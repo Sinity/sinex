@@ -286,7 +286,9 @@
                 build_lock_dir="$build_state_dir/xtask-build.lock"
                 build_failure_stamp="$build_state_dir/xtask-build.failed"
                 build_failure_log="$build_state_dir/xtask-build.failed.log"
+                runtime_introspection_stamp="$cargo_target_dir/debug/xtask.runtime-introspection.built"
                 force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
+                requires_runtime_introspection="0"
 
                 _sinex_xtask_normalize_global_args() {
                   local global_args=()
@@ -337,6 +339,7 @@
                   for extra_dep in \
                     "$root_dir/Cargo.toml" \
                     "$root_dir/Cargo.lock" \
+                    "$root_dir/flake.nix" \
                     "$root_dir/xtask/Cargo.toml" \
                     "$root_dir/.cargo/config.toml"
                   do
@@ -361,7 +364,16 @@
 
                 _sinex_xtask_needs_build() {
                   [ ! -x "$bin_path" ] && return 0
+                  _sinex_xtask_needs_runtime_introspection_build && return 0
                   _sinex_xtask_sources_newer_than "$bin_path"
+                }
+
+                _sinex_xtask_needs_runtime_introspection_build() {
+                  [ "$requires_runtime_introspection" = "1" ] || return 1
+                  [ ! -x "$bin_path" ] && return 0
+                  [ ! -e "$runtime_introspection_stamp" ] && return 0
+                  [ "$bin_path" -nt "$runtime_introspection_stamp" ] && return 0
+                  _sinex_xtask_sources_newer_than "$runtime_introspection_stamp"
                 }
 
                 _sinex_xtask_failed_build_is_current() {
@@ -412,6 +424,59 @@
                         ;;
                     esac
                   done
+                }
+
+                _sinex_xtask_command_arg() {
+                  local wanted_index="$1"
+                  local seen=0
+                  shift
+
+                  while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                      --json|--list-commands|--bg|--fg|-v|-vv|-vvv)
+                        shift
+                        ;;
+                      --format)
+                        if [ "$#" -ge 2 ]; then
+                          shift 2
+                        else
+                          shift
+                        fi
+                        ;;
+                      --format=*)
+                        shift
+                        ;;
+                      *)
+                        if [ "$seen" -eq "$wanted_index" ]; then
+                          printf '%s\n' "$1"
+                          return 0
+                        fi
+                        seen="$((seen + 1))"
+                        shift
+                        ;;
+                    esac
+                  done
+                }
+
+                _sinex_xtask_requires_runtime_introspection() {
+                  local command_name subcommand_name
+                  command_name="$(_sinex_xtask_command_arg 0 "$@")"
+                  subcommand_name="$(_sinex_xtask_command_arg 1 "$@")"
+
+                  case "$command_name" in
+                    source-units)
+                      return 0
+                      ;;
+                    docs)
+                      case "$subcommand_name" in
+                        sync|check|proof-catalog)
+                          return 0
+                          ;;
+                      esac
+                      ;;
+                  esac
+
+                  return 1
                 }
 
                 _sinex_xtask_can_use_existing_binary() {
@@ -526,7 +591,15 @@
                       return 1
                     fi
 
-                    cargo build --quiet -p xtask || build_rc=$?
+                    if [ "$requires_runtime_introspection" = "1" ]; then
+                      cargo build --quiet -p xtask --features runtime-introspection || build_rc=$?
+                      if [ "$build_rc" -eq 0 ]; then
+                        touch "$runtime_introspection_stamp"
+                      fi
+                    else
+                      cargo build --quiet -p xtask || build_rc=$?
+                      rm -f "$runtime_introspection_stamp"
+                    fi
                     ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
                     rm -rf "$sqlx_tmp"
                     return "$build_rc"
@@ -539,6 +612,9 @@
                   _normalized_args+=("$_arg")
                 done < <(_sinex_xtask_normalize_global_args "$@")
                 set -- "''${_normalized_args[@]}"
+                if _sinex_xtask_requires_runtime_introspection "$@"; then
+                  requires_runtime_introspection="1"
+                fi
 
                 if [ -x "$bin_path" ] \
                   && [ "$force_rebuild" != "1" ] \
@@ -546,20 +622,30 @@
                 then
                   if _sinex_xtask_needs_build; then
                     if _sinex_xtask_failed_build_is_current; then
-                      echo "ℹ  Using existing xtask binary; local rebuild is currently broken for these sources" >&2
-                      if [ -r "$build_failure_log" ]; then
-                        echo "  log: $build_failure_log" >&2
+                      if [ "$requires_runtime_introspection" = "1" ]; then
+                        _sinex_xtask_report_current_failure
+                        exit 101
+                      else
+                        echo "ℹ  Using existing xtask binary; local rebuild is currently broken for these sources" >&2
+                        if [ -r "$build_failure_log" ]; then
+                          echo "  log: $build_failure_log" >&2
+                        fi
                       fi
                     elif _sinex_xtask_is_observability_command "$@"; then
                       echo "ℹ  Using existing xtask binary for read-only command while sources are newer" >&2
                     else
                       if ! _sinex_xtask_build_with_lock; then
                         if _sinex_xtask_failed_build_is_current; then
-                          echo "ℹ  Falling back to existing xtask binary after rebuild failure" >&2
-                          if [ -r "$build_failure_log" ]; then
-                            echo "  log: $build_failure_log" >&2
+                          if [ "$requires_runtime_introspection" = "1" ]; then
+                            _sinex_xtask_report_current_failure
+                            exit 101
+                          else
+                            echo "ℹ  Falling back to existing xtask binary after rebuild failure" >&2
+                            if [ -r "$build_failure_log" ]; then
+                              echo "  log: $build_failure_log" >&2
+                            fi
+                            exec "$bin_path" "$@"
                           fi
-                          exec "$bin_path" "$@"
                         fi
                         exit 1
                       fi
@@ -572,6 +658,10 @@
                 if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
                   if ! _sinex_xtask_build_with_lock; then
                     if _sinex_xtask_failed_build_is_current; then
+                      if [ "$requires_runtime_introspection" = "1" ]; then
+                        _sinex_xtask_report_current_failure
+                        exit 101
+                      fi
                       if [ -x "$bin_path" ] && _sinex_xtask_can_use_existing_binary "$@"; then
                         echo "ℹ  Falling back to existing xtask binary after rebuild failure" >&2
                         if [ -r "$build_failure_log" ]; then

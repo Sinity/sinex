@@ -8,10 +8,11 @@
 //! - Purge raw DLQ messages
 
 use crate::api::service_container::ServiceContainer;
+use crate::event_engine::policy::PolicyEngine;
 use crate::node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
-use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::validation::normalize_unicode;
 use sinex_primitives::{Result, SinexError};
+use serde_json::Value as JsonValue;
 use tracing::warn;
 
 // Re-export RPC types for consistency
@@ -54,56 +55,33 @@ fn truncate_preview(payload: &str, max_chars: usize) -> String {
     }
 }
 
-fn payload_preview(payload: &str, max_chars: usize) -> SanitizedPreview {
-    const SUPPRESSED_PREVIEW: &str = "[payload preview suppressed by privacy policy]";
-    const ENGINE_UNAVAILABLE_PREVIEW: &str = "[payload preview unavailable: privacy engine failed]";
-
-    let mut current = payload.to_string();
-    let mut redacted = false;
-    let mut caveats = Vec::new();
-
-    // DLQ messages may contain raw command, journal, or document-shaped payloads.
-    // Run the same privacy engine across those operator-relevant contexts before
-    // any bytes leave the gateway boundary.
-    for context in [
-        ProcessingContext::Command,
-        ProcessingContext::Journal,
-        ProcessingContext::Document,
-    ] {
-        let processed = match privacy::process(&current, context) {
-            Ok(processed) => processed,
-            Err(error) => {
-                warn!(
-                    error = %error,
-                    "DLQ payload preview privacy processing failed; suppressing preview"
-                );
-                return SanitizedPreview {
-                    text: ENGINE_UNAVAILABLE_PREVIEW.to_string(),
-                    redacted: true,
-                    caveats: vec!["privacy_engine_unavailable".to_string()],
-                };
-            }
-        };
-
-        if processed.suppressed {
-            return SanitizedPreview {
-                text: SUPPRESSED_PREVIEW.to_string(),
-                redacted: true,
-                caveats: vec!["payload_preview_suppressed".to_string()],
-            };
-        }
-
-        if processed.any_matched() {
-            redacted = true;
-            caveats.push(format!("redacted:{context:?}"));
-            current = processed.text.into_owned();
-        }
+fn render_preview_value(value: &JsonValue) -> String {
+    match value {
+        JsonValue::String(text) => text.clone(),
+        other => serde_json::to_string(other)
+            .unwrap_or_else(|_| "[payload preview unavailable: JSON serialization failed]".into()),
     }
+}
+
+async fn payload_preview(
+    payload: &str,
+    max_chars: usize,
+    policy_engine: &PolicyEngine,
+) -> SanitizedPreview {
+    let original = serde_json::from_str::<JsonValue>(payload)
+        .unwrap_or_else(|_| JsonValue::String(payload.to_string()));
+    let redacted_value = policy_engine.redact_json_value(original.clone()).await;
+    let redacted = redacted_value != original;
+    let current = render_preview_value(&redacted_value);
 
     SanitizedPreview {
         text: truncate_preview(&current, max_chars),
         redacted,
-        caveats,
+        caveats: if redacted {
+            vec!["redacted:privacy_policy".to_string()]
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -212,7 +190,8 @@ pub async fn handle_dlq_peek(
                         "[payload contains dangerous Unicode characters]".to_string()
                     }
                 };
-                let payload_preview = payload_preview(&normalized_payload, 200);
+                let payload_preview =
+                    payload_preview(&normalized_payload, 200, services.privacy_policy()).await;
                 let sequence = require_stream_sequence(
                     msg.info()
                         .map(|info| info.stream_sequence)
@@ -366,8 +345,10 @@ pub async fn handle_dlq_purge(
 #[cfg(test)]
 mod tests {
     use super::{parse_retry_count_header, payload_preview, require_stream_sequence};
+    use crate::event_engine::policy::PolicyEngine;
+    use sinex_db::DbPoolExt;
     use sinex_primitives::error::ErrorClass;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::prelude::*;
 
     #[sinex_test]
     async fn parse_retry_count_header_defaults_when_missing() -> TestResult<()> {
@@ -404,9 +385,10 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn payload_preview_truncates_without_breaking_unicode() -> TestResult<()> {
+    async fn payload_preview_truncates_without_breaking_unicode(ctx: TestContext) -> TestResult<()> {
         let payload = "żółw".repeat(80);
-        let preview = payload_preview(&payload, 200);
+        let policy = PolicyEngine::noop(ctx.pool().clone());
+        let preview = payload_preview(&payload, 200, &policy).await;
         assert!(preview.text.ends_with("..."));
         assert_eq!(preview.text.chars().count(), 203);
         assert!(!preview.redacted);
@@ -415,30 +397,49 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn payload_preview_redacts_raw_dlq_secret_bytes() -> TestResult<()> {
-        let payload = r#"{
+    async fn payload_preview_redacts_raw_dlq_secret_bytes_by_db_policy(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "dlq-preview-secret",
+                "test rule",
+                "regex",
+                r"ghp_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                None,
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule("dlq-preview-secret", None, None, None, 0)
+            .await?;
+        let policy = PolicyEngine::load(ctx.pool().clone()).await?;
+        let token = ["ghp_", "abcdefghijklmnopqrstuvwxyz123456"].concat();
+        let payload = format!(
+            r#"{{
             "original_subject": "dev.sinex.events.raw.shell.command",
-            "original_payload": {
-                "command": "export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz123456"
-            }
-        }"#;
+            "original_payload": {{
+                "command": "export GITHUB_TOKEN={token}"
+            }}
+        }}"#
+        );
 
-        let preview = payload_preview(payload, 200);
+        let preview = payload_preview(&payload, 200, &policy).await;
 
         assert!(preview.redacted);
         assert!(
             preview
                 .caveats
                 .iter()
-                .any(|caveat| caveat.starts_with("redacted:")),
+                .any(|caveat| caveat == "redacted:privacy_policy"),
             "redaction must be visible to machine clients: {:?}",
             preview.caveats
         );
-        assert!(
-            !preview
-                .text
-                .contains("ghp_abcdefghijklmnopqrstuvwxyz123456")
-        );
+        assert!(!preview.text.contains(&token));
         assert!(!preview.text.contains("GITHUB_TOKEN=ghp_"));
         Ok(())
     }

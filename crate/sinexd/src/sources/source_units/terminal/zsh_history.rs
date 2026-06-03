@@ -251,17 +251,6 @@ impl ZshHistoryParser {
         }
         self.dedup.observe(command.as_bytes());
 
-        // Privacy processing.
-        let processed = {
-            let result = sinex_primitives::privacy::engine()
-                .map_err(|e| ParserError::Parse(format!("privacy engine unavailable: {e}")))?
-                .process(&command, ProcessingContext::Command);
-            if result.suppressed {
-                return Ok(vec![]);
-            }
-            result.text.into_owned()
-        };
-
         let (ts_orig, timing) = match ts {
             Some(t) => (
                 t,
@@ -274,7 +263,7 @@ impl ZshHistoryParser {
         };
 
         let payload = HistoryCommandImportedPayload {
-            command: processed,
+            command,
             timestamp: ts,
             shell_type: "zsh".into(),
             source_file: self.source_file.clone(),

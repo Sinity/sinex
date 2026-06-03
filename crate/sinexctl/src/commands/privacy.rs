@@ -13,11 +13,17 @@ use sinex_primitives::query::{
     Cursor, EventQuery, EventQueryResult, PayloadFilter, QueryResultEvent, SortDirection, TimeRange,
 };
 use sinex_primitives::rpc::dlq::DlqListResponse;
+use sinex_primitives::rpc::privacy::{
+    PrivacyPolicyBackendAddRequest, PrivacyPolicyDictionaryAddRequest, PrivacyPolicyListResponse,
+    PrivacyPolicyMutationResponse, PrivacyPolicyRule, PrivacyPolicyRuleAddRequest,
+    PrivacyPolicyScopeBindRequest, PrivacyPolicySeedBuiltinRequest, PrivacyPolicySeedBuiltinResponse,
+};
 use sinex_primitives::rpc::sources::{
     CaveatSeverity, SourceCaveat, SourceReadiness, SourceReadinessStatus,
     SourcesReadinessListRequest, SourcesReadinessListResponse,
 };
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::Uuid;
 use std::path::PathBuf;
 
 use crate::validation::parse_time_input;
@@ -28,6 +34,12 @@ EXAMPLES:
     sinexctl privacy private-mode status -f json
     sinexctl privacy private-mode enable --actor sinity --source-class desktop
     sinexctl privacy private-mode disable
+    sinexctl privacy policy list
+    sinexctl privacy policy backend add --name presidio-local --kind presidio --endpoint-url http://127.0.0.1:5001/analyze
+    sinexctl privacy policy dictionary add --name local-projects --term sinex --tag project
+    sinexctl privacy policy seed builtin --enabled
+    sinexctl privacy policy rule add --name api-token --matcher-type regex --matcher-value 'TOKEN=[^ ]+' --action redact
+    sinexctl privacy policy scope bind --rule-name api-token --event-source terminal --field-path command
     sinexctl privacy audit
     sinexctl privacy export --since 24h --source terminal --output privacy-export.json -f json
 ")]
@@ -42,6 +54,12 @@ enum PrivacySubcommand {
     PrivateMode {
         #[command(subcommand)]
         cmd: PrivateModeCommand,
+    },
+
+    /// Inspect DB-backed admission policy.
+    Policy {
+        #[command(subcommand)]
+        cmd: PolicyCommand,
     },
 
     /// Summarize current privacy posture from private-mode, DLQ, and source readiness.
@@ -61,6 +79,208 @@ enum PrivateModeCommand {
 
     /// Disable runtime private mode.
     Disable,
+}
+
+#[derive(Debug, Subcommand)]
+enum PolicyCommand {
+    /// List DB-backed policy rules, scopes, recognizer backends, and dictionaries.
+    List(PolicyListArgs),
+
+    /// Manage recognizer backend bindings.
+    Backend {
+        #[command(subcommand)]
+        cmd: PolicyBackendCommand,
+    },
+
+    /// Manage imported or user-local dictionary assets.
+    Dictionary {
+        #[command(subcommand)]
+        cmd: PolicyDictionaryCommand,
+    },
+
+    /// Manage DB-backed policy rules.
+    Rule {
+        #[command(subcommand)]
+        cmd: PolicyRuleCommand,
+    },
+
+    /// Seed DB-backed policy from catalog data.
+    Seed {
+        #[command(subcommand)]
+        cmd: PolicySeedCommand,
+    },
+
+    /// Bind policy rules to source/type/field scopes.
+    Scope {
+        #[command(subcommand)]
+        cmd: PolicyScopeCommand,
+    },
+}
+
+#[derive(Debug, Args)]
+struct PolicyListArgs {
+    /// Include disabled policy objects.
+    #[arg(long)]
+    include_disabled: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum PolicyBackendCommand {
+    /// Add a recognizer backend binding.
+    Add(PolicyBackendAddArgs),
+}
+
+#[derive(Debug, Args)]
+struct PolicyBackendAddArgs {
+    /// Unique backend name.
+    #[arg(long)]
+    name: String,
+
+    /// Backend kind: local, presidio, gitleaks, trufflehog, or external_http.
+    #[arg(long)]
+    kind: String,
+
+    /// Optional HTTP endpoint URL for remote recognizers.
+    #[arg(long)]
+    endpoint_url: Option<String>,
+
+    /// Backend-specific JSON config.
+    #[arg(long, default_value = "{}")]
+    config: String,
+
+    /// Register the backend disabled.
+    #[arg(long)]
+    disabled: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum PolicyDictionaryCommand {
+    /// Add an imported or user-local dictionary.
+    Add(PolicyDictionaryAddArgs),
+}
+
+#[derive(Debug, Args)]
+struct PolicyDictionaryAddArgs {
+    /// Unique dictionary name.
+    #[arg(long)]
+    name: String,
+
+    /// Operator-facing description.
+    #[arg(long, default_value = "")]
+    description: String,
+
+    /// Optional BCP-47-ish language tag.
+    #[arg(long)]
+    language: Option<String>,
+
+    /// Source kind: user, seed, imported, or generated.
+    #[arg(long, default_value = "user")]
+    source_kind: String,
+
+    /// Dictionary tag. Repeatable.
+    #[arg(long)]
+    tag: Vec<String>,
+
+    /// Dictionary term. Repeatable.
+    #[arg(long)]
+    term: Vec<String>,
+}
+
+#[derive(Debug, Subcommand)]
+enum PolicyRuleCommand {
+    /// Add a DB-backed policy rule.
+    Add(PolicyRuleAddArgs),
+}
+
+#[derive(Debug, Subcommand)]
+enum PolicySeedCommand {
+    /// Upsert the built-in catalog into DB policy rows.
+    Builtin(PolicySeedBuiltinArgs),
+}
+
+#[derive(Debug, Args)]
+struct PolicySeedBuiltinArgs {
+    /// Seed rows enabled. By default seeded rules are present but disabled.
+    #[arg(long)]
+    enabled: bool,
+}
+
+#[derive(Debug, Args)]
+struct PolicyRuleAddArgs {
+    /// Unique rule name.
+    #[arg(long)]
+    name: String,
+
+    /// Operator-facing description.
+    #[arg(long, default_value = "")]
+    description: String,
+
+    /// Matcher type: regex, literal, dictionary, structural, presidio_entity,
+    /// presidio_analyzer, secret_scanner, or external.
+    #[arg(long)]
+    matcher_type: String,
+
+    /// Matcher value. Stored in policy DB; omitted from table output.
+    #[arg(long)]
+    matcher_value: String,
+
+    /// JSON matcher config for dictionary/backend recognizers.
+    #[arg(long, default_value = "{}")]
+    matcher_config: String,
+
+    /// Optional recognizer backend UUID.
+    #[arg(long)]
+    recognizer_backend_id: Option<Uuid>,
+
+    /// Recognizer kind: local_pattern, dictionary, presidio_entity,
+    /// secret_scanner, or external.
+    #[arg(long, default_value = "local_pattern")]
+    recognizer_kind: String,
+
+    /// Treat string matching as case sensitive.
+    #[arg(long)]
+    case_sensitive: bool,
+
+    /// Action: redact, hash, encrypt, suppress, or mask.
+    #[arg(long)]
+    action: String,
+
+    /// Optional label used by redaction/masking actions.
+    #[arg(long)]
+    action_label: Option<String>,
+
+    /// Encryption/hash key namespace.
+    #[arg(long, default_value = "default")]
+    key_namespace: String,
+}
+
+#[derive(Debug, Subcommand)]
+enum PolicyScopeCommand {
+    /// Bind a rule to an optional source/type/field scope.
+    Bind(PolicyScopeBindArgs),
+}
+
+#[derive(Debug, Args)]
+struct PolicyScopeBindArgs {
+    /// Existing policy rule name.
+    #[arg(long)]
+    rule_name: String,
+
+    /// Optional event source scope; omitted means all sources.
+    #[arg(long)]
+    event_source: Option<String>,
+
+    /// Optional event type scope; omitted means all event types.
+    #[arg(long)]
+    event_type: Option<String>,
+
+    /// Optional payload field path; omitted means all fields.
+    #[arg(long)]
+    field_path: Option<String>,
+
+    /// Scope priority; higher values win earlier when scopes overlap.
+    #[arg(long, default_value_t = 0)]
+    priority: i32,
 }
 
 #[derive(Debug, Args)]
@@ -134,6 +354,24 @@ impl PrivacyCommand {
                 PrivateModeCommand::Enable(_) => "privacy private-mode enable",
                 PrivateModeCommand::Disable => "privacy private-mode disable",
             },
+            PrivacySubcommand::Policy { cmd } => match cmd {
+                PolicyCommand::List(_) => "privacy policy list",
+                PolicyCommand::Backend {
+                    cmd: PolicyBackendCommand::Add(_),
+                } => "privacy policy backend add",
+                PolicyCommand::Dictionary {
+                    cmd: PolicyDictionaryCommand::Add(_),
+                } => "privacy policy dictionary add",
+                PolicyCommand::Rule {
+                    cmd: PolicyRuleCommand::Add(_),
+                } => "privacy policy rule add",
+                PolicyCommand::Seed {
+                    cmd: PolicySeedCommand::Builtin(_),
+                } => "privacy policy seed builtin",
+                PolicyCommand::Scope {
+                    cmd: PolicyScopeCommand::Bind(_),
+                } => "privacy policy scope bind",
+            },
             PrivacySubcommand::Audit(_) => "privacy audit",
             PrivacySubcommand::Export(_) => "privacy export",
         }
@@ -142,6 +380,7 @@ impl PrivacyCommand {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match &self.cmd {
             PrivacySubcommand::PrivateMode { cmd } => cmd.execute(client, format).await,
+            PrivacySubcommand::Policy { cmd } => cmd.execute(client, format).await,
             PrivacySubcommand::Audit(args) => args.execute(client, format).await,
             PrivacySubcommand::Export(args) => args.execute(client, format).await,
         }
@@ -171,6 +410,162 @@ impl PrivateModeCommand {
 
         CommandOutput::single(state, format_private_mode_state).display(&format)?;
         Ok(())
+    }
+}
+
+impl PolicyCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        match self {
+            Self::List(args) => args.execute(client, format).await,
+            Self::Backend { cmd } => cmd.execute(client, format).await,
+            Self::Dictionary { cmd } => cmd.execute(client, format).await,
+            Self::Rule { cmd } => cmd.execute(client, format).await,
+            Self::Seed { cmd } => cmd.execute(client, format).await,
+            Self::Scope { cmd } => cmd.execute(client, format).await,
+        }
+    }
+}
+
+impl PolicyBackendCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        match self {
+            Self::Add(args) => args.execute(client, format).await,
+        }
+    }
+}
+
+impl PolicyDictionaryCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        match self {
+            Self::Add(args) => args.execute(client, format).await,
+        }
+    }
+}
+
+impl PolicyRuleCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        match self {
+            Self::Add(args) => args.execute(client, format).await,
+        }
+    }
+}
+
+impl PolicySeedCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        match self {
+            Self::Builtin(args) => args.execute(client, format).await,
+        }
+    }
+}
+
+impl PolicyScopeCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        match self {
+            Self::Bind(args) => args.execute(client, format).await,
+        }
+    }
+}
+
+impl PolicyListArgs {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client.privacy_policy_list(self.include_disabled).await?;
+        CommandOutput::single(response, format_privacy_policy_list).display(&format)?;
+        Ok(())
+    }
+}
+
+impl PolicyBackendAddArgs {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client.privacy_policy_backend_add(self.to_request()?).await?;
+        CommandOutput::single(response, format_privacy_policy_mutation).display(&format)?;
+        Ok(())
+    }
+
+    fn to_request(&self) -> Result<PrivacyPolicyBackendAddRequest> {
+        let config = serde_json::from_str(&self.config)
+            .map_err(|e| eyre!("--config must be valid JSON: {e}"))?;
+        Ok(PrivacyPolicyBackendAddRequest {
+            name: self.name.clone(),
+            kind: self.kind.clone(),
+            endpoint_url: self.endpoint_url.clone(),
+            config,
+            enabled: !self.disabled,
+        })
+    }
+}
+
+impl PolicyDictionaryAddArgs {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client.privacy_policy_dictionary_add(self.to_request()).await?;
+        CommandOutput::single(response, format_privacy_policy_mutation).display(&format)?;
+        Ok(())
+    }
+
+    fn to_request(&self) -> PrivacyPolicyDictionaryAddRequest {
+        PrivacyPolicyDictionaryAddRequest {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            language: self.language.clone(),
+            source_kind: self.source_kind.clone(),
+            tags: self.tag.clone(),
+            terms: self.term.clone(),
+        }
+    }
+}
+
+impl PolicyRuleAddArgs {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client.privacy_policy_rule_add(self.to_request()?).await?;
+        CommandOutput::single(response, format_privacy_policy_mutation).display(&format)?;
+        Ok(())
+    }
+
+    fn to_request(&self) -> Result<PrivacyPolicyRuleAddRequest> {
+        let matcher_config = serde_json::from_str(&self.matcher_config)
+            .map_err(|e| eyre!("--matcher-config must be valid JSON: {e}"))?;
+        Ok(PrivacyPolicyRuleAddRequest {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            matcher_type: self.matcher_type.clone(),
+            matcher_value: self.matcher_value.clone(),
+            matcher_config,
+            recognizer_backend_id: self.recognizer_backend_id,
+            recognizer_kind: self.recognizer_kind.clone(),
+            case_sensitive: self.case_sensitive,
+            action: self.action.clone(),
+            action_label: self.action_label.clone(),
+            key_namespace: self.key_namespace.clone(),
+        })
+    }
+}
+
+impl PolicySeedBuiltinArgs {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client
+            .privacy_policy_seed_builtin(PrivacyPolicySeedBuiltinRequest {
+                enabled: self.enabled,
+            })
+            .await?;
+        CommandOutput::single(response, format_privacy_policy_seed).display(&format)?;
+        Ok(())
+    }
+}
+
+impl PolicyScopeBindArgs {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client.privacy_policy_scope_bind(self.to_request()).await?;
+        CommandOutput::single(response, format_privacy_policy_mutation).display(&format)?;
+        Ok(())
+    }
+
+    fn to_request(&self) -> PrivacyPolicyScopeBindRequest {
+        PrivacyPolicyScopeBindRequest {
+            rule_name: self.rule_name.clone(),
+            event_source: self.event_source.clone(),
+            event_type: self.event_type.clone(),
+            field_path: self.field_path.clone(),
+            priority: self.priority,
+        }
     }
 }
 
@@ -673,6 +1068,83 @@ fn format_privacy_audit_report(report: &PrivacyAuditReport) -> String {
     lines.join("\n")
 }
 
+fn format_privacy_policy_list(report: &PrivacyPolicyListResponse) -> String {
+    let mut lines = vec![
+        "Privacy Policy".to_string(),
+        format!(
+            "Rules: {} ({} enabled)",
+            report.rules.len(),
+            report.rules.iter().filter(|rule| rule.enabled).count()
+        ),
+        format!("Field scopes: {}", report.field_scopes.len()),
+        format!("Key namespaces: {}", report.key_namespaces.len()),
+        format!(
+            "Recognizer backends: {} ({} enabled)",
+            report.recognizer_backends.len(),
+            report
+                .recognizer_backends
+                .iter()
+                .filter(|backend| backend.enabled)
+                .count()
+        ),
+        format!(
+            "Dictionaries: {} ({} enabled)",
+            report.dictionaries.len(),
+            report
+                .dictionaries
+                .iter()
+                .filter(|dictionary| dictionary.enabled)
+                .count()
+        ),
+    ];
+
+    if report.rules.is_empty() {
+        lines.push("Rules: none".to_string());
+    } else {
+        lines.push("Rules:".to_string());
+        for rule in &report.rules {
+            lines.push(format_privacy_rule_line(rule, report));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn format_privacy_rule_line(
+    rule: &PrivacyPolicyRule,
+    report: &PrivacyPolicyListResponse,
+) -> String {
+    let scope_count = report
+        .field_scopes
+        .iter()
+        .filter(|scope| scope.rule_id == rule.id)
+        .count();
+    format!(
+        "  {} [{}] matcher={} recognizer={} action={} key={} scopes={}",
+        rule.name,
+        if rule.enabled { "enabled" } else { "disabled" },
+        rule.matcher_type,
+        rule.recognizer_kind,
+        rule.action,
+        rule.key_namespace,
+        scope_count
+    )
+}
+
+fn format_privacy_policy_mutation(response: &PrivacyPolicyMutationResponse) -> String {
+    format!(
+        "Privacy Policy Mutation\nKind: {}\nName: {}\nID: {}",
+        response.kind, response.name, response.id
+    )
+}
+
+fn format_privacy_policy_seed(response: &PrivacyPolicySeedBuiltinResponse) -> String {
+    format!(
+        "Privacy Policy Seed\nInserted: {}\nUpdated: {}\nUnchanged: {}\nTotal: {}",
+        response.inserted, response.updated, response.unchanged, response.total
+    )
+}
+
 fn format_private_mode_state(state: &RuntimePrivateModeState) -> String {
     let scope = if state.affected_source_classes.is_empty() {
         "all".to_string()
@@ -860,6 +1332,160 @@ mod tests {
             format!("{error:#}").contains("requires an explicit scope"),
             "error should explain scope requirement: {error:#}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_policy_table_summarizes_without_matcher_value_leak()
+    -> xtask::sandbox::TestResult<()> {
+        let rule_id = Uuid::new_v4();
+        let report = PrivacyPolicyListResponse {
+            rules: vec![PrivacyPolicyRule {
+                id: rule_id,
+                name: "api-token".to_string(),
+                description: "token fixture".to_string(),
+                matcher_type: "regex".to_string(),
+                matcher_value: "SECRET_TOKEN_SHOULD_NOT_RENDER".to_string(),
+                matcher_config: json!({}),
+                recognizer_backend_id: None,
+                recognizer_kind: "local_pattern".to_string(),
+                case_sensitive: false,
+                action: "redact".to_string(),
+                action_label: Some("<TOKEN>".to_string()),
+                key_namespace: "default".to_string(),
+                enabled: true,
+            }],
+            field_scopes: vec![],
+            key_namespaces: vec![],
+            recognizer_backends: vec![],
+            dictionaries: vec![],
+        };
+
+        let table = format_privacy_policy_list(&report);
+
+        assert!(table.contains("Privacy Policy"));
+        assert!(table.contains("api-token"));
+        assert!(table.contains("matcher=regex"));
+        assert!(!table.contains("SECRET_TOKEN_SHOULD_NOT_RENDER"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_policy_rule_add_parses_matcher_config_without_receipt_leak()
+    -> xtask::sandbox::TestResult<()> {
+        let args = PolicyRuleAddArgs {
+            name: "local-secret".to_string(),
+            description: "fixture".to_string(),
+            matcher_type: "regex".to_string(),
+            matcher_value: "SECRET_TOKEN_SHOULD_NOT_RENDER".to_string(),
+            matcher_config: r#"{"entity":"API_KEY","score_threshold":0.8}"#.to_string(),
+            recognizer_backend_id: None,
+            recognizer_kind: "local_pattern".to_string(),
+            case_sensitive: false,
+            action: "redact".to_string(),
+            action_label: Some("<SECRET>".to_string()),
+            key_namespace: "default".to_string(),
+        };
+
+        let request = args.to_request()?;
+        assert_eq!(request.matcher_type, "regex");
+        assert_eq!(request.matcher_config["entity"], "API_KEY");
+        assert_eq!(request.matcher_config["score_threshold"], 0.8);
+
+        let receipt = PrivacyPolicyMutationResponse {
+            id: Uuid::new_v4(),
+            kind: "rule".to_string(),
+            name: request.name,
+        };
+        let table = format_privacy_policy_mutation(&receipt);
+        assert!(table.contains("Privacy Policy Mutation"));
+        assert!(table.contains("local-secret"));
+        assert!(!table.contains("SECRET_TOKEN_SHOULD_NOT_RENDER"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_policy_seed_builtin_formats_idempotent_counts()
+    -> xtask::sandbox::TestResult<()> {
+        let args = PolicySeedBuiltinArgs { enabled: false };
+        let response = PrivacyPolicySeedBuiltinResponse {
+            inserted: 37,
+            updated: 0,
+            unchanged: 0,
+            total: 37,
+        };
+
+        let table = format_privacy_policy_seed(&response);
+        assert!(!args.enabled);
+        assert!(table.contains("Privacy Policy Seed"));
+        assert!(table.contains("Inserted: 37"));
+        assert!(table.contains("Total: 37"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_policy_backend_add_parses_config_and_enabled_state()
+    -> xtask::sandbox::TestResult<()> {
+        let args = PolicyBackendAddArgs {
+            name: "presidio-local".to_string(),
+            kind: "presidio".to_string(),
+            endpoint_url: Some("http://127.0.0.1:5001/analyze".to_string()),
+            config: r#"{"language":"en","entities":["EMAIL_ADDRESS"]}"#.to_string(),
+            disabled: true,
+        };
+
+        let request = args.to_request()?;
+        assert_eq!(request.name, "presidio-local");
+        assert_eq!(request.kind, "presidio");
+        assert_eq!(
+            request.endpoint_url.as_deref(),
+            Some("http://127.0.0.1:5001/analyze")
+        );
+        assert_eq!(request.config["language"], "en");
+        assert_eq!(request.config["entities"][0], "EMAIL_ADDRESS");
+        assert!(!request.enabled);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_policy_dictionary_add_preserves_terms_and_tags()
+    -> xtask::sandbox::TestResult<()> {
+        let args = PolicyDictionaryAddArgs {
+            name: "local-projects".to_string(),
+            description: "project deny-list".to_string(),
+            language: Some("en".to_string()),
+            source_kind: "user".to_string(),
+            tag: vec!["project".to_string(), "local".to_string()],
+            term: vec!["sinex".to_string(), "sinity".to_string()],
+        };
+
+        let request = args.to_request();
+        assert_eq!(request.name, "local-projects");
+        assert_eq!(request.description, "project deny-list");
+        assert_eq!(request.language.as_deref(), Some("en"));
+        assert_eq!(request.source_kind, "user");
+        assert_eq!(request.tags, vec!["project".to_string(), "local".to_string()]);
+        assert_eq!(request.terms, vec!["sinex".to_string(), "sinity".to_string()]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_policy_scope_bind_preserves_field_hint_scope()
+    -> xtask::sandbox::TestResult<()> {
+        let args = PolicyScopeBindArgs {
+            rule_name: "window-title-sensitive".to_string(),
+            event_source: Some("desktop".to_string()),
+            event_type: Some("window.focus".to_string()),
+            field_path: Some("title".to_string()),
+            priority: 20,
+        };
+
+        let request = args.to_request();
+        assert_eq!(request.rule_name, "window-title-sensitive");
+        assert_eq!(request.event_source.as_deref(), Some("desktop"));
+        assert_eq!(request.event_type.as_deref(), Some("window.focus"));
+        assert_eq!(request.field_path.as_deref(), Some("title"));
+        assert_eq!(request.priority, 20);
         Ok(())
     }
 }

@@ -867,8 +867,9 @@ impl IngestService {
             .with_reject_initial_replay(reject_initial_replay)
             .with_observer(observer);
 
-            // Load DB-backed privacy policy (#1042). Falls back to noop on DB error.
-            consumer = consumer.with_policy_engine().await;
+            // Load DB-backed privacy policy (#1042). Admission must not run
+            // with an implicit noop policy in production.
+            consumer = consumer.with_policy_engine().await?;
 
             if let Some(hb) = heartbeat_handle {
                 consumer = consumer.with_heartbeat_handle(hb);

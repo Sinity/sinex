@@ -3,7 +3,7 @@
 //! Covers:
 //! - Rule loading from DB (`PrivacyPolicyRepository::load_enabled_rules`)
 //! - Action application: Redact (regex) / Suppress (literal) matchers
-//! - Field-path scoping: rule scoped to top-level key
+//! - Field-path scoping: rule scoped by JSON Pointer
 //! - Chokepoint: source event payload is redacted before DB storage
 //! - DLQ envelope: raw bytes suppressed, metadata-only stub stored
 //! - Cache refresh: new rule picked up after reload
@@ -15,10 +15,13 @@ use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_primitives::{
     Id, Uuid,
+    domain::EventSource,
     events::{DynamicPayload, Event},
+    query::{EventQuery, EventQueryResult, PayloadFilter},
 };
 use sinexd::event_engine::admission::AdmittedEvent;
 use sinexd::event_engine::policy::PolicyEngine;
+use tokio::net::TcpListener;
 use xtask::sandbox::prelude::*;
 
 use support::FIXTURE_SOURCE_MATERIAL_ID;
@@ -79,6 +82,37 @@ async fn insert_global_rule(
     Ok(())
 }
 
+async fn spawn_presidio_fixture() -> TestResult<String> {
+    use axum::{Json, Router, routing::post};
+
+    async fn analyze(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+        let text = payload
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let matches = match text.find("SECRET_PERSON") {
+            Some(start) => json!([{
+                "start": text[..start].chars().count(),
+                "end": text[..start + "SECRET_PERSON".len()].chars().count(),
+                "entity_type": "PERSON",
+                "score": 0.99
+            }]),
+            None => json!([]),
+        };
+        Json(matches)
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let app = Router::new().route("/analyze", post(analyze));
+    tokio::spawn(async move {
+        if let Err(error) = axum::serve(listener, app).await {
+            tracing::warn!(%error, "Presidio fixture server exited");
+        }
+    });
+    Ok(format!("http://{addr}/analyze"))
+}
+
 // ─── DB rule loading ─────────────────────────────────────────────────────────
 
 /// Rules inserted into the DB are returned by `load_enabled_rules`.
@@ -129,6 +163,305 @@ async fn privacy_rule_loading_roundtrip(ctx: TestContext) -> TestResult<()> {
         !rules[0].scopes.is_empty(),
         "global scope should be present"
     );
+
+    Ok(())
+}
+
+/// Recognizer backends and dictionaries are DB/user-controlled policy
+/// inputs, not built-in Rust catalog state.
+#[sinex_test]
+async fn privacy_recognizer_backend_and_dictionary_roundtrip(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let pool = ctx.pool();
+    let repo = pool.privacy_policy();
+
+    let backend_id = repo
+        .add_recognizer_backend(
+            "local-presidio",
+            "presidio",
+            Some("http://127.0.0.1:3000/analyze"),
+            json!({
+                "languages": ["en", "pl"]
+            }),
+            true,
+        )
+        .await?;
+
+    let terms = vec!["project codename".to_string(), "private label".to_string()];
+    let dictionary_id = repo
+        .add_dictionary(
+            "local-deny-list",
+            "operator-maintained deny list",
+            Some("en"),
+            "imported",
+            &["local".to_string()],
+            &terms,
+        )
+        .await?;
+
+    let backends = repo.list_recognizer_backends().await?;
+    assert_eq!(backends.len(), 1);
+    assert_eq!(backends[0].id, backend_id);
+    assert_eq!(backends[0].kind, "presidio");
+    assert_eq!(
+        backends[0].endpoint_url.as_deref(),
+        Some("http://127.0.0.1:3000/analyze")
+    );
+    assert_eq!(backends[0].config["languages"][1].as_str(), Some("pl"));
+
+    let dictionaries = repo.list_dictionaries().await?;
+    assert_eq!(dictionaries.len(), 1);
+    assert_eq!(dictionaries[0].id, dictionary_id);
+    assert_eq!(dictionaries[0].source_kind, "imported");
+    let persisted_terms = repo.list_dictionary_terms(dictionary_id).await?;
+    assert_eq!(
+        persisted_terms
+            .iter()
+            .map(|record| record.term.as_str())
+            .collect::<Vec<_>>(),
+        vec!["private label", "project codename"]
+    );
+
+    Ok(())
+}
+
+/// Dictionary recognizer rules execute from DB policy metadata. The terms may
+/// come from imported recognizer assets; Sinex only owns storage/binding.
+#[sinex_test]
+async fn privacy_dictionary_matcher_redacts_from_db(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+    let repo = pool.privacy_policy();
+
+    let terms = vec!["PRIVATE_PROJECT".to_string(), "PRIVATE_PERSON".to_string()];
+    let dictionary_id = repo
+        .add_dictionary(
+            "imported-deny-list",
+            "imported deny-list terms",
+            Some("en"),
+            "imported",
+            &["presidio".to_string()],
+            &terms,
+        )
+        .await?;
+
+    repo.add_recognizer_rule(
+        "dictionary-redact",
+        "dictionary-backed deny-list",
+        "dictionary",
+        "",
+        json!({ "dictionary_id": dictionary_id.to_string() }),
+        None,
+        "dictionary",
+        false,
+        "redact",
+        Some("<DICT>"),
+        "default",
+    )
+    .await?;
+    repo.bind_field_rule("dictionary-redact", None, None, None, 0)
+        .await?;
+
+    let engine = PolicyEngine::load(pool.clone()).await?;
+    let payload = json!({ "title": "meeting about PRIVATE_PROJECT" });
+    let event = make_material_event("test.source", "test.event", payload);
+    let result = engine.redact_batch(vec![admit(event)]).await;
+
+    let title = result[0].event.payload["title"].as_str().unwrap_or("");
+    assert!(!title.contains("PRIVATE_PROJECT"), "got: {title}");
+    assert!(title.contains("<DICT>"), "got: {title}");
+
+    Ok(())
+}
+
+/// Structural detectors are policy rows too; they do not need hardcoded caller
+/// contexts to fire at the admission chokepoint.
+#[sinex_test]
+async fn privacy_structural_matcher_redacts_from_db(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+    let repo = pool.privacy_policy();
+
+    repo.add_recognizer_rule(
+        "structural-card",
+        "credit card structural detector",
+        "structural",
+        "credit_card",
+        json!({}),
+        None,
+        "local_pattern",
+        false,
+        "redact",
+        Some("<CARD>"),
+        "default",
+    )
+    .await?;
+    repo.bind_field_rule("structural-card", None, None, None, 0)
+        .await?;
+
+    let engine = PolicyEngine::load(pool.clone()).await?;
+    let card = ["4111", "111111111111"].concat();
+    let payload = json!({ "note": format!("card {card} should not persist") });
+    let event = make_material_event("test.source", "test.event", payload);
+    let result = engine.redact_batch(vec![admit(event)]).await;
+
+    let note = result[0].event.payload["note"].as_str().unwrap_or("");
+    assert!(!note.contains(&card), "got: {note}");
+    assert!(note.contains("<CARD>"), "got: {note}");
+
+    Ok(())
+}
+
+/// Secret-scanner-shaped rules can be imported into DB policy without baking
+/// provider regexes into Rust. This covers the Gitleaks-compatible regex shape.
+#[sinex_test]
+async fn privacy_secret_scanner_rule_redacts_from_db(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+    let repo = pool.privacy_policy();
+
+    let backend_id = repo
+        .add_recognizer_backend(
+            "gitleaks-compatible",
+            "gitleaks",
+            None,
+            json!({ "format": "gitleaks-rule" }),
+            true,
+        )
+        .await?;
+
+    repo.add_recognizer_rule(
+        "gitleaks-generic-api-key",
+        "imported secret-scanner regex",
+        "secret_scanner",
+        "",
+        json!({ "regex": "GLSECRET_[A-Z0-9]{8}" }),
+        Some(backend_id),
+        "secret_scanner",
+        false,
+        "redact",
+        Some("<SECRET_SCANNER>"),
+        "default",
+    )
+    .await?;
+    repo.bind_field_rule("gitleaks-generic-api-key", None, None, None, 0)
+        .await?;
+
+    let engine = PolicyEngine::load(pool.clone()).await?;
+    let payload = json!({ "command": "export KEY=GLSECRET_ABCDEFGH" });
+    let event = make_material_event("test.source", "test.event", payload);
+    let result = engine.redact_batch(vec![admit(event)]).await;
+
+    let command = result[0].event.payload["command"].as_str().unwrap_or("");
+    assert!(!command.contains("GLSECRET_ABCDEFGH"), "got: {command}");
+    assert!(command.contains("<SECRET_SCANNER>"), "got: {command}");
+
+    Ok(())
+}
+
+/// Presidio-compatible external recognizers execute from DB-backed backend
+/// configuration and apply returned spans to event payloads.
+#[sinex_test]
+async fn privacy_presidio_backend_redacts_from_http_spans(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+    let repo = pool.privacy_policy();
+    let endpoint = spawn_presidio_fixture().await?;
+
+    let backend_id = repo
+        .add_recognizer_backend(
+            "presidio-fixture",
+            "presidio",
+            Some(&endpoint),
+            json!({ "language": "en" }),
+            true,
+        )
+        .await?;
+
+    repo.add_recognizer_rule(
+        "presidio-person",
+        "Presidio Analyzer PERSON rule",
+        "presidio_entity",
+        "PERSON",
+        json!({
+            "entities": ["PERSON"],
+            "language": "en",
+            "score_threshold": 0.5
+        }),
+        Some(backend_id),
+        "presidio_entity",
+        false,
+        "redact",
+        Some("<PERSON>"),
+        "default",
+    )
+    .await?;
+    repo.bind_field_rule("presidio-person", None, None, Some("/title"), 0)
+        .await?;
+
+    let engine = PolicyEngine::load(pool.clone()).await?;
+    let payload = json!({
+        "title": "met SECRET_PERSON yesterday",
+        "body": "SECRET_PERSON stays untouched outside the field scope"
+    });
+    let event = make_material_event("test.source", "test.event", payload);
+    let result = engine.redact_batch(vec![admit(event)]).await;
+
+    let title = result[0].event.payload["title"].as_str().unwrap_or("");
+    let body = result[0].event.payload["body"].as_str().unwrap_or("");
+    assert!(!title.contains("SECRET_PERSON"), "got: {title}");
+    assert!(title.contains("<PERSON>"), "got: {title}");
+    assert!(body.contains("SECRET_PERSON"), "got: {body}");
+
+    Ok(())
+}
+
+/// Unscoped external recognizer rules walk nested JSON string leaves rather
+/// than requiring source-specific title/body redaction code.
+#[sinex_test]
+async fn privacy_presidio_global_rule_walks_nested_json(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+    let repo = pool.privacy_policy();
+    let endpoint = spawn_presidio_fixture().await?;
+
+    let backend_id = repo
+        .add_recognizer_backend(
+            "presidio-global-fixture",
+            "presidio",
+            Some(&endpoint),
+            json!({ "language": "en" }),
+            true,
+        )
+        .await?;
+
+    repo.add_recognizer_rule(
+        "presidio-global-person",
+        "Presidio Analyzer PERSON rule",
+        "presidio_entity",
+        "PERSON",
+        json!({ "entities": ["PERSON"] }),
+        Some(backend_id),
+        "presidio_entity",
+        false,
+        "redact",
+        Some("<PERSON>"),
+        "default",
+    )
+    .await?;
+    repo.bind_field_rule("presidio-global-person", None, None, None, 0)
+        .await?;
+
+    let engine = PolicyEngine::load(pool.clone()).await?;
+    let payload = json!({
+        "nested": {
+            "title": "met SECRET_PERSON yesterday"
+        }
+    });
+    let event = make_material_event("test.source", "test.event", payload);
+    let result = engine.redact_batch(vec![admit(event)]).await;
+
+    let title = result[0].event.payload["nested"]["title"]
+        .as_str()
+        .unwrap_or("");
+    assert!(!title.contains("SECRET_PERSON"), "got: {title}");
+    assert!(title.contains("<PERSON>"), "got: {title}");
 
     Ok(())
 }
@@ -206,10 +539,8 @@ async fn privacy_action_suppress_literal(ctx: TestContext) -> TestResult<()> {
 
 // ─── Field-path scoping ──────────────────────────────────────────────────────
 
-/// A rule scoped to `/secret_field` applies only to that top-level key and
+/// A rule scoped to `/secret_field` applies only to that JSON Pointer and
 /// leaves other fields (even matching ones) untouched.
-///
-/// v1 limitation: only top-level JSON keys are supported.
 #[sinex_test]
 async fn privacy_field_scoped_rule(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
@@ -226,7 +557,7 @@ async fn privacy_field_scoped_rule(ctx: TestContext) -> TestResult<()> {
         "default",
     )
     .await?;
-    // Scope to top-level key "/secret_field" only.
+    // Scope to JSON Pointer "/secret_field" only.
     repo.bind_field_rule("scope-test", None, None, Some("/secret_field"), 0)
         .await?;
 
@@ -255,6 +586,55 @@ async fn privacy_field_scoped_rule(ctx: TestContext) -> TestResult<()> {
         public.contains("SENSITIVE"),
         "unscoped field must be untouched; got: {public}"
     );
+
+    Ok(())
+}
+
+/// Field scopes use JSON Pointer semantics, so nested source payload mappings
+/// can be protected without imperative source-specific redaction code.
+#[sinex_test]
+async fn privacy_field_scoped_rule_supports_nested_json_pointer(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let pool = ctx.pool();
+    let repo = pool.privacy_policy();
+
+    repo.add_rule(
+        "nested-scope-test",
+        "",
+        "literal",
+        "NESTED_SECRET",
+        false,
+        "redact",
+        Some("<NESTED>"),
+        "default",
+    )
+    .await?;
+    repo.bind_field_rule("nested-scope-test", None, None, Some("/outer/inner/title"), 0)
+        .await?;
+
+    let engine = PolicyEngine::load(pool.clone()).await?;
+
+    let payload = json!({
+        "outer": {
+            "inner": {
+                "title": "contains NESTED_SECRET",
+                "note": "NESTED_SECRET outside pointer"
+            }
+        }
+    });
+    let event = make_material_event("test.source", "test.event", payload);
+    let result = engine.redact_batch(vec![admit(event)]).await;
+
+    let title = result[0].event.payload["outer"]["inner"]["title"]
+        .as_str()
+        .unwrap_or("");
+    let note = result[0].event.payload["outer"]["inner"]["note"]
+        .as_str()
+        .unwrap_or("");
+    assert!(!title.contains("NESTED_SECRET"), "got: {title}");
+    assert!(title.contains("<NESTED>"), "got: {title}");
+    assert!(note.contains("NESTED_SECRET"), "got: {note}");
 
     Ok(())
 }
@@ -467,6 +847,107 @@ async fn privacy_cache_reload_picks_up_new_rule(ctx: TestContext) -> TestResult<
     assert!(
         value.contains("<CACHED>"),
         "expected <CACHED> label; got: {value}"
+    );
+
+    Ok(())
+}
+
+// ─── Search-index leakage guard ─────────────────────────────────────────────
+
+/// AC #1042: a sensitive term redacted by the chokepoint must not be reachable
+/// through the full-text search surface once the event is persisted.
+///
+/// Pipeline mirrored: a global rule redacts the secret, the chokepoint
+/// (`redact_batch`) rewrites the payload, and the redacted event is persisted.
+/// The Postgres FTS index is built from `payload::text`, so this proves the
+/// secret never enters the searchable surface — while a benign sibling token in
+/// the same payload remains searchable (the row is indexed, only the secret is
+/// gone, not the whole event).
+#[sinex_test]
+async fn privacy_redacted_term_not_reachable_via_text_search(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+    let material_id = ctx.create_source_material(Some("leak-guard")).await?;
+
+    // Global rule: redact the secret token shape.
+    insert_global_rule(
+        pool,
+        "leak-guard-redact",
+        "regex",
+        r"LEAKSECRET_\w+",
+        "redact",
+        Some("<REDACTED>"),
+    )
+    .await?;
+
+    // Build an event whose payload mixes a benign marker with the secret.
+    let event = DynamicPayload::new(
+        "leak-guard-source",
+        "document.indexed",
+        json!({ "content": "benignmarker contains LEAKSECRET_ABC inside" }),
+    )
+    .from_material(material_id)
+    .build()
+    .expect("test event build should not fail");
+
+    // Run the event through the admission chokepoint, then persist the result —
+    // exactly the order the live pipeline uses (redact_batch before persist).
+    let engine = PolicyEngine::load(pool.clone()).await?;
+    let redacted = engine.redact_batch(vec![admit(event)]).await;
+    let redacted_event = redacted
+        .into_iter()
+        .next()
+        .expect("one redacted event")
+        .event;
+    assert!(
+        !redacted_event.payload["content"]
+            .as_str()
+            .unwrap_or("")
+            .contains("LEAKSECRET_ABC"),
+        "precondition: chokepoint must have stripped the secret before persistence"
+    );
+    pool.events().insert(redacted_event).await?;
+
+    let source = vec![EventSource::from_static("leak-guard-source")];
+
+    // The secret term must NOT surface through full-text search.
+    let leaked = pool
+        .events()
+        .query(EventQuery {
+            sources: source.clone(),
+            payload: Some(PayloadFilter::TextSearch {
+                text: "LEAKSECRET_ABC".to_string(),
+            }),
+            ..Default::default()
+        })
+        .await?;
+    let EventQueryResult::Events { events, .. } = leaked else {
+        panic!("expected Events result for secret search");
+    };
+    assert!(
+        events.is_empty(),
+        "redacted secret must not be reachable via text search; found {} event(s)",
+        events.len()
+    );
+
+    // The benign sibling token in the same payload IS still searchable, proving
+    // the row was indexed and the absence above is redaction, not a missing row.
+    let benign = pool
+        .events()
+        .query(EventQuery {
+            sources: source,
+            payload: Some(PayloadFilter::TextSearch {
+                text: "benignmarker".to_string(),
+            }),
+            ..Default::default()
+        })
+        .await?;
+    let EventQueryResult::Events { events, .. } = benign else {
+        panic!("expected Events result for benign search");
+    };
+    assert_eq!(
+        events.len(),
+        1,
+        "benign token in the same payload must remain searchable"
     );
 
     Ok(())

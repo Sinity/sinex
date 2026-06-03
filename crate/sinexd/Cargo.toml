@@ -20,6 +20,18 @@ path = "src/lib.rs"
 name = "privacy_policy_test"
 path = "tests/event_engine/privacy_policy_test.rs"
 
+[[test]]
+name = "browser_history_parser_test"
+path = "tests/sources/browser_history_parser_test.rs"
+
+[[test]]
+name = "terminal_history_parser_test"
+path = "tests/sources/terminal_history_parser_test.rs"
+
+[[test]]
+name = "production_path"
+path = "tests/sources/production_path.rs"
+
 [features]
 default = ["db", "messaging", "preflight"]
 tokio-console = ["dep:console-subscriber"]

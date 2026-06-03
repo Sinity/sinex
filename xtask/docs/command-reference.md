@@ -1488,7 +1488,7 @@ Test input text against the privacy engine
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `input` | yes | yes | Input text to process |
-| `-c, --context` | yes | no | Processing context (command, clipboard, window_title, journal, dbus, notification, document, metadata) |
+| `-c, --context` | yes | no | Processing context (command, clipboard, journal, dbus, notification, document, metadata) |
 
 
 ### `xtask privacy decrypt`
@@ -1936,4 +1936,3 @@ Internal detached process watchdog — not for human use
 | `--job-id` | yes | yes | Background job ID to mark as killed on timeout |
 | `--db-path` | yes | yes | Path to the history DB file |
 | `--job-dir` | yes | yes | Directory containing the job's exit_code file (written on timeout) |
-

@@ -18,9 +18,8 @@
 //!
 //! ## Privacy
 //!
-//! Chunk text is run through `privacy::engine()` with `ProcessingContext::Document`
-//! before emission. Frontmatter values are redacted with
-//! `ProcessingContext::Metadata`.
+//! Chunk text is emitted as parsed text. DB/user privacy policy applies at the
+//! event-engine chokepoint using the emitted event metadata and payload hints.
 //!
 //! Ref: `docs/architecture/document-layer-v1.md`.
 
@@ -29,8 +28,6 @@ use crate::node_sdk::derived_node::{
 };
 use crate::node_sdk::processing::NodeLogicError;
 use sinex_primitives::events::payloads::DocumentKind;
-use sinex_primitives::privacy;
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::{JsonValue, Uuid};
 use std::collections::HashMap;
 
@@ -81,11 +78,6 @@ impl MultiOutputTransducerNode for DocumentParserNode {
     fn output_event_types(&self) -> &[&'static str] {
         &["document.parsed", "document.chunked"]
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Document
-    }
-
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::MaterialOnly
     }
@@ -159,7 +151,8 @@ impl DocumentParserNode {
         let title = frontmatter.get("title").cloned();
         let wikilinks = extract_wikilinks(&body);
 
-        // Chunk the body (post-frontmatter removal, post-redaction).
+        // Chunk the body after frontmatter removal. Privacy policy is not
+        // applied here; the event engine owns admission/redaction decisions.
         let raw_chunks: Vec<String> = paragraph_split(&body);
         let chunk_count = raw_chunks.len() as u32;
         let total_bytes: u64 = raw_chunks.iter().map(|c| c.len() as u64).sum();
@@ -216,13 +209,10 @@ impl DocumentParserNode {
         for (i, chunk_text) in raw_chunks.into_iter().enumerate() {
             let chunk_len = chunk_text.len() as u64;
 
-            // Apply privacy redaction to chunk text.
-            let redacted = redact_chunk_text(&chunk_text);
-
             let chunk_payload = serde_json::to_value(serde_json::json!({
                 "document_id": document_id,
                 "chunk_index": i as u32,
-                "text": redacted,
+                "text": chunk_text,
                 "byte_offset_start": byte_offset,
                 "byte_offset_end": byte_offset + chunk_len,
                 "source_anchor_start": byte_offset,
@@ -301,12 +291,11 @@ impl DocumentParserNode {
         let mut byte_offset: u64 = 0;
         for (i, chunk_text) in raw_chunks.into_iter().enumerate() {
             let chunk_len = chunk_text.len() as u64;
-            let redacted = redact_chunk_text(&chunk_text);
 
             let chunk_payload = serde_json::to_value(serde_json::json!({
                 "document_id": document_id,
                 "chunk_index": i as u32,
-                "text": redacted,
+                "text": chunk_text,
                 "byte_offset_start": byte_offset,
                 "byte_offset_end": byte_offset + chunk_len,
                 "source_anchor_start": null,
@@ -461,17 +450,11 @@ fn line_group_split(text: &str) -> Vec<String> {
     paragraph_split(text)
 }
 
-/// Redact a chunk of text through the privacy engine.
-fn redact_chunk_text(text: &str) -> String {
-    match privacy::process(text, ProcessingContext::Document) {
-        Ok(result) => result.text.into_owned(),
-        Err(_) => text.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::domain::{ProcessingMode, TriggerKind};
+    use sinex_primitives::{Id, Timestamp};
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -553,6 +536,46 @@ mod tests {
                 MAX_CHUNK_BYTES
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_chunks_are_not_parser_redacted() -> TestResult<()> {
+        let node = DocumentParserNode::default();
+        let mut state = DocumentParserState::default();
+        let event_id = Id::new();
+        let context = AutomatonContext {
+            trigger_event_id: event_id,
+            source: "terminal".into(),
+            event_type: "command.canonical".into(),
+            ts_orig: Some(Timestamp::UNIX_EPOCH),
+            ts_coided: event_id.timestamp(),
+            processing_mode: ProcessingMode::Live,
+            trigger_kind: TriggerKind::NewEvent,
+            created_by_operation_id: None,
+        };
+        let token = ["ghp_", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"].concat();
+
+        let outputs = node.process_terminal(
+            &mut state,
+            serde_json::json!({
+                "command": "cat token",
+                "output": format!("token={token}"),
+            }),
+            &context,
+        )?;
+
+        let chunk = outputs
+            .iter()
+            .find(|output| output.event_type == Some("document.chunked"));
+        assert!(chunk.is_some(), "document.chunked output");
+        let text = chunk
+            .and_then(|output| output.payload["text"].as_str())
+            .unwrap_or("");
+        assert!(
+            text.contains(token.as_str()),
+            "document parser must preserve parsed text; DB/user policy owns redaction"
+        );
         Ok(())
     }
 }

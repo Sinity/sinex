@@ -1,15 +1,21 @@
-//! Unified privacy engine for Sinex.
+//! Privacy rule compiler and catalog substrate for Sinex.
 //!
-//! All sensitive-data handling — secret redaction, PII detection, encryption,
-//! hashing — flows through a single [`PrivacyEngine`] instance obtained via
-//! [`engine()`].
+//! Runtime admission policy is DB/user driven and owned by `sinexd`'s event
+//! engine. This module provides reusable rule definitions, configuration
+//! parsing, and the [`PrivacyEngine`] compiler used by that chokepoint; it is
+//! not a process-wide runtime policy authority.
 //!
 //! # Quick start
 //!
 //! ```
-//! use sinex_primitives::privacy::{self, ProcessingContext};
+//! use sinex_primitives::privacy::{
+//!     CategorySet, PrivacyConfig, PrivacyEngine, ProcessingContext,
+//! };
 //!
-//! let result = privacy::process("export TOKEN=ghp_abc123", ProcessingContext::Command)?;
+//! let mut config = PrivacyConfig::default();
+//! config.builtin_categories = CategorySet::All;
+//! let engine = PrivacyEngine::new(config)?;
+//! let result = engine.process("export TOKEN=secret_fixture_123", ProcessingContext::Command);
 //! assert!(!result.matched_rules.is_empty());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -19,12 +25,11 @@ mod config;
 mod detector;
 mod engine;
 mod envelope;
-pub mod field;
 pub mod private_mode;
 
+pub use catalog::builtin_policy_seed_rules;
 pub use config::{CategorySet, PrivacyConfig, PrivacyConfigError};
 pub use engine::PrivacyEngine;
-pub use field::{FieldPrivacyDecision, parser_field_privacy};
 pub use private_mode::{
     DEFAULT_PRIVATE_MODE_STATE_DIR, PRIVATE_MODE_STATE_RELATIVE_PATH, PrivateModeReasonClass,
     RuntimePrivateModeState, load_private_mode_state, private_mode_state_path,
@@ -35,66 +40,6 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
-use std::sync::OnceLock;
-
-// ─── Global engine ───────────────────────────────────────────
-
-static ENGINE: OnceLock<Result<PrivacyEngine, PrivacyError>> = OnceLock::new();
-
-fn build_engine_from_env() -> Result<PrivacyEngine, PrivacyError> {
-    let config = PrivacyConfig::from_env().map_err(PrivacyError::Config)?;
-    PrivacyEngine::new(config)
-}
-
-/// Get the process-wide privacy engine.
-///
-/// On first call, initializes from `PrivacyConfig::from_env()`.
-///
-/// Returns the same cached initialization error on every call if privacy
-/// configuration or built-in rule compilation fails.
-pub fn engine() -> Result<&'static PrivacyEngine, &'static PrivacyError> {
-    ENGINE.get_or_init(build_engine_from_env).as_ref()
-}
-
-/// Build a privacy engine augmented with per-source-unit rules.
-///
-/// Loads the global config (identical to [`engine()`]) and merges the extra
-/// rules declared by the matching [`crate::proof::SourceUnitPrivacyRules`]
-/// entry (registered via `extra_privacy_rules:` in `register_source_unit!`).
-///
-/// Returns a freshly-constructed `PrivacyEngine` — **not** a cached singleton.
-/// Callers that need performance should build once at node startup and reuse.
-/// If no per-unit rules are registered the engine is identical to the global
-/// one (same config, same compiled rule set).
-///
-/// # Errors
-/// Returns `PrivacyError` if the config or any rule pattern fails to compile.
-pub fn engine_for_source_unit(
-    source_unit_id: &crate::parser::SourceUnitId,
-) -> Result<PrivacyEngine, PrivacyError> {
-    let mut config = config::PrivacyConfig::from_env().map_err(PrivacyError::Config)?;
-    if let Some(scoped) = crate::proof::find_source_unit_privacy_rules(source_unit_id) {
-        let extra = (scoped.rules_fn)();
-        config.extra_rules.extend(extra);
-    }
-    PrivacyEngine::new(config)
-}
-
-/// Process text with the global privacy engine.
-pub fn process(
-    text: &str,
-    context: ProcessingContext,
-) -> Result<Processed<'_>, &'static PrivacyError> {
-    Ok(engine()?.process(text, context))
-}
-
-/// Process JSON with the global privacy engine.
-pub fn process_json(
-    value: &serde_json::Value,
-    context: ProcessingContext,
-) -> Result<serde_json::Value, &'static PrivacyError> {
-    Ok(engine()?.process_json(value, context))
-}
 
 // ─── Processing context ──────────────────────────────────────
 
@@ -109,8 +54,6 @@ pub enum ProcessingContext {
     Command,
     /// Clipboard text content.
     Clipboard,
-    /// Window and tab titles.
-    WindowTitle,
     /// Systemd journal messages and fields.
     Journal,
     /// D-Bus method arguments, signal payloads.
@@ -149,7 +92,7 @@ pub enum Strategy {
     Suppress,
     /// Partially obscure matched text, keeping some characters visible.
     ///
-    /// Example: `4111111111111111` with `keep_prefix: 4, keep_suffix: 4, char: '*'`
+    /// Example: a 16-digit card number with `keep_prefix: 4, keep_suffix: 4, char: '*'`
     /// produces `4111********1111`.
     Mask {
         /// Character to use for masking. Defaults to `'*'`.
@@ -231,7 +174,7 @@ pub enum RuleCategory {
     Secret,
     /// Personally identifiable information: emails, phones, card numbers.
     Pii,
-    /// Privacy-relevant metadata: window titles revealing activity.
+    /// Privacy-relevant metadata and activity context.
     Privacy,
     /// User-defined rules.
     Custom,
@@ -260,6 +203,25 @@ pub struct PatternRule {
 
 fn default_true() -> bool {
     true
+}
+
+/// DB-policy seed projection for one built-in catalog rule.
+///
+/// This is data for explicit operator seeding, not runtime policy authority.
+/// Runtime admission policy is loaded from the DB-backed privacy tables.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyPolicySeedRule {
+    pub name: String,
+    pub description: String,
+    pub matcher_type: String,
+    pub matcher_value: String,
+    pub matcher_config: serde_json::Value,
+    pub recognizer_kind: String,
+    pub case_sensitive: bool,
+    pub action: String,
+    pub action_label: Option<String>,
+    pub key_namespace: String,
+    pub enabled: bool,
 }
 
 /// Override for a built-in rule.
@@ -646,12 +608,15 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn build_engine_from_env_propagates_config_errors() -> ::xtask::sandbox::TestResult<()> {
+    async fn explicit_env_config_load_propagates_config_errors()
+    -> ::xtask::sandbox::TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         let old_extra_rules = std::env::var_os("SINEX_PRIVACY_EXTRA_RULES");
         unsafe { std::env::set_var("SINEX_PRIVACY_EXTRA_RULES", "{not-json") };
 
-        let result = build_engine_from_env();
+        let result = PrivacyConfig::from_env()
+            .map_err(PrivacyError::Config)
+            .and_then(PrivacyEngine::new);
 
         restore_var("SINEX_PRIVACY_EXTRA_RULES", old_extra_rules);
 
@@ -667,45 +632,36 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn build_engine_from_env_accepts_default_configuration()
+    async fn explicit_env_config_load_accepts_default_configuration()
     -> ::xtask::sandbox::TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         let old_extra_rules = std::env::var_os("SINEX_PRIVACY_EXTRA_RULES");
+        let old_builtin = std::env::var_os("SINEX_PRIVACY_BUILTIN_CATEGORIES");
         unsafe { std::env::remove_var("SINEX_PRIVACY_EXTRA_RULES") };
+        unsafe { std::env::remove_var("SINEX_PRIVACY_BUILTIN_CATEGORIES") };
 
-        let engine = build_engine_from_env()?;
+        let engine = PrivacyEngine::new(PrivacyConfig::from_env().map_err(PrivacyError::Config)?)?;
         let processed = engine.process("token=abc", ProcessingContext::Command);
 
         restore_var("SINEX_PRIVACY_EXTRA_RULES", old_extra_rules);
+        restore_var("SINEX_PRIVACY_BUILTIN_CATEGORIES", old_builtin);
 
-        assert!(processed.any_matched());
-        Ok(())
-    }
-
-    // ── engine_for_source_unit ──
-
-    #[sinex_test]
-    async fn engine_for_source_unit_returns_engine_without_scoped_rules()
-    -> ::xtask::sandbox::TestResult<()> {
-        // A source unit with no registered `SourceUnitPrivacyRules` should
-        // produce an engine that behaves identically to the global one.
-        let engine = engine_for_source_unit(&crate::parser::SourceUnitId::from_static(
-            "nonexistent.source-unit",
-        ))?;
-        let result = engine.process(
-            "export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
-            ProcessingContext::Command,
+        // Default config loads cleanly, but built-in catalog rules are opt-in
+        // (#1042): with no extra rules and the default `CategorySet::None`, the
+        // engine performs no automatic redaction. Policy now comes from DB/user
+        // rules, not an always-on catalog.
+        assert!(
+            !processed.any_matched(),
+            "default-from-env engine must not auto-redact; built-in rules are opt-in"
         );
-        assert!(result.any_matched(), "global rules should still fire");
         Ok(())
     }
 
     #[sinex_test]
-    async fn engine_for_source_unit_with_extra_rules_merges_correctly()
+    async fn privacy_engine_extra_rules_merge_correctly()
     -> ::xtask::sandbox::TestResult<()> {
-        // We cannot register inventory at test time (link-time only), so we
-        // verify the merge path directly by constructing a PrivacyConfig with
-        // extra rules and confirming both global and scoped rules fire.
+        // DB/user policy compiles rows into extra rules. Verify that a caller
+        // can explicitly combine seed catalog rules with caller-supplied rules.
         let scoped_rule = PatternRule {
             name: "test_scoped_sentinel".into(),
             description: "fires only in scoped engine".into(),
@@ -721,12 +677,15 @@ mod tests {
         };
 
         let mut config = PrivacyConfig::default();
+        config.builtin_categories = CategorySet::All;
         config.extra_rules.push(scoped_rule);
         let engine = PrivacyEngine::new(config)?;
 
         // Global rule fires.
+        let token = ["ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"].concat();
+        let token_input = format!("export TOKEN={token}");
         let result = engine.process(
-            "export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+            &token_input,
             ProcessingContext::Command,
         );
         assert!(

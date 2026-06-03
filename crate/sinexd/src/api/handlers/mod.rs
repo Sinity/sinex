@@ -92,7 +92,10 @@ pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use privacy::{
     handle_private_mode_disable, handle_private_mode_disable_service, handle_private_mode_enable,
     handle_private_mode_enable_service, handle_private_mode_status,
-    handle_private_mode_status_service,
+    handle_private_mode_status_service, handle_privacy_policy_backend_add,
+    handle_privacy_policy_dictionary_add, handle_privacy_policy_list,
+    handle_privacy_policy_rule_add, handle_privacy_policy_scope_bind,
+    handle_privacy_policy_seed_builtin,
 };
 pub use sources::{
     handle_sources_annotate, handle_sources_archive, handle_sources_bindings_create,

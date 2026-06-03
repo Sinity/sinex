@@ -186,7 +186,9 @@ async fn test_process_clean_input() -> Result<()> {
 async fn test_process_sensitive_input_github_token() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
-            input: "export TOKEN=ghp_ABCDEFghijklmnopqrstuvwxyz1234567890".into(),
+            input: ["export TOKEN=", "ghp_", "ABCDEFghijklmnopqrstuvwxyz1234567890"]
+                .concat()
+                .into(),
             context: "command".into(),
         },
     };
@@ -204,8 +206,10 @@ async fn test_process_sensitive_input_github_token() -> Result<()> {
             processed.contains("<GITHUB_TOKEN>") || processed.contains("<REDACTED>"),
             "Expected redaction marker in: {processed}"
         );
+        let token_fixture =
+            ["ghp_", "ABCDEFghijklmnopqrstuvwxyz1234567890"].concat();
         assert!(
-            !processed.contains("ghp_ABCDEFghijklmnopqrstuvwxyz1234567890"),
+            !processed.contains(&token_fixture),
             "Token should not appear in processed output"
         );
     }
@@ -310,8 +314,7 @@ async fn test_process_context_matching() -> Result<()> {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn test_process_window_title_privacy() -> Result<()> {
-    // Window title rules should fire for window_title context
+async fn test_process_window_title_context_rejected() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
             input: "KeePass - Passwords".into(),
@@ -320,16 +323,12 @@ async fn test_process_window_title_privacy() -> Result<()> {
     };
 
     let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
-    let result = cmd.execute(&ctx).await?;
+    let error = cmd
+        .execute(&ctx)
+        .await
+        .expect_err("window_title context should be rejected");
 
-    assert!(result.is_success());
-
-    if let Some(data) = &result.data {
-        assert_eq!(
-            data["changed"], true,
-            "Password manager title should be redacted"
-        );
-    }
+    assert!(error.to_string().contains("Unknown context 'window_title'"));
     Ok(())
 }
 

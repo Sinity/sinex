@@ -66,7 +66,7 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 /// `#[default = "..."]` — default value (parsed as JSON, falls back to string)
 /// `#[skip]` — exclude this field from the emitted payload
 /// `#[occurrence_key]` — include in composite `OccurrenceKey`
-/// `#[privacy(context = "Command")]` — run through `privacy::process` at parse time
+/// `#[privacy(context = "Command")]` — emit a field privacy-context hint
 /// `#[timestamp(format = "rfc3339", fallback = "material_timing")]` — derive `ts_orig`
 /// `#[suppress_if(binding_field = "private_mode_active", whole_event = false)]`
 ///

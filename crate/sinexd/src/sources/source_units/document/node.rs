@@ -34,7 +34,6 @@ use sinex_primitives::{
         EventId, EventPayload,
         payloads::{KnowledgeTagAppliedPayload, document::DocumentIngestedPayload},
     },
-    privacy::{self, ProcessingContext},
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -678,12 +677,8 @@ impl DocumentNode {
         )
         .await?;
 
-        // Run the file path through the privacy engine so user-home prefixes
-        // are collapsed to `<HOME>/...` before the event leaves the ingestor.
-        // Apply privacy redaction to file paths (redact_metadata invokes the engine).
-        let redacted_file_path = redact_metadata(document.sanitized_path.as_str())?;
         let payload = DocumentIngestedPayload {
-            file_path: redacted_file_path,
+            file_path: document.sanitized_path.to_string(),
             source_material_id: material_id.to_string(),
             size_bytes: document.file_size,
             mime_type: Some(document.mime.clone()),
@@ -761,26 +756,6 @@ impl DocumentNode {
             Ok(Some("binary".to_string()))
         }
     }
-}
-
-/// Run a value through the privacy engine using the metadata context.
-///
-/// The path-redaction rule in the privacy catalog (`user_home_path`) is what
-/// collapses `/home/USER/...` to `<HOME>/...`. Until the engine is invoked
-/// no rule fires. Any error here is bubbled up as a configuration failure
-/// rather than swallowed — the ingestor cannot honestly emit if redaction
-/// is broken.
-///
-/// Apply privacy redaction to file metadata (e.g., file paths).
-fn redact_metadata(value: &str) -> NodeResult<String> {
-    Ok(privacy::process(value, ProcessingContext::Metadata)
-        .map_err(|error| {
-            SinexError::configuration("failed to initialize privacy engine")
-                .with_context("component", "document_path_redaction")
-                .with_std_error(error)
-        })?
-        .text
-        .into_owned())
 }
 
 impl SourceUnit for DocumentNode {

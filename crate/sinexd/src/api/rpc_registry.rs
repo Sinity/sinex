@@ -49,8 +49,11 @@ use sinex_primitives::rpc::{
     ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
     pkm::{PKM_CREATE_ENTITIES_METHOD, PKM_CREATE_NOTE_METHOD, PKM_LINK_ENTITIES_METHOD},
     privacy::{
-        PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
-        PRIVACY_PRIVATE_MODE_STATUS_METHOD,
+        PRIVACY_POLICY_BACKEND_ADD_METHOD, PRIVACY_POLICY_DICTIONARY_ADD_METHOD,
+        PRIVACY_POLICY_LIST_METHOD, PRIVACY_POLICY_RULE_ADD_METHOD,
+        PRIVACY_POLICY_SCOPE_BIND_METHOD, PRIVACY_POLICY_SEED_BUILTIN_METHOD,
+        PRIVACY_PRIVATE_MODE_DISABLE_METHOD,
+        PRIVACY_PRIVATE_MODE_ENABLE_METHOD, PRIVACY_PRIVATE_MODE_STATUS_METHOD,
     },
     replay::{
         REPLAY_APPROVE_OPERATION_METHOD, REPLAY_CANCEL_OPERATION_METHOD,
@@ -612,8 +615,12 @@ fn build_registry_impl() -> RpcRegistry {
         handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel,
         handle_ops_get, handle_ops_list, handle_ops_start, handle_private_mode_disable_service,
         handle_private_mode_enable_service, handle_private_mode_status_service,
-        handle_replay_approve_operation, handle_replay_cancel_operation,
-        handle_replay_create_operation, handle_replay_execute_operation,
+        handle_privacy_policy_backend_add, handle_privacy_policy_dictionary_add,
+        handle_privacy_policy_list, handle_privacy_policy_rule_add,
+        handle_privacy_policy_scope_bind, handle_privacy_policy_seed_builtin,
+        handle_replay_approve_operation,
+        handle_replay_cancel_operation, handle_replay_create_operation,
+        handle_replay_execute_operation,
         handle_replay_list_operations, handle_replay_operation_status,
         handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
         handle_semantic_epoch_create, handle_semantic_epoch_list, handle_semantic_lane_create,
@@ -653,6 +660,7 @@ fn build_registry_impl() -> RpcRegistry {
         .service_typed_rpc(PRIVACY_PRIVATE_MODE_STATUS_METHOD, |services, request| {
             Box::pin(async move { handle_private_mode_status_service(services, request).await })
         })
+        .pool_typed_rpc(PRIVACY_POLICY_LIST_METHOD, boxed!(handle_privacy_policy_list))
         // Composable event query methods (ReadOnly)
         .pool_typed_rpc(EVENTS_QUERY_METHOD, boxed!(handle_events_query))
         .pool_typed_rpc(EVENTS_CARDS_METHOD, boxed!(handle_events_cards))
@@ -934,6 +942,26 @@ fn build_registry_impl() -> RpcRegistry {
         .service_auth_typed_rpc(
             PRIVACY_PRIVATE_MODE_DISABLE_METHOD,
             boxed!(handle_private_mode_disable_service, 3),
+        )
+        .pool_typed_rpc(
+            PRIVACY_POLICY_BACKEND_ADD_METHOD,
+            boxed!(handle_privacy_policy_backend_add),
+        )
+        .pool_typed_rpc(
+            PRIVACY_POLICY_DICTIONARY_ADD_METHOD,
+            boxed!(handle_privacy_policy_dictionary_add),
+        )
+        .pool_typed_rpc(
+            PRIVACY_POLICY_RULE_ADD_METHOD,
+            boxed!(handle_privacy_policy_rule_add),
+        )
+        .pool_typed_rpc(
+            PRIVACY_POLICY_SEED_BUILTIN_METHOD,
+            boxed!(handle_privacy_policy_seed_builtin),
+        )
+        .pool_typed_rpc(
+            PRIVACY_POLICY_SCOPE_BIND_METHOD,
+            boxed!(handle_privacy_policy_scope_bind),
         )
         // Replay create/preview (Write - doesn't execute yet)
         .replay_typed_rpc(

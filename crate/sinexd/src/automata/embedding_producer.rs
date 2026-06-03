@@ -4,7 +4,6 @@ use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, TransducerN
 use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
 use serde_json::Value as JsonValue;
 use sinex_primitives::llm::{ModelEffectRequest, hash_model_input};
-use sinex_primitives::privacy::ProcessingContext;
 
 #[derive(Default)]
 pub struct EmbeddingProducer;
@@ -29,10 +28,6 @@ impl Transducer for EmbeddingProducer {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Document
-    }
-
     async fn process(
         &mut self,
         _state: &mut Self::State,

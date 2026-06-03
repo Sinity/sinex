@@ -14,7 +14,7 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
     SourceUnitId, TimingEvidence,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -45,7 +45,7 @@ register_source_unit! {
         retention: RetentionPolicy::Forever,
         proof_obligations: &[
             "udev_action_dispatch",
-            "privacy_device_path",
+            "privacy_context_declared",
         ],
         occurrence_identity: OccurrenceIdentity::Anchor,
         access_policy: "udev_monitor_read",
@@ -131,7 +131,7 @@ impl MaterialParser for UdevParser {
                 ),
             ],
             privacy_contexts: vec![ProcessingContext::Metadata],
-            proof_obligations: vec!["udev_action_dispatch".into(), "privacy_device_path".into()],
+            proof_obligations: vec!["udev_action_dispatch".into(), "privacy_context_declared".into()],
             description: "Maps FileDropAdapter inotify records to udev device events.".into(),
         }
     }
@@ -141,17 +141,9 @@ impl MaterialParser for UdevParser {
         record: SourceRecord,
         ctx: &ParserContext,
     ) -> Result<Vec<ParsedEventIntent>, ParserError> {
-        let raw_path = std::str::from_utf8(&record.bytes)
+        let device_path = std::str::from_utf8(&record.bytes)
             .map_err(|e| ParserError::Parse(format!("udev record path not UTF-8: {e}")))?
             .to_string();
-
-        let device_path = match privacy::engine() {
-            Ok(eng) => eng
-                .process(&raw_path, ProcessingContext::Metadata)
-                .text
-                .into_owned(),
-            Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-        };
 
         let metadata = match FileDropRecordMetadata::from_value(&record.metadata) {
             Ok(m) => Some(m),
@@ -370,6 +362,10 @@ mod tests {
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].event_type.as_str(), "device.connected");
         assert_eq!(intents[0].event_source.as_str(), "udev");
+        assert_eq!(
+            intents[0].payload["device_path"],
+            "/sys/bus/usb/devices/1-1"
+        );
         Ok(())
     }
 

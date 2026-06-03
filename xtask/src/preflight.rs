@@ -117,6 +117,8 @@ fn open_schema_apply_lock_file(state_dir: &Path) -> Result<std::fs::File> {
 /// Default TTL for the preflight cache in seconds.
 const PREFLIGHT_CACHE_DEFAULT_TTL_SECS: u64 = 60;
 pub(crate) const SCHEMA_READINESS_PROBE_TIMEOUT_SECS: u64 = 5;
+// Consumed only by the cfg-gated `doctor::deployment` submodule.
+#[cfg(any(feature = "runtime-introspection", test))]
 pub(crate) const SCHEMA_READINESS_PROBE_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(SCHEMA_READINESS_PROBE_TIMEOUT_SECS);
 const SCHEMA_APPLY_LOCK_WAIT_TIMEOUT_SECS: u64 = 30;
@@ -415,7 +417,7 @@ fn hash_schema_sources() -> Result<String> {
 /// contains no `.rs` files.
 fn hash_contracts_dir() -> Result<String> {
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let payloads_dir = crate_dir.join("../crate/lib/sinex-primitives/src/events/payloads");
+    let payloads_dir = crate_dir.join("../crate/sinex-primitives/src/events/payloads");
     hash_contracts_dir_from(&payloads_dir)
 }
 

@@ -7,10 +7,8 @@
 //! - **Secondary (`AppendOnlyFile`)**: reads JSONL/NDJSON dump export lines appended
 //!   to by polylogue or manual browser history exports.
 //!
-//! Privacy tier: `Secret` — URLs carry auth tokens.
-//! `url` / `normalized_url` / `referrer` → `ProcessingContext::Clipboard`.
-//! `title` → `ProcessingContext::WindowTitle`.
-//! `source_file` → `ProcessingContext::Metadata`.
+//! Privacy tier: `Secret` — URLs carry auth tokens. The parser emits privacy
+//! context metadata; DB admission policy owns payload redaction/suppression.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -29,7 +27,7 @@ use sinex_primitives::{
         InputShapeKind, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
         SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
     },
-    privacy::{self, ProcessingContext},
+    privacy::ProcessingContext,
     temporal::Timestamp,
 };
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
@@ -49,7 +47,7 @@ register_source_unit! {
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
         proof_obligations: &[
-            "url_privacy_redaction",
+            "privacy_context_declared",
             "sqlite_row_anchor",
             "dump_line_anchor",
         ],
@@ -229,11 +227,10 @@ impl MaterialParser for BrowserHistoryParser {
             )],
             privacy_contexts: vec![
                 ProcessingContext::Clipboard,
-                ProcessingContext::WindowTitle,
                 ProcessingContext::Metadata,
             ],
             proof_obligations: vec![
-                "url_privacy_redaction".into(),
+                "privacy_context_declared".into(),
                 "sqlite_row_anchor".into(),
                 "dump_line_anchor".into(),
             ],
@@ -545,24 +542,15 @@ fn build_intent(
     record: &SourceRecord,
     ctx: &ParserContext,
 ) -> ParserResult<Vec<ParsedEventIntent>> {
-    let url = redact(&visit.url, ProcessingContext::Clipboard)?;
-    let title = redact(&visit.title, ProcessingContext::WindowTitle)?;
-    let referrer = visit
-        .referrer
-        .as_deref()
-        .map(|r| redact(r, ProcessingContext::Clipboard))
-        .transpose()?;
-    let source_file = redact(&visit.source_file, ProcessingContext::Metadata)?;
-
     let mut payload = serde_json::Map::new();
     payload.insert("browser".into(), serde_json::json!(visit.browser));
-    payload.insert("title".into(), serde_json::json!(title));
-    payload.insert("url".into(), serde_json::json!(url));
+    payload.insert("title".into(), serde_json::json!(visit.title));
+    payload.insert("url".into(), serde_json::json!(visit.url));
     payload.insert(
         "visit_time".into(),
         serde_json::json!(visit.visit_time.format_rfc3339()),
     );
-    if let Some(ref r) = referrer {
+    if let Some(ref r) = visit.referrer {
         payload.insert("referrer".into(), serde_json::json!(r));
     }
     if let Some(ref t) = visit.transition {
@@ -576,7 +564,7 @@ fn build_intent(
     }
     // `PageVisitedPayload.source_file` is a required field — always insert,
     // even if empty (preserves the contract for schema validation). #1321.
-    payload.insert("source_file".into(), serde_json::json!(source_file));
+    payload.insert("source_file".into(), serde_json::json!(visit.source_file));
     if let Some(ln) = visit.line_number {
         payload.insert("line_number".into(), serde_json::json!(ln));
     }
@@ -607,16 +595,6 @@ fn build_intent(
             .privacy_context(ProcessingContext::Clipboard)
             .build(),
     ])
-}
-
-// ---------------------------------------------------------------------------
-// Privacy helper
-// ---------------------------------------------------------------------------
-
-fn redact(value: &str, ctx: ProcessingContext) -> ParserResult<String> {
-    privacy::process(value, ctx)
-        .map(|r| r.text.into_owned())
-        .map_err(|e| ParserError::Privacy(e.to_string()))
 }
 
 // ---------------------------------------------------------------------------

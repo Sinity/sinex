@@ -18,7 +18,6 @@ use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     EntityCategory, EntityEnrichedPayload, EntityResolvedPayload,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::{Duration, Timestamp};
 use std::collections::{BTreeMap, HashMap};
 
@@ -104,11 +103,6 @@ impl ScopeReconciler for EntityEnricher {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::SynthesizedOnly
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     fn scope_keys(&self, input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         // Each entity is its own scope.
         vec![input.entity_id.to_string()]
