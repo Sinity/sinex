@@ -10,6 +10,6 @@
 # or inside `nix develop`: `rustc --version`.
 # If fenix's resolution drifts substantially from this pin, either bump this
 # date or switch to a fixed stable channel (e.g. `channel = "1.83.0"`).
-channel = "nightly-2026-05-15"
+channel = "nightly-2026-01-28"
 components = ["rustfmt", "clippy", "rust-src", "rust-analyzer"]
 profile = "minimal"
