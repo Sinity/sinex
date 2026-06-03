@@ -163,12 +163,16 @@ fn log_coordination_decision(
     );
 }
 
-fn coordination_decision_fields(result: &CoordinationResult) -> (&'static str, Option<i64>, Option<i64>) {
+fn coordination_decision_fields(
+    result: &CoordinationResult,
+) -> (&'static str, Option<i64>, Option<i64>) {
     match result {
         CoordinationResult::Fresh { invocation_id, .. } => ("fresh", None, Some(*invocation_id)),
         CoordinationResult::Started { job_id } => ("started", Some(*job_id), None),
         CoordinationResult::Attached { job_id } => ("attached", Some(*job_id), None),
-        CoordinationResult::Superseded { new_job_id, .. } => ("superseded", Some(*new_job_id), None),
+        CoordinationResult::Superseded { new_job_id, .. } => {
+            ("superseded", Some(*new_job_id), None)
+        }
         CoordinationResult::Queued { current_job_id } => ("queued", Some(*current_job_id), None),
     }
 }
@@ -1740,7 +1744,11 @@ fn coordination_attached_result(job_id: i64, ctx: &CommandContext) -> CommandRes
         }))
 }
 
-fn coordination_superseded_result(old_job_id: i64, new_job_id: i64, ctx: &CommandContext) -> CommandResult {
+fn coordination_superseded_result(
+    old_job_id: i64,
+    new_job_id: i64,
+    ctx: &CommandContext,
+) -> CommandResult {
     tracing::info!(
         target: "xtask::coordinator",
         old_job_id = old_job_id,
@@ -1770,7 +1778,9 @@ fn coordination_queued_result(current_job_id: i64, ctx: &CommandContext) -> Comm
     let pending_job_assignment = current_job_id < 0;
     if ctx.is_human() {
         if pending_job_assignment {
-            println!("⏳ Queued: waiting for the active coordinated slot to finish assigning its next job id");
+            println!(
+                "⏳ Queued: waiting for the active coordinated slot to finish assigning its next job id"
+            );
             println!("   Monitor: xtask jobs active");
         } else {
             println!("⏳ Queued: waiting for job {current_job_id} to complete");
@@ -1797,19 +1807,22 @@ fn coordination_queued_result(current_job_id: i64, ctx: &CommandContext) -> Comm
 
 pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext) -> CommandResult {
     match result {
-        CoordinationResult::Fresh { invocation_id, status, duration_secs } => {
-            coordination_fresh_result(
-                *invocation_id,
-                status,
-                *duration_secs,
-                ctx,
-                fresh_packages_probe(*invocation_id),
-            )
-        }
+        CoordinationResult::Fresh {
+            invocation_id,
+            status,
+            duration_secs,
+        } => coordination_fresh_result(
+            *invocation_id,
+            status,
+            *duration_secs,
+            ctx,
+            fresh_packages_probe(*invocation_id),
+        ),
         CoordinationResult::Attached { job_id } => coordination_attached_result(*job_id, ctx),
-        CoordinationResult::Superseded { old_job_id, new_job_id } => {
-            coordination_superseded_result(*old_job_id, *new_job_id, ctx)
-        }
+        CoordinationResult::Superseded {
+            old_job_id,
+            new_job_id,
+        } => coordination_superseded_result(*old_job_id, *new_job_id, ctx),
         CoordinationResult::Queued { current_job_id } => {
             coordination_queued_result(*current_job_id, ctx)
         }

@@ -179,13 +179,14 @@ impl XtaskCommand for FixCommand {
                 let clippy_fix_stage = ctx.start_stage("clippy_fix");
                 let clippy_result = self.run_clippy_fix(ctx, &packages);
                 if let Err(ref e) = clippy_result
-                    && ctx.is_human() {
-                        eprintln!(
-                            "clippy --fix failed: {e}\n\
+                    && ctx.is_human()
+                {
+                    eprintln!(
+                        "clippy --fix failed: {e}\n\
                              Check changed files with: git diff --name-only\n\
                              Revert with: git checkout -- <files>"
-                        );
-                    }
+                    );
+                }
                 ctx.finish_stage(clippy_fix_stage, clippy_result.is_ok());
                 clippy_result?;
             }

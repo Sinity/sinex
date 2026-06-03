@@ -59,7 +59,8 @@ impl MaterialParser for NotificationParser {
         // Match DbusNotificationSentPayload's concrete types (urgency: u8,
         // timeout: i32) so out-of-range D-Bus values can't fail admission-time
         // schema validation. D-Bus urgency is 0..=2; timeout is i32 ms (-1 = never).
-        let urgency = u8::try_from(payload["urgency"].as_u64().unwrap_or_default()).unwrap_or(u8::MAX);
+        let urgency =
+            u8::try_from(payload["urgency"].as_u64().unwrap_or_default()).unwrap_or(u8::MAX);
         let timeout =
             i32::try_from(payload["timeout"].as_i64().unwrap_or_default()).unwrap_or(i32::MAX);
         let actions = payload["actions"]
@@ -71,10 +72,7 @@ impl MaterialParser for NotificationParser {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let hints = payload["hints"]
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
+        let hints = payload["hints"].as_object().cloned().unwrap_or_default();
 
         Ok(vec![
             ParsedEventIntent::builder()
@@ -83,18 +81,16 @@ impl MaterialParser for NotificationParser {
                 .parser_version("1.0.0")
                 .event_source(EventSource::from_static("dbus"))
                 .event_type(EventType::from_static("notification.sent"))
-                .payload(
-                    serde_json::json!({
-                        "app_name": app_name,
-                        "summary": summary,
-                        "body": body,
-                        "urgency": urgency,
-                        "timeout": timeout,
-                        "actions": actions,
-                        "hints": hints,
-                        "timestamp": ts_orig,
-                    }),
-                )
+                .payload(serde_json::json!({
+                    "app_name": app_name,
+                    "summary": summary,
+                    "body": body,
+                    "urgency": urgency,
+                    "timeout": timeout,
+                    "actions": actions,
+                    "hints": hints,
+                    "timestamp": ts_orig,
+                }))
                 .ts_orig(ts_orig)
                 .timing(TimingEvidence::Intrinsic {
                     field: "timestamp".into(),

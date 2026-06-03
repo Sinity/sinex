@@ -53,7 +53,8 @@ impl TimelineCommand {
         for event in &events {
             let ts = event
                 .event
-                .ts_orig.map_or_else(|| "?".into(), |t| t.to_string());
+                .ts_orig
+                .map_or_else(|| "?".into(), |t| t.to_string());
             let source = event.event.source.as_str();
             let etype = event.event.event_type.as_str();
             let summary = event

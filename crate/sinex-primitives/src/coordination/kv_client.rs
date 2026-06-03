@@ -329,7 +329,10 @@ impl CoordinationKvClient {
                 .update(key, candidate_id.to_string().into(), entry.revision)
                 .await
                 .inspect(|_| {
-                    info!("Acquired leadership (was deleted) for {}", self.service_name);
+                    info!(
+                        "Acquired leadership (was deleted) for {}",
+                        self.service_name
+                    );
                 })
                 .is_ok());
         }

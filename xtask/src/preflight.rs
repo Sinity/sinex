@@ -1400,10 +1400,7 @@ fn check_preflight_cache_hit() -> bool {
 ///
 /// < 70% used: silent. 70-85%: warn. 85-90%: auto-reclaim. >= 90%: reclaim then
 /// refuse if free space is below the floor. Opt-out: `SINEX_PREFLIGHT_SKIP_DISK_CHECK=1`.
-fn check_disk_pressure(
-    ctx: &crate::command::CommandContext,
-    is_interactive: bool,
-) -> Result<()> {
+fn check_disk_pressure(ctx: &crate::command::CommandContext, is_interactive: bool) -> Result<()> {
     if std::env::var("SINEX_PREFLIGHT_SKIP_DISK_CHECK").is_ok() {
         return Ok(());
     }
@@ -1431,7 +1428,8 @@ fn check_disk_pressure(
                     eprintln!(
                         "   Reclaimed {:.2} GB. Disk now {:.1}% used ({:.0} GB free).",
                         (report.cargo_sweep_reclaimed_bytes + report.incremental_bytes_reclaimed)
-                            as f64 / 1e9,
+                            as f64
+                            / 1e9,
                         after.percent_used,
                         after.free_gb
                     );
@@ -1442,7 +1440,9 @@ fn check_disk_pressure(
                          below {:.0} GB floor). \
                          Refusing to proceed — free space manually or raise threshold via \
                          SINEX_PREFLIGHT_SKIP_DISK_CHECK=1.",
-                        after.mount, after.percent_used, after.free_gb,
+                        after.mount,
+                        after.percent_used,
+                        after.free_gb,
                         crate::cache_hygiene::REFUSE_MIN_FREE_GB
                     );
                 }
@@ -1454,7 +1454,9 @@ fn check_disk_pressure(
                         "Disk {} {:.1}% used ({:.0} GB free, below {:.0} GB floor) \
                          and reclaim failed: {error:#}. \
                          Free space manually or set SINEX_PREFLIGHT_SKIP_DISK_CHECK=1.",
-                        usage.mount, usage.percent_used, usage.free_gb,
+                        usage.mount,
+                        usage.percent_used,
+                        usage.free_gb,
                         crate::cache_hygiene::REFUSE_MIN_FREE_GB
                     );
                 }

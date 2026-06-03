@@ -1609,7 +1609,9 @@ async fn call_tool_events_sources(
         "sinex.source_continuity" => source_continuity(client, arguments).await?,
         "sinex.source_drift" => source_drift(client, arguments).await?,
         "sinex.source_gap_explain" => source_gap_explain(client, arguments).await?,
-        "sinex.source_identifier_continuity" => source_identifier_continuity(client, arguments).await?,
+        "sinex.source_identifier_continuity" => {
+            source_identifier_continuity(client, arguments).await?
+        }
         "sinex.source_materials" => source_materials(client, arguments).await?,
         "sinex.source_material" => source_material(client, arguments).await?,
         "sinex.source_coverage" => source_coverage(client, arguments).await?,
@@ -1685,7 +1687,9 @@ async fn call_tool_ops_infra(
         "sinex.audit_trail" => audit_trail(client, arguments).await?,
         "sinex.coordination_instances" => coordination_instances(client, arguments).await?,
         "sinex.coordination_leader" => coordination_leader(client, arguments).await?,
-        "sinex.coordination_instance_health" => coordination_instance_health(client, arguments).await?,
+        "sinex.coordination_instance_health" => {
+            coordination_instance_health(client, arguments).await?
+        }
         "sinex.shadow_consumers" => shadow_consumers(client, arguments).await?,
         "sinex.context_pack" => context_pack(client, arguments).await?,
         _ => return Ok(None),
@@ -2689,9 +2693,10 @@ async fn context_pack(client: &GatewayClient, arguments: Value) -> Result<Value>
     // context-pack DTO from #1095. For now, use it as a source prefix
     // hint when the path looks like a known project name.
     if let Some(ref path) = args.project_path
-        && let Ok(source) = sinex_primitives::domain::EventSource::new(path.clone()) {
-            query.sources = vec![source];
-        }
+        && let Ok(source) = sinex_primitives::domain::EventSource::new(path.clone())
+    {
+        query.sources = vec![source];
+    }
     query.validate()?;
 
     let events_result = client.query_events(query).await?;

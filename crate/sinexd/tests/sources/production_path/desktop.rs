@@ -136,8 +136,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type.as_str(), "browser.tab.active");
         assert_eq!(
-            events[0].payload["title"],
-            "KeePass - Database.kdbx",
+            events[0].payload["title"], "KeePass - Database.kdbx",
             "ActivityWatch title policy belongs to DB admission rules, not parser-local redaction"
         );
 
@@ -189,13 +188,13 @@ mod tests {
     #[sinex_test]
     async fn desktop_window_manager_unix_socket_adapter_parses_hyprland_frame() -> TestResult<()> {
         use futures::StreamExt;
-        use sinexd::node_sdk::parser::{
-            InputShapeAdapter, MaterialParser, UnixSocketStreamAdapter, UnixSocketStreamConfig,
-        };
         use sinex_primitives::events::SourceMaterial;
         use sinex_primitives::ids::Id;
         use sinex_primitives::parser::{ParserContext, SourceUnitId};
         use sinex_primitives::temporal::Timestamp;
+        use sinexd::node_sdk::parser::{
+            InputShapeAdapter, MaterialParser, UnixSocketStreamAdapter, UnixSocketStreamConfig,
+        };
         use sinexd::sources::source_units::desktop::window_manager::HyprlandParser;
 
         let fixture = crate::fixtures::unix_socket::build(b"activewindow>>kitty,~/project/sinex\n")

@@ -709,8 +709,9 @@ fn validate_source_units(
                     exempted_output_event_pair_backing.push(format!("{formatted_pair}: {reason}"));
                 }
                 (None, None, true) => {
-                    exempted_output_event_pair_backing
-                        .push(format!("{formatted_pair}: proposed binding has no runtime emitter yet"));
+                    exempted_output_event_pair_backing.push(format!(
+                        "{formatted_pair}: proposed binding has no runtime emitter yet"
+                    ));
                 }
                 (None, None, false) => {
                     missing_output_event_pair_backing.push(formatted_pair);

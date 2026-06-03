@@ -315,7 +315,6 @@ pub struct ReplayStateMachine {
     pool: PgPool,
 }
 
-
 fn map_state_to_status(state: &ReplayState) -> (&'static str, &'static str) {
     match state {
         ReplayState::Completed => ("success", "completed"),
@@ -1207,8 +1206,13 @@ async fn fetch_and_validate_stale_meta<'t>(
     repo: &ReplayRepository<'_>,
     mut tx: Transaction<'t, Postgres>,
     operation_id: Uuid,
-) -> Result<Option<(MetaJson, Option<sinex_primitives::temporal::Duration>, Transaction<'t, Postgres>)>>
-{
+) -> Result<
+    Option<(
+        MetaJson,
+        Option<sinex_primitives::temporal::Duration>,
+        Transaction<'t, Postgres>,
+    )>,
+> {
     let existing = match repo.fetch_meta_for_update(&mut tx, operation_id).await {
         Ok(v) => v,
         Err(e) => {

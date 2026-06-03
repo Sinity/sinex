@@ -412,7 +412,9 @@ fn infer_duration_infallible(
     attrs: &FieldAttrs,
 ) -> syn::Result<TokenStream2> {
     require_duration_type(ty)?;
-    let unit = attrs.duration.expect("duration attribute checked by caller");
+    let unit = attrs
+        .duration
+        .expect("duration attribute checked by caller");
     let default = attrs.default.as_ref().ok_or_else(|| {
         syn::Error::new_spanned(
             ty,
@@ -546,7 +548,9 @@ fn infer_duration_fallible(
     attrs: &FieldAttrs,
 ) -> syn::Result<TokenStream2> {
     require_duration_type(ty)?;
-    let unit = attrs.duration.expect("duration attribute checked by caller");
+    let unit = attrs
+        .duration
+        .expect("duration attribute checked by caller");
     let default = attrs.default.as_ref().ok_or_else(|| {
         syn::Error::new_spanned(
             ty,

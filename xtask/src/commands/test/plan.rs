@@ -248,10 +248,10 @@ fn runtime_binary_manifest_only_stale_after_build(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::sinex_test;
     use crate::sandbox::orchestrator::{
         RuntimeBinaryFreshnessReport, RuntimeBinaryFreshnessStatus,
     };
+    use crate::sandbox::sinex_test;
     use std::path::PathBuf;
     use std::time::SystemTime;
 

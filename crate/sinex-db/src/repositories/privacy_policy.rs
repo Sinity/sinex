@@ -388,9 +388,7 @@ impl<'a> PrivacyPolicyRepository<'a> {
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| {
-            SinexError::database(format!("failed to add privacy recognizer rule: {e}"))
-        })?;
+        .map_err(|e| SinexError::database(format!("failed to add privacy recognizer rule: {e}")))?;
         Ok(row.id)
     }
 
@@ -606,10 +604,7 @@ impl<'a> PrivacyPolicyRepository<'a> {
     /// the backend is disabled or absent — a disabled backend must not abort
     /// policy loading; the referencing rule is skipped instead (see
     /// `load_enabled_rules`). `Err` is reserved for real DB failures.
-    async fn get_recognizer_backend(
-        &self,
-        id: Uuid,
-    ) -> DbResult<Option<RecognizerBackendRecord>> {
+    async fn get_recognizer_backend(&self, id: Uuid) -> DbResult<Option<RecognizerBackendRecord>> {
         sqlx::query_as!(
             RecognizerBackendRecord,
             r#"
@@ -667,9 +662,7 @@ impl<'a> PrivacyPolicyRepository<'a> {
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| {
-            SinexError::database(format!("failed to list privacy dictionaries: {e}"))
-        })
+        .map_err(|e| SinexError::database(format!("failed to list privacy dictionaries: {e}")))
     }
 
     /// List enabled terms for one dictionary.
@@ -689,9 +682,7 @@ impl<'a> PrivacyPolicyRepository<'a> {
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| {
-            SinexError::database(format!("failed to list privacy dictionary terms: {e}"))
-        })
+        .map_err(|e| SinexError::database(format!("failed to list privacy dictionary terms: {e}")))
     }
 
     /// Register an imported/user-local dictionary and its initial terms.
@@ -719,9 +710,7 @@ impl<'a> PrivacyPolicyRepository<'a> {
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| {
-            SinexError::database(format!("failed to add privacy dictionary: {e}"))
-        })?;
+        .map_err(|e| SinexError::database(format!("failed to add privacy dictionary: {e}")))?;
         for term in terms {
             sqlx::query!(
                 r#"

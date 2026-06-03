@@ -170,9 +170,7 @@ async fn privacy_rule_loading_roundtrip(ctx: TestContext) -> TestResult<()> {
 /// Recognizer backends and dictionaries are DB/user-controlled policy
 /// inputs, not built-in Rust catalog state.
 #[sinex_test]
-async fn privacy_recognizer_backend_and_dictionary_roundtrip(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn privacy_recognizer_backend_and_dictionary_roundtrip(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
     let repo = pool.privacy_policy();
 
@@ -610,8 +608,14 @@ async fn privacy_field_scoped_rule_supports_nested_json_pointer(
         "default",
     )
     .await?;
-    repo.bind_field_rule("nested-scope-test", None, None, Some("/outer/inner/title"), 0)
-        .await?;
+    repo.bind_field_rule(
+        "nested-scope-test",
+        None,
+        None,
+        Some("/outer/inner/title"),
+        0,
+    )
+    .await?;
 
     let engine = PolicyEngine::load(pool.clone()).await?;
 
@@ -762,12 +766,14 @@ async fn privacy_dlq_raw_bytes_suppressed(ctx: TestContext) -> TestResult<()> {
         "_raw_bytes_base64 must be absent in DLQ stub; got: {stub}"
     );
     assert_eq!(
-        stub.get("_raw_bytes_suppressed").and_then(serde_json::Value::as_bool),
+        stub.get("_raw_bytes_suppressed")
+            .and_then(serde_json::Value::as_bool),
         Some(true),
         "stub must mark suppression"
     );
     assert_eq!(
-        stub.get("_raw_bytes_len").and_then(serde_json::Value::as_u64),
+        stub.get("_raw_bytes_len")
+            .and_then(serde_json::Value::as_u64),
         Some(42),
         "stub must record original length"
     );

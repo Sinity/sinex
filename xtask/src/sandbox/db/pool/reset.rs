@@ -189,9 +189,7 @@ pub(super) async fn clean_database(
                     if attempt >= 2 {
                         POOL_METRICS.record_cleanup_failure();
                         let suffix = residual_probe_suffix(&working_pool, &mut residuals).await;
-                        let err = eyre!(
-                            "Database {db_name} cleanup failed: {verify_err}{suffix}"
-                        );
+                        let err = eyre!("Database {db_name} cleanup failed: {verify_err}{suffix}");
                         quarantine_slot_on_error(slot, err.to_string(), residuals.clone());
                         return Err(err);
                     }
