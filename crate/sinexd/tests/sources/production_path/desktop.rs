@@ -98,6 +98,52 @@ mod tests {
         Ok(())
     }
 
+    #[sinex_test]
+    async fn desktop_activitywatch_titles_are_not_parser_redacted() -> TestResult<()> {
+        use sinex_primitives::events::SourceMaterial;
+        use sinex_primitives::ids::Id;
+        use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId};
+        use sinex_primitives::temporal::Timestamp;
+        use sinexd::node_sdk::parser::MaterialParser;
+        use sinexd::sources::source_units::desktop::activitywatch::ActivityWatchParser;
+
+        let material_id = Id::<SourceMaterial>::from_uuid(sinex_primitives::Uuid::now_v7());
+        let source_unit_id = SourceUnitId::from_static("desktop.activitywatch");
+        let record = SourceRecord {
+            material_id,
+            anchor: MaterialAnchor::SqliteRow {
+                table: "events".to_string(),
+                rowid: 1,
+            },
+            bytes: br#"{"bucket_id":"aw-watcher-web-firefox","started_at":"2024-01-15T14:24:00.000000+00:00","duration":30.0,"data":{"url":"https://example.com","title":"KeePass - Database.kdbx"}}"#.to_vec(),
+            logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
+        };
+        let ctx = ParserContext {
+            source_unit_id,
+            source_material_id: material_id,
+            record_anchor: record.anchor.clone(),
+            operation_id: sinex_primitives::Uuid::now_v7(),
+            job_id: sinex_primitives::Uuid::now_v7(),
+            host: "fixture-host".to_string(),
+            acquisition_time: Timestamp::now(),
+        };
+
+        let mut parser = ActivityWatchParser;
+        let events = parser.parse_record(record, &ctx).await?;
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type.as_str(), "browser.tab.active");
+        assert_eq!(
+            events[0].payload["title"],
+            "KeePass - Database.kdbx",
+            "ActivityWatch title policy belongs to DB admission rules, not parser-local redaction"
+        );
+
+        Ok(())
+    }
+
     // -------------------------------------------------------------------------
     // desktop.clipboard
     // -------------------------------------------------------------------------
@@ -150,7 +196,7 @@ mod tests {
         use sinex_primitives::ids::Id;
         use sinex_primitives::parser::{ParserContext, SourceUnitId};
         use sinex_primitives::temporal::Timestamp;
-        use sinexd::sources::sources::desktop::window_manager::HyprlandParser;
+        use sinexd::sources::source_units::desktop::window_manager::HyprlandParser;
 
         let fixture = crate::fixtures::unix_socket::build(b"activewindow>>kitty,~/project/sinex\n")
             .await

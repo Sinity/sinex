@@ -84,16 +84,35 @@ pub fn owning_package(file: &Path, workspace_root: &Path) -> Option<String> {
         }
 
         let candidate = dir.join("Cargo.toml");
-        if candidate.is_file()
-            && let Some(name) = extract_package_name(&candidate)
-        {
-            return Some(name);
+        if candidate.is_file() {
+            // A manifest that declares its own `[workspace]` is an independent
+            // nested workspace root (e.g. a `cargo-fuzz` crate). Files beneath it
+            // are not owned by any package in the outer workspace, and
+            // `cargo check -p <that-package>` fails with "cannot specify features
+            // for packages outside of workspace". Stop the walk and disown the file.
+            if manifest_declares_workspace(&candidate) {
+                return None;
+            }
+            if let Some(name) = extract_package_name(&candidate) {
+                return Some(name);
+            }
         }
 
         dir = dir.parent()?;
     }
 
     None
+}
+
+/// Return `true` when `cargo_toml` contains a `[workspace]` table, marking it as
+/// an independent (possibly nested) workspace root rather than a plain member.
+fn manifest_declares_workspace(cargo_toml: &Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(cargo_toml) else {
+        return false;
+    };
+    content
+        .lines()
+        .any(|line| line.trim() == "[workspace]")
 }
 
 /// Parse `[package] name = "..."` from a `Cargo.toml` file.

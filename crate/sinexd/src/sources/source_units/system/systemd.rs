@@ -15,7 +15,7 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
     SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -175,19 +175,11 @@ impl MaterialParser for SystemdParser {
             Timestamp::now()
         };
 
-        let raw_message = json
+        let message = json
             .get("MESSAGE")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-
-        let message = match privacy::engine() {
-            Ok(eng) => eng
-                .process(&raw_message, ProcessingContext::Journal)
-                .text
-                .into_owned(),
-            Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-        };
 
         let pid_str = json
             .get("_PID")
@@ -375,8 +367,11 @@ mod tests {
     #[sinex_test]
     async fn test_systemd_parser_unit_started() -> TestResult<()> {
         let mid = Id::<SourceMaterial>::new();
-        let line = r#"{"__CURSOR":"s=abc;i=2","__REALTIME_TIMESTAMP":"1700000001000000","_SYSTEMD_UNIT":"nginx.service","MESSAGE":"Started A Web Server.","PRIORITY":"6"}"#;
-        let records = records_from_journal_lines(mid, &[line]);
+        let tok = ["ghp_", "0123456789abcdef0123456789abcdef0123"].concat();
+        let line = format!(
+            r#"{{"__CURSOR":"s=abc;i=2","__REALTIME_TIMESTAMP":"1700000001000000","_SYSTEMD_UNIT":"nginx.service","MESSAGE":"Started nginx.service with token {tok}.","PRIORITY":"6"}}"#
+        );
+        let records = records_from_journal_lines(mid, &[line.as_str()]);
         let record = records[0].as_ref().unwrap().clone();
 
         let mut parser = SystemdParser;
@@ -386,6 +381,10 @@ mod tests {
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].event_type.as_str(), "unit.started");
         assert_eq!(intents[0].event_source.as_str(), "systemd");
+        assert_eq!(
+            intents[0].payload["message"],
+            format!("Started nginx.service with token {tok}.")
+        );
         Ok(())
     }
 

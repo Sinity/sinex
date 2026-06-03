@@ -85,9 +85,16 @@ use sinex_primitives::rpc::{
     },
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     privacy::{
-        PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
-        PRIVACY_PRIVATE_MODE_STATUS_METHOD, PrivateModeDisableRequest, PrivateModeEnableRequest,
-        PrivateModeStateResponse, PrivateModeStatusRequest,
+        PRIVACY_POLICY_BACKEND_ADD_METHOD, PRIVACY_POLICY_DICTIONARY_ADD_METHOD,
+        PRIVACY_POLICY_LIST_METHOD, PRIVACY_POLICY_RULE_ADD_METHOD,
+        PRIVACY_POLICY_SCOPE_BIND_METHOD, PRIVACY_POLICY_SEED_BUILTIN_METHOD,
+        PRIVACY_PRIVATE_MODE_DISABLE_METHOD,
+        PRIVACY_PRIVATE_MODE_ENABLE_METHOD, PRIVACY_PRIVATE_MODE_STATUS_METHOD,
+        PrivateModeDisableRequest, PrivateModeEnableRequest, PrivateModeStateResponse,
+        PrivateModeStatusRequest, PrivacyPolicyBackendAddRequest,
+        PrivacyPolicyDictionaryAddRequest, PrivacyPolicyListRequest, PrivacyPolicyListResponse,
+        PrivacyPolicyMutationResponse, PrivacyPolicyRuleAddRequest, PrivacyPolicyScopeBindRequest,
+        PrivacyPolicySeedBuiltinRequest, PrivacyPolicySeedBuiltinResponse,
     },
     replay::{
         REPLAY_APPROVE_OPERATION_METHOD, REPLAY_CANCEL_OPERATION_METHOD,
@@ -1539,6 +1546,54 @@ impl GatewayClient {
     pub async fn private_mode_disable(&self) -> Result<PrivateModeStateResponse> {
         let req = PrivateModeDisableRequest {};
         self.call_typed(PRIVACY_PRIVATE_MODE_DISABLE_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_list(
+        &self,
+        include_disabled: bool,
+    ) -> Result<PrivacyPolicyListResponse> {
+        let req = PrivacyPolicyListRequest { include_disabled };
+        self.call_typed(PRIVACY_POLICY_LIST_METHOD, &req).await
+    }
+
+    pub async fn privacy_policy_rule_add(
+        &self,
+        req: PrivacyPolicyRuleAddRequest,
+    ) -> Result<PrivacyPolicyMutationResponse> {
+        self.call_typed(PRIVACY_POLICY_RULE_ADD_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_backend_add(
+        &self,
+        req: PrivacyPolicyBackendAddRequest,
+    ) -> Result<PrivacyPolicyMutationResponse> {
+        self.call_typed(PRIVACY_POLICY_BACKEND_ADD_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_dictionary_add(
+        &self,
+        req: PrivacyPolicyDictionaryAddRequest,
+    ) -> Result<PrivacyPolicyMutationResponse> {
+        self.call_typed(PRIVACY_POLICY_DICTIONARY_ADD_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_scope_bind(
+        &self,
+        req: PrivacyPolicyScopeBindRequest,
+    ) -> Result<PrivacyPolicyMutationResponse> {
+        self.call_typed(PRIVACY_POLICY_SCOPE_BIND_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_seed_builtin(
+        &self,
+        req: PrivacyPolicySeedBuiltinRequest,
+    ) -> Result<PrivacyPolicySeedBuiltinResponse> {
+        self.call_typed(PRIVACY_POLICY_SEED_BUILTIN_METHOD, &req)
             .await
     }
 

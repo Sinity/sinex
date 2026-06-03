@@ -16,7 +16,6 @@ use sinex_primitives::events::{
     EventPayload,
     payloads::{ActivityWindowCloseReason, ActivityWindowSummaryPayload},
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{JsonValue, Uuid, env as shared_env};
 use std::collections::{BTreeMap, BTreeSet};
@@ -188,11 +187,6 @@ impl Windowed for AnalyticsAutomaton {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::MaterialOnly
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     async fn accumulate(
         &mut self,
         state: &mut Self::State,

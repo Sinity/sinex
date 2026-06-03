@@ -7,15 +7,21 @@ use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::environment::SinexEnvironment;
 use sinex_primitives::prelude::*;
 use sinex_primitives::privacy::{
-    RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
+    RuntimePrivateModeState, builtin_policy_seed_rules, load_private_mode_state,
+    save_private_mode_state,
 };
 use sinex_primitives::rpc::privacy::{
     PrivateModeDisableRequest, PrivateModeEnableRequest, PrivateModeStateResponse,
-    PrivateModeStatusRequest,
+    PrivateModeStatusRequest, PrivacyPolicyBackendAddRequest, PrivacyPolicyDictionary,
+    PrivacyPolicyDictionaryAddRequest, PrivacyPolicyFieldScope, PrivacyPolicyKeyNamespace,
+    PrivacyPolicyListRequest, PrivacyPolicyListResponse, PrivacyPolicyMutationResponse,
+    PrivacyPolicyRecognizerBackend, PrivacyPolicyRule, PrivacyPolicyRuleAddRequest,
+    PrivacyPolicyScopeBindRequest, PrivacyPolicySeedBuiltinRequest, PrivacyPolicySeedBuiltinResponse,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::transport;
 use sqlx::PgPool;
+use std::collections::HashSet;
 use std::path::Path;
 
 const PRIVATE_MODE_OPERATION_TYPE: &str = "privacy.private_mode";
@@ -35,6 +41,221 @@ pub async fn handle_private_mode_status_service(
     request: PrivateModeStatusRequest,
 ) -> Result<PrivateModeStateResponse> {
     handle_private_mode_status(services.state_dir(), request).await
+}
+
+pub async fn handle_privacy_policy_list(
+    pool: &PgPool,
+    request: PrivacyPolicyListRequest,
+) -> Result<PrivacyPolicyListResponse> {
+    let repo = pool.privacy_policy();
+    let mut rules = repo.list_rules().await?;
+    if !request.include_disabled {
+        rules.retain(|rule| rule.enabled);
+    }
+    let enabled_rule_ids = rules.iter().map(|rule| rule.id).collect::<HashSet<_>>();
+
+    let field_scopes = repo
+        .list_field_rules(None)
+        .await?
+        .into_iter()
+        .filter(|scope| request.include_disabled || enabled_rule_ids.contains(&scope.rule_id))
+        .map(|scope| PrivacyPolicyFieldScope {
+            id: scope.id,
+            rule_id: scope.rule_id,
+            event_source: scope.event_source,
+            event_type: scope.event_type,
+            field_path: scope.field_path,
+            priority: scope.priority,
+        })
+        .collect();
+
+    let key_namespaces = repo
+        .list_keys()
+        .await?
+        .into_iter()
+        .map(|key| PrivacyPolicyKeyNamespace {
+            id: key.id,
+            name: key.name,
+            description: key.description,
+        })
+        .collect();
+
+    let recognizer_backends = repo
+        .list_recognizer_backends()
+        .await?
+        .into_iter()
+        .filter(|backend| request.include_disabled || backend.enabled)
+        .map(|backend| PrivacyPolicyRecognizerBackend {
+            id: backend.id,
+            name: backend.name,
+            kind: backend.kind,
+            endpoint_url: backend.endpoint_url,
+            config: backend.config,
+            enabled: backend.enabled,
+        })
+        .collect();
+
+    let dictionaries = policy_dictionaries(pool, request.include_disabled).await?;
+
+    Ok(PrivacyPolicyListResponse {
+        rules: rules
+            .into_iter()
+            .map(|rule| PrivacyPolicyRule {
+                id: rule.id,
+                name: rule.name,
+                description: rule.description,
+                matcher_type: rule.matcher_type,
+                matcher_value: rule.matcher_value,
+                matcher_config: rule.matcher_config,
+                recognizer_backend_id: rule.recognizer_backend_id,
+                recognizer_kind: rule.recognizer_kind,
+                case_sensitive: rule.case_sensitive,
+                action: rule.action,
+                action_label: rule.action_label,
+                key_namespace: rule.key_namespace,
+                enabled: rule.enabled,
+            })
+            .collect(),
+        field_scopes,
+        key_namespaces,
+        recognizer_backends,
+        dictionaries,
+    })
+}
+
+pub async fn handle_privacy_policy_rule_add(
+    pool: &PgPool,
+    request: PrivacyPolicyRuleAddRequest,
+) -> Result<PrivacyPolicyMutationResponse> {
+    let repo = pool.privacy_policy();
+    let id = repo
+        .add_recognizer_rule(
+            &request.name,
+            &request.description,
+            &request.matcher_type,
+            &request.matcher_value,
+            request.matcher_config,
+            request.recognizer_backend_id,
+            &request.recognizer_kind,
+            request.case_sensitive,
+            &request.action,
+            request.action_label.as_deref(),
+            &request.key_namespace,
+        )
+        .await?;
+    Ok(PrivacyPolicyMutationResponse {
+        id,
+        kind: "rule".to_string(),
+        name: request.name,
+    })
+}
+
+pub async fn handle_privacy_policy_backend_add(
+    pool: &PgPool,
+    request: PrivacyPolicyBackendAddRequest,
+) -> Result<PrivacyPolicyMutationResponse> {
+    let repo = pool.privacy_policy();
+    let id = repo
+        .add_recognizer_backend(
+            &request.name,
+            &request.kind,
+            request.endpoint_url.as_deref(),
+            request.config,
+            request.enabled,
+        )
+        .await?;
+    Ok(PrivacyPolicyMutationResponse {
+        id,
+        kind: "recognizer_backend".to_string(),
+        name: request.name,
+    })
+}
+
+pub async fn handle_privacy_policy_dictionary_add(
+    pool: &PgPool,
+    request: PrivacyPolicyDictionaryAddRequest,
+) -> Result<PrivacyPolicyMutationResponse> {
+    let repo = pool.privacy_policy();
+    let id = repo
+        .add_dictionary(
+            &request.name,
+            &request.description,
+            request.language.as_deref(),
+            &request.source_kind,
+            &request.tags,
+            &request.terms,
+        )
+        .await?;
+    Ok(PrivacyPolicyMutationResponse {
+        id,
+        kind: "dictionary".to_string(),
+        name: request.name,
+    })
+}
+
+pub async fn handle_privacy_policy_scope_bind(
+    pool: &PgPool,
+    request: PrivacyPolicyScopeBindRequest,
+) -> Result<PrivacyPolicyMutationResponse> {
+    let repo = pool.privacy_policy();
+    let id = repo
+        .bind_field_rule(
+            &request.rule_name,
+            request.event_source.as_deref(),
+            request.event_type.as_deref(),
+            request.field_path.as_deref(),
+            request.priority,
+        )
+        .await?;
+    Ok(PrivacyPolicyMutationResponse {
+        id,
+        kind: "field_scope".to_string(),
+        name: request.rule_name,
+    })
+}
+
+pub async fn handle_privacy_policy_seed_builtin(
+    pool: &PgPool,
+    request: PrivacyPolicySeedBuiltinRequest,
+) -> Result<PrivacyPolicySeedBuiltinResponse> {
+    let rules = builtin_policy_seed_rules(request.enabled);
+    let summary = pool.privacy_policy().seed_rules(&rules).await?;
+    Ok(PrivacyPolicySeedBuiltinResponse {
+        inserted: summary.inserted,
+        updated: summary.updated,
+        unchanged: summary.unchanged,
+        total: rules.len(),
+    })
+}
+
+async fn policy_dictionaries(
+    pool: &PgPool,
+    include_disabled: bool,
+) -> Result<Vec<PrivacyPolicyDictionary>> {
+    let repo = pool.privacy_policy();
+    let mut dictionaries = Vec::new();
+    for dictionary in repo.list_dictionaries().await? {
+        if !include_disabled && !dictionary.enabled {
+            continue;
+        }
+        let enabled_terms = repo
+            .list_dictionary_terms(dictionary.id)
+            .await?
+            .into_iter()
+            .filter(|term| term.enabled)
+            .count();
+        dictionaries.push(PrivacyPolicyDictionary {
+            id: dictionary.id,
+            name: dictionary.name,
+            description: dictionary.description,
+            language: dictionary.language,
+            source_kind: dictionary.source_kind,
+            tags: dictionary.tags,
+            enabled: dictionary.enabled,
+            enabled_terms,
+        });
+    }
+    Ok(dictionaries)
 }
 
 pub async fn handle_private_mode_enable(

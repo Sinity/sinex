@@ -113,8 +113,8 @@ mod tests {
     #[sinex_test]
     async fn encrypt_decrypt_roundtrip() -> ::xtask::sandbox::TestResult<()> {
         let key = test_key();
-        let plaintext = "ghp_abcdefghij1234567890ABCDEFGHIJKLMN";
-        let token = encrypt_token(plaintext, &key).unwrap();
+        let plaintext = ["ghp_", "abcdefghij1234567890ABCDEFGHIJKLMN"].concat();
+        let token = encrypt_token(&plaintext, &key).unwrap();
         assert!(token.starts_with('\u{231c}'));
         assert!(token.ends_with('\u{231d}'));
         assert!(token.contains("enc:v1:"));

@@ -244,6 +244,30 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "privacy policy list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy backend add",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy dictionary add",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy rule add",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy seed builtin",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy scope bind",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "privacy audit",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -943,6 +967,12 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "privacy private-mode status" => &[methods::PRIVACY_PRIVATE_MODE_STATUS],
         "privacy private-mode enable" => &[methods::PRIVACY_PRIVATE_MODE_ENABLE],
         "privacy private-mode disable" => &[methods::PRIVACY_PRIVATE_MODE_DISABLE],
+        "privacy policy list" => &[methods::PRIVACY_POLICY_LIST],
+        "privacy policy backend add" => &[methods::PRIVACY_POLICY_BACKEND_ADD],
+        "privacy policy dictionary add" => &[methods::PRIVACY_POLICY_DICTIONARY_ADD],
+        "privacy policy rule add" => &[methods::PRIVACY_POLICY_RULE_ADD],
+        "privacy policy seed builtin" => &[methods::PRIVACY_POLICY_SEED_BUILTIN],
+        "privacy policy scope bind" => &[methods::PRIVACY_POLICY_SCOPE_BIND],
         "privacy audit" => &[
             methods::PRIVACY_PRIVATE_MODE_STATUS,
             methods::DLQ_LIST,

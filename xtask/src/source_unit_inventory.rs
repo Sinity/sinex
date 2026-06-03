@@ -9,7 +9,7 @@
 extern crate sinexd as _;
 
 // `sinex_primitives` carries the infra source-unit descriptors registered
-// by `crate/lib/sinex-primitives/src/events/payloads/{blob,process,metrics}.rs`.
+// by `crate/sinex-primitives/src/events/payloads/{blob,process,metrics}.rs`.
 // Without an `extern crate` line the linker drops the inventory submissions
 // even though xtask depends on `sinex_primitives` directly through `use`
 // statements — Rust's linker GC can still elide statics in `.init_array`-

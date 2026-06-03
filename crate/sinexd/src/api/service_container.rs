@@ -3,6 +3,7 @@
 use crate::api::config::GatewayConfig;
 use crate::api::content_service::ContentService;
 use crate::api::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
+use crate::event_engine::policy::PolicyEngine;
 use crate::node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
 use sinex_db::create_pool_with_config;
 use sinex_db::pkm::PkmService;
@@ -24,6 +25,7 @@ pub struct ServiceContainer {
     pub pkm: Arc<PkmService>,
     pub replay_control: Option<ReplayControlClient>,
     pub coordination: Option<Arc<CoordinationKvClient>>,
+    privacy_policy: Arc<PolicyEngine>,
     nats_client: Option<async_nats::Client>,
     env: sinex_primitives::environment::SinexEnvironment,
     sse_bus: Arc<OnceLock<Arc<crate::api::sse_bus::SubscriptionBus>>>,
@@ -142,6 +144,7 @@ impl ServiceContainer {
         );
 
         let replay = Arc::new(ReplayStateMachine::new(content_pool.clone()));
+        let privacy_policy = Arc::new(PolicyEngine::load(content_pool.clone()).await?);
 
         recover_stale_replay_operations(&replay).await?;
 
@@ -191,6 +194,7 @@ impl ServiceContainer {
             pkm: Arc::new(PkmService::new(pkm_pool)),
             replay_control: control_client,
             coordination: coordination_client,
+            privacy_policy,
             nats_client,
             env,
             sse_bus: Arc::new(OnceLock::new()),
@@ -260,6 +264,11 @@ impl ServiceContainer {
     #[must_use]
     pub fn pool_max_connections(&self) -> usize {
         self.pool_max_connections
+    }
+
+    #[must_use]
+    pub fn privacy_policy(&self) -> &Arc<PolicyEngine> {
+        &self.privacy_policy
     }
 
     #[must_use]

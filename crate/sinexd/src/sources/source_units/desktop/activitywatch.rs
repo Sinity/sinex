@@ -9,7 +9,7 @@
 //! Adapter: `SqliteRowAdapter` (`MutableSnapshot` checkpoint, ROWID cursor)
 //! Anchor: `SqliteRow`
 //! Checkpoint family: `MutableSnapshot { backing_store: "sqlite", anchor: "bucket_event_timestamp" }`
-//! Privacy tier: `Secret` — titles/URLs pass through `ProcessingContext::WindowTitle`
+//! Privacy tier: `Secret` — title/URL fields are policy-scoped by payload path.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,7 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
     TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -50,7 +50,7 @@ register_source_unit! {
         proof_obligations: &[
             "anchor_sqlite_row",
             "timestamp_intrinsic",
-            "window_title_redacted",
+            "title_url_policy_scoped",
         ],
         occurrence_identity: OccurrenceIdentity::Uuid5From(
             "(source_unit, bucket_id, event_timestamp)",
@@ -72,7 +72,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("SqliteRowAdapter")
     .output_event_type("window.active")
-    .privacy_context("window_title")
+    .privacy_context("document")
     .material_policy("activitywatch_bucket_event")
     .checkpoint_policy("mutable_snapshot")
     .resource_shape("linear_rows_bounded_memory")
@@ -172,11 +172,11 @@ impl MaterialParser for ActivityWatchParser {
                     EventType::from_static("browser.tab.active"),
                 ),
             ],
-            privacy_contexts: vec![ProcessingContext::WindowTitle],
+            privacy_contexts: vec![ProcessingContext::Document],
             proof_obligations: vec![
                 "anchor_sqlite_row".into(),
                 "timestamp_intrinsic".into(),
-                "window_title_redacted".into(),
+                "title_url_policy_scoped".into(),
             ],
             description: "Parses ActivityWatch SQLite events into typed window/afk/browser events."
                 .into(),
@@ -211,19 +211,6 @@ impl MaterialParser for ActivityWatchParser {
 
         let data = row.get("data").cloned().unwrap_or(serde_json::Value::Null);
 
-        // Fail closed: if the privacy engine cannot initialize we must not emit
-        // the raw (Secret-tier) title/URL. Propagate the error so the event is
-        // dropped rather than leaked as plaintext.
-        let redact_title = |title: &str| -> ParserResult<String> {
-            match privacy::engine() {
-                Ok(eng) => Ok(eng
-                    .process(title, ProcessingContext::WindowTitle)
-                    .text
-                    .into_owned()),
-                Err(e) => Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-            }
-        };
-
         // Schema payloads (ActivityWatchWindowActivePayload, AfkChangedPayload,
         // BrowserTabActivePayload) require `duration_ms: u64` (not the
         // `duration_secs` we computed in the SQL query). Convert here. Also
@@ -243,7 +230,7 @@ impl MaterialParser for ActivityWatchParser {
                     serde_json::json!({
                         "bucket_id": bucket_id,
                         "app": app,
-                        "title": redact_title(title)?,
+                        "title": title,
                         "duration_ms": duration_ms,
                     }),
                 )
@@ -262,8 +249,6 @@ impl MaterialParser for ActivityWatchParser {
             BucketKind::Web => {
                 let url = data.get("url").and_then(|v| v.as_str()).unwrap_or("");
                 let title = data.get("title").and_then(|v| v.as_str()).unwrap_or("");
-                // URLs are highly sensitive — redact via WindowTitle context (closest available).
-                let redacted_url = redact_title(url)?;
                 // Bucket name pattern: `aw-watcher-web-<browser>` (e.g.
                 // `aw-watcher-web-firefox`, `aw-watcher-web-chrome`).
                 let browser = bucket_id
@@ -275,8 +260,8 @@ impl MaterialParser for ActivityWatchParser {
                     serde_json::json!({
                         "bucket_id": bucket_id,
                         "browser": browser,
-                        "url": redacted_url,
-                        "title": redact_title(title)?,
+                        "url": url,
+                        "title": title,
                         "duration_ms": duration_ms,
                     }),
                 )
@@ -299,7 +284,7 @@ impl MaterialParser for ActivityWatchParser {
                 confidence: TimingConfidence::Intrinsic,
             })
             .anchor(record.anchor.clone())
-            .privacy_context(ProcessingContext::WindowTitle)
+            .privacy_context(ProcessingContext::Document)
             .build();
 
         Ok(vec![intent])

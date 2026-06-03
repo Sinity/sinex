@@ -3,7 +3,7 @@
 //! Configuration is loaded in priority order:
 //! 1. Environment variables (`SINEX_PRIVACY_*`) override everything
 //! 2. TOML config file (`$SINEX_PRIVACY_CONFIG` or `$SINEX_STATE_DIR/privacy.toml`)
-//! 3. Built-in defaults
+//! 3. Seed-neutral defaults
 
 use std::collections::HashMap;
 use std::error::Error as StdError;
@@ -49,7 +49,7 @@ impl Default for PrivacyConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            builtin_categories: CategorySet::All,
+            builtin_categories: CategorySet::None,
             extra_rules: Vec::new(),
             overrides: HashMap::new(),
             default_strategy: Strategy::Redact { label: None },
@@ -488,7 +488,7 @@ mod tests {
         let parsed: PrivacyConfig = toml::from_str(&toml_str).expect("deserialize");
 
         assert!(parsed.enabled);
-        assert!(matches!(parsed.builtin_categories, CategorySet::All));
+        assert!(matches!(parsed.builtin_categories, CategorySet::None));
         assert!(parsed.extra_rules.is_empty());
         assert!(parsed.overrides.is_empty());
         assert!(!parsed.track_stats);
@@ -598,7 +598,7 @@ contexts = ["command"]
 
         let config = PrivacyConfig::from_file(&path).unwrap();
         assert!(config.enabled); // default
-        assert!(matches!(config.builtin_categories, CategorySet::All)); // default
+        assert!(matches!(config.builtin_categories, CategorySet::None)); // default
         assert!(config.track_stats); // overridden
         Ok(())
     }

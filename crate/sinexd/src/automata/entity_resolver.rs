@@ -20,7 +20,6 @@ use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{EntityExtractedPayload, EntityResolvedPayload};
-use sinex_primitives::privacy::ProcessingContext;
 use std::collections::HashMap;
 
 /// Persistent resolver state: the deduplication map of `canonical_key` → `entity_id`.
@@ -67,11 +66,6 @@ impl Windowed for EntityResolver {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::SynthesizedOnly
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     async fn accumulate(
         &mut self,
         state: &mut Self::State,

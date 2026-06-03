@@ -18,10 +18,9 @@ use crate::node_sdk::{NodeResult, SinexError};
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::non_empty::NonEmptyVec;
-use sinex_primitives::privacy;
 use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue};
 
-use tracing::{debug, warn};
+use tracing::warn;
 
 impl<N> AutomatonRuntime<N>
 where
@@ -207,22 +206,6 @@ where
         } = output;
 
         let resolved_event_type = event_type.unwrap_or_else(|| self.node.output_event_type());
-        let privacy_context = self.node.output_privacy_context();
-        let filtered_payload =
-            privacy::process_json(&payload, privacy_context).map_err(|error| {
-                SinexError::configuration("failed to initialize privacy engine".to_string())
-                    .with_context("component", "derived_output_payload")
-                    .with_context("privacy_context", format!("{privacy_context:?}"))
-                    .with_std_error(error)
-            })?;
-        if filtered_payload != payload {
-            debug!(
-                node = %self.node.name(),
-                output_event_type = %resolved_event_type,
-                ?privacy_context,
-                "Applied privacy filtering to derived output payload"
-            );
-        }
 
         let typed_ids: Vec<Id<Event<JsonValue>>> =
             source_event_ids.into_iter().map(Id::from_uuid).collect();
@@ -261,7 +244,7 @@ where
             id: Some(Id::new()),
             source: EventSource::new(self.node.output_event_source())?,
             event_type: EventType::new(resolved_event_type)?,
-            payload: filtered_payload,
+            payload,
             ts_orig: Some(ts_orig),
             host: HostName::new(&self.host)?,
             source_run_id: self

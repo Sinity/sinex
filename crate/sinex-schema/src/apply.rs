@@ -1175,12 +1175,65 @@ CREATE TABLE IF NOT EXISTS privacy.encryption_keys (
     CONSTRAINT encryption_keys_name_nonempty CHECK (char_length(name) > 0)
 );
 
+CREATE TABLE IF NOT EXISTS privacy.recognizer_backends (
+    id          UUID PRIMARY KEY DEFAULT uuidv7(),
+    name        TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    endpoint_url TEXT,
+    config      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT recognizer_backends_name_unique UNIQUE (name),
+    CONSTRAINT recognizer_backends_name_nonempty CHECK (char_length(name) > 0),
+    CONSTRAINT recognizer_backends_kind_valid CHECK (
+        kind IN (
+            'local',
+            'presidio',
+            'gitleaks',
+            'trufflehog',
+            'external_http'
+        )
+    )
+);
+
+CREATE TABLE IF NOT EXISTS privacy.dictionaries (
+    id          UUID PRIMARY KEY DEFAULT uuidv7(),
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    language    TEXT,
+    source_kind TEXT NOT NULL DEFAULT 'user',
+    tags        TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT dictionaries_name_unique UNIQUE (name),
+    CONSTRAINT dictionaries_name_nonempty CHECK (char_length(name) > 0),
+    CONSTRAINT dictionaries_source_kind_valid CHECK (
+        source_kind IN ('user', 'seed', 'imported', 'generated')
+    )
+);
+
+CREATE TABLE IF NOT EXISTS privacy.dictionary_terms (
+    id            UUID PRIMARY KEY DEFAULT uuidv7(),
+    dictionary_id UUID NOT NULL REFERENCES privacy.dictionaries(id) ON DELETE CASCADE,
+    term          TEXT NOT NULL,
+    metadata      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT dictionary_terms_nonempty CHECK (char_length(term) > 0),
+    CONSTRAINT dictionary_terms_unique UNIQUE (dictionary_id, term)
+);
+
 CREATE TABLE IF NOT EXISTS privacy.rules (
     id             UUID PRIMARY KEY DEFAULT uuidv7(),
     name           TEXT NOT NULL,
     description    TEXT NOT NULL DEFAULT '',
     matcher_type   TEXT NOT NULL,
     matcher_value  TEXT NOT NULL,
+    matcher_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    recognizer_backend_id UUID REFERENCES privacy.recognizer_backends(id) ON DELETE SET NULL,
+    recognizer_kind TEXT NOT NULL DEFAULT 'local_pattern',
     case_sensitive BOOLEAN NOT NULL DEFAULT FALSE,
     action         TEXT NOT NULL,
     action_label   TEXT,
@@ -1190,9 +1243,64 @@ CREATE TABLE IF NOT EXISTS privacy.rules (
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT rules_name_unique UNIQUE (name),
     CONSTRAINT rules_name_nonempty CHECK (char_length(name) > 0),
-    CONSTRAINT rules_matcher_type_valid CHECK (matcher_type IN ('regex', 'literal')),
-    CONSTRAINT rules_action_valid CHECK (action IN ('redact', 'hash', 'encrypt', 'suppress'))
+    CONSTRAINT rules_matcher_type_valid CHECK (
+        matcher_type IN (
+            'regex',
+            'literal',
+            'dictionary',
+            'structural',
+            'presidio_entity',
+            'presidio_analyzer',
+            'secret_scanner',
+            'external'
+        )
+    ),
+    CONSTRAINT rules_action_valid CHECK (action IN ('redact', 'hash', 'encrypt', 'suppress', 'mask')),
+    CONSTRAINT rules_recognizer_kind_valid CHECK (
+        recognizer_kind IN (
+            'local_pattern',
+            'dictionary',
+            'presidio_entity',
+            'secret_scanner',
+            'external'
+        )
+    )
 );
+
+ALTER TABLE privacy.recognizer_backends
+    ADD COLUMN IF NOT EXISTS endpoint_url TEXT;
+
+ALTER TABLE privacy.rules
+    ADD COLUMN IF NOT EXISTS matcher_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS recognizer_backend_id UUID REFERENCES privacy.recognizer_backends(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS recognizer_kind TEXT NOT NULL DEFAULT 'local_pattern';
+
+ALTER TABLE privacy.rules
+    DROP CONSTRAINT IF EXISTS rules_matcher_type_valid,
+    DROP CONSTRAINT IF EXISTS rules_action_valid,
+    DROP CONSTRAINT IF EXISTS rules_recognizer_kind_valid,
+    ADD CONSTRAINT rules_matcher_type_valid CHECK (
+        matcher_type IN (
+            'regex',
+            'literal',
+            'dictionary',
+            'structural',
+            'presidio_entity',
+            'presidio_analyzer',
+            'secret_scanner',
+            'external'
+        )
+    ),
+    ADD CONSTRAINT rules_action_valid CHECK (action IN ('redact', 'hash', 'encrypt', 'suppress', 'mask')),
+    ADD CONSTRAINT rules_recognizer_kind_valid CHECK (
+        recognizer_kind IN (
+            'local_pattern',
+            'dictionary',
+            'presidio_entity',
+            'secret_scanner',
+            'external'
+        )
+    );
 
 CREATE TABLE IF NOT EXISTS privacy.field_rules (
     id           UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -1208,6 +1316,27 @@ CREATE TABLE IF NOT EXISTS privacy.field_rules (
 
 CREATE INDEX IF NOT EXISTS ix_field_rules_scope
     ON privacy.field_rules (event_source, event_type);
+
+CREATE INDEX IF NOT EXISTS ix_privacy_rules_backend
+    ON privacy.rules (recognizer_backend_id);
+
+CREATE INDEX IF NOT EXISTS ix_privacy_dictionary_terms_dictionary
+    ON privacy.dictionary_terms (dictionary_id);
+
+CREATE INDEX IF NOT EXISTS ix_privacy_dictionary_terms_term
+    ON privacy.dictionary_terms (term);
+
+DROP TRIGGER IF EXISTS trg_privacy_recognizer_backends_updated_at ON privacy.recognizer_backends;
+CREATE TRIGGER trg_privacy_recognizer_backends_updated_at
+    BEFORE UPDATE ON privacy.recognizer_backends
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_current_timestamp_updated_at();
+
+DROP TRIGGER IF EXISTS trg_privacy_dictionaries_updated_at ON privacy.dictionaries;
+CREATE TRIGGER trg_privacy_dictionaries_updated_at
+    BEFORE UPDATE ON privacy.dictionaries
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_current_timestamp_updated_at();
 
 DROP TRIGGER IF EXISTS trg_privacy_rules_updated_at ON privacy.rules;
 CREATE TRIGGER trg_privacy_rules_updated_at

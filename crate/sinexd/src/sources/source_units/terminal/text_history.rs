@@ -132,16 +132,6 @@ impl MaterialParser for TextHistoryParser {
         }
         self.dedup.observe(line.as_bytes());
 
-        let processed = {
-            let result = sinex_primitives::privacy::engine()
-                .map_err(|e| ParserError::Parse(format!("privacy engine unavailable: {e}")))?
-                .process(line, ProcessingContext::Command);
-            if result.suppressed {
-                return Ok(vec![]);
-            }
-            result.text.into_owned()
-        };
-
         let line_number = match &record.anchor {
             sinex_primitives::parser::MaterialAnchor::Line { line: ln, .. } => Some(*ln as u32),
             _ => None,
@@ -154,7 +144,7 @@ impl MaterialParser for TextHistoryParser {
             .unwrap_or_default();
 
         let payload = HistoryCommandImportedPayload {
-            command: processed,
+            command: line.to_owned(),
             timestamp: None,
             shell_type: "unknown".into(),
             source_file,

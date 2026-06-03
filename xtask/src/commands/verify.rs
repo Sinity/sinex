@@ -92,7 +92,7 @@ pub enum VerifySubcommand {
         history_db: Option<PathBuf>,
     },
     /// Source-worker evidence gate: NixOS binding drift, parser registration,
-    /// and privacy invocation.
+    /// and privacy metadata.
     SourceWorker {
         /// Path to the JSON file exported by
         /// `config.services.sinex.sources.exportedJson` (from the NixOS module).
@@ -1283,9 +1283,9 @@ fn execute_source_worker(
         check_sw_binding_drift(&root, bindings_json),
         // A3.1.2 — Registered parsers smoke
         check_sw_registered_parsers(&root),
-        // A3.1.3 — Privacy invocation: every Sensitive/Secret source unit must invoke
-        // the privacy engine or declare an explicit escape hatch.
-        check_sw_privacy_invocation(&root),
+        // A3.1.3 — Privacy metadata: every Sensitive/Secret source unit must
+        // declare policy-selection metadata or an explicit escape hatch.
+        check_sw_privacy_metadata(&root),
     ];
 
     let overall = if checks.iter().any(SwCheck::is_fail) {
@@ -1321,7 +1321,7 @@ fn execute_source_worker(
     // source units without NixOS bindings) that the PR being verified did not introduce.
     // Returning Partial here would make every PR fail CI as soon as any drift accumulates
     // anywhere in the source-unit catalog, defeating the gate's purpose. Only true Fail
-    // states (registered parser or privacy invocation regressions, plus live binding drift
+    // states (registered parser or privacy metadata regressions, plus live binding drift
     // when --bindings-json is supplied) block the PR.
     let mut result = match &overall {
         SwCheckStatus::Pass => {
@@ -1497,10 +1497,13 @@ fn check_sw_binding_drift(root: &Path, bindings_json: Option<&Path>) -> SwCheck 
 }
 
 /// A3.1.2 — Registered parsers smoke: list every `register_parser!` call in
-/// the workspace and surface source_unit_id + parser type for drift visibility.
+/// parser/source surfaces and surface source_unit_id + parser type for drift
+/// visibility.
 fn check_sw_registered_parsers(root: &Path) -> SwCheck {
-    // Static grep across crate/core/sinex-source-worker and crate/lib/sinex-node-sdk.
+    // Static grep across current sinexd source units plus retained parser
+    // support surfaces.
     let search_roots = [
+        root.join("crate/sinexd/src/sources"),
         root.join("crate/core/sinex-source-worker"),
         root.join("crate/lib/sinex-node-sdk"),
     ];
@@ -1518,7 +1521,7 @@ fn check_sw_registered_parsers(root: &Path) -> SwCheck {
     if registrations.is_empty() {
         SwCheck::warn(
             "registered_parsers",
-            "no register_parser! calls found in source-worker or sdk",
+            "no register_parser! calls found in parser/source surfaces",
             Vec::new(),
         )
     } else {
@@ -1550,36 +1553,35 @@ fn scan_rs_files_for_pattern(dir: &Path, pattern: &regex::Regex, out: &mut Vec<S
     }
 }
 
-/// A3.1.3 — Privacy invocation: every `register_source_unit!` block that declares
-/// a non-Public privacy tier must invoke the privacy engine in the same file.
+/// A3.1.3 — Privacy metadata: every `register_source_unit!` block that declares
+/// a non-Public privacy tier must declare policy-selection metadata.
 ///
-/// Scanning targets: the entire `crate/core/sinex-source-worker/src/` tree and
-/// `crate/lib/sinex-node-sdk/src/parser/` (where parsers may live after the fold).
+/// Scanning targets: the current `crate/sinexd/src/sources/` tree plus the
+/// retained parser support surfaces where descriptors may still live.
 ///
-/// Indicators (any one satisfies the gate):
-/// - `privacy::engine(`
-/// - `privacy::process(`
-/// - `privacy::process_json(`
-/// - `ProcessingContext::` (imperative parsers that use a context variant)
+/// Metadata indicators (any one satisfies the gate):
+/// - `ProcessingContext::` (emitted intent context metadata)
+/// - `.privacy_context(` (source-unit binding context metadata)
+/// - `privacy_contexts:` (parser manifest context metadata)
 /// - `default_privacy_context =` (declarative `#[source_record]` DSL attribute)
-/// - `#[allow(missing_privacy_invocation` (explicit escape hatch)
-fn check_sw_privacy_invocation(root: &Path) -> SwCheck {
+/// - `#[allow(missing_privacy_metadata` (explicit escape hatch)
+fn check_sw_privacy_metadata(root: &Path) -> SwCheck {
     const NON_PUBLIC_TIERS: &[&str] = &[
         "PrivacyTier::Sensitive",
         "PrivacyTier::Secret",
         "SuPrivacyTier::Sensitive",
         "SuPrivacyTier::Secret",
     ];
-    const PRIVACY_INDICATORS: &[&str] = &[
-        "privacy::engine(",
-        "privacy::process(",
-        "privacy::process_json(",
+    const PRIVACY_METADATA_INDICATORS: &[&str] = &[
         "ProcessingContext::",
+        ".privacy_context(",
+        "privacy_contexts:",
         "default_privacy_context =",
-        "#[allow(missing_privacy_invocation",
+        "#[allow(missing_privacy_metadata",
     ];
 
     let search_roots = [
+        root.join("crate/sinexd/src/sources"),
         root.join("crate/core/sinex-source-worker/src"),
         root.join("crate/lib/sinex-node-sdk/src/parser"),
     ];
@@ -1590,21 +1592,21 @@ fn check_sw_privacy_invocation(root: &Path) -> SwCheck {
         collect_privacy_violations(
             search_root,
             NON_PUBLIC_TIERS,
-            PRIVACY_INDICATORS,
+            PRIVACY_METADATA_INDICATORS,
             &mut violations,
         );
     }
 
     if violations.is_empty() {
         SwCheck::pass(
-            "privacy_invocation",
-            "all non-Public source units invoke the privacy engine",
+            "privacy_metadata",
+            "all non-Public source units declare privacy metadata",
         )
     } else {
         SwCheck::fail(
-            "privacy_invocation",
+            "privacy_metadata",
             format!(
-                "{} file(s) have non-Public source units without a privacy invocation",
+                "{} file(s) have non-Public source units without privacy metadata",
                 violations.len()
             ),
             violations,
@@ -1612,12 +1614,12 @@ fn check_sw_privacy_invocation(root: &Path) -> SwCheck {
     }
 }
 
-/// Walk `.rs` files under `dir` and collect privacy-gate violations.
+/// Walk `.rs` files under `dir` and collect privacy-metadata violations.
 ///
-/// Only the `crate/core/sinex-source-worker/` and `crate/lib/sinex-node-sdk/src/parser/`
-/// trees are scanned — not the whole workspace. Descriptor-only source units
-/// (e.g. blob-storage in sinex-primitives) are only registered there to describe
-/// infra-internal event types and are not caught by this gate.
+/// Only parser/source surfaces are scanned, not the whole workspace.
+/// Descriptor-only source units (e.g. blob-storage in sinex-primitives) are
+/// only registered there to describe infra-internal event types and are not
+/// caught by this gate.
 fn collect_privacy_violations(
     dir: &Path,
     non_public_tiers: &[&str],
@@ -1645,14 +1647,14 @@ fn collect_privacy_violations(
                 continue;
             }
 
-            // Pass if any privacy indicator is present.
-            let has_invocation = privacy_indicators.iter().any(|ind| contents.contains(ind));
-            if has_invocation {
+            // Pass if any privacy metadata indicator is present.
+            let has_metadata = privacy_indicators.iter().any(|ind| contents.contains(ind));
+            if has_metadata {
                 continue;
             }
 
             // Also check siblings in the same directory (lib.rs + sibling pattern).
-            let has_sibling_invocation = path
+            let has_sibling_metadata = path
                 .parent()
                 .and_then(|parent| fs::read_dir(parent).ok())
                 .is_some_and(|rd| {
@@ -1664,16 +1666,16 @@ fn collect_privacy_violations(
                         })
                 });
 
-            if has_sibling_invocation {
+            if has_sibling_metadata {
                 continue;
             }
 
             // Extract id for the error message.
             let id = extract_unit_id_from_contents(&contents);
             out.push(format!(
-                "{}: source unit '{}' has non-Public privacy tier but no privacy invocation \
-                 (add privacy::engine(, ProcessingContext::, default_privacy_context =, or \
-                 #[allow(missing_privacy_invocation, reason = \"...\")])",
+                "{}: source unit '{}' has non-Public privacy tier but no privacy metadata \
+                 (add ProcessingContext::, .privacy_context(, privacy_contexts:, \
+                 default_privacy_context =, or #[allow(missing_privacy_metadata, reason = \"...\")])",
                 path.display(),
                 id,
             ));

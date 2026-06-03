@@ -1,15 +1,90 @@
 //! Built-in privacy rule catalog.
 
-use super::{Matcher, PatternRule, ProcessingContext, RuleCategory, Strategy, StructuralDetector};
+use super::{
+    Matcher, PatternRule, PrivacyPolicySeedRule, ProcessingContext, RuleCategory, Strategy,
+    StructuralDetector,
+};
+use serde_json::json;
 
 /// All built-in privacy rules.
 pub fn builtin_rules() -> Vec<PatternRule> {
-    let mut rules = Vec::with_capacity(40);
+    let mut rules = Vec::with_capacity(36);
     rules.extend(secret_rules());
     rules.extend(pii_rules());
     rules.extend(infrastructure_rules());
-    rules.extend(privacy_title_rules());
     rules
+}
+
+/// Project built-in catalog entries into DB-policy seed rows.
+///
+/// The projection preserves the old catalog category/context as metadata in
+/// `matcher_config`; it does not translate those contexts into runtime scopes.
+/// Actual runtime authority comes only from rows inserted into the policy DB.
+#[must_use]
+pub fn builtin_policy_seed_rules(enabled: bool) -> Vec<PrivacyPolicySeedRule> {
+    builtin_rules()
+        .into_iter()
+        .filter_map(|rule| policy_seed_rule(rule, enabled))
+        .collect()
+}
+
+fn policy_seed_rule(rule: PatternRule, enabled: bool) -> Option<PrivacyPolicySeedRule> {
+    let (matcher_type, matcher_value, mut matcher_config, case_sensitive) = match rule.matcher {
+        Matcher::Regex { pattern } => (
+            "regex".to_string(),
+            pattern,
+            json!({ "seed_source": "builtin_catalog" }),
+            false,
+        ),
+        Matcher::Literal {
+            text,
+            case_sensitive,
+        } => (
+            "literal".to_string(),
+            text,
+            json!({ "seed_source": "builtin_catalog" }),
+            case_sensitive,
+        ),
+        Matcher::Structural { detector } => {
+            let detector_name = serde_json::to_value(detector)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))?;
+            (
+                "structural".to_string(),
+                detector_name,
+                json!({
+                    "seed_source": "builtin_catalog",
+                    "detector": detector,
+                }),
+                false,
+            )
+        }
+        Matcher::All(_) | Matcher::Any(_) => return None,
+    };
+    matcher_config["category"] = json!(rule.category);
+    matcher_config["catalog_contexts"] = json!(rule.contexts);
+
+    let (action, action_label) = match rule.strategy {
+        Strategy::Redact { label } => ("redact".to_string(), label),
+        Strategy::Encrypt => ("encrypt".to_string(), None),
+        Strategy::Hash => ("hash".to_string(), None),
+        Strategy::Suppress => ("suppress".to_string(), None),
+        Strategy::Mask { .. } => ("mask".to_string(), None),
+    };
+
+    Some(PrivacyPolicySeedRule {
+        name: rule.name,
+        description: rule.description,
+        matcher_type,
+        matcher_value,
+        matcher_config,
+        recognizer_kind: "local_pattern".to_string(),
+        case_sensitive,
+        action,
+        action_label,
+        key_namespace: "default".to_string(),
+        enabled: enabled && rule.enabled,
+    })
 }
 
 // ─── Secrets ─────────────────────────────────────────────────
@@ -45,7 +120,7 @@ fn secret_rules() -> Vec<PatternRule> {
         // NOTE: Two URL-credential redactors exist by design:
         //
         // 1. This regex rule — operates on free-form text (command lines, log lines,
-        //    window titles) where the surrounding context means the input cannot be
+        //    notifications) where the surrounding context means the input cannot be
         //    handed to `url::Url::parse`. It must capture credentials embedded inside
         //    longer strings (e.g. `git clone https://user:pass@host/repo.git`).
         //
@@ -526,82 +601,25 @@ fn infrastructure_rules() -> Vec<PatternRule> {
     ]
 }
 
-// ─── Privacy / Window titles ─────────────────────────────────
-
-fn privacy_title_rules() -> Vec<PatternRule> {
-    vec![
-        PatternRule {
-            name: "password_entry_title".into(),
-            description: "Window titles related to password entry".into(),
-            category: RuleCategory::Privacy,
-            matcher: Matcher::Regex {
-                pattern: r"(?i)(password|passwort|mot de passe|contraseña|密码|パスワード)".into(),
-            },
-            strategy: Strategy::Redact {
-                label: Some("<PASSWORD_ENTRY>".into()),
-            },
-            contexts: vec![ProcessingContext::WindowTitle],
-            enabled: true,
-        },
-        PatternRule {
-            name: "login_window_title".into(),
-            description: "Login / sign-in window titles".into(),
-            category: RuleCategory::Privacy,
-            matcher: Matcher::Regex {
-                pattern: r"(?i)(sign.?in|log.?in|auth(?:entication)?|verify your identity)".into(),
-            },
-            strategy: Strategy::Redact {
-                label: Some("<LOGIN_WINDOW>".into()),
-            },
-            contexts: vec![ProcessingContext::WindowTitle],
-            enabled: true,
-        },
-        PatternRule {
-            name: "password_manager_title".into(),
-            description: "Password manager window titles".into(),
-            category: RuleCategory::Privacy,
-            matcher: Matcher::Regex {
-                pattern: r"(?i)(keepass|1password|bitwarden|lastpass|dashlane|password.?safe)"
-                    .into(),
-            },
-            strategy: Strategy::Redact {
-                label: Some("<PASSWORD_MANAGER>".into()),
-            },
-            contexts: vec![ProcessingContext::WindowTitle],
-            enabled: true,
-        },
-        PatternRule {
-            name: "sensitive_file_title".into(),
-            description: "Window titles showing sensitive file types".into(),
-            category: RuleCategory::Privacy,
-            matcher: Matcher::Regex {
-                pattern: r"(?i)\.(env|pem|key|crt|pfx|p12|jks|keystore)\b".into(),
-            },
-            strategy: Strategy::Redact {
-                label: Some("<SENSITIVE_FILE>".into()),
-            },
-            contexts: vec![ProcessingContext::WindowTitle],
-            enabled: true,
-        },
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::privacy::CategorySet;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn catalog_has_expected_count() -> ::xtask::sandbox::TestResult<()> {
         let rules = builtin_rules();
-        // 20 secrets + 8 PII + 5 infrastructure + 4 privacy = 37
-        // (added: anthropic_api_key, openai_api_key, huggingface_token,
-        //         pesel, nip, regon)
-        assert!(
-            rules.len() >= 37,
-            "expected at least 37 rules, got {}",
-            rules.len()
-        );
+        // Built-in seed catalog after #1042: the four WindowTitle-policy rules
+        // (password_entry_title, login_window_title, password_manager_title,
+        // sensitive_file_title) are gone — WindowTitle is no longer a policy
+        // concept — and former infrastructure rules fold into PII.
+        // 20 secret + 11 PII + 3 privacy = 34.
+        let count = |cat: RuleCategory| rules.iter().filter(|r| r.category == cat).count();
+        assert_eq!(count(RuleCategory::Secret), 20, "secret rule count");
+        assert_eq!(count(RuleCategory::Pii), 11, "PII rule count");
+        assert_eq!(count(RuleCategory::Privacy), 3, "privacy rule count");
+        assert_eq!(rules.len(), 34, "total built-in rule count");
         Ok(())
     }
 
@@ -646,6 +664,36 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn builtin_seed_projection_is_explicit_db_policy_data()
+    -> ::xtask::sandbox::TestResult<()> {
+        let rules = builtin_policy_seed_rules(false);
+        let aws = rules
+            .iter()
+            .find(|rule| rule.name == "aws_access_key")
+            .expect("aws access key seed rule exists");
+        assert_eq!(aws.matcher_type, "regex");
+        assert_eq!(aws.recognizer_kind, "local_pattern");
+        assert_eq!(aws.action, "redact");
+        assert_eq!(aws.matcher_config["seed_source"], "builtin_catalog");
+        assert_eq!(aws.matcher_config["category"], "secret");
+        assert!(!aws.enabled);
+
+        let ssn = rules
+            .iter()
+            .find(|rule| rule.name == "ssn")
+            .expect("ssn seed rule exists");
+        assert_eq!(ssn.matcher_type, "structural");
+        assert_eq!(ssn.matcher_value, "ssn");
+        assert!(
+            ssn.matcher_config["catalog_contexts"]
+                .as_array()
+                .is_some_and(|contexts| !contexts.is_empty()),
+            "old catalog contexts should survive only as seed metadata"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn aggressive_path_rule_replaces_collapse_when_opted_in()
     -> ::xtask::sandbox::TestResult<()> {
         // Document the operator-facing pattern: turning on the aggressive
@@ -675,6 +723,7 @@ mod tests {
         );
 
         let config = PrivacyConfig {
+            builtin_categories: CategorySet::All,
             overrides,
             ..PrivacyConfig::default()
         };

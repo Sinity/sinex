@@ -13,7 +13,7 @@ use color_eyre::eyre::{Result, eyre};
 use console::style;
 use serde_json::json;
 use sinex_primitives::privacy::{
-    Matcher, PrivacyConfig, PrivacyEngine, ProcessingContext, RuleCategory, Strategy,
+    CategorySet, Matcher, PrivacyConfig, PrivacyEngine, ProcessingContext, RuleCategory, Strategy,
 };
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -37,7 +37,7 @@ pub enum PrivacySubcommand {
         /// Input text to process
         input: String,
 
-        /// Processing context (command, clipboard, window_title, journal, dbus, notification, document, metadata)
+        /// Processing context (command, clipboard, journal, dbus, notification, document, metadata)
         #[arg(short, long, default_value = "command")]
         context: String,
     },
@@ -99,7 +99,9 @@ fn execute_catalog(
     include_disabled: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let engine = PrivacyEngine::new(PrivacyConfig::from_env()?)?;
+    let mut config = PrivacyConfig::from_env()?;
+    config.builtin_categories = CategorySet::All;
+    let engine = PrivacyEngine::new(config)?;
     let rules = engine.catalog();
 
     // Parse category filter
@@ -196,6 +198,7 @@ fn execute_test(input: &str, context_str: &str, ctx: &CommandContext) -> Result<
     let context = parse_context(context_str)?;
 
     let mut config = PrivacyConfig::from_env()?;
+    config.builtin_categories = CategorySet::All;
     config.track_stats = true;
     let engine = PrivacyEngine::new(config)?;
 
@@ -392,7 +395,7 @@ enabled = true
 #   "all"  — all categories (default)
 #   "none" — no built-in rules
 #   ["secret", "pii", "privacy"] — only listed categories
-builtin_categories = "all"
+builtin_categories = "none"
 
 # Default strategy for rules that don't specify one.
 # Options: { action = "redact" }, { action = "encrypt" },
@@ -534,7 +537,6 @@ fn format_context(ctx: &ProcessingContext) -> String {
     match ctx {
         ProcessingContext::Command => "command",
         ProcessingContext::Clipboard => "clipboard",
-        ProcessingContext::WindowTitle => "window_title",
         ProcessingContext::Journal => "journal",
         ProcessingContext::Dbus => "dbus",
         ProcessingContext::Notification => "notification",
@@ -584,7 +586,6 @@ fn parse_context(s: &str) -> Result<ProcessingContext> {
     match s.to_lowercase().as_str() {
         "command" => Ok(ProcessingContext::Command),
         "clipboard" => Ok(ProcessingContext::Clipboard),
-        "window_title" | "window" => Ok(ProcessingContext::WindowTitle),
         "journal" => Ok(ProcessingContext::Journal),
         "dbus" => Ok(ProcessingContext::Dbus),
         "notification" => Ok(ProcessingContext::Notification),
@@ -592,7 +593,7 @@ fn parse_context(s: &str) -> Result<ProcessingContext> {
         "metadata" => Ok(ProcessingContext::Metadata),
         "source_capture" => Ok(ProcessingContext::SourceCapture),
         _ => Err(eyre!(
-            "Unknown context '{}'. Valid values: command, clipboard, window_title, journal, dbus, notification, document, metadata, source_capture",
+            "Unknown context '{}'. Valid values: command, clipboard, journal, dbus, notification, document, metadata, source_capture",
             s
         )),
     }
