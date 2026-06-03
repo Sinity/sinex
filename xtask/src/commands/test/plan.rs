@@ -5,29 +5,25 @@ use crate::command::{CommandContext, WorkloadScope};
 use crate::process::ProcessBuilder;
 
 pub(super) const HEAVY_TEST_THREAD_CAP: usize = 4;
-// Packages whose integration tests require the sinexd runtime binary
-// (formerly sinex-ingestd — renamed in Wave-B fold, PR #1223).
-const INGESTD_RUNTIME_TEST_PACKAGES: &[&str] = &[
-    "sinex-browser-ingestor",
+// Packages whose integration tests require the `sinexd` runtime binary.
+//
+// Post Wave-B fold (#1223) and the gateway fold (#1559), `sinexd` is the single
+// runtime binary hosting both the event engine (formerly `sinex-ingestd`) and
+// the operator API / gateway (formerly `sinex-gateway`). Test fixtures spawn it
+// as the engine-only ingestd (`SINEX_API_ENABLED=false`) and/or as the
+// gateway-only `rpc-server` subprocess, so any package using either fixture
+// needs this binary built.
+const SINEXD_RUNTIME_TEST_PACKAGES: &[&str] = &[
     "sinex-db",
-    "sinex-desktop-ingestor",
     "sinex-e2e-tests",
-    "sinex-gateway",
     "sinexd",
-    "sinex-terminal-ingestor",
     "sinex-workspace-tests",
 ];
-const GATEWAY_RUNTIME_TEST_PACKAGES: &[&str] =
-    &["sinex-e2e-tests", "sinex-gateway", "sinex-workspace-tests"];
 const DATABASE_TEST_PACKAGES: &[&str] = &[
-    "sinex-browser-ingestor",
     "sinex-db",
-    "sinex-desktop-ingestor",
     "sinex-e2e-tests",
-    "sinex-gateway",
     "sinexd",
     "sinex-schema",
-    "sinex-terminal-ingestor",
     "sinex-workspace-tests",
 ];
 
@@ -105,23 +101,11 @@ pub(super) fn runtime_binary_requirements_for_plan(
     execution_plan: &NextestExecutionPlan,
 ) -> Vec<RuntimeBinaryRequirement> {
     let mut requirements = Vec::new();
-    if workload_scope_includes_any(
-        &execution_plan.workload_scope,
-        INGESTD_RUNTIME_TEST_PACKAGES,
-    ) {
+    if workload_scope_includes_any(&execution_plan.workload_scope, SINEXD_RUNTIME_TEST_PACKAGES) {
+        // Single fold-era binary hosting both the event engine and the gateway.
         requirements.push(RuntimeBinaryRequirement {
-            // Renamed from sinex-ingestd in Wave-B fold (PR #1223)
             package: "sinexd",
             binary: "sinexd",
-        });
-    }
-    if workload_scope_includes_any(
-        &execution_plan.workload_scope,
-        GATEWAY_RUNTIME_TEST_PACKAGES,
-    ) {
-        requirements.push(RuntimeBinaryRequirement {
-            package: "sinex-gateway",
-            binary: "sinex-gateway",
         });
     }
     requirements
@@ -308,7 +292,7 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let plan = resolve_nextest_execution_plan(
             &["sinex-db".into(), "xtask".into()],
-            vec!["sinex-gateway".into()],
+            vec!["sinexd".into()],
             Some(vec!["sinex-e2e-tests".into()]),
             &[],
         );
@@ -329,7 +313,7 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let plan = resolve_nextest_execution_plan(
             &[],
-            vec!["sinex-gateway".into()],
+            vec!["sinexd".into()],
             Some(vec!["xtask".into(), "sinex-db".into(), "xtask".into()]),
             &[],
         );
@@ -337,9 +321,9 @@ mod tests {
         assert_eq!(
             plan,
             NextestExecutionPlan {
-                runner_packages: vec!["sinex-gateway".into()],
+                runner_packages: vec!["sinexd".into()],
                 excluded_packages: Vec::new(),
-                workload_scope: WorkloadScope::Packages(vec!["sinex-gateway".into()]),
+                workload_scope: WorkloadScope::Packages(vec!["sinexd".into()]),
             }
         );
         Ok(())
@@ -417,12 +401,11 @@ mod tests {
             workload_scope: WorkloadScope::Workspace,
         };
 
+        // A single `sinexd` runtime binary hosts both engine and gateway.
         let requirements = runtime_binary_requirements_for_plan(&plan);
-        assert_eq!(requirements.len(), 2);
+        assert_eq!(requirements.len(), 1);
         assert_eq!(requirements[0].package, "sinexd");
         assert_eq!(requirements[0].binary, "sinexd");
-        assert_eq!(requirements[1].package, "sinex-gateway");
-        assert_eq!(requirements[1].binary, "sinex-gateway");
         Ok(())
     }
 
@@ -466,68 +449,23 @@ mod tests {
             workload_scope: WorkloadScope::Packages(vec!["sinex-e2e-tests".to_string()]),
         };
 
+        // e2e tests drive both the engine and gateway, both served by `sinexd`.
         let requirements = runtime_binary_requirements_for_plan(&plan);
-        assert_eq!(requirements.len(), 2);
+        assert_eq!(requirements.len(), 1);
         assert_eq!(requirements[0].package, "sinexd");
         assert_eq!(requirements[0].binary, "sinexd");
-        assert_eq!(requirements[1].package, "sinex-gateway");
-        assert_eq!(requirements[1].binary, "sinex-gateway");
         Ok(())
     }
 
     #[sinex_test]
-    async fn runtime_binary_requirements_include_gateway_for_gateway_tests()
+    async fn runtime_binary_requirements_include_sinexd_for_workspace_tests()
     -> ::xtask::sandbox::TestResult<()> {
+        // sinex-workspace-tests includes the gateway-driving TestCoreStack
+        // fixture, which spawns the `sinexd rpc-server` subprocess.
         let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-gateway".to_string()],
+            runner_packages: vec!["sinex-workspace-tests".to_string()],
             excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-gateway".to_string()]),
-        };
-
-        let requirements = runtime_binary_requirements_for_plan(&plan);
-        assert_eq!(requirements.len(), 2);
-        assert_eq!(requirements[0].package, "sinexd");
-        assert_eq!(requirements[1].package, "sinex-gateway");
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn runtime_binary_requirements_include_ingestd_for_terminal_ingestor_tests()
-    -> ::xtask::sandbox::TestResult<()> {
-        let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-terminal-ingestor".to_string()],
-            excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-terminal-ingestor".to_string()]),
-        };
-
-        let requirements = runtime_binary_requirements_for_plan(&plan);
-        assert_eq!(requirements.len(), 1);
-        assert_eq!(requirements[0].package, "sinexd");
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn runtime_binary_requirements_include_ingestd_for_browser_ingestor_tests()
-    -> ::xtask::sandbox::TestResult<()> {
-        let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-browser-ingestor".to_string()],
-            excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-browser-ingestor".to_string()]),
-        };
-
-        let requirements = runtime_binary_requirements_for_plan(&plan);
-        assert_eq!(requirements.len(), 1);
-        assert_eq!(requirements[0].package, "sinexd");
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn runtime_binary_requirements_include_ingestd_for_desktop_ingestor_tests()
-    -> ::xtask::sandbox::TestResult<()> {
-        let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-desktop-ingestor".to_string()],
-            excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-desktop-ingestor".to_string()]),
+            workload_scope: WorkloadScope::Packages(vec!["sinex-workspace-tests".to_string()]),
         };
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
