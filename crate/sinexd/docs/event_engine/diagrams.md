@@ -173,20 +173,20 @@ STREAM 1: events.raw (Raw Events from Nodes)
   │                                                                       │
   │  Consumers:                                                           │
   │  ┌────────────────────────────────────────────┐                     │
-  │  │ Consumer: ingestd-begin                    │                     │
+  │  │ Consumer: event-engine-begin                    │                     │
   │  │ - Filter: events.raw.>.material_begin      │                     │
   │  │ - Batch: configurable (default 100)       │                     │
   │  │ - Ack Wait: 30s                            │                     │
   │  │ - Max Deliver: 3                           │                     │
   │  └────────────────────────────────────────────┘                     │
   │  ┌────────────────────────────────────────────┐                     │
-  │  │ Consumer: ingestd-slices                   │                     │
+  │  │ Consumer: event-engine-slices                   │                     │
   │  │ - Filter: events.raw.>.material_slice      │                     │
   │  │ - Batch: configurable (default 100)        │                     │
   │  │ - Ack Wait: 30s                            │                     │
   │  └────────────────────────────────────────────┘                     │
   │  ┌────────────────────────────────────────────┐                     │
-  │  │ Consumer: ingestd-end                      │                     │
+  │  │ Consumer: event-engine-end                      │                     │
   │  │ - Filter: events.raw.>.material_end        │                     │
   │  │ - Batch: configurable (default 100)       │                     │
   │  └────────────────────────────────────────────┘                     │
@@ -257,7 +257,7 @@ STREAM 3: events.dlq (Raw-Ingest Dead Letter Queue)
   │  {                                                                    │
   │    "original_message": { ... },                                       │
   │    "error": "Validation failed: payload too large",                   │
-  │    "component": "ingestd",                                            │
+  │    "component": "event_engine",                                            │
   │    "timestamp": "2025-01-15T12:00:00Z",                               │
   │    "retry_count": 3,                                                  │
   │    "metadata": { ... }                                                │

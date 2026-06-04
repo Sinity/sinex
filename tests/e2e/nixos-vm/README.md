@@ -113,8 +113,7 @@ It follows the scenario registry in `tests/e2e/nixos-vm/default.nix`.
 
 ```nix
 { pkgs
-, sinex-ingestd
-, sinex-gateway
+, sinexd
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -126,7 +125,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib sinexd pg_jsonschema sinex sinexCli;
       })
     ];
 

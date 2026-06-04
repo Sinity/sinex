@@ -154,12 +154,12 @@ use sinex_primitives::rpc::{
     },
     telemetry::{
         AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
-        FileActivityEntry, GatewayStatsBucket, IngestdBatchStatsBucket, IngestdValidationSnapshot,
+        FileActivityEntry, GatewayStatsBucket, EventEngineBatchStatsBucket, EventEngineValidationSnapshot,
         MetricCounterBucket, NodeStatsBucket, RecentActivityEntry, StreamStatsBucket,
         SystemStateBucket, TELEMETRY_ASSEMBLY_STATS_METHOD, TELEMETRY_COMMAND_FREQUENCY_METHOD,
         TELEMETRY_CURRENT_DEVICE_STATE_METHOD, TELEMETRY_CURRENT_HEALTH_METHOD,
         TELEMETRY_FILE_ACTIVITY_METHOD, TELEMETRY_GATEWAY_STATS_METHOD,
-        TELEMETRY_INGESTD_BATCH_STATS_METHOD, TELEMETRY_INGESTD_VALIDATION_METHOD,
+        TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD, TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD,
         TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_NODE_STATS_METHOD,
         TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_STREAM_STATS_METHOD,
         TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD, TELEMETRY_WINDOW_FOCUS_METHOD,
@@ -168,9 +168,9 @@ use sinex_primitives::rpc::{
         TelemetryCurrentDeviceStateRequest, TelemetryCurrentDeviceStateResponse,
         TelemetryCurrentHealthRequest, TelemetryCurrentHealthResponse,
         TelemetryFileActivityRequest, TelemetryFileActivityResponse, TelemetryGatewayStatsRequest,
-        TelemetryGatewayStatsResponse, TelemetryIngestdBatchStatsRequest,
-        TelemetryIngestdBatchStatsResponse, TelemetryIngestdValidationRequest,
-        TelemetryIngestdValidationResponse, TelemetryMetricCountersRequest,
+        TelemetryGatewayStatsResponse, TelemetryEventEngineBatchStatsRequest,
+        TelemetryEventEngineBatchStatsResponse, TelemetryEventEngineValidationRequest,
+        TelemetryEventEngineValidationResponse, TelemetryMetricCountersRequest,
         TelemetryMetricCountersResponse, TelemetryNodeStatsRequest, TelemetryNodeStatsResponse,
         TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
         TelemetryStreamStatsRequest, TelemetryStreamStatsResponse, TelemetrySystemStateRequest,
@@ -1866,28 +1866,28 @@ impl GatewayClient {
         Ok(response.buckets)
     }
 
-    /// Query ingestd hourly batch-stat telemetry.
-    pub async fn telemetry_ingestd_batch_stats(
+    /// Query event_engine hourly batch-stat telemetry.
+    pub async fn telemetry_event_engine_batch_stats(
         &self,
         from: Option<String>,
         to: Option<String>,
         limit: Option<i64>,
-    ) -> Result<Vec<IngestdBatchStatsBucket>> {
-        let req = TelemetryIngestdBatchStatsRequest {
+    ) -> Result<Vec<EventEngineBatchStatsBucket>> {
+        let req = TelemetryEventEngineBatchStatsRequest {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let response: TelemetryIngestdBatchStatsResponse = self
-            .call_typed(TELEMETRY_INGESTD_BATCH_STATS_METHOD, &req)
+        let response: TelemetryEventEngineBatchStatsResponse = self
+            .call_typed(TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD, &req)
             .await?;
         Ok(response.buckets)
     }
 
-    /// Query the latest ingestd validation snapshot.
-    pub async fn telemetry_ingestd_validation(&self) -> Result<Option<IngestdValidationSnapshot>> {
-        let req = TelemetryIngestdValidationRequest::default();
-        let response: TelemetryIngestdValidationResponse = self
-            .call_typed(TELEMETRY_INGESTD_VALIDATION_METHOD, &req)
+    /// Query the latest event_engine validation snapshot.
+    pub async fn telemetry_event_engine_validation(&self) -> Result<Option<EventEngineValidationSnapshot>> {
+        let req = TelemetryEventEngineValidationRequest::default();
+        let response: TelemetryEventEngineValidationResponse = self
+            .call_typed(TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD, &req)
             .await?;
         Ok(response.snapshot)
     }

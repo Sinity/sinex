@@ -74,7 +74,7 @@ async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
 
     assert_eq!(
         after_count, initial_count,
-        "Gateway helpers must never write blob.ingested events; ingestd is the single writer"
+        "Gateway helpers must never write blob.ingested events; event_engine is the single writer"
     );
 
     Ok(())

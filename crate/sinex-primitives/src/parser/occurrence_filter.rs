@@ -8,7 +8,7 @@
 //!
 //! # Relationship to other dedup
 //!
-//! - `ContentHashWindow` (in `sinex-node-sdk::parser::dedup`) is a bounded
+//! - `ContentHashWindow` (in `sinexd::parser::dedup`) is a bounded
 //!   ring buffer for append-only-file rotation overlap dedup — ephemeral,
 //!   byte-hash-based, tied to inode rotations. This is NOT the
 //!   occurrence-filtered model; it only answers "did I emit this record

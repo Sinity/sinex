@@ -4,14 +4,14 @@ use sinex_primitives::nats::NatsConnectionConfig;
 use sinex_primitives::{
     Event, EventSource, EventType, HostName, Id, OffsetKind, Provenance, SourceMaterial,
 };
-use sinexd::event_engine::{JetStreamTopology, config::IngestdConfig, service::IngestService};
+use sinexd::event_engine::{JetStreamTopology, config::EventEngineConfig, service::IngestService};
 use tempfile::TempDir;
 use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 #[sinex_test]
-async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResult<()> {
+async fn event_engine_processes_backlog_after_downtime(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
@@ -19,7 +19,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     let env = ctx.env();
 
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let consumer_name = format!("ingestd-backlog-{namespace}");
+    let consumer_name = format!("event-engine-backlog-{namespace}");
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -29,7 +29,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     tokio::fs::create_dir_all(content_store_path.as_std_path()).await?;
     tokio::fs::create_dir_all(assembler_state_dir.as_std_path()).await?;
 
-    let config = IngestdConfig::builder()
+    let config = EventEngineConfig::builder()
         .database_url(ctx.database_url().to_string())
         .nats(
             NatsConnectionConfig::builder()
@@ -54,7 +54,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
         config.nats_namespace.as_deref(),
     );
 
-    // Create the JetStream stream directly (instead of starting+stopping ingestd just for this)
+    // Create the JetStream stream directly (instead of starting+stopping event_engine just for this)
     let stream_config = async_nats::jetstream::stream::Config {
         name: topology.events_stream.to_string(),
         subjects: vec![topology.events_subject.to_string()],
@@ -62,7 +62,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     };
     js.get_or_create_stream(stream_config).await?;
 
-    // Publish events to JetStream while ingestd is offline (the "backlog")
+    // Publish events to JetStream while event_engine is offline (the "backlog")
     let subject = env.nats_raw_event_subject_with_namespace(
         config.nats_namespace.as_deref(),
         "backlog-source",
@@ -126,7 +126,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     service.shutdown().await?;
     let join_result = timeout(Duration::from_secs(Timeouts::QUICK), handle)
         .await
-        .map_err(|_| color_eyre::eyre::eyre!("ingestd runner shutdown timed out"))?;
+        .map_err(|_| color_eyre::eyre::eyre!("event_engine runner shutdown timed out"))?;
     join_result??;
 
     Ok(())

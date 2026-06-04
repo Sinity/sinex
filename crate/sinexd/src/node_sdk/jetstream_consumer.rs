@@ -173,7 +173,7 @@ impl JetStreamEventConsumer {
 
         let js = jetstream::new(self.nats_client.clone());
 
-        // Align with ingestd topology: base stream is SINEX_RAW_EVENTS.
+        // Align with event_engine topology: base stream is SINEX_RAW_EVENTS.
         let raw_stream = self
             .env
             .nats_stream_name_with_namespace(self.namespace.as_deref(), "SINEX_RAW_EVENTS");
@@ -651,7 +651,7 @@ impl JetStreamEventConsumer {
     }
 
     /// Legacy per-event-id confirmation handling — preserved for mixed-deploy
-    /// scenarios where ingestd pre-#1306 publishes per-event-id confirmations.
+    /// scenarios where event_engine pre-#1306 publishes per-event-id confirmations.
     /// New deploys publish per-kind watermarks; this branch is exercised only
     /// when `source`/`event_type` fields are absent on the confirmation payload.
     async fn handle_legacy_per_event_confirmation(
@@ -899,7 +899,7 @@ impl JetStreamEventConsumer {
                 SinexError::processing(format!("Invalid ts_orig '{ts_orig_str}': {e}"))
             })?
         } else {
-            // ts_orig is optional in the Event schema; fall back to now (matching ingestd behavior)
+            // ts_orig is optional in the Event schema; fall back to now (matching event_engine behavior)
             sinex_primitives::temporal::now()
         };
 

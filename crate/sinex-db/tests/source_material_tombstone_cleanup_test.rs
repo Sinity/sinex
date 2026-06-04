@@ -2,7 +2,7 @@
 //! `SourceMaterialRepository` (#987 partial — repository-level scope).
 //!
 //! The full delete-on-tombstone path runs in
-//! `crate/core/sinex-gateway/src/handlers/lifecycle.rs::handle_tombstone_approve`,
+//! `crate/sinexd/src/handlers/lifecycle.rs::handle_tombstone_approve`,
 //! which the existing test fixtures cannot exercise without a `ServiceContainer`
 //! (see disabled tests in `lifecycle_handlers_test.rs`). These tests cover the
 //! repository-level building blocks the handler composes.

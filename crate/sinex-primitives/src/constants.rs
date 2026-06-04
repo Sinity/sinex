@@ -50,7 +50,7 @@ pub mod limits {
     /// Maximum event batch size for bulk operations
     pub const MAX_EVENT_BATCH_SIZE: usize = 1000;
 
-    /// Maximum raw byte size for a single ingestd event payload (10 MiB).
+    /// Maximum raw byte size for a single event_engine event payload (10 MiB).
     ///
     /// Enforced before JSON parsing so that oversized payloads are rejected
     /// without allocating memory for the parse attempt. Corresponds to the

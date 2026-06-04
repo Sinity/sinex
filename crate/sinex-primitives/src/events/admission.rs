@@ -2,13 +2,13 @@
 //!
 //! This module defines the `EventIntent` envelope that producers construct
 //! to declare "I've done my admission checks, here's the payload." The envelope
-//! complements (does not replace) the ingestd-side admission boundary extracted in
-//! #1056 — the producer uses the envelope type (compile-time guard), and ingestd
+//! complements (does not replace) the event-engine-side admission boundary extracted in
+//! #1056 — the producer uses the envelope type (compile-time guard), and event_engine
 //! validates it on receipt (runtime guard).
 //!
 //! # Envelope versioning
 //!
-//! The envelope carries an explicit version string. ingestd rejects unknown
+//! The envelope carries an explicit version string. event_engine rejects unknown
 //! versions, giving us a forward-compatible migration path.
 
 use crate::domain::HostName;
@@ -20,7 +20,7 @@ use serde_json::Value as JsonValue;
 /// Current envelope version emitted by all producers.
 pub const CURRENT_ENVELOPE_VERSION: &str = "1";
 
-/// Envelope versions that ingestd will accept on receipt.
+/// Envelope versions that event_engine will accept on receipt.
 pub const ACCEPTED_ENVELOPE_VERSIONS: &[&str] = &["1"];
 
 /// The kind of anchor that identifies an occurrence within source material.
@@ -157,7 +157,7 @@ impl EventIntent {
         }
     }
 
-    /// Check whether this envelope version is accepted by ingestd.
+    /// Check whether this envelope version is accepted by event_engine.
     #[must_use]
     pub fn is_version_accepted(&self) -> bool {
         ACCEPTED_ENVELOPE_VERSIONS.contains(&self.envelope_version.as_str())

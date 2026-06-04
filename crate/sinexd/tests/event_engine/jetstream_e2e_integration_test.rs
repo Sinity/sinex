@@ -62,7 +62,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
         ..Default::default()
     };
     // Wait for the confirmations stream to exist before starting the automaton consumer.
-    // ingestd (started by PipelineScope) creates this stream on startup; the automaton
+    // event_engine (started by PipelineScope) creates this stream on startup; the automaton
     // consumer's run() immediately calls js.get_stream() which fails if it doesn't exist.
     let js = async_nats::jetstream::new(nats_client.clone());
     let confirmations_stream = format!(
@@ -141,8 +141,8 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
 
     info!("🎉 E2E JetStream test PASSED");
     info!("   ✓ Node → JetStream (events.raw)");
-    info!("   ✓ ingestd → Database persistence");
-    info!("   ✓ ingestd → JetStream (events.confirmations)");
+    info!("   ✓ event_engine → Database persistence");
+    info!("   ✓ event_engine → JetStream (events.confirmations)");
     info!("   ✓ Automaton → Confirmed event consumption");
 
     automaton_handle.abort();

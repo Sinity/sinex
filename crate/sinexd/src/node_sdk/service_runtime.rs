@@ -1,4 +1,4 @@
-//! Shared bootstrap utilities for service-level binaries (gateway, ingestd).
+//! Shared bootstrap utilities for service-level binaries (gateway, event_engine).
 //!
 //! These helpers cover the common startup concerns that aren't specific to
 //! the node lifecycle managed by `NodeCliRunner`. Unlike `SourceUnit` or
@@ -8,7 +8,7 @@
 //!
 //! The duplication this consolidates was flagged during the declaration→consumer drift audit (#744)
 //! (#694) and the audit-cycle derived: `load_env_filter` was copy-pasted
-//! identically into both gateway and ingestd, and the tracing-init shape
+//! identically into both gateway and event_engine, and the tracing-init shape
 //! drifted between them in small ways (`try_init` vs init, target/thread-id
 //! flags) without any of the differences being deliberate.
 //!

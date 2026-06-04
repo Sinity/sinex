@@ -28,7 +28,7 @@ use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Row, Transaction};
 pub const COPY_BATCH_THRESHOLD: usize = 50;
 use tracing::instrument;
 
-/// Lightweight DTO for stream batch inserts from ingestd.
+/// Lightweight DTO for stream batch inserts from event_engine.
 ///
 /// This struct provides a minimal representation of event data for high-throughput
 /// batch inserts, avoiding the overhead of the full `Event<T>` type tree.
@@ -1258,7 +1258,7 @@ impl<'a> EventRepository<'a> {
         Ok(events)
     }
 
-    // ========== Stream Batch Insert (for ingestd) ==========
+    // ========== Stream Batch Insert (for event_engine) ==========
 
     /// Insert a batch of pre-validated events from the stream consumer.
     ///

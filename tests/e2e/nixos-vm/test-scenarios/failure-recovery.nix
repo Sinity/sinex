@@ -308,7 +308,7 @@ pkgs.testers.nixosTest {
         package = sinexPackage;
         cliPackage = sinexCliPackage;
         users.target = "test";
-        secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
+        secrets.apiAdminTokenFile = "/etc/sinex/api-admin-token";
         core.gateway.autoGenerateTls = true;
         database.autoSetup = true;
         database.connectionPool.maxConnections = 20;
@@ -373,7 +373,7 @@ pkgs.testers.nixosTest {
         uid = 1000;
       };
       
-      environment.etc."sinex/gateway-admin-token".text = "test-admin-token:admin";
+      environment.etc."sinex/api-admin-token".text = "test-admin-token:admin";
       
       services.postgresql.authentication = lib.mkForce ''
 local   all             all                                     trust
@@ -497,7 +497,7 @@ SQL
           Restart = lib.mkForce "always";
           RestartSec = lib.mkForce "5";
         };
-        environment.SINEX_RPC_TOKEN_FILE = "/etc/sinex/gateway-admin-token";
+        environment.SINEX_RPC_TOKEN_FILE = "/etc/sinex/api-admin-token";
       };
     };
 

@@ -25,7 +25,7 @@ use sqlx::FromRow;
 /// The central registry for all event payload JSON schemas. This table acts as the
 /// data contract registry for the entire system. It is managed by the schema
 /// toolchain that synchronizes Rust definitions into Postgres and is read by
-/// `ingestd` at runtime to perform validation on all incoming events.
+/// `event_engine` at runtime to perform validation on all incoming events.
 #[derive(Iden, Copy, Clone)]
 pub enum EventPayloadSchemas {
     Table,
@@ -285,7 +285,7 @@ impl Runs {
 
 /// **Table: `sinex_schemas.binary_schema_version`**
 ///
-/// Single-row table checked at gateway and ingestd startup. If the row is
+/// Single-row table checked at gateway and event_engine startup. If the row is
 /// missing it is inserted with the current expected version; if the version
 /// mismatches the service refuses to start.
 #[derive(Iden, Copy, Clone)]

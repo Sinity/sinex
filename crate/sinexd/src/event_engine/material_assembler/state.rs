@@ -18,7 +18,7 @@ use super::{
         AssemblyInput, AssemblyLogicalState, AssemblyStateMachine, AssemblyTransition,
     },
 };
-use crate::event_engine::{IngestdResult, SinexError};
+use crate::event_engine::{EventEngineResult, SinexError};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Default)]
 pub enum AssemblyPhase {
@@ -31,13 +31,13 @@ pub enum AssemblyPhase {
 pub(super) const BUFFER_DIR_NAME: &str = "buffers";
 pub(super) const WAL_FILE_NAME: &str = "state.wal";
 pub(super) const TEMP_FILE_NAME: &str = "material.bin";
-pub(super) const DLQ_CONSUMER: &str = "ingestd";
+pub(super) const DLQ_CONSUMER: &str = "event_engine";
 
 pub(super) fn parse_material_started_at(
     material_id: Uuid,
     started_at: &str,
     source: &str,
-) -> IngestdResult<Timestamp> {
+) -> EventEngineResult<Timestamp> {
     Timestamp::parse_rfc3339(started_at).map_err(|error| {
         SinexError::invalid_state(format!("Invalid started_at in material assembler {source}"))
             .with_context("material_id", material_id.to_string())
@@ -50,7 +50,7 @@ pub(super) fn parse_material_ended_at(
     material_id: Uuid,
     ended_at: &str,
     source: &str,
-) -> IngestdResult<Timestamp> {
+) -> EventEngineResult<Timestamp> {
     Timestamp::parse_rfc3339(ended_at).map_err(|error| {
         SinexError::invalid_state(format!("Invalid ended_at in material assembler {source}"))
             .with_context("material_id", material_id.to_string())
@@ -214,7 +214,7 @@ pub(super) fn take_buffered_slice(
     state: &mut AssemblerState,
     material_id: Uuid,
     offset: i64,
-) -> IngestdResult<PathBuf> {
+) -> EventEngineResult<PathBuf> {
     state.buffered_slices.remove(&offset).ok_or_else(|| {
         SinexError::service(format!(
             "Missing buffered slice for {material_id} at offset {offset}"
@@ -301,7 +301,7 @@ pub(super) async fn handle_begin(
     assembler: &MaterialAssembler,
     material_id: Uuid,
     begin: MaterialBeginMessage,
-) -> IngestdResult<()> {
+) -> EventEngineResult<()> {
     tracing::Span::current().record("material_id", tracing::field::display(&material_id));
 
     let started_at = parse_material_started_at(material_id, &begin.started_at, "begin message")?;

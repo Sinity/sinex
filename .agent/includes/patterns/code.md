@@ -79,7 +79,7 @@ if result.suppressed { /* drop the field */ }
 sensitive fields. Path-bearing source units use `redact_metadata()` with
 `ProcessingContext::Metadata`; check the concrete implementation under
 `crate/sinexd/src/sources/source_units/` before making a coverage claim.
-The old per-domain ingestor crate paths (and the `sinex-source-worker` crate)
+The old per-domain ingestor crate paths (and the `sinex-source-unit` crate)
 no longer exist after the Wave-B fold.
 
 **Open privacy question:** The `Metadata` context only fires the home-prefix collapse rule.

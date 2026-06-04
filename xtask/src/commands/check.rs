@@ -784,7 +784,7 @@ fn ensure_nix_tool_ready_with(check_tool: impl FnOnce(&str) -> Result<ToolInfo>)
 
 /// Extract package names from planner action commands (#1146).
 ///
-/// Parses commands like "xtask check -p sinex-db -p sinex-gateway" and
+/// Parses commands like "xtask check -p sinex-db -p sinexd" and
 /// returns the set of package names after `-p` flags.
 fn extract_packages_from_actions(actions: &[crate::planner::PlannedAction]) -> Vec<String> {
     let mut packages = std::collections::BTreeSet::new();

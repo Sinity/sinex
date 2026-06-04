@@ -17,7 +17,7 @@ use clap::{Parser, Subcommand};
 use sinexd::api::config::GatewayConfig;
 use sinexd::api::rpc_server;
 use sinexd::api::service_container::ServiceContainer;
-use sinexd::event_engine::IngestdConfig;
+use sinexd::event_engine::EventEngineConfig;
 use sinexd::node_sdk::service_runtime::{TracingFormat, install_tracing, spawn_shutdown_task};
 use sinexd::sources::bindings::{self as source_bindings, SourceBinding};
 use sinexd::supervisor::Supervisor;
@@ -69,7 +69,7 @@ enum Command {
     /// Run only the operator API / RPC gateway (no event engine, automata, or
     /// source bindings).
     ///
-    /// The post-fold equivalent of the deleted `sinex-gateway rpc-server`.
+    /// API-only entrypoint used by sandbox fixtures and manual diagnostics.
     /// Used by the sandbox `TestCoreStack` fixture to run the gateway as a
     /// standalone TLS subprocess on a known port.
     RpcServer {
@@ -184,7 +184,7 @@ async fn main() -> color_eyre::Result<()> {
 }
 
 async fn serve(cli: &Cli) -> color_eyre::Result<()> {
-    let event_engine_config = IngestdConfig::from_args(
+    let event_engine_config = EventEngineConfig::from_args(
         cli.database_url.clone(),
         cli.nats_url.clone(),
         cli.nats_require_tls,
@@ -207,7 +207,7 @@ async fn serve(cli: &Cli) -> color_eyre::Result<()> {
     }?;
 
     // The API is enabled by default. Engine-only deployments (e.g. the sandbox
-    // ingestd fixture, which runs the gateway as a separate TLS subprocess)
+    // event_engine fixture, which runs the gateway as a separate TLS subprocess)
     // opt out via `SINEX_API_ENABLED=false` so the supervisor does not try to
     // bind the TLS-required gateway and tear the daemon down.
     let supervisor = Supervisor {

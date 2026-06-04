@@ -2,7 +2,7 @@
 
 //! Configuration helpers for the ingestion daemon.
 
-use crate::event_engine::{IngestdResult, SinexError, material_assembler::DurabilityThresholds};
+use crate::event_engine::{EventEngineResult, SinexError, material_assembler::DurabilityThresholds};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_db::{PoolConfig, PoolSessionPolicy, create_pool_with_config_and_session_policy};
@@ -20,7 +20,7 @@ use validator::{Validate, ValidationError};
 /// Configuration for the ingestion daemon
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, bon::Builder)]
 #[builder(on(String, into))]
-pub struct IngestdConfig {
+pub struct EventEngineConfig {
     /// Database URL for `PostgreSQL` connection
     #[validate(url(message = "Invalid database URL"))]
     #[validate(custom(
@@ -117,7 +117,7 @@ pub struct IngestdConfig {
 
     /// NATS consumer durable name
     #[validate(length(min = 1, message = "NATS consumer name cannot be empty"))]
-    #[builder(default = String::from("ingestd"))]
+    #[builder(default = String::from("event_engine"))]
     pub nats_consumer_name: String,
 
     /// Optional namespace appended to all `JetStream` subjects/streams (used by tests).
@@ -144,7 +144,7 @@ pub struct IngestdConfig {
 
     /// Strict validation mode: reject events without registered schemas
     ///
-    /// When enabled, ingestd will reject any event that doesn't have a registered schema.
+    /// When enabled, event_engine will reject any event that doesn't have a registered schema.
     /// When disabled (default), events without schemas are allowed but won't be validated.
     ///
     /// Set via: `SINEX_EVENT_ENGINE_STRICT_VALIDATION=true`
@@ -261,7 +261,7 @@ pub struct IngestdConfig {
 
     /// Enable `GitOps` schema sync service
     ///
-    /// When enabled, ingestd periodically fetches configured Git repositories
+    /// When enabled, event_engine periodically fetches configured Git repositories
     /// and discovers JSON schema files to register in the database.
     ///
     /// Set via: `SINEX_EVENT_ENGINE_GITOPS_ENABLED=true`
@@ -278,7 +278,7 @@ pub struct IngestdConfig {
 
     /// Schema reload interval in seconds
     ///
-    /// How often ingestd reloads JSON schemas from the database.
+    /// How often event_engine reloads JSON schemas from the database.
     /// Lower values make schema updates take effect faster at the cost of more DB queries.
     ///
     /// Set via: `SINEX_EVENT_ENGINE_SCHEMA_RELOAD_INTERVAL_SECS=300`
@@ -289,7 +289,7 @@ pub struct IngestdConfig {
 
     /// Stats logging interval in seconds
     ///
-    /// How often ingestd logs processing statistics (events processed, failed, etc.).
+    /// How often event_engine logs processing statistics (events processed, failed, etc.).
     ///
     /// Set via: `SINEX_EVENT_ENGINE_STATS_LOG_INTERVAL_SECS=60`
     #[serde(default = "default_stats_log_interval_secs")]
@@ -320,7 +320,7 @@ pub struct IngestdConfig {
     ///
     /// This defaults on for production so accidental cold-start replay is an
     /// explicit operator decision. Test harnesses may disable it when the test
-    /// intentionally publishes before ingestd starts and expects catch-up.
+    /// intentionally publishes before event_engine starts and expects catch-up.
     ///
     /// Set via: `SINEX_EVENT_ENGINE_REJECT_INITIAL_REPLAY=false`
     #[serde(default = "default_reject_initial_replay")]
@@ -329,7 +329,7 @@ pub struct IngestdConfig {
 
     /// Interval between automatic blob garbage collection sweeps. None = disabled.
     ///
-    /// When set, ingestd periodically sweeps content-store keys that are unused
+    /// When set, event_engine periodically sweeps content-store keys that are unused
     /// in git-annex AND have no matching `core.blobs` row, dropping them from
     /// the large-object backend. The same logic backs `sinexctl blob sweep-orphans`.
     ///
@@ -339,7 +339,7 @@ pub struct IngestdConfig {
     pub blob_gc_interval_secs: Option<u64>,
 }
 
-impl IngestdConfig {
+impl EventEngineConfig {
     /// Create configuration from command line arguments using the builder
     pub fn from_args(
         database_url: Option<String>,
@@ -354,9 +354,9 @@ impl IngestdConfig {
         content_store_path: Option<String>,
         assembler_state_dir: Option<String>,
         namespace: Option<String>,
-    ) -> IngestdResult<Self> {
+    ) -> EventEngineResult<Self> {
         let work_dir_override =
-            strict_env_validated_path("SINEX_EVENT_ENGINE_WORK_DIR", "ingestd work dir")?;
+            strict_env_validated_path("SINEX_EVENT_ENGINE_WORK_DIR", "event_engine work dir")?;
         let content_store_env_override =
             strict_env_validated_path("SINEX_CONTENT_STORE_PATH", "content-store path")?;
         let assembler_state_dir_env_override =
@@ -517,7 +517,7 @@ impl IngestdConfig {
         self
     }
 
-    pub(crate) fn material_durability_thresholds(&self) -> IngestdResult<DurabilityThresholds> {
+    pub(crate) fn material_durability_thresholds(&self) -> EventEngineResult<DurabilityThresholds> {
         let staged_bytes =
             i64::try_from(self.material_staged_sync_bytes.as_u64()).map_err(|_| {
                 SinexError::configuration("staged material sync byte threshold exceeds i64 range")
@@ -543,7 +543,7 @@ impl IngestdConfig {
     }
 
     /// Validate the configuration
-    pub async fn validate(&self) -> IngestdResult<()> {
+    pub async fn validate(&self) -> EventEngineResult<()> {
         use validator::Validate as ValidateTrait;
 
         // Fail fast on NATS TLS policy before running other validators.
@@ -601,7 +601,7 @@ impl IngestdConfig {
     }
 
     /// Test database connection
-    async fn test_database_connection(&self) -> IngestdResult<()> {
+    async fn test_database_connection(&self) -> EventEngineResult<()> {
         let mut config = self.pool_config();
         config.max_connections = 1;
 
@@ -634,7 +634,7 @@ impl IngestdConfig {
     }
 
     /// Test NATS connection
-    async fn test_nats_connection(&self) -> IngestdResult<()> {
+    async fn test_nats_connection(&self) -> EventEngineResult<()> {
         let client = self.nats.connect().await?;
 
         // Connection successful logic is implicit in connect() success
@@ -663,7 +663,7 @@ impl IngestdConfig {
         // See: https://github.com/launchbadge/sqlx/issues/3117
     }
 
-    pub async fn create_db_pool(&self) -> IngestdResult<sinex_db::DbPool> {
+    pub async fn create_db_pool(&self) -> EventEngineResult<sinex_db::DbPool> {
         create_pool_with_config_and_session_policy(
             &self.database_url,
             &self.pool_config(),
@@ -695,7 +695,7 @@ fn env_validated_path(name: &str, context: &str) -> Option<Utf8PathBuf> {
     }
 }
 
-fn strict_env_validated_path(name: &str, context: &str) -> IngestdResult<Option<Utf8PathBuf>> {
+fn strict_env_validated_path(name: &str, context: &str) -> EventEngineResult<Option<Utf8PathBuf>> {
     let Some(raw) = shared_env::strict_var(name)? else {
         return Ok(None);
     };
@@ -709,7 +709,7 @@ fn strict_env_validated_path(name: &str, context: &str) -> IngestdResult<Option<
         })
 }
 
-fn validated_path_override(raw: &str, context: &str) -> IngestdResult<Utf8PathBuf> {
+fn validated_path_override(raw: &str, context: &str) -> EventEngineResult<Utf8PathBuf> {
     sinex_primitives::validation::validate_path(raw).map_err(|error| {
         SinexError::configuration(format!("invalid path value for {context}"))
             .with_context("context", context)
@@ -756,7 +756,7 @@ fn validated_path_or_fallback(
     }
 }
 
-impl Default for IngestdConfig {
+impl Default for EventEngineConfig {
     fn default() -> Self {
         let env = environment();
         Self {
@@ -775,7 +775,7 @@ impl Default for IngestdConfig {
             work_dir: default_work_dir(),
             max_message_size: default_max_message_size(),
             nats_stream_name: default_nats_stream_name(),
-            nats_consumer_name: format!("ingestd-{}", env.name()),
+            nats_consumer_name: format!("event-engine-{}", env.name()),
             nats_namespace: None,
             content_store_path: default_content_store_path(),
             assembler_state_dir: default_assembler_state_dir(),
@@ -829,32 +829,32 @@ fn default_database_url_fallback() -> String {
     format!("postgresql:///{base_name}?host=/run/postgresql")
 }
 
-/// Default work directory for ingestd with environment namespacing
+/// Default work directory for event_engine with environment namespacing
 fn default_work_dir() -> Utf8PathBuf {
-    if let Some(validated) = env_validated_path("SINEX_EVENT_ENGINE_WORK_DIR", "ingestd work dir") {
+    if let Some(validated) = env_validated_path("SINEX_EVENT_ENGINE_WORK_DIR", "event_engine work dir") {
         return validated;
     }
 
     let env = environment();
     let work_dir = Utf8PathBuf::from_path_buf(
-        env.work_directory(default_path_base_dir().join("sinex").join("ingestd")),
+        env.work_directory(default_path_base_dir().join("sinex").join("event_engine")),
     )
     .unwrap_or_else(|path| {
         warn!(
             path = %path.display(),
-            "Derived ingestd work directory is not valid UTF-8; using fallback"
+            "Derived event_engine work directory is not valid UTF-8; using fallback"
         );
-        Utf8PathBuf::from("/tmp/sinex/ingestd")
+        Utf8PathBuf::from("/tmp/sinex/event_engine")
     });
-    let fallback = Utf8PathBuf::from_path_buf(env.work_directory("/tmp/sinex/ingestd"))
+    let fallback = Utf8PathBuf::from_path_buf(env.work_directory("/tmp/sinex/event_engine"))
         .unwrap_or_else(|path| {
             warn!(
                 path = %path.display(),
-                "Fallback ingestd work directory is not valid UTF-8; using literal /tmp path"
+                "Fallback event_engine work directory is not valid UTF-8; using literal /tmp path"
             );
-            Utf8PathBuf::from("/tmp/sinex/ingestd")
+            Utf8PathBuf::from("/tmp/sinex/event_engine")
         });
-    validated_path_or_fallback(&work_dir, fallback, "ingestd work dir")
+    validated_path_or_fallback(&work_dir, fallback, "event_engine work dir")
 }
 
 fn default_pool_acquire_timeout_secs() -> u64 {
@@ -872,7 +872,7 @@ fn default_consumer_fetch_max_messages() -> usize {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_CONSUMER_FETCH_MAX_MESSAGES",
                 %error,
                 "Invalid env override for consumer fetch max messages; using default"
@@ -889,7 +889,7 @@ fn default_consumer_fetch_timeout_ms() -> Milliseconds {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_CONSUMER_FETCH_TIMEOUT_MS",
                 %error,
                 "Invalid env override for consumer fetch timeout; using default"
@@ -906,7 +906,7 @@ fn default_consumer_max_ack_pending() -> i64 {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_CONSUMER_MAX_ACK_PENDING",
                 %error,
                 "Invalid env override for consumer max_ack_pending; using default"
@@ -923,7 +923,7 @@ fn default_material_slices_max_ack_pending() -> i64 {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_MATERIAL_SLICES_MAX_ACK_PENDING",
                 %error,
                 "Invalid env override for material slices max_ack_pending; using default"
@@ -987,7 +987,7 @@ fn default_content_store_path() -> Utf8PathBuf {
     let content_store = default_work_dir().join("content-store");
     validated_path_or_fallback(
         &content_store,
-        Utf8PathBuf::from("/tmp/sinex/ingestd/content-store"),
+        Utf8PathBuf::from("/tmp/sinex/event_engine/content-store"),
         "content-store path",
     )
 }
@@ -1002,7 +1002,7 @@ fn default_assembler_state_dir() -> Utf8PathBuf {
     let state_dir = default_work_dir().join("assembler_state");
     validated_path_or_fallback(
         &state_dir,
-        Utf8PathBuf::from("/tmp/sinex/ingestd/assembler_state"),
+        Utf8PathBuf::from("/tmp/sinex/event_engine/assembler_state"),
         "assembler state directory",
     )
 }
@@ -1068,7 +1068,7 @@ fn default_max_buffered_slices() -> usize {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_MAX_BUFFERED_SLICES",
                 %error,
                 "Invalid env override for max buffered slices; using default"
@@ -1092,7 +1092,7 @@ fn default_slice_timeout_secs() -> u64 {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_SLICE_TIMEOUT_SECS",
                 %error,
                 "Invalid env override for slice timeout; using default"
@@ -1109,7 +1109,7 @@ fn default_orphan_threshold_secs() -> u64 {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_ORPHAN_THRESHOLD_SECS",
                 %error,
                 "Invalid env override for orphan threshold; using default"
@@ -1126,7 +1126,7 @@ fn default_disk_threshold_percent() -> u8 {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_DISK_THRESHOLD_PERCENT",
                 %error,
                 "Invalid env override for disk threshold percent; using default"
@@ -1143,7 +1143,7 @@ fn default_max_material_size_bytes() -> Bytes {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_MAX_MATERIAL_SIZE_BYTES",
                 %error,
                 "Invalid env override for max material size; using default"
@@ -1160,7 +1160,7 @@ fn default_material_staged_sync_bytes() -> Bytes {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_BYTES",
                 %error,
                 "Invalid env override for staged material sync bytes; using default"
@@ -1177,7 +1177,7 @@ fn default_material_staged_sync_interval_ms() -> Milliseconds {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_INTERVAL_MS",
                 %error,
                 "Invalid env override for staged material sync interval; using default"
@@ -1194,7 +1194,7 @@ fn default_material_wal_sync_bytes() -> Bytes {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_BYTES",
                 %error,
                 "Invalid env override for material WAL sync bytes; using default"
@@ -1211,7 +1211,7 @@ fn default_material_wal_sync_entries() -> u32 {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_ENTRIES",
                 %error,
                 "Invalid env override for material WAL sync entries; using default"
@@ -1228,7 +1228,7 @@ fn default_material_wal_sync_interval_ms() -> Milliseconds {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_INTERVAL_MS",
                 %error,
                 "Invalid env override for material WAL sync interval; using default"
@@ -1249,7 +1249,7 @@ fn default_gitops_work_dir() -> Utf8PathBuf {
     let gitops = default_work_dir().join("gitops");
     validated_path_or_fallback(
         &gitops,
-        Utf8PathBuf::from("/tmp/sinex/ingestd/gitops"),
+        Utf8PathBuf::from("/tmp/sinex/event_engine/gitops"),
         "gitops work directory",
     )
 }
@@ -1269,7 +1269,7 @@ fn default_startup_catch_up_max_concurrent() -> usize {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_STARTUP_CATCH_UP_MAX_CONCURRENT",
                 %error,
                 "Invalid env override for startup catch-up max concurrent; using default"
@@ -1286,7 +1286,7 @@ fn default_reject_initial_replay() -> bool {
         Err(error) => {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.config_env_parse_errors_total",
+                metric = "event_engine.config_env_parse_errors_total",
                 env = "SINEX_EVENT_ENGINE_REJECT_INITIAL_REPLAY",
                 %error,
                 "Invalid env override for initial replay guard; using default"
@@ -1318,7 +1318,7 @@ fn default_ts_orig_lower_bound_unix() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        DurabilityThresholds, IngestdConfig, default_assembler_state_dir,
+        DurabilityThresholds, EventEngineConfig, default_assembler_state_dir,
         default_content_store_path, default_gitops_work_dir, default_path_base_dir,
         default_work_dir, env_validated_path,
     };
@@ -1345,7 +1345,7 @@ mod tests {
         env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_ENTRIES", "128");
         env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_INTERVAL_MS", "1000");
 
-        let config = IngestdConfig::default();
+        let config = EventEngineConfig::default();
 
         assert_eq!(
             config.material_durability_thresholds()?,
@@ -1355,12 +1355,12 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn pool_config_preserves_ingestd_pool_policy() -> xtask::sandbox::TestResult<()> {
-        let config = IngestdConfig {
+    async fn pool_config_preserves_event_engine_pool_policy() -> xtask::sandbox::TestResult<()> {
+        let config = EventEngineConfig {
             database_pool_size: 7,
             pool_acquire_timeout_secs: 11,
             pool_idle_timeout_secs: 29,
-            ..IngestdConfig::default()
+            ..EventEngineConfig::default()
         };
 
         let pool = config.pool_config();
@@ -1383,12 +1383,12 @@ mod tests {
     async fn default_work_dir_ignores_invalid_override() -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_EVENT_ENGINE_WORK_DIR", "../../etc");
-        env.set("XDG_CACHE_HOME", "/tmp/sinex-ingestd-config-cache");
+        env.set("XDG_CACHE_HOME", "/tmp/sinexd-config-cache");
 
         let expected = Utf8PathBuf::from_path_buf(
-            environment().work_directory(default_path_base_dir().join("sinex").join("ingestd")),
+            environment().work_directory(default_path_base_dir().join("sinex").join("event_engine")),
         )
-        .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/ingestd"));
+        .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/event_engine"));
 
         assert_eq!(default_work_dir(), expected);
         Ok(())
@@ -1399,7 +1399,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set(
             "SINEX_EVENT_ENGINE_WORK_DIR",
-            "/tmp/sinex-ingestd-config-root",
+            "/tmp/sinexd-config-root",
         );
         env.set("SINEX_CONTENT_STORE_PATH", "../../bad-content-store");
         env.set("SINEX_ASSEMBLER_STATE_DIR", "../../bad-state-dir");
@@ -1407,15 +1407,15 @@ mod tests {
 
         assert_eq!(
             default_content_store_path(),
-            Utf8PathBuf::from("/tmp/sinex-ingestd-config-root/content-store")
+            Utf8PathBuf::from("/tmp/sinexd-config-root/content-store")
         );
         assert_eq!(
             default_assembler_state_dir(),
-            Utf8PathBuf::from("/tmp/sinex-ingestd-config-root/assembler_state")
+            Utf8PathBuf::from("/tmp/sinexd-config-root/assembler_state")
         );
         assert_eq!(
             default_gitops_work_dir(),
-            Utf8PathBuf::from("/tmp/sinex-ingestd-config-root/gitops")
+            Utf8PathBuf::from("/tmp/sinexd-config-root/gitops")
         );
         Ok(())
     }
@@ -1442,7 +1442,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("DATABASE_URL", OsString::from_vec(vec![0x70, 0x80]));
 
-        let error = IngestdConfig::from_args(
+        let error = EventEngineConfig::from_args(
             None,
             "nats://localhost:4222".to_string(),
             false,
@@ -1456,7 +1456,7 @@ mod tests {
             None,
             None,
         )
-        .expect_err("non-UTF8 DATABASE_URL should fail ingestd config construction");
+        .expect_err("non-UTF8 DATABASE_URL should fail event_engine config construction");
 
         let message = error.to_string();
         assert!(message.contains("DATABASE_URL"));

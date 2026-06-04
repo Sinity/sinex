@@ -2,7 +2,7 @@
 //!
 //! These scenarios exercise Stage-as-You-Go’s `JetStream` material pipeline when
 //! nodes crash mid-acquisition. Since nodes no longer write directly
-//! to Postgres, we stand up a test `ingestd` to consume begin/slice/end messages
+//! to Postgres, we stand up a test `event_engine` to consume begin/slice/end messages
 //! and persist registry state.
 
 use serde_json::json;
@@ -18,21 +18,21 @@ use std::sync::{
 };
 use std::time::Duration;
 use xtask::sandbox::{
-    TestIngestdConfig, TestIngestdHandle, prelude::*, start_test_ingestd_with_config,
+    TestEventEngineConfig, TestEventEngineHandle, prelude::*, start_test_event_engine_with_config,
     timing::Timeouts,
 };
 
-/// Return type for `setup_ingestd` — holds ownership of the work directory
-/// so it isn't cleaned up while ingestd is still running.
-struct IngestdSetup {
+/// Return type for `setup_event_engine` — holds ownership of the work directory
+/// so it isn't cleaned up while event_engine is still running.
+struct EventEngineSetup {
     ctx: TestContext,
-    ingest_handle: TestIngestdHandle,
+    ingest_handle: TestEventEngineHandle,
     nats_client: async_nats::Client,
     namespace: String,
     _work_dir: tempfile::TempDir,
 }
 
-async fn setup_ingestd(ctx: TestContext) -> Result<IngestdSetup> {
+async fn setup_event_engine(ctx: TestContext) -> Result<EventEngineSetup> {
     let ctx = ctx.with_nats().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
@@ -40,7 +40,7 @@ async fn setup_ingestd(ctx: TestContext) -> Result<IngestdSetup> {
     AcquisitionManager::bootstrap_streams_with_namespace(&nats_client, Some(&namespace)).await?;
 
     let work_dir = tempfile::tempdir()?;
-    let ingest_config = TestIngestdConfig {
+    let ingest_config = TestEventEngineConfig {
         nats: ctx.nats_handle()?.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: Some(work_dir.path().to_path_buf()),
@@ -48,10 +48,10 @@ async fn setup_ingestd(ctx: TestContext) -> Result<IngestdSetup> {
         ..Default::default()
     };
 
-    let ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+    let ingest_handle = start_test_event_engine_with_config(ingest_config, Some(&ctx)).await?;
 
-    // Wait for ingestd's MaterialAssembler to attach a consumer on the ordered frame stream.
-    // start_test_ingestd_with_config already waits for the RAW_EVENTS consumer, but
+    // Wait for event_engine's MaterialAssembler to attach a consumer on the ordered frame stream.
+    // start_test_event_engine_with_config already waits for the RAW_EVENTS consumer, but
     // the MaterialAssembler starts slightly after. Without this, begin_material()
     // messages may arrive before the assembler is consuming, causing wait_for_material_row
     // to time out.
@@ -66,7 +66,7 @@ async fn setup_ingestd(ctx: TestContext) -> Result<IngestdSetup> {
     )
     .await?;
 
-    Ok(IngestdSetup {
+    Ok(EventEngineSetup {
         ctx,
         ingest_handle,
         nats_client,
@@ -172,13 +172,13 @@ async fn wait_for_material_staged_floor(ctx: &TestContext, material_id: Uuid) ->
 /// Node crashes immediately after registering a material (begin published, no slices/end).
 #[sinex_test]
 async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Result<()> {
-    let IngestdSetup {
+    let EventEngineSetup {
         ctx,
         mut ingest_handle,
         nats_client,
         namespace,
         _work_dir: work_dir,
-    } = setup_ingestd(ctx).await?;
+    } = setup_event_engine(ctx).await?;
 
     let acquisition_mgr = AcquisitionManager::new_with_namespace(
         nats_client.clone(),
@@ -210,13 +210,13 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
 /// Node crashes mid-acquisition after several slices (no end).
 #[sinex_test]
 async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<()> {
-    let IngestdSetup {
+    let EventEngineSetup {
         ctx,
         mut ingest_handle,
         nats_client,
         namespace,
         _work_dir: work_dir,
-    } = setup_ingestd(ctx).await?;
+    } = setup_event_engine(ctx).await?;
 
     let acquisition_mgr = AcquisitionManager::new_with_namespace(
         nats_client.clone(),
@@ -254,13 +254,13 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
 /// Detect orphaned materials left sensing after multiple nodes crash.
 #[sinex_test]
 async fn test_orphaned_material_detection_and_recovery(ctx: TestContext) -> Result<()> {
-    let IngestdSetup {
+    let EventEngineSetup {
         ctx,
         mut ingest_handle,
         nats_client,
         namespace,
         _work_dir: work_dir,
-    } = setup_ingestd(ctx).await?;
+    } = setup_event_engine(ctx).await?;
 
     let acq_mgr1 = AcquisitionManager::new_with_namespace(
         nats_client.clone(),
@@ -369,13 +369,13 @@ async fn test_checkpoint_recovery_with_material_reference(ctx: TestContext) -> R
 /// Concurrent acquisitions where half crash and half finalize cleanly.
 #[sinex_test]
 async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestContext) -> Result<()> {
-    let IngestdSetup {
+    let EventEngineSetup {
         ctx,
         mut ingest_handle,
         nats_client,
         namespace,
         _work_dir: work_dir,
-    } = setup_ingestd(ctx).await?;
+    } = setup_event_engine(ctx).await?;
 
     let successful_materials = Arc::new(AtomicU64::new(0));
     let crashed_materials = Arc::new(AtomicU64::new(0));
@@ -530,13 +530,13 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
 /// Crash after data written but before finalize sends end message.
 #[sinex_test]
 async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
-    let IngestdSetup {
+    let EventEngineSetup {
         ctx,
         mut ingest_handle,
         nats_client,
         namespace,
         _work_dir: work_dir,
-    } = setup_ingestd(ctx).await?;
+    } = setup_event_engine(ctx).await?;
 
     let acquisition_mgr = AcquisitionManager::new_with_namespace(
         nats_client,
@@ -573,13 +573,13 @@ async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
 /// Mark a crashed material as recovered_partial with recovery metadata.
 #[sinex_test]
 async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -> Result<()> {
-    let IngestdSetup {
+    let EventEngineSetup {
         ctx,
         mut ingest_handle,
         nats_client,
         namespace,
         _work_dir: work_dir,
-    } = setup_ingestd(ctx).await?;
+    } = setup_event_engine(ctx).await?;
 
     let acquisition_mgr = AcquisitionManager::new_with_namespace(
         nats_client,

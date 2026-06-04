@@ -1,7 +1,7 @@
 use super::output::{ServiceRunStatus, ServiceStatus};
 use crate::infra::probe::{NatsProbe, PostgresProbe};
 use crate::infra::stack::StackConfig;
-use crate::runtime_metrics::{IngestdStatus, RuntimeMetrics};
+use crate::runtime_metrics::{EventEngineStatus, RuntimeMetrics};
 use crate::runtime_target::{checkout_status_snapshot, signal, warning};
 use color_eyre::eyre::{Result, WrapErr};
 use sinex_primitives::{
@@ -78,7 +78,7 @@ pub(super) fn gateway_service_status_from_readiness(
     };
 
     ServiceStatus {
-        name: "sinex-gateway".to_string(),
+        name: "sinexd".to_string(),
         status,
         probe: "gateway_ready_http",
         pid,
@@ -100,25 +100,15 @@ pub(super) async fn collect_core_service_statuses(
     runtime_metrics: Option<&RuntimeMetrics>,
     active_jobs: &[crate::jobs::Job],
 ) -> Vec<ServiceStatus> {
-    let ingestd = active_job_for_service("sinex-ingestd", active_jobs).map_or_else(
-        || ingestd_service_status_from_runtime_metrics(runtime_metrics),
-        |job| service_status_from_active_job("sinex-ingestd", job),
+    let daemon = active_job_for_service("sinexd", active_jobs).map_or_else(
+        || event_engine_service_status_from_runtime_metrics(runtime_metrics),
+        |job| service_status_from_active_job("sinexd", job),
     );
-    let gateway_process = active_job_for_service("sinex-gateway", active_jobs).map_or_else(
-        || ServiceStatus {
-            name: "sinex-gateway".to_string(),
-            status: ServiceRunStatus::Stopped,
-            probe: "checkout_local",
-            pid: None,
-            message: Some("no active checkout-local gateway job is tracked".to_string()),
-        },
-        |job| service_status_from_active_job("sinex-gateway", job),
-    );
-    let gateway_force_probe = matches!(gateway_process.status, ServiceRunStatus::Running);
+    let gateway_force_probe = matches!(daemon.status, ServiceRunStatus::Running);
 
     vec![
-        probe_gateway_service_status(gateway_url, gateway_force_probe, gateway_process.pid).await,
-        ingestd,
+        probe_gateway_service_status(gateway_url, gateway_force_probe, daemon.pid).await,
+        daemon,
     ]
 }
 
@@ -134,32 +124,32 @@ pub(super) fn resolve_runtime_metrics_database_url(
     Ok(Some(stack_config.database_url()))
 }
 
-pub(super) fn ingestd_service_status_from_runtime_metrics(
+pub(super) fn event_engine_service_status_from_runtime_metrics(
     runtime_metrics: Option<&RuntimeMetrics>,
 ) -> ServiceStatus {
     let (status, message) = match runtime_metrics {
-        Some(metrics) => match metrics.ingestd_status {
-            IngestdStatus::Healthy => (ServiceRunStatus::Running, None),
-            IngestdStatus::Down => (
+        Some(metrics) => match metrics.event_engine_status {
+            EventEngineStatus::Healthy => (ServiceRunStatus::Running, None),
+            EventEngineStatus::Down => (
                 ServiceRunStatus::Stopped,
                 Some(
-                    "no checkout-local ingestd heartbeat found in the local runtime database"
+                    "no checkout-local event_engine heartbeat found in the local runtime database"
                         .to_string(),
                 ),
             ),
-            IngestdStatus::Stale => (
+            EventEngineStatus::Stale => (
                 ServiceRunStatus::Unknown,
                 Some(
-                    "checkout-local ingestd heartbeat is stale in the local runtime database"
+                    "checkout-local event_engine heartbeat is stale in the local runtime database"
                         .to_string(),
                 ),
             ),
-            IngestdStatus::Unknown => (
+            EventEngineStatus::Unknown => (
                 ServiceRunStatus::Unknown,
                 metrics
                     .query_error
                     .clone()
-                    .or_else(|| Some("checkout-local ingestd status is unavailable".to_string())),
+                    .or_else(|| Some("checkout-local event_engine status is unavailable".to_string())),
             ),
         },
         None => (
@@ -169,7 +159,7 @@ pub(super) fn ingestd_service_status_from_runtime_metrics(
     };
 
     ServiceStatus {
-        name: "sinex-ingestd".to_string(),
+        name: "sinexd".to_string(),
         status,
         probe: "runtime_metrics",
         pid: None,
@@ -282,12 +272,12 @@ pub(super) fn build_runtime_status_snapshot(
 
     if let Some(metrics) = runtime_metrics {
         signals.push(signal(
-            "ingestd_heartbeat",
-            match metrics.ingestd_status {
-                IngestdStatus::Healthy => RuntimeStatusSignalStatus::Healthy,
-                IngestdStatus::Stale => RuntimeStatusSignalStatus::Stale,
-                IngestdStatus::Down => RuntimeStatusSignalStatus::Unhealthy,
-                IngestdStatus::Unknown => RuntimeStatusSignalStatus::Unknown,
+            "event_engine_heartbeat",
+            match metrics.event_engine_status {
+                EventEngineStatus::Healthy => RuntimeStatusSignalStatus::Healthy,
+                EventEngineStatus::Stale => RuntimeStatusSignalStatus::Stale,
+                EventEngineStatus::Down => RuntimeStatusSignalStatus::Unhealthy,
+                EventEngineStatus::Unknown => RuntimeStatusSignalStatus::Unknown,
             },
             "checkout-local runtime database telemetry",
             metrics

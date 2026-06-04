@@ -17,7 +17,7 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
     let pool = PgPool::connect(database_url).await?;
 
     test_baseline_monotonic(runner, &pool).await;
-    test_ingestd_survives_clock_advance(runner, &pool).await;
+    test_event_engine_survives_clock_advance(runner, &pool).await;
     test_events_reach_db_despite_skew(runner, &pool).await;
     test_no_catastrophic_timestamp_corruption(runner, &pool).await;
     test_hypertable_chunk_structure_intact(runner, &pool).await;
@@ -63,8 +63,8 @@ async fn test_baseline_monotonic(runner: &mut TestRunner, pool: &PgPool) {
     }
 }
 
-async fn test_ingestd_survives_clock_advance(runner: &mut TestRunner, _pool: &PgPool) {
-    let name = "chaos-clock-skew: ingestd survives clock advance";
+async fn test_event_engine_survives_clock_advance(runner: &mut TestRunner, _pool: &PgPool) {
+    let name = "chaos-clock-skew: event_engine survives clock advance";
 
     // Read current epoch
     let epoch_output = Command::new("date").args(["+%s"]).output().ok();
@@ -93,16 +93,16 @@ async fn test_ingestd_survives_clock_advance(runner: &mut TestRunner, _pool: &Pg
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Check ingestd still active
+    // Check event_engine still active
     let active = Command::new("systemctl")
-        .args(["is-active", "--quiet", "sinex-ingestd"])
+        .args(["is-active", "--quiet", "sinexd"])
         .status()
         .is_ok_and(|s| s.success());
 
     if active {
         runner.pass(name);
     } else {
-        runner.fail(name, "ingestd crashed after clock advance");
+        runner.fail(name, "event_engine crashed after clock advance");
         // Restore clock before returning
         let _ = Command::new("date")
             .args(["-s", &format!("@{current_epoch}")])

@@ -160,7 +160,7 @@ in
 
           The Polylogue daemon is an external producer: it publishes
           metadata-only conversation-indexed events directly to NATS JetStream
-          without depending on the sinex Rust SDK. ingestd accepts these events
+          without depending on the sinex Rust SDK. event_engine accepts these events
           on the standard {env}.sinex.events.raw.> stream.
 
           Setting this to true signals that the Polylogue daemon is expected to

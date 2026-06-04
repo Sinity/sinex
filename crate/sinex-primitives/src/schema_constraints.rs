@@ -1,6 +1,6 @@
 //! Compile-time database CHECK constraint specifications derived from Rust enums.
 //!
-//! See `crate/lib/sinex-macros/docs/db_check.md` for the macro grammar.
+//! See `crate/sinex-macros/docs/db_check.md` for the macro grammar.
 //!
 //! # Architecture
 //!

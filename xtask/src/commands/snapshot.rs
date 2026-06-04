@@ -908,7 +908,7 @@ exit 101
         write_executable_script(
             &bin_dir.join("cargo"),
             r#"#!/bin/sh
-printf '%s\n' '{"packages":[{"id":"path+file:///realm/project/sinex/crate/lib/sinex-db#0.1.0","name":"sinex-db","manifest_path":"/realm/project/sinex/crate/lib/sinex-db/Cargo.toml","dependencies":[]}],"workspace_members":["path+file:///realm/project/sinex/crate/lib/sinex-db#0.1.0"]}'
+printf '%s\n' '{"packages":[{"id":"path+file:///realm/project/sinex/crate/sinex-db#0.1.0","name":"sinex-db","manifest_path":"/realm/project/sinex/crate/sinex-db/Cargo.toml","dependencies":[]}],"workspace_members":["path+file:///realm/project/sinex/crate/sinex-db#0.1.0"]}'
 "#,
         )?;
 

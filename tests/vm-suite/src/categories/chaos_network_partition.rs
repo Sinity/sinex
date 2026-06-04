@@ -1,7 +1,7 @@
-//! Chaos test: simulate network partition between ingestd and NATS.
+//! Chaos test: simulate network partition between event_engine and NATS.
 //!
 //! Injects a network partition on the loopback interface targeting NATS port 4222,
-//! verifies ingestd remains active and recovers when partition is healed.
+//! verifies event_engine remains active and recovers when partition is healed.
 
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -17,9 +17,9 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
     let pool = PgPool::connect(database_url).await?;
 
     test_baseline_pipeline(runner, &pool).await;
-    test_partition_ingestd_survives(runner, &pool).await;
+    test_partition_event_engine_survives(runner, &pool).await;
     test_during_partition_period(runner, &pool).await;
-    test_partition_healed_ingestd_active(runner, &pool).await;
+    test_partition_healed_event_engine_active(runner, &pool).await;
     test_events_reach_db_after_heal(runner, &pool).await;
 
     Ok(())
@@ -54,8 +54,8 @@ async fn test_baseline_pipeline(runner: &mut TestRunner, pool: &PgPool) {
     }
 }
 
-async fn test_partition_ingestd_survives(runner: &mut TestRunner, _pool: &PgPool) {
-    let name = "chaos-network-partition: ingestd survives NATS partition";
+async fn test_partition_event_engine_survives(runner: &mut TestRunner, _pool: &PgPool) {
+    let name = "chaos-network-partition: event_engine survives NATS partition";
 
     // Inject iptables rules to drop traffic to NATS port 4222
     let inject_rules = vec![
@@ -84,21 +84,21 @@ async fn test_partition_ingestd_survives(runner: &mut TestRunner, _pool: &PgPool
     // Wait for partition to stabilize
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Check ingestd is still active
+    // Check event_engine is still active
     let active = Command::new("systemctl")
-        .args(["is-active", "--quiet", "sinex-ingestd"])
+        .args(["is-active", "--quiet", "sinexd"])
         .status()
         .is_ok_and(|s| s.success());
 
     if active {
         runner.pass(name);
     } else {
-        runner.fail(name, "ingestd crashed during NATS partition injection");
+        runner.fail(name, "event_engine crashed during NATS partition injection");
     }
 }
 
 async fn test_during_partition_period(runner: &mut TestRunner, pool: &PgPool) {
-    let name = "chaos-network-partition: ingestd survives during-partition period";
+    let name = "chaos-network-partition: event_engine survives during-partition period";
 
     let _before = event_count(pool).await;
     let watched = "/var/lib/sinex/watched";
@@ -111,24 +111,24 @@ async fn test_during_partition_period(runner: &mut TestRunner, pool: &PgPool) {
         );
     }
 
-    // Wait to allow ingestd to process (even if buffered)
+    // Wait to allow event_engine to process (even if buffered)
     tokio::time::sleep(Duration::from_secs(5)).await;
 
-    // Check ingestd still active during partition
+    // Check event_engine still active during partition
     let active = Command::new("systemctl")
-        .args(["is-active", "--quiet", "sinex-ingestd"])
+        .args(["is-active", "--quiet", "sinexd"])
         .status()
         .is_ok_and(|s| s.success());
 
     if active {
         runner.pass(name);
     } else {
-        runner.fail(name, "ingestd became inactive during partition period");
+        runner.fail(name, "event_engine became inactive during partition period");
     }
 }
 
-async fn test_partition_healed_ingestd_active(runner: &mut TestRunner, _pool: &PgPool) {
-    let name = "chaos-network-partition: partition healed, ingestd still active";
+async fn test_partition_healed_event_engine_active(runner: &mut TestRunner, _pool: &PgPool) {
+    let name = "chaos-network-partition: partition healed, event_engine still active";
 
     // Heal the partition
     let _ = Command::new("sh")
@@ -144,16 +144,16 @@ async fn test_partition_healed_ingestd_active(runner: &mut TestRunner, _pool: &P
     // Wait for network to stabilize
     tokio::time::sleep(Duration::from_secs(10)).await;
 
-    // Verify ingestd is active
+    // Verify event_engine is active
     let active = Command::new("systemctl")
-        .args(["is-active", "--quiet", "sinex-ingestd"])
+        .args(["is-active", "--quiet", "sinexd"])
         .status()
         .is_ok_and(|s| s.success());
 
     if active {
         runner.pass(name);
     } else {
-        runner.fail(name, "ingestd crashed after partition heal");
+        runner.fail(name, "event_engine crashed after partition heal");
     }
 }
 

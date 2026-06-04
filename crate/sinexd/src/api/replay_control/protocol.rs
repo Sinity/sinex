@@ -1,7 +1,7 @@
 //! Wire-level request/response/error/status enums for the replay control bus.
 //!
 //! These types are serialized over NATS and exposed publicly under
-//! `sinex_gateway::replay_control` so client and server siblings can speak
+//! `sinex_api::replay_control` so client and server siblings can speak
 //! the same protocol.
 
 use serde::{Deserialize, Serialize};

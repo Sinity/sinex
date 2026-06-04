@@ -26,13 +26,13 @@ let
 
   stateRoot = cfg.stateRoot;
   runtimeDir = "${stateRoot}/run";
-  ingestSpool = coreCfg.ingestd.spoolDir;
+  ingestSpool = coreCfg.event_engine.spoolDir;
   logDir = cfg.observability.logDir;
   blobDir = cfg.storage.blob.repositoryPath;
   tlsDir = "${stateRoot}/tls";
   tlsAutoGenEnabled = coreEnabled && coreCfg.gateway.autoGenerateTls;
   # Ancillary service flags.
-  # JetStream bootstrap is a hard requirement when enabled because ingestd and
+  # JetStream bootstrap is a hard requirement when enabled because event_engine and
   # gateway assume the streams already exist at startup. Blob init remains soft.
   natsBootstrapEnabled = natsEnabled && cfg.nats.bootstrapStreams.enable;
   blobInitEnabled = cfg.storage.blob.enable && cfg.storage.blob.autoInit;
@@ -80,9 +80,9 @@ let
   natsUrl = concatStringsSep "," nodesCfg.nats.servers;
   secretPaths = config.sinex.secrets.paths or { };
   resolveSecretPath = resolveNamedSecretPath secretPaths;
-  gatewayAdminTokenFile =
-    resolveSecretPath cfg.secrets.gatewayAdminTokenFile [
-      "sinex-gateway-admin-token"
+  apiAdminTokenFile =
+    resolveSecretPath cfg.secrets.apiAdminTokenFile [
+      "sinex-api-admin-token"
     ];
   effectiveDatabasePasswordFile = resolveSecretPath cfg.database.passwordFile [
     "sinex-local-db"
@@ -134,7 +134,7 @@ let
   ];
   gatewaySecretAssertPaths = collectReadablePaths (
     [
-      gatewayAdminTokenFile
+      apiAdminTokenFile
       cfg.core.gateway.tlsCertFile
       cfg.core.gateway.tlsKeyFile
     ]
@@ -257,7 +257,7 @@ let
     "SINEX_LOG_DIR=${logDir}"
     "SINEX_NATS_URL=${natsUrl}"
     "SINEX_NATS_MONITORING_PORT=${toString nodesCfg.nats.monitoringPort}"
-    # Both ingestd and gateway access the same content-store root; set here
+    # Both event_engine and gateway access the same content-store root; set here
     # so all core services share a consistent path without per-service repetition.
     "SINEX_CONTENT_STORE_PATH=${blobDir}"
   ]
@@ -423,13 +423,13 @@ let
 
   mkCoreServices = { automataEnabledList, sourceBindingsManifestFile, nodesOverlay }:
     let
-      batch = coreCfg.ingestd.batch;
+      batch = coreCfg.event_engine.batch;
       sinexdArgs = concatStringsSep " " ([
         "--nats-url ${natsUrl}"
-        "--log-level ${coreCfg.ingestd.logLevel}"
-      ] ++ coreCfg.ingestd.extraArgs);
+        "--log-level ${coreCfg.event_engine.logLevel}"
+      ] ++ coreCfg.event_engine.extraArgs);
       gatewayLimits = coreCfg.gateway.limits;
-      gatewayAdminTokenRuntimeFile = "${runtimeDir}/gateway-admin-token";
+      apiAdminTokenRuntimeFile = "${runtimeDir}/api-admin-token";
       gatewayTlsCertRuntimeFile = "${runtimeDir}/gateway-server.pem";
       gatewayTlsKeyRuntimeFile = "${runtimeDir}/gateway-server-key.pem";
       gatewayTlsClientCaRuntimeFile = "${runtimeDir}/gateway-client-ca.pem";
@@ -440,13 +440,13 @@ let
         else
           null;
       gatewayRuntimeInputStageScript =
-        if gatewayAdminTokenFile == null
+        if apiAdminTokenFile == null
           && cfg.core.gateway.tlsCertFile == null
           && cfg.core.gateway.tlsKeyFile == null
           && gatewayTlsTrustAnchorSourceFile == null
           && cfg.core.gateway.tlsClientCAFile == null
         then null else
-          pkgs.writeShellScript "sinex-gateway-stage-runtime-inputs" ''
+          pkgs.writeShellScript "sinexd-stage-runtime-inputs" ''
             set -euo pipefail
 
             INSTALL=${pkgs.coreutils}/bin/install
@@ -469,7 +469,7 @@ let
               "$INSTALL" -m "$mode" -o ${serviceUser} -g ${serviceUser} "$source_path" "$dest_path"
             }
 
-            stage_gateway_admin_token() {
+            stage_api_admin_token() {
               local source_path="$1"
               local dest_path="$2"
               local tmp_path
@@ -505,7 +505,7 @@ let
                   ;;
               esac
 
-              tmp_path="$(mktemp "$runtime_dir/gateway-admin-token.XXXXXX")"
+              tmp_path="$(mktemp "$runtime_dir/api-admin-token.XXXXXX")"
               ${pkgs.coreutils}/bin/chmod 0600 "$tmp_path"
               ${pkgs.coreutils}/bin/printf '%s\n' "$staged_token" > "$tmp_path"
               ${pkgs.coreutils}/bin/chown ${serviceUser}:${serviceUser} "$tmp_path"
@@ -515,7 +515,7 @@ let
 
             "$INSTALL" -d -m 0750 -o ${serviceUser} -g ${serviceUser} "$runtime_dir"
 
-            stage_gateway_admin_token ${escapeShellArg (if gatewayAdminTokenFile == null then "" else toString gatewayAdminTokenFile)} ${escapeShellArg gatewayAdminTokenRuntimeFile}
+            stage_api_admin_token ${escapeShellArg (if apiAdminTokenFile == null then "" else toString apiAdminTokenFile)} ${escapeShellArg apiAdminTokenRuntimeFile}
             stage_file ${escapeShellArg (if cfg.core.gateway.tlsCertFile == null then "" else toString cfg.core.gateway.tlsCertFile)} ${escapeShellArg gatewayTlsCertRuntimeFile} 0440
             stage_file ${escapeShellArg (if cfg.core.gateway.tlsKeyFile == null then "" else toString cfg.core.gateway.tlsKeyFile)} ${escapeShellArg gatewayTlsKeyRuntimeFile} 0400
             stage_file ${escapeShellArg (if gatewayTlsTrustAnchorSourceFile == null then "" else toString gatewayTlsTrustAnchorSourceFile)} ${escapeShellArg gatewayTlsTrustAnchorRuntimeFile} 0444
@@ -537,7 +537,7 @@ let
     if !coreEnabled then { } else
     {
       "sinexd" = {
-        description = "Sinex daemon (event engine + API + automata + source workers)";
+        description = "Sinex daemon (event engine + API + automata + source unit hosts)";
         wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
         restartIfChanged = cfg.runtime.restartOnSwitch;
         after = gatewayAfter ++ (nodesOverlay.afterUnits or [ ]);
@@ -553,28 +553,28 @@ let
           (
             mkServiceEnv (
               [
-                "RUST_LOG=${coreCfg.ingestd.logLevel}"
+                "RUST_LOG=${coreCfg.event_engine.logLevel}"
                 # Event engine pool size and timeouts.
                 "SINEX_EVENT_ENGINE_POOL_SIZE=${toString cfg.database.connectionPool.maxConnections}"
                 "SINEX_EVENT_ENGINE_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
                 "SINEX_EVENT_ENGINE_POOL_IDLE_TIMEOUT_SECS=${toString cfg.database.connectionPool.idleTimeout}"
-                # Ack-pending limits (read via env by IngestdConfig::from_args).
-                "SINEX_EVENT_ENGINE_CONSUMER_MAX_ACK_PENDING=${toString coreCfg.ingestd.consumerMaxAckPending}"
-                "SINEX_EVENT_ENGINE_MATERIAL_SLICES_MAX_ACK_PENDING=${toString coreCfg.ingestd.materialSlicesMaxAckPending}"
+                # Ack-pending limits (read via env by EventEngineConfig::from_args).
+                "SINEX_EVENT_ENGINE_CONSUMER_MAX_ACK_PENDING=${toString coreCfg.event_engine.consumerMaxAckPending}"
+                "SINEX_EVENT_ENGINE_MATERIAL_SLICES_MAX_ACK_PENDING=${toString coreCfg.event_engine.materialSlicesMaxAckPending}"
                 # Explicit work and spool dirs prevent fallback to dirs::cache_dir() (~/.cache)
                 # which is blocked by ProtectHome = true in the systemd unit.
-                "SINEX_EVENT_ENGINE_WORK_DIR=${stateRoot}/ingestd/work"
+                "SINEX_EVENT_ENGINE_WORK_DIR=${stateRoot}/event_engine/work"
                 "SINEX_ASSEMBLER_STATE_DIR=${ingestSpool}"
                 # Schema and validation behaviour.
-                "SINEX_EVENT_ENGINE_GITOPS_ENABLED=${if coreCfg.ingestd.gitopsEnabled then "true" else "false"}"
-                "SINEX_SKIP_SCHEMA_SYNC=${if coreCfg.ingestd.skipSchemaSync then "true" else "false"}"
-                "SINEX_EVENT_ENGINE_STRICT_VALIDATION=${if coreCfg.ingestd.strictValidation then "true" else "false"}"
-                "SINEX_VALIDATE_SCHEMAS=${if coreCfg.ingestd.validateSchemas then "true" else "false"}"
+                "SINEX_EVENT_ENGINE_GITOPS_ENABLED=${if coreCfg.event_engine.gitopsEnabled then "true" else "false"}"
+                "SINEX_SKIP_SCHEMA_SYNC=${if coreCfg.event_engine.skipSchemaSync then "true" else "false"}"
+                "SINEX_EVENT_ENGINE_STRICT_VALIDATION=${if coreCfg.event_engine.strictValidation then "true" else "false"}"
+                "SINEX_VALIDATE_SCHEMAS=${if coreCfg.event_engine.validateSchemas then "true" else "false"}"
                 # Skip internal stream bootstrap when the module manages streams declaratively.
                 "SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=${if natsBootstrapEnabled then "true" else "false"}"
                 # Operational intervals.
-                "SINEX_EVENT_ENGINE_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.ingestd.schemaReloadIntervalSecs}"
-                "SINEX_EVENT_ENGINE_STATS_LOG_INTERVAL_SECS=${toString coreCfg.ingestd.statsLogIntervalSecs}"
+                "SINEX_EVENT_ENGINE_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.event_engine.schemaReloadIntervalSecs}"
+                "SINEX_EVENT_ENGINE_STATS_LOG_INTERVAL_SECS=${toString coreCfg.event_engine.statsLogIntervalSecs}"
                 # API (gateway) config.
                 "SINEX_API_MAX_CONCURRENCY=${toString gatewayLimits.maxConcurrency}"
                 "SINEX_API_REQUEST_TIMEOUT_SECS=${toString gatewayLimits.requestTimeoutSec}"
@@ -599,9 +599,9 @@ let
               ++ lib.optional (sourceBindingsManifestFile != null)
                 "SINEX_SOURCE_BINDINGS_PATH=${toString sourceBindingsManifestFile}"
               ++ lib.optional
-                (coreCfg.ingestd.blobGcIntervalSecs != null)
-                "SINEX_EVENT_ENGINE_BLOB_GC_INTERVAL_SECS=${toString coreCfg.ingestd.blobGcIntervalSecs}"
-              ++ optional (gatewayAdminTokenFile != null) "SINEX_API_ADMIN_TOKEN_FILE=${gatewayAdminTokenRuntimeFile}"
+                (coreCfg.event_engine.blobGcIntervalSecs != null)
+                "SINEX_EVENT_ENGINE_BLOB_GC_INTERVAL_SECS=${toString coreCfg.event_engine.blobGcIntervalSecs}"
+              ++ optional (apiAdminTokenFile != null) "SINEX_API_ADMIN_TOKEN_FILE=${apiAdminTokenRuntimeFile}"
               ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_API_TLS_CERT=${gatewayTlsCertRuntimeFile}"
               ++ optional (cfg.core.gateway.tlsKeyFile != null) "SINEX_API_TLS_KEY=${gatewayTlsKeyRuntimeFile}"
               ++ optional (cfg.core.gateway.tlsClientCAFile != null) "SINEX_API_TLS_CLIENT_CA=${gatewayTlsClientCaRuntimeFile}"

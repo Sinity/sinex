@@ -5,7 +5,7 @@
 //! Non-Rust producers (Python, shell scripts, external tools) can publish
 //! [`EventIntent`] envelopes to NATS `JetStream` without depending on the
 //! Rust SDK. The contract below is the minimum a producer must satisfy for
-//! ingestd to accept the payload.
+//! event_engine to accept the payload.
 //!
 //! ## Envelope format
 //!

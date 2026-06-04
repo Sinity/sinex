@@ -124,7 +124,7 @@ impl DistributedRateLimiter {
     pub async fn new(jetstream: Context, config: DistributedRateLimitConfig) -> Result<Self> {
         // Create or get KV bucket for rate limits
         let kv_config = KvConfig {
-            bucket: "sinex_gateway_rate_limits".to_string(),
+            bucket: "sinex_api_rate_limits".to_string(),
             description: "Per-token rate limit counters".to_string(),
             max_age: Duration::from_secs(config.window_seconds * 2), // Auto-cleanup old entries
             ..Default::default()

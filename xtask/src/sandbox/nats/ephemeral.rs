@@ -571,7 +571,7 @@ impl EphemeralNats {
 
     /// Wait until at least one consumer exists on the given JetStream stream.
     ///
-    /// This ensures that the process creating consumers (e.g. ingestd) has fully
+    /// This ensures that the process creating consumers (e.g. event_engine) has fully
     /// started and is actively pulling messages. Without this, tests may publish
     /// events to a stream before anyone is consuming them.
     pub async fn wait_for_consumer_on_stream(

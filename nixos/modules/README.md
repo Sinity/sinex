@@ -59,9 +59,9 @@ values derived from `stateRoot` and the global `logLevel`.
 
 `core.sinexd` is enabled by default, so the quick-start config needs a real
 API admin token file before the generated unit will start. The module
-auto-resolves either an agenix secret named `sinex-gateway-admin-token` or a
-declarative `environment.etc."sinex/gateway-admin-token"` entry; set
-`services.sinex.secrets.gatewayAdminTokenFile` only when you need a non-standard
+auto-resolves either an agenix secret named `sinex-api-admin-token` or a
+declarative `environment.etc."sinex/api-admin-token"` entry; set
+`services.sinex.secrets.apiAdminTokenFile` only when you need a non-standard
 path.
 
 ### Database
@@ -108,7 +108,7 @@ disabled (e.g. staging migrations).
   declared `retention` / `maxAge` / `maxMsgs` / `maxBytes` policy on boot, so
   stream-shape changes land without imperative follow-up.
 - Source-material streams default to work-queue retention. They are an ingest
-  handoff into `ingestd`, not a long-lived archive; once the material assembler
+  handoff into `event_engine`, not a long-lived archive; once the material assembler
   acknowledges them they should leave JetStream.
 
 ### Core & nodes
@@ -185,8 +185,8 @@ disabled (e.g. staging migrations).
   secured local NATS deployments do not need a separate bootstrap-only secret path.
 
 ### Secret Conventions
-- API admin token falls back to `sinex-gateway-admin-token`, which can come
-  from agenix or from declarative `environment.etc."sinex/gateway-admin-token"`
+- API admin token falls back to `sinex-api-admin-token`, which can come
+  from agenix or from declarative `environment.etc."sinex/api-admin-token"`
 - database password surfaces fall back to `sinex-local-db` / `sinex-remote-db`
   and the conventional declarative files `/etc/sinex/db-password` /
   `/etc/sinex/remote-db-password`

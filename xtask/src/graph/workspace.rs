@@ -42,7 +42,7 @@ use crate::graph::impact::ImpactMetrics;
 /// use xtask::graph::WorkspaceGraph;
 ///
 /// let graph = WorkspaceGraph::new()?;
-/// let deps = graph.all_dependencies("sinex-gateway")?;
+/// let deps = graph.all_dependencies("sinexd")?;
 ///
 /// for dep in deps {
 ///     println!("Depends on: {}", dep.name);
@@ -255,7 +255,7 @@ impl WorkspaceGraph {
     ///
     /// let graph = WorkspaceGraph::new()?;
     ///
-    /// match graph.shortest_path("sinex-gateway", "sinex-db")? {
+    /// match graph.shortest_path("sinexd", "sinex-db")? {
     ///     Some(path) => {
     ///         println!("Dependency path: {}", path.join(" -> "));
     ///     }
@@ -387,9 +387,9 @@ impl WorkspaceGraph {
     /// use xtask::graph::WorkspaceGraph;
     ///
     /// let graph = WorkspaceGraph::new()?;
-    /// let deps = graph.all_dependencies("sinex-gateway")?;
+    /// let deps = graph.all_dependencies("sinexd")?;
     ///
-    /// println!("Dependencies of sinex-gateway:");
+    /// println!("Dependencies of sinexd:");
     /// for dep in deps {
     ///     println!("  - {}", dep.name);
     /// }

@@ -97,7 +97,7 @@ messaging for browser extensions. Auth uses stateless token-suffix RBAC.
 
 ## I
 
-### ingestd
+### event_engine
 The `sinexd::event_engine` module that consumes event batches from NATS
 JetStream, validates them, and persists them to PostgreSQL. Routes batches
 through COPY (>= 50 material events) or QueryBuilder (< 50 events). Derived
@@ -154,7 +154,7 @@ privacy context, material policy, checkpoint policy, runtime shape, and
 package impact. Bindings are the durable contract between a Rust source-unit
 implementation and its NixOS-side runtime configuration. They are compiled
 into the source-unit registry and exercised through normal Rust/NixOS
-verification; the old generated catalog and source-worker drift gate no longer
+verification; the old generated catalog and source-unit drift gate no longer
 exist.
 
 ### source material
@@ -178,7 +178,7 @@ resolves source units by inventory lookup against this registry — no match
 arms. A source unit is NOT a process or deployment identity; multiple
 source-unit instances of the same kind can co-exist under the same `sinexd`
 deployment. Post-Wave-B fold (#1081), the per-domain ingestor crates and
-standalone source-worker binary were deleted; source-unit hosting is now part
+standalone source-unit binary were deleted; source-unit hosting is now part
 of `sinexd`.
 
 ### derived provenance

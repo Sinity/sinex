@@ -693,10 +693,10 @@ fn command_path(cmd: &Commands) -> String {
             TelemetryCommands::AssemblyStats { .. } => "telemetry assembly-stats".to_string(),
             TelemetryCommands::NodeStats { .. } => "telemetry node-stats".to_string(),
             TelemetryCommands::MetricCounters { .. } => "telemetry metric-counters".to_string(),
-            TelemetryCommands::IngestdBatchStats { .. } => {
-                "telemetry ingestd-batch-stats".to_string()
+            TelemetryCommands::EventEngineBatchStats { .. } => {
+                "telemetry event-engine-batch-stats".to_string()
             }
-            TelemetryCommands::IngestdValidation => "telemetry ingestd-validation".to_string(),
+            TelemetryCommands::EventEngineValidation => "telemetry event-engine-validation".to_string(),
         },
         Commands::Report { cmd } => match cmd {
             ReportCommands::Today => "report today".to_string(),
@@ -925,7 +925,7 @@ mod tests {
               "kind": "deployed_host",
               "gateway": {
                 "base_url": "https://127.0.0.1:9999",
-                "token_file": "/run/agenix/sinex-gateway-admin-token",
+                "token_file": "/run/agenix/sinex-api-admin-token",
                 "token_role": "admin",
                 "ca_cert_file": "/var/lib/sinex/run/gateway-ca.pem"
               }
@@ -940,7 +940,7 @@ mod tests {
         assert_eq!(config.rpc_url, "https://127.0.0.1:9999");
         assert_eq!(
             config.token_file.as_deref(),
-            Some("/run/agenix/sinex-gateway-admin-token")
+            Some("/run/agenix/sinex-api-admin-token")
         );
         assert_eq!(
             config.token_role,

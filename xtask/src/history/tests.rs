@@ -2649,12 +2649,12 @@ mod tests {
         db.store_test_results(
             inv_id,
             &[TestResult {
-                test_name: "ingestd_ready_probe".into(),
-                package: "sinex-ingestd".into(),
+                test_name: "event_engine_ready_probe".into(),
+                package: "sinexd".into(),
                 status: TestStatus::Fail,
                 duration_secs: Some(12.0),
                 attempt: 1,
-                output: Some("ingestd did not reach READY state".into()),
+                output: Some("event_engine did not reach READY state".into()),
             }],
         )?;
 

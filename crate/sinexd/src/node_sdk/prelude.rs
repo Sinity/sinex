@@ -1,7 +1,7 @@
 //! Prelude module for convenient imports
 //!
 //! This module re-exports the most commonly used types and traits from the
-//! sinex-node-sdk crate, allowing for more ergonomic imports:
+//! sinexd crate, allowing for more ergonomic imports:
 //!
 //! ```rust
 //! use crate::node_sdk::prelude::*;

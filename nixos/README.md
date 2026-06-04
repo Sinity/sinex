@@ -76,18 +76,18 @@ Add to your NixOS configuration:
   # Using environment.etc."...".text = "..." bakes the token into the world-readable
   # Nix store — do NOT do that for real tokens.
   #
-  # Recommended: use agenix (token is auto-resolved from sinex-gateway-admin-token.age):
-  #   age.secrets.sinex-gateway-admin-token.file = ./secrets/sinex-gateway-admin-token.age;
+  # Recommended: use agenix (token is auto-resolved from sinex-api-admin-token.age):
+  #   age.secrets.sinex-api-admin-token.file = ./secrets/sinex-api-admin-token.age;
   #
   # Alternative: point the legacy-named option directly at a runtime secret file:
-  #   services.sinex.secrets.gatewayAdminTokenFile = "/run/secrets/sinex-gateway-admin-token";
+  #   services.sinex.secrets.apiAdminTokenFile = "/run/secrets/sinex-api-admin-token";
   #
   # The module asserts that one of the above is present and refuses to start without it.
 }
 ```
 
-The module auto-resolves the token from agenix (`sinex-gateway-admin-token`) or from
-`services.sinex.secrets.gatewayAdminTokenFile`. It will refuse to start if neither is
+The module auto-resolves the token from agenix (`sinex-api-admin-token`) or from
+`services.sinex.secrets.apiAdminTokenFile`. It will refuse to start if neither is
 configured, preventing accidental no-auth deployments.
 
 Apply with:

@@ -1,7 +1,7 @@
 # Chaos test: sinexd process kill during batch ingestion — Rust-driven.
 #
-# SIGKILLs ingestd mid-batch and verifies:
-#   - ingestd restarts (via systemd) and resumes from its checkpoint
+# SIGKILLs event_engine mid-batch and verifies:
+#   - event_engine restarts (via systemd) and resumes from its checkpoint
 #   - no duplicate events in Postgres (idempotent re-processing)
 #   - the total event count is monotonically non-decreasing (no data loss)
 { pkgs
@@ -31,7 +31,7 @@ pkgs.testers.nixosTest {
       watchPaths = [ "/var/lib/sinex/watched" ];
     };
 
-    # ingestd must restart automatically after SIGKILL
+    # event_engine must restart automatically after SIGKILL
     systemd.services.sinexd.serviceConfig.Restart = lib.mkForce "always";
     systemd.services.sinexd.serviceConfig.RestartSec = lib.mkForce "2s";
 

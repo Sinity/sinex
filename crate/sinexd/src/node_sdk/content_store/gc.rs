@@ -8,7 +8,7 @@
 //! and cross-references against `core.blobs`.
 //!
 //! The same routine is invoked by the `sinexctl blob sweep-orphans` CLI and
-//! by the periodic GC task in `sinex-ingestd`.
+//! by the periodic GC task in `sinexd`.
 
 use crate::node_sdk::{NodeResult, SinexError};
 use serde::Serialize;

@@ -1154,9 +1154,9 @@ pub(super) fn check_secret_materials(
     let descriptor_present = descriptor.is_some();
     let admin_token = descriptor_secret_path(
         descriptor,
-        |value| value.secrets.gateway_admin_token_file.clone(),
+        |value| value.secrets.api_admin_token_file.clone(),
         "SINEX_API_ADMIN_TOKEN_FILE",
-        PathBuf::from("/run/agenix/sinex-gateway-admin-token"),
+        PathBuf::from("/run/agenix/sinex-api-admin-token"),
     );
     let db_password = descriptor_secret_path(
         descriptor,
@@ -1242,10 +1242,10 @@ pub(super) fn check_secret_materials(
     let mut present = Vec::new();
 
     if let Some(path) = admin_token {
-        record_secret_file("gateway-admin-token", &path, &mut present, &mut missing);
+        record_secret_file("api-admin-token", &path, &mut present, &mut missing);
     } else if !descriptor_present {
         missing.push(
-            "gateway-admin-token missing (set SINEX_API_ADMIN_TOKEN_FILE or provide /run/agenix/sinex-gateway-admin-token)"
+            "api-admin-token missing (set SINEX_API_ADMIN_TOKEN_FILE or provide /run/agenix/sinex-api-admin-token)"
                 .to_string(),
         );
     }

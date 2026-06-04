@@ -7,12 +7,10 @@ use crate::process::ProcessBuilder;
 pub(super) const HEAVY_TEST_THREAD_CAP: usize = 4;
 // Packages whose integration tests require the `sinexd` runtime binary.
 //
-// Post Wave-B fold (#1223) and the gateway fold (#1559), `sinexd` is the single
-// runtime binary hosting both the event engine (formerly `sinex-ingestd`) and
-// the operator API / gateway (formerly `sinex-gateway`). Test fixtures spawn it
-// as the engine-only ingestd (`SINEX_API_ENABLED=false`) and/or as the
-// gateway-only `rpc-server` subprocess, so any package using either fixture
-// needs this binary built.
+// `sinexd` is the single runtime binary hosting both the event engine and the
+// operator API. Test fixtures spawn it as an engine-only process
+// (`SINEX_API_ENABLED=false`) and/or as an API-only `rpc-server` subprocess, so
+// any package using either fixture needs this binary built.
 const SINEXD_RUNTIME_TEST_PACKAGES: &[&str] = &[
     "sinex-db",
     "sinex-e2e-tests",
@@ -367,7 +365,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn runtime_binary_requirements_include_ingestd_for_node_sdk_tests()
+    async fn runtime_binary_requirements_include_event_engine_for_node_sdk_tests()
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinexd".to_string()],
@@ -382,7 +380,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn runtime_binary_requirements_include_ingestd_for_db_tests()
+    async fn runtime_binary_requirements_include_event_engine_for_db_tests()
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinex-db".to_string()],

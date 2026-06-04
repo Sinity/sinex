@@ -319,7 +319,7 @@ pub async fn handle_curation_record_duplicate_judgment(
         candidate_payload,
         evidence_event_ids: req.event_ids.clone(),
         evidence_material_ids: evidence_material_ids.clone(),
-        producer: "sinex-gateway.duplicate-workbench@1".to_string(),
+        producer: "sinexd.duplicate-workbench@1".to_string(),
         confidence: 1.0,
         rationale: "operator duplicate-resolution action over cross-material candidate events"
             .to_string(),

@@ -20,9 +20,9 @@ use crate::history::HistoryDb;
 const PACKAGES: &[&str] = &[
     "sinex-primitives",
     "sinex-db",
-    "sinex-gateway",
-    "sinex-ingestd",
-    "sinex-node-sdk",
+    "sinexd",
+    "sinexd",
+    "sinexd",
 ];
 
 const COMMANDS: &[(&str, u32)] = &[

@@ -93,7 +93,7 @@ async fn test_schema_violation_routes_to_dlq() -> TestResult<()> {
     })
     .await?;
 
-    // 2. Setup Consumer (Ingestd) with Strict Validator
+    // 2. Setup Consumer (EventEngine) with Strict Validator
     let mut validator = IngestEventValidator::new_strict(true);
     let loaded = validator.reload_schemas(&pool).await?;
     println!("Loaded schemas: {loaded}");
@@ -122,7 +122,7 @@ async fn test_schema_violation_routes_to_dlq() -> TestResult<()> {
     let topology = JetStreamTopology::new(
         env,
         base_stream.clone(),
-        ctx.pipeline_namespace().consumer_name("ingestd_test"),
+        ctx.pipeline_namespace().consumer_name("event_engine_test"),
         Some(ctx.pipeline_namespace().prefix()),
     );
 

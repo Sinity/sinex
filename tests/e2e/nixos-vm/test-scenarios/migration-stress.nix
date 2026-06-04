@@ -102,7 +102,7 @@ pkgs.testers.nixosTest {
     #
     # Sinex tracks whether migrations have been applied via a hash file in the
     # state directory. Deleting it forces preflight to re-apply the schema on
-    # the next ingestd restart.
+    # the next event_engine restart.
 
     with subtest("invalidate-and-restart"):
         machine.succeed(
@@ -131,7 +131,7 @@ pkgs.testers.nixosTest {
 
         print(f"✓ Maximum observed lock duration: {max_observed_lock_secs:.1f}s (< 30s threshold)")
 
-    # ─── Wait for ingestd to come back up after migration ─────────────────────
+    # ─── Wait for event_engine to come back up after migration ─────────────────────
 
     with subtest("post-migration-health"):
         machine.wait_for_unit("sinexd.service", timeout=60)

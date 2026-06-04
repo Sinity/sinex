@@ -161,7 +161,7 @@ pub(super) async fn maybe_start_schema_listener(
     Option<tokio::task::JoinHandle<()>>,
 )> {
     // Enable schema cache and validation when infrastructure is available.
-    // Schemas are broadcast from ingestd and stored in NATS KV.
+    // Schemas are broadcast from event_engine and stored in NATS KV.
     // In edge mode (without full infrastructure), gracefully skip schema validation.
 
     let client = match transport {

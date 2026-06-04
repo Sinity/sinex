@@ -56,7 +56,7 @@
     core = {
       enable = true;
       gateway.autoGenerateTls = true;
-      ingestd = {
+      event_engine = {
         batch = {
           size = 500;
           timeoutSec = 3;
@@ -158,7 +158,7 @@
     };
   };
 
-  environment.etc."sinex/gateway-admin-token".text = "dev-sandbox-admin:admin";
+  environment.etc."sinex/api-admin-token".text = "dev-sandbox-admin:admin";
 
   users.users.developer = {
     isNormalUser = true;

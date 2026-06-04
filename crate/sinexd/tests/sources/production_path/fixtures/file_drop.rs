@@ -1,7 +1,7 @@
 //! File-drop fixture.
 //!
 //! Creates a temporary directory and writes `data` as a file into it.
-//! Simulates the inotify-driven `FileDropAdapter` path: the source worker
+//! Simulates the inotify-driven `FileDropAdapter` path: the source unit host
 //! watches the directory and picks up the newly-dropped file.
 
 use std::path::PathBuf;

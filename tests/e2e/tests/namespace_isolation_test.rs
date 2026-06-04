@@ -7,7 +7,7 @@ use sinex_primitives::DynamicPayload;
 use xtask::sandbox::prelude::*;
 
 /// Two independent pipeline scopes should not see each other's events.
-/// Each scope gets its own NATS namespace and ingestd consumer, so event
+/// Each scope gets its own NATS namespace and event_engine consumer, so event
 /// counts observed via `wait_for_event_count` must be scope-local.
 #[sinex_test]
 #[ignore = "heavy: run with xtask test --heavy"]

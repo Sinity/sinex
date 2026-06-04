@@ -148,8 +148,8 @@ pub const TELEMETRY_STREAM_STATS: &str = "telemetry.stream_stats";
 pub const TELEMETRY_ASSEMBLY_STATS: &str = "telemetry.assembly_stats";
 pub const TELEMETRY_NODE_STATS: &str = "telemetry.node_stats";
 pub const TELEMETRY_METRIC_COUNTERS: &str = "telemetry.metric_counters";
-pub const TELEMETRY_INGESTD_BATCH_STATS: &str = "telemetry.ingestd_batch_stats";
-pub const TELEMETRY_INGESTD_VALIDATION: &str = "telemetry.ingestd_validation";
+pub const TELEMETRY_EVENT_ENGINE_BATCH_STATS: &str = "telemetry.event_engine_batch_stats";
+pub const TELEMETRY_EVENT_ENGINE_VALIDATION: &str = "telemetry.event_engine_validation";
 pub const TELEMETRY_THROUGHPUT: &str = "telemetry.throughput";
 
 // Annotations

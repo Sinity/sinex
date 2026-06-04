@@ -64,9 +64,9 @@ pub use nats::EventOverrides;
 #[cfg(any(feature = "runtime-introspection", test))]
 pub use node_runtime::{TestRuntime, TestRuntimeBuilder};
 pub use orchestrator::{
-    CapturedOutput, TestGatewayConfig, TestGatewayHandle, TestIngestdConfig, TestIngestdHandle,
+    CapturedOutput, TestGatewayConfig, TestGatewayHandle, TestEventEngineConfig, TestEventEngineHandle,
     TestSourceUnitConfig, TestSourceUnitHandle, run_test_source_unit_scan,
-    source_unit_host_binary_path, start_test_gateway, start_test_ingestd_with_config,
+    source_unit_host_binary_path, start_test_gateway, start_test_event_engine_with_config,
     start_test_source_unit,
 };
 pub use prelude::SinexError;

@@ -80,7 +80,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 ///
 /// ### [`Class::Confirmation`] — persistence acknowledgement signals
 ///
-/// Per-event ACK signals from ingestd to derived-node adapters. Loss causes
+/// Per-event ACK signals from event_engine to derived-node adapters. Loss causes
 /// duplicate processing (not data loss); automata re-check against DB state.
 ///
 /// - **Subject pattern**: `{env}.events.confirmations.{event_id}`
@@ -151,7 +151,7 @@ pub enum Class {
     /// Loss breaks material provenance and must fail the acquisition operation.
     SourceMaterial,
 
-    /// Persistence acknowledgement signals from ingestd to derived nodes.
+    /// Persistence acknowledgement signals from event_engine to derived nodes.
     /// Loss causes duplicate processing; best-effort with retry queue.
     Confirmation,
 

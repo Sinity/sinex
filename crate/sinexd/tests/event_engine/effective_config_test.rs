@@ -1,10 +1,10 @@
-use sinexd::event_engine::IngestdConfig;
+use sinexd::event_engine::EventEngineConfig;
 use sinex_primitives::validation::config_validation::ConfigValidation;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn defaults_match_constants() -> TestResult<()> {
-    let config = IngestdConfig::default();
+    let config = EventEngineConfig::default();
     assert_eq!(config.database_pool_size, 50);
     assert_eq!(config.max_buffered_slices, 4096);
     assert!(!config.dry_run);
@@ -15,7 +15,7 @@ async fn defaults_match_constants() -> TestResult<()> {
 
 #[sinex_test]
 async fn validates_database_urls() -> TestResult<()> {
-    let mut config = IngestdConfig::default();
+    let mut config = EventEngineConfig::default();
     config.database_url = "postgresql://localhost/test".to_string();
     config.nats.url = "nats://localhost:4222".to_string();
 
@@ -28,7 +28,7 @@ async fn validates_database_urls() -> TestResult<()> {
 
 #[sinex_test]
 async fn constructs_from_args() -> TestResult<()> {
-    let config = IngestdConfig::from_args(
+    let config = EventEngineConfig::from_args(
         Some("postgresql://custom/db".to_string()),
         "nats://custom:4222".to_string(),
         true,
@@ -57,16 +57,16 @@ async fn defaults_read_process_environment() -> TestResult<()> {
     env.set("DATABASE_URL", "postgresql://env/example");
     env.set("SINEX_NATS_URL", "tls://env-nats:4222");
     env.set("SINEX_NATS_REQUIRE_TLS", "1");
-    env.set("SINEX_EVENT_ENGINE_WORK_DIR", "/tmp/sinex-ingestd-env-config");
+    env.set("SINEX_EVENT_ENGINE_WORK_DIR", "/tmp/sinexd-env-config");
 
-    let config = IngestdConfig::default();
+    let config = EventEngineConfig::default();
 
     assert_eq!(config.database_url, "postgresql://env/example");
     assert_eq!(config.nats.url, "tls://env-nats:4222");
     assert!(config.nats.require_tls);
     assert_eq!(
         config.work_dir,
-        camino::Utf8PathBuf::from("/tmp/sinex-ingestd-env-config")
+        camino::Utf8PathBuf::from("/tmp/sinexd-env-config")
     );
     Ok(())
 }
@@ -78,7 +78,7 @@ async fn cli_arguments_override_env_transport_values() -> TestResult<()> {
     env.set("SINEX_NATS_URL", "nats://env-default:4222");
     env.set("SINEX_NATS_REQUIRE_TLS", "0");
     env.set("SINEX_EVENT_ENGINE_POOL_ACQUIRE_TIMEOUT_SECS", "45");
-    let config = IngestdConfig::from_args(
+    let config = EventEngineConfig::from_args(
         Some("postgresql://cli/override".to_string()),
         "tls://cli-nats:4222".to_string(),
         true,
@@ -120,10 +120,10 @@ async fn from_args_reads_env_backed_runtime_flags() -> TestResult<()> {
     env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_INTERVAL_MS", "500");
     env.set(
         "SINEX_ASSEMBLER_STATE_DIR",
-        "/tmp/sinex-ingestd-assembler-state",
+        "/tmp/sinexd-assembler-state",
     );
 
-    let config = IngestdConfig::from_args(
+    let config = EventEngineConfig::from_args(
         Some("postgresql://custom/db".to_string()),
         "nats://custom:4222".to_string(),
         false,
@@ -154,14 +154,14 @@ async fn from_args_reads_env_backed_runtime_flags() -> TestResult<()> {
     assert_eq!(config.material_wal_sync_interval_ms.as_millis(), 500);
     assert_eq!(
         config.assembler_state_dir,
-        camino::Utf8PathBuf::from("/tmp/sinex-ingestd-assembler-state")
+        camino::Utf8PathBuf::from("/tmp/sinexd-assembler-state")
     );
     Ok(())
 }
 
 #[sinex_test]
 async fn requires_tls_when_enabled() -> TestResult<()> {
-    let mut config = IngestdConfig::default();
+    let mut config = EventEngineConfig::default();
     config.nats.require_tls = true;
     config.nats.url = "nats://localhost:4222".to_string();
     assert!(config.validate_config().is_err());
@@ -177,7 +177,7 @@ async fn rejects_invalid_env_overrides() -> TestResult<()> {
     let mut env = EnvGuard::new();
     env.set("SINEX_EVENT_ENGINE_POOL_ACQUIRE_TIMEOUT_SECS", "soon");
 
-    let error = IngestdConfig::from_args(
+    let error = EventEngineConfig::from_args(
         Some("postgresql://cli/override".to_string()),
         "nats://localhost:4222".to_string(),
         false,
@@ -191,7 +191,7 @@ async fn rejects_invalid_env_overrides() -> TestResult<()> {
         None,
         None,
     )
-    .expect_err("invalid ingestd env should fail config construction");
+    .expect_err("invalid event_engine env should fail config construction");
 
     let message = error.to_string();
     assert!(message.contains("SINEX_EVENT_ENGINE_POOL_ACQUIRE_TIMEOUT_SECS"));
@@ -205,7 +205,7 @@ async fn from_args_rejects_invalid_path_env_overrides() -> TestResult<()> {
     env.set("SINEX_EVENT_ENGINE_WORK_DIR", "../../bad-work-dir");
     env.set("SINEX_ASSEMBLER_STATE_DIR", "../../bad-state-dir");
 
-    let error = IngestdConfig::from_args(
+    let error = EventEngineConfig::from_args(
         Some("postgresql://cli/override".to_string()),
         "nats://localhost:4222".to_string(),
         false,
@@ -219,7 +219,7 @@ async fn from_args_rejects_invalid_path_env_overrides() -> TestResult<()> {
         None,
         None,
     )
-    .expect_err("invalid ingestd path override must fail config construction");
+    .expect_err("invalid event_engine path override must fail config construction");
 
     let message = error.to_string();
     assert!(message.contains("SINEX_EVENT_ENGINE_WORK_DIR"));
@@ -229,7 +229,7 @@ async fn from_args_rejects_invalid_path_env_overrides() -> TestResult<()> {
 
 #[sinex_test]
 async fn from_args_rejects_invalid_direct_path_overrides() -> TestResult<()> {
-    let error = IngestdConfig::from_args(
+    let error = EventEngineConfig::from_args(
         Some("postgresql://cli/override".to_string()),
         "nats://localhost:4222".to_string(),
         false,

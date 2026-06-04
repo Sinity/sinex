@@ -73,5 +73,5 @@
     extraGroups = [ "wheel" ];
   };
 
-  environment.etc."sinex/gateway-admin-token".text = "headless-admin:admin";
+  environment.etc."sinex/api-admin-token".text = "headless-admin:admin";
 }

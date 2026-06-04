@@ -23,7 +23,7 @@
       "type": "object"
     },
     "name": {
-      "description": "Metric name (e.g., \"gateway.requests\", \"`ingestd.events_processed`\")",
+      "description": "Metric name (e.g., \"gateway.requests\", \"`event_engine.events_processed`\")",
       "type": "string"
     },
     "value": {

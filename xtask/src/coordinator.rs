@@ -2215,7 +2215,7 @@ mod tests {
     #[sinex_test]
     async fn test_scope_key_different() -> TestResult<()> {
         let args1 = vec!["-p".into(), "sinex-db".into()];
-        let args2 = vec!["-p".into(), "sinex-gateway".into()];
+        let args2 = vec!["-p".into(), "sinexd".into()];
         assert_ne!(scope_key("test", &args1), scope_key("test", &args2));
         Ok(())
     }
@@ -2240,7 +2240,7 @@ mod tests {
     #[sinex_test]
     async fn test_scope_key_uses_semantic_scope_marker() -> TestResult<()> {
         let args1 = vec!["--scope=packages:sinex-db,xtask".into()];
-        let args2 = vec!["--scope=packages:sinex-gateway,xtask".into()];
+        let args2 = vec!["--scope=packages:sinexd,xtask".into()];
         assert_ne!(scope_key("test", &args1), scope_key("test", &args2));
         Ok(())
     }
@@ -2250,7 +2250,7 @@ mod tests {
         let args1 = vec![
             "--scope=packages:sinex-db,xtask".into(),
             "-p".into(),
-            "sinex-gateway".into(),
+            "sinexd".into(),
         ];
         let args2 = vec!["--scope=packages:sinex-db,xtask".into()];
         assert_eq!(scope_key("test", &args1), scope_key("test", &args2));
@@ -2302,7 +2302,7 @@ mod tests {
     #[sinex_test]
     async fn test_check_scope_varies_with_packages() -> TestResult<()> {
         let args_p1 = vec!["-p".into(), "sinex-db".into()];
-        let args_p2 = vec!["-p".into(), "sinex-gateway".into()];
+        let args_p2 = vec!["-p".into(), "sinexd".into()];
         let args_all = vec!["--all".into()];
         let args_lint = vec!["--lint".into()];
         let args_empty: Vec<String> = vec![];
@@ -2388,15 +2388,15 @@ mod tests {
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
 
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
         std::fs::write(
             dir.path().join("Cargo.toml"),
             r#"[workspace]
-members = ["crate/lib/sinex-db", "crate/lib/sinex-primitives"]
+members = ["crate/sinex-db", "crate/sinex-primitives"]
 "#,
         )?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/Cargo.toml"),
+            dir.path().join("crate/sinex-db/Cargo.toml"),
             r#"[package]
 name = "sinex-db"
 version = "0.0.0"
@@ -2404,12 +2404,12 @@ edition = "2024"
 "#,
         )?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            dir.path().join("crate/sinex-db/src/lib.rs"),
             "fn db() {}\n",
         )?;
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-primitives/src"))?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-primitives/src"))?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-primitives/Cargo.toml"),
+            dir.path().join("crate/sinex-primitives/Cargo.toml"),
             r#"[package]
 name = "sinex-primitives"
 version = "0.0.0"
@@ -2417,17 +2417,17 @@ edition = "2024"
 "#,
         )?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-primitives/src/lib.rs"),
+            dir.path().join("crate/sinex-primitives/src/lib.rs"),
             "fn p() {}\n",
         )?;
         run_git(
             &[
                 "add",
                 "Cargo.toml",
-                "crate/lib/sinex-db/Cargo.toml",
-                "crate/lib/sinex-db/src/lib.rs",
-                "crate/lib/sinex-primitives/Cargo.toml",
-                "crate/lib/sinex-primitives/src/lib.rs",
+                "crate/sinex-db/Cargo.toml",
+                "crate/sinex-db/src/lib.rs",
+                "crate/sinex-primitives/Cargo.toml",
+                "crate/sinex-primitives/src/lib.rs",
             ],
             dir.path(),
         )?;
@@ -2461,21 +2461,21 @@ edition = "2024"
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
 
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            dir.path().join("crate/sinex-db/src/lib.rs"),
             "fn db() {}\n",
         )?;
-        run_git(&["add", "crate/lib/sinex-db/src/lib.rs"], dir.path())?;
+        run_git(&["add", "crate/sinex-db/src/lib.rs"], dir.path())?;
         run_git(&["commit", "-qm", "first"], dir.path())?;
         let args = vec!["-p".into(), "sinex-db".into()];
         let fp_first = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
 
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            dir.path().join("crate/sinex-db/src/lib.rs"),
             "fn db() { /* v2 */ }\n",
         )?;
-        run_git(&["add", "crate/lib/sinex-db/src/lib.rs"], dir.path())?;
+        run_git(&["add", "crate/sinex-db/src/lib.rs"], dir.path())?;
         run_git(&["commit", "-qm", "second"], dir.path())?;
         let fp_second = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
 
@@ -2532,22 +2532,22 @@ edition = "2024"
         run_git(&["init", "-q"], dir.path())?;
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            dir.path().join("crate/sinex-db/src/lib.rs"),
             "fn db() {}\n",
         )?;
-        run_git(&["add", "crate/lib/sinex-db/src/lib.rs"], dir.path())?;
+        run_git(&["add", "crate/sinex-db/src/lib.rs"], dir.path())?;
         run_git(&["commit", "-qm", "init"], dir.path())?;
         let args = vec!["-p".into(), "sinex-db".into()];
 
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            dir.path().join("crate/sinex-db/src/lib.rs"),
             "fn db() { let _x = 1; }\n",
         )?;
         let fp_one = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            dir.path().join("crate/sinex-db/src/lib.rs"),
             "fn db() { let _x = 2; }\n",
         )?;
         let fp_two = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
@@ -2566,15 +2566,15 @@ edition = "2024"
         run_git(&["init", "-q"], dir.path())?;
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            dir.path().join("crate/sinex-db/src/lib.rs"),
             "fn db() {}\n",
         )?;
-        run_git(&["add", "crate/lib/sinex-db/src/lib.rs"], dir.path())?;
+        run_git(&["add", "crate/sinex-db/src/lib.rs"], dir.path())?;
         run_git(&["commit", "-qm", "init"], dir.path())?;
         let args = vec!["-p".into(), "sinex-db".into()];
-        let scratch = dir.path().join("crate/lib/sinex-db/src/scratch.rs");
+        let scratch = dir.path().join("crate/sinex-db/src/scratch.rs");
 
         std::fs::write(&scratch, "const VALUE: u8 = 1;\n")?;
         let fp_one = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
@@ -2594,14 +2594,14 @@ edition = "2024"
         run_git(&["init", "-q"], dir.path())?;
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            dir.path().join("crate/sinex-db/src/lib.rs"),
             "fn db() {}\n",
         )?;
         std::fs::write(dir.path().join("Cargo.lock"), "# v1\n")?;
         run_git(
-            &["add", "crate/lib/sinex-db/src/lib.rs", "Cargo.lock"],
+            &["add", "crate/sinex-db/src/lib.rs", "Cargo.lock"],
             dir.path(),
         )?;
         run_git(&["commit", "-qm", "init"], dir.path())?;
@@ -2628,13 +2628,13 @@ edition = "2024"
         std::fs::write(
             dir.path().join("Cargo.toml"),
             r#"[workspace]
-members = ["crate/lib/sinex-primitives", "crate/lib/sinex-db"]
+members = ["crate/sinex-primitives", "crate/sinex-db"]
 resolver = "2"
 "#,
         )?;
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-primitives/src"))?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-primitives/src"))?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-primitives/Cargo.toml"),
+            dir.path().join("crate/sinex-primitives/Cargo.toml"),
             r#"[package]
 name = "sinex-primitives"
 version = "0.1.0"
@@ -2642,12 +2642,12 @@ edition = "2024"
 "#,
         )?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-primitives/src/lib.rs"),
+            dir.path().join("crate/sinex-primitives/src/lib.rs"),
             "pub fn primitive() -> u8 { 1 }\n",
         )?;
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/Cargo.toml"),
+            dir.path().join("crate/sinex-db/Cargo.toml"),
             r#"[package]
 name = "sinex-db"
 version = "0.1.0"
@@ -2658,7 +2658,7 @@ sinex-primitives = { path = "../sinex-primitives" }
 "#,
         )?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            dir.path().join("crate/sinex-db/src/lib.rs"),
             "pub fn db() -> u8 { sinex_primitives::primitive() }\n",
         )?;
         run_git(&["add", "."], dir.path())?;
@@ -2666,12 +2666,12 @@ sinex-primitives = { path = "../sinex-primitives" }
         let args = vec!["-p".into(), "sinex-db".into()];
 
         std::fs::write(
-            dir.path().join("crate/lib/sinex-primitives/src/lib.rs"),
+            dir.path().join("crate/sinex-primitives/src/lib.rs"),
             "pub fn primitive() -> u8 { 2 }\n",
         )?;
         let fp_one = scoped_tree_fingerprint_in(dir.path(), "test", &args)?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-primitives/src/lib.rs"),
+            dir.path().join("crate/sinex-primitives/src/lib.rs"),
             "pub fn primitive() -> u8 { 3 }\n",
         )?;
         let fp_two = scoped_tree_fingerprint_in(dir.path(), "test", &args)?;
@@ -2708,7 +2708,7 @@ sinex-primitives = { path = "../sinex-primitives" }
             queue: vec![
                 QueuedWork {
                     command: "check".into(),
-                    args: vec!["-p".into(), "sinex-gateway".into()],
+                    args: vec!["-p".into(), "sinexd".into()],
                     is_foreground: false,
                     output_format: OutputFormat::Human,
                     tree_fingerprint: "queued-fp-1".into(),
@@ -2730,7 +2730,7 @@ sinex-primitives = { path = "../sinex-primitives" }
         let json = serde_json::to_string(&state)?;
         let deserialized: CoordinationState = serde_json::from_str(&json)?;
         assert_eq!(deserialized.queue.len(), 2);
-        assert_eq!(deserialized.queue[0].args, vec!["-p", "sinex-gateway"]);
+        assert_eq!(deserialized.queue[0].args, vec!["-p", "sinexd"]);
         assert_eq!(deserialized.queue[1].args, vec!["-p", "sinex-primitives"]);
         assert!(deserialized.queue[1].is_foreground);
         assert_eq!(deserialized.queue[0].output_format.as_cli_str(), "human");
@@ -2849,7 +2849,7 @@ sinex-primitives = { path = "../sinex-primitives" }
                 queue: vec![
                     QueuedWork {
                         command: "test".into(),
-                        args: vec!["-p".into(), "sinex-gateway".into()],
+                        args: vec!["-p".into(), "sinexd".into()],
                         is_foreground: false,
                         output_format: OutputFormat::Json,
                         tree_fingerprint: "queued-fp".into(),
@@ -2873,7 +2873,7 @@ sinex-primitives = { path = "../sinex-primitives" }
             .handle_completion("check")?
             .expect("queued work should be promoted");
         assert_eq!(next.command, "test");
-        assert_eq!(next.args, vec!["-p", "sinex-gateway"]);
+        assert_eq!(next.args, vec!["-p", "sinexd"]);
         assert_eq!(next.tree_fingerprint, "queued-fp");
         assert_eq!(next.scope_key, "queued-scope");
 
@@ -2883,7 +2883,7 @@ sinex-primitives = { path = "../sinex-primitives" }
         assert_eq!(promoted.command, "test");
         assert_eq!(promoted.job_id, -1);
         assert_eq!(promoted.pid, 0);
-        assert_eq!(promoted.args, vec!["-p", "sinex-gateway"]);
+        assert_eq!(promoted.args, vec!["-p", "sinexd"]);
         assert_eq!(promoted.tree_fingerprint, "queued-fp");
         assert_eq!(promoted.scope_key, "queued-scope");
         assert_eq!(promoted.queue.len(), 1);
@@ -3793,9 +3793,9 @@ sinex-primitives = { path = "../sinex-primitives" }
 
     #[sinex_test]
     async fn test_extract_explicit_packages_long_flag() -> TestResult<()> {
-        let args = vec!["--package".into(), "sinex-gateway".into()];
+        let args = vec!["--package".into(), "sinexd".into()];
         let pkgs = extract_explicit_packages("check", &args);
-        assert_eq!(pkgs, vec!["sinex-gateway"]);
+        assert_eq!(pkgs, vec!["sinexd"]);
         Ok(())
     }
 
@@ -3813,12 +3813,12 @@ sinex-primitives = { path = "../sinex-primitives" }
             "-p".into(),
             "sinex-db".into(),
             "-p".into(),
-            "sinex-gateway".into(),
+            "sinexd".into(),
         ];
         let pkgs = extract_explicit_packages("check", &args);
         assert_eq!(pkgs.len(), 2);
         assert!(pkgs.contains(&"sinex-db".to_string()));
-        assert!(pkgs.contains(&"sinex-gateway".to_string()));
+        assert!(pkgs.contains(&"sinexd".to_string()));
         Ok(())
     }
 

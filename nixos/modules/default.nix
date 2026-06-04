@@ -666,10 +666,10 @@ in
           enable = mkOption {
             type = bool;
             default = true;
-            description = "Enable core Sinex services (ingestd and gateway).";
+            description = "Enable core Sinex services (event engine and API).";
           };
 
-          ingestd = mkOption {
+          event_engine = mkOption {
             type = submodule {
               options = {
                 enable = mkOption {
@@ -679,25 +679,25 @@ in
                 };
                 spoolDir = mkOption {
                   type = path;
-                  default = cfg.stateRoot + "/spool/ingestd";
-                  defaultText = literalExpression "config.services.sinex.stateRoot + \"/spool/ingestd\"";
-                  description = "Spool directory for ingestd.";
+                  default = cfg.stateRoot + "/spool/event_engine";
+                  defaultText = literalExpression "config.services.sinex.stateRoot + \"/spool/event_engine\"";
+                  description = "Spool directory for event_engine.";
                 };
                 logLevel = mkOption {
                   type = str;
                   default = cfg.logLevel;
                   defaultText = literalExpression "config.services.sinex.logLevel";
-                  description = "Log level for ingestd.";
+                  description = "Log level for event_engine.";
                 };
                 batch = mkOption {
                   type = batchModule { defaultSize = 50; defaultTimeout = 2; };
                   default = { };
-                  description = "Batch settings for ingestd. Defaults tuned for desktop workloads (low latency). Increase size/timeout for high-throughput server deployments.";
+                  description = "Batch settings for event_engine. Defaults tuned for desktop workloads (low latency). Increase size/timeout for high-throughput server deployments.";
                 };
                 consumerMaxAckPending = mkOption {
                   type = positive;
                   default = 100;
-                  description = "JetStream max_ack_pending for the main ingestd consumer.";
+                  description = "JetStream max_ack_pending for the main event_engine consumer.";
                 };
                 materialSlicesMaxAckPending = mkOption {
                   type = positive;
@@ -711,14 +711,14 @@ in
                     defaultOpenFiles = 524288;
                   };
                   default = { };
-                  description = "Resource limits for ingestd.";
+                  description = "Resource limits for event_engine.";
                 };
                 gitopsEnabled = mkOption {
                   type = bool;
                   default = false;
                   description = ''
                     Enable GitOps schema sync service.
-                    When enabled, ingestd periodically fetches configured Git repositories
+                    When enabled, event_engine periodically fetches configured Git repositories
                     and registers discovered JSON schema files in the database.
                   '';
                 };
@@ -763,13 +763,13 @@ in
                     Interval in seconds between automatic blob garbage collection sweeps.
                     When null (default), automatic GC is disabled and orphans must be
                     reclaimed manually via `sinexctl blob sweep-orphans --apply`.
-                    Minimum effective value is 60 seconds (validated by ingestd).
+                    Minimum effective value is 60 seconds (validated by event_engine).
                   '';
                 };
                 extraArgs = mkOption {
                   type = strList;
                   default = [ ];
-                  description = "Additional command-line arguments for ingestd.";
+                  description = "Additional command-line arguments for event_engine.";
                 };
               };
             };
@@ -2184,14 +2184,14 @@ in
             '';
           };
 
-          gatewayAdminTokenFile = mkOption {
+          apiAdminTokenFile = mkOption {
             type = nullOr str;
             default = null;
             description = ''
               Optional path to the API admin token file.
               When unset, the module first looks for the conventional secret sources
-              <literal>sinex-gateway-admin-token</literal> (agenix) and
-              <literal>/etc/sinex/gateway-admin-token</literal> (declarative environment.etc),
+              <literal>sinex-api-admin-token</literal> (agenix) and
+              <literal>/etc/sinex/api-admin-token</literal> (declarative environment.etc),
               and the API refuses to start only if none of those exist.
             '';
           };
@@ -2208,7 +2208,7 @@ in
       runtimeDir = "${stateRoot}/run";
       spoolBase = "${stateRoot}/spool";
       nodesSpool = "${spoolBase}/nodes";
-      ingestSpool = cfg.core.ingestd.spoolDir;
+      ingestSpool = cfg.core.event_engine.spoolDir;
       logDir = cfg.observability.logDir;
       blobDir = cfg.storage.blob.repositoryPath;
       sinexUser = cfg.users.nodes;
@@ -2231,9 +2231,9 @@ in
       databaseUrl = renderDatabaseUrl dbCfg;
       secretPaths = config.sinex.secrets.paths or { };
       resolveSecretPath = resolveNamedSecretPath secretPaths;
-      gatewayAdminTokenFile =
-        resolveSecretPath cfg.secrets.gatewayAdminTokenFile [
-          "sinex-gateway-admin-token"
+      apiAdminTokenFile =
+        resolveSecretPath cfg.secrets.apiAdminTokenFile [
+          "sinex-api-admin-token"
         ];
       effectiveDatabasePasswordFile = resolveSecretPath cfg.database.passwordFile [
         "sinex-local-db"
@@ -2406,7 +2406,7 @@ in
         };
         secrets = {
           database_password_file = effectiveDatabasePasswordFile;
-          gateway_admin_token_file = gatewayAdminTokenFile;
+          api_admin_token_file = apiAdminTokenFile;
           gateway_tls_cert_file = gatewayTlsCertFile;
           gateway_tls_key_file = gatewayTlsKeyFile;
           gateway_tls_trust_anchor_file = gatewayTlsTrustAnchorFile;
@@ -2442,7 +2442,7 @@ in
         };
         gateway = {
           base_url = gatewayProbeBaseUrl;
-          token_file = gatewayAdminTokenFile;
+          token_file = apiAdminTokenFile;
           token_role = "admin";
           ca_cert_file = gatewayTlsTrustAnchorFile;
           client_cert_file = null;
@@ -2486,11 +2486,11 @@ in
           { path = spoolBase; mode = "0755"; }
           { path = nodesSpool; mode = "0755"; }
           { path = ingestSpool; mode = "0755"; }
-          # ingestd writes its working directory under ${stateRoot}/ingestd/work
-          # (see SINEX_EVENT_ENGINE_WORK_DIR). Pre-create so ingestd does not need
+          # event_engine writes its working directory under ${stateRoot}/event_engine/work
+          # (see SINEX_EVENT_ENGINE_WORK_DIR). Pre-create so event_engine does not need
           # write access to stateRoot itself.
-          { path = "${stateRoot}/ingestd"; mode = "0750"; }
-          { path = "${stateRoot}/ingestd/work"; mode = "0750"; }
+          { path = "${stateRoot}/event_engine"; mode = "0750"; }
+          { path = "${stateRoot}/event_engine/work"; mode = "0750"; }
           { path = logDir; mode = "0755"; }
         ]
         ++ optionals (cfg.storage.blob.enable) [{ path = blobDir; mode = "0750"; }]
@@ -2507,7 +2507,7 @@ in
 
       # Auxiliary sinex-owned units that should be gated alongside the
       # long-running runtime services. Long-running services
-      # (sinexd, source workers, automata) already wire their own wantedBy
+      # (sinexd, source unit hosts, automata) already wire their own wantedBy
       # from cfg.runtime.target.attachToMultiUser and publish their service
       # names via config.sinex._generatedUnits. The auxiliary list here
       # covers the one-shots, the standalone sinex-document-scan and its
@@ -2578,11 +2578,11 @@ in
             message = "services.sinex.package must be set when services.sinex.enable = true.";
           }
           {
-            assertion = (!cfg.core.enable || !cfg.core.gateway.enable) || gatewayAdminTokenFile != null;
+            assertion = (!cfg.core.enable || !cfg.core.gateway.enable) || apiAdminTokenFile != null;
             message = ''
-              Gateway requires an admin token file. Set services.sinex.secrets.gatewayAdminTokenFile,
-              provide an agenix secret named sinex-gateway-admin-token, or define
-              environment.etc."sinex/gateway-admin-token".
+              API requires an admin token file. Set services.sinex.secrets.apiAdminTokenFile,
+              provide an agenix secret named sinex-api-admin-token, or define
+              environment.etc."sinex/api-admin-token".
             '';
           }
           {

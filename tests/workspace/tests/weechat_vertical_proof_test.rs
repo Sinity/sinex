@@ -3,14 +3,14 @@
 //! This test replaces the fake-scan-node pattern (direct DB inserts) with the
 //! real parser pipeline: `AppendOnlyFileAdapter` → `WeeChatLogParser` →
 //! `ParsedEventIntent` → Event (material provenance) → `EventIntent` →
-//! NATS publish → ingestd admission → DB persistence → query verification.
+//! NATS publish → event_engine admission → DB persistence → query verification.
 //!
 //! # Coverage
 //!
 //! - Four `WeeChat` event types: message, join, part, `server_notice`
 //! - Material provenance with per-line anchors
 //! - Admitted event intent envelope
-//! - Full NATS → ingestd → DB round-trip
+//! - Full NATS → event_engine → DB round-trip
 //! - DB verification of event type, source, timestamp, payload, provenance
 
 use futures::StreamExt;
@@ -159,7 +159,7 @@ fn raw_events_subject(ctx: &Sandbox, source: &str, event_type: &str) -> String {
 // Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Full vertical proof: WeeChat log file → parser → NATS → ingestd → DB → query.
+/// Full vertical proof: WeeChat log file → parser → NATS → event_engine → DB → query.
 ///
 /// This exercises every layer of the staged-source architecture for a concrete
 /// parser, proving that the Wave 1-3 infrastructure is wired end-to-end.
@@ -235,7 +235,7 @@ async fn weechat_full_pipeline_persists_correctly(ctx: TestContext) -> TestResul
         .await
         .map_err(|e| eyre!("NATS flush failed: {e}"))?;
 
-    // ── Wait for ingestd persistence ─────────────────────────────────────
+    // ── Wait for event_engine persistence ─────────────────────────────────────
     let count = stack.wait_for_event_count(5).await?;
     assert_eq!(count, 5, "expected 5 events persisted, got {count}");
 
@@ -368,7 +368,7 @@ async fn weechat_empty_file_produces_no_events(ctx: TestContext) -> TestResult<(
         intents.len()
     );
 
-    // Publish a zero-event intent — ingestd should not persist anything
+    // Publish a zero-event intent — event_engine should not persist anything
     // from this material.
     let initial_event_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE source_material_id = $1")

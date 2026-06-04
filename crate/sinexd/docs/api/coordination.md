@@ -96,7 +96,7 @@ impl DistributedRateLimiter {
 
 ```rust
 KvConfig {
-    bucket: "sinex_gateway_rate_limits",
+    bucket: "sinex_api_rate_limits",
     max_age: Duration::from_secs(window_seconds * 2), // Auto-cleanup
     ..Default::default()
 }

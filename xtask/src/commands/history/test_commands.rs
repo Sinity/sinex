@@ -83,10 +83,7 @@ fn classify_slow_test(test: &HistoricalSlowTest) -> SlowTestClassification {
             "dlq",
             "nats",
         ],
-    ) || matches!(
-        package,
-        "sinexd" | "sinex-gateway" | "sinex-ingestd"
-    ) {
+    ) || matches!(package, "sinexd") {
         return SlowTestClassification {
             kind: "runtime_path_candidate",
             recommendation: "check runtime startup/prep and gate reuse before weakening coverage",

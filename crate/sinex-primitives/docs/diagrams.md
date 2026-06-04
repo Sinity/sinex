@@ -312,7 +312,7 @@ Graceful Upgrade (Zero-Downtime)
   │  │ fs-watcher       ✅ Healthy  2d 4h    23.5       45MB  2.3%  │   │
   │  │ terminal-node    ✅ Healthy  2d 4h    8.2        32MB  1.1%  │   │
   │  │ desktop-node     ⚠️  Degraded 1d 2h    5.1        78MB  3.8%  │   │
-  │  │ ingestd          ✅ Healthy  2d 4h    31.8       125MB 8.2%  │   │
+  │  │ event_engine          ✅ Healthy  2d 4h    31.8       125MB 8.2%  │   │
   │  └──────────────────────────────────────────────────────────────┘   │
   └───────────────────────────────────────────────────────────────────────┘
 ```

@@ -113,7 +113,7 @@ async fn validator_rejects_null_byte_in_payload_string(ctx: TestContext) -> Test
         .build()?;
 
         // Transport acceptance and persistence are intentionally decoupled here:
-        // null bytes should make persistence fail cleanly later in ingestd.
+        // null bytes should make persistence fail cleanly later in event_engine.
         match scope.ctx().publish_prebuilt_event(&event).await {
             Ok(_) => accepted_by_transport += 1,
             Err(e) => {
@@ -129,7 +129,7 @@ async fn validator_rejects_null_byte_in_payload_string(ctx: TestContext) -> Test
     //
     // Poll until event count from this source stabilizes (two consecutive
     // checks return the same value) rather than sleeping a fixed duration.
-    // Null-byte payloads may be rejected by ingestd/DB before persisting, so
+    // Null-byte payloads may be rejected by event_engine/DB before persisting, so
     // the stable count may be anywhere from 0 to accepted_by_transport.
     if accepted_by_transport > 0 {
         let pool = scope.ctx().pool.clone();

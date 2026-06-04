@@ -1,12 +1,12 @@
-//! Reusable event admission boundary for ingestd.
+//! Reusable event admission boundary for event_engine.
 //!
 //! This module owns validation and persistence that are not intrinsically tied
 //! to NATS message settlement. The `JetStream` consumer remains responsible for
 //! ACK/NAK/DLQ and confirmation publishing, while finite staged parsers can call
 //! this service directly before they have a transport shape of their own.
 
+use crate::event_engine::{EventEngineResult, SinexError};
 use crate::event_engine::validator::{IngestEventValidator, ValidationResult};
-use crate::event_engine::{IngestdResult, SinexError};
 use sinex_db::DbPool;
 use sinex_db::repositories::{DbPoolExt, StreamBatchRow};
 use sinex_primitives::constants::limits::MAX_EVENT_PAYLOAD_BYTES;
@@ -319,7 +319,7 @@ impl AdmissionService {
     }
 
     /// Admit a candidate event already decoded into the canonical event model.
-    pub async fn admit_event(&self, event: Event<JsonValue>) -> IngestdResult<AdmissionDecision> {
+    pub async fn admit_event(&self, event: Event<JsonValue>) -> EventEngineResult<AdmissionDecision> {
         self.admit_event_with_metadata(event, None).await
     }
 
@@ -327,7 +327,7 @@ impl AdmissionService {
     pub async fn admit_candidate(
         &self,
         candidate: CandidateEvent,
-    ) -> IngestdResult<AdmissionDecision> {
+    ) -> EventEngineResult<AdmissionDecision> {
         let CandidateEvent {
             mut event,
             metadata,
@@ -391,7 +391,7 @@ impl AdmissionService {
         &self,
         mut event: Event<JsonValue>,
         metadata: Option<CandidateEventMetadata>,
-    ) -> IngestdResult<AdmissionDecision> {
+    ) -> EventEngineResult<AdmissionDecision> {
         // #1570 Prong B: material-provenance events legitimately arrive with
         // `ts_orig = None` — they defer resolution to the persistence stage,
         // which reads the source-material timing tier *after* the
@@ -414,7 +414,7 @@ impl AdmissionService {
             if ts_orig < self.ts_orig_lower_bound {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.admission_rejections_total",
+                    metric = "event_engine.admission_rejections_total",
                     kind = "past_timestamp",
                     event_id = ?event.id,
                     source = %event.source,
@@ -435,7 +435,7 @@ impl AdmissionService {
                 let latest_expected = now + self.future_ts_skew;
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.admission_rejections_total",
+                    metric = "event_engine.admission_rejections_total",
                     kind = "future_timestamp",
                     event_id = ?event.id,
                     source = %event.source,
@@ -460,7 +460,7 @@ impl AdmissionService {
         {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.admission_rejections_total",
+                metric = "event_engine.admission_rejections_total",
                 kind = "negative_anchor",
                 event_id = ?event.id,
                 source = %event.source,
@@ -494,7 +494,7 @@ impl AdmissionService {
         } else {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.admission_rejections_total",
+                metric = "event_engine.admission_rejections_total",
                 kind = "missing_event_id",
                 "Event missing required ID"
             );
@@ -506,7 +506,7 @@ impl AdmissionService {
         if !is_uuid_v7(&event_id) {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.admission_rejections_total",
+                metric = "event_engine.admission_rejections_total",
                 kind = "invalid_event_id",
                 event_id = %event_id,
                 source = %event.source,
@@ -533,7 +533,7 @@ impl AdmissionService {
     }
 
     /// Admit a canonical event encoded as bytes from a durable transport.
-    pub async fn admit_bytes(&self, payload: &[u8]) -> IngestdResult<AdmissionDecision> {
+    pub async fn admit_bytes(&self, payload: &[u8]) -> EventEngineResult<AdmissionDecision> {
         if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
             return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
                 AdmissionRejectionKind::PayloadTooLarge,
@@ -591,7 +591,7 @@ impl AdmissionService {
     pub async fn admit_intent_bytes(
         &self,
         payload: &[u8],
-    ) -> IngestdResult<Vec<AdmissionDecision>> {
+    ) -> EventEngineResult<Vec<AdmissionDecision>> {
         if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
             return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
                 AdmissionRejectionKind::PayloadTooLarge,
@@ -676,7 +676,7 @@ impl AdmissionService {
     pub async fn persist_batch(
         &self,
         batch: &[AdmittedEvent],
-    ) -> IngestdResult<AdmissionPersistResult> {
+    ) -> EventEngineResult<AdmissionPersistResult> {
         let refs: Vec<&AdmittedEvent> = batch.iter().collect();
         self.persist_batch_refs(&refs).await
     }
@@ -684,7 +684,7 @@ impl AdmissionService {
     pub async fn plan_persistence_batch(
         &self,
         batch: &[AdmittedEvent],
-    ) -> IngestdResult<AdmissionBatchPlan> {
+    ) -> EventEngineResult<AdmissionBatchPlan> {
         let refs: Vec<&AdmittedEvent> = batch.iter().collect();
         self.plan_persistence_batch_refs(&refs).await
     }
@@ -692,7 +692,7 @@ impl AdmissionService {
     pub async fn plan_persistence_batch_refs(
         &self,
         batch: &[&AdmittedEvent],
-    ) -> IngestdResult<AdmissionBatchPlan> {
+    ) -> EventEngineResult<AdmissionBatchPlan> {
         let tombstone_filter = self.filter_tombstoned_batch(batch).await?;
         let cache_filter = self.filter_cached_batch(&tombstone_filter.events).await;
         let cacheable_event_ids = tombstone_filter
@@ -718,7 +718,7 @@ impl AdmissionService {
     pub async fn persist_batch_refs(
         &self,
         batch: &[&AdmittedEvent],
-    ) -> IngestdResult<AdmissionPersistResult> {
+    ) -> EventEngineResult<AdmissionPersistResult> {
         let plan = self.plan_persistence_batch_refs(batch).await?;
         self.persist_plan(&plan).await
     }
@@ -726,7 +726,7 @@ impl AdmissionService {
     pub async fn persist_plan(
         &self,
         plan: &AdmissionBatchPlan,
-    ) -> IngestdResult<AdmissionPersistResult> {
+    ) -> EventEngineResult<AdmissionPersistResult> {
         if plan.events.is_empty() {
             return Ok(AdmissionPersistResult::skipped_plan(plan));
         }
@@ -755,7 +755,7 @@ impl AdmissionService {
             .map_err(|_| {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.batch_insert_timeouts_total",
+                    metric = "event_engine.batch_insert_timeouts_total",
                     batch_size = to_persist.len(),
                     timeout_seconds = write_timeout.as_secs_f64(),
                     "Timed out waiting for batch insert to complete"
@@ -806,7 +806,7 @@ impl AdmissionService {
             } else {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.batch_persistence_failures_total",
+                    metric = "event_engine.batch_persistence_failures_total",
                     error = %error,
                     "Failed to persist events batch"
                 );
@@ -841,7 +841,7 @@ impl AdmissionService {
         is_isolatable_batch_persistence_failure(error)
     }
 
-    async fn validate_event(&self, event: &Event<JsonValue>) -> IngestdResult<Option<Uuid>> {
+    async fn validate_event(&self, event: &Event<JsonValue>) -> EventEngineResult<Option<Uuid>> {
         let guard = self.validator.read().await;
         let validation =
             guard.validate_payload_for(&event.source, &event.event_type, &event.payload);
@@ -884,7 +884,7 @@ impl AdmissionService {
     async fn filter_tombstoned_batch<'a>(
         &self,
         batch: &[&'a AdmittedEvent],
-    ) -> IngestdResult<TombstoneFilterResult<'a>> {
+    ) -> EventEngineResult<TombstoneFilterResult<'a>> {
         if batch.is_empty() {
             return Ok(TombstoneFilterResult {
                 events: Vec::new(),
@@ -904,7 +904,7 @@ impl AdmissionService {
             .map_err(|error| {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.tombstone_query_failures_total",
+                    metric = "event_engine.tombstone_query_failures_total",
                     error = %error,
                     "Failed to query event_tombstones during batch persistence"
                 );
@@ -938,7 +938,7 @@ impl AdmissionService {
     }
 }
 
-fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> IngestdResult<Vec<StreamBatchRow>> {
+fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<StreamBatchRow>> {
     batch
         .iter()
         .map(|admitted| {
@@ -991,7 +991,7 @@ fn resolve_validation_result(
     strict_mode: bool,
     source: &sinex_primitives::domain::EventSource,
     event_type: &sinex_primitives::domain::EventType,
-) -> IngestdResult<Option<Uuid>> {
+) -> EventEngineResult<Option<Uuid>> {
     match validation {
         ValidationResult::Valid { schema_id } => Ok(Some(schema_id)),
         ValidationResult::Skipped => Ok(None),
@@ -1026,7 +1026,7 @@ fn resolve_validation_result(
 fn require_inserted_ids(
     inserted_ids: Option<Vec<Uuid>>,
     attempted_rows: usize,
-) -> IngestdResult<Vec<Uuid>> {
+) -> EventEngineResult<Vec<Uuid>> {
     inserted_ids.ok_or_else(|| {
         SinexError::invalid_state(format!(
             "Event repository omitted inserted_ids for a non-empty stream batch of {attempted_rows} row(s)"

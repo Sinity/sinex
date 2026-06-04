@@ -16,13 +16,13 @@ use tracing::{debug, info, warn};
 use sinex_primitives::{Timestamp, Uuid};
 
 use super::{MaterialAssembler, state};
-use crate::event_engine::{IngestdResult, SinexError};
+use crate::event_engine::{EventEngineResult, SinexError};
 
 const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1);
 
 pub(super) type MaterialTaskOutcome = (
     &'static str,
-    Result<IngestdResult<()>, tokio::task::JoinError>,
+    Result<EventEngineResult<()>, tokio::task::JoinError>,
 );
 
 struct AbortOnDropHandle<T> {
@@ -56,7 +56,7 @@ impl MaterialAssembler {
     pub(super) fn track_material_task(
         tasks: &mut JoinSet<MaterialTaskOutcome>,
         name: &'static str,
-        handle: JoinHandle<IngestdResult<()>>,
+        handle: JoinHandle<EventEngineResult<()>>,
     ) {
         tasks.spawn(async move { (name, AbortOnDropHandle::new(handle).join().await) });
     }
@@ -133,9 +133,9 @@ impl MaterialAssembler {
 
     pub(super) fn handle_task_exit(
         task_name: &str,
-        result: Result<IngestdResult<()>, tokio::task::JoinError>,
+        result: Result<EventEngineResult<()>, tokio::task::JoinError>,
         shutdown_flag: &Arc<AtomicBool>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         match result {
             Ok(Ok(())) if shutdown_flag.load(Ordering::Relaxed) => Ok(()),
             Ok(Ok(())) => Err(SinexError::service(format!(
@@ -156,7 +156,7 @@ impl MaterialAssembler {
         &self,
         shutdown_flag: Arc<AtomicBool>,
         shutdown_notify: Arc<Notify>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         let mut interval = tokio::time::interval(STALE_ASSEMBLY_CHECK_INTERVAL);
 
         loop {
@@ -279,7 +279,7 @@ impl MaterialAssembler {
     }
 
     /// Scan state root for orphaned temp files from crashed/terminated assemblies.
-    pub(super) async fn cleanup_orphaned_temp_files(&self) -> IngestdResult<()> {
+    pub(super) async fn cleanup_orphaned_temp_files(&self) -> EventEngineResult<()> {
         let mut entries = match fs::read_dir(&self.state_root).await {
             Ok(entries) => entries,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -311,7 +311,7 @@ impl MaterialAssembler {
     pub(super) async fn check_orphaned_folder(
         &self,
         path: std::path::PathBuf,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) else {
             return Err(SinexError::invalid_state(format!(
                 "Assembler state folder name is not valid UTF-8: {}",

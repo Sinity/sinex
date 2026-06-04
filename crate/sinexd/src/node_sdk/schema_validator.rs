@@ -3,7 +3,7 @@
 //! Enables nodes to validate events before publishing to NATS,
 //! reducing bandwidth and providing early feedback on schema errors.
 //!
-//! Uses schema broadcasts from ingestd and fetches full schemas from
+//! Uses schema broadcasts from event_engine and fetches full schemas from
 //! NATS KV to compile and cache validators locally.
 //!
 //! ## Edge Mode vs. Full Mode
@@ -29,7 +29,7 @@ use crate::node_sdk::runtime::stream::SchemaBroadcastEntry;
 /// Schema validator for nodes
 ///
 /// This validator:
-/// 1. Receives schema metadata via NATS broadcasts from ingestd
+/// 1. Receives schema metadata via NATS broadcasts from event_engine
 /// 2. Fetches full schema JSON from NATS KV bucket
 /// 3. Compiles schemas using jsonschema crate
 /// 4. Caches compiled validators for fast validation

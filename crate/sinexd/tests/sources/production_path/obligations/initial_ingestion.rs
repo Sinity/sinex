@@ -14,7 +14,7 @@
 //! The default obligation still drives the parser dispatch function directly
 //! so Wave-B cases can cover many source units cheaply. The `binary_path`
 //! canary below separately launches the real `sinexd` binary,
-//! publishes through NATS, runs ingestd, and verifies the resulting DB row.
+//! publishes through NATS, runs event_engine, and verifies the resulting DB row.
 //!
 //! ## Per-domain fenced regions
 //!
@@ -189,7 +189,7 @@ mod binary_path {
     }
 
     struct SourceUnitHostIngestStack {
-        ingestd: TestIngestdHandle,
+        event_engine: TestEventEngineHandle,
         _work_dir: tempfile::TempDir,
     }
 
@@ -199,8 +199,8 @@ mod binary_path {
 
             let nats = ctx.nats_handle()?;
             let work_dir = tempfile::tempdir()?;
-            let ingestd = start_test_ingestd_with_config(
-                TestIngestdConfig {
+            let event_engine = start_test_event_engine_with_config(
+                TestEventEngineConfig {
                     nats: nats.connection_config(),
                     database_url: ctx.database_url().to_string(),
                     work_dir: Some(work_dir.path().to_path_buf()),
@@ -215,13 +215,13 @@ mod binary_path {
             .await?;
 
             Ok(Self {
-                ingestd,
+                event_engine,
                 _work_dir: work_dir,
             })
         }
 
         async fn shutdown(mut self) -> TestResult<()> {
-            self.ingestd.stop().await?;
+            self.event_engine.stop().await?;
             Ok(())
         }
     }
@@ -314,7 +314,7 @@ mod binary_path {
 
     /// Proves the real `sinexd scan-source-unit` path for adapter-backed
     /// source units: binary launch, adapter config, parser, NATS publish,
-    /// ingestd persistence, DB payload visibility, and private-mode policy.
+    /// event_engine persistence, DB payload visibility, and private-mode policy.
     #[sinex_test(timeout = 120)]
     async fn source_unit_host_scan_private_mode_matrix(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;

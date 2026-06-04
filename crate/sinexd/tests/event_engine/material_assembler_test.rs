@@ -2,7 +2,7 @@
 
 use async_nats::jetstream;
 use serde_json::json;
-use sinexd::event_engine::{IngestdResult, MaterialAssembler, MaterialReadySet};
+use sinexd::event_engine::{EventEngineResult, MaterialAssembler, MaterialReadySet};
 use sinexd::node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
 use sinex_primitives::temporal;
 use std::sync::Arc;
@@ -29,7 +29,7 @@ async fn start_assembler(
     ctx: &TestContext,
     existing_state_path: Option<std::path::PathBuf>,
 ) -> TestResult<(
-    tokio::task::JoinHandle<IngestdResult<()>>,
+    tokio::task::JoinHandle<EventEngineResult<()>>,
     jetstream::Context,
     tempfile::TempDir,
     Option<tempfile::TempDir>,
@@ -76,7 +76,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
     let (handle, js, _content_store_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
     let material_id = uuid::Uuid::now_v7();
-    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
+    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.event_engine");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
     sinexd::node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
@@ -135,7 +135,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
     .await?
     .await?;
 
-    // Expect DLQ entry on the ingestd DLQ subject or detect assembler failure due to existing stream config drift.
+    // Expect DLQ entry on the event_engine DLQ subject or detect assembler failure due to existing stream config drift.
     use tokio::time::Instant;
     let deadline = Instant::now() + Duration::from_secs(Timeouts::LONG);
     loop {
@@ -297,7 +297,7 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
     let (handle, js, _content_store_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
     let material_id = uuid::Uuid::now_v7();
-    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
+    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.event_engine");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
     // Ensure streams are bootstrapped
@@ -371,7 +371,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
         start_assembler(&ctx, None).await?;
 
     let material_id = uuid::Uuid::now_v7();
-    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
+    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.event_engine");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
     sinexd::node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(

@@ -34,7 +34,7 @@ pub struct DoctorCommand {
     #[arg(long)]
     pub fix: bool,
 
-    /// Check runtime health (ingestd heartbeat, consumer lag, batch latency)
+    /// Check runtime health (event_engine heartbeat, consumer lag, batch latency)
     #[arg(long)]
     pub runtime: bool,
 
@@ -1531,7 +1531,7 @@ fn pipeline_smoke_invocation(
 ) -> (String, [&'static str; 5], String) {
     (
         xtask_program.into(),
-        ["test", "--debug", "-p", "sinex-ingestd", "-E"],
+        ["test", "--debug", "-p", "sinexd", "-E"],
         "test(test_pipeline_smoke)".to_string(),
     )
 }
@@ -1838,7 +1838,7 @@ struct RuntimeCheckReport {
 
 async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckReport> {
     use crate::config::config;
-    use crate::runtime_metrics::{IngestdStatus, RuntimeAssessment, RuntimeHealthStatus};
+    use crate::runtime_metrics::{EventEngineStatus, RuntimeAssessment, RuntimeHealthStatus};
 
     let cfg = config();
     let descriptor = match DeploymentReadinessDescriptor::load() {
@@ -1908,12 +1908,12 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
     if ctx.is_human() {
         println!("\n{}", style("Runtime Health:").bold());
 
-        // Ingestd heartbeat
-        let status_icon = match metrics.ingestd_status {
-            IngestdStatus::Healthy => style("✓").green(),
-            IngestdStatus::Stale => style("⚠").yellow(),
-            IngestdStatus::Down => style("✗").red(),
-            IngestdStatus::Unknown => style("?").dim(),
+        // EventEngine heartbeat
+        let status_icon = match metrics.event_engine_status {
+            EventEngineStatus::Healthy => style("✓").green(),
+            EventEngineStatus::Stale => style("⚠").yellow(),
+            EventEngineStatus::Down => style("✗").red(),
+            EventEngineStatus::Unknown => style("?").dim(),
         };
         let age_str = metrics
             .last_heartbeat_age_secs
@@ -1922,7 +1922,7 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
         println!(
             "  {} {:<20} {}",
             status_icon,
-            format!("ingestd: {}", metrics.ingestd_status),
+            format!("event_engine: {}", metrics.event_engine_status),
             style(age_str).dim()
         );
 

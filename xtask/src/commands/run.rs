@@ -49,7 +49,7 @@ fn make_instance_id(name: &str, prefix: Option<&str>) -> String {
 
 /// Build the runtime CLI arguments for the unified `sinexd` binary.
 ///
-/// Post-collapse, every short name (`ingestd`, `gateway`, automatons, source units)
+/// Post-collapse, every short name (`event_engine`, `gateway`, automatons, source units)
 /// resolves to the same `sinexd` binary. Source-unit short names dispatch through
 /// `sinexd scan-source-unit --source-unit <id>`; everything else falls through to
 /// the default `serve` subcommand which runs the full supervisor.
@@ -348,7 +348,7 @@ async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
 /// unified `sinexd` daemon. The CLI short names are preserved so existing
 /// scripts and operator habits keep working, but they all build/run sinexd.
 ///
-/// - `ingestd` / `gateway`: launch sinexd's supervisor (default `serve`
+/// - `event_engine` / `gateway`: launch sinexd's supervisor (default `serve`
 ///   subcommand). The supervisor brings up the event engine, the API, and
 ///   every enabled source-unit/automaton in one process — there is no
 ///   meaningful "just the gateway" anymore.
@@ -359,7 +359,7 @@ async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
 ///   individual automatons are no longer separately runnable.
 static BINARIES: &[(&str, &str, &str, Option<&str>)] = &[
     // Core supervisor entry points (serve the whole daemon)
-    ("ingestd", "sinexd", "sinexd", None),
+    ("event_engine", "sinexd", "sinexd", None),
     ("gateway", "sinexd", "sinexd", None),
     ("sinexd", "sinexd", "sinexd", None),
     // Source-unit one-off scans (sinexd scan-source-unit --source-unit <id>)
@@ -439,7 +439,7 @@ pub(crate) fn list_run_targets() -> Vec<String> {
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum RunSubcommand {
     /// Run sinexd (alias preserved post-collapse; runs the full supervisor)
-    Ingestd {
+    EventEngine {
         /// Instance ID for multi-instance coordination
         #[arg(long)]
         instance_id: Option<String>,
@@ -458,7 +458,7 @@ pub enum RunSubcommand {
         #[arg(long)]
         instance_id: Option<String>,
     },
-    /// Run core services bundle (ingestd + gateway)
+    /// Run core services bundle (event engine + API)
     Core {
         /// Instance ID prefix
         #[arg(long)]
@@ -575,8 +575,8 @@ impl XtaskCommand for RunCommand {
 
         match &self.subcommand {
             RunSubcommand::List => Ok(execute_list(ctx)),
-            RunSubcommand::Ingestd { instance_id } => {
-                self.run_binary("ingestd", instance_id.clone(), ctx).await
+            RunSubcommand::EventEngine { instance_id } => {
+                self.run_binary("event_engine", instance_id.clone(), ctx).await
             }
             RunSubcommand::Gateway { instance_id } => {
                 self.run_binary("gateway", instance_id.clone(), ctx).await
@@ -621,7 +621,7 @@ impl RunCommand {
     fn runs_single_binary(&self) -> bool {
         matches!(
             self.subcommand,
-            RunSubcommand::Ingestd { .. }
+            RunSubcommand::EventEngine { .. }
                 | RunSubcommand::Gateway { .. }
                 | RunSubcommand::Node { .. }
         )
@@ -642,7 +642,7 @@ impl RunCommand {
 
     fn validate_flag_compatibility(&self, ctx: &CommandContext) -> Result<()> {
         if self.watch && !self.runs_single_binary() {
-            bail!("--watch only supports single local binaries (`ingestd`, `gateway`, or `node`)");
+            bail!("--watch only supports single local binaries (`event_engine`, `gateway`, or `node`)");
         }
 
         if self.watch && ctx.is_background() {

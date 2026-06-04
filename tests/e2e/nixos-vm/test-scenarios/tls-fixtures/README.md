@@ -10,7 +10,7 @@ This directory contains TLS certificates for mTLS integration testing.
 
 - **Server Certificate**: `server-cert.pem` + `server-key.pem`
   - CN: localhost
-  - Used by sinex-gateway for TLS termination
+  - Used by sinexd for TLS termination
 
 - **Client Certificate**: `client-cert.pem` + `client-key.pem`
   - CN: test-client

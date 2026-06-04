@@ -144,7 +144,7 @@ Hardening defaults that are already part of the repo:
 
 Conventional secret names that the module now resolves automatically through agenix:
 
-- API admin token: `sinex-gateway-admin-token`
+- API admin token: `sinex-api-admin-token`
 - local NATS server TLS: `sinex-nats-server-cert`, `sinex-nats-server-key`, `sinex-nats-client-ca`
 - shared NATS client TLS/auth: `sinex-nats-ca`, `sinex-nats-client-cert`, `sinex-nats-client-key`, `sinex-nats-client-creds`, `sinex-nats-client-nkey`, `sinex-nats-token`
 - compatibility aliases are also accepted for the NATS client path: `nats-ca`, `nats-client-cert`, `nats-client-key`, `nats-client-creds`, `nats-client-nkey`, `nats-token`

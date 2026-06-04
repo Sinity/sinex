@@ -1,8 +1,8 @@
 # Sinex End-to-End Tests
 
-This crate hosts Rust integration coverage that spans multiple runtime crates
-(staging nodes ➜ ingestd ➜ core ➜ services ➜ gateway) as well as the NixOS
-module assertions and VM harness.
+This crate hosts Rust integration coverage that spans the deployed runtime path
+(source units -> event engine -> core storage -> API) as well as the NixOS module
+assertions and VM harness.
 
 ## Prerequisites
 
@@ -12,7 +12,7 @@ module assertions and VM harness.
 - PostgreSQL must be reachable at the location used by `sinex_test_utils`
   (the standard dev shell sets the required environment variables). `xtask test`
   runs the repo preflight that starts/repairs the local infra stack when needed.
-- Tests that spawn `sinex-ingestd` require the runtime binary in the active
+- Tests that spawn `sinexd` require the runtime binary in the active
   target directory. Use `xtask test`, not bare `cargo nextest`; xtask prepares
   stale or missing runtime binaries before launching nextest.
 - Python 3 is required for the CLI smoke check (`python3 -m compileall`).

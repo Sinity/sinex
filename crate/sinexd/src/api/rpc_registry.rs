@@ -88,7 +88,7 @@ use sinex_primitives::rpc::{
         TELEMETRY_ASSEMBLY_STATS_METHOD, TELEMETRY_COMMAND_FREQUENCY_METHOD,
         TELEMETRY_CURRENT_DEVICE_STATE_METHOD, TELEMETRY_CURRENT_HEALTH_METHOD,
         TELEMETRY_FILE_ACTIVITY_METHOD, TELEMETRY_GATEWAY_STATS_METHOD,
-        TELEMETRY_INGESTD_BATCH_STATS_METHOD, TELEMETRY_INGESTD_VALIDATION_METHOD,
+        TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD, TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD,
         TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_NODE_STATS_METHOD,
         TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_STREAM_STATS_METHOD,
         TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD, TELEMETRY_WINDOW_FOCUS_METHOD,
@@ -641,7 +641,7 @@ fn build_registry_impl() -> RpcRegistry {
         handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
         handle_telemetry_current_device_state, handle_telemetry_current_health,
         handle_telemetry_file_activity, handle_telemetry_gateway_stats,
-        handle_telemetry_ingestd_batch_stats, handle_telemetry_ingestd_validation,
+        handle_telemetry_event_engine_batch_stats, handle_telemetry_event_engine_validation,
         handle_telemetry_metric_counters, handle_telemetry_node_stats,
         handle_telemetry_recent_activity, handle_telemetry_stream_stats,
         handle_telemetry_system_state, handle_telemetry_throughput, handle_telemetry_window_focus,
@@ -831,12 +831,12 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_telemetry_metric_counters),
         )
         .pool_typed_rpc(
-            TELEMETRY_INGESTD_BATCH_STATS_METHOD,
-            boxed!(handle_telemetry_ingestd_batch_stats),
+            TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD,
+            boxed!(handle_telemetry_event_engine_batch_stats),
         )
         .pool_typed_rpc(
-            TELEMETRY_INGESTD_VALIDATION_METHOD,
-            boxed!(handle_telemetry_ingestd_validation),
+            TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD,
+            boxed!(handle_telemetry_event_engine_validation),
         )
         .pool_typed_rpc(
             TELEMETRY_THROUGHPUT_METHOD,

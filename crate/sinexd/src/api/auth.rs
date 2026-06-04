@@ -72,7 +72,7 @@ impl Role {
     /// # Examples
     ///
     /// ```
-    /// use sinex_gateway::auth::Role;
+    /// use sinex_api::auth::Role;
     ///
     /// assert!(Role::Admin.has_permission(Role::ReadOnly)); // Admin can do everything
     /// assert!(Role::Admin.has_permission(Role::Write));

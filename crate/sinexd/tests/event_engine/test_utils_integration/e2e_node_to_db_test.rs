@@ -1,7 +1,7 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinexd::event_engine::{
-    IngestdResult, JetStreamConsumer, JetStreamTopology, validator::IngestEventValidator,
+    EventEngineResult, JetStreamConsumer, JetStreamTopology, validator::IngestEventValidator,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,11 +10,11 @@ use tokio::time::timeout;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 use xtask::sandbox::{TestNodePublisher, prelude::*};
 
-async fn start_ingestd(
+async fn start_event_engine(
     ctx: &TestContext,
     suffix: &str,
 ) -> TestResult<(
-    tokio::task::JoinHandle<IngestdResult<()>>,
+    tokio::task::JoinHandle<EventEngineResult<()>>,
     jetstream::Context,
     JetStreamTopology,
 )> {
@@ -29,7 +29,7 @@ async fn start_ingestd(
         &env,
         stream,
         ctx.pipeline_namespace()
-            .consumer_name(&format!("ingestd-e2e-{suffix}")),
+            .consumer_name(&format!("event-engine-e2e-{suffix}")),
         Some(&namespace),
     );
 
@@ -62,7 +62,7 @@ async fn end_to_end_single_node_full_flow(ctx: TestContext) -> TestResult<()> {
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let suffix = format!("e2e-{}", uuid::Uuid::new_v4());
-    let (handle, js, topology) = start_ingestd(&ctx, &suffix).await?;
+    let (handle, js, topology) = start_event_engine(&ctx, &suffix).await?;
 
     let mut confirmation_sub = nats_client
         .subscribe(topology.confirmations_subject.clone())

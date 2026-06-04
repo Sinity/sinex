@@ -691,7 +691,7 @@ inventory::submit! {
             "claim:source_material.material_provenance",
             "claim:source_material.bounded_physical_frames",
         ],
-        command: "xtask test -p sinex-node-sdk",
+        command: "xtask test -p sinexd",
     }
 }
 
@@ -701,7 +701,7 @@ inventory::submit! {
         runner: "cargo-nextest",
         subject: SubjectQuery::from_static("node_adapter:record_source_harness"),
         claims: &["claim:record_source.cursor_and_anchor_laws"],
-        command: "xtask test -p sinex-node-sdk -E 'test(harness_materializes_records_and_finalizes_sink)'",
+        command: "xtask test -p sinexd -E 'test(harness_materializes_records_and_finalizes_sink)'",
     }
 }
 

@@ -1,7 +1,7 @@
 //! NixOS VM test suite binary for sinex.
 //!
 //! Runs inside a NixOS VM and asserts behavioral invariants against live
-//! services (`PostgreSQL`, sinex-ingestd) using typed queries and process checks.
+//! services (`PostgreSQL`, sinexd) using typed queries and process checks.
 //! Called from testScript with the VM-provided `SINEX_TEST_DB_NAME` environment,
 //! or an explicit `DATABASE_URL` override when a scenario needs a different DB.
 

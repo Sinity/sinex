@@ -112,7 +112,7 @@
             "systemctl show -p MemoryMax -p LimitNOFILE sinexd.service"
         )
         assert "MemoryMax=" in limits, "Memory limits not set"
-        assert "LimitNOFILE=524288" in limits, f"Unexpected ingestd LimitNOFILE: {limits}"
+        assert "LimitNOFILE=524288" in limits, f"Unexpected event_engine LimitNOFILE: {limits}"
 
         live_limits = sinex.succeed(
             "python - <<'PY'\n"
@@ -121,7 +121,7 @@
             "    'systemctl', 'show', '-p', 'MainPID', '--value', 'sinexd.service'\n"
             "], text=True).strip())\n"
             "if pid <= 0:\n"
-            "    raise SystemExit(f'invalid ingestd pid: {pid}')\n"
+            "    raise SystemExit(f'invalid event_engine pid: {pid}')\n"
             "with open(f'/proc/{pid}/limits') as fh:\n"
             "    for line in fh:\n"
             "        if line.startswith('Max open files'):\n"
@@ -131,7 +131,7 @@
             "        raise SystemExit('missing Max open files limit')\n"
             "PY"
         )
-        assert "524288" in live_limits, f"Unexpected live ingestd fd limit: {live_limits}"
+        assert "524288" in live_limits, f"Unexpected live event_engine fd limit: {live_limits}"
     
     # Test graceful shutdown
     with subtest("Graceful shutdown"):

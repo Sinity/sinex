@@ -23,7 +23,7 @@ surfaces:
 | `sinex-nats-bootstrap` | JetStream bootstrap | Created when managed NATS stream bootstrap is enabled. |
 | Source support units | ACL/env/setup bridges | Generated for enabled workstation source families when they need target-user access or setup. |
 
-There are no live per-domain ingestor, `sinex-ingestd`, `sinex-gateway`, or
+There are no live per-domain ingestor, `sinexd`, `sinexd`, or
 `sinex-process` binaries in the current topology. Historical target-vision
 prose that names them is superseded by the `sinexd` fold.
 
@@ -150,7 +150,7 @@ Eight agenix-managed secrets decrypt to `/run/agenix/` (0400, sinex user).
 | Secret | Purpose | Required when |
 |---|---|---|
 | `sinex-local-db` | PostgreSQL scram-sha-256 password | All non-dev modes |
-| `sinex-gateway-admin-token` | API admin RPC bearer | Admin operations |
+| `sinex-api-admin-token` | API admin RPC bearer | Admin operations |
 | `sinex-nats-ca` | NATS CA cert | NATS TLS in production |
 | `sinex-nats-client-cert` | NATS client cert | NATS mTLS |
 | `sinex-nats-client-key` | NATS client key | NATS mTLS |
@@ -159,7 +159,7 @@ Eight agenix-managed secrets decrypt to `/run/agenix/` (0400, sinex user).
 | `sinex-nats-client-nkey` | NATS NKey seed | NATS auth in NKey mode |
 
 Dev mode (trust auth, no TLS) requires none. Production requires
-`sinex-local-db` and `sinex-gateway-admin-token` unconditionally; NATS
+`sinex-local-db` and `sinex-api-admin-token` unconditionally; NATS
 secrets are conditional on the chosen auth mode.
 
 The `sinex-privacy-key` agenix secret is owned by `nixos/modules/at-rest-encryption.md`

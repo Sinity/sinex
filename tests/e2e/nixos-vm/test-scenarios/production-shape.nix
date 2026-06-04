@@ -1,7 +1,7 @@
 # Production-shape end-to-end proof for Sinex (#1135).
 #
 # Proves the FULL production pipeline in a real NixOS VM:
-#   source-unit host (fs) → NATS JetStream → ingestd → PostgreSQL → gateway RPC
+#   source-unit host (fs) → NATS JetStream → event_engine → PostgreSQL → gateway RPC
 #
 # Design choices:
 #   - Source unit: `fs` (filesystem watcher). Chosen because it is the
@@ -20,7 +20,7 @@
 #     failed sinex-* units and with preflight enabled." ✅
 #   - "source binding/source-unit host deployment state appears in readiness/
 #     preflight output." ✅ (sinexctl verify --source-evidence check)
-#   - "emit a smoke event through the deployed runtime path; wait for ingestd
+#   - "emit a smoke event through the deployed runtime path; wait for event_engine
 #     persistence; query it back through the production-facing surface." ✅
 #
 # Category: production-shape
@@ -110,7 +110,7 @@ pkgs.testers.nixosTest {
         print(f"verify output (rc={rc}): {out[:500]}")
 
     # ── Phase 3: Write a fixture and wait for ingestion ──────────────────────
-    with subtest("Smoke event emitted through source-unit host → NATS → ingestd"):
+    with subtest("Smoke event emitted through source-unit host → NATS → event_engine"):
         machine.succeed(f"mkdir -p /var/lib/sinex/watched")
         machine.succeed(
             f"echo '{SMOKE_CONTENT}' > {SMOKE_FILE}"
@@ -119,7 +119,7 @@ pkgs.testers.nixosTest {
 
         # Poll the gateway RPC until the event appears in core.events.
         # Timeout 90s: fs watcher detects inotify change → publishes NATS batch
-        # (≤1s flush) → ingestd persists → gateway indexes.
+        # (≤1s flush) → event_engine persists → gateway indexes.
         deadline = 90
         found = False
         last_output = ""
@@ -167,6 +167,6 @@ pkgs.testers.nixosTest {
             f"Expected event_type to start with 'file.', got '{event_type}'. Full event: {ev}"
 
         print(f"Proof: source={source!r}, event_type={event_type!r}")
-        print("Production-shape proof PASSED: source-unit host → ingestd → DB → gateway verified.")
+        print("Production-shape proof PASSED: source-unit host → event_engine → DB → gateway verified.")
   '';
 }

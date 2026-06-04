@@ -174,7 +174,7 @@ impl ServiceContainer {
         let js = async_nats::jetstream::new(coordination_nats.clone());
         let coordination_client = Some(Arc::new(CoordinationKvClient::new(
             js,
-            "sinex-gateway".to_string(),
+            "sinexd".to_string(),
         )));
         let nats_client = Some(coordination_nats);
 

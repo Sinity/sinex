@@ -1,7 +1,7 @@
 //! Runtime private-mode state.
 //!
 //! Private mode is an operator-controlled capture suppression state. This
-//! module owns the durable wire/file shape so CLI, gateway, and source workers
+//! module owns the durable wire/file shape so CLI, gateway, and source unit hosts
 //! do not grow parallel interpretations.
 
 use crate::error::SinexError;

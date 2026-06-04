@@ -24,7 +24,7 @@ use crate::watcher::{FileWatcher, WatchEvent};
 /// Arguments for running a binary with hot reload
 #[derive(Debug, Clone)]
 pub struct RunArgs {
-    /// Binary name (e.g., "sinex-ingestd")
+    /// Binary name (e.g., "sinexd")
     pub binary: String,
     /// Build in release mode
     pub release: bool,

@@ -3996,7 +3996,7 @@ mod tests {
         let mut diagnostics = vec![
             sample_diagnostic(
                 "warning",
-                Some("crate/lib/sinex-db/src/lib.rs"),
+                Some("crate/sinex-db/src/lib.rs"),
                 Some("sinex-db"),
                 Some("W001"),
                 true,
@@ -4012,7 +4012,7 @@ mod tests {
             ),
             sample_diagnostic(
                 "error",
-                Some("crate/lib/sinex-db/src/lib.rs"),
+                Some("crate/sinex-db/src/lib.rs"),
                 Some("sinex-db"),
                 Some("E001"),
                 false,
@@ -4085,7 +4085,7 @@ mod tests {
                 code: Some("W001".into()),
                 message: "target".into(),
                 package: Some("sinex-db".into()),
-                file_path: Some("crate/lib/sinex-db/src/lib.rs".into()),
+                file_path: Some("crate/sinex-db/src/lib.rs".into()),
                 fix_applicability: Some("MachineApplicable".into()),
                 ..Default::default()
             },
@@ -4109,7 +4109,7 @@ mod tests {
                 code: Some("W001".into()),
                 message: "not fixable".into(),
                 package: Some("sinex-db".into()),
-                file_path: Some("crate/lib/sinex-db/src/state.rs".into()),
+                file_path: Some("crate/sinex-db/src/state.rs".into()),
                 ..Default::default()
             },
         )?;
@@ -4325,9 +4325,9 @@ mod tests {
                     output: None,
                 },
                 StoredTestResult {
-                    test_name: "sinex-gateway::replay_control::tests::node_never_reports_completion"
+                    test_name: "sinexd::replay_control::tests::node_never_reports_completion"
                         .into(),
-                    package: "sinex-gateway".into(),
+                    package: "sinexd".into(),
                     status: TestStatus::Pass,
                     duration_secs: Some(2.0),
                     attempt: 1,
@@ -4377,7 +4377,7 @@ mod tests {
                 code: Some("W001".into()),
                 message: "persistent".into(),
                 package: Some("sinex-db".into()),
-                file_path: Some("crate/lib/sinex-db/src/lib.rs".into()),
+                file_path: Some("crate/sinex-db/src/lib.rs".into()),
                 fix_applicability: Some("MachineApplicable".into()),
                 ..Default::default()
             },
@@ -4392,7 +4392,7 @@ mod tests {
                 code: Some("W001".into()),
                 message: "persistent".into(),
                 package: Some("sinex-db".into()),
-                file_path: Some("crate/lib/sinex-db/src/lib.rs".into()),
+                file_path: Some("crate/sinex-db/src/lib.rs".into()),
                 fix_applicability: Some("MachineApplicable".into()),
                 ..Default::default()
             },
@@ -4404,7 +4404,7 @@ mod tests {
                 code: Some("W002".into()),
                 message: "new build-only".into(),
                 package: Some("sinex-db".into()),
-                file_path: Some("crate/lib/sinex-db/src/state.rs".into()),
+                file_path: Some("crate/sinex-db/src/state.rs".into()),
                 fix_applicability: Some("MachineApplicable".into()),
                 ..Default::default()
             },
@@ -4466,7 +4466,7 @@ mod tests {
                 code: Some("W001".into()),
                 message: "target".into(),
                 package: Some("sinex-db".into()),
-                file_path: Some("crate/lib/sinex-db/src/lib.rs".into()),
+                file_path: Some("crate/sinex-db/src/lib.rs".into()),
                 fix_applicability: Some("MachineApplicable".into()),
                 ..Default::default()
             },
@@ -4478,7 +4478,7 @@ mod tests {
                 code: Some("W002".into()),
                 message: "other path".into(),
                 package: Some("sinex-db".into()),
-                file_path: Some("crate/lib/sinex-db/tests/lib.rs".into()),
+                file_path: Some("crate/sinex-db/tests/lib.rs".into()),
                 fix_applicability: Some("MachineApplicable".into()),
                 ..Default::default()
             },

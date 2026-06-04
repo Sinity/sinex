@@ -21,7 +21,7 @@ use crate::api::config::GatewayConfig;
 use crate::api::rpc_server;
 use crate::api::service_container::ServiceContainer;
 use crate::automata::registry::{self as automata_registry, AutomatonSpec};
-use crate::event_engine::{IngestService, IngestdConfig};
+use crate::event_engine::{IngestService, EventEngineConfig};
 use crate::sources::bindings::{self as source_bindings, SourceBinding};
 
 /// Environment variable selecting which automata `sinexd` hosts.
@@ -32,7 +32,7 @@ const ENV_AUTOMATA_ENABLED: &str = "SINEX_AUTOMATA_ENABLED";
 
 /// Environment variable pointing at the source-bindings manifest JSON.
 ///
-/// Unset / empty means no source workers are hosted in this `sinexd`
+/// Unset / empty means no source unit hosts are hosted in this `sinexd`
 /// instance (used during single-binary local development against an
 /// out-of-band source unit, for example).
 const ENV_SOURCE_BINDINGS_PATH: &str = "SINEX_SOURCE_BINDINGS_PATH";
@@ -60,7 +60,7 @@ impl Supervisor {
 
     pub async fn run(
         self,
-        event_engine_config: IngestdConfig,
+        event_engine_config: EventEngineConfig,
         api_config: GatewayConfig,
     ) -> Result<()> {
         info!("sinexd starting");
@@ -229,7 +229,7 @@ impl Supervisor {
 }
 
 fn start_event_engine(
-    config: IngestdConfig,
+    config: EventEngineConfig,
     shutdown_rx: watch::Receiver<bool>,
     escalate_tx: watch::Sender<bool>,
 ) -> tokio::task::JoinHandle<()> {

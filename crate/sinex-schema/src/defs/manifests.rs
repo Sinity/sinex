@@ -1,7 +1,7 @@
 //! The canonical database schema for runtime process/source manifests.
 //!
 //! `core.manifests` records the immutable identity of every runtime entity:
-//! nodes (ingestd, gateway), sources (weechat-parser, atuin-history), and
+//! nodes (event_engine, gateway), sources (weechat-parser, atuin-history), and
 //! automata (canonicalizer, health-aggregator).
 //!
 //! Each manifest declares what the entity IS — its type, version, parent,

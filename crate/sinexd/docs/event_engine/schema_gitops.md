@@ -47,8 +47,8 @@ sinexctl gitops sync <SOURCE_UUID>
 
 - Start local infrastructure with `xtask infra start`.
 - Run the services with `xtask run core --logs` or the relevant deployed units.
-- Check ingestd logs if sync is not happening.
-- Gateway handlers own CRUD/trigger operations; ingestd owns the polling and
+- Check event_engine logs if sync is not happening.
+- Gateway handlers own CRUD/trigger operations; event_engine owns the polling and
   import loop.
 
 ## See Also

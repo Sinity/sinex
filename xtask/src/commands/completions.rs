@@ -291,7 +291,7 @@ mod tests {
     async fn test_list_run_targets_non_empty() -> ::xtask::sandbox::TestResult<()> {
         let targets = crate::commands::run::list_run_targets();
         assert!(!targets.is_empty(), "run targets should not be empty");
-        assert!(targets.contains(&"ingestd".to_string()));
+        assert!(targets.contains(&"event_engine".to_string()));
         assert!(targets.contains(&"core".to_string()));
         Ok(())
     }

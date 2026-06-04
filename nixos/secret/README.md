@@ -17,7 +17,7 @@ Replace the plaintext via stdin before running the command.
 ## Files
 
 - `sinex-local-db.age` – local dev database password
-- `sinex-gateway-admin-token.age` – API RPC admin bearer token (**required to enable `sinexd::api`**)
+- `sinex-api-admin-token.age` – API RPC admin bearer token (**required to enable `sinexd::api`**)
 - `sinex-grafana-secret-key.age` – optional Grafana signing/encryption key override
 - `sinex-remote-db.age` – remote satellite DB credential
 - `sinex-remote-nats-*.age` – TLS CA/cert/key for remote satellites
@@ -28,7 +28,7 @@ Generate a random token and encrypt it:
 
 ```
 head -c 32 /dev/urandom | base64 | tr -d '=' > /tmp/sinex-api-admin-token
-agenix -e nixos/secret/sinex-gateway-admin-token.age \
+agenix -e nixos/secret/sinex-api-admin-token.age \
   -r "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDwD8IB2eVfw6X7z9AqBBGjrqOIOCJ4tden1we7mCqOy sinity@sinnix-prime" \
   -r "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILrplBDI4Rrb1hyzqYO7f8/2pmFWupC7C2+hYkBAkOdF root@sinnix-prime" \
   -r "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEsBMzW1MeF+qcxatMh4nvrQSl3jjAMQyMa+h7egmQyT root@sinnix-ethereal" < /tmp/sinex-api-admin-token

@@ -11,7 +11,7 @@ let
   sinexPackage = sinex;
   sinexCliPackage = sinexCli;
   stateDir = config.services.sinex.stateRoot;
-  workDir = "${stateDir}/.cache/sinex/ingestd-dev";
+  workDir = "${stateDir}/.cache/sinex/event-engine-dev";
   databaseName = "sinex_dev";
   sinexConfigBase = {
     enable = true;
@@ -75,10 +75,10 @@ in
     };
 
   # Provide dummy secrets expected by the gateway.
-  environment.etc."sinex/gateway-admin-token".text = "test-admin-token:admin";
+  environment.etc."sinex/api-admin-token".text = "test-admin-token:admin";
   environment.variables = {
     SINEX_TEST_DB_NAME = databaseName;
-    SINEX_RPC_TOKEN_FILE = "/etc/sinex/gateway-admin-token";
+    SINEX_RPC_TOKEN_FILE = "/etc/sinex/api-admin-token";
   };
 
   # Use the real NixOS schema-apply unit rather than shadowing it with a second
@@ -183,7 +183,7 @@ host    all             all             ::1/128                 trust
     "D ${stateDir}/nats 0755 sinex sinex -"
     "f ${stateDir}/.zsh_history 0644 sinex sinex -"
     "f ${stateDir}/.bash_history 0644 sinex sinex -"
-    # Intermediate dirs for workDir = stateDir/.cache/sinex/ingestd-dev
+    # Intermediate dirs for workDir = stateDir/.cache/sinex/event-engine-dev
     "d ${stateDir}/.cache 0755 sinex sinex -"
     "d ${stateDir}/.cache/sinex 0755 sinex sinex -"
     "d ${workDir} 0755 sinex sinex -"
@@ -191,7 +191,7 @@ host    all             all             ::1/128                 trust
     "d ${workDir}/assembler_state 0755 sinex sinex -"
   ];
 
-  # Prepare ingestd annex before service startup so the blob manager is usable.
+  # Prepare the event-engine annex before service startup so the blob manager is usable.
   systemd.services.sinexd-annex-setup = {
     description = "Prepare Sinex daemon annex repository";
     wantedBy = [ "multi-user.target" ];
@@ -200,18 +200,18 @@ host    all             all             ::1/128                 trust
       Type = "oneshot";
       User = "sinex";
       Group = "sinex";
-      ExecStart = pkgs.writeShellScript "prepare-ingestd-annex" ''
+      ExecStart = pkgs.writeShellScript "prepare-event-engine-annex" ''
         set -euo pipefail
         install -d -m0755 -o sinex -g sinex ${workDir}/annex
         install -d -m0755 -o sinex -g sinex ${workDir}/assembler_state
         cd ${workDir}/annex
         if [ ! -d .git ]; then ${pkgs.git}/bin/git init; fi
-        ${pkgs.git-annex}/bin/git-annex init ingestd || true
+        ${pkgs.git-annex}/bin/git-annex init event-engine || true
       '';
     };
   };
 
-  # Ensure ingestd has its expected working directories before startup.
+  # Ensure the event engine has its expected working directories before startup.
   # NB: do NOT self-reference config.systemd.services here — it causes infinite
   # recursion because node-services.nix defines systemd.services based on
   # config.services.sinex.core.  The module system auto-merges definitions.
@@ -221,7 +221,7 @@ host    all             all             ::1/128                 trust
       "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/annex"
       "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/assembler_state"
       "-${pkgs.git}/bin/git -C ${workDir}/annex init"
-      "-${pkgs.git-annex}/bin/git-annex -C ${workDir}/annex init ingestd"
+      "-${pkgs.git-annex}/bin/git-annex -C ${workDir}/annex init event-engine"
     ];
     Environment = [
       "XDG_CACHE_HOME=${stateDir}/.cache"

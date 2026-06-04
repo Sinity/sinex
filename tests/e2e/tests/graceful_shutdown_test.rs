@@ -4,7 +4,7 @@
 //! including in-flight request completion and resource cleanup.
 //!
 //! ## Coverage Areas
-//! - Ingestd graceful shutdown with pending messages
+//! - EventEngine graceful shutdown with pending messages
 //! - Service shutdown preserves data integrity
 //! - Concurrent shutdown handling
 //! - Shutdown timeout behavior
@@ -17,7 +17,7 @@ use sinex_primitives::nats::NatsConnectionConfig;
 use sinex_primitives::{
     Event, EventSource, EventType, HostName, Id, OffsetKind, Provenance, SourceMaterial,
 };
-use sinexd::event_engine::{JetStreamTopology, config::IngestdConfig, service::IngestService};
+use sinexd::event_engine::{JetStreamTopology, config::EventEngineConfig, service::IngestService};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use tempfile::TempDir;
@@ -84,9 +84,9 @@ fn build_test_event_bytes(
     Ok(serde_json::to_vec(&event)?)
 }
 
-/// Test that ingestd completes in-flight processing before shutdown.
+/// Test that event_engine completes in-flight processing before shutdown.
 #[sinex_test(timeout = 60)]
-async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> TestResult<()> {
+async fn test_event_engine_graceful_shutdown_completes_inflight(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
@@ -94,7 +94,7 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     let env = ctx.env();
 
     let namespace = format!("graceful-{}", uuid::Uuid::new_v4().simple());
-    let consumer_name = "ingestd-graceful".to_string();
+    let consumer_name = "event-engine-graceful".to_string();
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -105,7 +105,7 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     tokio::fs::create_dir_all(assembler_state_dir.as_std_path()).await?;
     let material_id = register_test_material(&ctx.pool, "graceful-source").await?;
 
-    let mut config = IngestdConfig::builder()
+    let mut config = EventEngineConfig::builder()
         .database_url(ctx.database_url().to_string())
         .nats(
             NatsConnectionConfig::builder()
@@ -143,7 +143,7 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     )
     .await?;
 
-    // Wait for ingestd to attach a consumer — proves it's actively pulling messages.
+    // Wait for event_engine to attach a consumer — proves it's actively pulling messages.
     nats.wait_for_consumer_on_stream(
         &js,
         &topology.events_stream,
@@ -169,7 +169,7 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     }
     nats_client.flush().await?;
 
-    // Wait for ingestd to persist at least one event before shutting down
+    // Wait for event_engine to persist at least one event before shutting down
     WaitHelpers::wait_for_event_count(&ctx.pool, 1, Timeouts::SHORT).await?;
 
     // Initiate shutdown
@@ -177,7 +177,7 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
 
     let join_result = timeout(Duration::from_secs(Timeouts::SHORT), handle)
         .await
-        .map_err(|_| color_eyre::eyre::eyre!("ingestd runner shutdown timed out"))?;
+        .map_err(|_| color_eyre::eyre::eyre!("event_engine runner shutdown timed out"))?;
     join_result??;
 
     // Verify events processed before shutdown were persisted
@@ -202,7 +202,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     let env = ctx.env();
 
     let namespace = format!("load-{}", uuid::Uuid::new_v4().simple());
-    let consumer_name = "ingestd-load".to_string();
+    let consumer_name = "event-engine-load".to_string();
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -213,7 +213,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     tokio::fs::create_dir_all(assembler_state_dir.as_std_path()).await?;
     let material_id = register_test_material(&ctx.pool, "load-source").await?;
 
-    let mut config = IngestdConfig::builder()
+    let mut config = EventEngineConfig::builder()
         .database_url(ctx.database_url().to_string())
         .nats(
             NatsConnectionConfig::builder()
@@ -310,7 +310,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
         }
     });
 
-    // Wait until the publisher is actively generating load and ingestd has
+    // Wait until the publisher is actively generating load and event_engine has
     // persisted at least one event before requesting shutdown.
     let pool = ctx.pool.clone();
     WaitHelpers::wait_for_condition(
@@ -341,7 +341,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     // Wait for service to stop
     let join_result = timeout(Duration::from_secs(Timeouts::SHORT), handle)
         .await
-        .map_err(|_| color_eyre::eyre::eyre!("ingestd runner shutdown timed out under load"))?;
+        .map_err(|_| color_eyre::eyre::eyre!("event_engine runner shutdown timed out under load"))?;
     join_result??;
 
     let total_published = published_count.load(Ordering::SeqCst);
@@ -498,7 +498,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     let env = ctx.env();
 
     let namespace = format!("consistency-{}", uuid::Uuid::new_v4().simple());
-    let consumer_name = "ingestd-consistency".to_string();
+    let consumer_name = "event-engine-consistency".to_string();
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -509,7 +509,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     tokio::fs::create_dir_all(assembler_state_dir.as_std_path()).await?;
     let material_id = register_test_material(&ctx.pool, "consistency-source").await?;
 
-    let mut config = IngestdConfig::builder()
+    let mut config = EventEngineConfig::builder()
         .database_url(ctx.database_url().to_string())
         .nats(
             NatsConnectionConfig::builder()

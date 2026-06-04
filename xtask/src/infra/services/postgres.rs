@@ -859,7 +859,7 @@ mod tests {
         let mut statements = Vec::new();
 
         PostgresManager::ensure_role_with(
-            "sinex_gateway",
+            "sinex_api",
             false,
             false,
             "postgres",
@@ -875,12 +875,12 @@ mod tests {
                 (
                     "postgres".to_string(),
                     "postgres".to_string(),
-                    "SELECT 1 FROM pg_roles WHERE rolname = 'sinex_gateway'".to_string(),
+                    "SELECT 1 FROM pg_roles WHERE rolname = 'sinex_api'".to_string(),
                 ),
                 (
                     "postgres".to_string(),
                     "postgres".to_string(),
-                    "CREATE ROLE \"sinex_gateway\" NOLOGIN".to_string(),
+                    "CREATE ROLE \"sinex_api\" NOLOGIN".to_string(),
                 ),
             ]
         );

@@ -106,5 +106,5 @@
     extraGroups = [ "wheel" ];
   };
 
-  environment.etc."sinex/gateway-admin-token".text = "workstation-admin:admin";
+  environment.etc."sinex/api-admin-token".text = "workstation-admin:admin";
 }

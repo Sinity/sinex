@@ -1,12 +1,12 @@
 //! End-to-end replay test exercising the full sinex service stack.
 //!
 //! Unlike `replay_lifecycle_test.rs` (which uses an in-process `ServiceContainer`),
-//! this test starts NATS + ingestd + gateway as real subprocesses via `TestCoreStack`,
-//! seeds events through the full ingest path (NATS → ingestd → `PostgreSQL`), then
+//! this test starts NATS + event engine + API as real subprocesses via `TestCoreStack`,
+//! seeds events through the full ingest path (NATS → event_engine → `PostgreSQL`), then
 //! orchestrates a replay through the gateway's HTTP JSON-RPC API.
 //!
 //! What this test proves:
-//! - Events seeded via NATS are persisted by ingestd and visible to the gateway
+//! - Events seeded via NATS are persisted by event_engine and visible to the gateway
 //! - The replay plan/preview/approve/execute RPC sequence works over HTTPS
 //! - A fake scan node receives the scan command via NATS and can report progress
 //! - All scoped events are archived to `audit.archived_events` and removed from `core.events`
@@ -203,7 +203,7 @@ async fn json_rpc(
 /// Full end-to-end replay: seed → plan → preview → approve → execute → verify archived.
 ///
 /// Exercises the full request path:
-/// - Events published to NATS, persisted by the ingestd subprocess
+/// - Events published to NATS, persisted by the event_engine subprocess
 /// - Fake scan node listening on NATS for scan commands
 /// - Replay orchestration through the gateway subprocess via HTTPS JSON-RPC
 /// - Post-execution verification: archived rows in `audit.archived_events`, none in `core.events`

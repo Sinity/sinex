@@ -18,7 +18,7 @@ schema coverage to be mandatory instead of best-effort.
 
 ### Configuration
 
-- NixOS: `services.sinex.core.ingestd.strictValidation = true`
+- NixOS: `services.sinex.core.event_engine.strictValidation = true`
 - direct/manual run: `SINEX_EVENT_ENGINE_STRICT_VALIDATION=true`
 - default: `false`
 

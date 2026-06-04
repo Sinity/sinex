@@ -25,29 +25,17 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
 // ─── Individual test functions ────────────────────────────────────────────
 
 fn test_core_services_active(runner: &mut TestRunner) {
-    let name = "core services: sinex-gateway and sinex-ingestd are active";
+    let name = "core service: sinexd is active";
 
-    let gateway_ok = Command::new("systemctl")
-        .args(["is-active", "--quiet", "sinex-gateway"])
+    let sinexd_ok = Command::new("systemctl")
+        .args(["is-active", "--quiet", "sinexd"])
         .status()
         .is_ok_and(|s| s.success());
 
-    let ingestd_ok = Command::new("systemctl")
-        .args(["is-active", "--quiet", "sinex-ingestd"])
-        .status()
-        .is_ok_and(|s| s.success());
-
-    if gateway_ok && ingestd_ok {
+    if sinexd_ok {
         runner.pass(name);
     } else {
-        let mut failures = Vec::new();
-        if !gateway_ok {
-            failures.push("sinex-gateway");
-        }
-        if !ingestd_ok {
-            failures.push("sinex-ingestd");
-        }
-        runner.fail(name, &format!("inactive services: {}", failures.join(", ")));
+        runner.fail(name, "inactive service: sinexd");
     }
 }
 

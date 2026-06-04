@@ -134,7 +134,7 @@ impl SourceMaterialHandle {
 
     /// The wall-clock timestamp recorded when this material capture began.
     ///
-    /// This value is carried in the `MaterialBeginMessage` sent to ingestd, which
+    /// This value is carried in the `MaterialBeginMessage` sent to event_engine, which
     /// persists it as a `staged_at` ledger entry in `raw.temporal_ledger`. Use it
     /// as the fallback `ts_orig` for events that lack an intrinsic timestamp
     /// derived from the source material content — it is reproducible on replay

@@ -287,8 +287,7 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Va
         required_binaries.splice(
             0..0,
             [
-                ("sinex-ingestd", "Ingestion daemon", true),
-                ("sinex-gateway", "API gateway", true),
+                ("sinexd", "Unified Sinex daemon", true),
                 ("sinex-preflight", "Pre-flight verification service", true),
             ],
         );
@@ -956,8 +955,7 @@ mod tests {
     #[sinex_test]
     async fn discover_unit_files_in_path_finds_only_sinex_service_units() -> TestResult<()> {
         let temp = tempfile::tempdir()?;
-        std::fs::write(temp.path().join("sinex-ingestd.service"), [])?;
-        std::fs::write(temp.path().join("sinex-gateway.service"), [])?;
+        std::fs::write(temp.path().join("sinexd.service"), [])?;
         std::fs::write(temp.path().join("postgresql.service"), [])?;
         std::fs::create_dir(temp.path().join("sinex-dir.service"))?;
 
@@ -967,10 +965,7 @@ mod tests {
 
         assert_eq!(
             found,
-            vec![
-                format!("{}/sinex-gateway.service", temp.path().display()),
-                format!("{}/sinex-ingestd.service", temp.path().display()),
-            ]
+            vec![format!("{}/sinexd.service", temp.path().display())]
         );
         Ok(())
     }

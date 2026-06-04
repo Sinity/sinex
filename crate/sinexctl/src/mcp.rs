@@ -43,7 +43,7 @@ use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::rpc::tasks::{
     TaskListRequest, TaskListResponse, TaskStateGetRequest, TaskStateResponse,
 };
-use sinex_primitives::rpc::telemetry::IngestdValidationSnapshot;
+use sinex_primitives::rpc::telemetry::EventEngineValidationSnapshot;
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::{
     SourcesContinuityGetRequest, SourcesContinuityListRequest, SourcesExplainGapRequest,
@@ -622,17 +622,17 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.ingestd_validation",
+            name: "sinex.event_engine_validation",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only latest ingestd validation and admission snapshot.",
-            backing_rpc_methods: &[methods::TELEMETRY_INGESTD_VALIDATION],
+            description: "Read-only latest event_engine validation and admission snapshot.",
+            backing_rpc_methods: &[methods::TELEMETRY_EVENT_ENGINE_VALIDATION],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.ingestd_batch_stats",
+            name: "sinex.event_engine_batch_stats",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only ingestd batch, latency, and validation telemetry buckets.",
-            backing_rpc_methods: &[methods::TELEMETRY_INGESTD_BATCH_STATS],
+            description: "Read-only event_engine batch, latency, and validation telemetry buckets.",
+            backing_rpc_methods: &[methods::TELEMETRY_EVENT_ENGINE_BATCH_STATS],
             read_only: true,
         },
         McpCatalogEntry {
@@ -1190,8 +1190,8 @@ pub fn tools() -> Vec<McpTool> {
         mcp_tool("sinex.nodes_health", stale_after_schema()),
         mcp_tool("sinex.nodes_active", stale_after_schema()),
         mcp_tool("sinex.nodes_registry", empty_object_schema()),
-        mcp_tool("sinex.ingestd_validation", empty_object_schema()),
-        mcp_tool("sinex.ingestd_batch_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex.event_engine_validation", empty_object_schema()),
+        mcp_tool("sinex.event_engine_batch_stats", telemetry_buckets_schema()),
         mcp_tool("sinex.throughput", empty_object_schema()),
         mcp_tool("sinex.recent_activity", limit_schema(20)),
         mcp_tool("sinex.command_frequency", telemetry_buckets_schema()),
@@ -1645,8 +1645,8 @@ async fn call_tool_nodes_analytics(
         "sinex.nodes_health" => nodes_health(client, arguments).await?,
         "sinex.nodes_active" => nodes_active(client, arguments).await?,
         "sinex.nodes_registry" => nodes_registry(client, arguments).await?,
-        "sinex.ingestd_validation" => ingestd_validation(client, arguments).await?,
-        "sinex.ingestd_batch_stats" => ingestd_batch_stats(client, arguments).await?,
+        "sinex.event_engine_validation" => event_engine_validation(client, arguments).await?,
+        "sinex.event_engine_batch_stats" => event_engine_batch_stats(client, arguments).await?,
         "sinex.system_health" => system_health(client, arguments).await?,
         "sinex.system_ping" => system_ping(client, arguments).await?,
         "sinex.system_version" => system_version(client, arguments).await?,
@@ -2085,23 +2085,23 @@ async fn nodes_registry(client: &GatewayClient, arguments: Value) -> Result<Valu
     ))
 }
 
-async fn ingestd_validation(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.ingestd_validation", &arguments)?;
-    let snapshot: Option<IngestdValidationSnapshot> = client.telemetry_ingestd_validation().await?;
+async fn event_engine_validation(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.event_engine_validation", &arguments)?;
+    let snapshot: Option<EventEngineValidationSnapshot> = client.telemetry_event_engine_validation().await?;
     Ok(envelope(
-        "sinex.ingestd_validation",
+        "sinex.event_engine_validation",
         &json!({}),
         &json!({ "snapshot": snapshot }),
     ))
 }
 
-async fn ingestd_batch_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
+async fn event_engine_batch_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
     let buckets = client
-        .telemetry_ingestd_batch_stats(args.from.clone(), args.to.clone(), args.limit)
+        .telemetry_event_engine_batch_stats(args.from.clone(), args.to.clone(), args.limit)
         .await?;
     Ok(envelope(
-        "sinex.ingestd_batch_stats",
+        "sinex.event_engine_batch_stats",
         &json!(args),
         &json!({ "buckets": buckets }),
     ))

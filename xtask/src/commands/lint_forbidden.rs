@@ -78,7 +78,7 @@ impl XtaskCommand for LintForbiddenCommand {
         // - Advisory locks
         // - Dynamic queries (analytics, cascade analysis)
         // - Test infrastructure
-        // Paths are post-fold (#1559): sinex-gateway/ingestd folded into
+        // Paths are post-fold (#1559): sinexd/event_engine folded into
         // crate/sinexd/{api,event_engine}; node_sdk under crate/sinexd/src/node_sdk;
         // sinex-db/schema flattened out of crate/lib. xtask/ and tests/ auto-skip
         // via is_tests_path, so they are not listed here.
@@ -224,7 +224,7 @@ impl XtaskCommand for LintForbiddenCommand {
             // later promotion to Id<T> repository surfaces.
             "crate/sinex-db/src/repositories/embeddings.rs",
             "crate/sinex-schema/src/defs/annotations.rs",
-            // Ingestd material assembler state mirrors NATS frame UUIDs
+            // EventEngine material assembler state mirrors NATS frame UUIDs
             // (folded into crate/sinexd/src/event_engine).
             "crate/sinexd/src/event_engine/admission.rs",
             "crate/sinexd/src/event_engine/material_assembler/restore_plan.rs",
@@ -332,7 +332,7 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         // Inline private-mode listener regression publishes a synthetic
         // control message; the production listener only subscribes.
         "crate/sinexd/src/node_sdk/parser/adapter_node.rs",
-        // Event-engine confirmation and raw-ingest DLQ publishers (folded ingestd).
+        // Event-engine confirmation and raw-ingest DLQ publishers (folded event_engine).
         "crate/sinexd/src/event_engine/jetstream_consumer.rs",
         // Source-material assembler DLQ routing.
         "crate/sinexd/src/event_engine/material_assembler/finalize.rs",
@@ -394,7 +394,7 @@ const NON_PUBLIC_TIER_PATTERNS: &[&str] = &[
 /// Files exempt from the privacy-metadata gate.
 ///
 /// These are **descriptor-only** source units: they declare event-type metadata
-/// for events emitted from inside the pipeline infrastructure (ingestd, gateway,
+/// for events emitted from inside the pipeline infrastructure (event_engine, gateway,
 /// SDK), rather than from a dedicated parser. Privacy is handled at the emit
 /// site inside those binaries, not by a standalone parser.
 ///
@@ -402,7 +402,7 @@ const NON_PUBLIC_TIER_PATTERNS: &[&str] = &[
 /// (3) where privacy is handled.
 const PRIVACY_GATE_ALLOWLIST: &[&str] = &[
     // "blob-storage" source unit: blob.retrieved / blob.ingested / blob.verified /
-    // storage.statistics events are emitted from ingestd / gateway / node-sdk internals.
+    // storage.statistics events are emitted from event_engine / gateway / node-sdk internals.
     // Privacy is handled at the emit site in those binaries; no standalone parser exists.
     "crate/sinex-primitives/src/events/payloads/blob.rs",
 ];

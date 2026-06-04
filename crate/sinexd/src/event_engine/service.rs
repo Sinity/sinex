@@ -4,7 +4,7 @@
 
 // Local crate imports
 use crate::event_engine::{
-    IngestdResult, JetStreamTopology, SinexError, config::IngestdConfig,
+    EventEngineResult, JetStreamTopology, SinexError, config::EventEngineConfig,
     material_ready_set::MaterialReadySet, validator::IngestEventValidator,
 };
 // External crates
@@ -60,7 +60,7 @@ fn log_node_manifest_write_failure(
         node = %node_name,
         version = env!("CARGO_PKG_VERSION"),
         error = %error,
-        "Failed to persist ingestd node manifest state"
+        "Failed to persist event_engine node manifest state"
     );
 }
 
@@ -68,7 +68,7 @@ async fn await_ready_signal(
     component: &'static str,
     ready_timeout: Duration,
     ready_rx: oneshot::Receiver<()>,
-) -> IngestdResult<()> {
+) -> EventEngineResult<()> {
     match tokio::time::timeout(ready_timeout, ready_rx).await {
         Ok(Ok(())) => {
             info!(component, "Startup component reached ready state");
@@ -132,7 +132,7 @@ fn background_task_timeout(count: usize, timeout: Duration) -> SinexError {
 
 /// Main ingestion service
 pub struct IngestService {
-    config: IngestdConfig,
+    config: EventEngineConfig,
     db_pool: Option<PgPool>,
     nats_client: Option<NatsClient>,
     jetstream: Option<jetstream::Context>,
@@ -147,7 +147,7 @@ pub struct IngestService {
 
 type CriticalTaskOutcome = (
     &'static str,
-    Result<IngestdResult<()>, tokio::task::JoinError>,
+    Result<EventEngineResult<()>, tokio::task::JoinError>,
 );
 
 impl Clone for IngestService {
@@ -169,7 +169,7 @@ impl Clone for IngestService {
 
 impl IngestService {
     /// Create a new ingestion service
-    pub async fn new(config: IngestdConfig) -> IngestdResult<Self> {
+    pub async fn new(config: EventEngineConfig) -> EventEngineResult<Self> {
         info!("Initializing ingestion service");
 
         let db_pool = Self::init_db_pool(&config).await?;
@@ -192,7 +192,7 @@ impl IngestService {
         if let Err(error) = observer.prime().await {
             warn!(
                 %error,
-                "Failed to prime ingestd self-observation materializer; telemetry events may retry before the source material is registered"
+                "Failed to prime event_engine self-observation materializer; telemetry events may retry before the source material is registered"
             );
         }
 
@@ -213,7 +213,7 @@ impl IngestService {
         Ok(service)
     }
 
-    async fn init_db_pool(config: &IngestdConfig) -> IngestdResult<Option<PgPool>> {
+    async fn init_db_pool(config: &EventEngineConfig) -> EventEngineResult<Option<PgPool>> {
         if config.dry_run {
             return Ok(None);
         }
@@ -222,7 +222,7 @@ impl IngestService {
         Ok(Some(pool))
     }
 
-    async fn verify_binary_schema_version(pool: &PgPool) -> IngestdResult<()> {
+    async fn verify_binary_schema_version(pool: &PgPool) -> EventEngineResult<()> {
         use sinex_primitives::EXPECTED_BINARY_SCHEMA_VERSION;
         let db_version: Option<String> = sqlx::query_scalar(
             "SELECT version FROM sinex_schemas.binary_schema_version WHERE id = 1",
@@ -261,8 +261,8 @@ impl IngestService {
     }
 
     async fn init_nats(
-        config: &IngestdConfig,
-    ) -> IngestdResult<(Option<NatsClient>, Option<jetstream::Context>)> {
+        config: &EventEngineConfig,
+    ) -> EventEngineResult<(Option<NatsClient>, Option<jetstream::Context>)> {
         if config.dry_run {
             return Ok((None, None));
         }
@@ -281,9 +281,9 @@ impl IngestService {
     }
 
     async fn init_validator(
-        config: &IngestdConfig,
+        config: &EventEngineConfig,
         pool: Option<&PgPool>,
-    ) -> IngestdResult<IngestEventValidator> {
+    ) -> EventEngineResult<IngestEventValidator> {
         if let Some(pool) = pool {
             let _lock = try_acquire_migration_lock(pool).await?;
 
@@ -304,7 +304,7 @@ impl IngestService {
         }
     }
 
-    async fn sync_schemas(pool: &PgPool) -> IngestdResult<()> {
+    async fn sync_schemas(pool: &PgPool) -> EventEngineResult<()> {
         let sync_result = crate::event_engine::schema_sync::synchronize_schemas(pool)
             .await
             .map_err(|e| {
@@ -334,7 +334,7 @@ impl IngestService {
     }
 
     /// Run the ingestion service
-    pub async fn run(&mut self) -> IngestdResult<()> {
+    pub async fn run(&mut self) -> EventEngineResult<()> {
         info!("Starting ingestion service");
 
         // Create shared MaterialReadySet for event/material coordination. Events and
@@ -399,7 +399,7 @@ impl IngestService {
             );
         }
 
-        // Register a run for ingestd and start periodic heartbeat
+        // Register a run for event_engine and start periodic heartbeat
         if let Some(ref pool) = self.db_pool {
             let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string());
             let node_name = NodeName::new("sinexd");
@@ -414,11 +414,11 @@ impl IngestService {
                 .await
             {
                 Ok(row) => {
-                    info!(manifest_id = row.id, "Registered ingestd manifest");
+                    info!(manifest_id = row.id, "Registered event_engine manifest");
                     Some(row.id)
                 }
                 Err(e) => {
-                    warn!(%e, "Failed to register ingestd manifest; heartbeat persistence disabled");
+                    warn!(%e, "Failed to register event_engine manifest; heartbeat persistence disabled");
                     None
                 }
             };
@@ -428,10 +428,10 @@ impl IngestService {
                 .await
             {
                 Ok(run) => {
-                    info!(run_id = %run.id, "Started ingestd run");
+                    info!(run_id = %run.id, "Started event_engine run");
                     self.observer.set_source_run_id(run.id.to_uuid());
                 }
-                Err(e) => warn!(%e, "Failed to start ingestd run"),
+                Err(e) => warn!(%e, "Failed to start event_engine run"),
             }
 
             // Emit health-aware heartbeats on a fixed cadence.
@@ -507,7 +507,7 @@ impl IngestService {
             (Err(error), Err(cleanup_error)) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.component_failures_total",
+                    metric = "event_engine.component_failures_total",
                     component = "runtime_shutdown",
                     runtime_error = %error,
                     cleanup_error = %cleanup_error,
@@ -521,14 +521,14 @@ impl IngestService {
     async fn finish_startup_failure(
         &self,
         startup_error: SinexError,
-        js_handle: Option<JoinHandle<IngestdResult<()>>>,
-        ma_handle: Option<JoinHandle<IngestdResult<()>>>,
-    ) -> IngestdResult<()> {
+        js_handle: Option<JoinHandle<EventEngineResult<()>>>,
+        ma_handle: Option<JoinHandle<EventEngineResult<()>>>,
+    ) -> EventEngineResult<()> {
         error!(
             target: "sinex_metrics",
-            metric = "ingestd.startup_failures_total",
+            metric = "event_engine.startup_failures_total",
             error = %startup_error,
-            "Critical ingestd component failed during startup"
+            "Critical event_engine component failed during startup"
         );
         trigger_shutdown(&self.shutdown_flag, &self.shutdown_notify);
 
@@ -537,7 +537,7 @@ impl IngestService {
             Err(cleanup_error) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.startup_failures_total",
+                    metric = "event_engine.startup_failures_total",
                     startup_error = %startup_error,
                     cleanup_error = %cleanup_error,
                     "Startup failure cleanup surfaced an additional critical task failure"
@@ -549,7 +549,7 @@ impl IngestService {
         if let Err(cleanup_error) = self.wait_for_tasks(Duration::from_secs(5)).await {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.startup_failures_total",
+                metric = "event_engine.startup_failures_total",
                 startup_error = %startup_error,
                 cleanup_error = %cleanup_error,
                 "Startup failure cleanup surfaced an additional background task failure"
@@ -562,9 +562,9 @@ impl IngestService {
     /// Monitor critical tasks - exit on first failure or shutdown signal
     async fn monitor_runtime(
         &self,
-        js_handle: Option<JoinHandle<IngestdResult<()>>>,
-        ma_handle: Option<JoinHandle<IngestdResult<()>>>,
-    ) -> IngestdResult<()> {
+        js_handle: Option<JoinHandle<EventEngineResult<()>>>,
+        ma_handle: Option<JoinHandle<EventEngineResult<()>>>,
+    ) -> EventEngineResult<()> {
         let shutdown_flag = self.shutdown_flag.clone();
         let shutdown_notify = self.shutdown_notify.clone();
         // `critical_tasks` is the JoinSet of wrapper futures used for completion
@@ -625,7 +625,7 @@ impl IngestService {
         tasks: &mut JoinSet<CriticalTaskOutcome>,
         abort_handles: &mut Vec<(&'static str, tokio::task::AbortHandle)>,
         name: &'static str,
-        handle: Option<JoinHandle<IngestdResult<()>>>,
+        handle: Option<JoinHandle<EventEngineResult<()>>>,
     ) {
         if let Some(handle) = handle {
             // Obtain an AbortHandle *before* moving `handle` into the JoinSet
@@ -719,10 +719,10 @@ impl IngestService {
 
     fn handle_task_result(
         name: &str,
-        result: Result<IngestdResult<()>, tokio::task::JoinError>,
+        result: Result<EventEngineResult<()>, tokio::task::JoinError>,
         shutdown_flag: &Arc<AtomicBool>,
         shutdown_notify: &Arc<tokio::sync::Notify>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         match result {
             Ok(res) => Self::handle_join_success(name, res, shutdown_flag, shutdown_notify),
             Err(e) => Self::handle_join_error(name, &e, shutdown_flag, shutdown_notify),
@@ -731,10 +731,10 @@ impl IngestService {
 
     fn handle_join_success(
         name: &str,
-        result: IngestdResult<()>,
+        result: EventEngineResult<()>,
         shutdown_flag: &Arc<AtomicBool>,
         shutdown_notify: &Arc<tokio::sync::Notify>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         match result {
             Ok(()) if shutdown_flag.load(Ordering::Acquire) => {
                 info!("{name} completed during shutdown");
@@ -743,7 +743,7 @@ impl IngestService {
             Ok(()) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.component_exits_total",
+                    metric = "event_engine.component_exits_total",
                     component = name,
                     "{name} exited unexpectedly without error"
                 );
@@ -753,7 +753,7 @@ impl IngestService {
             Err(e) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.component_failures_total",
+                    metric = "event_engine.component_failures_total",
                     component = name,
                     error = %e,
                     "{name} failed"
@@ -769,10 +769,10 @@ impl IngestService {
         err: &tokio::task::JoinError,
         shutdown_flag: &Arc<AtomicBool>,
         shutdown_notify: &Arc<tokio::sync::Notify>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         error!(
             target: "sinex_metrics",
-            metric = "ingestd.component_panics_total",
+            metric = "event_engine.component_panics_total",
             component = name,
             error = ?err,
             "{name} panicked"
@@ -782,9 +782,9 @@ impl IngestService {
     }
 
     fn handle_material_assembler_result(
-        result: IngestdResult<()>,
+        result: EventEngineResult<()>,
         shutdown_flag: &Arc<AtomicBool>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         match result {
             Ok(()) if shutdown_flag.load(Ordering::Acquire) => {
                 info!("MaterialAssembler shutting down normally");
@@ -797,7 +797,7 @@ impl IngestService {
             Err(error) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.material_assembler_failures_total",
+                    metric = "event_engine.material_assembler_failures_total",
                     error = %error,
                     "MaterialAssembler failed"
                 );
@@ -816,7 +816,7 @@ impl IngestService {
         pool: PgPool,
         ready_set: Option<MaterialReadySet>,
     ) -> (
-        JoinHandle<IngestdResult<()>>,
+        JoinHandle<EventEngineResult<()>>,
         tokio::sync::oneshot::Receiver<()>,
     ) {
         let shutdown_flag = self.shutdown_flag.clone();
@@ -888,7 +888,7 @@ impl IngestService {
                         Err(e) => {
                             error!(
                                 target: "sinex_metrics",
-                                metric = "ingestd.component_failures_total",
+                                metric = "event_engine.component_failures_total",
                                 component = "jetstream_consumer",
                                 error = %e,
                                 "JetStream consumer failed"
@@ -916,7 +916,7 @@ impl IngestService {
         pool: PgPool,
         ready_set: Option<MaterialReadySet>,
     ) -> (
-        JoinHandle<IngestdResult<()>>,
+        JoinHandle<EventEngineResult<()>>,
         tokio::sync::oneshot::Receiver<()>,
     ) {
         let shutdown_flag = self.shutdown_flag.clone();
@@ -948,7 +948,7 @@ impl IngestService {
                 Err(e) => {
                     error!(
                         target: "sinex_metrics",
-                        metric = "ingestd.startup_failures_total",
+                        metric = "event_engine.startup_failures_total",
                         path = %content_store_path,
                         error = %e,
                         "Failed to initialize content-store root"
@@ -981,7 +981,7 @@ impl IngestService {
                     Err(e) => {
                         error!(
                             target: "sinex_metrics",
-                            metric = "ingestd.material_assembler_failures_total",
+                            metric = "event_engine.material_assembler_failures_total",
                             error = %e,
                             "Failed to create MaterialAssembler"
                         );
@@ -1170,7 +1170,7 @@ impl IngestService {
         handles.push(handle);
     }
 
-    fn collapse_background_shutdown_errors(mut errors: Vec<SinexError>) -> IngestdResult<()> {
+    fn collapse_background_shutdown_errors(mut errors: Vec<SinexError>) -> EventEngineResult<()> {
         if errors.is_empty() {
             return Ok(());
         }
@@ -1207,7 +1207,7 @@ impl IngestService {
             Err(error) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.component_exits_total",
+                    metric = "event_engine.component_exits_total",
                     component = "background_task",
                     task_index = index,
                     error = %error,
@@ -1222,7 +1222,7 @@ impl IngestService {
         }
     }
 
-    async fn wait_for_tasks(&self, timeout: Duration) -> IngestdResult<()> {
+    async fn wait_for_tasks(&self, timeout: Duration) -> EventEngineResult<()> {
         let mut handles = {
             let mut guard = self.task_handles.lock().await;
             std::mem::take(&mut *guard)
@@ -1244,7 +1244,7 @@ impl IngestService {
                     if error.is_panic() {
                         error!(
                             target: "sinex_metrics",
-                            metric = "ingestd.component_panics_total",
+                            metric = "event_engine.component_panics_total",
                             component = "background_task",
                             task_index = i,
                             error = %error,
@@ -1283,7 +1283,7 @@ impl IngestService {
     }
 
     /// Graceful shutdown
-    pub async fn shutdown(&mut self) -> IngestdResult<()> {
+    pub async fn shutdown(&mut self) -> EventEngineResult<()> {
         info!("Initiating graceful shutdown");
 
         trigger_shutdown(&self.shutdown_flag, &self.shutdown_notify);
@@ -1293,7 +1293,7 @@ impl IngestService {
 
         // Close database connections
         if let Some(pool) = &self.db_pool {
-            info!("Closing ingestd database pool");
+            info!("Closing event_engine database pool");
             pool.close().await;
         }
 
@@ -1302,16 +1302,16 @@ impl IngestService {
     }
 }
 
-const MIGRATION_LOCK_KEY: &str = "ingestd.migrations";
+const MIGRATION_LOCK_KEY: &str = "event_engine.migrations";
 const SCHEMA_KV_BUCKET_NAME: &str = "sinex_schemas";
 
 pub async fn try_acquire_migration_lock(
     pool: &PgPool,
-) -> IngestdResult<ResourceGuard<AdvisoryLock>> {
+) -> EventEngineResult<ResourceGuard<AdvisoryLock>> {
     match AdvisoryLock::try_acquire(pool, MIGRATION_LOCK_KEY).await {
         Ok(Some(guard)) => Ok(guard),
         Ok(None) => Err(SinexError::service(
-            "Another ingestd instance is already applying migrations",
+            "Another event_engine instance is already applying migrations",
         )
         .with_operation("service.migration_lock")),
         Err(err) => Err(SinexError::service("Failed to acquire migration lock")
@@ -1330,7 +1330,7 @@ struct SchemaBroadcastEntry {
 impl IngestService {
     fn parse_schema_broadcast_entries(
         entries: &[SchemaBroadcastEntry],
-    ) -> IngestdResult<Vec<(uuid::Uuid, &SchemaBroadcastEntry)>> {
+    ) -> EventEngineResult<Vec<(uuid::Uuid, &SchemaBroadcastEntry)>> {
         entries
             .iter()
             .map(|entry| {
@@ -1350,7 +1350,7 @@ impl IngestService {
         validator: &IngestEventValidator,
         nats_client: &NatsClient,
         pool: &PgPool,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         let env = sinex_environment();
         let subject = env.nats_subject("system.schemas.active");
         let js = jetstream::new(nats_client.clone());
@@ -1396,7 +1396,7 @@ impl IngestService {
         entries: &[SchemaBroadcastEntry],
         pool: &PgPool,
         js: &jetstream::Context,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         use sinex_db::repositories::DbPoolExt;
 
         // KV bucket name is namespaced by environment (dev/prod) to prevent cross-environment
@@ -1474,7 +1474,7 @@ mod tests {
 
     fn test_service() -> IngestService {
         IngestService {
-            config: IngestdConfig::builder().build(),
+            config: EventEngineConfig::builder().build(),
             db_pool: None,
             nats_client: None,
             jetstream: None,
@@ -1547,7 +1547,7 @@ mod tests {
     async fn log_aborted_task_shutdown_result_rejects_panicked_task()
     -> xtask::sandbox::TestResult<()> {
         let handle = tokio::spawn(async {
-            panic!("ingestd background task panic");
+            panic!("event_engine background task panic");
         });
         let error = IngestService::log_aborted_task_shutdown_result(2, handle.await)
             .expect("panicked background task must stay visible");

@@ -2855,7 +2855,7 @@ pub struct EntityRelation;
 /// Service metadata for registration and discovery.
 ///
 /// This is the wire/registration metadata carried by the gateway and
-/// discovery layer. It is distinct from `sinex_node_sdk::ServiceInfo`,
+/// discovery layer. It is distinct from `sinexd::node_sdk::ServiceInfo`,
 /// which describes the *runtime* service (process-local, carries
 /// `runner_pack`). Named `ServiceRegistrationInfo` to avoid the
 /// collision — see issue #746 (A6).

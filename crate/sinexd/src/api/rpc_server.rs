@@ -1881,14 +1881,14 @@ pub async fn spawn(
     })?;
     info!("RPC server listening on TLS {}", local_addr);
 
-    systemd_notify::notify_ready("sinex-gateway");
-    let watchdog_handle = systemd_notify::spawn_watchdog("sinex-gateway");
+    systemd_notify::notify_ready("sinexd");
+    let watchdog_handle = systemd_notify::spawn_watchdog("sinexd");
 
     let handle = tokio::spawn(async move {
         // Run accept loop until shutdown signal
         let accept_result = RpcServer::accept_loop(listener, acceptor, app, &mut shutdown).await;
-        systemd_notify::stop_watchdog(watchdog_handle, "sinex-gateway").await;
-        systemd_notify::notify_stopping("sinex-gateway");
+        systemd_notify::stop_watchdog(watchdog_handle, "sinexd").await;
+        systemd_notify::notify_stopping("sinexd");
         accept_result?;
 
         // Signal all background tasks to shut down

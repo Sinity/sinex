@@ -1,8 +1,8 @@
-# Chaos test: network partition between ingestd and NATS — Rust-driven.
+# Chaos test: network partition between event_engine and NATS — Rust-driven.
 #
 # Injects a deterministic `tc netem` packet-drop rule between sinexd and
 # the NATS server, then removes it and verifies:
-#   - ingestd survives the partition without crashing
+#   - event_engine survives the partition without crashing
 #   - after reconnection, the event pipeline drains (no data loss)
 #   - the event count in Postgres grows back to the expected total
 { pkgs
@@ -28,7 +28,7 @@ pkgs.testers.nixosTest {
       ../common/chaos-toolkit.nix
     ];
 
-    # Enable NATS for this test (ingestd → NATS → ingestd pipeline)
+    # Enable NATS for this test (event_engine → NATS → event_engine pipeline)
     services.sinex.nats.enable = true;
     services.sinex.nats.bootstrapStreams.enable = true;
 

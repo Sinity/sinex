@@ -270,7 +270,7 @@ impl RuntimeTargetDescriptor {
             },
             gateway: RuntimeTargetGateway {
                 base_url: readiness.gateway.base_url.clone(),
-                token_file: readiness.secrets.gateway_admin_token_file.clone(),
+                token_file: readiness.secrets.api_admin_token_file.clone(),
                 token_role: Some(RuntimeTargetGatewayTokenRole::Admin),
                 ca_cert_file: readiness.secrets.gateway_tls_trust_anchor_file.clone(),
                 client_cert_file: None,
@@ -398,8 +398,8 @@ mod tests {
                 servers: vec!["tls://127.0.0.1:4222".to_string()],
             },
             secrets: DeploymentSecrets {
-                gateway_admin_token_file: Some(PathBuf::from(
-                    "/run/agenix/sinex-gateway-admin-token",
+                api_admin_token_file: Some(PathBuf::from(
+                    "/run/agenix/sinex-api-admin-token",
                 )),
                 gateway_tls_trust_anchor_file: Some(PathBuf::from(
                     "/var/lib/sinex/run/gateway-ca.pem",
@@ -422,7 +422,7 @@ mod tests {
         assert_eq!(target.nats.environment.as_deref(), Some("prod"));
         assert_eq!(
             target.gateway.token_file.as_deref(),
-            Some(Path::new("/run/agenix/sinex-gateway-admin-token"))
+            Some(Path::new("/run/agenix/sinex-api-admin-token"))
         );
         assert_eq!(
             target.gateway.token_role,

@@ -1,6 +1,6 @@
-# Ingestd Patterns
+# EventEngine Patterns
 
-> Maintained ingestd-side pattern note for event sourcing, idempotency, and backpressure.
+> Maintained event-engine-side pattern note for event sourcing, idempotency, and backpressure.
 
 ## Event Sourcing Architecture
 
@@ -18,11 +18,11 @@ Node Capture
     ↓ (stage material, emit provisional)
 NATS JetStream events.raw.{source}.{type}
     ↓ (Nats-Msg-Id for idempotency)
-Ingestd JetStreamConsumer
+EventEngine JetStreamConsumer
     ├─→ Validate Event
     ├─→ Persist to Postgres (TimescaleDB)
     ├─→ Publish Confirmation → events.confirmations.{event_id}
-    └─→ On Error → DLQ events.dlq.ingestd
+    └─→ On Error → DLQ events.dlq.event_engine
          ↓ (confirmed events only)
 Automata (search, analytics, health)
 ```

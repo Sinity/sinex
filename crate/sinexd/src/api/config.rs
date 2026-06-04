@@ -97,7 +97,7 @@ pub struct GatewayConfig {
     #[sinex_config(env = "SINEX_RPC_TOKEN_FILE")]
     pub rpc_token_file: Option<String>,
 
-    /// Higher-priority file containing the gateway admin token.
+    /// Higher-priority file containing the API admin token.
     #[serde(default)]
     #[sinex_config(env = "SINEX_API_ADMIN_TOKEN_FILE")]
     pub admin_token_file: Option<String>,
@@ -292,7 +292,7 @@ pub struct GatewayConfig {
     /// Pipeline namespace (`SINEX_NAMESPACE`), used for NATS subject/stream
     /// isolation in tests. The SSE SubscriptionBus subscribes to
     /// `{namespace}.events.confirmations.>`; it MUST match the namespace the
-    /// paired ingestd publishes confirmations under, or the bus never sees them
+    /// paired event_engine publishes confirmations under, or the bus never sees them
     /// and SSE delivery silently never completes. Unset in production.
     #[serde(default)]
     #[sinex_config(env = "SINEX_NAMESPACE")]

@@ -54,7 +54,7 @@ pub struct Event<T = JsonValue> {
     /// Original timestamp when the event occurred.
     ///
     /// `None` is the "derive me at persistence" signal for material-provenance
-    /// events: the ingestd admission stage resolves it from the source-material
+    /// events: the event_engine admission stage resolves it from the source-material
     /// timing tier (#1570 Prong B). Derived events and any caller that set an
     /// explicit time carry `Some`.
     #[serde(skip_serializing_if = "Option::is_none")]

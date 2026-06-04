@@ -1182,7 +1182,7 @@ expression: json
               "takes_value": true
             }
           ],
-          "name": "ingestd",
+          "name": "event_engine",
           "subcommands": []
         },
         {
@@ -1230,7 +1230,7 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "Run core services bundle (ingestd + gateway)",
+          "about": "Run core services bundle (event engine + API)",
           "args": [
             {
               "global": false,
@@ -4141,7 +4141,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Check runtime health (ingestd heartbeat, consumer lag, batch latency)",
+          "help": "Check runtime health (event_engine heartbeat, consumer lag, batch latency)",
           "long": "runtime",
           "name": "runtime",
           "possible_values": [

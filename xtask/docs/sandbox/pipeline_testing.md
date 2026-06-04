@@ -77,7 +77,7 @@ PipelineScope provides full pipeline testing with an in-process event-engine con
 async fn test_full_pipeline(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
 
-    // Start in-process ingestd
+    // Start in-process event_engine
     let scope = ctx.pipeline_scope().await?;
 
     // Publish events
@@ -196,7 +196,7 @@ A process-wide semaphore caps how many PipelineScope instances run in parallel:
 Default limit = available_parallelism / 6, clamped to 1..6
 ```
 
-This prevents JetStream-heavy suites from starving ingestd. Additional pipeline tests wait
+This prevents JetStream-heavy suites from starving event_engine. Additional pipeline tests wait
 for a permit instead of hitting timeouts.
 
 **Note**: If `jetstream_dlq_test` or `jetstream_e2e_integration_test` exceed 30s, check the
@@ -258,7 +258,7 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
 | Stream name | `namespace.stream("STREAM")` |
 | Subject pattern | `namespace.subject("subject.>")` |
 | Publish event | `ctx.publish_event(...)` |
-| Full pipeline + ingestd | `ctx.pipeline_scope().await?` |
+| Full pipeline + event_engine | `ctx.pipeline_scope().await?` |
 | Node-style publisher | `TestNodePublisher::with_namespace(...)` |
 | Wait for persistence | `scope.wait_for_event_count(n)` |
 
@@ -268,7 +268,7 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
 |----------|----------|
 | Unit test, no pipeline | Direct repository: `ctx.pool.events().insert()` |
 | Integration test | `ctx.publish_event()` |
-| Full pipeline with ingestd | `ctx.pipeline_scope()` |
+| Full pipeline with event_engine | `ctx.pipeline_scope()` |
 | Simulating node behavior | `TestNodePublisher` |
 | Custom JetStream setup | `ctx.jetstream()` + namespace |
 
@@ -288,7 +288,7 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
 
 ### "Pipeline test timeout"
 
-**Cause**: Ingestd not consuming fast enough, or too many concurrent pipeline tests.
+**Cause**: EventEngine not consuming fast enough, or too many concurrent pipeline tests.
 
 **Solutions**:
 - Check concurrency guard (max 6 concurrent PipelineScope instances)

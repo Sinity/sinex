@@ -90,7 +90,7 @@ async fn publish_raw_bytes(
 
 /// Isolated consumer setup for tests.
 struct ConsumerSetup {
-    handle: tokio::task::JoinHandle<sinexd::event_engine::IngestdResult<()>>,
+    handle: tokio::task::JoinHandle<sinexd::event_engine::EventEngineResult<()>>,
     js: jetstream::Context,
     topology: JetStreamTopology,
     namespace: String,
@@ -113,7 +113,7 @@ async fn start_isolated_consumer(ctx: &TestContext, suffix: &str) -> TestResult<
         &env,
         stream,
         ctx.pipeline_namespace()
-            .consumer_name(&format!("ingestd-{suffix}")),
+            .consumer_name(&format!("event-engine-{suffix}")),
         Some(&namespace),
     );
 
@@ -150,7 +150,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     let topology = JetStreamTopology::new(
         env,
         ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
-        ctx.pipeline_namespace().consumer_name("ingestd"),
+        ctx.pipeline_namespace().consumer_name("event_engine"),
         Some(&namespace),
     );
     let ready_topology = topology.clone();
@@ -211,7 +211,7 @@ async fn consumer_accepts_db_registered_material_outside_ready_set(
     let topology = JetStreamTopology::new(
         env,
         ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
-        ctx.pipeline_namespace().consumer_name("ingestd-ready-set"),
+        ctx.pipeline_namespace().consumer_name("event-engine-ready-set"),
         Some(&namespace),
     );
     let ready_topology = topology.clone();
@@ -271,7 +271,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let topology = JetStreamTopology::new(
         env,
         ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
-        ctx.pipeline_namespace().consumer_name("ingestd-confirm"),
+        ctx.pipeline_namespace().consumer_name("event-engine-confirm"),
         Some(&namespace),
     );
     let ready_topology = topology.clone();
@@ -333,7 +333,7 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
     let topology = JetStreamTopology::new(
         env,
         ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
-        ctx.pipeline_namespace().consumer_name("ingestd"),
+        ctx.pipeline_namespace().consumer_name("event_engine"),
         Some(&namespace),
     );
     let events_stream = topology.events_stream.clone();
@@ -430,7 +430,7 @@ async fn consumer_loads_externally_registered_materials_via_db_fallback(
         env,
         ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
         ctx.pipeline_namespace()
-            .consumer_name("ingestd-db-fallback"),
+            .consumer_name("event-engine-db-fallback"),
         Some(&namespace),
     );
     let ready_topology = topology.clone();
@@ -486,7 +486,7 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
     let topology = JetStreamTopology::new(
         env,
         ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
-        ctx.pipeline_namespace().consumer_name("ingestd"),
+        ctx.pipeline_namespace().consumer_name("event_engine"),
         Some(&namespace),
     );
     let dlq_stream = topology.dlq_stream.clone();

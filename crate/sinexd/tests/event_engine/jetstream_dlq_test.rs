@@ -169,7 +169,7 @@ async fn test_dlq_cases_table() -> TestResult<()> {
     let topology = JetStreamTopology::new(
         env,
         base_stream.clone(),
-        ctx.pipeline_namespace().consumer_name("ingestd"),
+        ctx.pipeline_namespace().consumer_name("event_engine"),
         Some(&namespace),
     );
     let consumer = JetStreamConsumer::with_ack_wait(
@@ -348,7 +348,7 @@ impl TestNodePublisher {
 /// Consumer setup result with all components needed for testing.
 struct ConsumerSetup {
     nats_client: async_nats::Client,
-    handle: tokio::task::JoinHandle<sinexd::event_engine::IngestdResult<()>>,
+    handle: tokio::task::JoinHandle<sinexd::event_engine::EventEngineResult<()>>,
     js: jetstream::Context,
     topology: JetStreamTopology,
     namespace: String,
@@ -396,7 +396,7 @@ async fn start_consumer_with_hooks_and_batch_config(
         env,
         stream,
         ctx.pipeline_namespace()
-            .consumer_name(&format!("ingestd-{suffix}")),
+            .consumer_name(&format!("event-engine-{suffix}")),
         Some(&namespace),
     );
 
@@ -1038,7 +1038,7 @@ async fn test_persistence_error_naked_when_dlq_routing_disabled() -> TestResult<
     Ok(())
 }
 
-/// When a non-retryable persistence error keeps recurring, ingestd should
+/// When a non-retryable persistence error keeps recurring, event_engine should
 /// eventually route it to DLQ itself instead of relying on JetStream expiry.
 #[sinex_test]
 async fn test_non_retryable_persistence_error_routes_terminal_delivery_to_dlq() -> TestResult<()> {

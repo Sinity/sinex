@@ -84,7 +84,7 @@ impl ConfigurationCoverage {
         };
 
         // Analyze modern configuration patterns
-        coverage.analyze_ingestd_config();
+        coverage.analyze_event_engine_config();
         coverage.analyze_nats_config();
         coverage.analyze_service_configs();
         coverage.analyze_environment_variables();
@@ -92,9 +92,9 @@ impl ConfigurationCoverage {
         coverage
     }
 
-    fn analyze_ingestd_config(&mut self) {
+    fn analyze_event_engine_config(&mut self) {
         self.service_configs.insert(
-            "IngestdConfig".to_string(),
+            "EventEngineConfig".to_string(),
             ConfigSchemaInfo {
                 required_fields: vec!["database_url".to_string(), "nats_servers".to_string()],
                 optional_fields: vec![
@@ -214,7 +214,7 @@ impl ConfigurationCoverage {
                 "SINEX_NATS_URL",
                 "NATS server URLs (comma-separated)",
                 Some("nats://localhost:4222"),
-                vec!["ingestd", "All automata"],
+                vec!["event_engine", "All automata"],
             ),
             (
                 "SINEX_DB_POOL_SIZE",
@@ -309,7 +309,7 @@ impl ConfigCompatibilityMatrix {
             description: "Test that all default configurations work together".to_string(),
             config_combinations: vec![
                 ConfigCombination {
-                    component: "ingestd".to_string(),
+                    component: "event_engine".to_string(),
                     config_overrides: HashMap::new(),
                     env_var_overrides: HashMap::new(),
                 },
@@ -328,7 +328,7 @@ impl ConfigCompatibilityMatrix {
             description: "Test different database pool sizes across components".to_string(),
             config_combinations: vec![
                 ConfigCombination {
-                    component: "ingestd".to_string(),
+                    component: "event_engine".to_string(),
                     config_overrides: HashMap::from([(
                         "database_pool_size".to_string(),
                         ConfigValue::Integer(50),
@@ -354,7 +354,7 @@ impl ConfigCompatibilityMatrix {
             name: "low_memory_config".to_string(),
             description: "Test configuration for low-memory environments".to_string(),
             config_combinations: vec![ConfigCombination {
-                component: "ingestd".to_string(),
+                component: "event_engine".to_string(),
                 config_overrides: HashMap::from([(
                     "database_pool_size".to_string(),
                     ConfigValue::Integer(5),
@@ -373,7 +373,7 @@ impl ConfigCompatibilityMatrix {
             name: "secure_config".to_string(),
             description: "Test secure configuration with minimal permissions".to_string(),
             config_combinations: vec![ConfigCombination {
-                component: "ingestd".to_string(),
+                component: "event_engine".to_string(),
                 config_overrides: HashMap::from([(
                     "validate_schemas".to_string(),
                     ConfigValue::Boolean(true),
@@ -390,7 +390,7 @@ impl ConfigCompatibilityMatrix {
             name: "invalid_database_url".to_string(),
             description: "Test behavior with invalid database configuration".to_string(),
             config_combinations: vec![ConfigCombination {
-                component: "ingestd".to_string(),
+                component: "event_engine".to_string(),
                 config_overrides: HashMap::from([(
                     "database_url".to_string(),
                     ConfigValue::String("invalid://url".to_string()),
@@ -407,7 +407,7 @@ impl ConfigCompatibilityMatrix {
             name: "invalid_nats_url".to_string(),
             description: "Test behavior with invalid NATS configuration".to_string(),
             config_combinations: vec![ConfigCombination {
-                component: "ingestd".to_string(),
+                component: "event_engine".to_string(),
                 config_overrides: HashMap::from([(
                     "nats_servers".to_string(),
                     ConfigValue::Array(vec![ConfigValue::String("invalid://server".to_string())]),
@@ -627,9 +627,9 @@ impl DefaultConfigValidator {
     }
 
     fn collect_default_configurations(&mut self) {
-        // Collect defaults from IngestdConfig
+        // Collect defaults from EventEngineConfig
         self.component_defaults.insert(
-            "IngestdConfig".to_string(),
+            "EventEngineConfig".to_string(),
             HashMap::from([
                 (
                     "database_url".to_string(),
@@ -692,7 +692,7 @@ impl DefaultConfigValidator {
 
         // Validate based on component type
         match component {
-            "IngestdConfig" => self.validate_ingestd_defaults(defaults, &mut report),
+            "EventEngineConfig" => self.validate_event_engine_defaults(defaults, &mut report),
             "NatsConfig" => self.validate_nats_defaults(defaults, &mut report),
             _ => {
                 // Generic validation for unknown components
@@ -703,7 +703,7 @@ impl DefaultConfigValidator {
         report
     }
 
-    fn validate_ingestd_defaults(
+    fn validate_event_engine_defaults(
         &self,
         defaults: &HashMap<String, ConfigValue>,
         report: &mut ValidationReport,
@@ -803,8 +803,8 @@ async fn test_configuration_coverage_analysis(ctx: TestContext) -> TestResult<()
 
     // Verify specific configurations exist
     assert!(
-        coverage.service_configs.contains_key("IngestdConfig"),
-        "Should have IngestdConfig"
+        coverage.service_configs.contains_key("EventEngineConfig"),
+        "Should have EventEngineConfig"
     );
     assert!(
         coverage.core_configs.contains_key("NatsConfig"),
@@ -982,13 +982,13 @@ async fn test_default_configuration_validation(ctx: TestContext) -> TestResult<(
     );
 
     // Test specific default values
-    if let Some(ingestd_defaults) = validator.component_defaults.get("IngestdConfig") {
-        if let Some(ConfigValue::Integer(pool_size)) = ingestd_defaults.get("database_pool_size") {
+    if let Some(event_engine_defaults) = validator.component_defaults.get("EventEngineConfig") {
+        if let Some(ConfigValue::Integer(pool_size)) = event_engine_defaults.get("database_pool_size") {
             assert!(pool_size > &0, "Default pool size should be positive");
         }
 
         if let Some(ConfigValue::Boolean(validate_schemas)) =
-            ingestd_defaults.get("validate_schemas")
+            event_engine_defaults.get("validate_schemas")
         {
             assert!(
                 validate_schemas == &true,

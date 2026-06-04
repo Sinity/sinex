@@ -1,7 +1,7 @@
 //! Transport boundary tests for the `EventIntent` envelope (#1131).
 //!
 //! Tests prove:
-//! 1. Happy path: admitted intent → NATS → ingestd admission → DB persistence → confirmation
+//! 1. Happy path: admitted intent → NATS → event_engine admission → DB persistence → confirmation
 //! 2. Rejection paths: invalid envelope version, missing fields, empty events
 //! 3. The low-level escape hatch (`publish_raw_event_batch`) is grep-detectable
 

@@ -240,16 +240,16 @@ Run command for binary lifecycle management
 
 | Command | Purpose |
 |---|---|
-| `ingestd` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
+| `event_engine` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
 | `gateway` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
 | `node` | Run a specific node by name |
-| `core` | Run core services bundle (ingestd + gateway) |
+| `core` | Run core services bundle (event engine + API) |
 | `all-ingestors` | Run all ingestors |
 | `all-automatons` | Run all automatons |
 | `list` | List available binaries |
 | `tether` | Connect to a remote environment via The Tether |
 
-### `xtask run ingestd`
+### `xtask run event_engine`
 
 Run sinexd (alias preserved post-collapse; runs the full supervisor)
 
@@ -285,7 +285,7 @@ Run a specific node by name
 
 ### `xtask run core`
 
-Run core services bundle (ingestd + gateway)
+Run core services bundle (event engine + API)
 
 **Arguments**
 
@@ -1434,7 +1434,7 @@ Probe developer-environment health and deployment readiness
 |---|---|---|---|
 | `--pipelines` | no | no | Run pipeline smoke tests in addition to health checks |
 | `--fix` | no | no | Auto-remediate: restart stale processes, invalidate stale preflight cache |
-| `--runtime` | no | no | Check runtime health (ingestd heartbeat, consumer lag, batch latency) |
+| `--runtime` | no | no | Check runtime health (event_engine heartbeat, consumer lag, batch latency) |
 | `--deployment-readiness` | no | no | Check deployment readiness (schema, services, permissions) |
 | `--reclaim` | no | no | Reclaim stale target-dir artifacts (cargo-sweep + incremental/ prune) |
 | `--test-db` | no | no | Inspect managed test database footprint and /dev/shm headroom |
@@ -1859,4 +1859,3 @@ Internal: record drift guard bypass events from the pre-push hook (#1565)
 |---|---|---|---|
 | `--branch` | yes | no | The git branch being pushed |
 | `--sha` | yes | no | The HEAD commit SHA at the time of bypass |
-

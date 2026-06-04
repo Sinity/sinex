@@ -329,12 +329,12 @@ async fn dlq_requeue_requires_selector_params(ctx: TestContext) -> TestResult<()
 }
 
 #[sinex_test]
-async fn dlq_requeue_by_id_requeues_ingestd_style_entry(ctx: TestContext) -> TestResult<()> {
+async fn dlq_requeue_by_id_requeues_event_engine_style_entry(ctx: TestContext) -> TestResult<()> {
     let harness = NatsHarness::start(ctx).await?;
     let js = jetstream::new(harness.client.clone());
     js.get_or_create_stream(jetstream::stream::Config {
         name: harness.env.nats_stream_name("SINEX_RAW_EVENTS_DLQ"),
-        subjects: vec![harness.env.nats_subject("events.dlq.ingestd")],
+        subjects: vec![harness.env.nats_subject("events.dlq.event_engine")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 1000,
         storage: jetstream::stream::StorageType::Memory,
@@ -381,7 +381,7 @@ async fn dlq_requeue_by_id_requeues_ingestd_style_entry(ctx: TestContext) -> Tes
     harness
         .client
         .publish_with_headers(
-            harness.env.nats_subject("events.dlq.ingestd"),
+            harness.env.nats_subject("events.dlq.event_engine"),
             headers,
             serde_json::to_vec(&dlq_entry)?.into(),
         )

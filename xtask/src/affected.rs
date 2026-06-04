@@ -1017,7 +1017,7 @@ mod tests {
         let repo = tempfile::tempdir()?;
         let inline_test = repo
             .path()
-            .join("crate/lib/sinex-node-sdk/src/coordination.rs");
+            .join("crate/lib/sinexd/src/coordination.rs");
         fs::create_dir_all(inline_test.parent().expect("inline parent"))?;
         fs::write(
             &inline_test,
@@ -1125,10 +1125,10 @@ mod tests {
         let repo = tempfile::tempdir()?;
         let root = repo
             .path()
-            .join("crate/lib/sinex-node-sdk/tests/integration_tests.rs");
+            .join("crate/lib/sinexd/tests/integration_tests.rs");
         let nested = repo
             .path()
-            .join("crate/lib/sinex-node-sdk/tests/integration/node_lifecycle_test.rs");
+            .join("crate/lib/sinexd/tests/integration/node_lifecycle_test.rs");
         fs::create_dir_all(nested.parent().expect("nested parent"))?;
         fs::write(&root, "mod integration;\nmod support;\n")?;
         fs::write(

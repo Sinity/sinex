@@ -406,7 +406,7 @@ where
                             node = %self.node.name(),
                             error = %prime_error,
                             "Failed to prime self-observation materializer; \
-                             telemetry events may be deferred by ingestd retry"
+                             telemetry events may be deferred by event_engine retry"
                         );
                     }
                     self.self_observer = Some(observer);

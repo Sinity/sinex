@@ -88,7 +88,7 @@ async fn insert_test_event(
     Ok(id)
 }
 
-/// Publish a fake confirmation message to NATS (mimics what ingestd does after persisting).
+/// Publish a fake confirmation message to NATS (mimics what event_engine does after persisting).
 async fn publish_confirmation(
     nats: &async_nats::Client,
     env_name: &str,

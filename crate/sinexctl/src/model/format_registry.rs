@@ -560,11 +560,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry ingestd-batch-stats",
+        "telemetry event-engine-batch-stats",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry ingestd-validation",
+        "telemetry event-engine-validation",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert("throughput", FormatCapability::single_shot(TABLE_JSON_YAML));
@@ -1055,8 +1055,8 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "telemetry metric-counters" => &[methods::TELEMETRY_METRIC_COUNTERS],
         "telemetry current-device-state" => &[methods::TELEMETRY_CURRENT_DEVICE_STATE],
         "telemetry current-health" => &[methods::TELEMETRY_CURRENT_HEALTH],
-        "telemetry ingestd-batch-stats" => &[methods::TELEMETRY_INGESTD_BATCH_STATS],
-        "telemetry ingestd-validation" => &[methods::TELEMETRY_INGESTD_VALIDATION],
+        "telemetry event-engine-batch-stats" => &[methods::TELEMETRY_EVENT_ENGINE_BATCH_STATS],
+        "telemetry event-engine-validation" => &[methods::TELEMETRY_EVENT_ENGINE_VALIDATION],
         "throughput" => &[methods::TELEMETRY_THROUGHPUT],
         "documents search" => &[methods::DOCUMENTS_SEARCH],
         "documents get" => &[methods::DOCUMENTS_GET],

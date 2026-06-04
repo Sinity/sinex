@@ -212,7 +212,7 @@ SQL
             machine.wait_for_unit(unit)
         machine.succeed("systemctl show -p Result --value sinex-schema-apply.service | grep '^success$'")
         machine.succeed("systemctl show -p Result --value sinex-blob-init.service | grep '^success$'")
-        machine.succeed("test -s /etc/sinex/gateway-admin-token")
+        machine.succeed("test -s /etc/sinex/api-admin-token")
         machine.succeed("su - postgres -c 'psql -d sinex -At -c \"SELECT 1\"' | grep '^1$'")
         machine.succeed("su - postgres -c \"psql -d sinex_dev -At -c \\\"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'core' AND table_name = 'events'\\\"\" | grep '^1$'")
 

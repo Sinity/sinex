@@ -7,7 +7,7 @@
 //! [`ParsedEventIntent`] values — the same code path regardless of how the
 //! spec was authored.
 //!
-//! See `crate/lib/sinex-node-sdk/docs/declarative_parser.md` for the locked
+//! See `crate/lib/sinexd/docs/declarative_parser.md` for the locked
 //! design and the macro attribute catalog.
 //!
 //! # v1 scope (this file)

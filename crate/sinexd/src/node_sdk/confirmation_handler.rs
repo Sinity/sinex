@@ -41,7 +41,7 @@ struct PendingEntry {
     timed_out_at: Option<sinex_primitives::temporal::Timestamp>,
 }
 
-/// Per-kind confirmation watermark from ingestd. Per #1306: a single message
+/// Per-kind confirmation watermark from event_engine. Per #1306: a single message
 /// per `(source, event_type)` tells downstream "events of this kind with
 /// id ≤ `event_id` are confirmed". Subjects use the kind as the leaf
 /// (`<prefix>.<source>.<event_type>`), so `max_messages_per_subject = 1` on the
@@ -225,7 +225,7 @@ impl ConfirmationBuffer {
     }
 
     /// Returns Some(event) iff the provisional event's kind already has a
-    /// watermark `>=` its `event_id` — i.e. ingestd already confirmed it but the
+    /// watermark `>=` its `event_id` — i.e. event_engine already confirmed it but the
     /// confirmation arrived before this provisional was buffered. Caller should
     /// treat the returned event as already confirmed.
     pub async fn try_implicit_confirm_on_add(&self, event: &ProvisionalEvent) -> bool {
@@ -241,7 +241,7 @@ impl ConfirmationBuffer {
 
     /// Per-kind watermark confirm. Per #1306: remove and return every pending
     /// event of `(source, event_type)` whose `event_id <= watermark`. This is
-    /// the consumer side of ingestd's per-kind watermark compaction — one
+    /// the consumer side of event_engine's per-kind watermark compaction — one
     /// message on `events.confirmations.<source>.<event_type>` implicitly
     /// confirms every prior event of that kind. Also advances the per-kind
     /// watermark so future late-arriving provisional events with `event_id ≤

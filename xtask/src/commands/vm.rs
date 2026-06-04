@@ -51,7 +51,7 @@ const CHAOS_TESTS: &[&str] = &[
     "chaos-clock-skew",
     "xtask-concurrency",
 ];
-/// End-to-end production-shape proof (#1135): real source-unit host → NATS → ingestd → DB → gateway.
+/// End-to-end production-shape proof (#1135): source unit -> NATS -> event engine -> DB -> API.
 const PRODUCTION_SHAPE_TESTS: &[&str] = &["production-shape"];
 
 /// Default timeout per test in seconds (15 minutes).
@@ -1114,10 +1114,10 @@ fn run_vm_validation_probe(
             "pkgs",
             "import <nixpkgs> {}",
             "--arg",
-            "sinex-ingestd",
+            "sinexd",
             VM_VALIDATION_DUMMY_PACKAGE_EXPR,
             "--arg",
-            "sinex-gateway",
+            "sinexd",
             VM_VALIDATION_DUMMY_PACKAGE_EXPR,
             "--arg",
             "sinex",

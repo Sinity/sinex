@@ -2,7 +2,7 @@
 //!
 //! This is intentionally stronger than the per-crate logic tests: each production automaton is
 //! initialized through the node runtime, emits derived envelopes through the SDK adapter, and
-//! those envelopes are then persisted through the normal NATS -> ingestd -> Postgres path.
+//! those envelopes are then persisted through the normal NATS -> event_engine -> Postgres path.
 
 use std::collections::HashMap;
 
@@ -46,17 +46,17 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
     let temp_dir = tempfile::tempdir()?;
     let nats = ctx.nats_handle()?;
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let ingest_config = TestIngestdConfig {
+    let ingest_config = TestEventEngineConfig {
         nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
-        work_dir: Some(temp_dir.path().join("ingestd")),
+        work_dir: Some(temp_dir.path().join("event_engine")),
         namespace: Some(namespace),
         consumer_fetch_max_messages: 16,
         consumer_fetch_timeout_ms: 25,
         database_pool_size: 2,
         ..Default::default()
     };
-    let mut ingestd = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+    let mut event_engine = start_test_event_engine_with_config(ingest_config, Some(&ctx)).await?;
 
     let base = Timestamp::now() - TemporalDuration::seconds(1_200);
     let command_events = vec![
@@ -163,7 +163,7 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
     let health_events = vec![
         ctx.publish_at(
             HealthStatusPayload {
-                component: "workspace-proof-ingestd".to_string(),
+                component: "workspace-proof-event-engine".to_string(),
                 previous_status: HealthStatus::Unknown,
                 current_status: HealthStatus::Healthy,
                 reason: Some("runtime proof baseline".to_string()),
@@ -174,7 +174,7 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
         .await?,
         ctx.publish_at(
             HealthStatusPayload {
-                component: "workspace-proof-ingestd".to_string(),
+                component: "workspace-proof-event-engine".to_string(),
                 previous_status: HealthStatus::Healthy,
                 current_status: HealthStatus::Unhealthy,
                 reason: Some("runtime proof transition".to_string()),
@@ -218,7 +218,7 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
         "failed health transition should emit an alert report"
     );
 
-    ingestd.stop().await?;
+    event_engine.stop().await?;
     Ok(())
 }
 

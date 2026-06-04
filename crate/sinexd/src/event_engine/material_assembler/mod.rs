@@ -122,7 +122,7 @@ struct AssemblyStatsSnapshot {
     commit_outcome_unknown: u64,
 }
 
-use crate::event_engine::{IngestdResult, SinexError, material_ready_set::MaterialReadySet};
+use crate::event_engine::{EventEngineResult, SinexError, material_ready_set::MaterialReadySet};
 use assembly_state_machine::{AssemblyLogicalState, AssemblyStateMachine};
 use state::{
     AssemblerState, AssemblyPhase, DLQ_CONSUMER, FinalizationState, MaterialEndMessage,
@@ -247,7 +247,7 @@ impl MaterialAssembler {
         slice_timeout_secs: u64,
         orphan_threshold_secs: u64,
         disk_threshold_percent: u8,
-    ) -> IngestdResult<Self> {
+    ) -> EventEngineResult<Self> {
         Self::new_with_durability_thresholds(
             nats_client,
             pool,
@@ -279,7 +279,7 @@ impl MaterialAssembler {
         orphan_threshold_secs: u64,
         disk_threshold_percent: u8,
         durability_thresholds: DurabilityThresholds,
-    ) -> IngestdResult<Self> {
+    ) -> EventEngineResult<Self> {
         if let Err(e) = std::fs::create_dir_all(&state_root) {
             return Err(SinexError::io(format!(
                 "Failed to create assembler state directory {}",
@@ -520,14 +520,14 @@ impl MaterialAssembler {
         }
     }
 
-    async fn material_is_terminal(&self, material_id: Uuid) -> IngestdResult<bool> {
+    async fn material_is_terminal(&self, material_id: Uuid) -> EventEngineResult<bool> {
         Ok(self.material_terminal_state(material_id).await?.is_some())
     }
 
     async fn material_terminal_state(
         &self,
         material_id: Uuid,
-    ) -> IngestdResult<Option<AssemblyLogicalState>> {
+    ) -> EventEngineResult<Option<AssemblyLogicalState>> {
         let record = self
             .pool
             .source_materials()
@@ -569,7 +569,7 @@ impl MaterialAssembler {
     }
 
     /// Build a placeholder assembler state for materials whose slices arrive before the begin message.
-    async fn create_placeholder_state(&self, material_id: Uuid) -> IngestdResult<AssemblerState> {
+    async fn create_placeholder_state(&self, material_id: Uuid) -> EventEngineResult<AssemblerState> {
         // Check disk space before creating new assembly
         if !self.disk_monitor.check_available() {
             self.stats.inc_disk_backpressure();
@@ -644,7 +644,7 @@ impl MaterialAssembler {
         &self,
         material_id: Uuid,
         begin: state::MaterialBeginMessage,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         state::handle_begin(self, material_id, begin).await
     }
 
@@ -654,7 +654,7 @@ impl MaterialAssembler {
         material_id: Uuid,
         offset: i64,
         data: Vec<u8>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         io::handle_slice(self, material_id, offset, data).await
     }
 
@@ -667,7 +667,7 @@ impl MaterialAssembler {
     async fn import_into_content_store(
         &self,
         state: &FinalizationState,
-    ) -> IngestdResult<crate::node_sdk::content_store::ContentStoreKey> {
+    ) -> EventEngineResult<crate::node_sdk::content_store::ContentStoreKey> {
         io::import_into_content_store(self, state).await
     }
 
@@ -678,7 +678,7 @@ impl MaterialAssembler {
         source_identifier: &str,
         metadata: JsonValue,
         started_at: Timestamp,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         self.pool
             .source_materials()
             .register_external_in_flight(
@@ -733,13 +733,13 @@ impl MaterialAssembler {
     /// - `assembly_timed_out` — timeout counter
     /// - `assembly_disk_backpressure` — disk threshold rejections
     /// - `wal_replay_completed` with `duration_ms`, `restored_assemblies` — startup metrics
-    pub async fn run(self) -> IngestdResult<()> {
+    pub async fn run(self) -> EventEngineResult<()> {
         self.run_with_shutdown(Arc::new(std::sync::atomic::AtomicBool::new(false)))
             .await
     }
 
     /// Run the assembler service with a shared shutdown flag.
-    pub async fn run_with_shutdown(self, shutdown_flag: Arc<AtomicBool>) -> IngestdResult<()> {
+    pub async fn run_with_shutdown(self, shutdown_flag: Arc<AtomicBool>) -> EventEngineResult<()> {
         self.run_with_shutdown_signal_and_ready(shutdown_flag, Arc::new(Notify::new()), None)
             .await
     }
@@ -752,7 +752,7 @@ impl MaterialAssembler {
         self,
         shutdown_flag: Arc<AtomicBool>,
         ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         self.run_with_shutdown_signal_and_ready(shutdown_flag, Arc::new(Notify::new()), ready_tx)
             .await
     }
@@ -763,7 +763,7 @@ impl MaterialAssembler {
         shutdown_flag: Arc<AtomicBool>,
         shutdown_notify: Arc<Notify>,
         ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         info!("Starting Material Assembler");
 
         pipeline::bootstrap_streams(&self).await?;
@@ -823,7 +823,7 @@ impl MaterialAssembler {
     }
 }
 
-fn encode_max_material_size_bytes(max_material_size_bytes: u64) -> IngestdResult<i64> {
+fn encode_max_material_size_bytes(max_material_size_bytes: u64) -> EventEngineResult<i64> {
     i64::try_from(max_material_size_bytes).map_err(|error| {
         SinexError::validation("max_material_size_bytes exceeds i64 range")
             .with_context(

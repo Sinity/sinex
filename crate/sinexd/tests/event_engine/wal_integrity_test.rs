@@ -4,7 +4,7 @@ use sinexd::node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
 use std::sync::Arc;
 use xtask::sandbox::prelude::*;
 
-async fn abort_and_join(handle: tokio::task::JoinHandle<sinexd::event_engine::IngestdResult<()>>) {
+async fn abort_and_join(handle: tokio::task::JoinHandle<sinexd::event_engine::EventEngineResult<()>>) {
     handle.abort();
     let _ = handle.await;
 }

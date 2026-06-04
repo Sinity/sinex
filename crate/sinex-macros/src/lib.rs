@@ -110,7 +110,7 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// See `crate/lib/sinex-node-sdk/docs/declarative_parser.md` for the locked
+/// See `crate/lib/sinexd/docs/declarative_parser.md` for the locked
 /// design.
 #[proc_macro_derive(
     SourceRecord,
@@ -200,8 +200,8 @@ pub fn derive_sinex_config(input: TokenStream) -> TokenStream {
 /// `Display` impl emits something else (e.g. `OperationStatus::Failed` →
 /// `"failure"`).
 ///
-/// See `crate/lib/sinex-primitives/src/schema_constraints.rs` for the
-/// generated spec type and `crate/lib/sinex-schema/src/apply.rs` for the
+/// See `crate/sinex-primitives/src/schema_constraints.rs` for the
+/// generated spec type and `crate/sinex-schema/src/apply.rs` for the
 /// schema-apply convergence integration.
 #[proc_macro_derive(DbCheck, attributes(db_check))]
 pub fn derive_db_check(input: TokenStream) -> TokenStream {

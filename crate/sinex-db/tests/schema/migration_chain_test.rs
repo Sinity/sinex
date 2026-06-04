@@ -507,11 +507,11 @@ async fn current_health_tracks_latest_status_per_component(ctx: TestContext) -> 
         Ok(())
     }
 
-    insert_health_status(&ctx, "ingestd", "healthy", "fresh heartbeat").await?;
+    insert_health_status(&ctx, "event_engine", "healthy", "fresh heartbeat").await?;
     tokio::time::sleep(Duration::from_millis(5)).await;
     insert_health_status(&ctx, "gateway", "degraded", "warming caches").await?;
     tokio::time::sleep(Duration::from_millis(5)).await;
-    insert_health_status(&ctx, "ingestd", "unhealthy", "lost database").await?;
+    insert_health_status(&ctx, "event_engine", "unhealthy", "lost database").await?;
 
     let rows = sqlx::query!(
         r#"
@@ -531,7 +531,7 @@ async fn current_health_tracks_latest_status_per_component(ctx: TestContext) -> 
     assert_eq!(rows[0].component.as_deref(), Some("gateway"));
     assert_eq!(rows[0].status.as_deref(), Some("degraded"));
     assert_eq!(rows[0].reason.as_deref(), Some("warming caches"));
-    assert_eq!(rows[1].component.as_deref(), Some("ingestd"));
+    assert_eq!(rows[1].component.as_deref(), Some("event_engine"));
     assert_eq!(rows[1].status.as_deref(), Some("unhealthy"));
     assert_eq!(rows[1].reason.as_deref(), Some("lost database"));
 
@@ -698,7 +698,7 @@ async fn telemetry_relations_expose_expected_contract_columns(ctx: TestContext) 
             ][..],
         ),
         (
-            "ingestd_batch_stats_1h",
+            "event_engine_batch_stats_1h",
             &[
                 "bucket",
                 "avg_batch_size",
@@ -763,7 +763,7 @@ async fn operator_telemetry_does_not_register_continuous_aggregates(
         "current_window_focus",
         "file_activity_summary",
         "gateway_stats_1h",
-        "ingestd_batch_stats_1h",
+        "event_engine_batch_stats_1h",
         "metric_counters_1h",
         "node_stats_1h",
         "stream_stats_1h",
@@ -827,7 +827,7 @@ async fn operator_telemetry_views_include_live_rows(ctx: TestContext) -> TestRes
 
     // CAGGs are populated by the refresh policy; manually refresh before querying.
     sqlx::query(
-        r"CALL refresh_continuous_aggregate('sinex_telemetry.ingestd_batch_stats_1h', NULL, NULL)",
+        r"CALL refresh_continuous_aggregate('sinex_telemetry.event_engine_batch_stats_1h', NULL, NULL)",
     )
     .execute(&ctx.pool)
     .await?;
@@ -838,7 +838,7 @@ async fn operator_telemetry_views_include_live_rows(ctx: TestContext) -> TestRes
             AVG(avg_batch_size::float8) AS avg_batch_size,
             MAX(batch_count) AS batch_count,
             MAX(total_deferred) AS total_deferred
-        FROM sinex_telemetry.ingestd_batch_stats_1h
+        FROM sinex_telemetry.event_engine_batch_stats_1h
         WHERE batch_count > 0
         ",
     )

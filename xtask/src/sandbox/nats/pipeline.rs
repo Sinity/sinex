@@ -47,7 +47,7 @@ fn parse_pipeline_concurrency(raw: &str) -> TestResult<usize> {
 /// Acquire a permit for running a pipeline test.
 ///
 /// This limits the number of concurrent pipeline tests to prevent
-/// memory exhaustion from multiple ingestd instances.
+/// memory exhaustion from multiple event_engine instances.
 pub async fn acquire_pipeline_permit(_namespace: &str) -> TestResult<OwnedSemaphorePermit> {
     PIPELINE_SEMAPHORE
         .clone()
@@ -64,8 +64,8 @@ pub async fn wait_for_event_persisted(
     let event_id = event_id.into();
     // Under nextest each test is a separate process, so the in-process semaphore
     // doesn't limit real concurrency (controlled by nextest test-threads = 32).
-    // With 32 concurrent ingestd processes + DB slots, events regularly need
-    // 15-25s to flow through NATS → ingestd → DB.
+    // With 32 concurrent event_engine processes + DB slots, events regularly need
+    // 15-25s to flow through NATS → event_engine → DB.
     WaitHelpers::wait_for_event_id(&ctx.pool, event_id, Timeouts::STANDARD).await
 }
 

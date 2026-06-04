@@ -22,7 +22,7 @@
 //! // Create an observer for the gateway component
 //! let observer = SelfObserver::new(
 //!     nats_client,
-//!     SelfObserverConfig::from_env("sinex-gateway"),
+//!     SelfObserverConfig::from_env("sinexd"),
 //! );
 //!
 //! // Emit metrics periodically
@@ -88,7 +88,7 @@ impl std::fmt::Debug for SelfObserver {
 /// Configuration for self-observation
 #[derive(Debug, Clone)]
 pub struct SelfObserverConfig {
-    /// Component name (e.g., "sinex-gateway", "sinex-ingestd")
+    /// Component name (e.g., "sinexd", "sinexd")
     pub component: String,
     /// Optional NATS namespace used by test/runtime isolation.
     pub namespace: Option<String>,
@@ -211,8 +211,8 @@ impl SelfObserver {
     /// first `append_*` call.  When the adapter emits a `metric.gauge` event,
     /// the event carries a `source_material_id` that was assigned by the
     /// materializer at append time.  If the BEGIN frame hasn't been committed to
-    /// `JetStream` yet — or if ingestd's `MaterialAssembler` consumer hasn't
-    /// processed it yet — ingestd's `MaterialReadySet` pre-check returns false
+    /// `JetStream` yet — or if event_engine's `MaterialAssembler` consumer hasn't
+    /// processed it yet — event_engine's `MaterialReadySet` pre-check returns false
     /// and the event is NAK'd for retry.  Under a fast startup this retry window
     /// is often exhausted before the material lands, causing DLQ routing.
     ///
@@ -753,9 +753,9 @@ impl SelfObserver {
         .await
     }
 
-    /// Emit ingestd batch processing statistics.
+    /// Emit event_engine batch processing statistics.
     #[allow(clippy::too_many_arguments)]
-    pub async fn emit_ingestd_batch_stats(
+    pub async fn emit_event_engine_batch_stats(
         &self,
         batch_size: u32,
         fetch_to_ack_ms: u64,
@@ -981,8 +981,8 @@ mod tests {
     async fn test_metric_identity_key_distinguishes_name_and_labels() -> TestResult<()> {
         let first = JsonValue::Object(
             serde_json::json!({
-                "component": "ingestd",
-                "name": "ingestd.consumer.lag.pending",
+                "component": "event_engine",
+                "name": "event_engine.consumer.lag.pending",
                 "labels": { "consumer": "alpha" },
                 "value": 1.0
             })
@@ -992,8 +992,8 @@ mod tests {
         );
         let second = JsonValue::Object(
             serde_json::json!({
-                "component": "ingestd",
-                "name": "ingestd.consumer.lag.ack_pending",
+                "component": "event_engine",
+                "name": "event_engine.consumer.lag.ack_pending",
                 "labels": { "consumer": "alpha" },
                 "value": 1.0
             })

@@ -2,7 +2,7 @@ use clap::Subcommand;
 use console::style;
 use sinex_primitives::rpc::telemetry::{
     AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
-    FileActivityEntry, GatewayStatsBucket, IngestdBatchStatsBucket, IngestdValidationSnapshot,
+    FileActivityEntry, GatewayStatsBucket, EventEngineBatchStatsBucket, EventEngineValidationSnapshot,
     MetricCounterBucket, NodeStatsBucket, RecentActivityEntry, StreamStatsBucket,
     SystemStateBucket, WindowFocusBucket,
 };
@@ -20,8 +20,8 @@ EXAMPLES:
     sinexctl telemetry current-health
     sinexctl telemetry gateway-stats --from 24h
     sinexctl telemetry metric-counters --from 6h --limit 20
-    sinexctl telemetry ingestd-batch-stats --from 12h -f json
-    sinexctl telemetry ingestd-validation
+    sinexctl telemetry event-engine-batch-stats --from 12h -f json
+    sinexctl telemetry event-engine-validation
 ")]
 pub enum TelemetryCommands {
     /// Latest component health-status rows
@@ -134,8 +134,8 @@ pub enum TelemetryCommands {
         limit: i64,
     },
 
-    /// Ingestd hourly batch-stat aggregates
-    IngestdBatchStats {
+    /// EventEngine hourly batch-stat aggregates
+    EventEngineBatchStats {
         #[arg(long)]
         from: Option<String>,
         #[arg(long)]
@@ -144,8 +144,8 @@ pub enum TelemetryCommands {
         limit: i64,
     },
 
-    /// Latest ingestd validation and plausibility snapshot
-    IngestdValidation,
+    /// Latest event_engine validation and plausibility snapshot
+    EventEngineValidation,
 }
 
 impl TelemetryCommands {
@@ -307,27 +307,27 @@ impl TelemetryCommands {
                 .display(&format)?;
             }
 
-            Self::IngestdBatchStats { from, to, limit } => {
+            Self::EventEngineBatchStats { from, to, limit } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let buckets = client
-                    .telemetry_ingestd_batch_stats(from_rfc, to_rfc, Some(*limit))
+                    .telemetry_event_engine_batch_stats(from_rfc, to_rfc, Some(*limit))
                     .await?;
                 CommandOutput::list(
                     buckets,
-                    "No ingestd-batch-stats data found.",
-                    format_ingestd_batch_stats_table,
+                    "No event-engine-batch-stats data found.",
+                    format_event_engine_batch_stats_table,
                 )
                 .display(&format)?;
             }
 
-            Self::IngestdValidation => match client.telemetry_ingestd_validation().await? {
+            Self::EventEngineValidation => match client.telemetry_event_engine_validation().await? {
                 Some(snapshot) => {
-                    CommandOutput::single(snapshot, format_ingestd_validation_table)
+                    CommandOutput::single(snapshot, format_event_engine_validation_table)
                         .display(&format)?;
                 }
-                None => CommandOutput::<IngestdValidationSnapshot>::empty(
-                    "No ingestd-validation data found.",
+                None => CommandOutput::<EventEngineValidationSnapshot>::empty(
+                    "No event-engine-validation data found.",
                 )
                 .display(&format)?,
             },
@@ -657,7 +657,7 @@ fn format_metric_counters_table(buckets: &[MetricCounterBucket]) -> String {
     table.to_string()
 }
 
-fn format_ingestd_batch_stats_table(buckets: &[IngestdBatchStatsBucket]) -> String {
+fn format_event_engine_batch_stats_table(buckets: &[EventEngineBatchStatsBucket]) -> String {
     let mut builder = Builder::new();
     builder.push_record([
         "BUCKET",
@@ -690,7 +690,7 @@ fn format_ingestd_batch_stats_table(buckets: &[IngestdBatchStatsBucket]) -> Stri
     table.to_string()
 }
 
-fn format_ingestd_validation_table(snapshot: &IngestdValidationSnapshot) -> String {
+fn format_event_engine_validation_table(snapshot: &EventEngineValidationSnapshot) -> String {
     let mut builder = Builder::new();
     builder.push_record(["FIELD", "VALUE"]);
     builder.push_record(["Observed At", snapshot.observed_at.as_str()]);

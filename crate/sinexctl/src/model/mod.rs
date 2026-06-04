@@ -29,7 +29,7 @@ pub enum NodeRole {
     Capture,
     /// Derived nodes (analytics, search, etc.)
     Derived,
-    /// Core services (ingestd)
+    /// Core services (event_engine)
     Core,
     /// Gateway
     Gateway,

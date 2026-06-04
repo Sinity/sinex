@@ -339,10 +339,10 @@ impl<I: SourceUnit> SourceUnitRuntime<I> {
             | Settlement::Quarantine { .. } => {
                 // SendToProcessingFailure/Park/Quarantine are scan-phase
                 // settlements the ingestor surface can't fully execute (no
-                // direct DLQ publisher here; downstream ingestd handles DLQ
+                // direct DLQ publisher here; downstream event_engine handles DLQ
                 // routing for per-event failures). Propagate the error so the
                 // caller's retry/abort logic runs; the DLQ wiring lives on
-                // ingestd's per-event path, not on ingestor scan errors.
+                // event_engine's per-event path, not on ingestor scan errors.
                 warn!(
                     node = %self.ingestor.name(),
                     phase,

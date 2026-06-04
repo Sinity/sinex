@@ -79,7 +79,7 @@
     extraGroups = [ "wheel" ];
   };
 
-  environment.etc."sinex/gateway-admin-token".text = "monitoring-admin:admin";
+  environment.etc."sinex/api-admin-token".text = "monitoring-admin:admin";
 
   networking.firewall.interfaces.lo.allowedTCPPorts = [ 9090 3000 ];
 }

@@ -2,7 +2,7 @@
 //!
 //! These types define the boundary-crossing contracts for the staged-source
 //! parser architecture (#1097). They are shared across `sinex-primitives`,
-//! `sinex-node-sdk`, `sinex-db`, and `sinex-schema` so that parser authors,
+//! `sinexd`, `sinex-db`, and `sinex-schema` so that parser authors,
 //! source-unit runtime, and schema/repository layers share a single
 //! vocabulary.
 //!

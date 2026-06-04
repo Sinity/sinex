@@ -1,4 +1,4 @@
-# Ingestd Transport Security
+# EventEngine Transport Security
 
 NATS JetStream security requirements for the ingestion hub.
 

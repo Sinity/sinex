@@ -119,7 +119,7 @@ async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResu
 
     assert_eq!(
         before, after,
-        "Gateway content RPC must not insert events directly; ingestion belongs to ingestd"
+        "Gateway content RPC must not insert events directly; ingestion belongs to event_engine"
     );
 
     Ok(())

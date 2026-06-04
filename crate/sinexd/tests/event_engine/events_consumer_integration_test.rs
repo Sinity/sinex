@@ -179,7 +179,7 @@ async fn publish_raw_bytes(
 /// Consumer setup result with all components needed for testing.
 struct ConsumerSetup {
     nats_client: Client,
-    handle: JoinHandle<sinexd::event_engine::IngestdResult<()>>,
+    handle: JoinHandle<sinexd::event_engine::EventEngineResult<()>>,
     js: jetstream::Context,
     topology: JetStreamTopology,
     namespace: String,
@@ -210,7 +210,7 @@ async fn start_consumer_with_hooks(
         env,
         stream,
         ctx.pipeline_namespace()
-            .consumer_name(&format!("ingestd-{suffix}")),
+            .consumer_name(&format!("event-engine-{suffix}")),
         Some(&namespace),
     );
 

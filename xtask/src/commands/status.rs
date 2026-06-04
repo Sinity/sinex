@@ -17,7 +17,7 @@ use crate::infra::stack::StackConfig;
 #[cfg(test)]
 use crate::runtime_metrics::RuntimeAssessment;
 #[cfg(test)]
-use crate::runtime_metrics::{IngestdStatus, RuntimeMetrics};
+use crate::runtime_metrics::{EventEngineStatus, RuntimeMetrics};
 #[cfg(test)]
 use crate::runtime_target::RuntimeTargetSummary;
 #[cfg(test)]
@@ -56,7 +56,7 @@ use services::runtime_query_error_message;
 #[cfg(test)]
 use services::{
     active_job_for_service, gateway_service_status_from_readiness,
-    ingestd_service_status_from_runtime_metrics, recover_runtime_metrics_thread,
+    event_engine_service_status_from_runtime_metrics, recover_runtime_metrics_thread,
 };
 #[cfg(test)]
 use services::{
@@ -450,10 +450,10 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ingestd_service_status_maps_healthy_runtime_to_running()
+    async fn test_event_engine_service_status_maps_healthy_runtime_to_running()
     -> ::xtask::sandbox::TestResult<()> {
         let metrics = RuntimeMetrics {
-            ingestd_status: IngestdStatus::Healthy,
+            event_engine_status: EventEngineStatus::Healthy,
             last_heartbeat_age_secs: Some(2),
             consumer_lag_pending: None,
             consumer_lag_age_secs: None,
@@ -461,7 +461,7 @@ mod tests {
             last_batch_latency_age_secs: None,
             query_error: None,
         };
-        let status = ingestd_service_status_from_runtime_metrics(Some(&metrics));
+        let status = event_engine_service_status_from_runtime_metrics(Some(&metrics));
 
         assert_eq!(status.status, ServiceRunStatus::Running);
         assert_eq!(status.probe, "runtime_metrics");
@@ -471,10 +471,10 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ingestd_service_status_reports_query_error_as_unknown()
+    async fn test_event_engine_service_status_reports_query_error_as_unknown()
     -> ::xtask::sandbox::TestResult<()> {
         let metrics = RuntimeMetrics {
-            ingestd_status: IngestdStatus::Unknown,
+            event_engine_status: EventEngineStatus::Unknown,
             last_heartbeat_age_secs: None,
             consumer_lag_pending: None,
             consumer_lag_age_secs: None,
@@ -482,7 +482,7 @@ mod tests {
             last_batch_latency_age_secs: None,
             query_error: Some("database unavailable".to_string()),
         };
-        let status = ingestd_service_status_from_runtime_metrics(Some(&metrics));
+        let status = event_engine_service_status_from_runtime_metrics(Some(&metrics));
 
         assert_eq!(status.status, ServiceRunStatus::Unknown);
         assert_eq!(status.probe, "runtime_metrics");
@@ -510,7 +510,7 @@ mod tests {
             true,
         );
 
-        assert_eq!(status.name, "sinex-gateway");
+        assert_eq!(status.name, "sinexd");
         assert_eq!(status.status, ServiceRunStatus::Running);
         assert_eq!(status.probe, "gateway_ready_http");
         assert_eq!(status.pid, Some(42));
@@ -601,7 +601,7 @@ mod tests {
         let jobs = vec![crate::jobs::Job {
             id: 7,
             invocation_id: None,
-            command: "/realm/project/sinex/.sinex/cache/target/debug/sinex-ingestd".into(),
+            command: "/realm/project/sinex/.sinex/cache/target/debug/sinexd".into(),
             args: vec![],
             started_at: time::OffsetDateTime::now_utc(),
             pid: Some(std::process::id()),
@@ -611,7 +611,7 @@ mod tests {
             exit_code: None,
         }];
 
-        let matched = active_job_for_service("sinex-ingestd", &jobs);
+        let matched = active_job_for_service("sinexd", &jobs);
         assert!(
             matched.is_some(),
             "active job should match by binary basename"
@@ -674,14 +674,14 @@ mod tests {
                 },
             },
             services: vec![ServiceStatus {
-                name: "sinex-gateway".into(),
+                name: "sinexd".into(),
                 status: ServiceRunStatus::Running,
                 probe: "process_exact_name",
                 pid: Some(12345),
                 message: None,
             }],
             runtime: Some(RuntimeMetrics {
-                ingestd_status: IngestdStatus::Healthy,
+                event_engine_status: EventEngineStatus::Healthy,
                 last_heartbeat_age_secs: Some(5),
                 consumer_lag_pending: Some(7.0),
                 consumer_lag_age_secs: Some(10),
@@ -738,10 +738,10 @@ mod tests {
 
         // Services shape (agents use: .data.services[].name, .status)
         assert!(json["services"].is_array());
-        assert_eq!(json["services"][0]["name"], "sinex-gateway");
+        assert_eq!(json["services"][0]["name"], "sinexd");
         assert_eq!(json["services"][0]["status"], "running");
         assert_eq!(json["services"][0]["pid"], 12345);
-        assert_eq!(json["runtime"]["ingestd_status"], "healthy");
+        assert_eq!(json["runtime"]["event_engine_status"], "healthy");
         assert_eq!(json["runtime_assessment"]["status"], "healthy");
         assert_eq!(json["history"]["status"], "available");
         assert_eq!(json["history"]["recent_invocations"], 1);
@@ -835,7 +835,7 @@ mod tests {
                 action: "xtask fix --smart".into(),
             }]),
             runtime: Some(RuntimeMetrics {
-                ingestd_status: IngestdStatus::Down,
+                event_engine_status: EventEngineStatus::Down,
                 last_heartbeat_age_secs: Some(240),
                 consumer_lag_pending: Some(42.0),
                 consumer_lag_age_secs: Some(240),
@@ -844,7 +844,7 @@ mod tests {
                 query_error: None,
             }),
             services: Some(vec![ServiceStatus {
-                name: "sinex-ingestd".into(),
+                name: "sinexd".into(),
                 status: ServiceRunStatus::Stopped,
                 probe: "process_exact_name",
                 pid: None,
@@ -899,10 +899,10 @@ mod tests {
         assert!(json["recommendations"].is_array());
         assert_eq!(json["recommendations"][0]["severity"], "warning");
         assert_eq!(json["recommendations"][0]["action"], "xtask fix --smart");
-        assert_eq!(json["runtime"]["ingestd_status"], "down");
+        assert_eq!(json["runtime"]["event_engine_status"], "down");
         assert_eq!(json["runtime"]["consumer_lag_age_secs"], 240);
         assert!(json["services"].is_array());
-        assert_eq!(json["services"][0]["name"], "sinex-ingestd");
+        assert_eq!(json["services"][0]["name"], "sinexd");
         assert_eq!(json["services"][0]["status"], "stopped");
         assert!(json["services"][0]["pid"].is_null());
         assert_eq!(json["last_commit"]["hash"], "aafd524");
@@ -1146,10 +1146,10 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_classify_runtime_summary_impact_treats_ingestd_down_as_unhealthy()
+    async fn test_classify_runtime_summary_impact_treats_event_engine_down_as_unhealthy()
     -> ::xtask::sandbox::TestResult<()> {
         let metrics = RuntimeMetrics {
-            ingestd_status: IngestdStatus::Down,
+            event_engine_status: EventEngineStatus::Down,
             last_heartbeat_age_secs: None,
             consumer_lag_pending: None,
             consumer_lag_age_secs: None,
@@ -1203,7 +1203,7 @@ mod tests {
         )
         .unwrap_or_else(|| panic!("expected runtime metrics placeholder"));
 
-        assert_eq!(metrics.ingestd_status, IngestdStatus::Unknown);
+        assert_eq!(metrics.event_engine_status, EventEngineStatus::Unknown);
         assert!(metrics.query_error.is_none());
         assert!(runtime_query_error_message(&metrics).is_none());
         Ok(())
@@ -1258,7 +1258,7 @@ mod tests {
     async fn test_runtime_query_error_message_surfaces_full_detail()
     -> ::xtask::sandbox::TestResult<()> {
         let metrics = RuntimeMetrics {
-            ingestd_status: IngestdStatus::Unknown,
+            event_engine_status: EventEngineStatus::Unknown,
             last_heartbeat_age_secs: None,
             consumer_lag_pending: None,
             consumer_lag_age_secs: None,
@@ -1291,7 +1291,7 @@ mod tests {
     #[sinex_test]
     async fn test_service_status_skip_serializing_none_pid() -> ::xtask::sandbox::TestResult<()> {
         let stopped = ServiceStatus {
-            name: "sinex-ingestd".into(),
+            name: "sinexd".into(),
             status: ServiceRunStatus::Stopped,
             probe: "process_exact_name",
             pid: None,
@@ -1302,10 +1302,10 @@ mod tests {
             json.get("pid").is_none(),
             "pid=None should be absent from JSON"
         );
-        assert_eq!(json["name"], "sinex-ingestd");
+        assert_eq!(json["name"], "sinexd");
 
         let running = ServiceStatus {
-            name: "sinex-gateway".into(),
+            name: "sinexd".into(),
             status: ServiceRunStatus::Running,
             probe: "process_exact_name",
             pid: Some(42),

@@ -418,7 +418,7 @@ async fn messenger_replay_produces_identical_occurrence_keys() {
 //
 //   - Staged email fixture parses message metadata with Message-ID anchors
 //   - Missing/duplicate Message-ID falls back to IMAP (mailbox, uid_validity, uid)
-//   - Bus-First source-unit path produces ingestd confirmations
+//   - Bus-First source-unit path produces event_engine confirmations
 //
 // are deferred to a follow-up implementation issue branching off #1090.
 // When EmailParser is added to sinexd::sources::sources::messaging,

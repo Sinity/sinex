@@ -21,7 +21,7 @@ xtask docs schema-bundle --check
 ```
 
 That path is separate from the runtime Rust -> database schema sync used by
-preflight and `sinex-ingestd`.
+preflight and `sinexd`.
 
 ## Directory Structure
 
@@ -45,20 +45,20 @@ The live schema registry is populated from Rust code, not from this directory:
    inventory.
 2. preflight / ingest startup runs the in-process discovery path and syncs the
    discovered schemas into `sinex_schemas.event_payload_schemas`.
-3. ingestd reloads active schemas from the database and broadcasts schema
+3. the event engine reloads active schemas from the database and broadcasts schema
    metadata to interested consumers.
 
 See:
 
-- `crate/core/sinex-ingestd/docs/schema_sync.md`
-- `crate/lib/sinex-primitives/docs/schema_registry.md`
+- `crate/sinexd/docs/event_engine/architecture.md`
+- `crate/sinex-primitives/docs/schema_registry.md`
 
 ## GitOps Path
 
 The checked-in JSON bundle matters for the GitOps import surface:
 
 1. Register a repository containing JSON schema files with `sinexctl gitops`.
-2. `sinex-ingestd` polls or syncs that repository.
+2. `sinexd` polls or syncs that repository.
 3. Matching JSON files are discovered and upserted into
    `sinex_schemas.event_payload_schemas`.
 

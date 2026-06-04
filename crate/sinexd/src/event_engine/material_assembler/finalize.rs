@@ -6,6 +6,8 @@
 
 use serde::Serialize;
 use sinex_db::repositories::DbPoolExt;
+#[cfg(test)]
+use sinex_db::repositories::TemporalLedgerEntry;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_primitives::MaterialStatus;
 use sinex_primitives::Timestamp;
@@ -15,7 +17,7 @@ use sinex_primitives::{Id, JsonValue, Uuid};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
-use crate::event_engine::{IngestdResult, SinexError};
+use crate::event_engine::{EventEngineResult, SinexError};
 
 use super::assembly_state_machine::{
     AssemblyInput, AssemblyLogicalState, AssemblyStateMachine, AssemblyTransition,
@@ -158,7 +160,7 @@ impl MaterialAssembler {
                 {
                     error!(
                         target: "sinex_metrics",
-                        metric = "ingestd.material_dlq_publish_failures_total",
+                        metric = "event_engine.material_dlq_publish_failures_total",
                         material_id = %material_id,
                         error = %e,
                         "Failed to publish material DLQ entry"
@@ -170,7 +172,7 @@ impl MaterialAssembler {
             Err(e) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.material_dlq_publish_failures_total",
+                    metric = "event_engine.material_dlq_publish_failures_total",
                     material_id = %material_id,
                     error = %e,
                     "Failed to encode DLQ payload"
@@ -184,7 +186,7 @@ impl MaterialAssembler {
         &self,
         material_id: Uuid,
         reason: &str,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         let id: Id<SourceMaterialRecord> = Id::from_uuid(material_id);
         self.pool
             .source_materials()
@@ -224,7 +226,7 @@ impl MaterialAssembler {
         material_id: Uuid,
         reason: &str,
         resume_phase: AssemblyPhase,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         debug!(
             material_id = %material_id,
             failure_reason = reason,
@@ -257,7 +259,7 @@ impl MaterialAssembler {
         context: JsonValue,
         state_handle: &Arc<Mutex<super::state::AssemblerState>>,
         end: MaterialEndMessage,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         self.route_material_error(material_id, reason, context)
             .await;
         if let Err(error) = self
@@ -279,7 +281,7 @@ impl MaterialAssembler {
         material_id: Uuid,
         state_handle: Arc<Mutex<super::state::AssemblerState>>,
         pending_behavior: PendingEndBehavior,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         use super::state::{build_finalize_metadata, parse_material_ended_at};
 
         let (final_state, assembled_bytes, slice_count, computed_hash, end, ended_at) = {
@@ -755,7 +757,7 @@ impl MaterialAssembler {
     }
 
     /// Handle material finalization (end message)
-    pub(super) async fn handle_end(&self, mut end: MaterialEndMessage) -> IngestdResult<()> {
+    pub(super) async fn handle_end(&self, mut end: MaterialEndMessage) -> EventEngineResult<()> {
         use super::state::normalize_metadata;
 
         end.metadata = normalize_metadata(end.metadata);
@@ -769,7 +771,7 @@ impl MaterialAssembler {
         if self.pool.is_closed() {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.material_finalization_failures_total",
+                metric = "event_engine.material_finalization_failures_total",
                 material_id = %material_id,
                 "Database pool closed before handling end message"
             );
@@ -997,7 +999,7 @@ mod tests {
         let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_id_typed = Id::from_uuid(material_id);
-        let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
+        let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.event_engine");
         let mut dlq_sub = ctx.nats_client().subscribe(dlq_subject).await?;
 
         ctx.pool
@@ -1062,7 +1064,7 @@ mod tests {
         let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_id_typed = Id::from_uuid(material_id);
-        let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
+        let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.event_engine");
         let mut dlq_sub = ctx.nats_client().subscribe(dlq_subject).await?;
 
         ctx.pool

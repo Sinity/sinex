@@ -53,7 +53,7 @@
 //! ```
 
 use crate::node_sdk::error_helpers::unix_timestamp_secs_with_warning;
-use crate::node_sdk::runtime::stream::NodeRuntimeState;
+use crate::node_sdk::runtime::stream::{NodeRuntimeState, RuntimeDrainController};
 use crate::node_sdk::version::{NodeInstance, NodeVersion};
 
 use async_nats::Subscriber;
@@ -684,6 +684,96 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn handoff_waits_for_runtime_drain_before_ready(ctx: TestContext) -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_COORDINATION_HEARTBEAT", "1");
+        env.set("SINEX_COORDINATION_HANDOFF", "2");
+
+        let harness = build_runtime(&ctx, "coordination-runtime-drain").await?;
+        let runtime_drain = harness.runtime.runtime_drain();
+        let mut drain_rx = runtime_drain.subscribe();
+        let mut coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "leader-instance".to_string())?;
+        let kv_client = coordination.kv_client.clone();
+        let instance_id = coordination.instance.instance_id.clone();
+        let service = coordination.instance.service_name.clone();
+        let target_version = coordination.instance.version.clone();
+        let nats = coordination.nats_client.clone();
+        let process_exited = Arc::new(AtomicUsize::new(0));
+        let process_exited_for_task = process_exited.clone();
+        let runtime_drain_for_task = runtime_drain.clone();
+
+        let run_handle = tokio::spawn(async move {
+            coordination
+                .run_coordination_loop(move || {
+                    let mut rx = runtime_drain_for_task.subscribe();
+                    let process_exited = process_exited_for_task.clone();
+                    async move {
+                        rx.changed().await.map_err(|error| {
+                            SinexError::channel_receive(format!(
+                                "runtime drain channel closed before handoff: {error}"
+                            ))
+                        })?;
+                        if *rx.borrow() {
+                            process_exited.fetch_add(1, Ordering::SeqCst);
+                            return Ok(());
+                        }
+                        std::future::pending::<Result<()>>().await
+                    }
+                })
+                .await
+        });
+
+        WaitHelpers::wait_for_condition(
+            || {
+                let kv_client = kv_client.clone();
+                let instance_id = instance_id.clone();
+                async move {
+                    Ok::<bool, SinexError>(
+                        kv_client.get_leader().await?.as_deref() == Some(instance_id.as_str()),
+                    )
+                }
+            },
+            3,
+        )
+        .await?;
+
+        let ready_subject = format!("sinex.coordination.{service}.handoff_ready");
+        let mut ready_sub = nats.subscribe(ready_subject).await?;
+        let request = HandoffRequest {
+            requester_instance_id: "newer-instance".to_string(),
+            requester_version: NodeVersion::current()?,
+            target_instance_id: instance_id,
+            target_version,
+            requested_at: SystemTime::now(),
+            timeout_seconds: Seconds::from_secs(2),
+        };
+        let handoff_subject = format!("sinex.coordination.{service}.handoff");
+        nats.publish(handoff_subject, serde_json::to_vec(&request)?.into())
+            .await?;
+
+        tokio::time::timeout(Duration::from_secs(2), drain_rx.changed()).await??;
+        assert!(
+            *drain_rx.borrow(),
+            "handoff must request runtime drain before readiness"
+        );
+
+        let ready = tokio::time::timeout(Duration::from_secs(3), ready_sub.next())
+            .await?
+            .ok_or_else(|| SinexError::processing("handoff_ready not published"))?;
+        let ready_request: HandoffRequest = serde_json::from_slice(&ready.payload)?;
+        assert_eq!(ready_request.requester_instance_id, "newer-instance");
+        assert_eq!(
+            process_exited.load(Ordering::SeqCst),
+            1,
+            "leader service future must exit before handoff_ready is published"
+        );
+
+        run_handle.await??;
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn run_coordination_loop_unregisters_instance_after_clean_exit(
         ctx: TestContext,
     ) -> TestResult<()> {
@@ -918,6 +1008,7 @@ pub struct NodeCoordination {
     nats_client: async_nats::Client,
     current_mode: InstanceMode,
     work_tracker: Arc<RwLock<WorkTracker>>,
+    runtime_drain: Option<Arc<RuntimeDrainController>>,
     leadership_failures: CoordinationPrimitive,
     handoff_drops: CoordinationPrimitive,
 }
@@ -1013,6 +1104,7 @@ impl NodeCoordination {
             nats_client,
             current_mode: InstanceMode::Standby,
             work_tracker,
+            runtime_drain: None,
             leadership_failures: CoordinationPrimitive::event_counter(
                 0,
                 "coordination_leadership_failures",
@@ -1030,12 +1122,14 @@ impl NodeCoordination {
             .ok_or_else(|| SinexError::configuration("NATS client missing"))?
             .clone();
 
-        Self::new(
+        let mut coordination = Self::new(
             ServiceName::new(runtime.service_info().control_identity()),
             instance_id,
             nats_client,
             runtime,
-        )
+        )?;
+        coordination.runtime_drain = Some(runtime.runtime_drain());
+        Ok(coordination)
     }
 
     /// Run the coordination loop - main entry point
@@ -1315,7 +1409,34 @@ impl NodeCoordination {
                request = handoff_rx.recv() => {
                    if let Some(request) = request {
                        info!("Received handoff request");
-                       self.handle_graceful_handoff(request).await?;
+                       self.begin_graceful_handoff(&request).await?;
+                       match tokio::time::timeout(
+                           self.kv_client.handoff_timeout(),
+                           &mut process_events_future,
+                       )
+                       .await
+                       {
+                           Ok(Ok(())) => {
+                               info!("Leader processing drained before handoff");
+                           }
+                           Ok(Err(e)) => {
+                               error!(
+                                   target: "sinex_metrics",
+                                   metric = "node.leader_loop_failures_total",
+                                   error = %e,
+                                   "Critical failure while draining leader for handoff"
+                               );
+                               self.signal_critical_failure(&e.to_string()).await?;
+                               return Err(e);
+                           }
+                           Err(_) => {
+                               warn!(
+                                   timeout_secs = self.kv_client.handoff_timeout().as_secs(),
+                                   "Timed out waiting for leader processing to drain before handoff"
+                               );
+                           }
+                       }
+                       self.complete_graceful_handoff(&request).await?;
                        return Ok(LeaderLoopOutcome::Exit); // Exit after handoff
                    }
                    warn!(service = %self.instance.service_name,
@@ -1358,7 +1479,7 @@ impl NodeCoordination {
         requester_version = %request.requester_version.version,
         target_version = %request.target_version.version
     ))]
-    async fn handle_graceful_handoff(&self, request: HandoffRequest) -> Result<()> {
+    async fn begin_graceful_handoff(&self, request: &HandoffRequest) -> Result<()> {
         // 📊 COORDINATION EVENT: Handoff Started
         info!(
             event = "coordination.handoff_started",
@@ -1370,7 +1491,10 @@ impl NodeCoordination {
 
         // Step 1: Finish current critical work
         self.finish_critical_work().await?;
+        Ok(())
+    }
 
+    async fn complete_graceful_handoff(&self, request: &HandoffRequest) -> Result<()> {
         // Step 2: Signal ready by publishing to handoff_ready subject.
         // transport::Class::Control — request-reply coordination; drop
         // pending on SIGTERM; timeout error returned to caller.
@@ -1745,6 +1869,10 @@ impl NodeCoordination {
         // Use a bounded drain timeout before forcing shutdown.
         let graceful_timeout = self.kv_client.handoff_timeout();
         let start = std::time::Instant::now();
+
+        if let Some(runtime_drain) = &self.runtime_drain {
+            let _ = runtime_drain.request_drain_and_warn(self.instance.service_name.as_str());
+        }
 
         // Signal any running tasks to complete gracefully
         // Lock scope 1: Signal shutdown

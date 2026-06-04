@@ -667,9 +667,9 @@ mod tests {
     async fn test_workspace_root_discovery_prefers_enclosing_checkout() -> TestResult<()> {
         let checkout = tempfile::tempdir()?;
         write_synthetic_checkout(checkout.path())?;
-        std::fs::create_dir_all(checkout.path().join("crate/lib/sinex-primitives"))?;
+        std::fs::create_dir_all(checkout.path().join("crate/sinex-primitives"))?;
 
-        let nested = checkout.path().join("crate/lib/sinex-primitives");
+        let nested = checkout.path().join("crate/sinex-primitives");
         let root = workspace_root_from_current_dir(&nested)
             .expect("nested checkout path should resolve to workspace root");
         assert_eq!(root, checkout.path());

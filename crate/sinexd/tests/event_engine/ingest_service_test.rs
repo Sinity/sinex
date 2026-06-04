@@ -1,6 +1,6 @@
 //! Ingest Service Integration Tests
 //!
-//! Tests the sinex-ingestd service functionality including:
+//! Tests the sinexd service functionality including:
 //! - Event ingestion and validation
 //! - Database persistence patterns
 //! - Performance characteristics and error handling

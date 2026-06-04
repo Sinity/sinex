@@ -62,7 +62,7 @@ removing plaintext for the operator-designated fields.
 |---|---|---|---|---|
 | `sinex-privacy-key` | `Strategy::Encrypt` token cipher | agenix | `/run/agenix/sinex-privacy-key` | 0400, sinex user |
 | `sinex-local-db` | PostgreSQL scram-sha-256 password | agenix | `/run/agenix/sinex-local-db` | 0400, sinex user |
-| `sinex-gateway-admin-token` | API admin RPC bearer | agenix | `/run/agenix/sinex-gateway-admin-token` | 0400, sinex user |
+| `sinex-api-admin-token` | API admin RPC bearer | agenix | `/run/agenix/sinex-api-admin-token` | 0400, sinex user |
 
 Operator constraints:
 

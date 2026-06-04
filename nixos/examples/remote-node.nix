@@ -1,7 +1,7 @@
 # Sinex remote node example
 #
 # Configures a node to run only node collectors and forward data to remote
-# ingestd/NATS endpoints. Suitable for edge devices feeding a central Sinex
+# event_engine/NATS endpoints. Suitable for edge devices feeding a central Sinex
 # cluster.
 
 {
@@ -23,7 +23,7 @@
 
     nats.environment = "prod";
 
-    core.enable = false; # ingestd/gateway run on central cluster
+    core.enable = false; # event_engine/gateway run on central cluster
     lifecycle.maintenance.enable = false;
     observability.enable = false;
 

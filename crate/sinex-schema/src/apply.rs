@@ -12,7 +12,7 @@ use sinex_primitives::validation::validate_pg_identifier;
 use sqlx::{Executor, PgPool};
 
 const REQUIRED_EXTENSIONS: &[&str] = &["pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
-pub const SHARED_ACCESS_ROLES: &[&str] = &["sinex_ingestd", "sinex_gateway", "sinex_readonly"];
+pub const SHARED_ACCESS_ROLES: &[&str] = &["sinex_event_engine", "sinex_api", "sinex_readonly"];
 const EVENTS_REQUIRED_TRIGGERS: &[&str] = &[
     "trg_events_no_update",
     "trg_events_archive_before_delete",
@@ -69,7 +69,7 @@ const TELEMETRY_CONTINUOUS_AGGREGATES: &[&str] = &[
     "assembly_stats_1h",
     "node_stats_1h",
     "metric_counters_1h",
-    "ingestd_batch_stats_1h",
+    "event_engine_batch_stats_1h",
     "current_window_focus",
     "command_frequency_hourly",
     "file_activity_summary",
@@ -971,7 +971,7 @@ async fn recreate_telemetry_read_models(pool: &PgPool) -> Result<(), ApplyError>
         BEGIN
             FOREACH relation_name IN ARRAY ARRAY[
                 'recent_activity_summary',
-                'ingestd_batch_stats_1h',
+                'event_engine_batch_stats_1h',
                 'file_activity_summary',
                 'command_frequency_hourly',
                 'current_window_focus',
@@ -1162,7 +1162,7 @@ CREATE TRIGGER set_timestamp
 
 // Privacy policy schema (#1042). User-controlled, DB-backed redaction policy
 // managed via `sinexctl privacy` (CLI deferred to a follow-up) and enforced at
-// the ingestd persistence chokepoint. Key MATERIAL never lives in the DB — the
+// the event_engine persistence chokepoint. Key MATERIAL never lives in the DB — the
 // `encryption_keys` table is a namespace registry only; key bytes resolve from
 // env/files via the existing KeyConfig pattern.
 const PRIVACY_SCHEMA_SQL: &str = r"
@@ -2158,7 +2158,7 @@ SELECT add_continuous_aggregate_policy('sinex_telemetry.metric_counters_1h',
     end_offset => INTERVAL '1 hour',
     schedule_interval => INTERVAL '1 hour');
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.ingestd_batch_stats_1h
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.event_engine_batch_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
     time_bucket('1 hour', id) AS bucket,
@@ -2182,7 +2182,7 @@ WHERE source = 'sinexd.event_engine'
 GROUP BY time_bucket('1 hour', id)
 WITH NO DATA;
 
-SELECT add_continuous_aggregate_policy('sinex_telemetry.ingestd_batch_stats_1h',
+SELECT add_continuous_aggregate_policy('sinex_telemetry.event_engine_batch_stats_1h',
     start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 hour',
     schedule_interval => INTERVAL '1 hour');
@@ -2437,31 +2437,31 @@ ORDER BY last_updated DESC;
 // schema-apply bootstrap binary), so declarative schema apply remains safe to run as
 // the database owner role.
 const ROLE_GRANTS_SQL: &str = r"
-GRANT USAGE ON SCHEMA core, raw, sinex_schemas, audit TO sinex_ingestd, sinex_gateway, sinex_readonly;
+GRANT USAGE ON SCHEMA core, raw, sinex_schemas, audit TO sinex_event_engine, sinex_api, sinex_readonly;
 
--- Privacy policy (#1042): ingestd loads rules at the chokepoint; gateway manages
+-- Privacy policy (#1042): event_engine loads rules at the chokepoint; gateway manages
 -- them via sinexctl; readonly may inspect.
-GRANT USAGE ON SCHEMA privacy TO sinex_ingestd, sinex_gateway, sinex_readonly;
-GRANT SELECT ON ALL TABLES IN SCHEMA privacy TO sinex_ingestd, sinex_readonly;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA privacy TO sinex_gateway;
+GRANT USAGE ON SCHEMA privacy TO sinex_event_engine, sinex_api, sinex_readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA privacy TO sinex_event_engine, sinex_readonly;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA privacy TO sinex_api;
 
 
-GRANT EXECUTE ON FUNCTION core.start_operation TO sinex_gateway;
-GRANT EXECUTE ON FUNCTION core.complete_operation TO sinex_gateway;
-GRANT EXECUTE ON FUNCTION core.fail_operation TO sinex_gateway;
-GRANT EXECUTE ON FUNCTION core.execute_cascade_tombstone TO sinex_gateway;
-GRANT EXECUTE ON FUNCTION core.execute_cascade_restore TO sinex_gateway;
-GRANT EXECUTE ON FUNCTION core.lifecycle_tier_status TO sinex_gateway, sinex_readonly;
-GRANT EXECUTE ON FUNCTION core.jsonb_merge_deep TO sinex_ingestd, sinex_gateway;
+GRANT EXECUTE ON FUNCTION core.start_operation TO sinex_api;
+GRANT EXECUTE ON FUNCTION core.complete_operation TO sinex_api;
+GRANT EXECUTE ON FUNCTION core.fail_operation TO sinex_api;
+GRANT EXECUTE ON FUNCTION core.execute_cascade_tombstone TO sinex_api;
+GRANT EXECUTE ON FUNCTION core.execute_cascade_restore TO sinex_api;
+GRANT EXECUTE ON FUNCTION core.lifecycle_tier_status TO sinex_api, sinex_readonly;
+GRANT EXECUTE ON FUNCTION core.jsonb_merge_deep TO sinex_event_engine, sinex_api;
 ";
 
 const SHARED_ACCESS_ROLES_BOOTSTRAP_SQL: &str = r"
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_ingestd') THEN
-    CREATE ROLE sinex_ingestd NOLOGIN;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_event_engine') THEN
+    CREATE ROLE sinex_event_engine NOLOGIN;
   END IF;
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_gateway') THEN
-    CREATE ROLE sinex_gateway NOLOGIN;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_api') THEN
+    CREATE ROLE sinex_api NOLOGIN;
   END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_readonly') THEN
     CREATE ROLE sinex_readonly NOLOGIN;

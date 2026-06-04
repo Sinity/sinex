@@ -1,7 +1,7 @@
 //! Self-tests for `TestCoreStack` — verifies the composite test fixture itself.
 //!
 //! These tests prove:
-//! 1. Stack startup (NATS + ingestd + gateway) completes without error
+//! 1. Stack startup (NATS + event engine + API) completes without error
 //! 2. Gateway is actually accepting TCP connections
 //! 3. Material/ledger seeding helpers produce valid, queryable data
 //! 4. Events seeded through the stack have correct provenance

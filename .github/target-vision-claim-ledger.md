@@ -103,13 +103,13 @@ catch-all (e). Vision files were not modified — they are input evidence.
 |---|---|---|---|---|---|---|
 | TV-010 | "Document retrieval / `search_docs_v1` derived table is the missing piece before embeddings" — intelligence.md and DR-12 recommended path. | implemented | `report/intelligence.md` (Semantic Search §); `reference/intelligence-designs.md` | #332 (closed 2026-05-15); `crate/sinex-schema/docs/document_layer.md` | Document layer v1 parser/chunker landed; remaining work is consumer surfaces, not the missing substrate. | Vision still describes #332 as open work. |
 | TV-011 | SDK input adapters (append-only file, IPC stream, one-time dump, incremental dump, API-backed, file-drop, watcher) missing. | implemented | `report/architecture.md` (Source Material Input Shapes table); `reference/sdk-assessment.md` (What's Missing) | #1011 (closed); shipped in input-shape substrate | Reuse the shipped adapter pattern; per-source reimplementation is no longer the default cost. | Vision tables still mark them "Not built". |
-| TV-012 | Settlement/ErrorClass adoption, ingestor health, `pub mod testing`, COPY routing, cascade trigger, DB credential redaction are open architectural fragilities. | verified | `report/architecture.md` (Architectural Fragilities table); `reference/sdk-assessment.md` (Related Issues) | #1009/#1010/#754/#988/#951/#986/#995 all closed | Maintain regression coverage in source-worker production matrix (#1367). | Fragility table already annotated "closed" but historical prose persists across vision files. |
+| TV-012 | Settlement/ErrorClass adoption, ingestor health, `pub mod testing`, COPY routing, cascade trigger, DB credential redaction are open architectural fragilities. | verified | `report/architecture.md` (Architectural Fragilities table); `reference/sdk-assessment.md` (Related Issues) | #1009/#1010/#754/#988/#951/#986/#995 all closed | Maintain regression coverage in source-unit production matrix (#1367). | Fragility table already annotated "closed" but historical prose persists across vision files. |
 | TV-013 | Local BLAKE3 CAS not yet first-class; git-annex still in play. | superseded | `report/data-landscape.md`; `report/architecture.md` (Fragilities) | #848/#987 (closed); current CAS in `crate/.../blob_storage` | None. | Historical references to git-annex are obsolete. |
-| TV-014 | Bus-First / source-worker host architecture is target but legacy domain ingestors remain. | implementation_ready | `report/architecture.md` (System Shape); `report/work-ahead.md` (Cluster 1-2) | #1054 (open spine) + #1081, #1097, #1098, #1057, #1067, #1100, #1064 all closed | Active migration tracked in #1126 execution plan; per-source-unit production smoke matrix already lands via #1367. | Treat #1054 as the live execution authority. |
+| TV-014 | Bus-First / source-unit host architecture is target but legacy domain ingestors remain. | implementation_ready | `report/architecture.md` (System Shape); `report/work-ahead.md` (Cluster 1-2) | #1054 (open spine) + #1081, #1097, #1098, #1057, #1067, #1100, #1064 all closed | Active migration tracked in #1126 execution plan; per-source-unit production smoke matrix already lands via #1367. | Treat #1054 as the live execution authority. |
 | TV-015 | Per-row SQLite staging is the only staging shape; lacks epistemic snapshot/WAL lane. | issue_backed | `report/architecture.md` (Source Material as a Role §); `reference/historical-architecture.md` | #1285 (closed — design decided); #1207 (open — evidence lanes / snapshot + WAL backing) | Complete #1207 evidence-lane implementation. | Design dispute is closed; remaining work is the snapshot/WAL companion lane. |
 | TV-016 | Anchor-uniqueness fix needed at DB level. | superseded | `report/architecture.md` (Invariant Enforcement Status) | TimescaleDB hypertable limitation documented; application-level `ON CONFLICT (id) DO NOTHING` is current design | None — accepted limitation. | Vision text reads as live gap; architecture has formally accepted it. |
-| TV-017 | DLQ stream name mismatch between gateway/node-sdk and ingestd. | verified | `report/architecture.md` (NATS Topology) | Fixed 2026-04-16 across 5 files. | None. | Already annotated in vision but worth ledgering. |
-| TV-018 | "Honesty sweep" — `Timestamp::now()` fabrication still present. | verified | `report/architecture.md` (Three Clocks §; Invariant Enforcement Status) | Resolved 2026-03-27 in ingestd ts_orig DLQ routing. | None. | Vision text annotates but readers occasionally reintroduce the assumption. |
+| TV-017 | DLQ stream name mismatch between gateway/node-sdk and event_engine. | verified | `report/architecture.md` (NATS Topology) | Fixed 2026-04-16 across 5 files. | None. | Already annotated in vision but worth ledgering. |
+| TV-018 | "Honesty sweep" — `Timestamp::now()` fabrication still present. | verified | `report/architecture.md` (Three Clocks §; Invariant Enforcement Status) | Resolved 2026-03-27 in event_engine ts_orig DLQ routing. | None. | Vision text annotates but readers occasionally reintroduce the assumption. |
 | TV-019 | qutebrowser WAL/recovery: needs write ACL, sinex only has read. | superseded | `reference/communication-social.md` discussion; data-landscape implication | #1325 (closed) — adapter handles qutebrowser DB read path. | None. | Closed via adapter changes; "completely uncaptured" remains true at the live-capture level but the WAL-write blocker no longer applies. |
 | TV-020 | Native-messaging browser ingress not yet built. | issue_backed | `report/data-landscape.md` (Browser History §); vision.md | #847 open (live webhistory capture via WebExtension native messaging); #808 closed (server-side ingress). | Ship the extension and admission path under #847. | Vision treats this as design-only; #847 is the live implementation issue. |
 
@@ -251,25 +251,25 @@ Nine more fictions/stale claims corrected in target-vision prose (each verified 
 
 ### Batch 4 (2026-05-30) — topology drain (`report/architecture.md`, `reference/design-rationale.md`, `reference/desktop-integration.md`)
 
-Wave-B (#1054/#1223/#1225) dissolved per-domain ingestors, `sinex-ingestd`, `sinex-gateway`, and `sinex-process` into `sinexd`. Prose corrected in target-vision commit `4014afa`.
+Wave-B (#1054/#1223/#1225) dissolved the old split admission/API/process binaries into `sinexd`. Prose corrected in target-vision commit `4014afa`.
 
 | Claim ID | Claim | Status | Evidence |
 |----------|-------|--------|----------|
-| TV-076 | `sinex-ingestd` is the single writer/admission service — a distinct binary | superseded | `crate/sinexd/Cargo.toml` (`name = "sinexd"`); event engine is `sinexd::event_engine`. Wave-B #1054/#1223/#1225. |
-| TV-077 | "Merging sinex-ingestd with sinex-gateway" was a rejected design alternative | superseded | Wave-B reversed it — `sinexd` merged both + sinex-process behind internal module boundaries; `nixos/modules/default.nix` `runner_binary = "sinexd"`. |
+| TV-076 | The admission/event-writer role is a distinct binary | superseded | `crate/sinexd/Cargo.toml` (`name = "sinexd"`); event engine is `sinexd::event_engine`. Wave-B #1054/#1223/#1225. |
+| TV-077 | Merging the old admission and API binaries was a rejected design alternative | superseded | Wave-B reversed it: `sinexd` hosts both behind internal module boundaries; `nixos/modules/default.nix` `runner_binary = "sinexd"`. |
 | TV-078 | `DerivedNodeAdapter<N>` / `IngestorNodeAdapter<T>` are the adapter type names | superseded | `AutomatonRuntime<N>` (`sinexd/src/node_sdk/derived_node/adapter/mod.rs:84`); `SourceUnitRuntime<I>` (`sinexd/src/node_sdk/ingestor_node.rs:144`). |
 | TV-079 | `sinex-desktop-ingestor` is a deployed binary | superseded | Desktop capture is source units hosted in sinexd; no such crate in `crate/`. |
 
 ### Batch 5 (2026-05-30) — binary-name drain (event-taxonomy, cli-tui, intelligence-designs)
 
-Remaining `sinex-process` / per-domain-ingestor / `sinex-gateway` binary-name drift across taxonomy + CLI/intelligence reference files. Prose corrected in target-vision commits `1ea30e4`, `9380fd8`. After this batch `reference/` is ~80% dissolved (binary-name drift resolved across 13 of ~16 files; remainder is claim-verification passes).
+Remaining split-binary drift across taxonomy + CLI/intelligence reference files. Prose corrected in target-vision commits `1ea30e4`, `9380fd8`. After this batch `reference/` is ~80% dissolved (binary-name drift resolved across 13 of ~16 files; remainder is claim-verification passes).
 
 | Claim ID | Claim | Status | Evidence |
 |----------|-------|--------|----------|
 | TV-080 | `capture-infrastructure.md` runner-pack table lists `sinex-{desktop,terminal,system}-ingestor` / `sinex-process` as live deployment vehicles | superseded | Post-Wave-B sinexd is the single runtime host (`crate/sinexd/Cargo.toml`); row strikethrough-annotated in file. |
-| TV-081 | `cli-tui-design.md` file-hotspot path `crate/core/sinex-gateway/src/rpc/` | superseded | sinex-gateway dissolved into `crate/sinexd/src/api/`. Fixed in `1ea30e4`. |
+| TV-081 | `cli-tui-design.md` file-hotspot path points at the old API crate | superseded | API code lives in `crate/sinexd/src/api/`. Fixed in `1ea30e4`. |
 | TV-082 | `cli-tui-design.md` "sinex-terminal-ingestor captures the execution event" | superseded | Terminal source unit hosted in sinexd. Fixed in `1ea30e4`. |
-| TV-083 | `cli-tui-design.md` stack-line `sinexctl → sinex-gateway → Postgres` | superseded | Stack is `sinexctl → sinexd (API) → Postgres`. Fixed in `1ea30e4`. |
+| TV-083 | `cli-tui-design.md` stack-line routes `sinexctl` through the old API binary | superseded | Stack is `sinexctl → sinexd (API) → Postgres`. Fixed in `1ea30e4`. |
 | TV-084 | `event-taxonomy/L-intelligence.md` "Deployed (sinex-process)" automata table | superseded | Automata run as sinexd instances (`crate/sinexd/src/automata/`). Fixed in `1ea30e4`. |
 | TV-085 | `event-taxonomy/M-self-telemetry.md` automata rows labelled "(sinex-process)" | superseded | sinex-process dissolved (Wave-B #944/#1223). Fixed in `1ea30e4`. |
 | TV-086 | `intelligence-designs.md` §9 "session detector (part of sinex-process)" | superseded | `crate/sinexd/src/automata/session.rs`. Fixed in `9380fd8`. |
@@ -285,12 +285,12 @@ Lower-risk remainder: stale automata counts, dissolved crate paths, and the TOML
 
 | Claim ID | Claim | Status | Evidence |
 |----------|-------|--------|----------|
-| TV-092 | `work-ahead.md` "9 automata (6 deployed in sinex-process per #944, 3 entity code-complete), ingestd + gateway live" | superseded | Post-Wave-B: 14 automata in `sinexd::automata`; `sinex-process`/ingestd/gateway dissolved into `sinexd` (#944/#1559/#1054). |
-| TV-093 | `work-ahead.md` "source-worker host (#1081) will eventually consolidate the 5 ingestors" | superseded | #1081 landed — `sinexd` is the unified host; per-ingestor crates dissolved (Wave-B). |
-| TV-094 | `media-document-processing.md` `BlobManager` at `sinex-node-sdk/src/annex/blob_manager.rs` | superseded | `sinex-node-sdk` dissolved into `sinexd` (Wave-B); BlobManager under `crate/sinexd/src/sources/`. |
+| TV-092 | `work-ahead.md` old automata count plus split admission/API runtime | superseded | Post-Wave-B: 14 automata in `sinexd::automata`; the old split runtime dissolved into `sinexd` (#944/#1559/#1054). |
+| TV-093 | `work-ahead.md` "source-unit host (#1081) will eventually consolidate the 5 ingestors" | superseded | #1081 landed — `sinexd` is the unified host; per-ingestor crates dissolved (Wave-B). |
+| TV-094 | `media-document-processing.md` `BlobManager` path points at the old SDK crate | superseded | BlobManager-related code lives under `crate/sinexd/src/sources/`. |
 | TV-095 | `media-document-processing.md` `DocumentIngestorNode (sinex-document-ingestor)` separate crate | superseded | Dissolved; logic at `crate/sinexd/src/sources/source_units/document/node.rs`. |
 | TV-096 | `media-document-processing.md` component paths `crate/nodes/sinex-{image-processor,audio-transcriber}/` | superseded | `crate/nodes/` dissolved (Wave-B Tier-2, #1225); future automata under `crate/sinexd/src/automata/`. |
-| TV-097 | `media-document-processing.md` `crate/lib/sinex-node-sdk/src/tags/` | superseded | Tag logic at `crate/sinexd/src/automata/tag_applier.rs`. |
+| TV-097 | `media-document-processing.md` tag path points at the old SDK crate | superseded | Tag logic at `crate/sinexd/src/automata/tag_applier.rs`. |
 | TV-098 | `privacy-and-operations.md` §7.1–7.2 `services.sinex.privacy` TOML/NixOS rendering as authoritative privacy-config model | superseded | #1042 (consolidated 2026-05-30) redesigns policy as DB tables via `sinexctl privacy`, not static TOML. Interim TOML remains in code pending #1042. |
 | TV-099 | `prescriptive-ideas.md` day/hourly summarizer sinex-process parenthetical | verified | `sinexd::automata::{daily,hourly}` confirmed; prose sharpened. |
 

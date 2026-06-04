@@ -49,8 +49,8 @@ primary mitigation other docs rely on.
   via the Unix socket without credentials.
 - **Primary mitigation**: A dedicated `sinex` service user (uid 991 on the
   reference deployment) that owns the database and ingestion paths. Data
-  directories at `0700`. Database role isolation: `sinex_ingestd`,
-  `sinex_gateway`, `sinex_readonly`, `sinex_admin` (role names are retained
+  directories at `0700`. Database role isolation: `sinex_event_engine`,
+  `sinex_api`, `sinex_readonly`, `sinex_admin` (role names are retained
   compatibility vocabulary; runtime modules are folded into `sinexd`; see
   `nixos/modules/database.nix`). No `SUPERUSER` granted to app roles. API RPC
   requires bearer-token auth even over a local socket.

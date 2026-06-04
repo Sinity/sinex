@@ -120,7 +120,7 @@
   };
 
   # Ensure the monitored operator account exists
-  environment.etc."sinex/gateway-admin-token".text = "coordination-admin:admin";
+  environment.etc."sinex/api-admin-token".text = "coordination-admin:admin";
 
   users.users."sinex-prod" = {
     isNormalUser = true;

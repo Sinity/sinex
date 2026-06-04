@@ -848,7 +848,7 @@ impl ReplayExecutionEngine {
         );
 
         // Poll replay operation state for terminal status. The source-unit
-        // processes the parse, publishes event intents through NATS → ingestd,
+        // processes the parse, publishes event intents through NATS → event_engine,
         // and the operation state machine transitions to Completed/Failed/Cancelled.
         let replay = self.replay.clone();
         loop {

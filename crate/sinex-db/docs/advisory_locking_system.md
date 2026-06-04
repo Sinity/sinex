@@ -6,7 +6,7 @@ Sinex utilizes PostgreSQL advisory locks for cross-process coordination, ensurin
 
 Advisory locks are application-level locks tied to a 64-bit identifier. Unlike row or table locks, they do not lock any physical database objects but instead act as a signaling mechanism that multiple system instances agree to respect.
 
-- **Key-to-ID Mapping**: String-based lock keys (e.g., `"ingestd:migrations"`) are deterministically hashed to 64-bit integers using the **BLAKE3** algorithm.
+- **Key-to-ID Mapping**: String-based lock keys (e.g., `"event_engine:migrations"`) are deterministically hashed to 64-bit integers using the **BLAKE3** algorithm.
 - **Session Scoping**: All advisory locks in Sinex are session-scoped. They are tied to a specific database connection and are automatically released by PostgreSQL if that connection is closed, protecting the system against deadlocks caused by process crashes or network partitions.
 
 ## RAII & Automatic Cleanup

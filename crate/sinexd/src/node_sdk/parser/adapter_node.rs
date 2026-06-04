@@ -1130,7 +1130,7 @@ where
             }
         }
 
-        // Finalize the in-flight stream material on clean shutdown so ingestd
+        // Finalize the in-flight stream material on clean shutdown so event_engine
         // receives the END frame and commits the row count before the process
         // exits.  Best-effort: a failure here only affects the current open
         // material; already-finalized materials and persisted events are safe.

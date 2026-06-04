@@ -58,7 +58,7 @@ impl GatewayMetrics {
     /// Create new gateway metrics collector
     #[must_use]
     pub fn new(nats_client: async_nats::Client) -> Self {
-        let config = SelfObserverConfig::from_env("sinex-gateway");
+        let config = SelfObserverConfig::from_env("sinexd");
         Self {
             total_requests: AtomicU64::new(0),
             successful_requests: AtomicU64::new(0),

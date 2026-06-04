@@ -15,9 +15,9 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
     let operation = Operation {
         id: None,
         operation_type: "archive".to_string(),
-        operator: "ingestd@localhost".to_string(),
+        operator: "event_engine@localhost".to_string(),
         scope: Some(json!({
-            "node": "ingestd",
+            "node": "event_engine",
             "mode": "ingestor",
             "source": "fs-watcher"
         })),
@@ -32,11 +32,11 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
 
     let logged = repo.log_operation(operation).await?;
     assert_eq!(logged.operation_type, "archive");
-    assert_eq!(logged.operator, "ingestd@localhost");
+    assert_eq!(logged.operator, "event_engine@localhost");
     assert_eq!(
         logged.scope,
         Some(json!({
-            "node": "ingestd",
+            "node": "event_engine",
             "mode": "ingestor",
             "source": "fs-watcher"
         }))
@@ -91,7 +91,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
     assert_eq!(recent[1].id, logged.id);
 
     let by_actor = repo
-        .get_operations_by_actor("ingestd@localhost", None)
+        .get_operations_by_actor("event_engine@localhost", None)
         .await?;
     assert_eq!(by_actor.len(), 1);
     assert_eq!(by_actor[0].id, logged.id);

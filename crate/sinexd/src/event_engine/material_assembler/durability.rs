@@ -5,7 +5,7 @@
 //! decisions.
 
 use super::state::AssemblerState;
-use crate::event_engine::{IngestdResult, SinexError};
+use crate::event_engine::{EventEngineResult, SinexError};
 use sinex_primitives::Uuid;
 use std::time::{Duration, Instant};
 use tokio::{fs::File, io::AsyncWriteExt};
@@ -26,7 +26,7 @@ pub(crate) struct DurabilityThresholds {
 }
 
 impl DurabilityThresholds {
-    pub(crate) fn default_checked() -> IngestdResult<Self> {
+    pub(crate) fn default_checked() -> EventEngineResult<Self> {
         Self::try_new(
             DEFAULT_STAGED_FILE_SYNC_BYTES,
             DEFAULT_STAGED_FILE_SYNC_INTERVAL,
@@ -42,7 +42,7 @@ impl DurabilityThresholds {
         wal_sync_bytes: usize,
         wal_sync_entries: u32,
         wal_sync_interval: Duration,
-    ) -> IngestdResult<Self> {
+    ) -> EventEngineResult<Self> {
         if staged_file_sync_bytes <= 0 {
             return Err(
                 SinexError::configuration("staged file sync threshold must be positive")
@@ -176,26 +176,26 @@ pub(super) trait DurabilityPolicy {
         force: bool,
     ) -> DurabilityDecision;
 
-    async fn flush_wal_after_append(&self, file: &mut File) -> IngestdResult<()>;
+    async fn flush_wal_after_append(&self, file: &mut File) -> EventEngineResult<()>;
 
     async fn sync_wal_if_needed(
         &self,
         state: &mut AssemblerState,
         force: bool,
-    ) -> IngestdResult<()>;
+    ) -> EventEngineResult<()>;
 
     async fn flush_staged_after_write(
         &self,
         file: &mut File,
         material_id: Uuid,
-    ) -> IngestdResult<()>;
+    ) -> EventEngineResult<()>;
 
     async fn sync_staged_file_if_needed(
         &self,
         state: &mut AssemblerState,
         material_id: Uuid,
         force: bool,
-    ) -> IngestdResult<()>;
+    ) -> EventEngineResult<()>;
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -249,7 +249,7 @@ impl DurabilityPolicy for DefaultDurabilityPolicy {
         DurabilityDecision::Skip
     }
 
-    async fn flush_wal_after_append(&self, file: &mut File) -> IngestdResult<()> {
+    async fn flush_wal_after_append(&self, file: &mut File) -> EventEngineResult<()> {
         file.flush()
             .await
             .map_err(|e| SinexError::io("WAL flush failed").with_source(e))
@@ -259,7 +259,7 @@ impl DurabilityPolicy for DefaultDurabilityPolicy {
         &self,
         state: &mut AssemblerState,
         force: bool,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         if !self
             .wal_sync_decision(WalDurabilityCounters::from_state(state), force)
             .should_sync()
@@ -282,7 +282,7 @@ impl DurabilityPolicy for DefaultDurabilityPolicy {
         &self,
         file: &mut File,
         material_id: Uuid,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         file.flush().await.map_err(|e| {
             SinexError::io(format!("Failed to flush staged material for {material_id}"))
                 .with_source(e)
@@ -294,7 +294,7 @@ impl DurabilityPolicy for DefaultDurabilityPolicy {
         state: &mut AssemblerState,
         material_id: Uuid,
         force: bool,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         if !self
             .staged_sync_decision(StagedDurabilityCounters::from_state(state), force)
             .should_sync()

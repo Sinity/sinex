@@ -1,6 +1,6 @@
 //! Chaos test: simulate abrupt process termination (SIGKILL) and recovery.
 //!
-//! Kills ingestd mid-flight with SIGKILL, verifies checkpoint recovery,
+//! Kills event_engine mid-flight with SIGKILL, verifies checkpoint recovery,
 //! and asserts no data loss or duplication.
 
 use std::process::Command;
@@ -17,7 +17,7 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
     let pool = PgPool::connect(database_url).await?;
 
     test_baseline_events_captured(runner, &pool).await;
-    test_ingestd_restarts_after_sigkill(runner, &pool).await;
+    test_event_engine_restarts_after_sigkill(runner, &pool).await;
     test_no_data_loss_after_restart(runner, &pool).await;
     test_no_duplicate_events_after_restart(runner, &pool).await;
     test_pipeline_flows_after_recovery(runner, &pool).await;
@@ -49,8 +49,8 @@ async fn test_baseline_events_captured(runner: &mut TestRunner, pool: &PgPool) {
     }
 }
 
-async fn test_ingestd_restarts_after_sigkill(runner: &mut TestRunner, _pool: &PgPool) {
-    let name = "chaos-process-restart: ingestd restarts after SIGKILL";
+async fn test_event_engine_restarts_after_sigkill(runner: &mut TestRunner, _pool: &PgPool) {
+    let name = "chaos-process-restart: event_engine restarts after SIGKILL";
 
     let watched = "/var/lib/sinex/watched";
 
@@ -62,9 +62,9 @@ async fn test_ingestd_restarts_after_sigkill(runner: &mut TestRunner, _pool: &Pg
         );
     }
 
-    // Get the PID of sinex-ingestd
+    // Get the PID of sinexd
     let pid_output = Command::new("systemctl")
-        .args(["show", "-p", "MainPID", "--value", "sinex-ingestd"])
+        .args(["show", "-p", "MainPID", "--value", "sinexd"])
         .output()
         .ok();
 
@@ -83,7 +83,7 @@ async fn test_ingestd_restarts_after_sigkill(runner: &mut TestRunner, _pool: &Pg
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let active = Command::new("systemctl")
-            .args(["is-active", "--quiet", "sinex-ingestd"])
+            .args(["is-active", "--quiet", "sinexd"])
             .status()
             .is_ok_and(|s| s.success());
         if active {
@@ -93,7 +93,7 @@ async fn test_ingestd_restarts_after_sigkill(runner: &mut TestRunner, _pool: &Pg
             return;
         }
         if Instant::now() >= deadline {
-            runner.fail(name, "ingestd did not restart within 30s after SIGKILL");
+            runner.fail(name, "event_engine did not restart within 30s after SIGKILL");
             return;
         }
     }

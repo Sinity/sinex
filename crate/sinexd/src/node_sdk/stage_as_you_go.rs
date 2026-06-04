@@ -543,7 +543,7 @@ impl StageAsYouGoContext {
     /// Get the `started_at` timestamp for an in-flight material.
     ///
     /// This is the wall-clock time recorded when the material capture began.
-    /// `register_in_flight()` now publishes BEGIN before it returns, so ingestd
+    /// `register_in_flight()` now publishes BEGIN before it returns, so event_engine
     /// can durably persist the same value as the `staged_at` ledger entry. Use
     /// it as the fallback `ts_orig` for events that lack an intrinsic timestamp
     /// — it is reproducible on replay because it traces to that persisted row.

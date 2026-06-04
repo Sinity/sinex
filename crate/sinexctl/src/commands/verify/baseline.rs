@@ -78,19 +78,6 @@ impl CheckStatus {
         }
     }
 
-    /// Severity ranking for worst-wins combination of sub-check results.
-    /// Higher = worse. Skipped is treated as a soft warning between Pass
-    /// and Degraded so a sub-check that could not run does not mask a
-    /// downstream Degraded/Fail signal.
-    fn severity(self) -> u8 {
-        match self {
-            Self::Pass => 0,
-            Self::Skipped => 1,
-            Self::Degraded => 2,
-            Self::Fail => 3,
-        }
-    }
-
     fn colored_icon(self) -> String {
         match self {
             Self::Pass => style("PASS").green().bold().to_string(),
@@ -458,7 +445,7 @@ async fn check_replay_integrity(check_timeout: Duration) -> CheckResult {
         run_xtask(&[
             "test",
             "-p",
-            "sinex-node-sdk",
+            "sinexd",
             "-E",
             "test(replay)",
             "--impact-mode=off",
@@ -478,7 +465,7 @@ async fn check_replay_integrity(check_timeout: Duration) -> CheckResult {
                     xtask_result.stderr_summary()
                 ));
                 result.recommendation =
-                    Some("Run `xtask test -p sinex-node-sdk -E 'test(replay)'` to inspect".into());
+                    Some("Run `xtask test -p sinexd -E 'test(replay)'` to inspect".into());
             }
         }
         Ok(Err(error)) => {

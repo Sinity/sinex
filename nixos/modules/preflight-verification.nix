@@ -29,7 +29,7 @@ let
   localPostgresUnits = optionals localPostgresEnabled [ "postgresql.service" "postgresql-setup.service" ];
   schemaApplyUnits = optionals schemaApplyEnabled [ "sinex-schema-apply.service" ];
   # Guard core units only when the core subsystem is enabled.
-  # Always guard both core and node units: nodes emit to NATS, ingestd must pass preflight
+  # Always guard both core and node units: nodes emit to NATS, event_engine must pass preflight
   # before either layer accepts production traffic.
   coreEnabled = sinexEnabled && (cfg.core.enable or false);
   coreUnitsToGuard = lib.optionals coreEnabled [ "sinexd" ];
@@ -38,7 +38,7 @@ let
 
   stateRoot = cfg.stateRoot;
   logDir = cfg.observability.logDir;
-  ingestSpool = cfg.core.ingestd.spoolDir;
+  ingestSpool = cfg.core.event_engine.spoolDir;
   nodeSpool = "${cfg.stateRoot}/spool/nodes";
   serviceUser = cfg.users.nodes;
 

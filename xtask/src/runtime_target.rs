@@ -99,7 +99,7 @@ pub fn checkout_runtime_target(cfg: &Config) -> Result<RuntimeTargetDescriptor> 
         },
         services: RuntimeTargetServices {
             managed_units: vec![
-                "checkout-local:sinex-gateway".to_string(),
+                "checkout-local:sinexd".to_string(),
                 "checkout-local:sinexd".to_string(),
             ],
         },

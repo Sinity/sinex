@@ -91,16 +91,16 @@ telemetry_method!(
     TelemetryMetricCountersResponse
 );
 telemetry_method!(
-    TELEMETRY_INGESTD_BATCH_STATS_METHOD,
-    TELEMETRY_INGESTD_BATCH_STATS,
-    TelemetryIngestdBatchStatsRequest,
-    TelemetryIngestdBatchStatsResponse
+    TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD,
+    TELEMETRY_EVENT_ENGINE_BATCH_STATS,
+    TelemetryEventEngineBatchStatsRequest,
+    TelemetryEventEngineBatchStatsResponse
 );
 telemetry_method!(
-    TELEMETRY_INGESTD_VALIDATION_METHOD,
-    TELEMETRY_INGESTD_VALIDATION,
-    TelemetryIngestdValidationRequest,
-    TelemetryIngestdValidationResponse
+    TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD,
+    TELEMETRY_EVENT_ENGINE_VALIDATION,
+    TelemetryEventEngineValidationRequest,
+    TelemetryEventEngineValidationResponse
 );
 telemetry_method!(
     TELEMETRY_THROUGHPUT_METHOD,
@@ -492,12 +492,12 @@ pub struct TelemetryMetricCountersResponse {
 }
 
 // ─────────────────────────────────────────────────────────────
-// telemetry.ingestd_batch_stats
+// telemetry.event_engine_batch_stats
 // ─────────────────────────────────────────────────────────────
 
-/// Request: `telemetry.ingestd_batch_stats`
+/// Request: `telemetry.event_engine_batch_stats`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TelemetryIngestdBatchStatsRequest {
+pub struct TelemetryEventEngineBatchStatsRequest {
     #[serde(flatten)]
     pub time_range: TelemetryTimeRange,
     /// Maximum number of buckets to return (default: 50).
@@ -505,9 +505,9 @@ pub struct TelemetryIngestdBatchStatsRequest {
     pub limit: Option<i64>,
 }
 
-/// A single ingestd batch-stat bucket.
+/// A single event_engine batch-stat bucket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IngestdBatchStatsBucket {
+pub struct EventEngineBatchStatsBucket {
     pub bucket: String,
     pub avg_batch_size: Option<f64>,
     pub max_batch_size: Option<i64>,
@@ -525,23 +525,23 @@ pub struct IngestdBatchStatsBucket {
     pub avg_validation_coverage_pct: Option<f64>,
 }
 
-/// Response: `telemetry.ingestd_batch_stats`
+/// Response: `telemetry.event_engine_batch_stats`
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TelemetryIngestdBatchStatsResponse {
-    pub buckets: Vec<IngestdBatchStatsBucket>,
+pub struct TelemetryEventEngineBatchStatsResponse {
+    pub buckets: Vec<EventEngineBatchStatsBucket>,
 }
 
 // ─────────────────────────────────────────────────────────────
-// telemetry.ingestd_validation
+// telemetry.event_engine_validation
 // ─────────────────────────────────────────────────────────────
 
-/// Request: `telemetry.ingestd_validation`
+/// Request: `telemetry.event_engine_validation`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TelemetryIngestdValidationRequest {}
+pub struct TelemetryEventEngineValidationRequest {}
 
-/// Latest ingestd validation / batch snapshot emitted via `sinex.ingestd batch.stats`.
+/// Latest event_engine validation / batch snapshot emitted via `sinex.event_engine batch.stats`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IngestdValidationSnapshot {
+pub struct EventEngineValidationSnapshot {
     pub observed_at: String,
     pub batch_size: i64,
     pub fetch_to_ack_ms: i64,
@@ -558,11 +558,11 @@ pub struct IngestdValidationSnapshot {
     pub suspicious_future_ts_orig: i64,
 }
 
-/// Response: `telemetry.ingestd_validation`
+/// Response: `telemetry.event_engine_validation`
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TelemetryIngestdValidationResponse {
+pub struct TelemetryEventEngineValidationResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub snapshot: Option<IngestdValidationSnapshot>,
+    pub snapshot: Option<EventEngineValidationSnapshot>,
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -587,7 +587,7 @@ pub struct ThroughputSourceEntry {
     pub eps_24h: f64,
 }
 
-/// Per-component aggregate: ingestd/gateway/derived-nodes lumped into one
+/// Per-component aggregate: event_engine/gateway/derived-nodes lumped into one
 /// row each so an operator can see "is the gateway above its long-run rate?"
 /// in a glance.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -379,7 +379,7 @@ impl HeartbeatEmitter {
             "level": "INFO",
             "message": "heartbeat",
             "target": "heartbeat",
-            "module_path": "sinex_node_sdk::heartbeat",
+            "module_path": "sinexd::node_sdk::heartbeat",
             "file": "heartbeat.rs",
             "line": 1,
             "fields": {
@@ -624,7 +624,7 @@ impl HeartbeatEmitter {
             "level": "WARN",
             "message": event_type,
             "target": "heartbeat",
-            "module_path": "sinex_node_sdk::heartbeat",
+            "module_path": "sinexd::node_sdk::heartbeat",
             "file": "heartbeat.rs",
             "line": 1,
             "fields": {

@@ -1973,7 +1973,7 @@ impl SourceMaterialRepository<'_> {
 
     /// Read all temporal-ledger entries for a material.
     ///
-    /// Used by the ingestd admission stage to resolve `ts_orig` for material
+    /// Used by the event_engine admission stage to resolve `ts_orig` for material
     /// events whose timing was deferred to persistence (#1570 Prong B). Entries
     /// describe sub-material offset ranges (wrapped streams / per-chunk timing).
     pub async fn read_temporal_ledger(

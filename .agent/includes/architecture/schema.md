@@ -24,7 +24,7 @@ unions across CAs); `current_device_state` remains a regular materialized view
 
 | Relation | Type | Bucket | What it tracks |
 |----------|------|--------|----------------|
-| `ingestd_batch_stats_1h` | Continuous aggregate | 1h | Batch size, latency, deferred/failed counts |
+| `event_engine_batch_stats_1h` | Continuous aggregate | 1h | Batch size, latency, deferred/failed counts |
 | `gateway_stats_1h` | Continuous aggregate | 1h | Request stats, latency, rate limits |
 | `node_stats_1h` | Continuous aggregate | 1h | Events processed, latency, queue depth per node |
 | `stream_stats_1h` | Continuous aggregate | 1h | JetStream fill %, message counts |

@@ -107,7 +107,7 @@ serde_yml = { workspace = true }
 mime_guess = "2.0"
 sinex-macros = { path = "../sinex-macros" }
 
-# node-sdk dependencies (formerly from sinex-node-sdk crate)
+# node-sdk dependencies (formerly from sinexd crate)
 sd-notify = { workspace = true }
 sysinfo = { workspace = true }
 which = { workspace = true }

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Startup snapshot for a `JetStream` pull consumer.\n\nEmitted once per consumer before the ingestd pull loop begins (before READY/`sd_notify`).\nCaptures stream state and consumer configuration so operators can determine at a glance\nwhether this startup is a normal resume, a cold-start full replay, or a catch-up run.",
+  "description": "Startup snapshot for a `JetStream` pull consumer.\n\nEmitted once per consumer before the event_engine pull loop begins (before READY/`sd_notify`).\nCaptures stream state and consumer configuration so operators can determine at a glance\nwhether this startup is a normal resume, a cold-start full replay, or a catch-up run.",
   "properties": {
     "consumer_ack_pending": {
       "description": "Messages acknowledged but not yet confirmed by the server.",

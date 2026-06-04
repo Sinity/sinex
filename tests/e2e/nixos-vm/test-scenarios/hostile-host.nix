@@ -126,7 +126,7 @@ pkgs.testers.nixosTest {
         )
         return int(result.strip())
 
-    def ingestd_is_active():
+    def event_engine_is_active():
         rc, _ = machine.execute("systemctl is-active sinexd")
         return rc == 0
 
@@ -137,10 +137,10 @@ pkgs.testers.nixosTest {
     with subtest("pump-10k-events"):
         machine.succeed("sinex-hostile-publish 10000")
 
-    # ─── Assert ingestd survived the load ─────────────────────────────────────
+    # ─── Assert event_engine survived the load ─────────────────────────────────────
 
     with subtest("no-oom-kill"):
-        assert ingestd_is_active(), \
+        assert event_engine_is_active(), \
             "sinexd was OOM-killed under constrained cgroup limits — backpressure failure"
         print("✓ sinexd still active (not OOM-killed)")
 
@@ -149,7 +149,7 @@ pkgs.testers.nixosTest {
             "systemctl show sinexd --property=NRestarts --value"
         )
         restarts = int(oom_out.strip()) if oom_out.strip().isdigit() else 0
-        print(f"  ingestd restart count: {restarts}")
+        print(f"  event_engine restart count: {restarts}")
         # Allow up to 2 restarts (backpressure may cause transient failures)
         assert restarts <= 2, \
             f"sinexd restarted {restarts} times under load — instability under constraint"
@@ -157,7 +157,7 @@ pkgs.testers.nixosTest {
     # ─── Wait for event drain ──────────────────────────────────────────────────
 
     with subtest("drain-and-no-data-loss"):
-        # Give ingestd time to drain the backlog at reduced throughput
+        # Give event_engine time to drain the backlog at reduced throughput
         drain_deadline = 120  # seconds
         start = time.time()
         prev_count = get_event_count()
@@ -168,8 +168,8 @@ pkgs.testers.nixosTest {
             if current_count > prev_count:
                 print(f"  draining... {current_count} events committed")
                 prev_count = current_count
-            # Check that ingestd is still alive during drain
-            if not ingestd_is_active():
+            # Check that event_engine is still alive during drain
+            if not event_engine_is_active():
                 raise Exception("sinexd died during drain phase")
 
         final_count = get_event_count()

@@ -36,8 +36,8 @@ filter = "package(sinex-e2e-tests)"
 slow-timeout = { period = "120s", terminate-after = 2 }
 
 # Heavy integration tests in core packages also need more time
-# Note: sinex-ingestd and sinex-node-sdk were folded into sinexd; their integration
-# tests now live under sinexd and are covered by the override above.
+# Unified-daemon integration tests live under sinexd and are covered by the
+# override above.
 [[profile.default.overrides]]
 filter = "package(sinexd) & test(/integration|pipeline|stress|chaos|material_acquisition|replay|blob|checkpoint|property/)"
 slow-timeout = { period = "120s", terminate-after = 2 }

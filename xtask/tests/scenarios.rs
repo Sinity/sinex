@@ -4,7 +4,7 @@
 //! hard to exercise at the unit-test level:
 //!
 //! - D11.3: provenance chain traversal (raw → derived lineage)
-//! - D11.4: `xtask status --summary --json` reports ingestd health
+//! - D11.4: `xtask status --summary --json` reports event_engine health
 //! - D11.6: binaries started with `--log-format json` produce valid JSON logs
 
 mod support;
@@ -120,15 +120,15 @@ async fn test_provenance_trace_scenario(ctx: TestContext) -> ::xtask::sandbox::T
 }
 
 // ============================================================================
-// D11.4 — ingestd_runtime_health scenario
+// D11.4 — event_engine_runtime_health scenario
 // ============================================================================
 
-/// D11.4: `xtask status --summary --json` reports ingestd as non-healthy when
-/// the checkout-local ingestd process is not running. The summary line should
-/// surface either a missing heartbeat (`ingestd:down`) or a stale heartbeat
-/// (`ingestd:stale`), and lag / batch fields should remain unavailable.
+/// D11.4: `xtask status --summary --json` reports event_engine as non-healthy when
+/// the checkout-local event_engine process is not running. The summary line should
+/// surface either a missing heartbeat (`event_engine:down`) or a stale heartbeat
+/// (`event_engine:stale`), and lag / batch fields should remain unavailable.
 #[sinex_test]
-async fn test_ingestd_runtime_health_when_down() -> ::xtask::sandbox::TestResult<()> {
+async fn test_event_engine_runtime_health_when_down() -> ::xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir()?;
     let output = xtask_command()?
         .env("SINEX_STATE_DIR", dir.path())
@@ -149,23 +149,23 @@ async fn test_ingestd_runtime_health_when_down() -> ::xtask::sandbox::TestResult
         .as_str()
         .ok_or_else(|| color_eyre::eyre::eyre!("data.summary missing or not a string"))?;
 
-    // ingestd is not running in the test environment. Depending on whether the
+    // event_engine is not running in the test environment. Depending on whether the
     // checkout-local runtime database still contains an old heartbeat row,
     // status may surface the service as down or stale.
     assert!(
-        summary.contains("ingestd:down") || summary.contains("ingestd:stale"),
-        "summary should contain 'ingestd:down' or 'ingestd:stale' when ingestd is not running, got: {summary}"
+        summary.contains("event_engine:down") || summary.contains("event_engine:stale"),
+        "summary should contain 'event_engine:down' or 'event_engine:stale' when event_engine is not running, got: {summary}"
     );
 
-    // Lag and batch should be absent ("-") when ingestd is not healthy
+    // Lag and batch should be absent ("-") when event_engine is not healthy
     assert!(
         summary.contains("lag:-"),
-        "summary should contain 'lag:-' when ingestd is not healthy, got: {summary}"
+        "summary should contain 'lag:-' when event_engine is not healthy, got: {summary}"
     );
 
     assert!(
         summary.contains("batch:-"),
-        "summary should contain 'batch:-' when ingestd is not healthy, got: {summary}"
+        "summary should contain 'batch:-' when event_engine is not healthy, got: {summary}"
     );
 
     Ok(())
@@ -175,15 +175,15 @@ async fn test_ingestd_runtime_health_when_down() -> ::xtask::sandbox::TestResult
 // D11.6 — Structured log format verification
 // ============================================================================
 
-/// D11.6: Start ingestd with `--log-format json`, capture its stderr, and
+/// D11.6: Start event_engine with `--log-format json`, capture its stderr, and
 /// verify that the initial log output consists of valid JSON objects with the
 /// fields produced by `tracing_subscriber::fmt::json()`.
 ///
 /// The test starts the binary, waits until it emits something or exits, then
-/// kills it. It does not wait for ingestd to become fully ready — we only need
+/// kills it. It does not wait for event_engine to become fully ready — we only need
 /// the first few log lines that the binary emits during startup.
 #[sinex_test]
-async fn test_ingestd_log_format_json() -> ::xtask::sandbox::TestResult<()> {
+async fn test_event_engine_log_format_json() -> ::xtask::sandbox::TestResult<()> {
     // Locate the binary
     let workspace = find_workspace_root()?;
     let profile = if cfg!(debug_assertions) {
@@ -192,12 +192,12 @@ async fn test_ingestd_log_format_json() -> ::xtask::sandbox::TestResult<()> {
         "release"
     };
     let target_dir = get_target_dir_test(&workspace);
-    let binary_path = target_dir.join(profile).join("sinex-ingestd");
+    let binary_path = target_dir.join(profile).join("sinexd");
 
     if !binary_path.exists() {
         // Skip gracefully if binary has not been built yet
         eprintln!(
-            "Skipping D11.6: sinex-ingestd not found at {}",
+            "Skipping D11.6: sinexd not found at {}",
             binary_path.display()
         );
         return Ok(());

@@ -24,7 +24,7 @@ use std::sync::{
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
-use crate::event_engine::{IngestdResult, SinexError};
+use crate::event_engine::{EventEngineResult, SinexError};
 
 const MATERIAL_CONSUMER_SHUTDOWN_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 // Keep SOURCE_MATERIAL stream caps aligned with the Nix bootstrap path. The current
@@ -35,7 +35,7 @@ async fn ack_with_warning(
     message: &jetstream::Message,
     reason: &'static str,
     material_id: Option<&Uuid>,
-) -> IngestdResult<()> {
+) -> EventEngineResult<()> {
     message.ack().await.map_err(|error| {
         warn!(
             subject = %message.subject,
@@ -60,7 +60,7 @@ async fn nak_with_warning(
     delay: Option<std::time::Duration>,
     reason: &'static str,
     material_id: Option<&Uuid>,
-) -> IngestdResult<()> {
+) -> EventEngineResult<()> {
     message
         .ack_with(jetstream::AckKind::Nak(delay))
         .await
@@ -84,7 +84,7 @@ async fn nak_with_warning(
         })
 }
 
-fn message_delivery_attempt(message: &jetstream::Message) -> IngestdResult<i64> {
+fn message_delivery_attempt(message: &jetstream::Message) -> EventEngineResult<i64> {
     message.info().map(|info| info.delivered).map_err(|error| {
         SinexError::processing("failed to inspect material frame delivery metadata")
             .with_context("subject", message.subject.to_string())
@@ -98,7 +98,7 @@ async fn apply_redelivery_decision(
     decision: RedeliveryDecision,
     material_id: Option<Uuid>,
     dlq_context: serde_json::Value,
-) -> IngestdResult<()> {
+) -> EventEngineResult<()> {
     match decision {
         RedeliveryDecision::Ack { reason } => {
             ack_with_warning(message, reason, material_id.as_ref()).await
@@ -128,7 +128,7 @@ async fn apply_redelivery_decision(
 }
 
 /// Bootstrap the ordered `JetStream` stream for material lifecycle frames.
-pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdResult<()> {
+pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> EventEngineResult<()> {
     // When SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true, the NixOS module owns
     // stream configuration. Skip bootstrap so the two sources of truth don't
     // conflict on stream shape or subject overlap.
@@ -223,12 +223,12 @@ impl MaterialFrameDecodeError {
 pub(super) async fn spawn_material_consumer(
     assembler: &MaterialAssembler,
     shutdown_flag: Arc<AtomicBool>,
-) -> IngestdResult<JoinHandle<IngestdResult<()>>> {
+) -> EventEngineResult<JoinHandle<EventEngineResult<()>>> {
     let js = assembler.js.clone();
     let assembler = assembler.clone_for_task();
 
     let stream_name = namespaced_stream(&assembler, SOURCE_MATERIAL_STREAM);
-    let consumer_name = namespaced_consumer(&assembler, "ingestd_material_frames");
+    let consumer_name = namespaced_consumer(&assembler, "event_engine_material_frames");
     let mut consumer_spec = PullConsumerSpec::new(stream_name, consumer_name);
     consumer_spec.deliver_policy = jetstream::consumer::DeliverPolicy::All;
     consumer_spec.max_ack_pending = assembler.slices_max_ack_pending;
@@ -321,7 +321,7 @@ pub(super) async fn spawn_material_consumer(
                 Err(err) => {
                     error!(
                         target: "sinex_metrics",
-                        metric = "ingestd.material_pipeline_failures_total",
+                        metric = "event_engine.material_pipeline_failures_total",
                         material_id = %material_id,
                         frame_kind,
                         error = %err,

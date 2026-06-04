@@ -24,7 +24,7 @@ let
   coreEnabled = sinexEnabled && cfg.core.enable;
   nodesEnabled = sinexEnabled && cfg.nodes.enable;
 
-  ingestEnabled = coreEnabled && cfg.core.ingestd.enable;
+  ingestEnabled = coreEnabled && cfg.core.event_engine.enable;
   gatewayEnabled = coreEnabled && cfg.core.gateway.enable;
 
   defaultInstances = cfg.nodes.defaults.instances;
@@ -132,8 +132,8 @@ let
           ensureDBOwnership = false;
           ensureClauses.login = false;
         }) [
-        "sinex_ingestd"
-        "sinex_gateway"
+        "sinex_event_engine"
+        "sinex_api"
         "sinex_readonly"
       ];
     in

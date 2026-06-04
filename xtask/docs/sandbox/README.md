@@ -43,7 +43,7 @@ async fn test_event_creation(ctx: TestContext) -> TestResult<()> {
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
 | **Database Isolation** | Each test gets an isolated database from a pool | [database_testing.md](database_testing.md) |
-| **Pipeline Testing** | Tests exercise real NATS → ingestd → DB flow | [pipeline_testing.md](pipeline_testing.md) |
+| **Pipeline Testing** | Tests exercise real NATS → event_engine → DB flow | [pipeline_testing.md](pipeline_testing.md) |
 | **TestContext** | Central coordination with assertions and timing | [test_context.md](test_context.md) |
 | **Property Testing** | Proptest integration with `#[sinex_prop]` | [property_testing.md](property_testing.md) |
 | **Timing Utilities** | Synchronization, barriers, adaptive polling | [timing_patterns.md](timing_patterns.md) |
@@ -55,7 +55,7 @@ Before seeding any events, call `ctx.with_nats().shared().await?` and use
 `ctx.publish_event(...)` so every test exercises the actual ingestion path.
 
 ```rust
-// PREFERRED: Pipeline-first approach (exercises NATS → ingestd → DB)
+// PREFERRED: Pipeline-first approach (exercises NATS → event_engine → DB)
 let ctx = ctx.with_nats().shared().await?;
 let event = ctx.publish_event(
     "fs-watcher",
@@ -71,7 +71,7 @@ let event = pool.events().insert_test_event(
 ).await?;
 ```
 
-Direct database insertion bypasses ingestd and should be used sparingly.
+Direct database insertion bypasses event_engine and should be used sparingly.
 
 ## Test Macros
 

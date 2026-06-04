@@ -5,15 +5,15 @@
 
 use sinex_primitives::rpc::telemetry::{
     AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
-    FileActivityEntry, GatewayStatsBucket, IngestdBatchStatsBucket, IngestdValidationSnapshot,
+    FileActivityEntry, GatewayStatsBucket, EventEngineBatchStatsBucket, EventEngineValidationSnapshot,
     MetricCounterBucket, NodeStatsBucket, RecentActivityEntry, StreamStatsBucket,
     SystemStateBucket, TelemetryAssemblyStatsRequest, TelemetryAssemblyStatsResponse,
     TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
     TelemetryCurrentDeviceStateRequest, TelemetryCurrentDeviceStateResponse,
     TelemetryCurrentHealthRequest, TelemetryCurrentHealthResponse, TelemetryFileActivityRequest,
     TelemetryFileActivityResponse, TelemetryGatewayStatsRequest, TelemetryGatewayStatsResponse,
-    TelemetryIngestdBatchStatsRequest, TelemetryIngestdBatchStatsResponse,
-    TelemetryIngestdValidationRequest, TelemetryIngestdValidationResponse,
+    TelemetryEventEngineBatchStatsRequest, TelemetryEventEngineBatchStatsResponse,
+    TelemetryEventEngineValidationRequest, TelemetryEventEngineValidationResponse,
     TelemetryMetricCountersRequest, TelemetryMetricCountersResponse, TelemetryNodeStatsRequest,
     TelemetryNodeStatsResponse, TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
     TelemetryStreamStatsRequest, TelemetryStreamStatsResponse, TelemetrySystemStateRequest,
@@ -201,7 +201,7 @@ struct MetricCounterRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct IngestdBatchStatsRow {
+struct EventEngineBatchStatsRow {
     bucket: OffsetDateTime,
     avg_batch_size: Option<f64>,
     max_batch_size: Option<i64>,
@@ -791,10 +791,10 @@ pub async fn handle_telemetry_metric_counters(
     Ok(TelemetryMetricCountersResponse { buckets })
 }
 
-pub async fn handle_telemetry_ingestd_batch_stats(
+pub async fn handle_telemetry_event_engine_batch_stats(
     pool: &PgPool,
-    req: TelemetryIngestdBatchStatsRequest,
-) -> Result<TelemetryIngestdBatchStatsResponse> {
+    req: TelemetryEventEngineBatchStatsRequest,
+) -> Result<TelemetryEventEngineBatchStatsResponse> {
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
         req.time_range.to.as_deref(),
@@ -802,7 +802,7 @@ pub async fn handle_telemetry_ingestd_batch_stats(
     )?;
     let limit = resolve_positive_limit(req.limit)?;
 
-    let rows = sqlx::query_as::<_, IngestdBatchStatsRow>(
+    let rows = sqlx::query_as::<_, EventEngineBatchStatsRow>(
         r"
         SELECT
             bucket,
@@ -820,7 +820,7 @@ pub async fn handle_telemetry_ingestd_batch_stats(
             validation_schema_not_found::bigint AS validation_schema_not_found,
             validation_invalid::bigint AS validation_invalid,
             avg_validation_coverage_pct::float8 AS avg_validation_coverage_pct
-        FROM sinex_telemetry.ingestd_batch_stats_1h
+        FROM sinex_telemetry.event_engine_batch_stats_1h
         WHERE bucket >= $1
           AND bucket <= $2
         ORDER BY bucket DESC
@@ -832,11 +832,11 @@ pub async fn handle_telemetry_ingestd_batch_stats(
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(|error| telemetry_query_error("sinex_telemetry.ingestd_batch_stats_1h", error))?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.event_engine_batch_stats_1h", error))?;
 
     let buckets = rows
         .into_iter()
-        .map(|row| IngestdBatchStatsBucket {
+        .map(|row| EventEngineBatchStatsBucket {
             bucket: fmt_rfc3339(row.bucket),
             avg_batch_size: row.avg_batch_size,
             max_batch_size: row.max_batch_size,
@@ -855,13 +855,13 @@ pub async fn handle_telemetry_ingestd_batch_stats(
         })
         .collect();
 
-    Ok(TelemetryIngestdBatchStatsResponse { buckets })
+    Ok(TelemetryEventEngineBatchStatsResponse { buckets })
 }
 
-pub async fn handle_telemetry_ingestd_validation(
+pub async fn handle_telemetry_event_engine_validation(
     pool: &PgPool,
-    _req: TelemetryIngestdValidationRequest,
-) -> Result<TelemetryIngestdValidationResponse> {
+    _req: TelemetryEventEngineValidationRequest,
+) -> Result<TelemetryEventEngineValidationResponse> {
     let row = sqlx::query!(
         r#"
         SELECT
@@ -888,9 +888,9 @@ pub async fn handle_telemetry_ingestd_validation(
     )
     .fetch_optional(pool)
     .await
-    .map_err(|error| telemetry_query_error("latest ingestd validation stats", error))?;
+    .map_err(|error| telemetry_query_error("latest event_engine validation stats", error))?;
 
-    let snapshot = row.map(|row| IngestdValidationSnapshot {
+    let snapshot = row.map(|row| EventEngineValidationSnapshot {
         observed_at: fmt_rfc3339(row.observed_at),
         batch_size: row.batch_size,
         fetch_to_ack_ms: row.fetch_to_ack_ms,
@@ -907,7 +907,7 @@ pub async fn handle_telemetry_ingestd_validation(
         suspicious_future_ts_orig: row.suspicious_future_ts_orig,
     });
 
-    Ok(TelemetryIngestdValidationResponse { snapshot })
+    Ok(TelemetryEventEngineValidationResponse { snapshot })
 }
 
 // ─────────────────────────────────────────────────────────────

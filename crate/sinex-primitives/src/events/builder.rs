@@ -274,7 +274,7 @@ impl<T> EventBuilder<T, HasProvenance> {
 
         // #1570 Prong B — builder inversion:
         // Material-provenance events without an explicit timestamp leave
-        // `ts_orig = None` as the "derive me at persistence" signal; the ingestd
+        // `ts_orig = None` as the "derive me at persistence" signal; the event_engine
         // admission stage resolves it from the source-material timing tier.
         // Derived events have no material to resolve against, so they keep the
         // wall-clock fallback (their synthesis time). Any caller that set an

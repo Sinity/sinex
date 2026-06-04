@@ -86,7 +86,7 @@ register_source_unit! {
 }
 
 // Infra source unit: descriptor-only by design — events emitted from inside
-// other binaries (ingestd, gateway, node SDK). The binding records the
+// other binaries (event_engine, gateway, node SDK). The binding records the
 // embedded shape; `proposed: true` flags it as not a host-level adapter.
 register_source_unit_binding! {
     SourceUnitBinding::builder(

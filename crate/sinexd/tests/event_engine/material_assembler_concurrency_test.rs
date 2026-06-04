@@ -4,7 +4,7 @@ use async_nats::jetstream;
 use blake3::Hasher;
 use futures::future::join_all;
 use serde_json::json;
-use sinexd::event_engine::{IngestdResult, MaterialAssembler, MaterialReadySet};
+use sinexd::event_engine::{EventEngineResult, MaterialAssembler, MaterialReadySet};
 use sinexd::node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
 use sinex_primitives::{Uuid, temporal};
 use sqlx::Row;
@@ -31,7 +31,7 @@ async fn start_assembler(
     ctx: &TestContext,
     namespace: &str,
 ) -> TestResult<(
-    tokio::task::JoinHandle<IngestdResult<()>>,
+    tokio::task::JoinHandle<EventEngineResult<()>>,
     jetstream::Context,
     tempfile::TempDir,
     tempfile::TempDir,

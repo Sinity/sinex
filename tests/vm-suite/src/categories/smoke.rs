@@ -26,8 +26,8 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
     // 3. core.events is a hypertable (not a plain table)
     test_events_hypertable(runner, &pool).await;
 
-    // 4. sinex-ingestd systemd unit is active
-    test_service_active(runner, "sinex-ingestd");
+    // 4. sinexd systemd unit is active
+    test_service_active(runner, "sinexd");
 
     // 5. Filesystem event pipeline: create files → events appear in DB
     test_filesystem_pipeline(runner, &pool).await;
@@ -35,7 +35,7 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
     // 6. Batch event capture: 20 files → count increases
     test_batch_capture(runner, &pool).await;
 
-    // 7. Service restart: pipeline works after ingestd restart
+    // 7. Service restart: pipeline works after daemon restart
     test_service_restart(runner, &pool).await;
 
     // 8. Database can be queried after restart (no lock/crash)
@@ -181,16 +181,16 @@ async fn test_batch_capture(runner: &mut TestRunner, pool: &PgPool) {
 }
 
 async fn test_service_restart(runner: &mut TestRunner, pool: &PgPool) {
-    let name = "service restart resilience: pipeline flows after ingestd restart";
+    let name = "service restart resilience: pipeline flows after daemon restart";
 
     // Restart the unit
     let restart_ok = Command::new("systemctl")
-        .args(["restart", "sinex-ingestd"])
+        .args(["restart", "sinexd"])
         .status()
         .is_ok_and(|s| s.success());
 
     if !restart_ok {
-        runner.fail(name, "systemctl restart sinex-ingestd failed");
+        runner.fail(name, "systemctl restart sinexd failed");
         return;
     }
 
@@ -199,7 +199,7 @@ async fn test_service_restart(runner: &mut TestRunner, pool: &PgPool) {
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let active = Command::new("systemctl")
-            .args(["is-active", "--quiet", "sinex-ingestd"])
+            .args(["is-active", "--quiet", "sinexd"])
             .status()
             .is_ok_and(|s| s.success());
         if active {
@@ -208,7 +208,7 @@ async fn test_service_restart(runner: &mut TestRunner, pool: &PgPool) {
         if Instant::now() >= up_deadline {
             runner.fail(
                 name,
-                "sinex-ingestd did not become active within 30s after restart",
+                "sinexd did not become active within 30s after restart",
             );
             return;
         }

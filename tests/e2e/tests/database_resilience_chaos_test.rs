@@ -1,7 +1,7 @@
 // # Database Resilience Chaos Tests
 //
 // Tests for system resilience under concurrent event publishing.
-// Events flow through the NATS -> ingestd -> DB pipeline to test real production behavior.
+// Events flow through the NATS -> event_engine -> DB pipeline to test real production behavior.
 
 use futures::future::join_all;
 use sinex_primitives::{DynamicPayload, Timestamp};

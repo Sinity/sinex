@@ -34,7 +34,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex", event_type = "metric.counter")]
 pub struct MetricCounterPayload {
-    /// Metric name (e.g., "gateway.requests", "`ingestd.events_processed`")
+    /// Metric name (e.g., "gateway.requests", "`event_engine.events_processed`")
     pub name: String,
     /// Current counter value
     pub value: u64,
@@ -354,7 +354,7 @@ pub struct ReplayStatsPayload {
     pub events_affected: u64,
 }
 
-/// Ingestd batch processing statistics
+/// EventEngine batch processing statistics
 ///
 /// Emitted after each batch is processed by the `JetStream` consumer.
 /// Captures throughput, latency, and schema validation coverage data for batch processing.
@@ -403,7 +403,7 @@ pub struct EventEngineBatchStatsPayload {
 
 /// Startup snapshot for a `JetStream` pull consumer.
 ///
-/// Emitted once per consumer before the ingestd pull loop begins (before READY/`sd_notify`).
+/// Emitted once per consumer before the event_engine pull loop begins (before READY/`sd_notify`).
 /// Captures stream state and consumer configuration so operators can determine at a glance
 /// whether this startup is a normal resume, a cold-start full replay, or a catch-up run.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -449,7 +449,7 @@ pub struct ConsumerStartupSnapshotPayload {
     pub initial_replay_risk: bool,
 }
 
-/// High-priority warning emitted when a dangerous replay is detected at ingestd startup.
+/// High-priority warning emitted when a dangerous replay is detected at event_engine startup.
 ///
 /// A dangerous replay occurs when a durable consumer is missing (e.g. renamed, environment
 /// drift, or first start after schema change) and the stream contains retained messages.
@@ -519,7 +519,7 @@ impl StreamStatsPayload {
 // counters/gauges/histograms (`sinex.metric.*`), component health
 // (`sinex.health.status`), and per-binary operational rollups
 // (`sinexd.event_engine.*`, `sinexd.api.*`, `sinex.node.*`). These payloads have
-// no dedicated systemd unit — they are produced from inside ingestd, gateway,
+// no dedicated systemd unit — they are produced from inside event_engine, gateway,
 // and the node SDK as those processes run. We register infra source-unit
 // descriptors so the (source, event_type) pairs declared by `#[event_payload]`
 // are claimed by the source-unit inventory; bindings continue to live with the
@@ -555,7 +555,7 @@ register_source_unit! {
 
 register_source_unit! {
     SourceUnitDescriptor {
-        id: "sinex-ingestd-telemetry",
+        id: "sinexd-event-engine-telemetry",
         namespace: "infra",
         event_types: &[
             ("sinexd.event_engine", "batch.stats"),
@@ -569,13 +569,13 @@ register_source_unit! {
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
-        access_policy: "embedded_in_ingestd",
+        access_policy: "embedded_in_event_engine",
     }
 }
 
 register_source_unit! {
     SourceUnitDescriptor {
-        id: "sinex-gateway-telemetry",
+        id: "sinexd-api-telemetry",
         namespace: "infra",
         event_types: &[
             ("sinexd.api", "request.stats"),
@@ -589,7 +589,7 @@ register_source_unit! {
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
-        access_policy: "embedded_in_gateway",
+        access_policy: "embedded_in_api",
     }
 }
 
@@ -638,48 +638,48 @@ register_source_unit_binding! {
 
 register_source_unit_binding! {
     SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:sinex-ingestd-telemetry"),
-        "sinex-ingestd-telemetry",
+        SubjectRef::from_static("source_unit:sinexd-event-engine-telemetry"),
+        "sinexd-event-engine-telemetry",
         "infra",
     )
-    .implementation("sinex-ingestd")
+    .implementation("sinexd")
     .adapter("EmbeddedEmitter")
     .output_event_type("stream.stats")
     .privacy_context("none")
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
-    .source_unit_id("sinex-ingestd-telemetry")
+    .source_unit_id("sinexd-event-engine-telemetry")
     .proposed(true)
     .runner_pack("infra")
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_ingestd")
+    .implementation_mode("rust_in_event_engine")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
 
 register_source_unit_binding! {
     SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:sinex-gateway-telemetry"),
-        "sinex-gateway-telemetry",
+        SubjectRef::from_static("source_unit:sinexd-api-telemetry"),
+        "sinexd-api-telemetry",
         "infra",
     )
-    .implementation("sinex-gateway")
+    .implementation("sinexd")
     .adapter("EmbeddedEmitter")
     .output_event_type("request.stats")
     .privacy_context("none")
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
-    .source_unit_id("sinex-gateway-telemetry")
+    .source_unit_id("sinexd-api-telemetry")
     .proposed(true)
     .runner_pack("infra")
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_gateway")
+    .implementation_mode("rust_in_api")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
@@ -690,7 +690,7 @@ register_source_unit_binding! {
         "sinex-node-telemetry",
         "infra",
     )
-    .implementation("sinex-node-sdk")
+    .implementation("sinexd")
     .adapter("EmbeddedEmitter")
     .output_event_type("processing.stats")
     .privacy_context("none")

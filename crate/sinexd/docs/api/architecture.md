@@ -10,8 +10,8 @@
 
 ## Why API and Event Engine Stay Separated
 
-The old `sinex-gateway` and `sinex-ingestd` binaries have been folded into
-`sinexd`, but the module boundary remains load-bearing.
+The old split admission/API binaries have been folded into `sinexd`, but the
+module boundary remains load-bearing.
 
 | Dimension | API module | Event engine module |
 |-----------|---------|---------|

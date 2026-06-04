@@ -35,7 +35,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT ts_coided AS observed_at, (payload->>'batch_size')::bigint AS batch_size, (payload->>'fetch_to_ack_ms')::double precision AS fetch_to_ack_ms, (payload->>'events_deferred')::bigint AS events_deferred, (payload->>'events_failed')::bigint AS events_failed, (payload->>'had_derived')::boolean AS had_derived, payload->>'insert_path' AS insert_path, (payload->>'validation_valid')::bigint AS validation_valid, (payload->>'validation_skipped')::bigint AS validation_skipped, (payload->>'validation_no_schema')::bigint AS validation_no_schema, (payload->>'validation_schema_not_found')::bigint AS validation_schema_not_found, (payload->>'validation_invalid')::bigint AS validation_invalid, ROUND(COALESCE((payload->>'validation_coverage_pct')::numeric, 0), 2) AS validation_coverage_pct FROM core.events WHERE source = 'sinex.ingestd' AND event_type = 'batch.stats' ORDER BY id DESC LIMIT 1",
+          "rawSql": "SELECT ts_coided AS observed_at, (payload->>'batch_size')::bigint AS batch_size, (payload->>'fetch_to_ack_ms')::double precision AS fetch_to_ack_ms, (payload->>'events_deferred')::bigint AS events_deferred, (payload->>'events_failed')::bigint AS events_failed, (payload->>'had_derived')::boolean AS had_derived, payload->>'insert_path' AS insert_path, (payload->>'validation_valid')::bigint AS validation_valid, (payload->>'validation_skipped')::bigint AS validation_skipped, (payload->>'validation_no_schema')::bigint AS validation_no_schema, (payload->>'validation_schema_not_found')::bigint AS validation_schema_not_found, (payload->>'validation_invalid')::bigint AS validation_invalid, ROUND(COALESCE((payload->>'validation_coverage_pct')::numeric, 0), 2) AS validation_coverage_pct FROM core.events WHERE source = 'sinex.event_engine' AND event_type = 'batch.stats' ORDER BY id DESC LIMIT 1",
           "refId": "A"
         }
       ],
@@ -80,7 +80,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT bucket AS time, avg_validation_coverage_pct AS \"Validation coverage %\" FROM sinex_telemetry.ingestd_batch_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "rawSql": "SELECT bucket AS time, avg_validation_coverage_pct AS \"Validation coverage %\" FROM sinex_telemetry.event_engine_batch_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
           "refId": "A"
         }
       ],
@@ -125,7 +125,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT bucket AS time, total_deferred AS deferred, total_failed AS failed FROM sinex_telemetry.ingestd_batch_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "rawSql": "SELECT bucket AS time, total_deferred AS deferred, total_failed AS failed FROM sinex_telemetry.event_engine_batch_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
           "refId": "A"
         }
       ],
