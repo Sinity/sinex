@@ -831,6 +831,16 @@ fn collect_source_files(root: &std::path::Path, paths: &mut Vec<PathBuf>) {
                 .path()
                 .extension()
                 .is_some_and(|extension| extension == "rs")
+            // `#[cfg(test)]` modules under a `src/**/tests/` directory do not
+            // compile into the runtime binary, so an edit to one must not mark
+            // the binary stale. (Inline `#[cfg(test)] mod tests` in a production
+            // file is unavoidably included, but those edits also rebuild the
+            // file's production code; the false positive here is the separate
+            // `tests/` submodule, e.g. `adapter/tests/mod.rs`.)
+            && !entry
+                .path()
+                .components()
+                .any(|component| component.as_os_str() == "tests")
         {
             paths.push(entry.path().to_path_buf());
         }
@@ -982,11 +992,12 @@ pub async fn run_test_source_worker_scan(
     ctx: Option<&crate::sandbox::context::Sandbox>,
 ) -> Result<CapturedOutput> {
     let workspace_root = find_workspace_root()?;
-    let freshness = check_runtime_binary_freshness(
-        &workspace_root,
-        "sinex-source-worker",
-        "sinex-source-worker",
-    )?;
+    // Post-fold: the deleted `sinex-source-worker` trampoline now lives inside the
+    // `sinexd` binary as the `scan-source-unit` subcommand. The SDK subcommand
+    // (`scan --until snapshot --targets …`) is forwarded via repeated `--extra-arg`,
+    // exactly as the NixOS source-binding units invoke it
+    // (see `nixos/modules/source-workers.nix`).
+    let freshness = check_runtime_binary_freshness(&workspace_root, "sinexd", "sinexd")?;
     if let Some(sandbox) = ctx {
         sandbox.record_evidence_event(
             "runtime_binary.freshness",
@@ -998,14 +1009,10 @@ pub async fn run_test_source_worker_scan(
 
     let mut cmd = Command::new(&freshness.binary_path);
     crate::process::configure_managed_child_tokio(&mut cmd);
-    cmd.args([
-        "--source-unit",
-        &config.source_unit_id,
-        "--runner-pack",
-        "source-worker",
-    ]);
+    cmd.arg("scan-source-unit");
+    cmd.args(["--source-unit", &config.source_unit_id]);
     if let Some(wd) = &config.work_dir {
-        cmd.arg("--work-dir").arg(wd);
+        // `scan-source-unit` has no --work-dir flag; the runner reads SINEX_WORK_DIR.
         cmd.env("SINEX_WORK_DIR", wd);
     }
     if let Some(service_name) = &config.service_name {
@@ -1014,9 +1021,15 @@ pub async fn run_test_source_worker_scan(
     if let Some(node_config) = &config.node_config {
         cmd.arg("--node-config").arg(node_config);
     }
-    cmd.arg("scan").arg("--until").arg("snapshot");
+    cmd.arg("--extra-arg")
+        .arg("scan")
+        .arg("--extra-arg")
+        .arg("--until")
+        .arg("--extra-arg")
+        .arg("snapshot");
     for target in targets {
-        cmd.arg("--targets").arg(target);
+        cmd.arg("--extra-arg").arg("--targets");
+        cmd.arg("--extra-arg").arg(target);
     }
 
     cmd.env("DATABASE_URL", &config.database_url);

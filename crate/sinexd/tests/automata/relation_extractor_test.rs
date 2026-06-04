@@ -73,7 +73,10 @@ async fn within_window_no_emission_yet() -> TestResult<()> {
     let t0 = Timestamp::from_unix_timestamp(1_800_000_000).expect("valid ts");
 
     for (i, name) in ["git", "nix", "cargo"].iter().enumerate() {
-        let ts = t0 + Duration::seconds(i as i64 * 60); // 60s apart, all within 300s
+        // 20s apart: within both the 300s gap and the 60s force-emit window, so
+        // the window accumulates without closing. (WINDOW_FORCE_EMIT_SECS = 60
+        // closes the window 60s after it opens even under continuous activity.)
+        let ts = t0 + Duration::seconds(i as i64 * 20);
         let ctx = make_context(ts);
         let outputs = extractor
             .reconcile(&mut state, CO_OCCURRENCE_SCOPE, resolved(name), &ctx)
@@ -92,17 +95,18 @@ async fn gap_closes_window_and_emits_pairwise_relations() -> TestResult<()> {
     let mut state = RelationExtractorState::default();
     let t0 = Timestamp::from_unix_timestamp(1_800_000_000).expect("valid ts");
 
-    // Three entities within the window.
+    // Three entities 20s apart: within the 60s force-emit window, so they
+    // accumulate without closing (last arrival at t0 + 40s).
     for (i, name) in ["git", "nix", "cargo"].iter().enumerate() {
-        let ts = t0 + Duration::seconds(i as i64 * 60);
+        let ts = t0 + Duration::seconds(i as i64 * 20);
         let ctx = make_context(ts);
         extractor
             .reconcile(&mut state, CO_OCCURRENCE_SCOPE, resolved(name), &ctx)
             .await?;
     }
 
-    // Fourth entity arrives after a 400s gap — closes the prior window.
-    let after_gap = t0 + Duration::seconds(60 * 2 + 400);
+    // Fourth entity arrives 400s after the last (> 300s gap) — closes the prior window.
+    let after_gap = t0 + Duration::seconds(40 + 400);
     let ctx = make_context(after_gap);
     let outputs = extractor
         .reconcile(&mut state, CO_OCCURRENCE_SCOPE, resolved("docker"), &ctx)

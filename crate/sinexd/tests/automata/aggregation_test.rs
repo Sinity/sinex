@@ -132,11 +132,12 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
     let context_baseline = make_context(Timestamp::now() - Duration::seconds(10));
     process(&mut aggregator, &mut state, baseline, &context_baseline).await?;
 
-    // Transition to failed status
+    // Transition to the unhealthy status (HealthStatus has no "failed" variant;
+    // "unhealthy" is the critical state that triggers an alert).
     let input = json!({
         "component": "critical-service",
         "previous_status": "healthy",
-        "current_status": "failed",
+        "current_status": "unhealthy",
     });
 
     let context = make_context(Timestamp::now());
@@ -188,7 +189,7 @@ async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResu
     process(&mut aggregator, &mut state, baseline, &context_baseline).await?;
 
     // Simulate multiple transitions for the same component
-    for (i, status) in ["degraded", "failed", "degraded", "healthy"]
+    for (i, status) in ["degraded", "unhealthy", "degraded", "healthy"]
         .iter()
         .enumerate()
     {
@@ -885,7 +886,7 @@ async fn test_reconcile_output_has_declared_effective_policy() -> TestResult<()>
     let input = json!({
         "component": "service-a",
         "previous_status": "healthy",
-        "current_status": "failed",
+        "current_status": "unhealthy",
     });
 
     let ctx = make_context(Timestamp::now());
