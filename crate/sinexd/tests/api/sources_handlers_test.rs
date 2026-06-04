@@ -78,7 +78,10 @@ async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext)
         .expect("staged material should appear in sources.list");
     assert_eq!(summary.format, Some(SourceMaterialFormat::Sqlite));
     assert_eq!(summary.contract_version, Some(1));
-    assert_eq!(summary.timing_info_type, "intrinsic");
+    assert_eq!(
+        summary.timing_info_type,
+        SourceMaterialTimingInfoType::Intrinsic
+    );
 
     let show = handlers::handle_sources_show(
         ctx.pool(),

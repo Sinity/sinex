@@ -135,7 +135,220 @@ gethostname = { workspace = true }
 xtask = { path = "../../xtask" }
 xtask-macros = { path = "../../xtask/macros" }
 sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
-sinexd = { path = ".", features = ["testing"] }
+sinexd = { path = ".", features = ["testing", "test-support"] }
+# Re-wired tests/api/ integration tests (#1625): TLS-boundary tests mint certs
+# via rcgen.
+rcgen = { workspace = true }
+# SSE integration tests drive a real HTTPS gateway: `stream` for `bytes_stream`,
+# `query` for `.query(..)` URL params, `rustls` for the self-signed TLS client,
+# `json` for typed bodies. Test-only; the runtime dependency (above) stays minimal.
+reqwest = { workspace = true, features = ["stream", "query", "json", "rustls"] }
 
 [lints]
 workspace = true
+
+# API/gateway integration tests (tests/api/), re-wired after the #1559 fold
+# left them orphaned and uncompiled. See #1625. Each file is a standalone
+# test-binary root that pulls in tests/api/common/mod.rs via `mod common;`.
+[[test]]
+name = "audit_handlers_test"
+path = "tests/api/audit_handlers_test.rs"
+
+[[test]]
+name = "auth_boundary_test"
+path = "tests/api/auth_boundary_test.rs"
+
+[[test]]
+name = "auth_test"
+path = "tests/api/auth_test.rs"
+
+[[test]]
+name = "blob_event_forwarding_test"
+path = "tests/api/blob_event_forwarding_test.rs"
+
+[[test]]
+name = "blob_route_security_test"
+path = "tests/api/blob_route_security_test.rs"
+
+[[test]]
+name = "cascade_analyzer_cycle_test"
+path = "tests/api/cascade_analyzer_cycle_test.rs"
+
+[[test]]
+name = "cascade_depth_truncation_test"
+path = "tests/api/cascade_depth_truncation_test.rs"
+
+[[test]]
+name = "client_test"
+path = "tests/api/client_test.rs"
+
+[[test]]
+name = "config_test"
+path = "tests/api/config_test.rs"
+
+[[test]]
+name = "content_service_test"
+path = "tests/api/content_service_test.rs"
+
+[[test]]
+name = "coordination_handlers_test"
+path = "tests/api/coordination_handlers_test.rs"
+
+[[test]]
+name = "distributed_rate_limit_test"
+path = "tests/api/distributed_rate_limit_test.rs"
+
+[[test]]
+name = "gateway_secret_management_test"
+path = "tests/api/gateway_secret_management_test.rs"
+
+[[test]]
+name = "handlers_test"
+path = "tests/api/handlers_test.rs"
+
+[[test]]
+name = "health_handlers_test"
+path = "tests/api/health_handlers_test.rs"
+
+[[test]]
+name = "instructions_handlers_test"
+path = "tests/api/instructions_handlers_test.rs"
+
+[[test]]
+name = "native_messaging_auth_test"
+path = "tests/api/native_messaging_auth_test.rs"
+
+[[test]]
+name = "node_registry_handlers_test"
+path = "tests/api/node_registry_handlers_test.rs"
+
+[[test]]
+name = "nodes_handlers_test"
+path = "tests/api/nodes_handlers_test.rs"
+
+[[test]]
+name = "ops_handlers_test"
+path = "tests/api/ops_handlers_test.rs"
+
+[[test]]
+name = "rate_limit_test"
+path = "tests/api/rate_limit_test.rs"
+
+[[test]]
+name = "replay_auth_test"
+path = "tests/api/replay_auth_test.rs"
+
+[[test]]
+name = "replay_control_resilience_test"
+path = "tests/api/replay_control_resilience_test.rs"
+
+[[test]]
+name = "replay_control_serialization_test"
+path = "tests/api/replay_control_serialization_test.rs"
+
+[[test]]
+name = "replay_determinism_test"
+path = "tests/api/replay_determinism_test.rs"
+
+[[test]]
+name = "replay_failure_test"
+path = "tests/api/replay_failure_test.rs"
+
+[[test]]
+name = "replay_idempotency_test"
+path = "tests/api/replay_idempotency_test.rs"
+
+[[test]]
+name = "replay_lifecycle_test"
+path = "tests/api/replay_lifecycle_test.rs"
+
+[[test]]
+name = "replay_rpc_live_test"
+path = "tests/api/replay_rpc_live_test.rs"
+
+[[test]]
+name = "rpc_auth_test"
+path = "tests/api/rpc_auth_test.rs"
+
+[[test]]
+name = "service_container_test"
+path = "tests/api/service_container_test.rs"
+
+[[test]]
+name = "tasks_handlers_test"
+path = "tests/api/tasks_handlers_test.rs"
+
+[[test]]
+name = "telemetry_handlers_test"
+path = "tests/api/telemetry_handlers_test.rs"
+
+[[test]]
+name = "tls_handshake_test"
+path = "tests/api/tls_handshake_test.rs"
+
+[[test]]
+name = "token_rotation_test"
+path = "tests/api/token_rotation_test.rs"
+
+[[test]]
+name = "transport_security_test"
+path = "tests/api/transport_security_test.rs"
+
+# Remaining tests/api/ files, conservatively deferred during the first re-wiring
+# pass (#1625) and now wired. Drift repaired where the 4-month-uncompiled gap
+# surfaced it.
+[[test]]
+name = "automata_handlers_test"
+path = "tests/api/automata_handlers_test.rs"
+
+[[test]]
+name = "cascade_analyzer_test"
+path = "tests/api/cascade_analyzer_test.rs"
+
+[[test]]
+name = "curation_handlers_test"
+path = "tests/api/curation_handlers_test.rs"
+
+[[test]]
+name = "dlq_handlers_test"
+path = "tests/api/dlq_handlers_test.rs"
+
+[[test]]
+name = "documents_handlers_test"
+path = "tests/api/documents_handlers_test.rs"
+
+[[test]]
+name = "lifecycle_handlers_test"
+path = "tests/api/lifecycle_handlers_test.rs"
+
+[[test]]
+name = "llm_handlers_test"
+path = "tests/api/llm_handlers_test.rs"
+
+[[test]]
+name = "pkm_handlers_test"
+path = "tests/api/pkm_handlers_test.rs"
+
+[[test]]
+name = "replay_state_machine_test"
+path = "tests/api/replay_state_machine_test.rs"
+
+[[test]]
+name = "semantic_handlers_test"
+path = "tests/api/semantic_handlers_test.rs"
+
+[[test]]
+name = "shadow_handlers_test"
+path = "tests/api/shadow_handlers_test.rs"
+
+[[test]]
+name = "sources_handlers_test"
+path = "tests/api/sources_handlers_test.rs"
+
+[[test]]
+name = "sse_real_confirmations_test"
+path = "tests/api/sse_real_confirmations_test.rs"
+
+[[test]]
+name = "sse_stream_test"
+path = "tests/api/sse_stream_test.rs"
