@@ -221,13 +221,16 @@ impl MaterialParser for DbusParser {
 
         let payload_value = match event_type_str {
             "notification.sent" => {
+                // org.freedesktop.Notifications.Notify signature:
+                //   app_name(0), replaces_id(1), app_icon(2), summary(3),
+                //   body(4), actions(5), hints(6), expire_timeout(7).
                 let summary = body_json
-                    .get(2)
+                    .get(3)
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
                 let body = body_json
-                    .get(3)
+                    .get(4)
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

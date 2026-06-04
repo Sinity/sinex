@@ -104,7 +104,15 @@ enum Command {
 
         /// Extra CLI arguments inserted before the SDK subcommand
         /// (e.g. `scan --until snapshot`).
-        #[arg(long = "extra-arg", action = clap::ArgAction::Append)]
+        ///
+        /// `allow_hyphen_values` is required because forwarded SDK flags are
+        /// themselves hyphen-prefixed (`--until`, `--targets`); without it clap
+        /// rejects `--extra-arg --until` as an unknown top-level flag.
+        #[arg(
+            long = "extra-arg",
+            action = clap::ArgAction::Append,
+            allow_hyphen_values = true
+        )]
         extra_args: Vec<String>,
 
         /// Extra environment variables to set in the source-worker process

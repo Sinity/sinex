@@ -390,7 +390,12 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_udev_parser_defaults_legacy_untyped_metadata_to_created() -> TestResult<()> {
+    async fn test_udev_parser_untyped_metadata_emits_other() -> TestResult<()> {
+        // When the record metadata carries no recognizable event kind, the parser
+        // deliberately classifies the event as `device.other` rather than guessing
+        // a connect/disconnect from absent data (see `parse_record`: "emitting Other
+        // action instead of guessing kind"). Properly-typed records still classify
+        // as connected/disconnected — see the sibling tests.
         let mid = Id::<SourceMaterial>::new();
         let mut record = make_udev_record(mid, "/sys/bus/usb/devices/1-3", "Deleted");
         record.metadata = serde_json::json!({});
@@ -400,7 +405,7 @@ mod tests {
         let intents = parser.parse_record(record, &ctx).await.unwrap();
 
         assert_eq!(intents.len(), 1);
-        assert_eq!(intents[0].event_type.as_str(), "device.connected");
+        assert_eq!(intents[0].event_type.as_str(), "device.other");
         Ok(())
     }
 

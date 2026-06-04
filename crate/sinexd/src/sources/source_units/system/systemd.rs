@@ -382,9 +382,16 @@ mod tests {
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].event_type.as_str(), "unit.started");
         assert_eq!(intents[0].event_source.as_str(), "systemd");
-        assert_eq!(
-            intents[0].payload["message"],
-            format!("Started nginx.service with token {tok}.")
+        // `unit.started` is a fully structured event: it captures the unit
+        // identity/state, not the raw journal MESSAGE (unlike unit.failed /
+        // unit.reloaded, whose payloads keep `message` for variable diagnostic
+        // detail). Not persisting the raw message also keeps secrets that appear
+        // in journal lines — like the token below — out of the event store.
+        assert_eq!(intents[0].payload["unit_name"], "nginx.service");
+        assert!(
+            intents[0].payload.get("message").is_none(),
+            "unit.started must not carry the raw journal message (secret-bearing): {}",
+            intents[0].payload
         );
         Ok(())
     }

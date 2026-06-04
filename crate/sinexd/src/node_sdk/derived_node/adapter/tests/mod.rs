@@ -711,13 +711,16 @@ async fn derived_source_state_reflects_failed_health_reporter(ctx: TestContext) 
 
     assert!(state.is_connected);
     assert!(!state.healthy);
-    assert!(state.description.contains("status=failed"));
+    // current_status() is a HealthStatus, whose worst state is Unhealthy (Display:
+    // "unhealthy"). The `error_rate_failed` threshold is an internal knob name, not
+    // a status value — exceeding it yields HealthStatus::Unhealthy.
+    assert!(state.description.contains("status=unhealthy"));
     assert_eq!(
         state
             .metadata
             .get("health_status")
             .and_then(serde_json::Value::as_str),
-        Some("failed")
+        Some("unhealthy")
     );
     Ok(())
 }

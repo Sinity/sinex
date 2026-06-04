@@ -673,7 +673,7 @@ mod tests {
         assert!(
             schema_sources
                 .iter()
-                .all(|source| source.path.starts_with("crate/lib/sinex-schema/src/"))
+                .all(|source| source.path.starts_with("crate/sinex-schema/src/"))
         );
         Ok(())
     }
