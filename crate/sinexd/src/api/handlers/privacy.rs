@@ -27,6 +27,41 @@ use std::path::Path;
 const PRIVATE_MODE_OPERATION_TYPE: &str = "privacy.private_mode";
 const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
 
+/// Fold typed Presidio `context_words` into the rule's `matcher_config` under
+/// the `"context"` key, so the recognizer-rule compiler and analyzer request
+/// can read them from one place. A non-empty list always wins; an empty list
+/// leaves any pre-existing `matcher_config["context"]` untouched (callers that
+/// want to clear it pass an explicit empty array inside `matcher_config`).
+fn fold_context_words(mut matcher_config: Value, context_words: &[String]) -> Value {
+    if context_words.is_empty() {
+        return matcher_config;
+    }
+    let context = Value::Array(context_words.iter().cloned().map(Value::String).collect());
+    match &mut matcher_config {
+        Value::Object(map) => {
+            map.insert("context".to_string(), context);
+            matcher_config
+        }
+        _ => json!({ "context": context }),
+    }
+}
+
+/// Project `matcher_config["context"]` back into a typed `Vec<String>` for the
+/// rule list response. Inverse of [`fold_context_words`].
+fn project_context_words(matcher_config: &Value) -> Vec<String> {
+    matcher_config
+        .get("context")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub async fn handle_private_mode_status(
     state_dir: &Path,
     _request: PrivateModeStatusRequest,
@@ -106,6 +141,7 @@ pub async fn handle_privacy_policy_list(
                 description: rule.description,
                 matcher_type: rule.matcher_type,
                 matcher_value: rule.matcher_value,
+                context_words: project_context_words(&rule.matcher_config),
                 matcher_config: rule.matcher_config,
                 recognizer_backend_id: rule.recognizer_backend_id,
                 recognizer_kind: rule.recognizer_kind,
@@ -128,13 +164,14 @@ pub async fn handle_privacy_policy_rule_add(
     request: PrivacyPolicyRuleAddRequest,
 ) -> Result<PrivacyPolicyMutationResponse> {
     let repo = pool.privacy_policy();
+    let matcher_config = fold_context_words(request.matcher_config, &request.context_words);
     let id = repo
         .add_recognizer_rule(
             &request.name,
             &request.description,
             &request.matcher_type,
             &request.matcher_value,
-            request.matcher_config,
+            matcher_config,
             request.recognizer_backend_id,
             &request.recognizer_kind,
             request.case_sensitive,

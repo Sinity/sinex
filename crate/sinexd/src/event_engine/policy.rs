@@ -121,6 +121,10 @@ struct ExternalRecognizerRule {
     language: String,
     entities: Vec<String>,
     score_threshold: Option<f64>,
+    /// Presidio context words: terms whose presence near a candidate span
+    /// boosts the recognizer's confidence score. Forwarded as the analyzer
+    /// request `context` field. Empty when none are configured.
+    context_words: Vec<String>,
     strategy: Strategy,
 }
 
@@ -326,6 +330,7 @@ fn external_recognizer_rule(
         .get("score_threshold")
         .or_else(|| backend.config.get("score_threshold"))
         .and_then(JsonValue::as_f64);
+    let context_words = external_rule_context_words(&rule.matcher_config, &backend.config);
 
     Some(ExternalRecognizerRule {
         name: rule.name.clone(),
@@ -336,8 +341,29 @@ fn external_recognizer_rule(
         language,
         entities,
         score_threshold,
+        context_words,
         strategy: db_row_to_strategy(&rule.action, rule.action_label.as_deref()),
     })
+}
+
+/// Extract Presidio `context` words, preferring the per-rule `matcher_config`
+/// over the backend-level `config`. Mirrors the `language`/`score_threshold`
+/// precedence: rule-specific tuning wins, backend supplies defaults.
+fn external_rule_context_words(matcher_config: &JsonValue, backend_config: &JsonValue) -> Vec<String> {
+    matcher_config
+        .get("context")
+        .or_else(|| backend_config.get("context"))
+        .and_then(JsonValue::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(JsonValue::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 fn external_rule_entities(matcher_value: &str, matcher_config: &JsonValue) -> Vec<String> {
@@ -806,6 +832,8 @@ struct PresidioAnalyzeRequest<'a> {
     entities: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     score_threshold: Option<f64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    context: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -828,6 +856,7 @@ async fn query_presidio(
         language: &rule.language,
         entities: rule.entities.clone(),
         score_threshold: rule.score_threshold,
+        context: rule.context_words.clone(),
     };
     client
         .post(&rule.endpoint_url)

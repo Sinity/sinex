@@ -181,6 +181,12 @@ pub struct PrivacyPolicyRuleAddRequest {
     pub matcher_value: String,
     #[serde(default = "empty_json_object")]
     pub matcher_config: JsonValue,
+    /// Presidio context words: terms whose presence near a candidate span
+    /// boosts the recognizer's confidence score. Folded into
+    /// `matcher_config["context"]` by the handler so the analyzer request
+    /// forwards them. Ignored by non-Presidio recognizers.
+    #[serde(default)]
+    pub context_words: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recognizer_backend_id: Option<Uuid>,
     #[serde(default = "default_recognizer_kind")]
@@ -236,6 +242,10 @@ pub struct PrivacyPolicyRule {
     pub matcher_type: String,
     pub matcher_value: String,
     pub matcher_config: JsonValue,
+    /// Presidio context words, projected from `matcher_config["context"]` for a
+    /// typed view. Empty when none are configured.
+    #[serde(default)]
+    pub context_words: Vec<String>,
     pub recognizer_backend_id: Option<Uuid>,
     pub recognizer_kind: String,
     pub case_sensitive: bool,
