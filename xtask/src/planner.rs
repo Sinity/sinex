@@ -245,41 +245,26 @@ fn affected_packages(dirty: &[&str]) -> Vec<String> {
     let mut packages = std::collections::BTreeSet::new();
 
     for path in dirty {
-        let pkg = if path.starts_with("crate/lib/sinex-primitives") {
-            "sinex-primitives"
-        } else if path.starts_with("crate/lib/sinex-db") {
-            "sinex-db"
-        } else if path.starts_with("crate/lib/sinex-schema") {
-            "sinex-schema"
-        } else if path.starts_with("crate/lib/sinex-macros") {
-            "sinex-macros"
-        } else if path.starts_with("crate/sinexd") {
-            "sinexd"
-        } else if path.starts_with("crate/nodes/sinex-fs-ingestor") {
-            "sinex-fs-ingestor"
-        } else if path.starts_with("crate/nodes/sinex-terminal-ingestor") {
-            "sinex-terminal-ingestor"
-        } else if path.starts_with("crate/nodes/sinex-desktop-ingestor") {
-            "sinex-desktop-ingestor"
-        } else if path.starts_with("crate/nodes/sinex-system-ingestor") {
-            "sinex-system-ingestor"
-        } else if path.starts_with("crate/nodes/sinex-document-ingestor") {
-            "sinex-document-ingestor"
-        } else if path.starts_with("crate/nodes/sinex-browser-ingestor") {
-            "sinex-browser-ingestor"
-        } else if path.starts_with("crate/cli") {
-            "sinexctl"
+        // Post-fold flat layout: workspace crates live at crate/<package>/...
+        // (#1559 gateway/source-worker fold removed the crate/{lib,core,nodes,cli}
+        // grouping). Derive the package directly from the first path segment.
+        let pkg: String = if let Some(rest) = path.strip_prefix("crate/") {
+            match rest.split('/').next() {
+                Some(name) if !name.is_empty() && !name.starts_with('.') => name.replace('_', "-"),
+                _ => return vec!["--workspace".to_string()],
+            }
         } else if path.starts_with("xtask/") {
-            "xtask"
-        } else if path.starts_with("tests/") {
-            "sinex-e2e-tests"
+            "xtask".to_string()
         } else if path.starts_with("nixos/") {
+            // Nix module changes do not affect the Rust workspace build/test.
             continue;
         } else {
+            // Unknown / workspace-level paths (Cargo.toml, top-level tests/
+            // fixtures, etc.) conservatively widen to the whole workspace.
             return vec!["--workspace".to_string()];
         };
 
-        packages.insert(pkg.to_string());
+        packages.insert(pkg);
     }
 
     packages.into_iter().collect()
@@ -292,13 +277,15 @@ mod tests {
     #[test]
     fn test_affected_packages_maps_crate_paths() {
         let dirty = &[
-            "crate/lib/sinex-db/src/repositories/events.rs",
-            "crate/lib/sinex-primitives/src/lib.rs",
+            "crate/sinex-db/src/repositories/events.rs",
+            "crate/sinex-primitives/src/lib.rs",
+            "crate/sinexd/src/main.rs",
         ];
         let pkgs = affected_packages(dirty);
         assert!(pkgs.contains(&"sinex-db".to_string()));
         assert!(pkgs.contains(&"sinex-primitives".to_string()));
-        assert_eq!(pkgs.len(), 2);
+        assert!(pkgs.contains(&"sinexd".to_string()));
+        assert_eq!(pkgs.len(), 3);
     }
 
     #[test]
