@@ -1531,6 +1531,22 @@ impl SourceMaterialTimingInfoType {
             TemporalSourceType::StagedAt => Self::StagedAt,
         }
     }
+
+    /// Map the coarse material-tier timing category to a quality rung on the
+    /// temporal ladder (#1570 Prong B). Categories with no real-world timing
+    /// (`Atemporal`, `Unknown`) collapse to the `StagedAt` floor. The registry
+    /// cannot distinguish mtime from ctime, so `Inferred` maps to the
+    /// `InferredMtime` rung.
+    #[must_use]
+    pub const fn to_temporal_source(self) -> TemporalSourceType {
+        match self {
+            Self::Realtime => TemporalSourceType::RealtimeCapture,
+            Self::Intrinsic => TemporalSourceType::IntrinsicContent,
+            Self::Inferred => TemporalSourceType::InferredMtime,
+            Self::Declared => TemporalSourceType::InferredUser,
+            Self::StagedAt | Self::Atemporal | Self::Unknown => TemporalSourceType::StagedAt,
+        }
+    }
 }
 
 impl fmt::Display for SourceMaterialTimingInfoType {

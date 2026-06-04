@@ -43,6 +43,9 @@ pub struct StreamBatchRow {
     pub event_type: EventType,
     /// Pre-parsed timestamp
     pub ts_orig: Timestamp,
+    /// Resolved `ts_orig` quality rung (`TemporalSourceType` display string).
+    /// `None` for derived events and legacy callers that do not track quality.
+    pub ts_quality: Option<String>,
     /// Hostname where event originated
     pub host: HostName,
     /// Event payload as JSON
@@ -709,6 +712,7 @@ impl<'a> EventRepository<'a> {
         let scope_key = event.scope_key.clone();
         let equivalence_key = event.equivalence_key.clone();
         let node_model_str = event.node_model.map(|m| m.to_string());
+        let ts_quality_str = event.ts_quality.map(|q| q.to_string());
 
         // Execute with retry logic
         with_retry_transaction_idempotent(
@@ -733,6 +737,7 @@ impl<'a> EventRepository<'a> {
                 let scope_key = scope_key.clone();
                 let equivalence_key = equivalence_key.clone();
                 let node_model_str = node_model_str.clone();
+                let ts_quality_str = ts_quality_str.clone();
 
                 Box::pin(async move {
                     // Enforce REPEATABLE READ for consistent view during cycle check
@@ -751,14 +756,14 @@ impl<'a> EventRepository<'a> {
                             source_material_id, offset_start, offset_end, offset_kind,
                             anchor_byte, associated_blob_ids,
                             temporal_policy, semantics_version, scope_key, equivalence_key,
-                            created_by_operation_id, node_model, anchor_payload_hash
+                            created_by_operation_id, node_model, anchor_payload_hash, ts_quality
                         ) VALUES (
                             $1::uuid, $2, $3, $4, $5,
                             $6, $7, $8, $9::uuid, $10::uuid[],
                             $11::uuid, $12, $13, $14,
                             $15, $16::uuid[],
                             $17, $18, $19, $20,
-                            $21::uuid, $22, $23
+                            $21::uuid, $22, $23, $24
                         )
                         RETURNING
                             id as "id!: uuid::Uuid",
@@ -785,7 +790,8 @@ impl<'a> EventRepository<'a> {
                             equivalence_key,
                             created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
                             node_model,
-                            anchor_payload_hash as "anchor_payload_hash: Vec<u8>"
+                            anchor_payload_hash as "anchor_payload_hash: Vec<u8>",
+                            ts_quality
                         "#,
                         id.to_uuid(),
                         event_source.as_str(),
@@ -809,7 +815,8 @@ impl<'a> EventRepository<'a> {
                         equivalence_key,
                         created_by_operation_id,
                         node_model_str,
-                        anchor_payload_hash
+                        anchor_payload_hash,
+                        ts_quality_str
                     )
                     .fetch_one(&mut **tx)
                     .await
@@ -883,6 +890,7 @@ impl<'a> EventRepository<'a> {
         let temporal_policy_str = event.temporal_policy.map(|p| p.to_string());
         let created_by_operation_id = resolved_created_by_operation_id(&event)?;
         let node_model_str = event.node_model.map(|m| m.to_string());
+        let ts_quality_str = event.ts_quality.map(|q| q.to_string());
 
         let record = sqlx::query_as!(
             EventRecord,
@@ -893,14 +901,14 @@ impl<'a> EventRepository<'a> {
                 source_material_id, offset_start, offset_end, offset_kind,
                 anchor_byte, associated_blob_ids,
                 temporal_policy, semantics_version, scope_key, equivalence_key,
-                created_by_operation_id, node_model, anchor_payload_hash
+                created_by_operation_id, node_model, anchor_payload_hash, ts_quality
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5,
                 $6, $7, $8, $9::uuid, $10::uuid[],
                 $11::uuid, $12, $13, $14,
                 $15, $16::uuid[],
                 $17, $18, $19, $20,
-                $21::uuid, $22, $23
+                $21::uuid, $22, $23, $24
             )
             RETURNING
                 id as "id!: uuid::Uuid",
@@ -927,7 +935,8 @@ impl<'a> EventRepository<'a> {
                 equivalence_key,
                 created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
                 node_model,
-                anchor_payload_hash as "anchor_payload_hash: Vec<u8>"
+                anchor_payload_hash as "anchor_payload_hash: Vec<u8>",
+                ts_quality
             "#,
             id.to_uuid(),
             event.source.as_str(),
@@ -951,7 +960,8 @@ impl<'a> EventRepository<'a> {
             event.equivalence_key,
             created_by_operation_id,
             node_model_str,
-            anchor_payload_hash
+            anchor_payload_hash,
+            ts_quality_str
         )
         .fetch_one(&mut **tx)
         .await
@@ -1108,6 +1118,7 @@ impl<'a> EventRepository<'a> {
         let mut equivalence_keys: Vec<Option<String>> = Vec::with_capacity(events.len());
         let mut created_by_operation_ids: Vec<Option<Uuid>> = Vec::with_capacity(events.len());
         let mut node_models: Vec<Option<String>> = Vec::with_capacity(events.len());
+        let mut ts_qualities: Vec<Option<String>> = Vec::with_capacity(events.len());
 
         for event in &events {
             let event_id = event
@@ -1169,6 +1180,7 @@ impl<'a> EventRepository<'a> {
             equivalence_keys.push(event.equivalence_key.clone());
             created_by_operation_ids.push(resolved_created_by_operation_id(event)?);
             node_models.push(event.node_model.map(|m| m.to_string()));
+            ts_qualities.push(event.ts_quality.map(|q| q.to_string()));
         }
 
         ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
@@ -1223,6 +1235,7 @@ impl<'a> EventRepository<'a> {
             b.push_bind(created_by_operation_ids[idx])
                 .push_unseparated("::uuid");
             b.push_bind(&node_models[idx]);
+            b.push_bind(&ts_qualities[idx]);
         });
 
         builder.build().execute(&mut **tx).await.map_err(|e| {
@@ -1409,6 +1422,7 @@ impl<'a> EventRepository<'a> {
         let equivalence_keys: Vec<_> = batch.iter().map(|r| r.equivalence_key.clone()).collect();
         let created_by_op_ids: Vec<_> = batch.iter().map(|r| r.created_by_operation_id).collect();
         let node_models: Vec<_> = batch.iter().map(|r| r.node_model.clone()).collect();
+        let ts_qualities: Vec<_> = batch.iter().map(|r| r.ts_quality.clone()).collect();
 
         // Build INSERT with VALUES using QueryBuilder (required for ragged arrays).
         //
@@ -1425,7 +1439,7 @@ impl<'a> EventRepository<'a> {
             // source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
             // source_event_ids, payload_schema_id, source_run_id, anchor_payload_hash,
             // associated_blob_ids, temporal_policy, semantics_version, scope_key,
-            // equivalence_key, created_by_operation_id, node_model
+            // equivalence_key, created_by_operation_id, node_model, ts_quality
             // — matches EVENT_COPY_COLUMNS order.
             b.push_bind(ids[idx]).push_unseparated("::uuid");
             b.push_bind(&sources[idx]);
@@ -1455,6 +1469,7 @@ impl<'a> EventRepository<'a> {
             b.push_bind(created_by_op_ids[idx])
                 .push_unseparated("::uuid");
             b.push_bind(&node_models[idx]);
+            b.push_bind(&ts_qualities[idx]);
         });
 
         builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid");

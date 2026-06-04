@@ -113,7 +113,7 @@ impl EventCopyColumn {
 
 const DB_MANAGED_EVENT_COLUMNS: [&str; 2] = ["ts_coided", "ts_persisted"];
 
-const EVENT_COPY_COLUMNS: [EventCopyColumn; 23] = [
+const EVENT_COPY_COLUMNS: [EventCopyColumn; 24] = [
     EventCopyColumn {
         event: Events::Id,
         copy_type: EventCopyColumnType::Uuid,
@@ -204,6 +204,10 @@ const EVENT_COPY_COLUMNS: [EventCopyColumn; 23] = [
     },
     EventCopyColumn {
         event: Events::NodeModel,
+        copy_type: EventCopyColumnType::Text,
+    },
+    EventCopyColumn {
+        event: Events::TsQuality,
         copy_type: EventCopyColumnType::Text,
     },
 ];
@@ -535,6 +539,13 @@ impl ToPostgresCopy for Event<JsonValue> {
                 .map(std::string::ToString::to_string)
                 .as_deref(),
         )?;
+        writer.field(
+            Events::TsQuality,
+            self.ts_quality
+                .as_ref()
+                .map(std::string::ToString::to_string)
+                .as_deref(),
+        )?;
 
         writer.finish()
     }
@@ -609,6 +620,7 @@ impl ToPostgresCopy for StreamBatchRow {
             writer.field(Events::CreatedByOperationId, created_by_str.as_deref())?;
         }
         writer.field(Events::NodeModel, self.node_model.as_deref())?;
+        writer.field(Events::TsQuality, self.ts_quality.as_deref())?;
 
         writer.finish()
     }

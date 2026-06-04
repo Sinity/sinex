@@ -62,17 +62,6 @@ enum FailureCleanupClaim {
 }
 
 impl MaterialAssembler {
-    fn is_duplicate_temporal_ledger_entry(error: &SinexError) -> bool {
-        const TEMPORAL_LEDGER_UNIQUE_CONSTRAINT: &str =
-            "uk_temporal_ledger_material_offset_source_type";
-
-        matches!(error, SinexError::AlreadyExists(_))
-            && error
-                .context_map()
-                .get("constraint")
-                .is_some_and(|value| value == TEMPORAL_LEDGER_UNIQUE_CONSTRAINT)
-    }
-
     async fn begin_failure_cleanup(&self, material_id: Uuid, reason: &str) -> FailureCleanupClaim {
         if let Some(state_handle) = self.get_state_handle(&material_id) {
             let mut state = state_handle.lock().await;
@@ -139,43 +128,6 @@ impl MaterialAssembler {
         // WAL is immutable — End message remains. In-memory state reverted.
     }
 
-    /// Write an early `staged_at` ledger entry at material-begin time.
-    ///
-    /// This ensures `LedgerReader::derive_ts_orig()` can always resolve a
-    /// persisted timestamp for events derived from this material, even before
-    /// finalization. The `offset_end` is set to `i64::MAX` to cover all offsets;
-    /// the precise `realtime_capture` entry written at finalization takes
-    /// precedence when both exist in the ledger.
-    pub(super) async fn record_staged_at_ledger_entry(
-        &self,
-        material_id: sinex_primitives::Uuid,
-        started_at: Timestamp,
-    ) -> IngestdResult<()> {
-        let entry = TemporalLedgerEntry::staged_at(material_id, i64::MAX, started_at);
-
-        match self
-            .pool
-            .source_materials()
-            .append_temporal_ledger(entry)
-            .await
-        {
-            Ok(()) => {
-                debug!(material_id = %material_id, "Wrote staged_at ledger entry at begin time");
-                Ok(())
-            }
-            Err(error) if Self::is_duplicate_temporal_ledger_entry(&error) => {
-                debug!(
-                    material_id = %material_id,
-                    "Reused existing staged_at ledger entry at begin time"
-                );
-                Ok(())
-            }
-            Err(e) => Err({
-                SinexError::database("Failed to append staged_at temporal ledger entry")
-                    .with_source(e)
-            }),
-        }
-    }
 
     /// Route material failure to DLQ
     pub(super) async fn route_material_error(
@@ -1350,51 +1302,6 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn record_staged_at_ledger_entry_is_idempotent(ctx: TestContext) -> TestResult<()> {
-        let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
-        let material_id = Uuid::now_v7();
-        let started_at = Timestamp::now();
-
-        ctx.pool
-            .source_materials()
-            .register_external_in_flight(
-                material_id,
-                "test",
-                Some("test://staged-at-idempotent"),
-                json!({}),
-                started_at,
-            )
-            .await?;
-
-        assembler
-            .record_staged_at_ledger_entry(material_id, started_at)
-            .await?;
-        assembler
-            .record_staged_at_ledger_entry(material_id, started_at)
-            .await?;
-
-        let staged_at_count = sqlx::query_scalar!(
-            r#"
-            SELECT COUNT(*) as "count!: i64"
-            FROM raw.temporal_ledger
-            WHERE source_material_id = $1
-              AND source_type = 'staged_at'
-            "#,
-            material_id
-        )
-        .fetch_one(&ctx.pool)
-        .await?;
-
-        assert_eq!(
-            staged_at_count, 1,
-            "duplicate begin-time staged_at writes must collapse to one ledger row"
-        );
-
-        Ok(())
-    }
-
-    #[sinex_test]
     async fn finalization_transaction_rolls_back_blob_material_and_ledger_on_finalize_failure(
         ctx: TestContext,
     ) -> TestResult<()> {
@@ -1525,9 +1432,6 @@ mod tests {
                 started_at,
             )
             .await?;
-        assembler
-            .record_staged_at_ledger_entry(material_id, started_at)
-            .await?;
 
         let final_state = FinalizationState {
             material_id,
@@ -1587,8 +1491,9 @@ mod tests {
         .fetch_one(&ctx.pool)
         .await?;
         assert_eq!(
-            ledger_entries, 2,
-            "staged_at + realtime_capture should both persist"
+            ledger_entries, 0,
+            "#1570 Prong B: finalization no longer writes whole-material ledger \
+             entries — material-tier timing lives on the source-material registry"
         );
 
         Ok(())
@@ -1630,9 +1535,6 @@ mod tests {
                 json!({}),
                 started_at,
             )
-            .await?;
-        assembler
-            .record_staged_at_ledger_entry(material_id, started_at)
             .await?;
 
         let final_state = FinalizationState {

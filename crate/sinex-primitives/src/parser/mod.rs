@@ -443,6 +443,29 @@ pub enum TimingEvidence {
     StagedAtFallback,
 }
 
+impl TimingEvidence {
+    /// Resolve this parser-side timing evidence to a quality rung on the
+    /// temporal ladder, when the parser owns the answer (#1570 Prong B).
+    ///
+    /// Returns `None` for evidence that the parser cannot resolve on its own:
+    /// - [`Self::Wrapper`] — defers to the sub-material temporal ledger;
+    /// - [`Self::StagedAtFallback`] / [`Self::Atemporal`] — defer to the
+    ///   material-tier timing on `raw.source_material_registry`.
+    ///
+    /// In those cases the event leaves `ts_orig`/`ts_quality` unresolved and the
+    /// persistence (admission) stage fills them in from the material tier.
+    #[must_use]
+    pub fn resolved_quality(&self) -> Option<crate::domain::TemporalSourceType> {
+        use crate::domain::TemporalSourceType;
+        match self {
+            Self::Intrinsic { .. } => Some(TemporalSourceType::IntrinsicContent),
+            Self::InferredMtime { .. } => Some(TemporalSourceType::InferredMtime),
+            Self::UserDeclared { .. } => Some(TemporalSourceType::InferredUser),
+            Self::Wrapper { .. } | Self::StagedAtFallback | Self::Atemporal => None,
+        }
+    }
+}
+
 // =============================================================================
 // Source record (adapter output, parser input)
 // =============================================================================

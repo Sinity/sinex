@@ -1,6 +1,6 @@
 use super::Timestamp;
 use super::{Event, SourceMaterial};
-use crate::domain::{EventSource, EventType, HostName};
+use crate::domain::{EventSource, EventType, HostName, TemporalSourceType};
 use crate::error::{Result, SinexError};
 use crate::ids::Id;
 use crate::non_empty::NonEmptyVec;
@@ -21,6 +21,7 @@ pub struct EventBuilder<T, P> {
     pub(crate) event_type: EventType,
     pub(crate) payload: T,
     pub(crate) timestamp: Option<Timestamp>,
+    pub(crate) ts_quality: Option<TemporalSourceType>,
     pub(crate) hostname: Option<crate::domain::HostName>,
     pub(crate) source_run_id: Option<Uuid>,
     pub(crate) payload_schema_id: Option<Uuid>,
@@ -44,6 +45,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             event_type,
             payload,
             timestamp: None,
+            ts_quality: None,
             hostname: None,
             source_run_id: None,
             payload_schema_id: None,
@@ -90,6 +92,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             event_type: self.event_type,
             payload: self.payload,
             timestamp: self.timestamp,
+            ts_quality: self.ts_quality,
             hostname: self.hostname,
             source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
@@ -123,6 +126,25 @@ impl<T> EventBuilder<T, NoProvenance> {
 impl<T> EventBuilder<T, HasProvenance> {
     pub fn at_time(mut self, ts: Timestamp) -> Self {
         self.timestamp = Some(ts);
+        self
+    }
+
+    /// Set an explicit `ts_orig` together with its quality rung on the temporal
+    /// ladder (#1570 Prong B). Use this when the caller already knows the
+    /// timestamp's provenance — e.g. a parser that resolved a `#[timestamp]`
+    /// field (`IntrinsicContent`) or a realtime monitor capturing live data
+    /// (`RealtimeCapture`).
+    #[must_use]
+    pub fn at_time_with_quality(mut self, ts: Timestamp, quality: TemporalSourceType) -> Self {
+        self.timestamp = Some(ts);
+        self.ts_quality = Some(quality);
+        self
+    }
+
+    /// Record the quality rung for `ts_orig` without changing the timestamp.
+    #[must_use]
+    pub fn ts_quality(mut self, quality: TemporalSourceType) -> Self {
+        self.ts_quality = Some(quality);
         self
     }
 
@@ -250,12 +272,27 @@ impl<T> EventBuilder<T, HasProvenance> {
             Provenance::Derived { .. } => None,
         };
 
+        // #1570 Prong B — builder inversion:
+        // Material-provenance events without an explicit timestamp leave
+        // `ts_orig = None` as the "derive me at persistence" signal; the ingestd
+        // admission stage resolves it from the source-material timing tier.
+        // Derived events have no material to resolve against, so they keep the
+        // wall-clock fallback (their synthesis time). Any caller that set an
+        // explicit time via `at_time`/`at_time_with_quality` keeps that value
+        // regardless of provenance.
+        let ts_orig = match (&provenance, self.timestamp) {
+            (_, Some(ts)) => Some(ts),
+            (Provenance::Material { .. }, None) => None,
+            (Provenance::Derived { .. }, None) => Some(Timestamp::now()),
+        };
+
         Ok(Event {
             id: self.id,
             source: self.source,
             event_type: self.event_type,
             payload: self.payload,
-            ts_orig: self.timestamp.or_else(|| Some(Timestamp::now())),
+            ts_orig,
+            ts_quality: self.ts_quality,
             host: self.hostname.unwrap_or_else(get_hostname),
             source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,

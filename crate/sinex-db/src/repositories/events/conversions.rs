@@ -2,7 +2,7 @@ use crate::EventRecord;
 use crate::repositories::common::DbResult;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::{DerivedNodeModel, SyntheticTemporalPolicy};
+use sinex_primitives::domain::{DerivedNodeModel, SyntheticTemporalPolicy, TemporalSourceType};
 use sinex_primitives::events::{EventId, SourceMaterial};
 use sinex_primitives::non_empty::NonEmptyVec;
 
@@ -120,6 +120,11 @@ impl EventRecordExt for EventRecord {
             host: self.host.into(),
             payload: self.payload,
             ts_orig: Some(ts_orig),
+            ts_quality: parse_optional_enum::<TemporalSourceType>(
+                self.ts_quality,
+                "ts_quality",
+                self.id,
+            )?,
             source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance,

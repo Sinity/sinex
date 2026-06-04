@@ -1971,6 +1971,56 @@ impl SourceMaterialRepository<'_> {
         Ok(())
     }
 
+    /// Read all temporal-ledger entries for a material.
+    ///
+    /// Used by the ingestd admission stage to resolve `ts_orig` for material
+    /// events whose timing was deferred to persistence (#1570 Prong B). Entries
+    /// describe sub-material offset ranges (wrapped streams / per-chunk timing).
+    pub async fn read_temporal_ledger(
+        &self,
+        material_id: Uuid,
+    ) -> DbResult<Vec<TemporalLedgerEntry>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                offset_start,
+                offset_end,
+                offset_kind,
+                ts_capture as "ts_capture: Timestamp",
+                precision,
+                clock,
+                source_type
+            FROM raw.temporal_ledger
+            WHERE source_material_id = $1::uuid
+            "#,
+            material_id
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "read temporal ledger"))?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(TemporalLedgerEntry {
+                    source_material_id: material_id,
+                    offset_start: row.offset_start,
+                    offset_end: row.offset_end,
+                    offset_kind: OffsetKind::try_from_wire_str(&row.offset_kind)?,
+                    ts_capture: row.ts_capture,
+                    precision: row.precision.parse::<TemporalPrecision>().map_err(|e| {
+                        SinexError::database(format!("invalid temporal_ledger precision: {e}"))
+                    })?,
+                    clock: row.clock.parse::<TemporalClock>().map_err(|e| {
+                        SinexError::database(format!("invalid temporal_ledger clock: {e}"))
+                    })?,
+                    source_type: row.source_type.parse::<TemporalSourceType>().map_err(|e| {
+                        SinexError::database(format!("invalid temporal_ledger source_type: {e}"))
+                    })?,
+                })
+            })
+            .collect()
+    }
+
     // -------------------------------------------------------------------------
     // Tombstone-driven cleanup (#987 delete-on-tombstone)
     // -------------------------------------------------------------------------

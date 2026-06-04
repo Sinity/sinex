@@ -115,83 +115,56 @@ async fn wait_for_material_row(
     .map_err(Into::into)
 }
 
-async fn ledger_count(
-    ctx: &TestContext,
-    material_id: Uuid,
-    source_type: Option<&str>,
-) -> Result<i64> {
-    let count = match source_type {
-        Some(source_type) => {
-            sqlx::query_scalar!(
-                r#"
-                SELECT COUNT(*) FROM raw.temporal_ledger
-                WHERE source_material_id = $1::uuid
-                  AND source_type = $2
-                "#,
-                Uuid::from(material_id),
-                source_type
-            )
-            .fetch_one(&ctx.pool)
-            .await?
-        }
-        None => {
-            sqlx::query_scalar!(
-                r#"
-                SELECT COUNT(*) FROM raw.temporal_ledger
-                WHERE source_material_id = $1::uuid
-                "#,
-                Uuid::from(material_id)
-            )
-            .fetch_one(&ctx.pool)
-            .await?
-        }
-    };
+async fn ledger_count(ctx: &TestContext, material_id: Uuid) -> Result<i64> {
+    let count = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*) FROM raw.temporal_ledger
+        WHERE source_material_id = $1::uuid
+        "#,
+        Uuid::from(material_id)
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
 
     Ok(count.unwrap_or(0))
 }
 
-async fn wait_for_material_ledger_counts(
-    ctx: &TestContext,
-    material_id: Uuid,
-    expected_staged_at: i64,
-    expected_realtime_capture: i64,
-) -> Result<()> {
+/// #1570 Prong B: the material-tier `staged_at` floor and `start_time` now live
+/// on `raw.source_material_registry` (set at registration), not in the temporal
+/// ledger. Wait until the registry row carries both, and assert that no
+/// whole-material ledger entries were written — the ledger is reserved for
+/// genuine sub-material wrapped-stream entries.
+async fn wait_for_material_staged_floor(ctx: &TestContext, material_id: Uuid) -> Result<()> {
     WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
             async move {
-                let staged_at = sqlx::query_scalar!(
+                let row = sqlx::query!(
                     r#"
-                    SELECT COUNT(*) FROM raw.temporal_ledger
-                    WHERE source_material_id = $1::uuid
-                      AND source_type = 'staged_at'
+                    SELECT staged_at as "staged_at!", start_time
+                    FROM raw.source_material_registry
+                    WHERE id = $1::uuid
                     "#,
                     Uuid::from(material_id)
                 )
-                .fetch_one(&pool)
-                .await?
-                .unwrap_or(0);
-                let realtime_capture = sqlx::query_scalar!(
-                    r#"
-                    SELECT COUNT(*) FROM raw.temporal_ledger
-                    WHERE source_material_id = $1::uuid
-                      AND source_type = 'realtime_capture'
-                    "#,
-                    Uuid::from(material_id)
-                )
-                .fetch_one(&pool)
-                .await?
-                .unwrap_or(0);
+                .fetch_optional(&pool)
+                .await?;
 
                 Ok::<bool, sqlx::Error>(
-                    staged_at == expected_staged_at
-                        && realtime_capture == expected_realtime_capture,
+                    row.is_some_and(|row| row.start_time.is_some()),
                 )
             }
         },
         Timeouts::STANDARD,
     )
     .await?;
+
+    // No whole-material ledger entries: material-tier timing lives on the registry.
+    assert_eq!(
+        ledger_count(ctx, material_id).await?,
+        0,
+        "#1570 Prong B: no whole-material temporal-ledger entries should be written"
+    );
 
     Ok(())
 }
@@ -228,13 +201,7 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
     assert_eq!(status_val, MaterialStatus::Sensing.as_str());
     assert!(optional_blob_id.is_none());
 
-    wait_for_material_ledger_counts(&ctx, material_id, 1, 0).await?;
-    assert_eq!(ledger_count(&ctx, material_id, None).await?, 1);
-    assert_eq!(ledger_count(&ctx, material_id, Some("staged_at")).await?, 1);
-    assert_eq!(
-        ledger_count(&ctx, material_id, Some("realtime_capture")).await?,
-        0
-    );
+    wait_for_material_staged_floor(&ctx, material_id).await?;
 
     ingest_handle.stop().await?;
     Ok(())
@@ -278,13 +245,7 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
     assert_eq!(status_val, MaterialStatus::Sensing.as_str());
     assert!(optional_blob_id.is_none());
 
-    wait_for_material_ledger_counts(&ctx, material_id, 1, 0).await?;
-    assert_eq!(ledger_count(&ctx, material_id, None).await?, 1);
-    assert_eq!(ledger_count(&ctx, material_id, Some("staged_at")).await?, 1);
-    assert_eq!(
-        ledger_count(&ctx, material_id, Some("realtime_capture")).await?,
-        0
-    );
+    wait_for_material_staged_floor(&ctx, material_id).await?;
 
     ingest_handle.stop().await?;
     Ok(())
@@ -522,36 +483,25 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
     assert_eq!(completed_count, successful);
     assert_eq!(sensing_count, crashed);
 
+    // #1570 Prong B: material-tier timing (start_time + staged_at floor) lives on
+    // the registry; every concurrent material should carry start_time, and no
+    // whole-material temporal-ledger entries should be written.
     WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
             async move {
-                let staged_at = sqlx::query_scalar!(
+                let missing_start_time = sqlx::query_scalar!(
                     r#"
-                    SELECT COUNT(*) FROM raw.temporal_ledger tl
-                    JOIN raw.source_material_registry smr ON tl.source_material_id = smr.id
-                    WHERE smr.source_identifier LIKE 'concurrent-source-%'
-                      AND tl.source_type = 'staged_at'
-                    "#
-                )
-                .fetch_one(&pool)
-                .await?
-                .unwrap_or(0) as u64;
-                let realtime_capture = sqlx::query_scalar!(
-                    r#"
-                    SELECT COUNT(*) FROM raw.temporal_ledger tl
-                    JOIN raw.source_material_registry smr ON tl.source_material_id = smr.id
-                    WHERE smr.source_identifier LIKE 'concurrent-source-%'
-                      AND tl.source_type = 'realtime_capture'
+                    SELECT COUNT(*) FROM raw.source_material_registry
+                    WHERE source_identifier LIKE 'concurrent-source-%'
+                      AND start_time IS NULL
                     "#
                 )
                 .fetch_one(&pool)
                 .await?
                 .unwrap_or(0) as u64;
 
-                Ok::<bool, sqlx::Error>(
-                    staged_at == successful + crashed && realtime_capture == successful,
-                )
+                Ok::<bool, sqlx::Error>(missing_start_time == 0)
             }
         },
         Timeouts::STANDARD,
@@ -568,7 +518,10 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
     .fetch_one(&ctx.pool)
     .await?
     .unwrap_or(0) as u64;
-    assert_eq!(total_ledger_count, successful + crashed + successful);
+    assert_eq!(
+        total_ledger_count, 0,
+        "#1570 Prong B: no whole-material temporal-ledger entries should be written"
+    );
 
     ingest_handle.stop().await?;
     Ok(())
@@ -611,13 +564,7 @@ async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
     assert_eq!(status_val, MaterialStatus::Sensing.as_str());
     assert!(optional_blob_id.is_none());
 
-    wait_for_material_ledger_counts(&ctx, material_id, 1, 0).await?;
-    assert_eq!(ledger_count(&ctx, material_id, None).await?, 1);
-    assert_eq!(ledger_count(&ctx, material_id, Some("staged_at")).await?, 1);
-    assert_eq!(
-        ledger_count(&ctx, material_id, Some("realtime_capture")).await?,
-        0
-    );
+    wait_for_material_staged_floor(&ctx, material_id).await?;
 
     ingest_handle.stop().await?;
     Ok(())

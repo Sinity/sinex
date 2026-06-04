@@ -10,10 +10,48 @@
 use crate::node_sdk::NodeResult;
 use serde_json;
 use sinex_primitives::Uuid;
-use sinex_primitives::domain::{EventSource, TemporalPrecision, TemporalSourceType};
+use sinex_primitives::domain::{
+    EventSource, SourceMaterialTimingInfoType, TemporalPrecision, TemporalSourceType,
+};
 use sinex_primitives::temporal::Timestamp;
 use std::collections::VecDeque;
 use tracing::{debug, warn};
+
+/// Material-tier timing summary, read from `raw.source_material_registry`.
+///
+/// This is the lower-precedence half of the #1570 Prong B two-sided join:
+/// when no sub-material ledger entry covers an event's anchor, the material
+/// registry's coarse timing category and `start_time`/`staged_at` resolve
+/// `ts_orig`. `staged_at` is the guaranteed floor — it is always present, so
+/// material-tier resolution never returns `None`.
+#[derive(Debug, Clone)]
+pub struct MaterialTiming {
+    /// Coarse timing category from the registry (`timing_info_type`).
+    pub timing_info_type: SourceMaterialTimingInfoType,
+    /// Material-begin timestamp (best-known real-world time), if recorded.
+    pub start_time: Option<Timestamp>,
+    /// Time the material was staged — the guaranteed `staged_at` floor.
+    pub staged_at: Timestamp,
+}
+
+impl MaterialTiming {
+    /// Resolve the material-tier `(ts_orig, rung)` for this material.
+    ///
+    /// Uses `start_time` (with the category's mapped rung) when present and the
+    /// category is timing-bearing; otherwise falls back to the `staged_at`
+    /// floor at the `StagedAt` rung. Never returns `None`.
+    #[must_use]
+    pub fn resolve(&self) -> (Timestamp, TemporalSourceType) {
+        let rung = self.timing_info_type.to_temporal_source();
+        match (self.start_time, rung) {
+            // No real-world begin time, or category is the floor itself.
+            (None, _) | (_, TemporalSourceType::StagedAt) => {
+                (self.staged_at, TemporalSourceType::StagedAt)
+            }
+            (Some(start), rung) => (start, rung),
+        }
+    }
+}
 
 /// `SliceAssembler` for record reassembly (e.g., line or JSON delimiter)
 /// `TARGET_final.md` line 120
@@ -139,62 +177,34 @@ impl LedgerReader {
             })
     }
 
-    /// Derive `ts_orig` and source type based on temporal ledger precedence.
+    /// Derive `ts_orig` and its quality rung for a material event at `offset`.
     ///
-    /// Precedence: `realtime_capture` > intrinsic content >
-    ///            `inferred_mtime` > `inferred_ctime` > `inferred_user` > `staged_at`
+    /// This is the persistence-owned (lower-precedence) half of the #1570
+    /// Prong B two-sided join. The parser already owns the `IntrinsicContent`
+    /// case (via `#[timestamp]`); when it resolves the rung it sets `ts_orig`
+    /// directly and persistence never calls this.
     ///
-    /// Returns `None` only when both the temporal ledger and intrinsic timestamp
-    /// are missing — this indicates a bug (a `staged_at` ledger entry should have
-    /// been written when the material first emitted durably).
+    /// Precedence here:
+    /// 1. **sub-material ledger** — a `temporal_ledger` entry whose offset range
+    ///    covers `offset` (genuine wrapped-stream / per-chunk timing). Its
+    ///    recorded `source_type` is the rung.
+    /// 2. **material tier** — the `raw.source_material_registry` timing summary,
+    ///    with `staged_at` as the guaranteed floor.
+    ///
+    /// Never returns `None`: the `staged_at` floor always resolves.
     #[must_use]
     pub fn derive_ts_orig(
         &self,
         offset: i64,
-        intrinsic_timestamp: Option<Timestamp>,
-    ) -> Option<(Timestamp, TemporalSourceType)> {
-        // First check ledger entry
+        material_timing: &MaterialTiming,
+    ) -> (Timestamp, TemporalSourceType) {
+        // 1. Sub-material ledger entry covering this offset (wrapped streams).
         if let Some(entry) = self.find_entry_for_offset(offset) {
-            match entry.source_type {
-                TemporalSourceType::RealtimeCapture => {
-                    return Some((entry.ts_capture, TemporalSourceType::RealtimeCapture));
-                }
-                TemporalSourceType::IntrinsicContent => {
-                    if let Some(ts) = intrinsic_timestamp {
-                        return Some((ts, TemporalSourceType::IntrinsicContent));
-                    }
-                }
-                TemporalSourceType::InferredMtime => {
-                    return Some((entry.ts_capture, TemporalSourceType::InferredMtime));
-                }
-                TemporalSourceType::InferredCtime => {
-                    return Some((entry.ts_capture, TemporalSourceType::InferredCtime));
-                }
-                TemporalSourceType::InferredUser => {
-                    return Some((entry.ts_capture, TemporalSourceType::InferredUser));
-                }
-                TemporalSourceType::StagedAt => {
-                    return Some((entry.ts_capture, TemporalSourceType::StagedAt));
-                }
-            }
+            return (entry.ts_capture, entry.source_type);
         }
 
-        // Fall back to intrinsic if available
-        if let Some(ts) = intrinsic_timestamp {
-            return Some((ts, TemporalSourceType::IntrinsicContent));
-        }
-
-        // No persisted temporal evidence and no intrinsic timestamp.
-        // A `staged_at` ledger entry should have been written once the material
-        // began emitting durably. Returning None forces the caller to handle this
-        // explicitly rather than silently using an ephemeral Timestamp::now().
-        warn!(
-            material_id = %self.material_id,
-            offset,
-            "derive_ts_orig: no ledger entry and no intrinsic timestamp — \
-             missing staged_at ledger entry?"
-        );
-        None
+        // 2. Material-tier registry timing, floored at staged_at.
+        material_timing.resolve()
     }
 }
 

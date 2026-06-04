@@ -427,14 +427,12 @@ pub(super) async fn handle_begin(
         )
         .await?;
 
-    // Write an early `staged_at` ledger entry so that `LedgerReader::derive_ts_orig()`
-    // always has a persisted fallback timestamp for events derived from this material.
-    // This is the Slice 2 guarantee: no material event gets `ts_orig` from an ephemeral
-    // `Timestamp::now()` — the `staged_at` value is persisted before any events are
-    // assembled.
-    assembler
-        .record_staged_at_ledger_entry(material_id, started_at)
-        .await?;
+    // #1570 Prong B: the material-tier `staged_at` floor now lives on
+    // `raw.source_material_registry` (set by `register_external_in_flight`,
+    // along with `start_time` and `timing_info_type`). The previously-written
+    // whole-material `staged_at` temporal-ledger entry was redundant with that
+    // and has been removed; the temporal ledger is now reserved for genuine
+    // sub-material wrapped-stream entries.
 
     // Signal that this material is now registered in the database, unblocking any
     // events in the JetStreamConsumer batch that reference this material_id via FK.
