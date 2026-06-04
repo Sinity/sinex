@@ -29,8 +29,9 @@ let
   localPostgresUnits = optionals localPostgresEnabled [ "postgresql.service" "postgresql-setup.service" ];
   schemaApplyUnits = optionals schemaApplyEnabled [ "sinex-schema-apply.service" ];
   # Guard core units only when the core subsystem is enabled.
-  # Always guard both core and node units: nodes emit to NATS, event_engine must pass preflight
-  # before either layer accepts production traffic.
+  # Always guard core and generated support units: source bindings and automata
+  # emit to NATS, so event_engine must pass preflight before either layer
+  # accepts production traffic.
   coreEnabled = sinexEnabled && (cfg.core.enable or false);
   coreUnitsToGuard = lib.optionals coreEnabled [ "sinexd" ];
   unitsToGuard = coreUnitsToGuard ++ generatedUnits;

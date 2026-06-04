@@ -688,7 +688,7 @@ let
       bindings = {
         "fs" = {
           enable = sat.enable;
-          description = "Filesystem watcher (source-unit host)";
+          description = "Filesystem watcher (hosted source binding)";
           adapterType = null;
           adapterConfig = nodeConfig;
           inherit instances resources;
@@ -886,7 +886,7 @@ let
       monitorBinding = {
         "terminal.monitor" = {
           enable = true;
-          description = "Terminal monitoring lifecycle event (source-unit host)";
+          description = "Terminal monitoring lifecycle event (hosted source binding)";
           adapterType = null;
           adapterConfig = { };
           instances = 1;
@@ -1233,10 +1233,10 @@ let
         # which makes SQLite's immutable=1 path fail SQLITE_CANTOPEN. Without
         # this override the worker spams "unable to open database file" every
         # 30 s. The rest of the SqliteRow defaults stay (read_only=true, etc.).
-        "desktop.activitywatch" = mkDesktopBinding "ActivityWatch SQLite (source-unit host)" { path = activitywatchDbPath; immutable = false; } false;
-        "desktop.window-manager" = mkDesktopBinding "Desktop window manager (source-unit host)" { } false;
+        "desktop.activitywatch" = mkDesktopBinding "ActivityWatch SQLite (hosted source binding)" { path = activitywatchDbPath; immutable = false; } false;
+        "desktop.window-manager" = mkDesktopBinding "Desktop window manager (hosted source binding)" { } false;
       } // optionalAttrs sat.clipboard.enable {
-        "desktop.clipboard" = mkDesktopBinding "Desktop clipboard (source-unit host)" { } false;
+        "desktop.clipboard" = mkDesktopBinding "Desktop clipboard (hosted source binding)" { } false;
       };
     in
     {
@@ -1362,7 +1362,7 @@ let
       bindings = {
         "browser.history" = {
           enable = sat.enable;
-          description = "Browser history (source-unit host)";
+          description = "Browser history (hosted source binding)";
           adapterType = "ChainedAdapter";
           # ChainedConfig: primary=SqliteRowConfig, secondary=AppendOnlyFileConfig.
           # qutebrowser's history.sqlite is in WAL mode with a live writer:
@@ -1477,13 +1477,13 @@ let
     # into `DbusStreamAdapter::open` (zbus 5.x).
     {
       bindings = {
-        "system.journald" = mkSystemBinding "system.journald" "systemd journal (source-unit host)";
-        "system.systemd" = mkSystemBinding "system.systemd" "systemd unit state (source-unit host)";
-        "system.udev" = mkSystemBinding "system.udev" "udev events (source-unit host)";
-        "system.dbus" = mkSystemBinding "system.dbus" "D-Bus signal stream (source-unit host)";
+        "system.journald" = mkSystemBinding "system.journald" "systemd journal (hosted source binding)";
+        "system.systemd" = mkSystemBinding "system.systemd" "systemd unit state (hosted source binding)";
+        "system.udev" = mkSystemBinding "system.udev" "udev events (hosted source binding)";
+        "system.dbus" = mkSystemBinding "system.dbus" "D-Bus signal stream (hosted source binding)";
         "system.monitor" = {
           enable = sat.enable;
-          description = "System monitoring lifecycle event (source-unit host)";
+          description = "System monitoring lifecycle event (hosted source binding)";
           adapterType = null;
           adapterConfig = { };
           instances = 1;

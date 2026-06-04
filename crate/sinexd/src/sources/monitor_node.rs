@@ -650,7 +650,7 @@ mod tests {
                     "monitor-fire-once-test".to_string(),
                     "test.monitor".to_string(),
                     Some("test.monitor".to_string()),
-                    Some("source-unit host".to_string()),
+                    Some("hosted source binding".to_string()),
                     HostName::from_static("test-host"),
                     work_dir_path,
                     false,

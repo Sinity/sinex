@@ -136,7 +136,7 @@ The upstream module exposes real feature toggles directly:
 ```nix
 services.sinex = {
   core.enable = true;                    # unified sinexd daemon
-  nodes.enable = true;                   # node units
+  nodes.enable = true;                   # hosted capture/automata bindings
   lifecycle.maintenance.enable = false;  # DLQ/blob maintenance timers
   observability.enable = false;          # journald/logging integration
   observability.monitoring.enable = false; # Prometheus/Grafana/exporters
