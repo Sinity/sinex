@@ -120,7 +120,7 @@ async fn spawn_bus_ready(
     let bus_clone = Arc::clone(bus);
     let bus_task = tokio::spawn(async move {
         bus_clone
-            .run_with_ready(nats, pool, env, shutdown_rx, Some(ready_clone))
+            .run_with_ready(nats, pool, env, None, shutdown_rx, Some(ready_clone))
             .await;
     });
     // Wait until the bus has subscribed to NATS before returning.
@@ -264,7 +264,8 @@ async fn bus_retries_initial_subscribe_failures_until_shutdown(
     let bus_task = tokio::spawn({
         let bus = Arc::clone(&bus);
         async move {
-            bus.run_with_ready(nats, pool, env, shutdown_rx, None).await;
+            bus.run_with_ready(nats, pool, env, None, shutdown_rx, None)
+                .await;
         }
     });
 
