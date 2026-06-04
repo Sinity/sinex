@@ -6,7 +6,7 @@
 //! `drain_completion_checkpoint_description`) that only touch `&self` fields.
 
 use super::{
-    Checkpoint, Node, NodeFactory, NodeRunner, NodeRuntimeState, NodeType, ProcessingModel,
+    Checkpoint, Node, SourceFactory, NodeRunner, NodeRuntimeState, NodeType, ProcessingModel,
     RunnerLifecycle,
 };
 use std::collections::HashMap;
@@ -18,14 +18,14 @@ impl<T: Node + 'static> NodeRunner<T> {
     }
 
     /// Create a node runner with a factory for fresh worker instances.
-    pub fn new_with_factory(node: T, node_factory: NodeFactory<T>) -> Self {
-        Self::new_with_optional_factory(node, Some(node_factory))
+    pub fn new_with_factory(node: T, source_factory: SourceFactory<T>) -> Self {
+        Self::new_with_optional_factory(node, Some(source_factory))
     }
 
-    pub(super) fn new_with_optional_factory(node: T, node_factory: Option<NodeFactory<T>>) -> Self {
+    pub(super) fn new_with_optional_factory(node: T, source_factory: Option<SourceFactory<T>>) -> Self {
         Self {
             node,
-            node_factory,
+            source_factory,
             lifecycle: RunnerLifecycle::Created,
             handles: None,
             service_info: None,

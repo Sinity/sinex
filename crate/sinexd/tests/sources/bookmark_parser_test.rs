@@ -6,7 +6,7 @@
 //! - Row/byte anchors identify each bookmark in its source material.
 //! - Sensitive URL/note/excerpt/tag content is gated via privacy context;
 //!   `cover` and `highlights` are dropped entirely.
-//! - Parser satisfies source-unit registration and manifest obligations
+//! - Parser satisfies source registration and manifest obligations
 //!   (Bus-First admission path verified via `declared_event_types` + `privacy_contexts`).
 
 use std::collections::HashSet;
@@ -15,11 +15,11 @@ use sinex_primitives::parser::MaterialParser;
 use sinex_primitives::{
     Uuid,
     ids::Id,
-    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
+    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceId},
     privacy::ProcessingContext,
     temporal::Timestamp,
 };
-use sinexd::sources::sources::bookmark::RaindropBookmarkParser;
+use sinexd::sources::source_contracts::bookmark::RaindropBookmarkParser;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,7 +27,7 @@ use sinexd::sources::sources::bookmark::RaindropBookmarkParser;
 
 fn test_ctx() -> ParserContext {
     ParserContext {
-        source_unit_id: SourceUnitId::from_static("raindrop-bookmarks"),
+        source_id: SourceId::from_static("raindrop-bookmarks"),
         source_material_id: Id::new(),
         record_anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
         operation_id: Uuid::new_v4(),
@@ -257,7 +257,7 @@ async fn privacy_tier_is_sensitive_in_manifest() {
     let parser = RaindropBookmarkParser;
     let manifest = parser.manifest();
 
-    // Parser declares Metadata context — the source unit is Sensitive tier.
+    // Parser declares Metadata context — the source is Sensitive tier.
     // Verify the manifest names the Metadata processing context.
     assert!(
         manifest
@@ -268,13 +268,13 @@ async fn privacy_tier_is_sensitive_in_manifest() {
 }
 
 // ---------------------------------------------------------------------------
-// AC: Output flows through source-unit host + Bus-First admission path
+// AC: Output flows through source host + Bus-First admission path
 //
 // We verify that:
 // - The manifest declares the expected (source, event_type) pair.
-// - The parser_id and source_unit_id match the registered constants.
-// - Every intent carries the source-unit-id and parser-id linking it to the
-//   Bus-First admission path (#1081 source-unit host registry).
+// - The parser_id and source_id match the registered constants.
+// - Every intent carries the source-id and parser-id linking it to the
+//   Bus-First admission path (#1081 source host registry).
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -283,7 +283,7 @@ async fn manifest_declares_raindrop_bookmark_created() {
     let manifest = parser.manifest();
 
     assert_eq!(manifest.parser_id.as_str(), "raindrop-bookmarks");
-    assert_eq!(manifest.source_unit_id.as_str(), "raindrop-bookmarks");
+    assert_eq!(manifest.source_id.as_str(), "raindrop-bookmarks");
     assert_eq!(
         manifest.accepted_input_shapes,
         vec![sinex_primitives::parser::InputShapeKind::StaticFile]
@@ -301,7 +301,7 @@ async fn manifest_declares_raindrop_bookmark_created() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn intents_carry_source_unit_host_routing_fields() {
+async fn intents_carry_source_driver_host_routing_fields() {
     let mut parser = RaindropBookmarkParser;
     let intents = parser
         .parse_record(record_for(SNAPSHOT_A.as_bytes()), &test_ctx())
@@ -310,9 +310,9 @@ async fn intents_carry_source_unit_host_routing_fields() {
 
     for intent in &intents {
         assert_eq!(
-            intent.source_unit_id.as_str(),
+            intent.source_id.as_str(),
             "raindrop-bookmarks",
-            "intent source_unit_id must match registered source unit"
+            "intent source_id must match registered source"
         );
         assert_eq!(
             intent.parser_id.as_str(),
@@ -347,26 +347,6 @@ async fn occurrence_key_fields_are_raindrop_id_url_created() {
         vec!["raindrop_id", "url", "created"],
         "occurrence key must be (raindrop_id, url, created)"
     );
-}
-
-// ---------------------------------------------------------------------------
-// Additional: manifest verification tags are declared
-// ---------------------------------------------------------------------------
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn manifest_verification_tags_declared() {
-    let parser = RaindropBookmarkParser;
-    let manifest = parser.manifest();
-    let verification_tags: HashSet<&str> = manifest
-        .proof_obligations
-        .iter()
-        .map(std::string::String::as_str)
-        .collect();
-
-    assert!(verification_tags.contains("timestamp_intrinsic"));
-    assert!(verification_tags.contains("anchor_csv_row"));
-    assert!(verification_tags.contains("occurrence_key_id_url_created"));
-    assert!(verification_tags.contains("cover_and_highlights_dropped"));
 }
 
 // ---------------------------------------------------------------------------

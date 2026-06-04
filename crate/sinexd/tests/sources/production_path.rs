@@ -1,6 +1,6 @@
 //! Production-path test harness root.
 //!
-//! Per-source-unit proof modules call `_run_case(...)` with fixture data,
+//! Per-source proof modules call `_run_case(...)` with fixture data,
 //! expected event types, and the obligation set they want to exercise.
 //!
 //! # Adapter kinds
@@ -38,12 +38,12 @@ pub enum AdapterKind {
     UnixSocket,
 }
 
-/// Canonical parser-fixture obligations exercised by each source-unit case.
+/// Canonical parser-fixture obligations exercised by each source case.
 ///
-/// Per-source-unit tests pass this to `_run_case(...)` when they need full
+/// Per-source tests pass this to `_run_case(...)` when they need full
 /// parser-contract coverage. Shared obligations that do not inspect parser
 /// output, such as drain-controller state transitions, belong in one shared
-/// test instead of being repeated for every source-unit fixture.
+/// test instead of being repeated for every source fixture.
 pub const ALL_OBLIGATIONS: &[&str] = &["initial_ingestion", "replay", "isolation", "privacy"];
 
 // ---------------------------------------------------------------------------
@@ -52,12 +52,12 @@ pub const ALL_OBLIGATIONS: &[&str] = &["initial_ingestion", "replay", "isolation
 
 /// Internal: runs the named obligation set against the given fixture.
 ///
-/// Called by per-source-unit production-path tests.
+/// Called by per-source production-path tests.
 ///
 /// Returns a list of failures as strings. An empty vec means all obligations
 /// passed. The caller (typically a `#[sinex_test]`) should assert this is empty.
 pub async fn _run_case(
-    source_unit_id: &str,
+    source_id: &str,
     adapter_kind: AdapterKind,
     fixture_data: &[u8],
     expected_event_types: &[&str],
@@ -67,11 +67,11 @@ pub async fn _run_case(
     let mut initial_ingestion_verified = false;
     for &obligation in obligation_names {
         let result = if obligation == "privacy" && initial_ingestion_verified {
-            obligations::privacy::run_metadata_only(source_unit_id).await
+            obligations::privacy::run_metadata_only(source_id).await
         } else {
             _run_obligation(
                 obligation,
-                source_unit_id,
+                source_id,
                 adapter_kind,
                 fixture_data,
                 expected_event_types,
@@ -79,7 +79,7 @@ pub async fn _run_case(
             .await
         };
         if let Err(e) = result {
-            failures.push(format!("[{source_unit_id}] obligation '{obligation}': {e}"));
+            failures.push(format!("[{source_id}] obligation '{obligation}': {e}"));
         } else if obligation == "initial_ingestion" {
             initial_ingestion_verified = true;
         }
@@ -90,7 +90,7 @@ pub async fn _run_case(
 /// Variant of `_run_case` for parsers whose production contract depends on
 /// `SourceRecord.logical_path`.
 pub async fn _run_case_with_logical_path(
-    source_unit_id: &str,
+    source_id: &str,
     adapter_kind: AdapterKind,
     fixture_data: &[u8],
     logical_path: &str,
@@ -98,7 +98,7 @@ pub async fn _run_case_with_logical_path(
     obligation_names: &[&str],
 ) -> Vec<String> {
     _run_case_with_record_fixture(
-        source_unit_id,
+        source_id,
         adapter_kind,
         RecordFixtureSpec::byte_range(fixture_data, Some(logical_path)),
         expected_event_types,
@@ -110,7 +110,7 @@ pub async fn _run_case_with_logical_path(
 /// Variant of `_run_case` for directory-walk parsers whose production contract
 /// depends on a `DirectoryEntry` anchor.
 pub async fn _run_case_with_directory_entry(
-    source_unit_id: &str,
+    source_id: &str,
     adapter_kind: AdapterKind,
     fixture_data: &[u8],
     directory_entry_path: &str,
@@ -127,7 +127,7 @@ pub async fn _run_case_with_directory_entry(
     };
 
     _run_case_with_record_fixture(
-        source_unit_id,
+        source_id,
         adapter_kind,
         RecordFixtureSpec {
             fixture_data,
@@ -164,7 +164,7 @@ impl<'a> RecordFixtureSpec<'a> {
 }
 
 async fn _run_case_with_record_fixture(
-    source_unit_id: &str,
+    source_id: &str,
     adapter_kind: AdapterKind,
     fixture: RecordFixtureSpec<'_>,
     expected_event_types: &[&str],
@@ -174,11 +174,11 @@ async fn _run_case_with_record_fixture(
     let mut initial_ingestion_verified = false;
     for &obligation in obligation_names {
         let result = if obligation == "privacy" && initial_ingestion_verified {
-            obligations::privacy::run_metadata_only(source_unit_id).await
+            obligations::privacy::run_metadata_only(source_id).await
         } else {
             _run_record_fixture_obligation(
                 obligation,
-                source_unit_id,
+                source_id,
                 adapter_kind,
                 fixture.clone(),
                 expected_event_types,
@@ -186,7 +186,7 @@ async fn _run_case_with_record_fixture(
             .await
         };
         if let Err(e) = result {
-            failures.push(format!("[{source_unit_id}] obligation '{obligation}': {e}"));
+            failures.push(format!("[{source_id}] obligation '{obligation}': {e}"));
         } else if obligation == "initial_ingestion" {
             initial_ingestion_verified = true;
         }
@@ -196,7 +196,7 @@ async fn _run_case_with_record_fixture(
 
 async fn _run_obligation(
     obligation: &str,
-    source_unit_id: &str,
+    source_id: &str,
     adapter_kind: AdapterKind,
     fixture_data: &[u8],
     expected_event_types: &[&str],
@@ -204,7 +204,7 @@ async fn _run_obligation(
     match obligation {
         "initial_ingestion" => {
             obligations::initial_ingestion::run(
-                source_unit_id,
+                source_id,
                 adapter_kind,
                 fixture_data,
                 expected_event_types,
@@ -213,20 +213,20 @@ async fn _run_obligation(
         }
         "replay" => {
             obligations::replay::run(
-                source_unit_id,
+                source_id,
                 adapter_kind,
                 fixture_data,
                 expected_event_types,
             )
             .await
         }
-        "drain" => obligations::drain::run(source_unit_id, adapter_kind, fixture_data).await,
+        "drain" => obligations::drain::run(source_id, adapter_kind, fixture_data).await,
         "isolation" => {
-            obligations::isolation::run(source_unit_id, adapter_kind, fixture_data).await
+            obligations::isolation::run(source_id, adapter_kind, fixture_data).await
         }
         "privacy" => {
             obligations::privacy::run(
-                source_unit_id,
+                source_id,
                 adapter_kind,
                 fixture_data,
                 expected_event_types,
@@ -241,25 +241,25 @@ async fn _run_obligation(
 
 async fn _run_record_fixture_obligation(
     obligation: &str,
-    source_unit_id: &str,
+    source_id: &str,
     adapter_kind: AdapterKind,
     fixture: RecordFixtureSpec<'_>,
     expected_event_types: &[&str],
 ) -> Result<(), String> {
     match obligation {
         "initial_ingestion" => {
-            run_record_fixture_initial_ingestion(source_unit_id, fixture, expected_event_types)
+            run_record_fixture_initial_ingestion(source_id, fixture, expected_event_types)
                 .await
         }
-        "replay" => run_record_fixture_replay(source_unit_id, fixture, expected_event_types).await,
+        "replay" => run_record_fixture_replay(source_id, fixture, expected_event_types).await,
         "drain" => {
-            obligations::drain::run(source_unit_id, adapter_kind, fixture.fixture_data).await
+            obligations::drain::run(source_id, adapter_kind, fixture.fixture_data).await
         }
         "isolation" => {
-            obligations::isolation::run(source_unit_id, adapter_kind, fixture.fixture_data).await
+            obligations::isolation::run(source_id, adapter_kind, fixture.fixture_data).await
         }
         "privacy" => {
-            run_record_fixture_privacy(source_unit_id, fixture, expected_event_types).await
+            run_record_fixture_privacy(source_id, fixture, expected_event_types).await
         }
         unknown => Err(format!(
             "unknown obligation '{unknown}'; valid: initial_ingestion, replay, drain, isolation, privacy"
@@ -268,24 +268,24 @@ async fn _run_record_fixture_obligation(
 }
 
 async fn run_record_fixture_initial_ingestion(
-    source_unit_id: &str,
+    source_id: &str,
     fixture: RecordFixtureSpec<'_>,
     expected_event_types: &[&str],
 ) -> Result<(), String> {
     let material_id = sinex_primitives::Uuid::now_v7();
     let outcome = dispatch_record_fixture_with_anchor(
-        source_unit_id,
+        source_id,
         fixture.fixture_data,
         fixture.anchor,
         fixture.logical_path,
         material_id,
     )
     .await
-    .map_err(|e| format!("dispatch error for '{source_unit_id}': {e}"))?;
+    .map_err(|e| format!("dispatch error for '{source_id}': {e}"))?;
 
     if outcome.events.is_empty() {
         return Err(format!(
-            "initial ingestion for '{source_unit_id}': parser returned no events for {} ({} bytes)",
+            "initial ingestion for '{source_id}': parser returned no events for {} ({} bytes)",
             fixture.input_label,
             fixture.fixture_data.len()
         ));
@@ -300,7 +300,7 @@ async fn run_record_fixture_initial_ingestion(
     for &expected in expected_event_types {
         if !produced_types.iter().any(|t| t == expected) {
             return Err(format!(
-                "initial ingestion for '{source_unit_id}': expected event type '{expected}' \
+                "initial ingestion for '{source_id}': expected event type '{expected}' \
                  not found in output. Produced: {produced_types:?}"
             ));
         }
@@ -310,31 +310,31 @@ async fn run_record_fixture_initial_ingestion(
 }
 
 async fn run_record_fixture_replay(
-    source_unit_id: &str,
+    source_id: &str,
     fixture: RecordFixtureSpec<'_>,
     expected_event_types: &[&str],
 ) -> Result<(), String> {
     let material_id_1 = sinex_primitives::Uuid::now_v7();
     let outcome_1 = dispatch_record_fixture_with_anchor(
-        source_unit_id,
+        source_id,
         fixture.fixture_data,
         fixture.anchor.clone(),
         fixture.logical_path,
         material_id_1,
     )
     .await
-    .map_err(|e| format!("replay first dispatch error for '{source_unit_id}': {e}"))?;
+    .map_err(|e| format!("replay first dispatch error for '{source_id}': {e}"))?;
 
     let material_id_2 = sinex_primitives::Uuid::now_v7();
     let outcome_2 = dispatch_record_fixture_with_anchor(
-        source_unit_id,
+        source_id,
         fixture.fixture_data,
         fixture.anchor,
         fixture.logical_path,
         material_id_2,
     )
     .await
-    .map_err(|e| format!("replay second dispatch error for '{source_unit_id}': {e}"))?;
+    .map_err(|e| format!("replay second dispatch error for '{source_id}': {e}"))?;
 
     if material_id_1 == material_id_2 {
         return Err("material IDs must differ between replay runs".into());
@@ -352,7 +352,7 @@ async fn run_record_fixture_replay(
         .collect();
     if types_1 != types_2 {
         return Err(format!(
-            "replay for '{source_unit_id}': event types differ between runs. \
+            "replay for '{source_id}': event types differ between runs. \
              run1={types_1:?} run2={types_2:?}"
         ));
     }
@@ -360,7 +360,7 @@ async fn run_record_fixture_replay(
     for &expected in expected_event_types {
         if !types_1.contains(&expected) {
             return Err(format!(
-                "replay for '{source_unit_id}': expected event type '{expected}' \
+                "replay for '{source_id}': expected event type '{expected}' \
                  missing from replay output. Got: {types_1:?}"
             ));
         }
@@ -370,19 +370,19 @@ async fn run_record_fixture_replay(
 }
 
 async fn run_record_fixture_privacy(
-    source_unit_id: &str,
+    source_id: &str,
     fixture: RecordFixtureSpec<'_>,
     expected_event_types: &[&str],
 ) -> Result<(), String> {
-    run_record_fixture_initial_ingestion(source_unit_id, fixture.clone(), expected_event_types)
+    run_record_fixture_initial_ingestion(source_id, fixture.clone(), expected_event_types)
         .await
         .map_err(|e| format!("privacy/clean-path: {e}"))?;
 
-    obligations::privacy::run_metadata_only(source_unit_id).await
+    obligations::privacy::run_metadata_only(source_id).await
 }
 
 async fn dispatch_record_fixture_with_anchor(
-    source_unit_id: &str,
+    source_id: &str,
     fixture_data: &[u8],
     anchor: sinex_primitives::parser::MaterialAnchor,
     logical_path: Option<&str>,
@@ -391,16 +391,16 @@ async fn dispatch_record_fixture_with_anchor(
     use camino::Utf8PathBuf;
     use sinex_primitives::events::SourceMaterial;
     use sinex_primitives::ids::Id;
-    use sinex_primitives::parser::{ParserContext, SourceRecord, SourceUnitId};
+    use sinex_primitives::parser::{ParserContext, SourceRecord, SourceId};
     use sinex_primitives::temporal::Timestamp;
     use sinexd::sources::dispatch::find_parser_factory;
 
-    let source_unit_id = SourceUnitId::new(source_unit_id)
-        .map_err(|e| format!("invalid source unit id '{source_unit_id}': {e}"))?;
-    let factory = find_parser_factory(&source_unit_id).ok_or_else(|| {
+    let source_id = SourceId::new(source_id)
+        .map_err(|e| format!("invalid source id '{source_id}': {e}"))?;
+    let factory = find_parser_factory(&source_id).ok_or_else(|| {
         format!(
-            "source unit '{}' has no parser registered",
-            source_unit_id.as_str()
+            "source '{}' has no parser registered",
+            source_id.as_str()
         )
     })?;
     let mut parser = factory();
@@ -415,7 +415,7 @@ async fn dispatch_record_fixture_with_anchor(
         metadata: serde_json::Value::Null,
     };
     let ctx = ParserContext {
-        source_unit_id,
+        source_id,
         source_material_id: material_id,
         record_anchor: anchor,
         operation_id: sinex_primitives::Uuid::now_v7(),
@@ -448,10 +448,10 @@ mod coverage_matrix {
 
     use crate::AdapterKind;
     use crate::obligations::drain;
-    use sinex_primitives::parser::SourceUnitId;
+    use sinex_primitives::parser::SourceId;
     use sinexd::sources::dispatch::find_parser_factory;
-    use sinexd::sources::node_factory::registered_node_factory_ids;
-    use sinexd::sources::registry::SourceUnitRegistry;
+    use sinexd::sources::source_factory::registered_source_factory_ids;
+    use sinexd::sources::registry::SourceContractRegistry;
     use xtask::sandbox::prelude::*;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -464,7 +464,7 @@ mod coverage_matrix {
 
     #[derive(Debug, Clone, Copy)]
     struct SmokeMatrixEntry {
-        source_unit_id: &'static str,
+        source_id: &'static str,
         coverage: SmokeCoverage,
         evidence: &'static str,
         blocker_issue: Option<&'static str>,
@@ -544,7 +544,7 @@ mod coverage_matrix {
         entry(
             "noop",
             SmokeCoverage::NoopHarness,
-            "noop.rs noop_source_unit_reports_zero_work",
+            "noop.rs noop_source_reports_zero_work",
         ),
         entry(
             "raindrop-bookmarks",
@@ -644,12 +644,12 @@ mod coverage_matrix {
     ];
 
     const fn entry(
-        source_unit_id: &'static str,
+        source_id: &'static str,
         coverage: SmokeCoverage,
         evidence: &'static str,
     ) -> SmokeMatrixEntry {
         SmokeMatrixEntry {
-            source_unit_id,
+            source_id,
             coverage,
             evidence,
             blocker_issue: None,
@@ -657,14 +657,14 @@ mod coverage_matrix {
     }
 
     #[sinex_test]
-    async fn source_unit_host_smoke_matrix_covers_every_registered_factory() -> TestResult<()> {
-        let factory_ids: BTreeSet<String> = registered_node_factory_ids()
+    async fn source_driver_host_smoke_matrix_covers_every_registered_factory() -> TestResult<()> {
+        let factory_ids: BTreeSet<String> = registered_source_factory_ids()
             .into_iter()
             .map(|id| id.as_str().to_string())
             .collect();
         let matrix_ids: BTreeSet<String> = SMOKE_MATRIX
             .iter()
-            .map(|entry| entry.source_unit_id.to_string())
+            .map(|entry| entry.source_id.to_string())
             .collect();
 
         let missing: Vec<&String> = factory_ids.difference(&matrix_ids).collect();
@@ -672,40 +672,40 @@ mod coverage_matrix {
 
         assert!(
             missing.is_empty(),
-            "source-unit host node factories missing smoke-matrix entries: {missing:#?}"
+            "source host source factories missing smoke-matrix entries: {missing:#?}"
         );
         assert!(
             stale.is_empty(),
-            "smoke-matrix entries without a registered node factory: {stale:#?}"
+            "smoke-matrix entries without a registered source factory: {stale:#?}"
         );
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn source_unit_host_smoke_matrix_entries_are_actionable() -> TestResult<()> {
-        let registry = SourceUnitRegistry::from_inventory();
+    async fn source_driver_host_smoke_matrix_entries_are_actionable() -> TestResult<()> {
+        let registry = SourceContractRegistry::from_inventory();
         let mut seen = BTreeMap::new();
 
         for entry in SMOKE_MATRIX {
             assert!(
                 !entry.evidence.trim().is_empty(),
                 "{} must cite concrete smoke or fixture evidence",
-                entry.source_unit_id
+                entry.source_id
             );
 
-            if let Some(previous) = seen.insert(entry.source_unit_id, entry.evidence) {
+            if let Some(previous) = seen.insert(entry.source_id, entry.evidence) {
                 panic!(
                     "duplicate smoke-matrix entry for {}: {previous} and {}",
-                    entry.source_unit_id, entry.evidence
+                    entry.source_id, entry.evidence
                 );
             }
 
-            let id = SourceUnitId::new(entry.source_unit_id)?;
+            let id = SourceId::new(entry.source_id)?;
             let descriptor = registry.find(&id).unwrap_or_else(|| {
-                panic!("{} descriptor must be registered", entry.source_unit_id)
+                panic!("{} descriptor must be registered", entry.source_id)
             });
-            assert_eq!(descriptor.id, entry.source_unit_id);
+            assert_eq!(descriptor.id, entry.source_id);
 
             if matches!(
                 entry.coverage,
@@ -714,7 +714,7 @@ mod coverage_matrix {
                 assert!(
                     find_parser_factory(&id).is_some(),
                     "{} must have a parser factory for {:?} coverage",
-                    entry.source_unit_id,
+                    entry.source_id,
                     entry.coverage
                 );
             }
@@ -723,7 +723,7 @@ mod coverage_matrix {
                 assert!(
                     find_parser_factory(&id).is_none(),
                     "{} monitor smoke entry must remain parserless",
-                    entry.source_unit_id
+                    entry.source_id
                 );
             }
 
@@ -731,19 +731,19 @@ mod coverage_matrix {
                 assert!(
                     find_parser_factory(&id).is_none(),
                     "{} noop smoke entry must remain parserless",
-                    entry.source_unit_id
+                    entry.source_id
                 );
                 assert!(
                     descriptor.event_types.is_empty(),
                     "{} noop smoke entry must remain eventless",
-                    entry.source_unit_id
+                    entry.source_id
                 );
             }
 
             assert!(
                 entry.blocker_issue.is_none(),
                 "{} smoke entry has obsolete blocker metadata",
-                entry.source_unit_id
+                entry.source_id
             );
         }
 
@@ -751,8 +751,8 @@ mod coverage_matrix {
     }
 
     #[sinex_test]
-    async fn source_unit_host_drain_obligation_covers_shared_controller() -> TestResult<()> {
-        drain::run("source-unit host.shared-drain", AdapterKind::StaticFile, b"")
+    async fn source_driver_host_drain_obligation_covers_shared_controller() -> TestResult<()> {
+        drain::run("source host.shared-drain", AdapterKind::StaticFile, b"")
             .await
             .map_err(SinexError::processing)?;
 

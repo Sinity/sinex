@@ -351,12 +351,12 @@ async fn main() -> color_eyre::Result<()> {
         // `sinexctl state` snapshot/restore commands are local filesystem,
         // database, and service operations that do not use gateway RPC.
         Commands::State { cmd } => cmd.execute(format)?,
-        // `sinexctl verify --source-units` (alone) is a static descriptor /
+        // `sinexctl verify --sources` (alone) is a static descriptor /
         // payload coverage check that does not need a gateway connection
         // or auth token. Short-circuit so it can be run in CI without
         // requiring a live deployment.
-        Commands::Verify(cmd) if cmd.is_source_units_only() => {
-            cmd.execute_source_units_only(format)?;
+        Commands::Verify(cmd) if cmd.is_source_contracts_only() => {
+            cmd.execute_source_contracts_only(format)?;
         }
         other => {
             let client_config = ClientConfig::from(&config);

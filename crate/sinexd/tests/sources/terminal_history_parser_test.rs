@@ -1,18 +1,18 @@
 //! Terminal history parser privacy-boundary regression tests.
 //!
-//! Source-unit parsers preserve interpreted payload fields. DB-backed
+//! Source parsers preserve interpreted payload fields. DB-backed
 //! admission policy owns redaction, hashing, encryption, and suppression.
 
 use camino::Utf8PathBuf;
 use sinex_primitives::{
     Uuid,
     ids::Id,
-    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
+    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceId},
     privacy::ProcessingContext,
     temporal::Timestamp,
 };
 use sinexd::node_sdk::parser::MaterialParser;
-use sinexd::sources::source_units::terminal::{
+use sinexd::sources::source_contracts::terminal::{
     atuin_history::AtuinHistoryParser, bash_history::BashHistoryParser,
     fish_history::FishHistoryParser, text_history::TextHistoryParser,
     zsh_history::ZshHistoryParser,
@@ -25,9 +25,9 @@ const SECRET_COMMAND: &str = concat!(
 );
 const SECRET_CWD: &str = "/home/sinity/project/top-secret-client";
 
-fn test_ctx(source_unit_id: &'static str) -> ParserContext {
+fn test_ctx(source_id: &'static str) -> ParserContext {
     ParserContext {
-        source_unit_id: SourceUnitId::from_static(source_unit_id),
+        source_id: SourceId::from_static(source_id),
         source_material_id: Id::new(),
         record_anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
         operation_id: Uuid::new_v4(),

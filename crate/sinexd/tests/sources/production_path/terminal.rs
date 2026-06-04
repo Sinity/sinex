@@ -1,6 +1,6 @@
-//! Wave B production-path obligation tests for terminal source units.
+//! Wave B production-path obligation tests for terminal source contracts.
 //!
-//! Source units covered:
+//! Source contracts covered:
 //! - `terminal.atuin-history`  (`SqliteRowAdapter` + `AtuinHistoryParser`)
 //! - `terminal.bash-history`   (`AppendOnlyFileAdapter` + `BashHistoryParser`)
 //! - `terminal.zsh-history`    (`AppendOnlyFileAdapter` + `ZshHistoryParser`)

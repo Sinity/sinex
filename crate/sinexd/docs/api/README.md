@@ -11,7 +11,7 @@ it reaches internal services.
 ## Architectural Patterns
 
 - **Zero-Trust Boundary**: The only component exposed to untrusted clients. The
-  event engine, source units, and automata operate within the trusted runtime.
+  event engine, source contracts, and automata operate within the trusted runtime.
 - **Failure Isolation**: API failure should not stop source collection or event
   persistence inside `sinexd`.
 - **Protocol Stack**: Supports JSON-RPC (CLI) and Length-prefixed JSON (browser extensions) via a unified dispatch layer.

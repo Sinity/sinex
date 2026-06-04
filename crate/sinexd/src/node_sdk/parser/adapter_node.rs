@@ -1,24 +1,24 @@
 //! Generic [`AdapterBackedIngestor`] — wires an [`InputShapeAdapter`] to a
-//! [`MaterialParser`] as a full [`SourceUnit`].
+//! [`MaterialParser`] as a full [`SourceDriver`].
 //!
 //! # Purpose
 //!
-//! Wave-B ingestor folds need one line per source unit:
+//! Wave-B ingestor folds need one line per source:
 //!
 //! ```rust,ignore
 //! register_adapter_ingestor!(
-//!     source_unit_id: "terminal.atuin-history",
+//!     source_id: "terminal.atuin-history",
 //!     adapter:        SqliteRowAdapter,
 //!     parser:         AtuinHistoryRecord,
 //! );
 //! ```
 //!
-//! `AdapterBackedIngestor<A, P>` is the `SourceUnit` implementation that
+//! `AdapterBackedIngestor<A, P>` is the `SourceDriver` implementation that
 //! backs every such registration. It handles:
 //!
 //! - Snapshot and historical scans (drive adapter stream → parse → emit).
 //! - Continuous mode for append-only adapters (tail loop with shutdown signal).
-//! - Cursor persistence via the standard `SourceUnit` state mechanism.
+//! - Cursor persistence via the standard `SourceDriver` state mechanism.
 //! - Conversion of `ParsedEventIntent` → `Event<JsonValue>` → `emit()`.
 //! - Long-lived source-material lifecycle: records without their own material
 //!   provenance are appended to the same [`AppendStreamAcquirer`], which
@@ -76,7 +76,7 @@
 //! Adapters that do not natively stream (e.g. `SqliteRowAdapter`,
 //! `StaticFileAdapter`) are polled on a configurable interval (default 30 s).
 //! Adapters that natively support streaming should implement their own
-//! `SourceUnit` instead.
+//! `SourceDriver` instead.
 
 use std::collections::{BTreeMap, HashMap};
 use std::marker::PhantomData;
@@ -103,7 +103,7 @@ use crate::node_sdk::NodeResult;
 use crate::node_sdk::acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy,
 };
-use crate::node_sdk::ingestor_node::SourceUnit;
+use crate::node_sdk::ingestor_node::SourceDriver;
 use crate::node_sdk::parser::adapters::SqliteSnapshotLane;
 use crate::node_sdk::parser::{
     BindingConfig, DriftEvent, InputShapeAdapter, InputShapeAdapterExt, MaterialParser,
@@ -175,14 +175,14 @@ pub struct AdapterNodeConfig {
     pub private_mode_state_dir: Option<PathBuf>,
 
     /// Optional source-class override used when matching private-mode scope.
-    /// Defaults to the prefix before the first `.` in the source-unit id.
+    /// Defaults to the prefix before the first `.` in the source id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub private_mode_source_class: Option<String>,
 
     /// Whether unreadable or malformed private-mode state should suppress
     /// acquisition. Defaults to fail-closed when `private_mode_state_dir` is set.
     ///
-    /// Lower-sensitivity source units may set this to `false` deliberately, but
+    /// Lower-sensitivity source contracts may set this to `false` deliberately, but
     /// the unavailable-state caveat still reaches binding-aware parsers through
     /// `private_mode_state_unavailable`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -216,7 +216,7 @@ impl AdapterNodeConfig {
     /// parser [`BindingConfig`].
     pub fn to_binding_config_for_source(
         &self,
-        source_unit_id: &str,
+        source_id: &str,
     ) -> Result<BindingConfig, crate::node_sdk::SinexError> {
         let mut bc = self.to_binding_config();
         let Some(state_dir) = &self.private_mode_state_dir else {
@@ -227,10 +227,10 @@ impl AdapterNodeConfig {
             Ok(state) => state,
             Err(error) => {
                 tracing::warn!(
-                    source_unit_id,
+                    source_id,
                     state_dir = %state_dir.display(),
                     error = %error,
-                    "private-mode state unavailable for adapter-backed source unit"
+                    "private-mode state unavailable for adapter-backed source"
                 );
                 bc = bc.with_flag("private_mode_state_unavailable", true);
                 if self.private_mode_fail_closed.unwrap_or(true) {
@@ -243,16 +243,16 @@ impl AdapterNodeConfig {
             .private_mode_source_class
             .as_deref()
             .unwrap_or_else(|| {
-                source_unit_id
+                source_id
                     .split_once('.')
-                    .map_or(source_unit_id, |(class, _)| class)
+                    .map_or(source_id, |(class, _)| class)
             });
-        let source_unit = source_unit_id;
+        let source = source_id;
         let scoped = state.affected_source_classes.is_empty()
             || state
                 .affected_source_classes
                 .iter()
-                .any(|class| class == source_class || class == source_unit);
+                .any(|class| class == source_class || class == source);
         bc = bc.with_flag(
             "private_mode_active",
             state.is_active_at(sinex_primitives::temporal::Timestamp::now()) && scoped,
@@ -354,7 +354,7 @@ where
 ///
 /// The adapter and parser are constructed via `Default`, then configured during
 /// `initialize`. The node config is deserialized into
-/// `AdapterNodeConfig<A::Config>`; the source-unit id is hard-coded at
+/// `AdapterNodeConfig<A::Config>`; the source id is hard-coded at
 /// registration time via the `register_adapter_ingestor!` macro.
 pub struct AdapterBackedIngestor<A, P>
 where
@@ -363,8 +363,8 @@ where
     A::Config: Clone + Serialize + DeserializeOwned,
     A::Cursor: Clone + Serialize + DeserializeOwned,
 {
-    /// Human-readable source-unit id, baked in at registration time.
-    source_unit_id: &'static str,
+    /// Human-readable source id, baked in at registration time.
+    source_id: &'static str,
 
     /// The adapter instance. Constructed in `Default`, configured in
     /// `initialize`.
@@ -412,7 +412,7 @@ where
     snapshot_shutdown: Option<tokio::sync::watch::Sender<bool>>,
 
     /// NATS control listener that mirrors private-mode broadcasts into the
-    /// configured local state directory for this adapter-backed source unit.
+    /// configured local state directory for this adapter-backed source.
     private_mode_control_task: Option<tokio::task::JoinHandle<()>>,
 
     /// Sleep duration between continuous-mode adapter drains.
@@ -441,15 +441,15 @@ where
     A::Config: Clone + Serialize + DeserializeOwned,
     A::Cursor: Clone + Serialize + DeserializeOwned,
 {
-    /// Create a new adapter-backed ingestor for the given source-unit id.
+    /// Create a new adapter-backed ingestor for the given source id.
     ///
     /// Called by `register_adapter_ingestor!` via `Default::default()` and the
     /// `new` constructor. Callers should normally use the macro, not this
     /// constructor directly.
     #[must_use]
-    pub fn new(source_unit_id: &'static str) -> Self {
+    pub fn new(source_id: &'static str) -> Self {
         Self {
-            source_unit_id,
+            source_id,
             adapter: A::default(),
             parser: P::default(),
             config: None,
@@ -509,17 +509,17 @@ where
         &self,
         config: &A::Config,
         state: &mut AdapterNodeState<A::Cursor>,
-        source_unit_id: &sinex_primitives::parser::SourceUnitId,
+        source_id: &sinex_primitives::parser::SourceId,
     ) {
         match self.adapter.input_fingerprint(config) {
             Ok(Some(current)) => {
                 if let Some(previous) = &state.last_input_fingerprint
                     && let Some(mut drift) =
-                        SourceRecordFingerprint::diff(source_unit_id.clone(), previous, &current)
+                        SourceRecordFingerprint::diff(source_id.clone(), previous, &current)
                 {
                     drift.required_input_keys = self.parser.required_input_keys();
                     warn!(
-                        source_unit = self.source_unit_id,
+                        source = self.source_id,
                         format = drift.format.as_str(),
                         previous_hash = drift.previous_hash.as_str(),
                         current_hash = drift.current_hash.as_str(),
@@ -536,7 +536,7 @@ where
             Ok(None) => {}
             Err(e) => {
                 warn!(
-                    source_unit = self.source_unit_id,
+                    source = self.source_id,
                     adapter_kind = A::KIND.as_str(),
                     error = %e,
                     "input fingerprint failed; continuing without shape drift check"
@@ -548,13 +548,13 @@ where
     /// Refresh runtime-derived binding flags before an acquisition attempt.
     ///
     /// Static flags remain stable, but fields derived from the private-mode
-    /// state file must be re-read so live source-unit poll loops can react
+    /// state file must be re-read so live source poll loops can react
     /// to operator toggles without waiting for process restart.
     fn refresh_binding_config(&mut self) -> NodeResult<()> {
         let Some(config) = &self.node_config else {
             return Ok(());
         };
-        self.binding_config = config.to_binding_config_for_source(self.source_unit_id)?;
+        self.binding_config = config.to_binding_config_for_source(self.source_id)?;
         Ok(())
     }
 
@@ -618,14 +618,14 @@ where
         // O(rotation_count) across drain cycles rather than O(poll_count).
         let record_bytes = record.bytes.as_slice();
         let anchor_payload_hash = blake3::hash(record_bytes).as_bytes().to_owned();
-        let source_unit_id_for_anchor = self.source_unit_id;
+        let source_id_for_anchor = self.source_id;
         let anchor = self
             .ensure_stream_acquirer()?
-            .append_with_anchor(record_bytes, source_unit_id_for_anchor)
+            .append_with_anchor(record_bytes, source_id_for_anchor)
             .await
             .map_err(|error| {
                 crate::node_sdk::SinexError::processing("append_with_anchor failed")
-                    .with_context("source_unit_id", self.source_unit_id)
+                    .with_context("source_id", self.source_id)
                     .with_std_error(&error)
             })?;
 
@@ -659,9 +659,9 @@ where
         self.refresh_binding_config()?;
         if self.binding_config.is_truthy("private_mode_active") {
             info!(
-                source_unit = self.source_unit_id,
+                source = self.source_id,
                 adapter_kind = A::KIND.as_str(),
-                "private mode active for source unit; skipping adapter acquisition"
+                "private mode active for source; skipping adapter acquisition"
             );
             return Ok(0);
         }
@@ -687,15 +687,15 @@ where
             .event_emitter()
             .clone();
 
-        let source_unit_id = sinex_primitives::parser::SourceUnitId::new(self.source_unit_id)
+        let source_id = sinex_primitives::parser::SourceId::new(self.source_id)
             .map_err(|e| {
                 crate::node_sdk::SinexError::validation(
-                    "invalid source_unit_id in AdapterBackedIngestor",
+                    "invalid source_id in AdapterBackedIngestor",
                 )
                 .with_std_error(&e)
             })?;
 
-        self.observe_input_fingerprint(config, state, &source_unit_id);
+        self.observe_input_fingerprint(config, state, &source_id);
 
         let operation_id = Uuid::now_v7();
         let job_id = Uuid::now_v7();
@@ -728,7 +728,7 @@ where
             Err(e) => {
                 return Err(
                     crate::node_sdk::SinexError::processing("adapter open failed")
-                        .with_context("source_unit_id", self.source_unit_id)
+                        .with_context("source_id", self.source_id)
                         .with_context("adapter_kind", A::KIND.as_str())
                         .with_context("error", e.to_string()),
                 );
@@ -741,7 +741,7 @@ where
             self.refresh_binding_config()?;
             if self.binding_config.is_truthy("private_mode_active") {
                 info!(
-                    source_unit = self.source_unit_id,
+                    source = self.source_id,
                     adapter_kind = A::KIND.as_str(),
                     emitted,
                     "private mode became active during adapter drain; stopping acquisition"
@@ -753,7 +753,7 @@ where
                 Ok(r) => r,
                 Err(e) => {
                     warn!(
-                        source_unit = self.source_unit_id,
+                        source = self.source_id,
                         error = %e,
                         "Adapter stream error — skipping record"
                     );
@@ -769,7 +769,7 @@ where
                 Ok(c) => Some(c),
                 Err(e) => {
                     warn!(
-                        source_unit = self.source_unit_id,
+                        source = self.source_id,
                         error = %e,
                         "cursor_after failed — checkpoint may regress"
                     );
@@ -781,7 +781,7 @@ where
                 Ok(materialized) => materialized,
                 Err(e) => {
                     warn!(
-                        source_unit = self.source_unit_id,
+                        source = self.source_id,
                         error = %e,
                         "record materialization failed — skipping record so material provenance can be retried"
                     );
@@ -795,7 +795,7 @@ where
             }
 
             let ctx = ParserContext {
-                source_unit_id: source_unit_id.clone(),
+                source_id: source_id.clone(),
                 source_material_id: material_id,
                 record_anchor: materialized.record.anchor.clone(),
                 operation_id,
@@ -812,7 +812,7 @@ where
                 Ok(v) => v,
                 Err(e) => {
                     warn!(
-                        source_unit = self.source_unit_id,
+                        source = self.source_id,
                         error = %e,
                         "parse_record error — skipping"
                     );
@@ -836,7 +836,7 @@ where
                     Ok(event) => {
                         if let Err(e) = event_emitter.emit(event).await {
                             warn!(
-                                source_unit = self.source_unit_id,
+                                source = self.source_id,
                                 error = %e,
                                 "emit failed — event dropped"
                             );
@@ -846,7 +846,7 @@ where
                     }
                     Err(e) => {
                         warn!(
-                            source_unit = self.source_unit_id,
+                            source = self.source_id,
                             error = %e,
                             "intent_to_event_with_anchor conversion failed — skipping"
                         );
@@ -861,7 +861,7 @@ where
 
         state.total_events_emitted += emitted;
         debug!(
-            source_unit = self.source_unit_id,
+            source = self.source_id,
             emitted,
             total = state.total_events_emitted,
             "drain_adapter complete"
@@ -899,17 +899,17 @@ where
     A::Cursor: Clone + Serialize + DeserializeOwned,
 {
     fn default() -> Self {
-        // Default::default() is required by SourceUnitRuntime<I>.
-        // The source_unit_id is a sentinel that the macro overrides via `new`.
+        // Default::default() is required by SourceDriverRuntime<I>.
+        // The source_id is a sentinel that the macro overrides via `new`.
         Self::new("__unset__")
     }
 }
 
 // =============================================================================
-// SourceUnit impl
+// SourceDriver impl
 // =============================================================================
 
-impl<A, P> SourceUnit for AdapterBackedIngestor<A, P>
+impl<A, P> SourceDriver for AdapterBackedIngestor<A, P>
 where
     A: InputShapeAdapter + Default + Send + Sync + 'static + InputShapeAdapterExt,
     P: MaterialParser + Default + Send + Sync + 'static,
@@ -920,7 +920,7 @@ where
     type State = AdapterNodeState<A::Cursor>;
 
     fn name(&self) -> &str {
-        self.source_unit_id
+        self.source_id
     }
 
     fn capabilities(&self) -> NodeCapabilities {
@@ -947,18 +947,18 @@ where
         let acq = runtime
             .acquisition_manager(
                 crate::node_sdk::acquisition_manager::RotationPolicy::default(),
-                self.source_unit_id,
+                self.source_id,
             )
             .map_err(|e| {
                 crate::node_sdk::SinexError::lifecycle(
                     "AdapterBackedIngestor: failed to build AcquisitionManager",
                 )
-                .with_context("source_unit_id", self.source_unit_id)
+                .with_context("source_id", self.source_id)
                 .with_std_error(&e)
             })?;
 
         self.acquisition_manager = Some(Arc::new(acq));
-        self.binding_config = config.to_binding_config_for_source(self.source_unit_id)?;
+        self.binding_config = config.to_binding_config_for_source(self.source_id)?;
         self.poll_interval = config.continuous_poll_interval()?;
         self.node_config = Some(config.clone());
         #[cfg(feature = "messaging")]
@@ -968,7 +968,7 @@ where
             self.private_mode_control_task = Some(spawn_private_mode_control_listener(
                 nats_client,
                 state_dir,
-                self.source_unit_id,
+                self.source_id,
             ));
         }
 
@@ -982,7 +982,7 @@ where
             crate::node_sdk::SinexError::configuration(
                 "AdapterBackedIngestor: failed to deserialize adapter config",
             )
-            .with_context("source_unit_id", self.source_unit_id)
+            .with_context("source_id", self.source_id)
             .with_std_error(&e)
         })?;
         // Opt-in parallel snapshot lane.  The adapter declares whether it
@@ -991,7 +991,7 @@ where
         // timer.  Per-record drain (above) is untouched.
         if let Some(spec) = self
             .adapter
-            .snapshot_lane(self.source_unit_id, &adapter_config)
+            .snapshot_lane(self.source_id, &adapter_config)
         {
             #[allow(clippy::expect_used)]
             let manager = Arc::clone(
@@ -1001,12 +1001,12 @@ where
             );
             let (tx, rx) = tokio::sync::watch::channel(false);
             let lane = SqliteSnapshotLane::new(spec, manager);
-            let unit_id = self.source_unit_id;
+            let unit_id = self.source_id;
             let handle = tokio::spawn(async move {
                 let result = lane.run(rx).await;
                 if let Err(ref e) = result {
                     warn!(
-                        source_unit = unit_id,
+                        source = unit_id,
                         error = %e,
                         "snapshot lane exited with error",
                     );
@@ -1021,7 +1021,7 @@ where
         self.runtime = Some(runtime.clone());
 
         info!(
-            source_unit = self.source_unit_id,
+            source = self.source_id,
             adapter_kind = A::KIND.as_str(),
             snapshot_lane = self.snapshot_task.is_some(),
             "AdapterBackedIngestor initialized"
@@ -1046,7 +1046,7 @@ where
             final_checkpoint: checkpoint,
             time_range: None,
             node_stats: HashMap::from([("emitted".to_string(), emitted)]),
-            successful_targets: vec![self.source_unit_id.to_string()],
+            successful_targets: vec![self.source_id.to_string()],
             failed_targets: Vec::new(),
             warnings: Vec::new(),
         })
@@ -1073,7 +1073,7 @@ where
             final_checkpoint: checkpoint,
             time_range: None,
             node_stats: HashMap::from([("emitted".to_string(), emitted)]),
-            successful_targets: vec![self.source_unit_id.to_string()],
+            successful_targets: vec![self.source_id.to_string()],
             failed_targets: Vec::new(),
             warnings: Vec::new(),
         })
@@ -1091,7 +1091,7 @@ where
         let poll_interval = self.poll_interval;
 
         info!(
-            source_unit = self.source_unit_id,
+            source = self.source_id,
             poll_interval_s = poll_interval.as_secs(),
             "AdapterBackedIngestor entering continuous poll loop"
         );
@@ -1100,7 +1100,7 @@ where
             // Check for shutdown before polling.
             if *shutdown_rx.borrow() {
                 info!(
-                    source_unit = self.source_unit_id,
+                    source = self.source_id,
                     "Drain signal received; exiting continuous loop"
                 );
                 break;
@@ -1111,7 +1111,7 @@ where
                 Ok(n) => total_emitted += n,
                 Err(e) => {
                     warn!(
-                        source_unit = self.source_unit_id,
+                        source = self.source_id,
                         error = %e,
                         "drain_adapter error in continuous mode — retrying after interval"
                     );
@@ -1122,7 +1122,7 @@ where
             tokio::select! {
                 result = shutdown_rx.changed() => {
                     if result.is_err() || *shutdown_rx.borrow() {
-                        info!(source_unit = self.source_unit_id, "Drain signal received; exiting continuous loop");
+                        info!(source = self.source_id, "Drain signal received; exiting continuous loop");
                         break;
                     }
                 }
@@ -1138,7 +1138,7 @@ where
             && let Err(e) = acquirer.finalize("continuous-mode-shutdown").await
         {
             warn!(
-                source_unit = self.source_unit_id,
+                source = self.source_id,
                 error = %e,
                 "Failed to finalize stream material on shutdown — in-flight material may be incomplete"
             );
@@ -1155,12 +1155,12 @@ where
             match tokio::time::timeout(Duration::from_secs(5), task).await {
                 Ok(Ok(_)) => {}
                 Ok(Err(e)) => warn!(
-                    source_unit = self.source_unit_id,
+                    source = self.source_id,
                     error = %e,
                     "snapshot lane task returned error on shutdown",
                 ),
                 Err(_) => warn!(
-                    source_unit = self.source_unit_id,
+                    source = self.source_id,
                     "snapshot lane did not exit within timeout; aborting",
                 ),
             }
@@ -1174,7 +1174,7 @@ where
             final_checkpoint: checkpoint,
             time_range: None,
             node_stats: HashMap::from([("emitted".to_string(), total_emitted)]),
-            successful_targets: vec![self.source_unit_id.to_string()],
+            successful_targets: vec![self.source_id.to_string()],
             failed_targets: Vec::new(),
             warnings: Vec::new(),
         })
@@ -1202,7 +1202,7 @@ struct PrivateModeControlUpdate {
 fn spawn_private_mode_control_listener(
     client: async_nats::Client,
     state_dir: PathBuf,
-    source_unit_id: &'static str,
+    source_id: &'static str,
 ) -> tokio::task::JoinHandle<()> {
     let subject =
         sinex_primitives::environment::environment().nats_subject(PRIVATE_MODE_CONTROL_SUBJECT);
@@ -1212,7 +1212,7 @@ fn spawn_private_mode_control_listener(
             Ok(subscription) => subscription,
             Err(error) => {
                 warn!(
-                    source_unit = source_unit_id,
+                    source = source_id,
                     subject = %subject,
                     error = %error,
                     "failed to subscribe to private-mode control subject"
@@ -1222,7 +1222,7 @@ fn spawn_private_mode_control_listener(
         };
 
         info!(
-            source_unit = source_unit_id,
+            source = source_id,
             subject = %subject,
             state_dir = %state_dir.display(),
             "private-mode control listener started"
@@ -1233,14 +1233,14 @@ fn spawn_private_mode_control_listener(
                 Ok(update) => {
                     if let Err(error) = save_private_mode_state(&state_dir, &update.state) {
                         warn!(
-                            source_unit = source_unit_id,
+                            source = source_id,
                             subject = %subject,
                             error = %error,
                             "failed to persist private-mode control update"
                         );
                     } else {
                         debug!(
-                            source_unit = source_unit_id,
+                            source = source_id,
                             subject = %subject,
                             enabled = update.state.enabled,
                             "persisted private-mode control update"
@@ -1249,7 +1249,7 @@ fn spawn_private_mode_control_listener(
                 }
                 Err(error) => {
                     warn!(
-                        source_unit = source_unit_id,
+                        source = source_id,
                         subject = %subject,
                         error = %error,
                         "failed to parse private-mode control update"
@@ -1259,7 +1259,7 @@ fn spawn_private_mode_control_listener(
         }
 
         warn!(
-            source_unit = source_unit_id,
+            source = source_id,
             subject = %subject,
             "private-mode control subscription closed"
         );
@@ -1406,7 +1406,7 @@ mod tests {
     use futures::stream::{self, BoxStream};
     use sinex_primitives::domain::{EventSource, EventType};
     use sinex_primitives::events::Event;
-    use sinex_primitives::parser::{MaterialAnchor, ParserId, ParserManifest, SourceUnitId};
+    use sinex_primitives::parser::{MaterialAnchor, ParserId, ParserManifest, SourceId};
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::privacy::{
         RuntimePrivateModeState, load_private_mode_state, private_mode_state_path,
@@ -1491,14 +1491,13 @@ mod tests {
                 parser_id: ParserId::from_static("test-parser"),
                 parser_version: "1.0.0".to_string(),
                 accepted_input_shapes: vec![InputShapeKind::AppendOnlyFile],
-                source_unit_id: SourceUnitId::from_static("desktop.clipboard"),
+                source_id: SourceId::from_static("desktop.clipboard"),
                 declared_event_types: vec![(
                     EventSource::from_static("test"),
                     EventType::from_static("test.event"),
                 )],
                 privacy_contexts: vec![ProcessingContext::Metadata],
                 sensitivity_hints: Vec::new(),
-                proof_obligations: Vec::new(),
                 description: String::new(),
             }
         }
@@ -1618,14 +1617,13 @@ mod tests {
                 parser_id: ParserId::from_static("emitting-parser"),
                 parser_version: "1.0.0".to_string(),
                 accepted_input_shapes: vec![InputShapeKind::AppendOnlyFile],
-                source_unit_id: SourceUnitId::from_static("desktop.clipboard"),
+                source_id: SourceId::from_static("desktop.clipboard"),
                 declared_event_types: vec![(
                     EventSource::from_static("test"),
                     EventType::from_static("test.event"),
                 )],
                 privacy_contexts: vec![ProcessingContext::Metadata],
                 sensitivity_hints: Vec::new(),
-                proof_obligations: Vec::new(),
                 description: String::new(),
             }
         }
@@ -1637,7 +1635,7 @@ mod tests {
         ) -> ParserResult<Vec<ParsedEventIntent>> {
             Ok(vec![
                 ParsedEventIntent::builder()
-                    .source_unit_id(ctx.source_unit_id.clone())
+                    .source_id(ctx.source_id.clone())
                     .parser_id(ParserId::from_static("emitting-parser"))
                     .parser_version("1.0.0")
                     .event_type(EventType::from_static("test.event"))
@@ -2014,7 +2012,7 @@ mod tests {
     #[sinex_test]
     async fn adapter_node_state_records_bounded_input_drift_history()
     -> xtask::sandbox::TestResult<()> {
-        let source_unit_id = SourceUnitId::from_static("desktop.clipboard");
+        let source_id = SourceId::from_static("desktop.clipboard");
         let mut ingestor =
             AdapterBackedIngestor::<FingerprintAdapter, TestParser>::new("desktop.clipboard");
         let mut state = AdapterNodeState::<u64>::default();
@@ -2022,17 +2020,17 @@ mod tests {
         ingestor.adapter.fingerprint = Some(SourceRecordFingerprint::from_json(
             &serde_json::json!({"count": 1}),
         ));
-        ingestor.observe_input_fingerprint(&(), &mut state, &source_unit_id);
+        ingestor.observe_input_fingerprint(&(), &mut state, &source_id);
         assert!(state.recent_input_drifts.is_empty());
 
         ingestor.adapter.fingerprint = Some(SourceRecordFingerprint::from_json(
             &serde_json::json!({"count": "1", "enabled": true}),
         ));
-        ingestor.observe_input_fingerprint(&(), &mut state, &source_unit_id);
+        ingestor.observe_input_fingerprint(&(), &mut state, &source_id);
 
         assert_eq!(state.recent_input_drifts.len(), 1);
         let drift = &state.recent_input_drifts[0];
-        assert_eq!(drift.source_unit_id, source_unit_id);
+        assert_eq!(drift.source_id, source_id);
         assert_eq!(drift.added_keys, vec!["/enabled".to_string()]);
         assert_eq!(drift.required_input_keys, vec!["/message".to_string()]);
         assert_eq!(
@@ -2046,7 +2044,7 @@ mod tests {
 
         for idx in 0..(MAX_RECENT_INPUT_DRIFTS + 3) {
             let drift = SourceRecordFingerprint::diff(
-                source_unit_id.clone(),
+                source_id.clone(),
                 &SourceRecordFingerprint::from_json(&serde_json::json!({ "idx": idx })),
                 &SourceRecordFingerprint::from_json(&serde_json::json!({ "idx": idx, "x": true })),
             )
@@ -2061,11 +2059,11 @@ mod tests {
     #[sinex_test]
     async fn adapter_node_state_summarizes_latest_input_drift_caveats()
     -> xtask::sandbox::TestResult<()> {
-        let source_unit_id = SourceUnitId::from_static("desktop.clipboard");
+        let source_id = SourceId::from_static("desktop.clipboard");
         let mut state = AdapterNodeState::<u64>::default();
 
         let additive = SourceRecordFingerprint::diff(
-            source_unit_id.clone(),
+            source_id.clone(),
             &SourceRecordFingerprint::from_json(&serde_json::json!({ "message": "hello" })),
             &SourceRecordFingerprint::from_json(&serde_json::json!({
                 "message": "hello",
@@ -2080,7 +2078,7 @@ mod tests {
         assert_eq!(additive_caveats[0].code, caveat_codes::SOURCE_SHAPE_CHANGED);
 
         let mut degraded = SourceRecordFingerprint::diff(
-            source_unit_id,
+            source_id,
             &SourceRecordFingerprint::from_json(&serde_json::json!({
                 "message": "hello",
                 "count": 1

@@ -6,7 +6,7 @@
 //!
 //! Each manifest declares what the entity IS — its type, version, parent,
 //! and the event types it consumes and emits. This is the runtime counterpart
-//! to the compile-time `register_source_unit!` inventory.
+//! to the compile-time `register_source_contract!` inventory.
 
 use crate::TableDef;
 use crate::primitives::Timestamp;

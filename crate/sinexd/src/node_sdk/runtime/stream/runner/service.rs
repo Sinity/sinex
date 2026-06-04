@@ -103,7 +103,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         );
         let heartbeat_identity = serde_json::json!({
             "node_name": runtime.node_name(),
-            "source_unit_id": runtime.source_unit_id(),
+            "source_id": runtime.source_id(),
             "runner_pack": runtime.runner_pack(),
             "service_instance": runtime.service_info().service_name(),
             "checkpoint_identity": runtime.checkpoint_identity(),

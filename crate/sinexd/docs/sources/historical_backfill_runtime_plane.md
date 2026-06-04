@@ -4,7 +4,7 @@ Status: current deployed node-runtime proof, not the final architecture for all
 future source processing. New source work should also read
 [`staged_source_parser_substrate.md`](staged_source_parser_substrate.md). Issue
 [#1054](https://github.com/Sinity/sinex/issues/1054) decides whether staged
-local materials keep using the source-unit runtime -> NATS -> event-engine path
+local materials keep using the source runtime -> NATS -> event-engine path
 or can run closer to persistence through a shared parser substrate.
 
 Historical backfill is a node/runtime operation. It is not a direct database
@@ -20,7 +20,7 @@ The expected path is:
 2. The node reads external source records from its normal source adapter.
 3. Each interpreted record is appended to SDK-managed source material.
 4. The node emits material-provenance events through its `EventEmitter`.
-5. The source-unit runtime batches and publishes those events to NATS.
+5. The source runtime batches and publishes those events to NATS.
 6. `sinexd::event_engine` consumes the batch and persists rows into
    `core.events`.
 7. Queries observe the events with non-null `source_material_id` and valid
@@ -28,7 +28,7 @@ The expected path is:
 
 Tests that call `scan_historical` directly are useful for node logic and
 checkpoint edge cases, but they are not sufficient proof of historical
-backfill. The runtime-plane proof must include the source-unit runtime, NATS,
+backfill. The runtime-plane proof must include the source runtime, NATS,
 the event engine, and database assertions.
 
 ## Current Proven Sources
@@ -46,7 +46,7 @@ The checked-in runtime proofs cover:
   `History` SQLite, and browser exports in `json`, `jsonl`, `ndjson`, and
   `csv` formats
 
-These sources all flow through `SourceUnitRuntime<_>` in tests and
+These sources all flow through `SourceDriverRuntime<_>` in tests and
 assert persisted `core.events` rows with material provenance.
 
 The browser runtime proof intentionally keeps the established

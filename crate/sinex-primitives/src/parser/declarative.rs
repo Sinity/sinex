@@ -64,7 +64,7 @@ use crate::Timestamp;
 use crate::domain::{EventSource, EventType};
 use crate::parser::{
     BindingConfig, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, SourceRecord,
-    SourceUnitId, TimingConfidence, TimingEvidence,
+    SourceId, TimingConfidence, TimingEvidence,
 };
 use crate::privacy::{ProcessingContext, SensitivityHint};
 use serde::{Deserialize, Serialize};
@@ -84,7 +84,7 @@ use crate::parser::ParserError;
 pub struct DeclarativeParserSpec {
     pub parser_id: ParserId,
     pub parser_version: String,
-    pub source_unit_id: SourceUnitId,
+    pub source_id: SourceId,
     pub event_source: EventSource,
     /// Default event type — used when no discriminator matches (or no discriminator is present).
     pub event_type: EventType,
@@ -623,14 +623,14 @@ fn evaluate_inner(
         None
     } else {
         Some(OccurrenceKey {
-            source_unit_id: ctx.source_unit_id.clone(),
+            source_id: ctx.source_id.clone(),
             fields: occurrence_fields,
         })
     };
 
     Ok(vec![
         ParsedEventIntent::builder()
-            .source_unit_id(ctx.source_unit_id.clone())
+            .source_id(ctx.source_id.clone())
             .parser_id(spec.parser_id.clone())
             .parser_version(spec.parser_version.clone())
             .event_type(resolved_event_type)
@@ -806,7 +806,7 @@ mod tests {
 
     fn test_ctx() -> ParserContext {
         ParserContext {
-            source_unit_id: SourceUnitId::from_static("test.unit"),
+            source_id: SourceId::from_static("test.unit"),
             source_material_id: Id::from_uuid(uuid::Uuid::nil()),
             record_anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
             operation_id: uuid::Uuid::nil(),
@@ -834,7 +834,7 @@ mod tests {
         DeclarativeParserSpec {
             parser_id: ParserId::from_static("test-parser"),
             parser_version: "1.0.0".into(),
-            source_unit_id: SourceUnitId::from_static("test.unit"),
+            source_id: SourceId::from_static("test.unit"),
             event_source: EventSource::from_static("test"),
             event_type: EventType::from_static("test.event"),
             default_privacy_context: ProcessingContext::Metadata,

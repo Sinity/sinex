@@ -75,11 +75,11 @@ if result.suppressed { /* drop the field */ }
 // Strategies: Redact, Encrypt (XChaCha20-Poly1305), Hash (BLAKE3 MAC), Suppress
 ```
 
-**Coverage:** Source units are expected to call `privacy::engine()` on
-sensitive fields. Path-bearing source units use `redact_metadata()` with
+**Coverage:** Source contracts are expected to call `privacy::engine()` on
+sensitive fields. Path-bearing source contracts use `redact_metadata()` with
 `ProcessingContext::Metadata`; check the concrete implementation under
-`crate/sinexd/src/sources/source_units/` before making a coverage claim.
-The old per-domain ingestor crate paths (and the `sinex-source-unit` crate)
+`crate/sinexd/src/sources/source_contracts/` before making a coverage claim.
+The old per-domain ingestor crate paths (and the `sinex-source` crate)
 no longer exist after the Wave-B fold.
 
 **Open privacy question:** The `Metadata` context only fires the home-prefix collapse rule.

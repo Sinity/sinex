@@ -1,6 +1,6 @@
-//! Lifecycle-hook runner for monitor source units.
+//! Lifecycle-hook runner for monitor source contracts.
 //!
-//! Monitor source units are fire-once or periodic emitters that have no adapter
+//! Monitor source contracts are fire-once or periodic emitters that have no adapter
 //! input — no file to tail, no socket to read. They emit a small fixed set of
 //! events at defined points in the node lifecycle: once at boot, once per
 //! interval, or once on clean shutdown.
@@ -8,7 +8,7 @@
 //! # Design
 //!
 //! A monitor unit is registered via [`register_monitor_unit!`], which inserts a
-//! [`NodeFactoryEntry`] backed by [`run_monitor_unit_delegated`]. The runner:
+//! [`SourceFactoryEntry`] backed by [`run_monitor_unit_delegated`]. The runner:
 //!
 //! 1. Opens a synthetic source material via `AcquisitionManager::begin_material`
 //!    (satisfies the FK constraint — material content is the JSON of the emitted
@@ -24,13 +24,13 @@
 //!
 //! All emitted events use **material provenance** anchored to a synthetic
 //! material opened per firing. This satisfies the FK constraint on `core.events`.
-//! The material's `source_identifier` is the source-unit ID; its content is the
+//! The material's `source_identifier` is the source ID; its content is the
 //! serialized JSON of the emitted events.
 //!
-//! # Relationship to `register_source_unit!`
+//! # Relationship to `register_source_contract!`
 //!
-//! `register_monitor_unit!` does NOT register the `SourceUnitDescriptor`. Call
-//! `register_source_unit!` from `sinex-primitives` separately. The two macros
+//! `register_monitor_unit!` does NOT register the `SourceContract`. Call
+//! `register_source_contract!` from `sinex-primitives` separately. The two macros
 //! compose — one owns the descriptor inventory, the other owns the factory.
 
 use futures::future::BoxFuture;
@@ -40,7 +40,7 @@ use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
 use crate::node_sdk::{
-    NodeResult, SourceUnit, SourceUnitRuntime,
+    NodeResult, SourceDriver, SourceDriverRuntime,
     acquisition_manager::RotationPolicy,
     node_cli::{NodeCli, NodeCliRunner},
     runtime::stream::{
@@ -61,7 +61,7 @@ use sinex_primitives::{
 /// Determines when a monitor unit's closure fires relative to the node lifecycle.
 #[derive(Debug, Clone)]
 pub enum MonitorPhase {
-    /// Fire once immediately at source-unit boot (inside `run_continuous`).
+    /// Fire once immediately at source boot (inside `run_continuous`).
     ///
     /// The runner fires the closure, emits events, then returns. The node exits
     /// cleanly. Use this for startup-annotation events.
@@ -114,15 +114,15 @@ pub struct MonitorState {}
 ///
 /// This is the single atomic unit of monitor work, shared across all phases.
 async fn fire_monitor_once(
-    source_unit_id: &'static str,
+    source_id: &'static str,
     emit_fn: MonitorEmitFn,
     runtime: &NodeRuntimeState,
 ) -> NodeResult<()> {
-    let acq = runtime.acquisition_manager(RotationPolicy::default(), source_unit_id)?;
+    let acq = runtime.acquisition_manager(RotationPolicy::default(), source_id)?;
 
     // Open a synthetic material. This registers a row in
     // `raw.source_material_registry` and satisfies the FK on `core.events`.
-    let mut mat_handle = acq.begin_material(source_unit_id).await?;
+    let mut mat_handle = acq.begin_material(source_id).await?;
     let material_id: Id<SourceMaterial> = Id::from_uuid(mat_handle.material_id);
 
     // Call the user async fn. It must return events anchored to `material_id`.
@@ -130,7 +130,7 @@ async fn fire_monitor_once(
 
     if events.is_empty() {
         debug!(
-            source_unit_id,
+            source_id,
             "monitor closure returned 0 events — finalizing with empty slice to prevent slice_arrival_timeout"
         );
         // Write an empty slice so the assembler sees at least one slice
@@ -154,7 +154,7 @@ async fn fire_monitor_once(
     }
 
     info!(
-        source_unit_id,
+        source_id,
         events = count,
         "monitor unit fired successfully",
     );
@@ -166,7 +166,7 @@ async fn fire_monitor_once(
 // =============================================================================
 
 async fn drive_monitor_phase(
-    source_unit_id: &'static str,
+    source_id: &'static str,
     phase: &MonitorPhase,
     emit_fn: MonitorEmitFn,
     runtime: &NodeRuntimeState,
@@ -175,27 +175,27 @@ async fn drive_monitor_phase(
     match phase {
         MonitorPhase::ServiceStart => {
             info!(
-                source_unit_id,
+                source_id,
                 "MonitorPhase::ServiceStart — firing once at boot"
             );
-            fire_monitor_once(source_unit_id, emit_fn, runtime).await?;
+            fire_monitor_once(source_id, emit_fn, runtime).await?;
         }
 
         MonitorPhase::PerInterval { period } => {
             info!(
-                source_unit_id,
+                source_id,
                 interval_secs = period.as_secs_f64(),
                 "MonitorPhase::PerInterval — starting loop",
             );
             loop {
-                fire_monitor_once(source_unit_id, emit_fn, runtime).await?;
+                fire_monitor_once(source_id, emit_fn, runtime).await?;
 
                 // Sleep for `period` or exit immediately on drain.
                 tokio::select! {
                     biased;
                     result = shutdown_rx.changed() => {
                         if result.is_err() || *shutdown_rx.borrow() {
-                            info!(source_unit_id, "drain received — stopping PerInterval loop");
+                            info!(source_id, "drain received — stopping PerInterval loop");
                             break;
                         }
                     }
@@ -206,7 +206,7 @@ async fn drive_monitor_phase(
 
         MonitorPhase::ServiceShutdown => {
             info!(
-                source_unit_id,
+                source_id,
                 "MonitorPhase::ServiceShutdown — waiting for drain signal",
             );
             loop {
@@ -218,12 +218,12 @@ async fn drive_monitor_phase(
                 }
             }
             info!(
-                source_unit_id,
+                source_id,
                 "drain received — firing ServiceShutdown monitor"
             );
-            if let Err(e) = fire_monitor_once(source_unit_id, emit_fn, runtime).await {
+            if let Err(e) = fire_monitor_once(source_id, emit_fn, runtime).await {
                 warn!(
-                    source_unit_id,
+                    source_id,
                     error = %e,
                     "ServiceShutdown monitor emit failed",
                 );
@@ -236,20 +236,20 @@ async fn drive_monitor_phase(
 }
 
 // =============================================================================
-// MonitorDriverNode — SourceUnit bridge
+// MonitorDriverNode — SourceDriver bridge
 // =============================================================================
 
-/// An `SourceUnit` that bridges the SDK lifecycle into `drive_monitor_phase`.
+/// An `SourceDriver` that bridges the SDK lifecycle into `drive_monitor_phase`.
 ///
 /// `initialize()` captures the `NodeRuntimeState` into `runtime_snapshot`.
 /// `run_continuous()` then drives `drive_monitor_phase` directly, giving the
 /// monitor closure full SDK access (NATS, `AcquisitionManager`, etc.).
 ///
-/// This bridges the gap that `SourceUnit::run_continuous` does not receive
+/// This bridges the gap that `SourceDriver::run_continuous` does not receive
 /// `NodeRuntimeState` directly.
 #[derive(Default)]
 pub struct MonitorDriverNode {
-    source_unit_id: &'static str,
+    source_id: &'static str,
     /// Taken on first call to `run_continuous`. `Option` because the value is
     /// moved out; a second call would find it `None` and return an error.
     phase: Option<MonitorPhase>,
@@ -261,9 +261,9 @@ pub struct MonitorDriverNode {
 
 impl MonitorDriverNode {
     #[must_use]
-    pub fn new(source_unit_id: &'static str, phase: MonitorPhase, emit_fn: MonitorEmitFn) -> Self {
+    pub fn new(source_id: &'static str, phase: MonitorPhase, emit_fn: MonitorEmitFn) -> Self {
         Self {
-            source_unit_id,
+            source_id,
             phase: Some(phase),
             emit_fn: Some(emit_fn),
             runtime_snapshot: None,
@@ -271,12 +271,12 @@ impl MonitorDriverNode {
     }
 }
 
-impl SourceUnit for MonitorDriverNode {
+impl SourceDriver for MonitorDriverNode {
     type Config = serde_json::Value;
     type State = MonitorState;
 
     fn name(&self) -> &str {
-        self.source_unit_id
+        self.source_id
     }
 
     fn capabilities(&self) -> NodeCapabilities {
@@ -301,7 +301,7 @@ impl SourceUnit for MonitorDriverNode {
         // Snapshot the runtime so run_continuous() can access it.
         self.runtime_snapshot = Some(runtime.clone());
         info!(
-            source_unit_id = self.source_unit_id,
+            source_id = self.source_id,
             "monitor unit initialized"
         );
         Ok(())
@@ -363,7 +363,7 @@ impl SourceUnit for MonitorDriverNode {
             SinexError::invalid_state("MonitorDriverNode: emit_fn already consumed")
         })?;
 
-        drive_monitor_phase(self.source_unit_id, &phase, emit_fn, &runtime, shutdown_rx).await?;
+        drive_monitor_phase(self.source_id, &phase, emit_fn, &runtime, shutdown_rx).await?;
 
         Ok(ScanReport {
             events_processed: 0,
@@ -384,14 +384,14 @@ impl SourceUnit for MonitorDriverNode {
 
 /// Entry point called by [`register_monitor_unit!`]-generated factory functions.
 ///
-/// Wires up the standard SDK CLI + runner via `SourceUnitRuntime`, which
+/// Wires up the standard SDK CLI + runner via `SourceDriverRuntime`, which
 /// calls `initialize()` (capturing runtime) then `run_continuous()` (driving
 /// `drive_monitor_phase`).
 ///
 /// This function is `pub` so the macro can name it; callers should use
 /// `register_monitor_unit!` rather than calling this directly.
 pub async fn run_monitor_unit_delegated(
-    source_unit_id: &'static str,
+    source_id: &'static str,
     phase: MonitorPhase,
     emit_fn: MonitorEmitFn,
     args: Vec<std::ffi::OsString>,
@@ -399,8 +399,8 @@ pub async fn run_monitor_unit_delegated(
     use clap::Parser;
 
     let parsed = NodeCli::parse_from(args);
-    let node = MonitorDriverNode::new(source_unit_id, phase, emit_fn);
-    let adapter = SourceUnitRuntime::new(node);
+    let node = MonitorDriverNode::new(source_id, phase, emit_fn);
+    let adapter = SourceDriverRuntime::new(node);
     let mut runner = NodeCliRunner::new(adapter);
     runner.run(parsed).await.map_err(std::convert::Into::into)
 }
@@ -409,16 +409,16 @@ pub async fn run_monitor_unit_delegated(
 // register_monitor_unit! — public macro
 // =============================================================================
 
-/// Register a lifecycle-hook source unit with the node factory registry.
+/// Register a lifecycle-hook source with the source factory registry.
 ///
-/// Monitor source units emit events at defined moments in the node lifecycle.
+/// Monitor source contracts emit events at defined moments in the node lifecycle.
 /// They have no adapter input (no file, socket, or DB to poll).
 ///
 /// # Signature
 ///
 /// ```rust,ignore
 /// register_monitor_unit!(
-///     source_unit_id: "terminal.monitor",
+///     source_id: "terminal.monitor",
 ///     emit_at: MonitorPhase::ServiceStart,
 ///     emit: emit_terminal_monitor,
 /// );
@@ -455,8 +455,8 @@ pub async fn run_monitor_unit_delegated(
 ///
 /// # Descriptor registration
 ///
-/// This macro does **not** register the [`SourceUnitDescriptor`]. Call
-/// `register_source_unit!` from `sinex-primitives` separately. The macros
+/// This macro does **not** register the [`SourceContract`]. Call
+/// `register_source_contract!` from `sinex-primitives` separately. The macros
 /// compose.
 ///
 /// # Why `fn` pointer?
@@ -467,12 +467,12 @@ pub async fn run_monitor_unit_delegated(
 #[macro_export]
 macro_rules! register_monitor_unit {
     (
-        source_unit_id: $id:expr,
+        source_id: $id:expr,
         emit_at: $phase:expr,
         emit: $emit_fn:expr $(,)?
     ) => {
         $crate::__submit_registry_entry!(
-            $crate::sources::node_factory::NodeFactoryEntry,
+            $crate::sources::source_factory::SourceFactoryEntry,
             $id,
             |args| {
                 Box::pin($crate::sources::monitor_node::run_monitor_unit_delegated(

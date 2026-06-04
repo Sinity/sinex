@@ -1,4 +1,4 @@
-//! `SourceUnit` trait for reducing boilerplate in ingestor nodes.
+//! `SourceDriver` trait for reducing boilerplate in ingestor nodes.
 //!
 //! This module provides a high-level abstraction (similar to `AutomatonNode`) but tailored
 //! for Ingestors, which typically produce events from external sources rather than
@@ -50,7 +50,7 @@ impl<S: Default> Default for IngestorState<S> {
 }
 
 /// Trait for simplified Ingestor implementation.
-pub trait SourceUnit: Send + Sync + 'static {
+pub trait SourceDriver: Send + Sync + 'static {
     /// Configuration type (from config file/env)
     type Config: Clone + Send + Sync + Serialize + DeserializeOwned + Default;
 
@@ -140,8 +140,8 @@ pub trait SourceUnit: Send + Sync + 'static {
     }
 }
 
-/// Adapter implementing `Node` for `SourceUnit`.
-pub struct SourceUnitRuntime<I: SourceUnit> {
+/// Adapter implementing `Node` for `SourceDriver`.
+pub struct SourceDriverRuntime<I: SourceDriver> {
     ingestor: I,
     state: IngestorState<I::State>,
     shutdown_config: ShutdownConfig,
@@ -153,7 +153,7 @@ pub struct SourceUnitRuntime<I: SourceUnit> {
     self_observer: Option<Arc<crate::node_sdk::self_observation::SelfObserver>>,
 }
 
-impl<I: SourceUnit> SourceUnitRuntime<I> {
+impl<I: SourceDriver> SourceDriverRuntime<I> {
     pub fn new(ingestor: I) -> Self {
         Self {
             ingestor,
@@ -197,13 +197,13 @@ impl<I: SourceUnit> SourceUnitRuntime<I> {
     }
 }
 
-impl<I: SourceUnit + Default> Default for SourceUnitRuntime<I> {
+impl<I: SourceDriver + Default> Default for SourceDriverRuntime<I> {
     fn default() -> Self {
         Self::new(I::default())
     }
 }
 
-impl<I: SourceUnit> SourceUnitRuntime<I> {
+impl<I: SourceDriver> SourceDriverRuntime<I> {
     async fn cleanup_hot_reload_file_best_effort(
         path: &Path,
         node_name: &str,
@@ -474,7 +474,7 @@ impl<I: SourceUnit> SourceUnitRuntime<I> {
     }
 }
 
-impl<I: SourceUnit> Node for SourceUnitRuntime<I> {
+impl<I: SourceDriver> Node for SourceDriverRuntime<I> {
     type Config = I::Config;
 
     async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
@@ -560,7 +560,7 @@ impl<I: SourceUnit> Node for SourceUnitRuntime<I> {
             .initialize(config, &runtime, &mut self.state.user_state)
             .await?;
 
-        info!("SourceUnit {} initialized", self.ingestor.name());
+        info!("SourceDriver {} initialized", self.ingestor.name());
         Ok(())
     }
 
@@ -714,7 +714,7 @@ impl<I: SourceUnit> Node for SourceUnitRuntime<I> {
     }
 }
 
-impl<I: SourceUnit> ExplorationProvider for SourceUnitRuntime<I> {
+impl<I: SourceDriver> ExplorationProvider for SourceDriverRuntime<I> {
     fn get_source_state(&self) -> NodeResult<SourceState> {
         self.ingestor.get_source_state(&self.state.user_state)
     }
@@ -733,13 +733,13 @@ impl<I: SourceUnit> ExplorationProvider for SourceUnitRuntime<I> {
 #[cfg(test)]
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
-    use super::{IngestorState, SourceUnitRuntime};
+    use super::{IngestorState, SourceDriverRuntime};
     use crate::node_sdk::checkpoint::{CheckpointManager, CheckpointState};
     use crate::node_sdk::runtime::stream::{
         Checkpoint, ContinuousStart, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
     };
     use crate::node_sdk::shutdown::ShutdownConfig;
-    use crate::node_sdk::{NodeResult, SourceUnit};
+    use crate::node_sdk::{NodeResult, SourceDriver};
     use futures::TryStreamExt;
     use serde::{Deserialize, Serialize};
     use sinex_primitives::Timestamp;
@@ -755,7 +755,7 @@ mod tests {
     #[derive(Default)]
     struct TestIngestor;
 
-    impl SourceUnit for TestIngestor {
+    impl SourceDriver for TestIngestor {
         type Config = ();
         type State = TestState;
 
@@ -864,7 +864,7 @@ mod tests {
         .save_to_file(&checkpoint_path)
         .await?;
 
-        let mut adapter = SourceUnitRuntime::new(TestIngestor);
+        let mut adapter = SourceDriverRuntime::new(TestIngestor);
         adapter.shutdown_config = ShutdownConfig {
             checkpoint_path: Some(checkpoint_path.clone()),
             ..ShutdownConfig::default()
@@ -915,7 +915,7 @@ mod tests {
         let checkpoint_path = temp_dir.path().join("corrupt-hot-reload.checkpoint.json");
         tokio::fs::write(&checkpoint_path, "{ definitely not valid json").await?;
 
-        let mut adapter = SourceUnitRuntime::new(TestIngestor);
+        let mut adapter = SourceDriverRuntime::new(TestIngestor);
         adapter.shutdown_config = ShutdownConfig {
             checkpoint_path: Some(checkpoint_path.clone()),
             ..ShutdownConfig::default()
@@ -967,7 +967,7 @@ mod tests {
         })?;
         kv.put(&key, corrupt.into()).await?;
 
-        let mut adapter = SourceUnitRuntime::new(TestIngestor);
+        let mut adapter = SourceDriverRuntime::new(TestIngestor);
         adapter.checkpoint_manager = Some(Arc::new(manager));
 
         let error = adapter
@@ -993,7 +993,7 @@ mod tests {
             "fresh-consumer".to_string(),
         );
 
-        let mut adapter = SourceUnitRuntime::new(TestIngestor);
+        let mut adapter = SourceDriverRuntime::new(TestIngestor);
         adapter.checkpoint_manager = Some(Arc::new(manager));
         adapter
             .load_state()
@@ -1048,7 +1048,7 @@ mod tests {
         .save_to_file(&checkpoint_path)
         .await?;
 
-        let mut adapter = SourceUnitRuntime::new(TestIngestor);
+        let mut adapter = SourceDriverRuntime::new(TestIngestor);
         adapter.shutdown_config = ShutdownConfig {
             checkpoint_path: Some(checkpoint_path.clone()),
             ..ShutdownConfig::default()
@@ -1110,7 +1110,7 @@ mod tests {
         .save_to_file(&checkpoint_path)
         .await?;
 
-        let mut adapter = SourceUnitRuntime::new(TestIngestor);
+        let mut adapter = SourceDriverRuntime::new(TestIngestor);
         adapter.shutdown_config = ShutdownConfig {
             checkpoint_path: Some(checkpoint_path.clone()),
             ..ShutdownConfig::default()

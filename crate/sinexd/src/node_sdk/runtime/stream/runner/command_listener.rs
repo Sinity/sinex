@@ -52,7 +52,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let env = sinex_primitives::environment::environment().clone();
         let raw_config = self.raw_config.clone().unwrap_or_default();
         let dry_run = service_info.dry_run();
-        let node_factory = self.node_factory.clone();
+        let source_factory = self.source_factory.clone();
         let drain_controller = handles.runtime_drain();
         #[cfg(feature = "db")]
         let db_pool = handles.db_pool().cloned();
@@ -84,7 +84,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                     let loop_service_info = service_info.clone();
                     let loop_raw_config = raw_config.clone();
                     let loop_work_dir_utf8 = work_dir_utf8.clone();
-                    let loop_node_factory = node_factory.clone();
+                    let loop_source_factory = source_factory.clone();
                     let loop_active_scan = active_scan.clone();
                     let loop_drain_controller = drain_controller.clone();
                     #[cfg(feature = "db")]
@@ -254,7 +254,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                                         continue;
                                     }
 
-                                    let Some(factory) = loop_node_factory.clone() else {
+                                    let Some(factory) = loop_source_factory.clone() else {
                                         let ack = NodeScanAck {
                                             operation_id,
                                             node_name: loop_node_name.clone(),

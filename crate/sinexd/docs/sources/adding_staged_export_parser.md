@@ -1,7 +1,7 @@
 # Adding a Staged-Export Parser
 
 This guide turns one personal-data export (Spotify history, Raindrop CSV,
-Messenger thread, etc.) into a typed source-unit that emits events through
+Messenger thread, etc.) into a typed source that emits events through
 the standard sinex pipeline.
 
 It is the consolidated procedure derived from the first three parsers
@@ -29,16 +29,16 @@ Every staged-export parser is built from four pieces:
 
 2. **A parser** — a `MaterialParser` implementation that turns one
    `SourceRecord` into N `ParsedEventIntent`s. Lives in
-   `crate/sinexd/src/sources/source_units/<domain>.rs`.
+   `crate/sinexd/src/sources/source_contracts/<domain>.rs`.
 
-3. **A source-unit descriptor + binding** — the `register_source_unit!`
-   and `register_source_unit_binding!` macros in the same source file.
+3. **A source contract + binding** — the `register_source_contract!`
+   and `register_source_runtime_binding!` macros in the same source file.
    These declare identity, privacy tier, retention, verification
-   tags/catalog obligations, and runtime shape.
+   parser/source identity and runtime shape.
 
-4. **The registration triple** — `register_adapter_ingestor!(source_unit_id,
+4. **The registration triple** — `register_adapter_ingestor!(source_id,
    <Adapter>, <Parser>)` wires the parser into both the replay dispatch
-   registry and the continuous-ingestion node factory.
+   registry and the continuous-ingestion source factory.
 
 ## Picking an adapter
 
@@ -74,10 +74,10 @@ stable path and the adapter-level drift path will still see the change.
 
 Decide:
 
-- **Source unit id** — kebab-case, scoped: `spotify-extended-history`,
+- **Source id** — kebab-case, scoped: `spotify-extended-history`,
   `raindrop-bookmarks`, `facebook-messenger-thread`. Used in
-  `SourceUnitId::from_static(...)`, `register_source_unit!` `id:` field,
-  `register_adapter_ingestor!` `source_unit_id:`, and as the binding
+  `SourceId::from_static(...)`, `register_source_contract!` `id:` field,
+  `register_adapter_ingestor!` `source_id:`, and as the binding
   `SubjectRef`.
 - **Event source** — one segment, lowercased: `"spotify"`, `"raindrop"`,
   `"messenger"`. Mirrors the provider.
@@ -133,7 +133,7 @@ mod tests {
 
 ### 3. Define the parser
 
-`crate/sinexd/src/sources/source_units/<domain>.rs`:
+`crate/sinexd/src/sources/source_contracts/<domain>.rs`:
 
 ```rust
 use async_trait::async_trait;
@@ -145,17 +145,17 @@ use crate::node_sdk::parser::{
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent,
-    ParserContext, ParserId, ParserManifest, SourceRecord, SourceUnitId,
+    ParserContext, ParserId, ParserManifest, SourceRecord, SourceId,
     TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
-    RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor,
+    RuntimeShape, SourceRuntimeBinding, SourceBuildImpact, SourceContract,
     SubjectRef,
 };
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // Raw export shape — mirrors the JSON/CSV/etc. fields verbatim with
 // lenient defaults for fields that may be absent across snapshot vintages.
@@ -193,7 +193,7 @@ impl MaterialParser for <Provider>Parser {
 | Field | What to set |
 |---|---|
 | `id` | `Id::new()` |
-| `source_unit_id` | `ctx.source_unit_id.clone()` |
+| `source_id` | `ctx.source_id.clone()` |
 | `parser_id` | `ParserId::from_static("<parser-id>")` |
 | `parser_version` | `"1.0.0".into()` to start |
 | `event_type` | `EventType::from_static("<event_type>")` |
@@ -220,7 +220,7 @@ Pick the variant that matches the export shape:
 | File-system record (one event per file) | `DirectoryEntry { path, content_hash: Some(...) }` |
 
 The anchor doesn't have to be a literal byte range — `start: <index>, len: 1`
-with a documented anchor semantics in the source-unit descriptor is
+with documented anchor semantics in the source contract is
 fine. Replay correctness only requires that the **same record on the
 same source material always gets the same anchor**.
 
@@ -234,7 +234,7 @@ Preferred shape:
 
 ```rust
 let occurrence_key = OccurrenceKey {
-    source_unit_id: SourceUnitId::from_static("<source-unit-id>"),
+    source_id: SourceId::from_static("<source-id>"),
     fields: vec![
         ("<provider_id_field>".into(), provider_id.to_string()),
         ("<secondary_field>".into(), secondary.to_string()),
@@ -267,25 +267,19 @@ Pick `ProcessingContext` for `privacy_context`:
 When in doubt, choose `Sensitive` + `Document` and let the admission
 policy widen the surface later if needed. Narrowing later is harder.
 
-### 7. Source-unit descriptor + binding
+### 7. Source contract + binding
 
 Two registration macros:
 
 ```rust
-register_source_unit! {
-    SourceUnitDescriptor {
-        id: "<source-unit-id>",
+register_source_contract! {
+    SourceContract {
+        id: "<source-id>",
         namespace: "<conceptual-namespace>",  // "music", "web", "messaging"
         event_types: &[("<source>", "<event_type>")],
         privacy_tier: PrivacyTier::Sensitive,
         horizons: &[Horizon::Historical],
         retention: RetentionPolicy::Forever,
-        proof_obligations: &[
-            "timestamp_intrinsic",
-            "anchor_<your_anchor_kind>",
-            "occurrence_key_<your_key_shape>",
-            // any descriptor-local parser invariants you want surfaced
-        ],
         occurrence_identity: OccurrenceIdentity::Uuid5From(
             "(<tuple-description>)",
         ),
@@ -293,10 +287,10 @@ register_source_unit! {
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:<source-unit-id>"),
-        "<source-unit-id>",
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:<source-id>"),
+        "<source-id>",
         "<namespace>",
     )
     .implementation("sinexd")
@@ -306,36 +300,36 @@ register_source_unit_binding! {
     .material_policy("static_export_file")
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")
-    .source_unit_id("<source-unit-id>")
-    .runner_pack("sinexd-source-unit")
+    .source_id("<source-id>")
+    .runner_pack("sinexd-source")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("<source_unit_id>_source_unit")
-    .implementation_mode("sinexd:source-unit")
-    .build_impact(SourceUnitBuildImpact::ZERO)
+    .package_impact("<source_id>_source")
+    .implementation_mode("sinexd:source")
+    .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
 ```
 
-The `implementation("sinexd")` and `runner_pack("sinexd-source-unit")`
-strings are descriptor labels retained by the current source-unit inventory.
-They do not name a separate crate or binary; source units are hosted by
+The `implementation("sinexd")` and `runner_pack("sinexd-source")`
+strings are descriptor labels retained by the current source inventory.
+They do not name a separate crate or binary; source contracts are hosted by
 `sinexd`.
 
-### 8. Register with the source-unit host
+### 8. Register with the source host
 
 Two more lines at the bottom of the source file:
 
 ```rust
 crate::register_adapter_ingestor!(
-    source_unit_id: "<source-unit-id>",
+    source_id: "<source-id>",
     adapter: StaticFileAdapter,
     parser: <Provider>Parser,
 );
 ```
 
 Then add `pub mod <domain>;` to
-`crate/sinexd/src/sources/source_units/mod.rs`.
+`crate/sinexd/src/sources/source_contracts/mod.rs`.
 
 ### 9. Inline tests
 
@@ -352,7 +346,7 @@ The pattern uses one inline `mod tests` per parser. Cover:
 | `<quoted_or_unicode>_round_trip` | CSV/Unicode edge cases for the format |
 | `invalid_<format>_errors` | Bad input surfaces ParserError, not panic |
 
-See `crate/sinexd/src/sources/source_units/music.rs::tests`,
+See `crate/sinexd/src/sources/source_contracts/music.rs::tests`,
 `bookmark.rs::tests`, `messaging.rs::tests` for concrete examples.
 
 ### 9a. Parser-family acceptance fixture
@@ -388,11 +382,7 @@ FixtureSpec {
         golden_artifact: None,
     }],
     acceptance: Some(FixtureAcceptanceContract {
-        source_unit_id: "<source-unit-id>".to_string(),
-        proof_obligations: vec![
-            "timestamp_intrinsic".to_string(),
-            "anchor_<kind>".to_string(),
-        ],
+        source_id: "<source-id>".to_string(),
         require_timestamp: true,
         require_timing: true,
         require_anchor: true,
@@ -407,12 +397,12 @@ FixtureSpec {
 }
 ```
 
-When the source descriptor is available, call
-`spec.acceptance_failures(&parser.manifest(), Some(&SOURCE_UNIT_DESCRIPTOR))`
+When the source contract is available, call
+`spec.acceptance_failures(&parser.manifest(), Some(&SOURCE_CONTRACT))`
 and assert that it returns no failures. The harness also runs the same
 contract against the parser manifest during fixture execution, so missing
-timestamp, occurrence, privacy, event-pair, or verification-tag evidence is
-visible as a fixture failure instead of a review-only checklist.
+timestamp, occurrence, privacy, or event-pair evidence is visible as a fixture
+failure instead of a review-only checklist.
 
 ### 10. Verification
 
@@ -423,16 +413,16 @@ xtask check -p sinexd
 xtask test -p sinexd -E 'test(/<your_test_names_pattern>/)'
 ```
 
-All inline tests should pass. `obligation:*` entries are checked against the
-proof catalog; descriptor-local strings are advisory verification tags and
-should describe parser-local invariants rather than global gates.
+All inline tests should pass. Parser/source acceptance belongs in fixture
+assertions and Rust tests; do not add advisory verification tags in place of
+enforced checks.
 
 ## What this guide intentionally does not cover
 
-- **NixOS bindings.** New source units do not need a NixOS systemd unit
+- **NixOS bindings.** New source contracts do not need a NixOS systemd unit
   unless they have a continuous runtime shape. Static-file parsers are
   on-demand (operator runs `sinexctl sources stage` + `sources replay`)
-  and require no extra Nix wiring beyond the existing source-unit
+  and require no extra Nix wiring beyond the existing source
   service.
 - **Live-deploy parity proof.** Each parser's #1070-style AC includes
   "query parity against Lynchpin export counts." That is operator work:
@@ -445,12 +435,12 @@ should describe parser-local invariants rather than global gates.
 - `crate/sinexd/src/node_sdk/parser/adapters/` — adapter implementations
 - `crate/sinex-primitives/src/parser/mod.rs` — `ParsedEventIntent`,
   `MaterialAnchor`, `OccurrenceKey`, `ParserManifest`
-- `crate/sinexd/src/sources/source_units/weechat.rs` — the canonical
+- `crate/sinexd/src/sources/source_contracts/weechat.rs` — the canonical
   append-only-file example
-- `crate/sinexd/src/sources/source_units/music.rs` — the canonical
+- `crate/sinexd/src/sources/source_contracts/music.rs` — the canonical
   static-file JSON-array example
-- `crate/sinexd/src/sources/source_units/bookmark.rs` — the canonical
+- `crate/sinexd/src/sources/source_contracts/bookmark.rs` — the canonical
   CSV example
-- `crate/sinexd/src/sources/source_units/messaging.rs` — the
+- `crate/sinexd/src/sources/source_contracts/messaging.rs` — the
   canonical per-file JSON-object example
 - #1070 — the live tracker for remaining export parsers

@@ -29,7 +29,7 @@
 //! adapter defaults to a tight catalog rooted at the interfaces the
 //! `system.dbus` parser actually classifies (notifications, network, power,
 //! hardware, bluetooth, mounts). This caps D-Bus signal volume so the
-//! source-unit host can't be DOS'd by a chatty interface we don't parse anyway.
+//! source host can't be DOS'd by a chatty interface we don't parse anyway.
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -69,7 +69,7 @@ pub struct DbusStreamConfig {
     /// D-Bus match rules (e.g.
     /// `"type='signal',interface='org.freedesktop.DBus.Properties'"`).
     /// An empty vector causes the adapter to substitute
-    /// [`default_match_rules`] so the source-unit host is not exposed to the
+    /// [`default_match_rules`] so the source host is not exposed to the
     /// entire D-Bus signal firehose.
     #[serde(default)]
     pub match_rules: Vec<String>,
@@ -77,7 +77,7 @@ pub struct DbusStreamConfig {
 
 /// Default match rules — restricted to the interfaces the `system.dbus`
 /// parser actually classifies. Anything outside this set is dropped at the
-/// broker, so a chatty unrelated interface can't DOS the source-unit.
+/// broker, so a chatty unrelated interface can't DOS the source.
 pub fn default_match_rules() -> Vec<String> {
     vec![
         // Desktop notifications (notification.sent).
@@ -143,7 +143,7 @@ pub struct DbusMessage {
 
 /// A parsed D-Bus match rule subset.
 ///
-/// We only model the conditions the source-unit host uses: `type`, `interface`,
+/// We only model the conditions the source host uses: `type`, `interface`,
 /// `member`, `path`, `path_namespace`, `sender`. Any other keys (e.g. `arg0`)
 /// are stored verbatim and currently treated as "pass-through" — the broker
 /// will enforce them, and the post-filter is conservative (does not drop a

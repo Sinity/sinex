@@ -31,12 +31,12 @@ WHERE c.command LIKE 'cargo test%'
 
 | Surface | Current Owner |
 |---------|---------------|
-| Capture | source units over staged materials, input-shape adapters, and parsers under `crate/sinexd/src/sources/` |
+| Capture | source contracts over staged materials, input-shape adapters, and parsers under `crate/sinexd/src/sources/` |
 | Query / control | `sinexd::api` + `sinexctl` |
 | Persistence | `sinexd::event_engine` + PostgreSQL |
 | Derived state | `sinexd::automata` and replay-aware stream runtime |
 | Deployment | NixOS modules + systemd |
-| Runtime extension | inline `sinexd` runtime support and source-unit/automaton traits |
+| Runtime extension | inline `sinexd` runtime support and source/automaton traits |
 
 ## Architecture
 
@@ -166,7 +166,7 @@ journalctl -u sinexd -f
 | Understand the system shape | [README.md#architecture](README.md#architecture) |
 | Deploy and harden the common NixOS path | [README.md#deployment--operations](README.md#deployment--operations) |
 | Deploy on NixOS | [nixos/README.md](nixos/README.md) |
-| Build a source unit or derived service | [crate/sinexd/docs/sources/README.md](crate/sinexd/docs/sources/README.md) |
+| Build a source or derived service | [crate/sinexd/docs/sources/README.md](crate/sinexd/docs/sources/README.md) |
 | Understand event schemas | [crate/sinex-db/docs/schema/event-taxonomy.md](crate/sinex-db/docs/schema/event-taxonomy.md) |
 | Separate notes, typed records, graph, and artifacts | [crate/sinex-primitives/docs/knowledge_boundaries.md](crate/sinex-primitives/docs/knowledge_boundaries.md) |
 | Define current-state projections for event-native domains | [crate/sinex-primitives/docs/domain_reducers.md](crate/sinex-primitives/docs/domain_reducers.md) |
@@ -189,7 +189,7 @@ journalctl -u sinexd -f
 | Reason about runtime backpressure and loss policy | [crate/sinexd/docs/runtime_qos.md](crate/sinexd/docs/runtime_qos.md) |
 | Suppress live capture through private mode | [crate/sinexctl/docs/private_mode.md](crate/sinexctl/docs/private_mode.md) |
 | Add a staged personal-export parser | [crate/sinexd/docs/sources/adding_staged_export_parser.md](crate/sinexd/docs/sources/adding_staged_export_parser.md) |
-| Drain and recover source-unit material cleanly | [crate/sinexd/docs/sources/source_unit_drain.md](crate/sinexd/docs/sources/source_unit_drain.md) |
+| Drain and recover source material cleanly | [crate/sinexd/docs/sources/source_drain.md](crate/sinexd/docs/sources/source_drain.md) |
 | Snapshot or restore runtime state | [crate/sinexctl/docs/state_snapshot.md](crate/sinexctl/docs/state_snapshot.md) |
 | Configure PostgreSQL backup/restore | [crate/sinex-db/docs/backup_restore.md](crate/sinex-db/docs/backup_restore.md) |
 | Decide which surface owns a runtime or data concern | [.github/authority-surfaces.md](.github/authority-surfaces.md) |

@@ -51,7 +51,7 @@ const CHAOS_TESTS: &[&str] = &[
     "chaos-clock-skew",
     "xtask-concurrency",
 ];
-/// End-to-end production-shape proof (#1135): source unit -> NATS -> event engine -> DB -> API.
+/// End-to-end production-shape proof (#1135): source -> NATS -> event engine -> DB -> API.
 const PRODUCTION_SHAPE_TESTS: &[&str] = &["production-shape"];
 
 /// Default timeout per test in seconds (15 minutes).

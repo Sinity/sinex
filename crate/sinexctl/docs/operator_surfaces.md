@@ -104,7 +104,7 @@ authoritative surfaces — not as separate substrates.
   they must not synthesize state.
 - Tab completions should derive their option lists from the runtime
   (registered sources, schema-known event types, known material ids,
-  registered source units, cached graph entities) rather than maintaining
+  registered source contracts, cached graph entities) rather than maintaining
   parallel registries.
 - Hyprland keybinds bind to `sinexctl` and the TUI; they should not embed
   pipelines that bypass redaction, hold credentials, or write directly to

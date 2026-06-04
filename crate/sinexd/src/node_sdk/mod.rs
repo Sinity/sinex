@@ -1,7 +1,7 @@
 //! # Sinex Runtime Support
 //!
 //! This module provides the current authoring and runtime surface for Sinex
-//! source units, automata, transport, checkpointing, content storage, and
+//! source contracts, automata, transport, checkpointing, content storage, and
 //! source-material staging. The `node_sdk` path is historical and should not be
 //! read as a separate node crate or deployment boundary.
 //!
@@ -113,7 +113,7 @@ pub use hyprland::{
     HyprlandCommandSocketProbe, HyprlandCommandSocketResponse, dispatch_hyprland_workspace_command,
     probe_hyprland_command_socket, resolve_hyprland_command_socket_path,
 };
-pub use ingestor_node::{IngestorState, SourceUnit, SourceUnitRuntime};
+pub use ingestor_node::{IngestorState, SourceDriver, SourceDriverRuntime};
 pub use input_shapes::{
     SqliteSnapshotCheckpointState, SqliteSourceCheckpointState, discover_importable_files_at_root,
 };

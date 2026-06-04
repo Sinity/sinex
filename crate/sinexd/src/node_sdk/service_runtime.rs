@@ -1,7 +1,7 @@
 //! Shared bootstrap utilities for service-level binaries (gateway, event_engine).
 //!
 //! These helpers cover the common startup concerns that aren't specific to
-//! the node lifecycle managed by `NodeCliRunner`. Unlike `SourceUnit` or
+//! the node lifecycle managed by `NodeCliRunner`. Unlike `SourceDriver` or
 //! `AutomatonRuntime`, this module is intentionally *not* lifecycle-aware —
 //! it provides pure setup functions that each binary calls once at the start
 //! of `main`.

@@ -34,7 +34,7 @@ pub use crate::node_sdk::{NodeInstance, NodeVersion};
 
 // Lifecycle management
 #[cfg(feature = "messaging")]
-pub use crate::node_sdk::{IngestorState, SourceUnit, SourceUnitRuntime};
+pub use crate::node_sdk::{IngestorState, SourceDriver, SourceDriverRuntime};
 
 // Event handling
 #[cfg(feature = "messaging")]

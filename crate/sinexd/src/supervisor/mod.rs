@@ -2,7 +2,7 @@
 //!
 //! `sinexd` is a single daemon hosting the event engine (admission +
 //! persistence + confirmation), the operator API, the enabled derived-node
-//! automata, and the configured source-unit bindings. Each module starts
+//! automata, and the configured source bindings. Each module starts
 //! as a tokio task under the supervisor. The shutdown signal is sourced from
 //! `crate::node_sdk::service_runtime::spawn_shutdown_task` which handles
 //! SIGINT/SIGTERM; tasks observe it via a shared `watch` receiver and unwind
@@ -34,7 +34,7 @@ const ENV_AUTOMATA_ENABLED: &str = "SINEX_AUTOMATA_ENABLED";
 ///
 /// Unset / empty means no source bindings are hosted in this `sinexd`
 /// instance (used during single-binary local development against an
-/// out-of-band source unit, for example).
+/// out-of-band source, for example).
 const ENV_SOURCE_BINDINGS_PATH: &str = "SINEX_SOURCE_BINDINGS_PATH";
 
 #[derive(Debug)]
@@ -66,7 +66,7 @@ impl Supervisor {
         info!("sinexd starting");
 
         // Set hosted mode BEFORE spawning any subsystem tasks. In-process
-        // nodes and source-unit bindings must NOT send sd_notify messages
+        // nodes and source bindings must NOT send sd_notify messages
         // to systemd — only this top-level supervisor speaks for the unit.
         // Notably, fire-once monitor bindings emit STOPPING=1 on clean
         // exit; without this latch they would tell systemd the whole sinexd
@@ -143,7 +143,7 @@ impl Supervisor {
         // single automaton crash does not take down siblings or the daemon.
         let automaton_handles = start_automata(shutdown_rx.clone())?;
 
-        // Hosted source-unit bindings. Same isolation property: one
+        // Hosted source bindings. Same isolation property: one
         // binding crash is logged and contained, sibling captures continue.
         let source_binding_handles = start_source_bindings(shutdown_rx.clone())?;
 
@@ -399,12 +399,12 @@ fn start_source_bindings(
 
     info!(
         count = manifest.bindings.len(),
-        "starting hosted source-unit bindings"
+        "starting hosted source bindings"
     );
 
     let mut handles = Vec::with_capacity(manifest.bindings.len());
     for binding in manifest.bindings {
-        let label = format!("{}-{}", binding.source_unit_id, binding.instance_idx);
+        let label = format!("{}-{}", binding.source_id, binding.instance_idx);
         let handle = spawn_source_binding(binding, shutdown_rx.clone());
         handles.push((label, handle));
     }
@@ -415,15 +415,15 @@ fn spawn_source_binding(
     binding: SourceBinding,
     shutdown_rx: watch::Receiver<bool>,
 ) -> JoinHandle<()> {
-    let label = format!("{}-{}", binding.source_unit_id, binding.instance_idx);
+    let label = format!("{}-{}", binding.source_id, binding.instance_idx);
     tokio::spawn(async move {
         let _shutdown_rx = shutdown_rx;
         match source_bindings::run_binding(binding).await {
-            Ok(()) => info!(source_binding = %label, "source-unit host exited"),
+            Ok(()) => info!(source_binding = %label, "source host exited"),
             Err(error) => warn!(
                 source_binding = %label,
                 ?error,
-                "source-unit host exited with error"
+                "source host exited with error"
             ),
         }
     })

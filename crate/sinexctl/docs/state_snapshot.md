@@ -2,7 +2,7 @@
 
 `sinexctl state snapshot` captures a point-in-time archive of the complete
 sinex runtime state surface — Postgres, NATS JetStream, CAS blob repository,
-and source-unit runtime state — into a single zstd-compressed tar archive.
+and source runtime state — into a single zstd-compressed tar archive.
 
 The default is a **quiesce-mode** backup: services must be stopped before the
 snapshot runs, or `--auto-stop` can stop `sinex-*` services for the command.
@@ -77,7 +77,7 @@ state/                          -- remaining $STATE_DIR contents
 
 Snapshot archives are **secret** by default. A normal archive may contain event
 payloads, raw source material, NATS stream state, CAS blobs, runtime state,
-private-mode state, and source-unit identifiers. Treat the archive at least as
+private-mode state, and source identifiers. Treat the archive at least as
 sensitive as the live Sinex state directory and database.
 
 The snapshot command does not intentionally include TLS client keys, private
@@ -106,7 +106,7 @@ The dry-run command does not extract or write restored state. It validates:
   parent directory.
 - Active `sinex-*` services are reported so destructive restore can quiesce
   them first.
-- The restore drill comparison plan includes source-unit count, Postgres table
+- The restore drill comparison plan includes source count, Postgres table
   count, NATS JetStream member count when present, CAS blob count when present,
   and runtime private-mode state presence.
 
@@ -148,7 +148,7 @@ Execution refuses to run unless:
   `--restore-database-url`, pointing at an empty drill database.
 
 The JSON/YAML result includes `observed_checks` comparing the extracted target
-against the manifest: source-unit IDs, NATS JetStream member paths when present,
+against the manifest: source IDs, NATS JetStream member paths when present,
 CAS blob count when present, and private-mode state presence. When Postgres is
 restored, it also compares exact row counts for the tables listed in the
 snapshot manifest.

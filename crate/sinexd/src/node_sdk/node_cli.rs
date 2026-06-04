@@ -39,11 +39,11 @@ pub struct NodeCli {
     #[arg(long)]
     pub service_name: Option<String>,
 
-    /// Semantic source-unit identity hosted by this runner pack
-    #[arg(long, env = "SINEX_SOURCE_UNIT", value_parser = validate_identity_token)]
-    pub source_unit: Option<String>,
+    /// Semantic source identity hosted by this runner pack
+    #[arg(long, env = "SINEX_SOURCE", value_parser = validate_identity_token)]
+    pub source: Option<String>,
 
-    /// Runner-pack identity for binaries that host multiple source units
+    /// Runner-pack identity for binaries that host multiple source contracts
     #[arg(long, env = "SINEX_RUNNER_PACK", value_parser = validate_identity_token)]
     pub runner_pack: Option<String>,
 
@@ -332,7 +332,7 @@ pub fn validate_scan_target(s: &str) -> Result<SanitizedPath, String> {
     parse_non_empty_path_arg(s, "Scan target").map_err(|e| e.to_string())
 }
 
-/// Validate a source-unit or runner-pack identifier.
+/// Validate a source or runner-pack identifier.
 pub fn validate_identity_token(s: &str) -> Result<String, String> {
     let value = s.trim();
     if value.is_empty() {
@@ -390,7 +390,7 @@ pub struct NodeCliRunner<
     T: crate::node_sdk::runtime::stream::Node + ExplorationProvider + Default + 'static,
 > {
     node: Option<T>,
-    node_factory: Arc<dyn Fn() -> T + Send + Sync>,
+    source_factory: Arc<dyn Fn() -> T + Send + Sync>,
 }
 
 fn unavailable_section(label: &str, error: &str) -> String {
@@ -447,7 +447,7 @@ fn default_service_name(args: &NodeCli) -> ServiceName {
         .service_name
         .clone()
         .or_else(|| {
-            args.source_unit
+            args.source
                 .as_ref()
                 .map(|unit| format!("sinex-{unit}"))
         })
@@ -464,10 +464,10 @@ impl<T: crate::node_sdk::runtime::stream::Node + ExplorationProvider + Default +
     }
 
     /// Create a new CLI runner with an explicit factory for fresh worker instances.
-    pub fn new_with_factory(node: T, node_factory: Arc<dyn Fn() -> T + Send + Sync>) -> Self {
+    pub fn new_with_factory(node: T, source_factory: Arc<dyn Fn() -> T + Send + Sync>) -> Self {
         Self {
             node: Some(node),
-            node_factory,
+            source_factory,
         }
     }
 
@@ -510,8 +510,8 @@ impl<T: crate::node_sdk::runtime::stream::Node + ExplorationProvider + Default +
 
         Self::insert_identity_arg(
             &mut node_config,
-            "source_unit_id",
-            args.source_unit.as_deref(),
+            "source_id",
+            args.source.as_deref(),
         )?;
         Self::insert_identity_arg(&mut node_config, "runner_pack", args.runner_pack.as_deref())?;
 
@@ -576,7 +576,7 @@ impl<T: crate::node_sdk::runtime::stream::Node + ExplorationProvider + Default +
         info!("Starting node service mode");
 
         // Create node runner
-        let mut runner = NodeRunner::new_with_factory(node, self.node_factory.clone());
+        let mut runner = NodeRunner::new_with_factory(node, self.source_factory.clone());
 
         // Set up dependencies
         let service_name = Self::resolve_service_name(&args);
@@ -1065,7 +1065,7 @@ mod tests {
             },
             database_url: database_url.map(ToOwned::to_owned),
             service_name: None,
-            source_unit: None,
+            source: None,
             runner_pack: None,
             work_dir: None,
             namespace: None,
@@ -1116,9 +1116,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn validate_identity_token_accepts_source_unit_spelling() -> TestResult<()> {
+    async fn validate_identity_token_accepts_source_spelling() -> TestResult<()> {
         assert_eq!(
-            validate_identity_token("terminal.atuin-history").expect("valid source unit"),
+            validate_identity_token("terminal.atuin-history").expect("valid source"),
             "terminal.atuin-history"
         );
         Ok(())
@@ -1133,9 +1133,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn source_unit_supplies_default_service_name() -> TestResult<()> {
+    async fn source_supplies_default_service_name() -> TestResult<()> {
         let mut cli = test_cli_with_database_url(None);
-        cli.source_unit = Some("terminal.atuin-history".to_string());
+        cli.source = Some("terminal.atuin-history".to_string());
 
         assert_eq!(
             default_service_name(&cli).as_str(),

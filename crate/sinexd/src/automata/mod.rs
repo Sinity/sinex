@@ -1,8 +1,8 @@
 //! Derived-node automata.
 //!
 //! Implementations are registered at program load via
-//! `register_source_unit!` in each submodule. The
-//! [`SourceUnitDescriptor`](sinex_primitives::proof::SourceUnitDescriptor)
+//! `register_source_contract!` in each submodule. The
+//! [`SourceContract`](sinex_primitives::proof::SourceContract)
 //! catalog discovers them through `inventory`.
 
 pub mod analytics;

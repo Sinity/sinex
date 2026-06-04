@@ -1,4 +1,4 @@
-//! Ingestion helper utilities for ingestor source-unit processing.
+//! Ingestion helper utilities for ingestor source processing.
 //!
 //! This module provides helpers for ingestors to process `MaterialSliceStream`:
 //! - `SliceAssembler` for record reassembly

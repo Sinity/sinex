@@ -132,7 +132,7 @@ mod tests {
         ctx: &TestContext,
         service_name: &str,
         node_name: &str,
-        source_unit_id: Option<&str>,
+        source_id: Option<&str>,
         runner_pack: Option<&str>,
     ) -> TestResult<TestRuntimeHarness> {
         let nats_client = ctx.ensure_nats().await?;
@@ -176,7 +176,7 @@ mod tests {
         let service_info = ServiceInfo::new_with_runtime_identity(
             service_name.to_string(),
             node_name.to_string(),
-            source_unit_id.map(ToOwned::to_owned),
+            source_id.map(ToOwned::to_owned),
             runner_pack.map(ToOwned::to_owned),
             sinex_primitives::events::builder::get_hostname(),
             work_dir.clone().into_std_path_buf(),
@@ -233,7 +233,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn source_unit_coordination_uses_control_identity_for_storage(
+    async fn source_coordination_uses_control_identity_for_storage(
         ctx: TestContext,
     ) -> TestResult<()> {
         let harness = build_runtime_with_identity(
@@ -245,7 +245,7 @@ mod tests {
         )
         .await?;
         let coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "source-unit-instance".to_string())?;
+            NodeCoordination::from_runtime(&harness.runtime, "source-instance".to_string())?;
 
         assert_eq!(
             coordination.instance.service_name.as_str(),
@@ -261,7 +261,7 @@ mod tests {
                 .kv_client
                 .acquire_leadership(&coordination.instance.instance_id)
                 .await?,
-            "source-unit coordination identity should be a valid NATS KV key"
+            "source coordination identity should be a valid NATS KV key"
         );
         Ok(())
     }

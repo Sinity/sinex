@@ -1,10 +1,10 @@
 use sinex_primitives::{
-    proof::{RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact},
+    proof::{RuntimeShape, SourceRuntimeBinding, SourceBuildImpact},
     subject_ref,
 };
 
 fn main() {
-    let _ = SourceUnitBinding::builder(
+    let _ = SourceRuntimeBinding::builder(
         subject_ref!("runtime_unit:test.missing_checkpoint_family"),
         "test.missing_checkpoint_family",
         "test",
@@ -15,6 +15,6 @@ fn main() {
     .material_policy("canonical_json_lines")
     .checkpoint_policy("row_id")
     .runtime_shape(RuntimeShape::Continuous)
-    .build_impact(SourceUnitBuildImpact::ZERO)
+    .build_impact(SourceBuildImpact::ZERO)
     .build();
 }

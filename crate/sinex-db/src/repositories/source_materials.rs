@@ -1901,7 +1901,7 @@ impl SourceMaterialRepository<'_> {
             out.push(SourceReadiness {
                 binding_id: None,
                 source_family: family.into(),
-                source_unit_id: None,
+                source_id: None,
                 parser_id: None,
                 source_identifier: display_identifier,
                 status,
@@ -2111,7 +2111,7 @@ impl SourceMaterialRepository<'_> {
 fn derive_source_family(source_identifier: &str, _material_kind: &str) -> &'static str {
     let lower = source_identifier.to_ascii_lowercase();
     if lower.starts_with("integration.") || lower.starts_with("analysis.") {
-        // External producer envelopes use dotted source-unit identifiers.
+        // External producer envelopes use dotted source identifiers.
         return "integration";
     }
     if lower.contains("atuin") || lower.contains("zsh_history") {

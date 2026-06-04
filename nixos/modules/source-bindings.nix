@@ -44,7 +44,7 @@ let
   # JSON representation of a single source binding for export.
   bindingToJson = name: binding: {
     inherit name;
-    sourceUnitId = binding.sourceUnitId;
+    sourceId = binding.sourceId;
     sourceFamily = binding.sourceFamily;
     bindingMode = binding.bindingMode;
     inputShapeKind = binding.inputShapeKind;
@@ -92,10 +92,10 @@ let
         default = null;
         description = "Parser identifier (null for stage-only bindings).";
       };
-      sourceUnitId = mkOption {
+      sourceId = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "Stable source-unit identity.";
+        description = "Stable source identity.";
       };
       privacyPolicyId = mkOption {
         type = privacyPolicyType;
@@ -130,7 +130,7 @@ in
         can be inspected when debugging host activation. It is not a generated
         Rust descriptor catalog or a verifier input.
 
-        Shape: { bindings: [{ name, sourceUnitId, sourceFamily, bindingMode,
+        Shape: { bindings: [{ name, sourceId, sourceFamily, bindingMode,
           inputShapeKind, privacyPolicyId, parserId, enabled }] }
       '';
     };
@@ -145,7 +145,7 @@ in
           resolverPreset = "atuin.default";
           inputShapeKind = "SqliteQuery";
           parserId = "shell.atuin";
-          sourceUnitId = "terminal.atuin-history";
+          sourceId = "terminal.atuin-history";
           privacyPolicyId = "allowPlaintext";
         };
       };
@@ -168,7 +168,7 @@ in
           systemd service — the Polylogue publisher is the unblocker (see
           https://github.com/sinity/polylogue for the companion PR).
 
-          The sinex-side source unit descriptor (integration.polylogue) and
+          The sinex-side source contract (integration.polylogue) and
           typed payload schema (PolylogueConversationIndexedPayload) land
           unconditionally; only the Polylogue daemon's runtime activation is
           gated here.

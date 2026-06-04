@@ -13,7 +13,7 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 - **modules/** - Implementation modules:
   - `default.nix` - Main module entry point and base options
   - `database.nix` - PostgreSQL provisioning, pooling, and health monitoring
-  - `source-units.nix` - Source-binding and automaton configuration
+  - `sources.nix` - Source-binding and automaton configuration
   - `monitoring.nix` - Prometheus/Grafana monitoring setup
   - `preflight-verification.nix` - Pre-deployment validation checks
   - `nats.nix` - NATS JetStream configuration
@@ -39,14 +39,14 @@ Key architectural decisions and implementation details are documented at their i
 - **Ingestion & JetStream Overview**: [`README.md#architecture`](../README.md#architecture)
   - Provenance model and replay responsibilities: [`README.md#the-provenance-model-read-this-first`](../README.md#the-provenance-model-read-this-first)
   - Stream bootstrap defaults + environment namespacing: [`modules/nats.nix`](modules/nats.nix)
-- **Source-unit and stream runtime patterns**: [`crate/sinexd/docs/sources/README.md`](../crate/sinexd/docs/sources/README.md)
-  - Source-unit host shape, source-material staging, and parser boundaries
+- **Source and stream runtime patterns**: [`crate/sinexd/docs/sources/README.md`](../crate/sinexd/docs/sources/README.md)
+  - Source host shape, source-material staging, and parser boundaries
   - Inline node SDK runtime and checkpoint semantics
 - **Stream runtime implementation**: [`crate/sinexd/src/node_sdk/runtime/stream/mod.rs`](../crate/sinexd/src/node_sdk/runtime/stream/mod.rs)
   - Snapshot, historical, and continuous modes
 
 ### Node Implementations
-- **Filesystem Monitoring**: [`sinexd/src/sources/source_units/fs/mod.rs`](../crate/sinexd/src/sources/source_units/fs/mod.rs)
+- **Filesystem Monitoring**: [`sinexd/src/sources/source_contracts/fs/mod.rs`](../crate/sinexd/src/sources/source_contracts/fs/mod.rs)
   - SDK `FileContentDropAdapter` registration
   - inotify-backed file-drop watch planning
   - content staging plus metadata-only observations
@@ -324,20 +324,20 @@ views for ingest/runtime telemetry and live event-time views for recent activity
 Sinex uses a node architecture:
 
 ```
-External Data → Source units → NATS JetStream → sinexd::event_engine → PostgreSQL (`core.events`)
+External Data → Source contracts → NATS JetStream → sinexd::event_engine → PostgreSQL (`core.events`)
                                     ↓
                       confirmations/DLQ → Automata → sinexd::api / sinexctl
 ```
 
 Current implementation:
-- Source units publish provisional events and source material slices directly to JetStream (`events.raw.*`, `source_material.*`).
+- Source contracts publish provisional events and source material slices directly to JetStream (`events.raw.*`, `source_material.*`).
 - `sinexd::event_engine` consumes from JetStream, validates, persists to PostgreSQL (TimescaleDB), then publishes confirmations (`events.confirmations.*`) and DLQ entries back to JetStream.
 - Automata consume confirmations via durable JetStream consumers; `sinexd::api` / `sinexctl` query PostgreSQL via JSON-RPC or direct DB mode.
 
 **Core Components:**
 - **sinexd::event_engine**: JetStream consumer + validator + single-writer persistence + confirmations/DLQ publisher
 - **sinexd::api**: HTTP/JSON-RPC API for CLI and web access
-- **Source units / automata**: source capture and derived processing hosted by `sinexd`
+- **Source contracts / automata**: source capture and derived processing hosted by `sinexd`
 - **PostgreSQL**: Event storage with TimescaleDB for time-series data
 - **NATS JetStream**: Message bus for real-time event distribution
 

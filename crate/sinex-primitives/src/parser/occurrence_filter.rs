@@ -22,12 +22,12 @@
 //!
 //! The canonical string key is derived from [`OccurrenceKey`] via
 //! [`occurrence_key_string`]: each `(field_name, value)` pair is
-//! rendered as `name=value`, joined by `|`, prefixed by the source unit
+//! rendered as `name=value`, joined by `|`, prefixed by the source
 //! id. Backslash, `|`, and `=` characters inside names and values are
 //! escaped (`\\`, `\|`, `\=`) so adversarial track titles like
 //! `Foo|bar=baz` cannot collide with the encoding of a different
 //! `(name, value)` pair. This format is stable, human-readable, and
-//! avoids collision across source units.
+//! avoids collision across source contracts.
 
 use std::collections::HashSet;
 
@@ -87,10 +87,10 @@ impl OccurrenceFilter {
 
 /// Derive a canonical string key from an [`OccurrenceKey`].
 ///
-/// Format: `source_unit_id|name1=val1|name2=val2|...`
+/// Format: `source_id|name1=val1|name2=val2|...`
 ///
 /// Backslash (`\\`), pipe (`|`), and equals (`=`) characters inside the
-/// `source_unit_id`, field names, and values are escaped (`\\\\`, `\\|`,
+/// `source_id`, field names, and values are escaped (`\\\\`, `\\|`,
 /// `\\=`) so two distinct keys never collapse to the same string. For
 /// example, `(foo, "bar|baz")` and `(foo|bar, "baz")` produce different
 /// outputs, which they would not under bare concatenation.
@@ -101,7 +101,7 @@ impl OccurrenceFilter {
 #[must_use]
 pub fn occurrence_key_string(key: &OccurrenceKey) -> String {
     let mut s = String::with_capacity(128);
-    push_escaped(&mut s, key.source_unit_id.as_str());
+    push_escaped(&mut s, key.source_id.as_str());
     for (name, value) in &key.fields {
         s.push('|');
         push_escaped(&mut s, name);
@@ -138,7 +138,7 @@ pub fn maybe_occurrence_key_string(key: Option<&OccurrenceKey>) -> Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::SourceUnitId;
+    use crate::parser::SourceId;
     use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
@@ -181,7 +181,7 @@ mod tests {
     #[sinex_test]
     async fn occurrence_key_string_format() -> xtask::sandbox::TestResult<()> {
         let key = OccurrenceKey {
-            source_unit_id: SourceUnitId::from_static("test.unit"),
+            source_id: SourceId::from_static("test.unit"),
             fields: vec![("a".into(), "1".into()), ("b".into(), "hello".into())],
         };
         let s = occurrence_key_string(&key);
@@ -192,7 +192,7 @@ mod tests {
     #[sinex_test]
     async fn maybe_occurrence_key_string_some_and_none() -> xtask::sandbox::TestResult<()> {
         let key = OccurrenceKey {
-            source_unit_id: SourceUnitId::from_static("test.unit"),
+            source_id: SourceId::from_static("test.unit"),
             fields: vec![("x".into(), "y".into())],
         };
         assert_eq!(
@@ -209,11 +209,11 @@ mod tests {
         // would both encode as `test.unit|foo=bar|baz` and silently
         // dedup against each other. With escaping they are distinct.
         let k1 = OccurrenceKey {
-            source_unit_id: SourceUnitId::from_static("test.unit"),
+            source_id: SourceId::from_static("test.unit"),
             fields: vec![("foo".into(), "bar|baz".into())],
         };
         let k2 = OccurrenceKey {
-            source_unit_id: SourceUnitId::from_static("test.unit"),
+            source_id: SourceId::from_static("test.unit"),
             fields: vec![("foo|bar".into(), "baz".into())],
         };
         let s1 = occurrence_key_string(&k1);
@@ -227,7 +227,7 @@ mod tests {
     #[sinex_test]
     async fn escaping_handles_equals_and_backslash() -> xtask::sandbox::TestResult<()> {
         let k = OccurrenceKey {
-            source_unit_id: SourceUnitId::from_static("test.unit"),
+            source_id: SourceId::from_static("test.unit"),
             fields: vec![("name=raw".into(), "value\\with\\slash".into())],
         };
         let s = occurrence_key_string(&k);

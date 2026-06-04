@@ -53,8 +53,8 @@ impl NodeRuntimeState {
     }
 
     #[must_use]
-    pub fn source_unit_id(&self) -> Option<&str> {
-        self.service_info.source_unit_id()
+    pub fn source_id(&self) -> Option<&str> {
+        self.service_info.source_id()
     }
 
     #[must_use]

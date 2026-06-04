@@ -2,10 +2,10 @@
 
 use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
 use sinex_primitives::{
-    parser::SourceUnitId,
+    parser::SourceId,
     rpc::sources::{CaveatSeverity, caveat_codes},
 };
-use sinexd::sources::sources::{
+use sinexd::sources::source_contracts::{
     ai_session::{ChatGptSessionParser, ClaudeSessionParser},
     messaging::MessengerThreadParser,
 };
@@ -44,7 +44,7 @@ async fn claude_required_conversation_field_removal_blocks_readiness() -> TestRe
         }
     ]));
     let mut drift = SourceRecordFingerprint::diff(
-        SourceUnitId::from_static("ai-session-claude"),
+        SourceId::from_static("ai-session-claude"),
         &before,
         &after,
     )

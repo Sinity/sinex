@@ -1,7 +1,7 @@
 //! Operator-facing ingestor status RPC types.
 //!
 //! Mirrors `rpc::automata` for the source-side: every registered ingestor (and
-//! source-unit) manifest, joined to its latest run, latest
+//! source) manifest, joined to its latest run, latest
 //! `health.status` event, and recent event-emission stats. Distinct from
 //! `rpc::nodes` (which carries coordinator-style state — drain/resume/horizon).
 
@@ -172,7 +172,7 @@ impl EmitStallThresholds {
     }
 }
 
-/// Verdict for a single source unit's emit-rate health.
+/// Verdict for a single source's emit-rate health.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EmitStallVerdict {
@@ -203,7 +203,7 @@ impl EmitStallVerdict {
         }
     }
 
-    /// Whether this verdict represents a degraded source unit that should
+    /// Whether this verdict represents a degraded source that should
     /// surface in operator dashboards.
     #[must_use]
     pub fn is_degraded(self) -> bool {
@@ -212,7 +212,7 @@ impl EmitStallVerdict {
 }
 
 impl IngestorStatus {
-    /// Classify this source unit's emit-rate health against the supplied
+    /// Classify this source's emit-rate health against the supplied
     /// thresholds and reference instant (`now`).
     ///
     /// Pure function over the snapshot — no I/O, no clock side-effects — so it

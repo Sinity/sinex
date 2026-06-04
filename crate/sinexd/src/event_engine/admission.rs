@@ -64,7 +64,7 @@ pub struct AdmittedEvent {
 pub struct CandidateEventMetadata {
     pub source_material_id: Option<Uuid>,
     pub stable_natural_key: Option<String>,
-    pub parser_source_unit_id: Option<String>,
+    pub parser_source_id: Option<String>,
     pub parser_semantics_version: Option<String>,
     pub timestamp_derivation_evidence: Option<String>,
     pub privacy_context: Option<String>,

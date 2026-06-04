@@ -37,7 +37,7 @@ Forcing high-volume ingestion through these security layers would create massive
 
 If the API module fails:
 - Users cannot query or interact
-- Data collection should continue through the event engine and source units
+- Data collection should continue through the event engine and source contracts
 - System degrades gracefully
 
 ## Protocol Stack

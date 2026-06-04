@@ -2,10 +2,10 @@
 
 use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
 use sinex_primitives::{
-    parser::SourceUnitId,
+    parser::SourceId,
     rpc::sources::{CaveatSeverity, caveat_codes},
 };
-use sinexd::sources::sources::music::SpotifyHistoryParser;
+use sinexd::sources::source_contracts::music::SpotifyHistoryParser;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -30,7 +30,7 @@ async fn spotify_required_array_field_removal_blocks_readiness() -> TestResult<(
         }
     ]));
     let mut drift = SourceRecordFingerprint::diff(
-        SourceUnitId::from_static("spotify-extended-history"),
+        SourceId::from_static("spotify-extended-history"),
         &before,
         &after,
     )

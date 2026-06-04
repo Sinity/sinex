@@ -66,7 +66,7 @@ use crate::node_sdk::acquisition_manager::AcquisitionManager;
 /// public type signature.
 const SNAPSHOT_SLICE_BYTES: usize = 256 * 1024;
 
-/// Per-source-unit snapshot configuration.
+/// Per-source snapshot configuration.
 ///
 /// Embedded as `snapshot` inside [`SqliteRowConfig`].  When `interval_seconds`
 /// is `0` the lane is disabled (the default) and no snapshots are produced.
@@ -125,8 +125,8 @@ pub struct SnapshotLaneSpec {
     pub path: PathBuf,
 
     /// Source identifier embedded in `raw.source_material_registry`. Should be
-    /// stable across runs for the same source unit; usually
-    /// `"<source_unit_id>.snapshot"`.
+    /// stable across runs for the same source; usually
+    /// `"<source_id>.snapshot"`.
     pub source_identifier: String,
 
     /// How often to capture a snapshot.
@@ -142,7 +142,7 @@ impl SnapshotLaneSpec {
     #[must_use]
     pub fn from_sqlite_config(
         path: impl AsRef<Path>,
-        source_unit_id: &str,
+        source_id: &str,
         config: &SqliteSnapshotConfig,
     ) -> Option<Self> {
         if !config.enabled() {
@@ -150,7 +150,7 @@ impl SnapshotLaneSpec {
         }
         Some(Self {
             path: path.as_ref().to_path_buf(),
-            source_identifier: format!("{source_unit_id}.snapshot"),
+            source_identifier: format!("{source_id}.snapshot"),
             interval: config.interval(),
             dedup_by_content_hash: config.dedup_by_content_hash,
         })
@@ -205,7 +205,7 @@ impl SqliteSnapshotLane {
         );
 
         // Capture once immediately so a short-running test (or a freshly
-        // restarted source unit) can prove at least one snapshot landed
+        // restarted source) can prove at least one snapshot landed
         // without waiting a full interval.
         if let Err(e) = self.capture_once().await {
             warn!(

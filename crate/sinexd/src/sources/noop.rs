@@ -1,76 +1,75 @@
-//! Noop source unit — minimal `SourceUnit` serving as a template and test vehicle.
+//! Noop source — minimal `SourceDriver` serving as a template and test vehicle.
 //!
-//! This source unit emits no events and idles in continuous mode until shutdown.
-//! It exists to prove the source-unit host dispatch infrastructure works
-//! without depending on external ingestor crates. Real source units follow the
+//! This source emits no events and idles in continuous mode until shutdown.
+//! It exists to prove the source host dispatch infrastructure works
+//! without depending on external ingestor crates. Real source contracts follow the
 //! same pattern with actual ingestion logic.
 
 use crate::node_sdk::{
-    NodeResult, SourceUnit,
+    NodeResult, SourceDriver,
     runtime::stream::{
         Checkpoint, ContinuousStart, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
     },
 };
-use crate::register_node_factory;
+use crate::register_source_driver;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
+    SourceRuntimeBinding, SourceBuildImpact, SourceContract, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 use std::collections::HashMap;
 use std::time::Instant;
 use tokio::sync::watch;
 
-register_node_factory!("noop", NoopSourceUnit);
+register_source_driver!("noop", NoopSourceDriver);
 
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "noop",
         namespace: "sinex",
         event_types: &[],
         privacy_tier: PrivacyTier::Public,
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,
-        proof_obligations: &[],
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(source_unit)"),
+        occurrence_identity: OccurrenceIdentity::Uuid5From("(source)"),
         access_policy: "none",
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:noop"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:noop"),
         "noop",
         "sinex",
     )
     .implementation("sinexd")
-    .adapter("SourceUnitRuntime")
+    .adapter("SourceDriverRuntime")
     .output_event_type("noop")
     .privacy_context("none")
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
-    .source_unit_id("noop")
-    .runner_pack("sinexd-source-unit")
+    .source_id("noop")
+    .runner_pack("sinexd-source")
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("noop_source_unit")
-    .implementation_mode("sinexd:source-unit")
-    .build_impact(SourceUnitBuildImpact::ZERO)
+    .package_impact("noop_source")
+    .implementation_mode("sinexd:source")
+    .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
 
-/// State for the noop source unit.
+/// State for the noop source.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NoopState;
 
-/// A source unit that emits no events. Used as a template for real
-/// implementations and as a test vehicle for the source-unit host.
+/// A source that emits no events. Used as a template for real
+/// implementations and as a test vehicle for the source host.
 #[derive(Default)]
-pub struct NoopSourceUnit;
+pub struct NoopSourceDriver;
 
-impl SourceUnit for NoopSourceUnit {
+impl SourceDriver for NoopSourceDriver {
     type Config = serde_json::Value;
     type State = NoopState;
 
@@ -97,7 +96,7 @@ impl SourceUnit for NoopSourceUnit {
         _runtime: &crate::node_sdk::runtime::stream::NodeRuntimeState,
         _state: &mut Self::State,
     ) -> NodeResult<()> {
-        tracing::info!("Noop source unit initialized");
+        tracing::info!("Noop source initialized");
         Ok(())
     }
 
@@ -131,7 +130,7 @@ impl SourceUnit for NoopSourceUnit {
         start: ContinuousStart,
         mut shutdown_rx: watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
-        tracing::info!("Noop source unit entering continuous mode");
+        tracing::info!("Noop source entering continuous mode");
 
         let started_at = Instant::now();
         loop {
@@ -185,8 +184,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn noop_source_unit_reports_zero_work() -> TestResult<()> {
-        let mut node = NoopSourceUnit;
+    async fn noop_source_reports_zero_work() -> TestResult<()> {
+        let mut node = NoopSourceDriver;
         let mut state = NoopState;
 
         let snapshot = node.scan_snapshot(&mut state, ScanArgs::default()).await?;

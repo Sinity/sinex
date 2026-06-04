@@ -56,7 +56,7 @@ The SDK exposes a framework-like SQLite source shape with two lanes:
 
 The node author should declare source identity, query, checkpoint, material
 encoding, privacy context, and snapshot policy once. The natural path should be
-to construct a SQLite source unit through SDK descriptors or annotations rather
+to construct a SQLite source through SDK descriptors or annotations rather
 than manually combining a row reader, materializer, checkpoint state, and
 evidence policy in node-local code.
 
@@ -118,7 +118,7 @@ The initial SQLite evidence lane applies to:
 - `browser.chromium_history`: Chromium-style `History`, tables `urls` and
   `visits`.
 
-Future SQLite/cachew/HPI-like adapters should use the same source-unit shape
+Future SQLite/cachew/HPI-like adapters should use the same source shape
 instead of inventing local snapshot logic.
 
 ## Snapshot Capture Semantics
@@ -139,13 +139,13 @@ boundary based:
 - before or after explicit historical backfill windows;
 - on clean shutdown when the previous snapshot is stale.
 
-The source unit should surface this as a policy, not as ad-hoc timers inside
+The source should surface this as a policy, not as ad-hoc timers inside
 each node.
 
 ## Rotation Semantics
 
 SQLite row streams rotate by source-material policy, not by adapter `open()` or
-drain invocation. A source unit keeps its stream material open while polling and
+drain invocation. A source keeps its stream material open while polling and
 appends each serialized row to the current material. Rotation finalizes the
 current material and starts a new one only when a configured boundary is reached:
 
@@ -191,7 +191,7 @@ There are two replay modes:
 - Row-stream replay: reprocess the row-stream material currently cited by events.
   This is the normal event replay path and preserves exact event anchors.
 - Snapshot-backed reinterpretation: use a snapshot evidence material to run a
-  new source-unit scan against an immutable copy of the database, producing new
+  new source scan against an immutable copy of the database, producing new
   row-stream materials and fresh events through the normal pipeline.
 
 Snapshot-backed reinterpretation is not bit-for-bit event mutation. It is a new
@@ -233,7 +233,7 @@ The important invariant is direction:
 
 - `row_stream_material --backed_by--> sqlite_snapshot_material`
 
-The SDK API makes the relationship automatic for SQLite source units that enable
+The SDK API makes the relationship automatic for SQLite source contracts that enable
 snapshots and provide a `SqliteSnapshotLinker`. Node code supplies only the
 runtime DB pool; it does not manually insert material links.
 
@@ -252,7 +252,7 @@ runtime DB pool; it does not manually insert material links.
 
 The initial implementation split into three slices:
 
-- SDK SQLite source-unit descriptors with snapshot policy and snapshot evidence
+- SDK SQLite source contracts with snapshot policy and snapshot evidence
   capture ([#493](https://github.com/Sinity/sinex/issues/493)).
 - Source-material evidence links
   ([#494](https://github.com/Sinity/sinex/issues/494)).

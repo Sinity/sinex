@@ -62,10 +62,10 @@ pub struct EventBatcherConfig {
     pub batch_size: usize,
     /// Maximum time to wait for a batch to fill
     pub batch_timeout_ms: u64,
-    /// Source unit identifier for the admission envelope (e.g., "fs-watcher").
+    /// Source identifier for the admission envelope (e.g., "fs-watcher").
     /// Required for production use — the batcher constructs an `EventIntent`.
     #[serde(default)]
-    pub source_unit_id: String,
+    pub source_id: String,
     /// Parser identifier for the admission envelope (e.g., "inotify-watcher").
     #[serde(default)]
     pub parser_id: String,
@@ -79,7 +79,7 @@ impl Default for EventBatcherConfig {
         Self {
             batch_size: 100,
             batch_timeout_ms: 1000,
-            source_unit_id: String::new(),
+            source_id: String::new(),
             parser_id: String::new(),
             parser_version: String::new(),
         }
@@ -330,10 +330,10 @@ impl EventBatcher {
             let publish_result = match &self.transport {
                 EventTransport::Nats(publisher) => {
                     let intent = EventIntent::new(
-                        if self.config.source_unit_id.is_empty() {
+                        if self.config.source_id.is_empty() {
                             "recovery-spool"
                         } else {
-                            &self.config.source_unit_id
+                            &self.config.source_id
                         },
                         if self.config.parser_id.is_empty() {
                             "recovery-spool"
@@ -455,7 +455,7 @@ impl EventBatcher {
                 Self::send_batch_nats(
                     publisher,
                     batch,
-                    &self.config.source_unit_id,
+                    &self.config.source_id,
                     &self.config.parser_id,
                     &self.config.parser_version,
                 )
@@ -598,7 +598,7 @@ impl EventBatcher {
     async fn send_batch_nats(
         publisher: &NatsPublisher,
         events: &mut Vec<Event<JsonValue>>,
-        source_unit_id: &str,
+        source_id: &str,
         parser_id: &str,
         parser_version: &str,
     ) -> BatchPublishResult {
@@ -612,10 +612,10 @@ impl EventBatcher {
         let event_count = events.len();
 
         let intent = EventIntent::new(
-            if source_unit_id.is_empty() {
+            if source_id.is_empty() {
                 "unknown"
             } else {
-                source_unit_id
+                source_id
             },
             parser_id,
             parser_version,

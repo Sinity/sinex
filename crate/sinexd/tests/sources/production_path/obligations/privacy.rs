@@ -1,12 +1,12 @@
 //! Privacy metadata obligation.
 //!
-//! Verifies that sensitive source-unit parsers declare privacy context metadata
+//! Verifies that sensitive source parsers declare privacy context metadata
 //! for the DB-backed admission policy.
 //!
 //! ## What this obligation proves
 //!
 //! - A clean fixture (no secrets) produces events normally.
-//! - Non-public source units expose parser privacy contexts.
+//! - Non-public source contracts expose parser privacy contexts.
 //!
 //! ## Privacy engine integration
 //!
@@ -16,28 +16,28 @@
 //!
 //! ## Per-domain fenced regions
 //!
-//! Per-source-unit modules call `_run_case(...)` directly.
+//! Per-source modules call `_run_case(...)` directly.
 
 use crate::AdapterKind;
-use sinex_primitives::parser::SourceUnitId;
+use sinex_primitives::parser::SourceId;
 use sinex_primitives::proof::{self, PrivacyTier};
 use sinexd::sources::dispatch::find_parser_factory;
 
-/// Run the privacy obligation for a source unit.
+/// Run the privacy obligation for a source.
 ///
 /// # Errors
 ///
 /// Returns an error if clean fixture fails dispatch, or if a non-public source
 /// unit lacks parser privacy context metadata.
 pub async fn run(
-    source_unit_id: &str,
+    source_id: &str,
     adapter_kind: AdapterKind,
     fixture_data: &[u8],
     expected_event_types: &[&str],
 ) -> Result<(), String> {
     // Part 1: clean fixture must dispatch cleanly (delegates to initial_ingestion logic).
     super::initial_ingestion::run(
-        source_unit_id,
+        source_id,
         adapter_kind,
         fixture_data,
         expected_event_types,
@@ -45,7 +45,7 @@ pub async fn run(
     .await
     .map_err(|e| format!("privacy/clean-path: {e}"))?;
 
-    run_metadata_only(source_unit_id).await
+    run_metadata_only(source_id).await
 }
 
 /// Run only the privacy metadata proof.
@@ -53,30 +53,30 @@ pub async fn run(
 /// Use this when the caller has already verified clean fixture dispatch in the
 /// same case. It preserves the privacy proof while avoiding a duplicate
 /// initial-ingestion pass in `ALL_OBLIGATIONS`.
-pub async fn run_metadata_only(source_unit_id: &str) -> Result<(), String> {
-    let source_unit_id = SourceUnitId::new(source_unit_id.to_owned())
-        .map_err(|error| format!("privacy metadata: invalid source unit id: {error}"))?;
-    let descriptor = proof::find_source_unit(&source_unit_id).ok_or_else(|| {
+pub async fn run_metadata_only(source_id: &str) -> Result<(), String> {
+    let source_id = SourceId::new(source_id.to_owned())
+        .map_err(|error| format!("privacy metadata: invalid source id: {error}"))?;
+    let descriptor = proof::find_source_contract(&source_id).ok_or_else(|| {
         format!(
-            "privacy metadata: unknown source unit '{}'",
-            source_unit_id.as_str()
+            "privacy metadata: unknown source '{}'",
+            source_id.as_str()
         )
     })?;
     if descriptor.privacy_tier == PrivacyTier::Public {
         return Ok(());
     }
 
-    let factory = find_parser_factory(&source_unit_id).ok_or_else(|| {
+    let factory = find_parser_factory(&source_id).ok_or_else(|| {
         format!(
-            "privacy metadata: source unit '{}' has no registered parser factory",
-            source_unit_id.as_str()
+            "privacy metadata: source '{}' has no registered parser factory",
+            source_id.as_str()
         )
     })?;
     let manifest = factory().manifest();
     if manifest.privacy_contexts.is_empty() {
         return Err(format!(
-            "privacy metadata: non-public source unit '{}' parser '{}' declares no privacy contexts",
-            source_unit_id.as_str(),
+            "privacy metadata: non-public source '{}' parser '{}' declares no privacy contexts",
+            source_id.as_str(),
             manifest.parser_id
         ));
     }

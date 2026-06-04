@@ -57,10 +57,10 @@ impl Default for TestEventEngineConfig {
     }
 }
 
-/// Configuration for a test source-unit host instance.
+/// Configuration for a test source host instance.
 #[derive(Debug, Clone)]
-pub struct TestSourceUnitConfig {
-    pub source_unit_id: String,
+pub struct TestSourceDriverConfig {
+    pub source_id: String,
     pub nats: sinex_primitives::nats::NatsConnectionConfig,
     pub database_url: String,
     pub work_dir: Option<std::path::PathBuf>,
@@ -69,11 +69,11 @@ pub struct TestSourceUnitConfig {
     pub service_name: Option<String>,
 }
 
-impl TestSourceUnitConfig {
+impl TestSourceDriverConfig {
     #[must_use]
-    pub fn new(source_unit_id: impl Into<String>) -> Self {
+    pub fn new(source_id: impl Into<String>) -> Self {
         Self {
-            source_unit_id: source_unit_id.into(),
+            source_id: source_id.into(),
             nats: sinex_primitives::nats::NatsConnectionConfig::default(),
             database_url: crate::infra::stack::StackConfig::for_current_checkout().map_or_else(
                 |_| "postgresql:///sinex_test?host=/run/postgresql".to_string(),
@@ -92,10 +92,10 @@ pub struct TestEventEngineHandle {
     pub stream_name: String,
 }
 
-/// Handle to a running test source-unit host instance.
-pub struct TestSourceUnitHandle {
+/// Handle to a running test source host instance.
+pub struct TestSourceDriverHandle {
     child: tokio::process::Child,
-    pub source_unit_id: String,
+    pub source_id: String,
 }
 
 async fn terminate_test_child(child: &mut tokio::process::Child, process_name: &str) -> Result<()> {
@@ -147,27 +147,27 @@ impl Drop for TestEventEngineHandle {
     }
 }
 
-impl TestSourceUnitHandle {
+impl TestSourceDriverHandle {
     pub async fn stop(&mut self) -> Result<()> {
-        let stop_result = terminate_test_child(&mut self.child, "test source-unit host").await;
-        let debug_log = source_unit_debug_log_path_for_test_process(&self.source_unit_id);
+        let stop_result = terminate_test_child(&mut self.child, "test source host").await;
+        let debug_log = source_driver_debug_log_path_for_test_process(&self.source_id);
         match std::fs::read_to_string(&debug_log) {
-            Ok(content) if content.is_empty() => eprintln!("📋 source-unit host log: EMPTY"),
+            Ok(content) if content.is_empty() => eprintln!("📋 source host log: EMPTY"),
             Ok(content) => {
                 let end = content.floor_char_boundary(3000);
                 let truncated = &content[..end];
                 eprintln!(
-                    "📋 source-unit host log ({} bytes):\n{truncated}",
+                    "📋 source host log ({} bytes):\n{truncated}",
                     content.len()
                 );
             }
-            Err(error) => eprintln!("📋 source-unit host log unavailable: {error:#}"),
+            Err(error) => eprintln!("📋 source host log unavailable: {error:#}"),
         }
         stop_result
     }
 }
 
-impl Drop for TestSourceUnitHandle {
+impl Drop for TestSourceDriverHandle {
     fn drop(&mut self) {
         let _ = self.child.start_kill();
     }
@@ -177,10 +177,10 @@ pub(crate) fn event_engine_debug_log_path_for_test_process() -> PathBuf {
     PathBuf::from(format!("/tmp/sinexd-{}.log", std::process::id()))
 }
 
-pub(crate) fn source_unit_debug_log_path_for_test_process(source_unit_id: &str) -> PathBuf {
-    let safe_unit = source_unit_id.replace(['/', ':'], "_");
+pub(crate) fn source_driver_debug_log_path_for_test_process(source_id: &str) -> PathBuf {
+    let safe_unit = source_id.replace(['/', ':'], "_");
     PathBuf::from(format!(
-        "/tmp/sinex-source-unit-{safe_unit}-{}.log",
+        "/tmp/sinex-source-{safe_unit}-{}.log",
         std::process::id()
     ))
 }
@@ -668,12 +668,12 @@ pub(crate) fn runtime_binary_path(workspace_root: &std::path::Path, binary_name:
         .join(binary_name)
 }
 
-/// Return the expected source-unit host binary path for this workspace.
+/// Return the expected source host binary path for this workspace.
 ///
-/// Source units are hosted by `sinexd`; there is no separate
+/// Source contracts are hosted by `sinexd`; there is no separate
 /// `sinexd` binary after the runtime fold.
 #[must_use]
-pub fn source_unit_host_binary_path(workspace_root: &std::path::Path) -> PathBuf {
+pub fn source_driver_host_binary_path(workspace_root: &std::path::Path) -> PathBuf {
     runtime_binary_path(workspace_root, "sinexd")
 }
 
@@ -884,23 +884,23 @@ fn system_time_epoch_secs(time: Option<SystemTime>) -> Option<u64> {
         .map(|duration| duration.as_secs())
 }
 
-pub async fn start_test_source_unit(
-    config: TestSourceUnitConfig,
+pub async fn start_test_source(
+    config: TestSourceDriverConfig,
     ctx: Option<&crate::sandbox::context::Sandbox>,
-) -> Result<TestSourceUnitHandle> {
+) -> Result<TestSourceDriverHandle> {
     let workspace_root = find_workspace_root()?;
     let freshness = check_runtime_binary_freshness(&workspace_root, "sinexd", "sinexd")?;
     if let Some(sandbox) = ctx {
         sandbox.record_evidence_event(
             "runtime_binary.freshness",
-            "checked runtime binary freshness before launching test source-unit host",
+            "checked runtime binary freshness before launching test source host",
             freshness.to_json(),
         );
     }
     freshness.ensure_fresh()?;
     let binary_path = freshness.binary_path.clone();
 
-    let debug_log = source_unit_debug_log_path_for_test_process(&config.source_unit_id);
+    let debug_log = source_driver_debug_log_path_for_test_process(&config.source_id);
     let notify_socket_path = notify_socket_path("sw")?;
     let _ = std::fs::remove_file(&notify_socket_path);
     let notify_listener = UnixDatagram::bind(&notify_socket_path)
@@ -914,12 +914,12 @@ pub async fn start_test_source_unit(
 
     let mut cmd = Command::new(&binary_path);
     crate::process::configure_managed_child_tokio(&mut cmd);
-    cmd.arg("scan-source-unit");
-    cmd.args(["--source-unit", &config.source_unit_id]);
+    cmd.arg("scan-source");
+    cmd.args(["--source", &config.source_id]);
     cmd.env("DATABASE_URL", &config.database_url);
     cmd.env("SINEX_NATS_URL", &config.nats.url);
-    cmd.env("SINEX_SOURCE_UNIT", &config.source_unit_id);
-    cmd.env("SINEX_RUNNER_PACK", "sinexd-source-unit");
+    cmd.env("SINEX_SOURCE", &config.source_id);
+    cmd.env("SINEX_RUNNER_PACK", "sinexd-source");
     if config.nats.require_tls {
         cmd.env("SINEX_NATS_REQUIRE_TLS", "true");
     }
@@ -952,12 +952,12 @@ pub async fn start_test_source_unit(
         .kill_on_drop(true);
 
     let mut child = cmd.spawn()?;
-    crate::process::register_tokio_child_process_group(&child, "sandbox source-unit host");
+    crate::process::register_tokio_child_process_group(&child, "sandbox source host");
 
     if let Some(sandbox) = ctx
         && sandbox.nats_handle().is_ok()
         && let Err(error) = wait_for_ready_notify(
-            "sinexd scan-source-unit",
+            "sinexd scan-source",
             &notify_listener,
             &mut child,
             Duration::from_secs(Timeouts::STANDARD),
@@ -965,44 +965,44 @@ pub async fn start_test_source_unit(
         .await
     {
         let _ = std::fs::remove_file(&notify_socket_path);
-        let mut handle = TestSourceUnitHandle {
+        let mut handle = TestSourceDriverHandle {
             child,
-            source_unit_id: config.source_unit_id,
+            source_id: config.source_id,
         };
         if let Err(stop_error) = handle.stop().await {
             return Err(error).wrap_err(format!(
-                "source-unit host failed to become ready and cleanup failed: {stop_error:#}"
+                "source host failed to become ready and cleanup failed: {stop_error:#}"
             ));
         }
-        return Err(error).wrap_err("source-unit host failed to become ready");
+        return Err(error).wrap_err("source host failed to become ready");
     }
     let _ = std::fs::remove_file(&notify_socket_path);
 
-    Ok(TestSourceUnitHandle {
+    Ok(TestSourceDriverHandle {
         child,
-        source_unit_id: config.source_unit_id,
+        source_id: config.source_id,
     })
 }
 
-/// Run a one-shot `sinexd scan-source-unit` subprocess and capture its output.
+/// Run a one-shot `sinexd scan-source` subprocess and capture its output.
 ///
 /// Use this for production-path tests that need to exercise the real binary
 /// path without keeping a long-running service process alive.
-pub async fn run_test_source_unit_scan(
-    config: TestSourceUnitConfig,
+pub async fn run_test_source_scan(
+    config: TestSourceDriverConfig,
     targets: &[PathBuf],
     ctx: Option<&crate::sandbox::context::Sandbox>,
 ) -> Result<CapturedOutput> {
     let workspace_root = find_workspace_root()?;
-    // The source-unit host is the `sinexd scan-source-unit` subcommand. The SDK subcommand
+    // The source host is the `sinexd scan-source` subcommand. The SDK subcommand
     // (`scan --until snapshot --targets …`) is forwarded via repeated `--extra-arg`,
     // exactly as the NixOS source-binding units invoke it
-    // (see `nixos/modules/source-units.nix`).
+    // (see `nixos/modules/sources.nix`).
     let freshness = check_runtime_binary_freshness(&workspace_root, "sinexd", "sinexd")?;
     if let Some(sandbox) = ctx {
         sandbox.record_evidence_event(
             "runtime_binary.freshness",
-            "checked runtime binary freshness before running test source-unit scan",
+            "checked runtime binary freshness before running test source scan",
             freshness.to_json(),
         );
     }
@@ -1010,10 +1010,10 @@ pub async fn run_test_source_unit_scan(
 
     let mut cmd = Command::new(&freshness.binary_path);
     crate::process::configure_managed_child_tokio(&mut cmd);
-    cmd.arg("scan-source-unit");
-    cmd.args(["--source-unit", &config.source_unit_id]);
+    cmd.arg("scan-source");
+    cmd.args(["--source", &config.source_id]);
     if let Some(wd) = &config.work_dir {
-        // `scan-source-unit` has no --work-dir flag; the runner reads SINEX_WORK_DIR.
+        // `scan-source` has no --work-dir flag; the runner reads SINEX_WORK_DIR.
         cmd.env("SINEX_WORK_DIR", wd);
     }
     if let Some(service_name) = &config.service_name {
@@ -1035,8 +1035,8 @@ pub async fn run_test_source_unit_scan(
 
     cmd.env("DATABASE_URL", &config.database_url);
     cmd.env("SINEX_NATS_URL", &config.nats.url);
-    cmd.env("SINEX_SOURCE_UNIT", &config.source_unit_id);
-    cmd.env("SINEX_RUNNER_PACK", "sinexd-source-unit");
+    cmd.env("SINEX_SOURCE", &config.source_id);
+    cmd.env("SINEX_RUNNER_PACK", "sinexd-source");
     if config.nats.require_tls {
         cmd.env("SINEX_NATS_REQUIRE_TLS", "true");
     }
@@ -1058,14 +1058,14 @@ pub async fn run_test_source_unit_scan(
         .kill_on_drop(true);
 
     let child = cmd.spawn()?;
-    crate::process::register_tokio_child_process_group(&child, "sandbox source-unit scan");
+    crate::process::register_tokio_child_process_group(&child, "sandbox source scan");
     let output = tokio::time::timeout(
         Duration::from_secs(Timeouts::STANDARD),
         child.wait_with_output(),
     )
     .await
-    .wrap_err("source-unit scan timed out")?
-    .wrap_err("failed to wait for source-unit scan")?;
+    .wrap_err("source scan timed out")?
+    .wrap_err("failed to wait for source scan")?;
 
     let captured = CapturedOutput {
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -1074,8 +1074,8 @@ pub async fn run_test_source_unit_scan(
     };
     if !output.status.success() {
         bail!(
-            "source-unit scan for '{}' exited with {}.\nstdout:\n{}\nstderr:\n{}",
-            config.source_unit_id,
+            "source scan for '{}' exited with {}.\nstdout:\n{}\nstderr:\n{}",
+            config.source_id,
             captured.exit_code,
             captured.stdout,
             captured.stderr
@@ -1231,9 +1231,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn source_unit_host_binary_path_uses_runtime_target_dir() -> TestResult<()> {
+    async fn source_driver_host_binary_path_uses_runtime_target_dir() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
-        let path = source_unit_host_binary_path(tempdir.path());
+        let path = source_driver_host_binary_path(tempdir.path());
 
         assert!(path.ends_with("sinexd"));
         assert!(path.starts_with(crate::orchestrator::get_target_dir(tempdir.path())));
@@ -1241,8 +1241,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn source_unit_debug_log_path_includes_sanitized_unit() -> TestResult<()> {
-        let path = source_unit_debug_log_path_for_test_process("browser.history:test");
+    async fn source_driver_debug_log_path_includes_sanitized_unit() -> TestResult<()> {
+        let path = source_driver_debug_log_path_for_test_process("browser.history:test");
         let rendered = path.display().to_string();
 
         assert!(rendered.contains("browser.history_test"));

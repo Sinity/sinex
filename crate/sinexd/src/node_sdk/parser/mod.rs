@@ -14,7 +14,7 @@
 //! - **`ParserFixtureHarness`** provides reusable test infrastructure.
 //!
 //! Parser authors implement `MaterialParser::parse_record()` and declare their
-//! manifest. The source-unit runtime owns adapter opening, cursor persistence,
+//! manifest. The source runtime owns adapter opening, cursor persistence,
 //! retry, admission, transport, and confirmation tracking.
 
 #[cfg(feature = "messaging")]
@@ -152,7 +152,7 @@ pub trait InputShapeAdapterExt: InputShapeAdapter {
     /// Describe an optional parallel snapshot lane for this adapter.
     fn snapshot_lane(
         &self,
-        _source_unit_id: &str,
+        _source_id: &str,
         _config: &Self::Config,
     ) -> Option<crate::node_sdk::parser::adapters::SnapshotLaneSpec> {
         None

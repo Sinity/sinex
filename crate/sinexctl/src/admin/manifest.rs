@@ -21,9 +21,9 @@ pub struct SnapshotManifest {
     pub host: String,
     /// Snapshot mode: `"quiesce"` or `"live"`.
     pub mode: String,
-    /// Source-unit IDs known at snapshot time.
+    /// Source IDs known at snapshot time.
     #[serde(default)]
-    pub source_unit_ids: Vec<String>,
+    pub source_ids: Vec<String>,
     /// Per-component capture records.
     pub components: Vec<ComponentRecord>,
     /// Aggregate size summary.
@@ -80,8 +80,8 @@ pub struct CasExtras {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateExtras {
-    /// Source units registered in the `sinexctl` binary that created the snapshot.
-    pub source_unit_ids: Vec<String>,
+    /// Source contracts registered in the `sinexctl` binary that created the snapshot.
+    pub source_ids: Vec<String>,
     /// Whether runtime private-mode state was present in the captured state.
     pub private_mode_state_present: bool,
 }

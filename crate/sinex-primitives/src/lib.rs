@@ -109,11 +109,7 @@ pub use events::{Event, SourceMaterial, Timestamp};
 pub use ids::Id;
 pub use llm::*;
 pub use primitives::Uuid;
-pub use proof::{
-    Claim, EvidenceEnvelope, Exemption, PROOF_CATALOG_SCHEMA_VERSION, ProofClaimKind,
-    ProofObligation, ProofObligationLevel, RunnerBinding, SourceUnitBinding, SubjectQuery,
-    SubjectRef,
-};
+pub use proof::{SourceRuntimeBinding, SubjectQuery, SubjectRef};
 pub use query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
     LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PathOp, PayloadFilter,

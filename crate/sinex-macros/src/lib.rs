@@ -47,10 +47,10 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 ///
 /// # Struct attribute
 ///
-/// `#[source_record(id, source_unit_id, input_shape, event_type, ...)]`
+/// `#[source_record(id, source_id, input_shape, event_type, ...)]`
 ///
-/// Required keys: `id`, `source_unit_id`, `input_shape`, `event_type`.
-/// Optional keys: `event_source` (defaults to first segment of `source_unit_id`),
+/// Required keys: `id`, `source_id`, `input_shape`, `event_type`.
+/// Optional keys: `event_source` (defaults to first segment of `source_id`),
 /// `default_privacy_context` (defaults to `Metadata`), `version` (defaults to `"1.0.0"`).
 ///
 /// `input_shape` ∈ `json | tab_separated | csv_row | sqlite_row | raw_line`.
@@ -85,7 +85,7 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 /// #[derive(SourceRecord)]
 /// #[source_record(
 ///     id = "atuin-history",
-///     source_unit_id = "terminal.atuin-history",
+///     source_id = "terminal.atuin-history",
 ///     input_shape = "sqlite_row",
 ///     event_type = "command.executed",
 ///     default_privacy_context = "Command",

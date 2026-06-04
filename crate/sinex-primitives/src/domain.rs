@@ -856,7 +856,7 @@ impl ControlSubject {
     /// `sinex.control.sources.<source_id>.parse`
     ///
     /// Published by the gateway to request a staged-source parse;
-    /// subscribed by the source unit's parse listener.
+    /// subscribed by the source's parse listener.
     #[must_use]
     pub fn source_parse(source_id: impl fmt::Display) -> String {
         format!("sinex.control.sources.{source_id}.parse")

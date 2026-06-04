@@ -78,7 +78,7 @@ confusion; the boundaries below are authoritative.
 
 ### Raw-ingest DLQ (`events.dlq.*`)
 
-- **What goes here**: raw event batches from source units that the event engine cannot
+- **What goes here**: raw event batches from source contracts that the event engine cannot
   persist after all retries. The event bytes are still syntactically valid NATS
   messages; the failure is at the DB or schema layer.
 - **Who writes**: the event engine's `JetStreamConsumer` after exceeding retry budget.

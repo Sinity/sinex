@@ -20,7 +20,7 @@
 //!
 //! The harness can operate at two levels:
 //! - **Unit**: no NATS, no Postgres — pure adapter → parser → assertions.
-//! - **Integration** (future): route accepted intents through source-unit path.
+//! - **Integration** (future): route accepted intents through source path.
 
 use std::collections::HashMap;
 
@@ -35,7 +35,7 @@ use sinex_primitives::parser::{
     TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::proof::SourceUnitDescriptor;
+use sinex_primitives::proof::SourceContract;
 use sinex_primitives::temporal::Timestamp;
 
 use super::{InputShapeAdapter, MaterialParser};
@@ -47,11 +47,11 @@ use super::{InputShapeAdapter, MaterialParser};
 /// Minimal test context for a parser fixture.
 ///
 /// Provides identifiers and helpers that parsers need during testing without
-/// requiring a live source-unit, NATS, or Postgres.
+/// requiring a live source, NATS, or Postgres.
 #[derive(Debug, Clone)]
 pub struct ParserTestContext {
-    /// The source unit this test belongs to.
-    pub source_unit_id: String,
+    /// The source this test belongs to.
+    pub source_id: String,
 
     /// The source material being parsed (test-generated).
     pub source_material_id: Id<SourceMaterial>,
@@ -72,9 +72,9 @@ pub struct ParserTestContext {
 impl ParserTestContext {
     /// Create a new test context with generated identifiers.
     #[must_use]
-    pub fn new(source_unit_id: impl Into<String>) -> Self {
+    pub fn new(source_id: impl Into<String>) -> Self {
         Self {
-            source_unit_id: source_unit_id.into(),
+            source_id: source_id.into(),
             source_material_id: Id::new(),
             operation_id: Uuid::new_v4(),
             job_id: Uuid::new_v4(),
@@ -87,7 +87,7 @@ impl ParserTestContext {
     #[must_use]
     pub fn parser_context(&self, record_anchor: MaterialAnchor) -> ParserContext {
         ParserContext {
-            source_unit_id: sinex_primitives::parser::SourceUnitId::from_static("test-source-unit"),
+            source_id: sinex_primitives::parser::SourceId::from_static("test-source"),
             source_material_id: self.source_material_id,
             record_anchor,
             operation_id: self.operation_id,
@@ -167,16 +167,12 @@ pub struct FixtureSpec {
 ///
 /// This is intentionally small and repetitive: each parser fixture should make
 /// source identity, emitted event pairs, temporal extraction, occurrence
-/// identity, privacy policy, and proof obligations explicit in the fixture
+/// identity and privacy policy explicit in the fixture
 /// itself instead of relying on issue prose.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FixtureAcceptanceContract {
-    /// Source unit this fixture is proving.
-    pub source_unit_id: String,
-
-    /// Proof obligations the parser issue claims this fixture exercises.
-    #[serde(default)]
-    pub proof_obligations: Vec<String>,
+    /// Source this fixture is proving.
+    pub source_id: String,
 
     /// Require every positive expectation to assert `ts_orig`.
     #[serde(default = "default_true")]
@@ -839,7 +835,7 @@ impl FixtureSpec {
     pub fn acceptance_failures(
         &self,
         manifest: &ParserManifest,
-        descriptor: Option<&SourceUnitDescriptor>,
+        descriptor: Option<&SourceContract>,
     ) -> Vec<FixtureFailure> {
         let Some(contract) = &self.acceptance else {
             return Vec::new();
@@ -847,13 +843,13 @@ impl FixtureSpec {
 
         let mut failures = Vec::new();
 
-        if manifest.source_unit_id.as_str() != contract.source_unit_id {
+        if manifest.source_id.as_str() != contract.source_id {
             failures.push(FixtureFailure {
                 intent_index: None,
-                expected: format!("manifest source_unit_id={}", contract.source_unit_id),
+                expected: format!("manifest source_id={}", contract.source_id),
                 found: format!(
-                    "manifest source_unit_id={}",
-                    manifest.source_unit_id.as_str()
+                    "manifest source_id={}",
+                    manifest.source_id.as_str()
                 ),
             });
         }
@@ -870,36 +866,13 @@ impl FixtureSpec {
         }
 
         if let Some(descriptor) = descriptor
-            && descriptor.id != contract.source_unit_id
+            && descriptor.id != contract.source_id
         {
             failures.push(FixtureFailure {
                 intent_index: None,
-                expected: format!("descriptor id={}", contract.source_unit_id),
+                expected: format!("descriptor id={}", contract.source_id),
                 found: format!("descriptor id={}", descriptor.id),
             });
-        }
-
-        for obligation in &contract.proof_obligations {
-            if !manifest
-                .proof_obligations
-                .iter()
-                .any(|item| item == obligation)
-            {
-                failures.push(FixtureFailure {
-                    intent_index: None,
-                    expected: format!("manifest proof obligation {obligation}"),
-                    found: format!("proof_obligations={:?}", manifest.proof_obligations),
-                });
-            }
-            if let Some(descriptor) = descriptor
-                && !descriptor.proof_obligations.contains(&obligation.as_str())
-            {
-                failures.push(FixtureFailure {
-                    intent_index: None,
-                    expected: format!("descriptor proof obligation {obligation}"),
-                    found: format!("proof_obligations={:?}", descriptor.proof_obligations),
-                });
-            }
         }
 
         if self.expect_error || self.expect_no_intents {
@@ -1085,43 +1058,36 @@ fn json_path_get<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a ser
 mod tests {
     use super::*;
     use sinex_primitives::domain::{EventSource, EventType};
-    use sinex_primitives::parser::{ParserId, SourceUnitId, TimingConfidence};
+    use sinex_primitives::parser::{ParserId, SourceId, TimingConfidence};
     use sinex_primitives::proof::{Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy};
     use xtask::sandbox::prelude::sinex_test;
 
     static EVENT_TYPES: &[(&str, &str)] = &[("terminal", "shell.command")];
     static HORIZONS: &[Horizon] = &[Horizon::Historical];
-    static PROOF_OBLIGATIONS: &[&str] = &["timestamp_intrinsic", "anchor_csv_row"];
-
     fn fixture_manifest() -> ParserManifest {
         ParserManifest {
             parser_id: ParserId::from_static("fixture-parser"),
             parser_version: "1.0.0".to_string(),
             accepted_input_shapes: vec![InputShapeKind::StaticFile],
-            source_unit_id: SourceUnitId::from_static("fixture.source"),
+            source_id: SourceId::from_static("fixture.source"),
             declared_event_types: vec![(
                 EventSource::from_static("terminal"),
                 EventType::from_static("shell.command"),
             )],
             privacy_contexts: vec![ProcessingContext::Command],
             sensitivity_hints: Vec::new(),
-            proof_obligations: PROOF_OBLIGATIONS
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
             description: "fixture parser".to_string(),
         }
     }
 
-    fn fixture_descriptor() -> SourceUnitDescriptor {
-        SourceUnitDescriptor {
+    fn fixture_descriptor() -> SourceContract {
+        SourceContract {
             id: "fixture.source",
             namespace: "fixture",
             event_types: EVENT_TYPES,
             privacy_tier: PrivacyTier::Sensitive,
             horizons: HORIZONS,
             retention: RetentionPolicy::Forever,
-            proof_obligations: PROOF_OBLIGATIONS,
             occurrence_identity: OccurrenceIdentity::Natural,
             access_policy: "fixture",
         }
@@ -1144,11 +1110,7 @@ mod tests {
             expected_error_contains: None,
             tags: vec!["parser-family".to_string()],
             acceptance: Some(FixtureAcceptanceContract {
-                source_unit_id: "fixture.source".to_string(),
-                proof_obligations: PROOF_OBLIGATIONS
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
+                source_id: "fixture.source".to_string(),
                 require_timestamp: true,
                 require_timing: true,
                 require_anchor: true,

@@ -7,10 +7,10 @@ use sinexd::node_sdk::parser::{MaterialParser, ParserError};
 use sinex_primitives::{
     Uuid,
     ids::Id,
-    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
+    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceId},
     temporal::Timestamp,
 };
-use sinexd::sources::sources::ai_session::{ChatGptSessionParser, ClaudeSessionParser};
+use sinexd::sources::source_contracts::ai_session::{ChatGptSessionParser, ClaudeSessionParser};
 use xtask::sandbox::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -19,7 +19,7 @@ use xtask::sandbox::prelude::*;
 
 fn claude_ctx() -> ParserContext {
     ParserContext {
-        source_unit_id: SourceUnitId::from_static("ai-session-claude"),
+        source_id: SourceId::from_static("ai-session-claude"),
         source_material_id: Id::new(),
         record_anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
         operation_id: Uuid::new_v4(),
@@ -31,7 +31,7 @@ fn claude_ctx() -> ParserContext {
 
 fn chatgpt_ctx() -> ParserContext {
     ParserContext {
-        source_unit_id: SourceUnitId::from_static("ai-session-chatgpt"),
+        source_id: SourceId::from_static("ai-session-chatgpt"),
         source_material_id: Id::new(),
         record_anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
         operation_id: Uuid::new_v4(),

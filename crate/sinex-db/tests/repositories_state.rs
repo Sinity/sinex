@@ -603,7 +603,7 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
 ///
 /// Five automatons on sinnix-prime were silently stuck in this loop:
 /// `relation-extractor` (also leaking 4.5 GB), `entity-extractor`,
-/// `entity-resolver`, `tag-applier`, `activitywatch` source-unit host.
+/// `entity-resolver`, `tag-applier`, `activitywatch` source host.
 #[sinex_test]
 async fn heartbeat_paths_do_not_collide_on_status(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();

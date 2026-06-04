@@ -19,7 +19,7 @@ use std::collections::VecDeque;
 
 /// Default window size: `10_000` records is enough for the longest plausible
 /// rotation overlap on the terminal history files we ingest (bash/zsh/text)
-/// while staying small enough to keep the per-source-unit memory footprint
+/// while staying small enough to keep the per-source memory footprint
 /// trivial (~320 KiB).
 pub const DEFAULT_WINDOW_CAPACITY: usize = 10_000;
 

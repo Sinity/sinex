@@ -204,20 +204,20 @@ impl Windowed for SessionDetector {
 /// Node type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type SessionDetectorNode = WindowedNodeAdapter<SessionDetector>;
 
-// --- Source-unit descriptor (issue #690 / #734) ---
+// --- Source descriptor (issue #690 / #734) ---
 
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitDescriptor, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
+    SourceContract, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // Session detector consumes activity-window summaries and emits session
 // boundary events when the inactivity gap closes the current window.
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "session-detector",
         namespace: "derived",
         event_types: &[
@@ -226,17 +226,16 @@ register_source_unit! {
         privacy_tier: SuPrivacyTier::Sensitive,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Uuid5From(
-            "(source_unit, parent_event_ids)",
+            "(source, parent_event_ids)",
         ),
         access_policy: "event_stream_read",
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:session-detector"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:session-detector"),
         "session-detector",
         "derived",
     )
@@ -247,12 +246,12 @@ register_source_unit_binding! {
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
-    .source_unit_id("session-detector")
+    .source_id("session-detector")
     .runner_pack("process")
     .checkpoint_family(SuCheckpointFamily::AppendStream)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
     .implementation_mode("rust_in_pack:process")
-    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
+    .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
     .build()
 }

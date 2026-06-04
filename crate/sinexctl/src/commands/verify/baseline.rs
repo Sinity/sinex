@@ -1,7 +1,7 @@
 //! `sinexctl verify baseline` — comprehensive verification battery (#1565).
 //!
 //! Runs a set of weighted checks across schema integrity, closure hygiene,
-//! source-unit coverage, privacy invariants, replay integrity, drift-guard
+//! source coverage, privacy invariants, replay integrity, drift-guard
 //! bypass frequency, and workspace compilation. Produces a machine-readable
 //! score (0-100) and a human-readable report with per-check status.
 

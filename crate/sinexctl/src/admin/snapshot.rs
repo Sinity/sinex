@@ -2,7 +2,7 @@
 //! surface.
 //!
 //! Captures Postgres (via `pg_dump`), NATS `JetStream` state, the CAS blob
-//! repository, and remaining per-source-unit host state files into a single
+//! repository, and remaining per-source host state files into a single
 //! zstd-compressed tar archive.
 
 use clap::Parser;
@@ -215,7 +215,7 @@ pub struct SnapshotResult {
     pub output_path: Option<String>,
     pub archive_bytes: Option<u64>,
     pub uncompressed_bytes: u64,
-    pub source_unit_ids: Vec<String>,
+    pub source_ids: Vec<String>,
     pub components_captured: Vec<ComponentSummary>,
 }
 
@@ -237,9 +237,9 @@ pub struct SnapshotInspectResult {
     pub git_sha: Option<String>,
     pub host: String,
     pub archive_entries: usize,
-    pub source_unit_count: usize,
-    pub source_unit_ids: Vec<String>,
-    pub state_source_unit_count: Option<usize>,
+    pub source_count: usize,
+    pub source_ids: Vec<String>,
+    pub state_source_count: Option<usize>,
     pub state_private_mode_state_present: Option<bool>,
     pub component_count: usize,
     pub components: Vec<ComponentSummary>,
@@ -275,7 +275,7 @@ pub struct RestorePlanStep {
 
 #[derive(Debug, Serialize)]
 pub struct RestoreDrillChecks {
-    pub source_unit_count: usize,
+    pub source_count: usize,
     pub postgres_table_count: usize,
     pub nats_member_count: Option<usize>,
     pub cas_blob_count: Option<u64>,
@@ -288,8 +288,8 @@ pub struct RestoreObservedChecks {
     pub target_entry_count: usize,
     pub checks_passed: bool,
     pub failed_checks: Vec<String>,
-    pub source_unit_count: usize,
-    pub source_unit_ids_match: bool,
+    pub source_count: usize,
+    pub source_ids_match: bool,
     pub component_blake3: BTreeMap<String, String>,
     pub component_blake3_matches: BTreeMap<String, bool>,
     pub postgres_row_counts: BTreeMap<String, i64>,
@@ -461,7 +461,7 @@ impl AdminSnapshotCommand {
         }
 
         if component_set.contains("state") {
-            let source_unit_ids = registered_source_unit_ids();
+            let source_ids = registered_source_ids();
             let private_mode_state_present = state_dir.join("private-mode/state.json").exists();
             let mut record = self.capture_state_component(
                 state_dir,
@@ -470,7 +470,7 @@ impl AdminSnapshotCommand {
                 mode.tolerates_vanished_files(),
             )?;
             record.extras = Some(ComponentExtras::State(StateExtras {
-                source_unit_ids,
+                source_ids,
                 private_mode_state_present,
             }));
             component_records.push(record);
@@ -478,7 +478,7 @@ impl AdminSnapshotCommand {
 
         // 9. Write manifest.
         let uncompressed_bytes: u64 = component_records.iter().map(|r| r.bytes).sum();
-        let source_unit_ids = registered_source_unit_ids();
+        let source_ids = registered_source_ids();
 
         let manifest = SnapshotManifest {
             snapshot_id: snapshot_id.to_string(),
@@ -487,7 +487,7 @@ impl AdminSnapshotCommand {
             git_sha: git_sha(),
             host: hostname(),
             mode: mode.as_str().to_string(),
-            source_unit_ids: source_unit_ids.clone(),
+            source_ids: source_ids.clone(),
             components: component_records.clone(),
             totals: Totals {
                 uncompressed_bytes,
@@ -519,7 +519,7 @@ impl AdminSnapshotCommand {
                 output_path: None,
                 archive_bytes: None,
                 uncompressed_bytes,
-                source_unit_ids,
+                source_ids,
                 components_captured: summaries,
             });
         }
@@ -552,7 +552,7 @@ impl AdminSnapshotCommand {
             output_path: Some(self.output.display().to_string()),
             archive_bytes: Some(archive_bytes),
             uncompressed_bytes,
-            source_unit_ids,
+            source_ids,
             components_captured: summaries,
         })
     }
@@ -982,8 +982,8 @@ fn git_sha() -> Option<String> {
     }
 }
 
-fn registered_source_unit_ids() -> Vec<String> {
-    let mut ids: Vec<String> = proof::all_source_units()
+fn registered_source_ids() -> Vec<String> {
+    let mut ids: Vec<String> = proof::all_source_contracts()
         .map(|descriptor| descriptor.id.to_string())
         .collect();
     ids.sort();
@@ -1028,9 +1028,9 @@ fn inspect_snapshot_archive(archive_path: &Path) -> Result<SnapshotInspectResult
         git_sha: manifest.git_sha.clone(),
         host: manifest.host.clone(),
         archive_entries: entries.len(),
-        source_unit_count: manifest.source_unit_ids.len(),
-        source_unit_ids: manifest.source_unit_ids.clone(),
-        state_source_unit_count: state_extras.map(|extras| extras.source_unit_ids.len()),
+        source_count: manifest.source_ids.len(),
+        source_ids: manifest.source_ids.clone(),
+        state_source_count: state_extras.map(|extras| extras.source_ids.len()),
         state_private_mode_state_present: state_extras
             .map(|extras| extras.private_mode_state_present),
         component_count: manifest.components.len(),
@@ -1134,7 +1134,7 @@ fn restore_step_for_component(component: &ComponentRecord, target_dir: &Path) ->
             target_dir.join("blob-repository").display().to_string(),
         ),
         "state" => (
-            "extract runtime state files and compare private-mode/source-unit surfaces".to_string(),
+            "extract runtime state files and compare private-mode/source surfaces".to_string(),
             target_dir.display().to_string(),
         ),
         other => (
@@ -1187,7 +1187,7 @@ fn restore_drill_checks(
         .collect();
 
     RestoreDrillChecks {
-        source_unit_count: manifest.source_unit_ids.len(),
+        source_count: manifest.source_ids.len(),
         postgres_table_count,
         nats_member_count,
         cas_blob_count,
@@ -1204,7 +1204,7 @@ fn observe_restored_target(
     target_dir: &Path,
     postgres_row_counts: Option<&BTreeMap<String, i64>>,
 ) -> RestoreObservedChecks {
-    let source_unit_ids = registered_source_unit_ids();
+    let source_ids = registered_source_ids();
     let expected_postgres_row_counts = expected_postgres_row_counts(manifest);
     let expected_cas_blob_count = manifest
         .components
@@ -1234,7 +1234,7 @@ fn observe_restored_target(
     let private_mode_state_present = target_dir.join("state/private-mode/state.json").exists();
     let manifest_private_mode_state_present = expected_private_mode_state_present(manifest)
         .unwrap_or_else(|| archive_path_contains(archive_entries, "state/private-mode/state.json"));
-    let source_unit_ids_match = source_unit_ids == manifest.source_unit_ids;
+    let source_ids_match = source_ids == manifest.source_ids;
     let postgres_row_counts_match = expected_postgres_row_counts
         .map(|expected| postgres_row_counts.is_some_and(|observed| observed == &expected));
     let nats_member_paths_match = expected_nats_member_paths.map(|expected| {
@@ -1247,7 +1247,7 @@ fn observe_restored_target(
     let private_mode_state_matches_manifest =
         private_mode_state_present == manifest_private_mode_state_present;
     let failed_checks = restore_failed_checks(&RestoreFailedCheckInput {
-        source_unit_ids_match,
+        source_ids_match,
         component_blake3_matches: &component_blake3_matches,
         postgres_row_counts_match,
         nats_member_paths_match,
@@ -1259,8 +1259,8 @@ fn observe_restored_target(
         target_entry_count: count_files_recursive(target_dir) as usize,
         checks_passed: failed_checks.is_empty(),
         failed_checks,
-        source_unit_count: source_unit_ids.len(),
-        source_unit_ids_match,
+        source_count: source_ids.len(),
+        source_ids_match,
         component_blake3,
         component_blake3_matches,
         postgres_row_counts: postgres_row_counts.cloned().unwrap_or_default(),
@@ -1276,7 +1276,7 @@ fn observe_restored_target(
 }
 
 struct RestoreFailedCheckInput<'a> {
-    source_unit_ids_match: bool,
+    source_ids_match: bool,
     component_blake3_matches: &'a BTreeMap<String, bool>,
     postgres_row_counts_match: Option<bool>,
     nats_member_paths_match: Option<bool>,
@@ -1286,8 +1286,8 @@ struct RestoreFailedCheckInput<'a> {
 
 fn restore_failed_checks(input: &RestoreFailedCheckInput<'_>) -> Vec<String> {
     let mut failed = Vec::new();
-    if !input.source_unit_ids_match {
-        failed.push("source_unit_ids_match".to_string());
+    if !input.source_ids_match {
+        failed.push("source_ids_match".to_string());
     }
     for (component, matched) in input.component_blake3_matches {
         if !matched {
@@ -1623,8 +1623,8 @@ pub fn format_snapshot_result(result: &SnapshotResult) -> String {
         format_bytes(result.uncompressed_bytes)
     ));
     out.push_str(&format!(
-        "  Source units: {}\n",
-        result.source_unit_ids.len()
+        "  Source contracts: {}\n",
+        result.source_ids.len()
     ));
     if let Some(archive_bytes) = result.archive_bytes {
         out.push_str(&format!("  Archive: {}\n", format_bytes(archive_bytes)));
@@ -1656,10 +1656,10 @@ pub fn format_snapshot_inspect_result(result: &SnapshotInspectResult) -> String 
     out.push_str(&format!("  Mode:    {}\n", result.mode));
     out.push_str(&format!("  Host:    {}\n", result.host));
     out.push_str(&format!("  Entries: {}\n", result.archive_entries));
-    out.push_str(&format!("  Source units: {}\n", result.source_unit_count));
-    if let Some(state_source_unit_count) = result.state_source_unit_count {
+    out.push_str(&format!("  Source contracts: {}\n", result.source_count));
+    if let Some(state_source_count) = result.state_source_count {
         out.push_str(&format!(
-            "  State source units: {state_source_unit_count}\n"
+            "  State source contracts: {state_source_count}\n"
         ));
     }
     if let Some(private_mode_state_present) = result.state_private_mode_state_present {
@@ -1726,8 +1726,8 @@ pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -
 
     out.push_str("\n  Drill checks:\n");
     out.push_str(&format!(
-        "    source units: {}\n",
-        result.drill_checks.source_unit_count
+        "    source contracts: {}\n",
+        result.drill_checks.source_count
     ));
     out.push_str(&format!(
         "    postgres tables: {}\n",
@@ -1769,9 +1769,9 @@ pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -
             observed.target_entry_count
         ));
         out.push_str(&format!(
-            "    source units: {} ({})\n",
-            observed.source_unit_count,
-            if observed.source_unit_ids_match {
+            "    source contracts: {} ({})\n",
+            observed.source_count,
+            if observed.source_ids_match {
                 "match"
             } else {
                 "mismatch"

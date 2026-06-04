@@ -2,10 +2,10 @@
 
 use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
 use sinex_primitives::{
-    parser::SourceUnitId,
+    parser::SourceId,
     rpc::sources::{CaveatSeverity, caveat_codes},
 };
-use sinexd::sources::sources::terminal::{
+use sinexd::sources::source_contracts::terminal::{
     atuin_history::AtuinHistoryParser, fish_history::FishHistoryParser,
 };
 use xtask::sandbox::prelude::*;
@@ -44,7 +44,7 @@ async fn atuin_required_schema_removal_blocks_readiness() -> TestResult<()> {
     let before = SourceRecordFingerprint::from_sqlite_connection(&before)?;
     let after = SourceRecordFingerprint::from_sqlite_connection(&after)?;
     let mut drift = SourceRecordFingerprint::diff(
-        SourceUnitId::from_static("terminal.atuin-history"),
+        SourceId::from_static("terminal.atuin-history"),
         &before,
         &after,
     )

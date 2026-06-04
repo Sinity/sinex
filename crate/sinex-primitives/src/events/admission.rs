@@ -102,7 +102,7 @@ impl std::str::FromStr for OccurrenceAnchorKind {
 ///
 /// This is the envelope that producers publish to NATS `JetStream` instead of raw
 /// `Event` batches. It carries:
-/// - **Envelope metadata** (version, source unit, parser identity)
+/// - **Envelope metadata** (version, source, parser identity)
 /// - **The admitted events** — one or more `Event<JsonValue>` entries
 ///
 /// The type system makes it hard to accidentally publish raw events to durable
@@ -115,9 +115,9 @@ pub struct EventIntent {
     /// Envelope version — currently "1".
     pub envelope_version: String,
 
-    /// Source unit identifier (e.g., "fs-watcher", "terminal-ingestor").
-    /// Must match a registered `SourceUnitDescriptor::source_unit_id`.
-    pub source_unit_id: String,
+    /// Source identifier (e.g., "fs-watcher", "terminal-ingestor").
+    /// Must match a registered `SourceContract::source_id`.
+    pub source_id: String,
 
     /// Parser that interpreted the source material (e.g., "inotify-watcher",
     /// "atuin-history-parser").
@@ -140,7 +140,7 @@ pub struct EventIntent {
 impl EventIntent {
     /// Create a new admitted event intent with the current envelope version.
     pub fn new(
-        source_unit_id: impl Into<String>,
+        source_id: impl Into<String>,
         parser_id: impl Into<String>,
         parser_version: impl Into<String>,
         events: Vec<Event<JsonValue>>,
@@ -148,7 +148,7 @@ impl EventIntent {
     ) -> Self {
         Self {
             envelope_version: CURRENT_ENVELOPE_VERSION.to_string(),
-            source_unit_id: source_unit_id.into(),
+            source_id: source_id.into(),
             parser_id: parser_id.into(),
             parser_version: parser_version.into(),
             events,
@@ -170,9 +170,9 @@ impl EventIntent {
                 "admitted event intent missing envelope_version",
             ));
         }
-        if self.source_unit_id.trim().is_empty() {
+        if self.source_id.trim().is_empty() {
             return Err(crate::SinexError::validation(
-                "admitted event intent missing source_unit_id",
+                "admitted event intent missing source_id",
             ));
         }
         if self.parser_id.trim().is_empty() {
@@ -221,7 +221,7 @@ mod tests {
     async fn envelope_validation_rejects_empty_version() -> TestResult<()> {
         let mut intent = EventIntent {
             envelope_version: String::new(),
-            source_unit_id: "test".into(),
+            source_id: "test".into(),
             parser_id: "test-parser".into(),
             parser_version: "1.0.0".into(),
             events: vec![minimal_event()],
@@ -239,7 +239,7 @@ mod tests {
     async fn envelope_validation_rejects_empty_events() -> TestResult<()> {
         let intent = EventIntent {
             envelope_version: "1".into(),
-            source_unit_id: "test".into(),
+            source_id: "test".into(),
             parser_id: "test-parser".into(),
             parser_version: "1.0.0".into(),
             events: vec![],
@@ -254,7 +254,7 @@ mod tests {
     async fn envelope_validation_passes_for_valid_intent() -> TestResult<()> {
         let intent = EventIntent {
             envelope_version: "1".into(),
-            source_unit_id: "test-unit".into(),
+            source_id: "test-unit".into(),
             parser_id: "test-parser".into(),
             parser_version: "1.0.0".into(),
             events: vec![minimal_event()],
@@ -269,7 +269,7 @@ mod tests {
     async fn is_version_accepted_returns_true_for_v1() -> TestResult<()> {
         let intent = EventIntent {
             envelope_version: "1".into(),
-            source_unit_id: "test".into(),
+            source_id: "test".into(),
             parser_id: "test-parser".into(),
             parser_version: "1.0.0".into(),
             events: vec![minimal_event()],
@@ -284,7 +284,7 @@ mod tests {
     async fn is_version_accepted_rejects_unknown_version() -> TestResult<()> {
         let intent = EventIntent {
             envelope_version: "999".into(),
-            source_unit_id: "test".into(),
+            source_id: "test".into(),
             parser_id: "test-parser".into(),
             parser_version: "1.0.0".into(),
             events: vec![minimal_event()],
@@ -306,7 +306,7 @@ mod tests {
 
         let intent = EventIntent {
             envelope_version: "1".into(),
-            source_unit_id: "test".into(),
+            source_id: "test".into(),
             parser_id: "test-parser".into(),
             parser_version: "1.0.0".into(),
             events: vec![ev1, ev2],

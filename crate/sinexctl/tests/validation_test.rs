@@ -337,7 +337,7 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
         "sinex.source_readiness",
         json!({
             "source_family": "terminal",
-            "source_unit_id": "terminal.atuin-history",
+            "source_id": "terminal.atuin-history",
             "include_caveats": false
         }),
     )
@@ -350,7 +350,7 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
         ));
     };
     assert_eq!(sources.len(), 1);
-    assert_eq!(sources[0]["source_unit_id"], "terminal.atuin-history");
+    assert_eq!(sources[0]["source_id"], "terminal.atuin-history");
     assert_eq!(sources[0]["evidence"]["sample"], "[REDACTED]");
     assert_eq!(response["items"]["caveats"], "suppressed_by_request");
     assert!(
@@ -395,7 +395,7 @@ async fn mcp_source_drift_call_uses_gateway_fixture() -> TestResult<()> {
         &client,
         "sinex.source_drift",
         json!({
-            "source_unit_id": "browser.history",
+            "source_id": "browser.history",
             "limit": 5
         }),
     )
@@ -403,7 +403,7 @@ async fn mcp_source_drift_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["tool"], "sinex.source_drift");
     assert_eq!(
-        response["items"]["result"]["drifts"][0]["source_unit_id"],
+        response["items"]["result"]["drifts"][0]["source_id"],
         "browser.history"
     );
     assert_eq!(
@@ -1771,7 +1771,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "sources": [
                         {
                             "source_family": "terminal",
-                            "source_unit_id": "terminal.atuin-history",
+                            "source_id": "terminal.atuin-history",
                             "source_identifier": "atuin-history",
                             "status": "available",
                             "cost": "local_fast",
@@ -1791,7 +1791,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         },
                         {
                             "source_family": "terminal",
-                            "source_unit_id": "terminal.text-history",
+                            "source_id": "terminal.text-history",
                             "source_identifier": "text-history",
                             "status": "stale",
                             "cost": "local_fast",
@@ -1802,7 +1802,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                 "sources.readiness.get" => json!({
                     "readiness": {
                         "source_family": "terminal",
-                        "source_unit_id": "terminal.atuin-history",
+                        "source_id": "terminal.atuin-history",
                         "source_identifier": "atuin-history",
                         "status": "available",
                         "cost": "local_fast",
@@ -1843,8 +1843,8 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                 "sources.drift.list" => json!({
                     "drifts": [
                         {
-                            "checkpoint_key": "source-unit.default.fixture",
-                            "source_unit_id": body["params"]["source_unit_id"].as_str().unwrap_or("browser.history"),
+                            "checkpoint_key": "source.default.fixture",
+                            "source_id": body["params"]["source_id"].as_str().unwrap_or("browser.history"),
                             "consumer_group": "default",
                             "consumer_name": "fixture",
                             "previous_hash": "shape-old",
@@ -2100,7 +2100,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "description": "fixture ingestor",
                             "manifest_status": "registered",
                             "live": true,
-                            "service_name": "sinex-source-unit@terminal.atuin-history.service",
+                            "service_name": "sinex-source@terminal.atuin-history.service",
                             "instance_id": "terminal-atuin-1",
                             "source_run_id": null,
                             "host": "test-host",
@@ -2128,8 +2128,8 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "node_name": "terminal.atuin-history",
                             "node_type": "ingestor",
                             "version": "0.4.2",
-                            "description": "fixture source unit host",
-                            "service_name": "sinex-source-unit@terminal.atuin-history.service",
+                            "description": "fixture source host",
+                            "service_name": "sinex-source@terminal.atuin-history.service",
                             "instance_id": "terminal-atuin-1",
                             "source_run_id": null,
                             "host": "test-host",

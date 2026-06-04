@@ -1104,12 +1104,12 @@ mod tests {
         )?;
         fs::write(
             &nested,
-            "#[sinex_test]\nasync fn source_unit_host_scan_private_mode_matrix() {}\n",
+            "#[sinex_test]\nasync fn source_driver_host_scan_private_mode_matrix() {}\n",
         )?;
 
         let inferred = infer_test_binaries_for_test_filter_in(
             repo.path(),
-            "test(source_unit_host_scan_private_mode_matrix)",
+            "test(source_driver_host_scan_private_mode_matrix)",
         )?;
         assert_eq!(inferred, vec!["production_path".to_string()]);
         Ok(())

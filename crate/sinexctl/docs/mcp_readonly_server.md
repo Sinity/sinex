@@ -98,7 +98,7 @@ Tool schemas are part of the public contract. Small and stable:
     "type": "object",
     "properties": {
       "source_family": { "type": "string" },
-      "source_unit_id": { "type": "string" },
+      "source_id": { "type": "string" },
       "include_caveats": { "type": "boolean", "default": true }
     },
     "additionalProperties": false

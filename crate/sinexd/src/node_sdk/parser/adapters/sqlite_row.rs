@@ -383,7 +383,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
 impl InputShapeAdapterExt for SqliteRowAdapter {
     fn snapshot_lane(
         &self,
-        source_unit_id: &str,
+        source_id: &str,
         config: &Self::Config,
     ) -> Option<SnapshotLaneSpec> {
         // Resolve the effective path the same way `open()` does — config wins
@@ -397,7 +397,7 @@ impl InputShapeAdapterExt for SqliteRowAdapter {
         } else {
             return None;
         };
-        SnapshotLaneSpec::from_sqlite_config(path, source_unit_id, &config.snapshot)
+        SnapshotLaneSpec::from_sqlite_config(path, source_id, &config.snapshot)
     }
 }
 

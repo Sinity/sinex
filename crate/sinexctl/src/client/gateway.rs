@@ -791,7 +791,7 @@ impl GatewayClient {
                 time_window,
                 material_filter,
                 filters,
-                source_unit_id: None,
+                source_id: None,
                 source_material_id: None,
                 parser_id: None,
                 parser_version: None,

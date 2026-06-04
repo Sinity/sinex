@@ -1,6 +1,6 @@
 # Staged Source Parser Substrate
 
-Status: source-unit design direction for new `sinexd::sources` work. Issue
+Status: source design direction for new `sinexd::sources` work. Issue
 [#1054](https://github.com/Sinity/sinex/issues/1054) owns any remaining
 process-topology decision.
 
@@ -47,8 +47,8 @@ granularity, or transport fan-out.
 | Stager | Registers source material and records enough identity, checksum, path, and operator intent to make later processing auditable. |
 | Input-shape adapter | Knows how to enumerate or tail a material shape: SQLite row cursor, append-only byte cursor, directory file list, static dump, API cursor, IPC frame stream. |
 | Parser | Deterministic interpretation from records/bytes to typed payloads, timestamps, anchors, privacy contexts, and natural keys. |
-| Source unit | Declarative binding of source identity, input shape, parser, emitted `(source, event_type)` pairs, checkpoint family, horizons, privacy tier, and runtime policy. |
-| Runtime topology | Where the source unit runs: inside `sinexd::sources`, in a dedicated lightweight capture process, or as an external plugin/process. |
+| Source | Declarative binding of source identity, input shape, parser, emitted `(source, event_type)` pairs, checkpoint family, horizons, privacy tier, and runtime policy. |
+| Runtime topology | Where the source runs: inside `sinexd::sources`, in a dedicated lightweight capture process, or as an external plugin/process. |
 
 ## Runtime Topology
 
@@ -107,12 +107,12 @@ must identify:
 - `source_material_id`
 - stable anchor, normally `anchor_byte` or a shape-specific anchor mapped onto
   the event anchor contract
-- parser id and semantics version, either in payload metadata, source-unit
+- parser id and semantics version, either in payload metadata, source
   descriptor data, or a future parser registry table
 - natural key when the source domain has one
 
 Replay targets the interpretation, not the material. A replay operation should
-archive events created by a given source unit/parser version over a material
+archive events created by a given source/parser version over a material
 scope, then rerun the parser through the normal validation and persistence path.
 The original source material remains the ground truth.
 
@@ -141,7 +141,7 @@ are derived.
 
 1. Do not add new permanent source-domain ingestor crates for staged or
    replayable materials unless the process boundary is explicitly justified.
-2. Implement new source issues as source-unit descriptors plus parser modules
+2. Implement new source issues as source contracts plus parser modules
    over shared input-shape adapters where possible.
 3. Keep existing deployed ingestors working while the substrate is designed.
    They are legacy placement, not proof that every future source belongs in a

@@ -49,15 +49,15 @@ fn make_instance_id(name: &str, prefix: Option<&str>) -> String {
 
 /// Build the runtime CLI arguments for the unified `sinexd` binary.
 ///
-/// Post-collapse, every short name (`event_engine`, `gateway`, automatons, source units)
-/// resolves to the same `sinexd` binary. Source-unit short names dispatch through
-/// `sinexd scan-source-unit --source-unit <id>`; everything else falls through to
+/// Post-collapse, every short name (`event_engine`, `gateway`, automatons, source contracts)
+/// resolves to the same `sinexd` binary. Source short names dispatch through
+/// `sinexd scan-source --source <id>`; everything else falls through to
 /// the default `serve` subcommand which runs the full supervisor.
-fn runtime_cli_args(_package: &str, run_identity: &str, source_unit: Option<&str>) -> Vec<String> {
-    source_unit.map_or_else(Vec::new, |id| {
+fn runtime_cli_args(_package: &str, run_identity: &str, source: Option<&str>) -> Vec<String> {
+    source.map_or_else(Vec::new, |id| {
         vec![
-            "scan-source-unit".to_string(),
-            "--source-unit".to_string(),
+            "scan-source".to_string(),
+            "--source".to_string(),
             id.to_string(),
             "--service-name".to_string(),
             run_identity.to_string(),
@@ -100,7 +100,7 @@ fn local_run_failure_suggestion(dev_journal_path: Option<&Path>) -> String {
 
 /// Developer observability shim — writes pseudo-journald NDJSON to a log file.
 ///
-/// `sinexd system.journald source unit` consumes `journalctl --output=json` (one JSON object per
+/// `sinexd system.journald source` consumes `journalctl --output=json` (one JSON object per
 /// line, each with `_SYSTEMD_UNIT`, `MESSAGE`, `_PID`, `_BOOT_ID`,
 /// `__REALTIME_TIMESTAMP`, `SYSLOG_IDENTIFIER`). This struct writes equivalent entries
 /// so the ingestor's journald-monitoring loop works end-to-end in dev environments
@@ -342,7 +342,7 @@ async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
 
 /// Known binary targets and their package names.
 ///
-/// Tuple layout: `(short_name, package, binary_name, source_unit_id)`.
+/// Tuple layout: `(short_name, package, binary_name, source_id)`.
 ///
 /// Post-sinexd-collapse: every previously-separate binary folded into the
 /// unified `sinexd` daemon. The CLI short names are preserved so existing
@@ -350,11 +350,11 @@ async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
 ///
 /// - `event_engine` / `gateway`: launch sinexd's supervisor (default `serve`
 ///   subcommand). The supervisor brings up the event engine, the API, and
-///   every enabled source-unit/automaton in one process — there is no
+///   every enabled source/automaton in one process — there is no
 ///   meaningful "just the gateway" anymore.
-/// - Source-unit short names (e.g. `fs-ingestor`): dispatch through
-///   `sinexd scan-source-unit --source-unit <id>` for one-off scan-mode
-///   runs against a single source unit.
+/// - Source short names (e.g. `fs-ingestor`): dispatch through
+///   `sinexd scan-source --source <id>` for one-off scan-mode
+///   runs against a single source.
 /// - Automaton short names: also resolve to the supervisor (`serve`) since
 ///   individual automatons are no longer separately runnable.
 static BINARIES: &[(&str, &str, &str, Option<&str>)] = &[
@@ -362,7 +362,7 @@ static BINARIES: &[(&str, &str, &str, Option<&str>)] = &[
     ("event_engine", "sinexd", "sinexd", None),
     ("gateway", "sinexd", "sinexd", None),
     ("sinexd", "sinexd", "sinexd", None),
-    // Source-unit one-off scans (sinexd scan-source-unit --source-unit <id>)
+    // Source one-off scans (sinexd scan-source --source <id>)
     ("fs-ingestor", "sinexd", "sinexd", Some("fs")),
     (
         "terminal-ingestor",
@@ -540,7 +540,7 @@ pub struct RunCommand {
     /// Write pseudo-journald NDJSON to .sinex/state/dev-journal.log
     ///
     /// Wraps each log line in a journald JSON envelope (`_SYSTEMD_UNIT`, `MESSAGE`,
-    /// `_PID`, `__REALTIME_TIMESTAMP`) so `sinexd system.journald source unit` can monitor locally-
+    /// `_PID`, `__REALTIME_TIMESTAMP`) so `sinexd system.journald source` can monitor locally-
     /// running sinex processes without systemd. Implies stdout/stderr capture.
     #[arg(long, global = true)]
     pub dev_journal: bool,
@@ -966,7 +966,7 @@ impl RunCommand {
                 let journal_path = config().state_dir.join("dev-journal.log");
                 if ctx.is_human() {
                     println!(
-                        "Dev journal: {} (sinexd system.journald source unit will pick this up)",
+                        "Dev journal: {} (sinexd system.journald source will pick this up)",
                         journal_path.display()
                     );
                 }
@@ -1155,7 +1155,7 @@ impl RunCommand {
         let journal = if let Some(journal_path) = journal_path.as_ref() {
             if ctx.is_human() {
                 println!(
-                    "Dev journal: {} (sinexd system.journald source unit will pick this up)",
+                    "Dev journal: {} (sinexd system.journald source will pick this up)",
                     journal_path.display()
                 );
             }
@@ -1505,9 +1505,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_runtime_cli_args_serve_supervisor_without_source_unit()
+    async fn test_runtime_cli_args_serve_supervisor_without_source()
     -> ::xtask::sandbox::TestResult<()> {
-        // Post-collapse: no source unit → empty args (sinexd defaults to `serve`).
+        // Post-collapse: no source → empty args (sinexd defaults to `serve`).
         assert_eq!(
             runtime_cli_args("sinexd", "gateway-123", None),
             Vec::<String>::new()
@@ -1516,7 +1516,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_runtime_cli_args_dispatch_scan_source_unit() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_runtime_cli_args_dispatch_scan_source() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(
             runtime_cli_args(
                 "sinexd",
@@ -1524,8 +1524,8 @@ mod tests {
                 Some("terminal.zsh-history")
             ),
             vec![
-                "scan-source-unit".to_string(),
-                "--source-unit".to_string(),
+                "scan-source".to_string(),
+                "--source".to_string(),
                 "terminal.zsh-history".to_string(),
                 "--service-name".to_string(),
                 "terminal-ingestor-123".to_string(),
@@ -1551,8 +1551,8 @@ mod tests {
                 "-p".to_string(),
                 "sinexd".to_string(),
                 "--".to_string(),
-                "scan-source-unit".to_string(),
-                "--source-unit".to_string(),
+                "scan-source".to_string(),
+                "--source".to_string(),
                 "terminal.zsh-history".to_string(),
                 "--service-name".to_string(),
                 "terminal-ingestor-123".to_string(),

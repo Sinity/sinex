@@ -344,7 +344,7 @@ async fn collect_source_and_stall_signals(
         }
     }
 
-    // Emit-rate stall detection for source units (issue #992).
+    // Emit-rate stall detection for source contracts (issue #992).
     //
     // Heartbeats prove liveness, not productivity. Surface units that are
     // alive and past the uptime gate but have not emitted in `quiet_secs`.
@@ -376,7 +376,7 @@ async fn collect_source_and_stall_signals(
             status: RuntimeStatusSignalStatus::Degraded,
             source: "ingestors.status emit-stall classifier".to_string(),
             message: Some(format!(
-                "{} stalled source unit(s) (quiet ≥ {}s, uptime ≥ {}s)",
+                "{} stalled source(s) (quiet ≥ {}s, uptime ≥ {}s)",
                 stalled_units.len(),
                 thresholds.quiet_secs,
                 thresholds.uptime_gate_secs,
@@ -438,7 +438,7 @@ fn render_status_table(
 
     if !stalled_units.is_empty() {
         println!();
-        println!("{}", style("Stalled source units").bold().yellow());
+        println!("{}", style("Stalled source contracts").bold().yellow());
         println!("{}", style("─".repeat(50)).dim());
         for (ing, verdict) in stalled_units {
             let last = ing
@@ -649,7 +649,7 @@ mod status_tests {
         SourceReadiness {
             binding_id: None,
             source_family: "test".to_string(),
-            source_unit_id: None,
+            source_id: None,
             parser_id: None,
             source_identifier: format!("test.{status:?}"),
             status,

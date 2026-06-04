@@ -214,7 +214,7 @@ where
         // The runtime is responsible for merging this update with the stored
         // checkpoint via `ChainedCursor { primary, secondary }`.
         //
-        // Contract: the caller (source-unit runtime) must merge the returned
+        // Contract: the caller (source runtime) must merge the returned
         // partial cursor with the persisted one. Here we return a cursor where
         // only the producing leg is `Some` and the other is `None`.
         let leg = classify_record(record)?;

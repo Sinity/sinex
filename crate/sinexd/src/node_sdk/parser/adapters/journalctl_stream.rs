@@ -10,7 +10,7 @@
 //!
 //! # Fan-out: [`SharedJournalctlStream`]
 //!
-//! When multiple source units share a single `journalctl` subprocess (e.g.
+//! When multiple source contracts share a single `journalctl` subprocess (e.g.
 //! `system.systemd` + `system.journald`), use [`SharedJournalctlStream`] to
 //! avoid spawning one subprocess per unit. One background task drives the
 //! subprocess and broadcasts each [`SourceRecord`] to all registered
@@ -318,7 +318,7 @@ impl SharedJournalctlStream {
 /// A filtered view of a [`SharedJournalctlStream`].
 ///
 /// Implements [`InputShapeAdapter`] so it can plug into
-/// `register_adapter_ingestor!` in source units that share a subprocess.
+/// `register_adapter_ingestor!` in source contracts that share a subprocess.
 ///
 /// Each subscriber maintains an independent cursor (the last journal cursor
 /// string seen through this filtered view). The underlying broadcast channel

@@ -16,11 +16,11 @@ use sinex_primitives::parser::MaterialParser;
 use sinex_primitives::{
     Uuid,
     ids::Id,
-    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
+    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceId},
     privacy::ProcessingContext,
     temporal::Timestamp,
 };
-use sinexd::sources::sources::messaging::MessengerThreadParser;
+use sinexd::sources::source_contracts::messaging::MessengerThreadParser;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -28,7 +28,7 @@ use sinexd::sources::sources::messaging::MessengerThreadParser;
 
 fn test_ctx() -> ParserContext {
     ParserContext {
-        source_unit_id: SourceUnitId::from_static("facebook-messenger-thread"),
+        source_id: SourceId::from_static("facebook-messenger-thread"),
         source_material_id: Id::new(),
         record_anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
         operation_id: Uuid::new_v4(),
@@ -418,10 +418,10 @@ async fn messenger_replay_produces_identical_occurrence_keys() {
 //
 //   - Staged email fixture parses message metadata with Message-ID anchors
 //   - Missing/duplicate Message-ID falls back to IMAP (mailbox, uid_validity, uid)
-//   - Bus-First source-unit path produces event_engine confirmations
+//   - Bus-First source path produces event_engine confirmations
 //
 // are deferred to a follow-up implementation issue branching off #1090.
-// When EmailParser is added to sinexd::sources::sources::messaging,
+// When EmailParser is added to sinexd::sources::source_contracts::messaging,
 // tests should be added here covering:
 //   - parse minimal RFC 2822 message (From/To/Subject/Date/Message-ID)
 //   - Message-ID as occurrence key field

@@ -36,15 +36,15 @@ pub struct VerifyCommand {
     #[arg(long = "historical-evidence", default_value_t = false)]
     historical_evidence: bool,
 
-    /// Cross-check every registered `SourceUnitDescriptor` against the
+    /// Cross-check every registered `SourceContract` against the
     /// `EventPayload` inventory: report orphan descriptor pairs (descriptor
     /// declares a (source, `event_type`) with no matching payload) and
-    /// unclaimed payloads (payload has no `register_source_unit!` entry).
+    /// unclaimed payloads (payload has no `register_source_contract!` entry).
     ///
-    /// Uses descriptors compiled into this binary. Source-unit catalog JSON
+    /// Uses descriptors compiled into this binary. Source catalog JSON
     /// files are not a runtime authority.
-    #[arg(long = "source-units", default_value_t = false)]
-    source_units: bool,
+    #[arg(long = "sources", default_value_t = false)]
+    source_contracts: bool,
 
     /// Run the seeded demo walkthrough (#1172 AC-10): if the database is
     /// empty, seed it with `sinexctl demo`; then exercise documented
@@ -206,17 +206,17 @@ impl VerifyCommand {
         .await?;
         run_active_verification(self, &mut summary, client, descriptor.as_ref()).await?;
         report_historical_evidence(self, &mut summary, client, descriptor.as_ref()).await?;
-        report_source_units_check(self, &mut summary);
+        report_source_contracts_check(self, &mut summary);
 
         finalize_summary(&summary, format)
     }
 
-    /// Returns true when `--source-units` is the only request and the
+    /// Returns true when `--sources` is the only request and the
     /// gateway-dependent checks should be skipped entirely.
     #[must_use]
-    pub fn is_source_units_only(&self) -> bool {
+    pub fn is_source_contracts_only(&self) -> bool {
         self.cmd.is_none()
-            && self.source_units
+            && self.source_contracts
             && !self.demo
             && !self.document_smoke
             && !self.source_evidence
@@ -229,15 +229,15 @@ impl VerifyCommand {
     }
 
     /// Run only the descriptor/payload coverage check, without requiring a
-    /// gateway connection or auth token. Use after [`Self::is_source_units_only`]
+    /// gateway connection or auth token. Use after [`Self::is_source_contracts_only`]
     /// returns true.
-    pub fn execute_source_units_only(&self, format: OutputFormat) -> Result<()> {
+    pub fn execute_source_contracts_only(&self, format: OutputFormat) -> Result<()> {
         let table_mode = matches!(format, OutputFormat::Table);
         if table_mode {
             print_verification_header();
         }
         let mut summary = VerificationSummary::new(format);
-        report_source_units_check(self, &mut summary);
+        report_source_contracts_check(self, &mut summary);
         finalize_summary(&summary, format)
     }
 }
@@ -428,26 +428,26 @@ async fn report_historical_evidence(
     Ok(())
 }
 
-/// Cross-check `SourceUnitDescriptor.event_types` pairs against the
-/// `EventPayload` inventory. See `--source-units` flag docs.
-fn report_source_units_check(command: &VerifyCommand, summary: &mut VerificationSummary) {
-    if !command.source_units {
+/// Cross-check `SourceContract.event_types` pairs against the
+/// `EventPayload` inventory. See `--sources` flag docs.
+fn report_source_contracts_check(command: &VerifyCommand, summary: &mut VerificationSummary) {
+    if !command.source_contracts {
         summary.skip(
-            "Descriptor/payload coverage check not run — pass --source-units to cross-check `SourceUnitDescriptor` declarations against the `EventPayload` inventory",
+            "Descriptor/payload coverage check not run — pass --sources to cross-check `SourceContract` declarations against the `EventPayload` inventory",
         );
         return;
     }
-    run_source_units_check(summary);
+    run_source_contracts_check(summary);
 }
 
-fn run_source_units_check(summary: &mut VerificationSummary) {
-    let report = build_source_units_report();
+fn run_source_contracts_check(summary: &mut VerificationSummary) {
+    let report = build_source_contracts_report();
     if let Some(source) = &report.descriptor_source_note {
         summary.warn(format!("Descriptor source: {source}"));
     }
     if report.orphan_descriptor_pairs.is_empty() {
         summary.pass(format!(
-            "Every declared `SourceUnitDescriptor` (source, event_type) pair ({} pairs across {} descriptors) maps to a registered `EventPayload`",
+            "Every declared `SourceContract` (source, event_type) pair ({} pairs across {} descriptors) maps to a registered `EventPayload`",
             report.descriptor_pair_count, report.descriptor_count
         ));
     } else {
@@ -470,7 +470,7 @@ fn run_source_units_check(summary: &mut VerificationSummary) {
     }
     if report.unclaimed_payloads.is_empty() {
         summary.pass(format!(
-            "Every registered `EventPayload` ({} payloads) is claimed by a `SourceUnitDescriptor`",
+            "Every registered `EventPayload` ({} payloads) is claimed by a `SourceContract`",
             report.payload_count
         ));
     } else {
@@ -489,7 +489,7 @@ fn run_source_units_check(summary: &mut VerificationSummary) {
             .collect::<Vec<_>>()
             .join(", ");
         summary.warn(format!(
-            "{} `EventPayload`(s) have no `register_source_unit!` claim: {preview}{}",
+            "{} `EventPayload`(s) have no `register_source_contract!` claim: {preview}{}",
             report.unclaimed_payloads.len(),
             if report.unclaimed_payloads.len() > 10 {
                 format!(" … +{} more", report.unclaimed_payloads.len() - 10)
@@ -498,11 +498,11 @@ fn run_source_units_check(summary: &mut VerificationSummary) {
             }
         ));
     }
-    summary.skip("Generated source-unit catalogs are not a verification authority");
+    summary.skip("Generated source catalogs are not a verification authority");
 }
 
 #[derive(Debug, Default)]
-struct SourceUnitsReport {
+struct SourceContractsReport {
     descriptor_count: usize,
     descriptor_pair_count: usize,
     payload_count: usize,
@@ -512,10 +512,10 @@ struct SourceUnitsReport {
     descriptor_source_note: Option<String>,
 }
 
-fn build_source_units_report() -> SourceUnitsReport {
+fn build_source_contracts_report() -> SourceContractsReport {
     let mut descriptor_count = 0usize;
     let mut declared_pairs = BTreeSet::new();
-    for descriptor in proof::all_source_units() {
+    for descriptor in proof::all_source_contracts() {
         descriptor_count += 1;
         for (src, ty) in descriptor.event_types {
             declared_pairs.insert(((*src).to_string(), (*ty).to_string()));
@@ -546,7 +546,7 @@ fn build_source_units_report() -> SourceUnitsReport {
         .map(|(src, ty)| format!("{src}/{ty}"))
         .collect::<Vec<_>>();
 
-    SourceUnitsReport {
+    SourceContractsReport {
         descriptor_count,
         descriptor_pair_count: declared_pairs.len(),
         payload_count: payload_pairs.len(),

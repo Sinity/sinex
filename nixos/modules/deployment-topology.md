@@ -17,7 +17,7 @@ surfaces:
 
 | Service | Role | Notes |
 |---|---|---|
-| `sinexd` | Unified runtime | Hosts event engine, API, source units, automata, and supervisor. |
+| `sinexd` | Unified runtime | Hosts event engine, API, source contracts, automata, and supervisor. |
 | `sinex-schema-apply` | Declarative convergence | `Type=oneshot`, exits cleanly |
 | `sinex-preflight` | Readiness gate | Verifies DB, extensions, schema, resources, configuration, services, and integration before runtime startup. |
 | `sinex-nats-bootstrap` | JetStream bootstrap | Created when managed NATS stream bootstrap is enabled. |
@@ -170,7 +170,7 @@ and is not enumerated here; it is not a transport secret.
 | Gap | Tracking |
 |---|---|
 | VM coverage lags runtime-target model | #318 |
-| Source-unit drain / in-flight material shutdown | #1125 |
+| Source drain / in-flight material shutdown | #1125 |
 | Source operation status surfaces | #1124 |
 
 The historical operational-gap inventory (backup/WAL/compression/

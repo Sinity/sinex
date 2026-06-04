@@ -1580,7 +1580,7 @@ mod tests {
             version: 1,
             phases: vec![PhaseVerificationPhase {
                 id: "1".to_string(),
-                title: "Source unit foundation".to_string(),
+                title: "Source foundation".to_string(),
                 issues: vec![1054, 1128],
                 required_checks: vec![
                     "git diff --check".to_string(),

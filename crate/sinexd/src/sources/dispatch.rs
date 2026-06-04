@@ -1,9 +1,9 @@
 //! Parser dispatch: maps `source_id` to a `MaterialParser` and invokes it
 //! against staged source material.
 //!
-//! The dispatch is fully registry-driven — no match arms. Source units register
+//! The dispatch is fully registry-driven — no match arms. Source contracts register
 //! their parsers at link time via [`register_parser!`]; the dispatcher looks
-//! them up by source-unit id at call time.
+//! them up by source id at call time.
 
 use futures::future::BoxFuture;
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ use sinex_primitives::Uuid;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
-    MaterialAnchor, ParsedEventIntent, ParserContext, ParserManifest, SourceRecord, SourceUnitId,
+    MaterialAnchor, ParsedEventIntent, ParserContext, ParserManifest, SourceRecord, SourceId,
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -85,25 +85,25 @@ pub type ParserFactoryFn = fn() -> Box<dyn ErasedParser>;
 
 /// Entry in the compile-time parser inventory.
 pub struct ParserRegistryEntry {
-    pub source_unit_id: &'static str,
+    pub source_id: &'static str,
     pub factory_fn: ParserFactoryFn,
 }
 
 inventory::collect!(ParserRegistryEntry);
 
-/// Global registry of parser factories keyed by source-unit id.
+/// Global registry of parser factories keyed by source id.
 static PARSER_REGISTRY: LazyLock<HashMap<&'static str, ParserFactoryFn>> = LazyLock::new(|| {
     let mut map: HashMap<&'static str, ParserFactoryFn> = HashMap::new();
     for entry in inventory::iter::<ParserRegistryEntry>() {
-        map.entry(entry.source_unit_id).or_insert(entry.factory_fn);
+        map.entry(entry.source_id).or_insert(entry.factory_fn);
     }
     map
 });
 
-/// Look up a parser factory function by source-unit id.
+/// Look up a parser factory function by source id.
 #[must_use]
-pub fn find_parser_factory(source_unit_id: &SourceUnitId) -> Option<ParserFactoryFn> {
-    PARSER_REGISTRY.get(source_unit_id.as_str()).copied()
+pub fn find_parser_factory(source_id: &SourceId) -> Option<ParserFactoryFn> {
+    PARSER_REGISTRY.get(source_id.as_str()).copied()
 }
 
 // =============================================================================
@@ -121,10 +121,10 @@ pub fn find_parser_factory(source_unit_id: &SourceUnitId) -> Option<ParserFactor
 /// ```
 #[macro_export]
 macro_rules! register_parser {
-    ($source_unit_id:expr, $parser_type:ty) => {
+    ($source_id:expr, $parser_type:ty) => {
         $crate::__submit_registry_entry!(
             $crate::sources::dispatch::ParserRegistryEntry,
-            $source_unit_id,
+            $source_id,
             || Box::new(<$parser_type>::default())
                 as Box<dyn $crate::sources::dispatch::ErasedParser>,
         );
@@ -138,17 +138,17 @@ macro_rules! register_parser {
 /// Create a registry-driven parser dispatch function.
 ///
 /// Looks up the parser for `source_id` in the compile-time registry. Returns
-/// an error for unregistered source units. No match arms — registration via
+/// an error for unregistered source contracts. No match arms — registration via
 /// [`register_parser!`] is the only path.
 #[must_use]
 pub fn default_parser_dispatch() -> ParserDispatchFn {
     Arc::new(
         move |source_id: &str, material_bytes: &[u8], material_id: Option<Uuid>| {
             // Validate the untrusted NATS-supplied source_id at the boundary.
-            let source_unit_id = SourceUnitId::new(source_id)
+            let source_id = SourceId::new(source_id)
                 .map_err(|e| format!("invalid source_id '{source_id}': {e}"))?;
 
-            let Some(factory_fn) = find_parser_factory(&source_unit_id) else {
+            let Some(factory_fn) = find_parser_factory(&source_id) else {
                 let mut ids: Vec<&str> = PARSER_REGISTRY.keys().copied().collect();
                 ids.sort_unstable();
                 return Err(if ids.is_empty() {
@@ -183,7 +183,7 @@ pub fn default_parser_dispatch() -> ParserDispatchFn {
             };
 
             let ctx = ParserContext {
-                source_unit_id,
+                source_id,
                 source_material_id: mat_id,
                 record_anchor: MaterialAnchor::ByteRange {
                     start: 0,

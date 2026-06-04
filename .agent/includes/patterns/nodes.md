@@ -4,15 +4,15 @@
 
 | You're building... | Use | Key trait |
 |--------------------|-----|-----------|
-| Raw data capture from external source | `SourceUnit` + `SourceUnitRuntime` | 3 scan modes + continuous |
+| Raw data capture from external source | `SourceDriver` + `SourceDriverRuntime` | 3 scan modes + continuous |
 | 1:1 event transformation | `Transducer` + `AutomatonRuntime` | Stateless process() |
 | Accumulate-then-emit (sessions, summaries) | `Windowed` + `AutomatonRuntime` | accumulate() + emit_window() |
 | Per-scope state reconciliation | `ScopeReconciler` + `AutomatonRuntime` | Per-scope state + reconcile() |
 
 Automata are registered via `AutomatonSpec` in `automata::registry`. Source
 units are semantic capture/parser contracts registered via
-`register_source_unit!`; deployment bindings come from
-`register_source_unit_binding!` plus the NixOS-generated binding manifest.
+`register_source_contract!`; deployment bindings come from
+`register_source_runtime_binding!` plus the NixOS-generated binding manifest.
 The historical `NodeCliRunner`/`node_sdk` names still exist in code, but do not
 imply a separate node crate or per-source systemd unit.
 
@@ -20,7 +20,7 @@ imply a separate node crate or per-source systemd unit.
 
 ```rust
 use serde::{Deserialize, Serialize};
-use crate::node_sdk::{SourceUnit, SourceUnitRuntime};
+use crate::node_sdk::{SourceDriver, SourceDriverRuntime};
 use crate::node_sdk::runtime::stream::*;
 use tokio::sync::watch;
 
@@ -30,7 +30,7 @@ struct MyState { /* checkpoint state — persisted automatically */ }
 #[derive(Default)]
 struct MyIngestor;
 
-impl SourceUnit for MyIngestor {
+impl SourceDriver for MyIngestor {
     type Config = serde_json::Value;
     type State = MyState;
 
@@ -53,7 +53,7 @@ impl SourceUnit for MyIngestor {
     }
 }
 
-pub type MyIngestorNode = SourceUnitRuntime<MyIngestor>;
+pub type MyIngestorNode = SourceDriverRuntime<MyIngestor>;
 ```
 
 ### Derived Node Pattern (Transducer — Stateless)
@@ -132,7 +132,7 @@ impl Windowed for SessionDetector {
 ```rust
 use crate::node_sdk::{
     // Core node types
-    SourceUnit, SourceUnitRuntime,
+    SourceDriver, SourceDriverRuntime,
     Transducer, Windowed, ScopeReconciler,
     AutomatonRuntime,
     // Config + CLI

@@ -1,7 +1,7 @@
 //! Production-path obligation tests for the `browser` domain (Wave B).
 //!
 //! Exercises `browser.history` registered in
-//! `sinexd::sources::sources::browser::history`.
+//! `sinexd::sources::source_contracts::browser::history`.
 
 #[cfg(test)]
 mod tests {

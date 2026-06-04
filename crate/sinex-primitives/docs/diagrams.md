@@ -264,9 +264,9 @@ Graceful Upgrade (Zero-Downtime)
   │  Format: Binary, indexed by timestamp, unit, priority               │
   └─────────────────┬───────────────────────────────────────────────────┘
                     │
-                    ↓ system source unit journal watcher reads
+                    ↓ system source journal watcher reads
   ┌─────────────────────────────────────────────────────────────────────┐
-  │             sinexd system source unit (Event Capture)                │
+  │             sinexd system source (Event Capture)                │
   │                                                                       │
   │  1. journalctl --follow --output=json --unit=*.service              │
   │  2. Filter: MESSAGE matches heartbeat pattern                        │

@@ -1,7 +1,7 @@
 //! Production-path obligation tests for social export parsers.
 //!
 //! These cases keep host-independent social export parsers on the same
-//! source-unit host obligation harness as other production-path source units.
+//! source host obligation harness as other production-path source contracts.
 
 #[cfg(test)]
 mod tests {

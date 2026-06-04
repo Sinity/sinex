@@ -217,7 +217,7 @@ A passing drill leaves no production state mutated.
 ## Known limitations
 
 - **Source materials are not backed up by `pg_basebackup`.** They live on
-  the filesystem under `services.sinex.stateRoot` / wherever source units
+  the filesystem under `services.sinex.stateRoot` / wherever source contracts
   store originals. Back those up with your usual file-level mechanism
   (restic, borgbackup, rsync-to-remote).
 - **The blob CAS at `services.sinex.storage.blob.repositoryPath` is not in

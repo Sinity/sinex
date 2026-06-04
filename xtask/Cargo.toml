@@ -74,8 +74,8 @@ sinex-primitives = { path = "../crate/sinex-primitives", default-features = fals
 # Database and node SDK (for test sandbox)
 sinex-db = { path = "../crate/sinex-db" }
 
-# Source-unit inventory links. xtask verification surfaces must see descriptors
-# declared by the shipped sinexd source units, not only descriptors hardcoded in
+# Source inventory links. xtask verification surfaces must see descriptors
+# declared by the shipped sinexd source contracts, not only descriptors hardcoded in
 # sinex-primitives.
 url = { workspace = true }
 fastrand = { workspace = true }

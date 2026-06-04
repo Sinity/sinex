@@ -513,29 +513,29 @@ impl StreamStatsPayload {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Source-unit descriptors for sinex.* self-observation metrics infra events.
+// Source descriptors for sinex.* self-observation metrics infra events.
 //
 // Every long-running sinex binary participates in self-observation:
 // counters/gauges/histograms (`sinex.metric.*`), component health
 // (`sinex.health.status`), and per-binary operational rollups
 // (`sinexd.event_engine.*`, `sinexd.api.*`, `sinex.node.*`). These payloads have
 // no dedicated systemd unit — they are produced from inside event_engine, gateway,
-// and the node SDK as those processes run. We register infra source-unit
+// and the node SDK as those processes run. We register infra source
 // descriptors so the (source, event_type) pairs declared by `#[event_payload]`
-// are claimed by the source-unit inventory; bindings continue to live with the
+// are claimed by the source inventory; bindings continue to live with the
 // owning ingestor / runner-pack descriptors.
 // ─────────────────────────────────────────────────────────────────────────────
 
 use crate::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
+    SourceBuildImpact, SourceContract, SubjectRef,
 };
-use crate::{register_source_unit, register_source_unit_binding};
+use crate::{register_source_contract, register_source_runtime_binding};
 
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "sinex-metrics",
         namespace: "infra",
         event_types: &[
@@ -547,14 +547,13 @@ register_source_unit! {
         privacy_tier: SuPrivacyTier::Public,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_every_sinex_binary",
     }
 }
 
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "sinexd-event-engine-telemetry",
         namespace: "infra",
         event_types: &[
@@ -567,14 +566,13 @@ register_source_unit! {
         privacy_tier: SuPrivacyTier::Public,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_event_engine",
     }
 }
 
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "sinexd-api-telemetry",
         namespace: "infra",
         event_types: &[
@@ -587,34 +585,32 @@ register_source_unit! {
         privacy_tier: SuPrivacyTier::Public,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_api",
     }
 }
 
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "sinex-node-telemetry",
         namespace: "infra",
         event_types: &[("sinex.node", "processing.stats")],
         privacy_tier: SuPrivacyTier::Public,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_node_sdk",
     }
 }
 
-// Infra source units: descriptor-only by design (events emitted from inside
+// Infra source contracts: descriptor-only by design (events emitted from inside
 // every sinex binary or specific runtime processes). Bindings are recorded
 // with `proposed: true` so manifest renderers separate them from host-level
 // adapter deployments.
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:sinex-metrics"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:sinex-metrics"),
         "sinex-metrics",
         "infra",
     )
@@ -625,20 +621,20 @@ register_source_unit_binding! {
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
-    .source_unit_id("sinex-metrics")
+    .source_id("sinex-metrics")
     .proposed(true)
     .runner_pack("infra")
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
     .implementation_mode("rust_in_every_sinex_binary")
-    .build_impact(SourceUnitBuildImpact::ZERO)
+    .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:sinexd-event-engine-telemetry"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:sinexd-event-engine-telemetry"),
         "sinexd-event-engine-telemetry",
         "infra",
     )
@@ -649,20 +645,20 @@ register_source_unit_binding! {
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
-    .source_unit_id("sinexd-event-engine-telemetry")
+    .source_id("sinexd-event-engine-telemetry")
     .proposed(true)
     .runner_pack("infra")
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
     .implementation_mode("rust_in_event_engine")
-    .build_impact(SourceUnitBuildImpact::ZERO)
+    .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:sinexd-api-telemetry"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:sinexd-api-telemetry"),
         "sinexd-api-telemetry",
         "infra",
     )
@@ -673,20 +669,20 @@ register_source_unit_binding! {
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
-    .source_unit_id("sinexd-api-telemetry")
+    .source_id("sinexd-api-telemetry")
     .proposed(true)
     .runner_pack("infra")
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
     .implementation_mode("rust_in_api")
-    .build_impact(SourceUnitBuildImpact::ZERO)
+    .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:sinex-node-telemetry"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:sinex-node-telemetry"),
         "sinex-node-telemetry",
         "infra",
     )
@@ -697,13 +693,13 @@ register_source_unit_binding! {
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
-    .source_unit_id("sinex-node-telemetry")
+    .source_id("sinex-node-telemetry")
     .proposed(true)
     .runner_pack("infra")
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
     .implementation_mode("rust_in_node_sdk")
-    .build_impact(SourceUnitBuildImpact::ZERO)
+    .build_impact(SourceBuildImpact::ZERO)
     .build()
 }

@@ -4,7 +4,7 @@ This is the complete path of an event through the system. Each step is a decisio
 
 ```
  1. Source data exists (file change, shell command, window focus, systemd event)
- 2. Source unit detects change (inotify/polling/socket/journal API)
+ 2. Source detects change (inotify/polling/socket/journal API)
  3. Source material registered in DB (raw.source_material_registry) — provenance root
  4. Ingestor parses source bytes into typed payload struct
  5. EventPayload trait provides (SOURCE, EVENT_TYPE) as compile-time constants
@@ -50,17 +50,17 @@ else              -> QueryBuilder (VALUES path)
                      (no staging overhead for small batches)
 ```
 
-Implication: automaton-heavy workloads never hit the COPY fast path. COPY only benefits material-provenance batches from source units.
+Implication: automaton-heavy workloads never hit the COPY fast path. COPY only benefits material-provenance batches from source contracts.
 
 ### Trust Boundaries
 
 | Boundary | Validated | NOT validated |
 |----------|-----------|---------------|
-| Source unit -> NATS | Privacy engine (per-event, synchronous) | Payload size (10MB NATS-payload cap, enforced in Rust only at source-unit side — `ingestion_helpers.rs:32`, `file_drop.rs:268`) |
+| Source -> NATS | Privacy engine (per-event, synchronous) | Payload size (10MB NATS-payload cap, enforced in Rust only at source side — `ingestion_helpers.rs:32`, `file_drop.rs:268`) |
 | NATS -> `sinexd::event_engine` | JSON parse, event ID, schema (lenient) | ts_orig plausibility, anchor_byte sign |
 | `sinexd::event_engine` -> DB | XOR provenance CHECK, material FK, self-ref cycle | Payload-to-material correspondence |
 | DB -> `sinexd::api` | Client message sanitization, role authorization | — |
-| `sinexd::api` -> CLI | Token-suffix RBAC (stateless, no revocation) | HTTP request body capped at 2MB (`SINEX_API_MAX_BODY_BYTES`, `api/config.rs`) — separate from the 10MB source-unit NATS-payload limit |
+| `sinexd::api` -> CLI | Token-suffix RBAC (stateless, no revocation) | HTTP request body capped at 2MB (`SINEX_API_MAX_BODY_BYTES`, `api/config.rs`) — separate from the 10MB source NATS-payload limit |
 
 ### Key Thresholds
 

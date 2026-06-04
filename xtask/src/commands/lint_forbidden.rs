@@ -251,7 +251,7 @@ impl XtaskCommand for LintForbiddenCommand {
         // Check for test-utils usage in production code (layering violation)
         check_test_utils_layering(&mut violations)?;
 
-        // Source-unit privacy policy is enforced at admission; source units
+        // Source privacy policy is enforced at admission; source contracts
         // declare metadata/hints rather than invoking the privacy engine.
 
         let ast_grep = run_ast_grep_scan()?;
@@ -345,7 +345,7 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         // Replay control request/reply and invalidation publishers.
         "crate/sinexd/src/api/replay_control/server.rs",
         "crate/sinexd/src/api/replay_control/execution/collect.rs",
-        // Source parse command request/reply acknowledgements (folded source-unit host).
+        // Source parse command request/reply acknowledgements (folded source host).
         "crate/sinexd/src/sources/parse_listener.rs",
     ];
 
@@ -371,7 +371,7 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
 /// Any one of these present in a file satisfies the gate:
 ///
 /// - `ProcessingContext::` — emitted intent context metadata
-/// - `.privacy_context(` — source-unit binding context metadata
+/// - `.privacy_context(` — source binding context metadata
 /// - `privacy_contexts:` — parser manifest context metadata
 /// - `default_privacy_context =` — declarative `#[source_record]` DSL attribute
 /// - `#[allow(missing_privacy_metadata` — explicit escape hatch with required `reason =`
@@ -383,7 +383,7 @@ const PRIVACY_METADATA_INDICATORS: &[&str] = &[
     "#[allow(missing_privacy_metadata",
 ];
 
-/// Patterns that indicate a non-Public privacy tier in a `register_source_unit!` block.
+/// Patterns that indicate a non-Public privacy tier in a `register_source_contract!` block.
 const NON_PUBLIC_TIER_PATTERNS: &[&str] = &[
     "PrivacyTier::Sensitive",
     "PrivacyTier::Secret",
@@ -393,29 +393,29 @@ const NON_PUBLIC_TIER_PATTERNS: &[&str] = &[
 
 /// Files exempt from the privacy-metadata gate.
 ///
-/// These are **descriptor-only** source units: they declare event-type metadata
+/// These are **descriptor-only** source contracts: they declare event-type metadata
 /// for events emitted from inside the pipeline infrastructure (event_engine, gateway,
 /// SDK), rather than from a dedicated parser. Privacy is handled at the emit
 /// site inside those binaries, not by a standalone parser.
 ///
-/// New entries MUST include: (1) the source unit id, (2) which binary emits it,
+/// New entries MUST include: (1) the source id, (2) which binary emits it,
 /// (3) where privacy is handled.
 const PRIVACY_GATE_ALLOWLIST: &[&str] = &[
-    // "blob-storage" source unit: blob.retrieved / blob.ingested / blob.verified /
+    // "blob-storage" source: blob.retrieved / blob.ingested / blob.verified /
     // storage.statistics events are emitted from event_engine / gateway / node-sdk internals.
     // Privacy is handled at the emit site in those binaries; no standalone parser exists.
     "crate/sinex-primitives/src/events/payloads/blob.rs",
 ];
 
-/// Gate: every source-unit parser with a non-Public privacy tier must declare
+/// Gate: every source parser with a non-Public privacy tier must declare
 /// privacy metadata so DB admission policy can select rules.
 ///
-/// For each `.rs` file containing `register_source_unit!` AND a non-Public
+/// For each `.rs` file containing `register_source_contract!` AND a non-Public
 /// `privacy_tier`:
 /// - If the file (or any `.rs` sibling in its immediate containing directory)
 ///   contains any [`PRIVACY_METADATA_INDICATORS`] → pass.
 /// - If the file is in [`PRIVACY_GATE_ALLOWLIST`] → pass (descriptor-only units).
-/// - Otherwise → violation with source-unit id, privacy tier, and file path.
+/// - Otherwise → violation with source id, privacy tier, and file path.
 ///
 /// The sibling-directory scan handles the common pattern where `lib.rs` holds
 /// the descriptor registration while parser files in the same directory
@@ -432,8 +432,8 @@ fn check_privacy_metadata_for_sensitive_units() -> Result<Vec<String>> {
     let root = workspace_root();
     let mut violations: Vec<String> = Vec::new();
 
-    // Find all .rs files that contain `register_source_unit!`.
-    let rsu_files = find_files_with_pattern(&root, "register_source_unit!")?;
+    // Find all .rs files that contain `register_source_contract!`.
+    let rsu_files = find_files_with_pattern(&root, "register_source_contract!")?;
 
     for rel_path in rsu_files {
         let abs_path = root.join(&rel_path);
@@ -470,11 +470,11 @@ fn check_privacy_metadata_for_sensitive_units() -> Result<Vec<String>> {
             continue;
         }
 
-        // Extract the source-unit id(s) and tier(s) for the error message.
-        let unit_ids = extract_source_unit_ids(&contents);
+        // Extract the source id(s) and tier(s) for the error message.
+        let unit_ids = extract_source_ids(&contents);
         let tiers = extract_non_public_tiers(&contents);
         violations.push(format!(
-            "{rel_path}: source unit(s) [{units}] with privacy tier [{tiers}] \
+            "{rel_path}: source(s) [{units}] with privacy tier [{tiers}] \
              must declare privacy metadata (ProcessingContext::, .privacy_context(, \
              privacy_contexts:, default_privacy_context =) or declare \
              #[allow(missing_privacy_metadata, reason = \"...\")]",
@@ -537,8 +537,8 @@ fn find_files_with_pattern(root: &std::path::Path, literal: &str) -> Result<Vec<
         .collect())
 }
 
-/// Extract `id: "..."` values from a source-unit descriptor block.
-fn extract_source_unit_ids(contents: &str) -> Vec<String> {
+/// Extract `id: "..."` values from a source descriptor block.
+fn extract_source_ids(contents: &str) -> Vec<String> {
     let mut ids = Vec::new();
     // Match lines like: `id: "some.id",`
     for line in contents.lines() {
@@ -1106,10 +1106,10 @@ mod tests {
             return violations;
         }
 
-        let unit_ids = extract_source_unit_ids(contents);
+        let unit_ids = extract_source_ids(contents);
         let tiers = extract_non_public_tiers(contents);
         violations.push(format!(
-            "fixture: source unit(s) [{units}] with privacy tier [{tiers}] missing privacy metadata",
+            "fixture: source(s) [{units}] with privacy tier [{tiers}] missing privacy metadata",
             units = unit_ids.join(", "),
             tiers = tiers.join(", "),
         ));
@@ -1122,8 +1122,8 @@ mod tests {
         // Planted violation: Sensitive tier, no privacy indicator.
         // IMPORTANT: the comment below must NOT contain privacy indicator strings.
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "stub.planted",
                     privacy_tier: PrivacyTier::Sensitive,
                 }
@@ -1142,7 +1142,7 @@ mod tests {
         );
         assert!(
             violations[0].contains("stub.planted"),
-            "violation must name the source unit id; got: {}",
+            "violation must name the source id; got: {}",
             violations[0]
         );
         assert!(
@@ -1157,8 +1157,8 @@ mod tests {
     async fn privacy_gate_catches_secret_unit_without_privacy_metadata()
     -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "stub.secret",
                     privacy_tier: PrivacyTier::Secret,
                 }
@@ -1174,8 +1174,8 @@ mod tests {
     async fn privacy_gate_passes_public_unit_without_privacy_call()
     -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "noop",
                     privacy_tier: PrivacyTier::Public,
                 }
@@ -1194,8 +1194,8 @@ mod tests {
     async fn privacy_gate_ignores_privacy_engine_call_without_metadata()
     -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "stub.sensitive",
                     privacy_tier: PrivacyTier::Sensitive,
                 }
@@ -1220,8 +1220,8 @@ mod tests {
     async fn privacy_gate_passes_with_processing_context_metadata()
     -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "stub.irc",
                     privacy_tier: PrivacyTier::Sensitive,
                 }
@@ -1244,8 +1244,8 @@ mod tests {
     async fn privacy_gate_passes_with_declarative_default_privacy_context()
     -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "stub.declarative",
                     privacy_tier: PrivacyTier::Sensitive,
                 }
@@ -1271,14 +1271,14 @@ mod tests {
     async fn privacy_gate_passes_with_explicit_allow() -> ::xtask::sandbox::TestResult<()> {
         // Escape hatch: `#[allow(missing_privacy_metadata, reason = "...")]`
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "stub.exempt",
                     privacy_tier: PrivacyTier::Sensitive,
                 }
             }
 
-            #[allow(missing_privacy_metadata, reason = "descriptor-only source unit")]
+            #[allow(missing_privacy_metadata, reason = "descriptor-only source")]
             fn parse_record(&self) {}
         "#;
 

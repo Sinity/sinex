@@ -31,7 +31,7 @@ use time::macros::format_description;
 
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
-    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
+    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceId,
     TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
@@ -145,7 +145,7 @@ impl MaterialParser for WeeChatLogParser {
             parser_id: ParserId::from_static("weechat-log"),
             parser_version: "1.0.0".into(),
             accepted_input_shapes: vec![InputShapeKind::AppendOnlyFile],
-            source_unit_id: SourceUnitId::from_static("weechat"),
+            source_id: SourceId::from_static("weechat"),
             declared_event_types: vec![
                 (
                     EventSource::from_static("irc"),
@@ -166,12 +166,6 @@ impl MaterialParser for WeeChatLogParser {
             ],
             privacy_contexts: vec![ProcessingContext::Command],
             sensitivity_hints: Vec::new(),
-            proof_obligations: vec![
-                "timestamp_intrinsic".into(),
-                "event_type_from_prefix".into(),
-                "anchor_line".into(),
-                "nick_extraction".into(),
-            ],
             description: "Parses WeeChat IRC client log files into typed IRC events.".into(),
         }
     }
@@ -214,7 +208,7 @@ impl MaterialParser for WeeChatLogParser {
         let anchor = record.anchor.clone();
 
         let intent = ParsedEventIntent::builder()
-            .source_unit_id(ctx.source_unit_id.clone())
+            .source_id(ctx.source_id.clone())
             .parser_id(ParserId::from_static("weechat-log"))
             .parser_version("1.0.0")
             .event_type(EventType::from_static(cls.event_type))
@@ -247,7 +241,7 @@ mod tests {
 
     fn test_ctx() -> ParserContext {
         ParserContext {
-            source_unit_id: SourceUnitId::from_static("weechat"),
+            source_id: SourceId::from_static("weechat"),
             source_material_id: sinex_primitives::ids::Id::new(),
             record_anchor: MaterialAnchor::Line {
                 byte_start: 0,

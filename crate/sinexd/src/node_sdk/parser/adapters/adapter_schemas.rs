@@ -46,7 +46,7 @@ pub struct AdapterSchema {
 
 /// Return the JSON Schema and required-field list for every adapter Config type.
 ///
-/// The map key is the canonical adapter name used in source-unit descriptors.
+/// The map key is the canonical adapter name used in source descriptors.
 ///
 /// Adapter coverage:
 /// - `AppendOnlyFileAdapter`

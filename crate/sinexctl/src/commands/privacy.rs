@@ -1226,7 +1226,7 @@ mod tests {
                 sources: vec![SourceReadiness {
                     binding_id: None,
                     source_family: "desktop".to_string(),
-                    source_unit_id: None,
+                    source_id: None,
                     parser_id: None,
                     source_identifier: "/home/sinity/private/window.log".to_string(),
                     status: SourceReadinessStatus::Blocked,

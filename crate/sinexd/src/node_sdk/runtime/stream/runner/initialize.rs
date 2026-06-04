@@ -123,9 +123,9 @@ impl<T: Node + 'static> NodeRunner<T> {
             .filter(|value| !value.is_empty())
             .unwrap_or("default")
             .to_string();
-        let source_unit_id = Self::config_identity_value(&raw_config, "source_unit_id");
+        let source_id = Self::config_identity_value(&raw_config, "source_id");
         let runner_pack = Self::config_identity_value(&raw_config, "runner_pack");
-        let checkpoint_identity = source_unit_id
+        let checkpoint_identity = source_id
             .clone()
             .unwrap_or_else(|| service_name.to_string());
 
@@ -221,7 +221,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let service_info = ServiceInfo::new_with_runtime_identity(
             service_name.clone(),
             self.node.node_name().to_string(),
-            source_unit_id.clone(),
+            source_id.clone(),
             runner_pack.clone(),
             host.clone(),
             work_dir.clone(),
@@ -284,7 +284,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 cfg.batch_timeout_ms = v;
             }
             // Set envelope identity fields from node configuration.
-            cfg.source_unit_id = source_unit_id.clone().unwrap_or_default();
+            cfg.source_id = source_id.clone().unwrap_or_default();
             cfg.parser_id = self.node.node_name().to_string();
             cfg.parser_version = env!("CARGO_PKG_VERSION").to_string();
             cfg
@@ -302,7 +302,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         info!(
             service = %service_name,
             node = %self.node.node_name(),
-            source_unit = source_unit_id.as_deref().unwrap_or("none"),
+            source = source_id.as_deref().unwrap_or("none"),
             runner_pack = runner_pack.as_deref().unwrap_or("none"),
             checkpoint_identity = %checkpoint_identity,
             node_type = ?self.node.node_type(),

@@ -7,7 +7,7 @@ use sinex_primitives::rpc::sources::{
 };
 
 use sinex_primitives::Timestamp;
-use sinex_primitives::parser::SourceUnitId;
+use sinex_primitives::parser::SourceId;
 use sinex_primitives::rpc::sources::{
     CaveatSeverity, SourceReadiness, SourceReadinessStatus, SourcesReadinessGetRequest,
     SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
@@ -100,18 +100,18 @@ pub enum SourcesSubcommand {
     Continuity(ContinuityCommand),
     /// Report source readiness, cost, freshness, and caveats
     Readiness(ReadinessCommand),
-    /// List recent source-shape drift observed by adapter-backed source units
+    /// List recent source-shape drift observed by adapter-backed source contracts
     Drift(DriftCommand),
     /// Explain a coverage gap at a specific timestamp
     #[command(name = "explain-gap")]
     ExplainGap(ExplainGapCommand),
-    /// Source readiness summary table with status per source unit
+    /// Source readiness summary table with status per source
     Cockpit(CockpitCommand),
 }
 
 // ── Cockpit ────────────────────────────────────────────────────────────
 
-/// Source readiness table showing status for each registered source unit.
+/// Source readiness table showing status for each registered source.
 #[derive(Debug, Args)]
 pub struct CockpitCommand {
     /// Filter to sources whose id contains this substring
@@ -1007,12 +1007,12 @@ fn format_readiness_detail(r: &SourceReadiness) -> String {
 
 // ── Drift (#1103) ─────────────────────────────────────────────────────
 
-/// List recent source-shape drift observed by adapter-backed source units
+/// List recent source-shape drift observed by adapter-backed source contracts
 #[derive(Debug, Args)]
 pub struct DriftCommand {
-    /// Optional source-unit id filter.
-    #[arg(long = "source-unit")]
-    source_unit_id: Option<String>,
+    /// Optional source id filter.
+    #[arg(long = "source")]
+    source_id: Option<String>,
 
     /// Maximum number of drift observations to return.
     #[arg(long, default_value_t = 50)]
@@ -1021,13 +1021,13 @@ pub struct DriftCommand {
 
 impl DriftCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let source_unit_id = self
-            .source_unit_id
+        let source_id = self
+            .source_id
             .as_deref()
-            .map(SourceUnitId::new)
+            .map(SourceId::new)
             .transpose()?;
         let req = SourcesDriftListRequest {
-            source_unit_id,
+            source_id,
             limit: Some(self.limit),
         };
         let body: SourcesDriftListResponse = client.sources_drift_list(req).await?;
@@ -1045,7 +1045,7 @@ fn format_drift_list(response: &SourcesDriftListResponse) -> String {
 
     let mut builder = Builder::new();
     builder.push_record([
-        "SOURCE UNIT",
+        "SOURCE",
         "IMPACT",
         "CAVEATS",
         "FORMAT",
@@ -1072,7 +1072,7 @@ fn format_drift_list(response: &SourcesDriftListResponse) -> String {
                 .join(", ")
         };
         builder.push_record([
-            drift.source_unit_id.as_str().to_string(),
+            drift.source_id.as_str().to_string(),
             impact,
             caveat_codes,
             drift.format.clone(),
@@ -1128,8 +1128,8 @@ mod tests {
     async fn drift_table_surfaces_readiness_impact() -> TestResult<()> {
         let response = SourcesDriftListResponse {
             drifts: vec![SourceShapeDriftObservation {
-                checkpoint_key: "source-unit.default.fixture".to_string(),
-                source_unit_id: SourceUnitId::from_static("browser.history"),
+                checkpoint_key: "source.default.fixture".to_string(),
+                source_id: SourceId::from_static("browser.history"),
                 consumer_group: Some("default".to_string()),
                 consumer_name: Some("fixture".to_string()),
                 previous_hash: "shape-old".to_string(),

@@ -1,10 +1,10 @@
 use sinex_primitives::{
-    proof::{CheckpointFamily, RuntimeShape, SourceUnitBinding},
+    proof::{CheckpointFamily, RuntimeShape, SourceRuntimeBinding},
     subject_ref,
 };
 
 fn main() {
-    let _ = SourceUnitBinding::builder(
+    let _ = SourceRuntimeBinding::builder(
         subject_ref!("runtime_unit:test.missing_build_impact"),
         "test.missing_build_impact",
         "test",

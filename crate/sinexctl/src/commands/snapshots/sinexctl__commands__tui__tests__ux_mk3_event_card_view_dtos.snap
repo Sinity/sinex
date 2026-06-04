@@ -17,7 +17,7 @@ expression: cards
       "family": "ux-mk3",
       "raw": "fixture.source",
       "unit_ref": {
-        "kind": "source_unit",
+        "kind": "source",
         "id": "ux.fixture-source"
       }
     },
@@ -80,7 +80,7 @@ expression: cards
       "family": "ux-mk3",
       "raw": "fixture.source",
       "unit_ref": {
-        "kind": "source_unit",
+        "kind": "source",
         "id": "ux.fixture-source"
       }
     },
@@ -149,7 +149,7 @@ expression: cards
       "family": "ux-mk3",
       "raw": "fixture.source",
       "unit_ref": {
-        "kind": "source_unit",
+        "kind": "source",
         "id": "ux.fixture-source"
       }
     },

@@ -44,7 +44,7 @@ pub fn custom_affected_leaf(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     run_affected_exercise(
         dir,
         verbose,
-        "crate/sinexd/src/sources/source_units/fs/mod.rs",
+        "crate/sinexd/src/sources/source_contracts/fs/mod.rs",
         &["sinexd"],
         &[], // Don't assert absence — transitive deps are implementation-dependent
     )

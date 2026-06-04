@@ -46,14 +46,14 @@ pub struct StorageStatisticsPayload {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Source-unit descriptor for blob storage infra events.
+// Source descriptor for blob storage infra events.
 //
-// `blob_storage` is not a normal ingestor source unit — it is sinex's
+// `blob_storage` is not a normal ingestor source — it is sinex's
 // content-addressable BLOB store, which emits operational events as it
 // retrieves, ingests, verifies blobs and reports aggregate statistics. We
 // register a descriptor so the (source, event_type) pairs declared via
 // `#[event_payload(...)]` are claimed by the descriptor inventory used by
-// `sinexctl verify --source-units`. The descriptor has no `SourceUnitBinding`
+// `sinexctl verify --sources`. The descriptor has no `SourceRuntimeBinding`
 // because there is no per-host service named "blob storage"; these events are
 // produced from inside long-running sinex processes.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,13 +61,13 @@ pub struct StorageStatisticsPayload {
 use crate::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
+    SourceBuildImpact, SourceContract, SubjectRef,
 };
-use crate::{register_source_unit, register_source_unit_binding};
+use crate::{register_source_contract, register_source_runtime_binding};
 
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "blob-storage",
         namespace: "infra",
         event_types: &[
@@ -79,18 +79,17 @@ register_source_unit! {
         privacy_tier: SuPrivacyTier::Sensitive,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_pipeline_processes",
     }
 }
 
-// Infra source unit: descriptor-only by design — events emitted from inside
+// Infra source: descriptor-only by design — events emitted from inside
 // other binaries (event_engine, gateway, node SDK). The binding records the
 // embedded shape; `proposed: true` flags it as not a host-level adapter.
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:blob-storage"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:blob-storage"),
         "blob-storage",
         "infra",
     )
@@ -101,14 +100,14 @@ register_source_unit_binding! {
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
-    .source_unit_id("blob-storage")
+    .source_id("blob-storage")
     .proposed(true)
     .runner_pack("infra")
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
     .implementation_mode("rust_in_pipeline_processes")
-    .build_impact(SourceUnitBuildImpact::ZERO)
+    .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
 

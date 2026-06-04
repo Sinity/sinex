@@ -5,7 +5,7 @@
 //! It coordinates material lifecycle (begin → append → finalize) without
 //! holding locks across I/O operations.
 //!
-//! Adapted from the source-unit host's stream and file-drop material handling.
+//! Adapted from the source host's stream and file-drop material handling.
 //!
 //! # Example
 //!

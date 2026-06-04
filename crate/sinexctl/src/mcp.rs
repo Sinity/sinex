@@ -14,7 +14,7 @@ use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
-use sinex_primitives::parser::SourceUnitId;
+use sinex_primitives::parser::SourceId;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
 use sinex_primitives::rpc::curation::CurationListProposalsRequest;
@@ -148,7 +148,7 @@ struct SourceReadinessArgs {
     #[serde(default)]
     source_family: Option<String>,
     #[serde(default)]
-    source_unit_id: Option<String>,
+    source_id: Option<String>,
     #[serde(default)]
     source_identifier: Option<String>,
     #[serde(default)]
@@ -168,7 +168,7 @@ struct SourceContinuityArgs {
 #[derive(Debug, Deserialize, Serialize)]
 struct SourceDriftArgs {
     #[serde(default)]
-    source_unit_id: Option<String>,
+    source_id: Option<String>,
     #[serde(default)]
     limit: Option<usize>,
 }
@@ -941,7 +941,7 @@ pub fn tools() -> Vec<McpTool> {
                 "type": "object",
                 "properties": {
                     "source_family": { "type": "string" },
-                    "source_unit_id": { "type": "string" },
+                    "source_id": { "type": "string" },
                     "source_identifier": { "type": "string" },
                     "stale_after_seconds": { "type": "integer", "minimum": 1 },
                     "include_caveats": { "type": "boolean", "default": true }
@@ -965,7 +965,7 @@ pub fn tools() -> Vec<McpTool> {
             json!({
                 "type": "object",
                 "properties": {
-                    "source_unit_id": { "type": "string" },
+                    "source_id": { "type": "string" },
                     "limit": {
                         "type": "integer",
                         "minimum": 1,
@@ -1760,8 +1760,8 @@ async fn source_readiness(client: &GatewayClient, arguments: Value) -> Result<Va
         serde_json::to_value(client.sources_readiness_list(request).await?)?
     };
 
-    if let Some(source_unit_id) = args.source_unit_id.as_deref() {
-        filter_readiness_by_source_unit(&mut result, source_unit_id);
+    if let Some(source_id) = args.source_id.as_deref() {
+        filter_readiness_by_source(&mut result, source_id);
     }
 
     let mut payload = json!({ "result": result });
@@ -1799,10 +1799,10 @@ async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<V
 async fn source_drift(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: SourceDriftArgs = serde_json::from_value(arguments)?;
     let request = SourcesDriftListRequest {
-        source_unit_id: args
-            .source_unit_id
+        source_id: args
+            .source_id
             .as_deref()
-            .map(SourceUnitId::new)
+            .map(SourceId::new)
             .transpose()?,
         limit: args.limit,
     };
@@ -2487,24 +2487,24 @@ fn reject_non_empty_args(tool: &str, arguments: &Value) -> Result<()> {
     }
 }
 
-fn filter_readiness_by_source_unit(result: &mut Value, source_unit_id: &str) {
+fn filter_readiness_by_source(result: &mut Value, source_id: &str) {
     if let Some(sources) = result.get_mut("sources").and_then(Value::as_array_mut) {
-        sources.retain(|source| source_unit_matches(source, source_unit_id));
+        sources.retain(|source| source_matches(source, source_id));
     }
 
     if let Some(readiness) = result.get_mut("readiness")
         && !readiness.is_null()
-        && !source_unit_matches(readiness, source_unit_id)
+        && !source_matches(readiness, source_id)
     {
         *readiness = Value::Null;
     }
 }
 
-fn source_unit_matches(source: &Value, source_unit_id: &str) -> bool {
+fn source_matches(source: &Value, source_id: &str) -> bool {
     source
-        .get("source_unit_id")
+        .get("source_id")
         .and_then(Value::as_str)
-        .is_some_and(|value| value == source_unit_id)
+        .is_some_and(|value| value == source_id)
 }
 
 fn strip_caveats(value: &mut Value) {

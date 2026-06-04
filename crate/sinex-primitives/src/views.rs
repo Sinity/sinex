@@ -16,7 +16,7 @@ pub const EVENT_CARD_LIST_SCHEMA_VERSION: &str = "sinex.event-card-list/v3";
 #[serde(rename_all = "snake_case")]
 pub enum SinexObjectKind {
     Event,
-    SourceUnit,
+    SourceDriver,
     SourceMaterial,
     MaterialAnchor,
     Document,
@@ -350,7 +350,7 @@ impl EventCardView {
                 family: source_family(event.source.as_str()),
                 raw: event.source.to_string(),
                 unit_ref: Some(
-                    SinexObjectRef::new(SinexObjectKind::SourceUnit, event.source.to_string())
+                    SinexObjectRef::new(SinexObjectKind::SourceDriver, event.source.to_string())
                         .with_label(event.source.to_string()),
                 ),
             },

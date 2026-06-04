@@ -118,7 +118,7 @@ impl Default for RuntimeDrainController {
 pub struct ServiceInfo {
     service_name: ServiceName,
     node_name: String,
-    source_unit_id: Option<String>,
+    source_id: Option<String>,
     runner_pack: Option<String>,
     host: HostName,
     work_dir: PathBuf,
@@ -143,7 +143,7 @@ impl ServiceInfo {
         Self {
             service_name: service_name.into(),
             node_name,
-            source_unit_id: None,
+            source_id: None,
             runner_pack: None,
             host,
             work_dir,
@@ -159,7 +159,7 @@ impl ServiceInfo {
     pub fn new_with_runtime_identity(
         service_name: impl Into<ServiceName>,
         node_name: String,
-        source_unit_id: Option<String>,
+        source_id: Option<String>,
         runner_pack: Option<String>,
         host: HostName,
         work_dir: PathBuf,
@@ -171,7 +171,7 @@ impl ServiceInfo {
         Self {
             service_name: service_name.into(),
             node_name,
-            source_unit_id,
+            source_id,
             runner_pack,
             host,
             work_dir,
@@ -193,8 +193,8 @@ impl ServiceInfo {
     }
 
     #[must_use]
-    pub fn source_unit_id(&self) -> Option<&str> {
-        self.source_unit_id.as_deref()
+    pub fn source_id(&self) -> Option<&str> {
+        self.source_id.as_deref()
     }
 
     #[must_use]
@@ -204,14 +204,14 @@ impl ServiceInfo {
 
     #[must_use]
     pub fn checkpoint_identity(&self) -> &str {
-        self.source_unit_id
+        self.source_id
             .as_deref()
             .unwrap_or(self.service_name.as_str())
     }
 
     #[must_use]
     pub fn control_identity(&self) -> &str {
-        self.source_unit_id
+        self.source_id
             .as_deref()
             .unwrap_or(self.node_name.as_str())
     }
@@ -259,7 +259,7 @@ pub struct EventEmitter {
     /// Optional emit tracker installed by `HealthReporter::enable_emit_stall_detection`.
     /// Bumped on every successful `emit()` so the reporter can detect emit-rate stalls.
     /// Slot is `Arc<parking_lot::RwLock<...>>` because `EventEmitter` is constructed by
-    /// the runtime before the `SourceUnitRuntime::initialize` hook installs the tracker.
+    /// the runtime before the `SourceDriverRuntime::initialize` hook installs the tracker.
     emit_tracker:
         Arc<parking_lot::RwLock<Option<Arc<crate::node_sdk::health_reporter::EmitTracker>>>>,
 }

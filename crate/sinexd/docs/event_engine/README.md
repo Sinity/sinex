@@ -2,7 +2,7 @@
 
 ## Overview
 
-`sinexd::event_engine` receives events from source units and automata, validates
+`sinexd::event_engine` receives events from source contracts and automata, validates
 them, writes them to PostgreSQL, and relays confirmations to streaming sinks.
 
 ## Key Responsibilities

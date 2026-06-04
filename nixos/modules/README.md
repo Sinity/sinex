@@ -321,7 +321,7 @@ sops-nix), use `services.sinex.database.setupWaitForPaths` to gate
 - `blob-storage.nix` – content-store backend initialization and maintenance timers.
 - `monitoring.nix` – Prometheus/Grafana/exporter configuration.
 - `preflight-verification.nix` – `sinex-preflight` and `sinex-update` units.
-- `source-units.nix` – `sinexd` service unit, source-binding, and automata wiring.
+- `sources.nix` – `sinexd` service unit, source-binding, and automata wiring.
 - `kitty-shell-integration.nix` – Kitty auto-configuration helper.
 
 ## Testing Tips

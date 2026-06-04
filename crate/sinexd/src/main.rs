@@ -1,10 +1,10 @@
 //! `sinexd` — the Sinex local daemon.
 //!
 //! Single binary hosting the event engine, the operator API, the enabled
-//! derived-node automata, and the configured source-unit bindings. The
+//! derived-node automata, and the configured source bindings. The
 //! default subcommand (`serve`, also the no-subcommand path) starts the
 //! supervisor; auxiliary subcommands run one-off scans against a single
-//! source unit (used by oneshot units like the document snapshot scan).
+//! source (used by oneshot units like the document snapshot scan).
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
@@ -83,18 +83,18 @@ enum Command {
         cors_origins: Option<String>,
     },
 
-    /// Run a single source unit to completion against the given subcommand.
+    /// Run a single source to completion against the given subcommand.
     ///
-    /// Runs a source unit through the `sinexd scan-source-unit` entrypoint
+    /// Runs a source through the `sinexd scan-source` entrypoint
     /// like the document snapshot scan. Reuses the source-binding manifest
     /// shape so operator-facing tooling matches the supervisor's catalog.
-    ScanSourceUnit {
-        /// Source-unit id (must match a registered descriptor).
+    ScanSourceDriver {
+        /// Source id (must match a registered descriptor).
         #[arg(long)]
-        source_unit: String,
+        source: String,
 
         /// Service name reported by systemd / heartbeats. Defaults to
-        /// `sinex-source-unit-<id>` when absent.
+        /// `sinex-source-<id>` when absent.
         #[arg(long)]
         service_name: Option<String>,
 
@@ -115,7 +115,7 @@ enum Command {
         )]
         extra_args: Vec<String>,
 
-        /// Extra environment variables to set in the source-unit host process
+        /// Extra environment variables to set in the source host process
         /// (repeatable, format `KEY=VAL`). Used to reproduce operator-side
         /// issues that need session-specific env like `DISPLAY` or
         /// `XAUTHORITY` for desktop.clipboard.
@@ -164,15 +164,15 @@ async fn main() -> color_eyre::Result<()> {
             tcp_listen,
             cors_origins,
         } => rpc_server_serve(&cli, tcp_listen, cors_origins).await,
-        Command::ScanSourceUnit {
-            source_unit,
+        Command::ScanSourceDriver {
+            source,
             service_name,
             node_config,
             extra_args,
             extra_env,
         } => {
-            scan_source_unit(
-                source_unit,
+            scan_source(
+                source,
                 service_name,
                 node_config,
                 extra_args,
@@ -246,8 +246,8 @@ async fn rpc_server_serve(
     Ok(())
 }
 
-async fn scan_source_unit(
-    source_unit: String,
+async fn scan_source(
+    source: String,
     service_name: Option<String>,
     node_config: Option<String>,
     extra_args: Vec<String>,
@@ -261,7 +261,7 @@ async fn scan_source_unit(
     let extra_env: HashMap<String, String> = extra_env.into_iter().collect();
 
     let binding = SourceBinding {
-        source_unit_id: source_unit,
+        source_id: source,
         instance_idx: 1,
         service_name,
         node_config: node_config_value,

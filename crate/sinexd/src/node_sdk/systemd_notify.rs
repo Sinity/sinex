@@ -15,7 +15,7 @@ fn watchdog_interval() -> Option<Duration> {
 }
 
 /// When set, this process is being hosted inside another sinex daemon
-/// (typically `sinexd`) and individual nodes / source-units MUST NOT send
+/// (typically `sinexd`) and individual nodes / sources MUST NOT send
 /// `READY=1` / `STOPPING=1` — only the top-level supervisor's `sd_notify` is
 /// authoritative for systemd. A fire-once monitor binding emitting
 /// `STOPPING=1` would otherwise tell systemd that the entire host daemon

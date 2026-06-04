@@ -2,10 +2,10 @@
 
 use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
 use sinex_primitives::{
-    parser::SourceUnitId,
+    parser::SourceId,
     rpc::sources::{CaveatSeverity, caveat_codes},
 };
-use sinexd::sources::sources::{
+use sinexd::sources::source_contracts::{
     bookmark::RaindropBookmarkParser,
     health::SleepMergedSummaryParser,
     social::{RedditCommentParser, RedditPostParser},
@@ -42,7 +42,7 @@ async fn raindrop_required_header_removal_blocks_readiness() -> TestResult<()> {
         b"id,title,note,excerpt,folder,tags,created,cover,highlights,favorite\n",
     )?;
     let mut drift = SourceRecordFingerprint::diff(
-        SourceUnitId::from_static("raindrop-bookmarks"),
+        SourceId::from_static("raindrop-bookmarks"),
         &before,
         &after,
     )

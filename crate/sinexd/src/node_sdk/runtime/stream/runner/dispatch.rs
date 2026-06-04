@@ -7,7 +7,7 @@
 
 use super::{
     Arc, AtomicU64, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, DispatchedScanOutcome, Event,
-    FailedDispatchedScanOutcome, HashMap, JsonValue, Node, NodeFactory, NodeHandles,
+    FailedDispatchedScanOutcome, HashMap, JsonValue, Node, SourceFactory, NodeHandles,
     NodeInitContext, NodeResult, NodeRunner, NodeScanCommand, Ordering, ServiceInfo, SinexError,
     Utf8PathBuf, Uuid, create_checkpoint_kv, mpsc,
 };
@@ -15,7 +15,7 @@ use super::{
 impl<T: Node + 'static> NodeRunner<T> {
     #[cfg(feature = "messaging")]
     pub(super) async fn execute_dispatched_scan(
-        node_factory: NodeFactory<T>,
+        source_factory: SourceFactory<T>,
         base_handles: NodeHandles,
         base_service_info: ServiceInfo,
         raw_config: HashMap<String, serde_json::Value>,
@@ -30,7 +30,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let replay_service_info = ServiceInfo::new_with_runtime_identity(
             replay_service_name.clone(),
             base_service_info.node_name().to_string(),
-            base_service_info.source_unit_id().map(ToOwned::to_owned),
+            base_service_info.source_id().map(ToOwned::to_owned),
             base_service_info.runner_pack().map(ToOwned::to_owned),
             base_service_info.host().clone(),
             base_service_info.work_dir().clone(),
@@ -78,7 +78,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             work_dir_utf8,
         );
 
-        let mut worker = node_factory();
+        let mut worker = source_factory();
         if let Err(error) = worker.initialize(init_context).await {
             return Err(FailedDispatchedScanOutcome {
                 error,

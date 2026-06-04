@@ -3,7 +3,7 @@
 //! These types define the boundary-crossing contracts for the staged-source
 //! parser architecture (#1097). They are shared across `sinex-primitives`,
 //! `sinexd`, `sinex-db`, and `sinex-schema` so that parser authors,
-//! source-unit runtime, and schema/repository layers share a single
+//! source runtime, and schema/repository layers share a single
 //! vocabulary.
 //!
 //! # Relationship to other modules
@@ -137,16 +137,16 @@ impl std::fmt::Display for ParserId {
     }
 }
 
-/// Identifies a logical source unit that parsers operate within.
+/// Identifies a logical source that parsers operate within.
 ///
-/// A source unit is the stable identity that groups parser instances,
+/// A source is the stable identity that groups parser instances,
 /// emitted event types, and configuration. It is NOT a process or
 /// deployment identity — that is the source-domain/service split.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 #[serde(transparent)]
-pub struct SourceUnitId(Cow<'static, str>);
+pub struct SourceId(Cow<'static, str>);
 
-impl<'de> serde::Deserialize<'de> for SourceUnitId {
+impl<'de> serde::Deserialize<'de> for SourceId {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
         Self::validate_str(&s).map_err(serde::de::Error::custom)?;
@@ -154,20 +154,20 @@ impl<'de> serde::Deserialize<'de> for SourceUnitId {
     }
 }
 
-impl SourceUnitId {
-    /// Creates a validated `SourceUnitId` from a string.
+impl SourceId {
+    /// Creates a validated `SourceId` from a string.
     pub fn new(s: impl Into<String>) -> Result<Self, SinexError> {
         let s = s.into();
         Self::validate_str(&s)?;
         Ok(Self(Cow::Owned(s)))
     }
 
-    /// Creates a const `SourceUnitId` from a static string literal.
+    /// Creates a const `SourceId` from a static string literal.
     #[must_use]
     pub const fn from_static(s: &'static str) -> Self {
         assert!(
             Self::const_validate(s),
-            "SourceUnitId must match [a-z][a-z0-9_.-]*"
+            "SourceId must match [a-z][a-z0-9_.-]*"
         );
         Self(Cow::Borrowed(s))
     }
@@ -183,7 +183,7 @@ impl SourceUnitId {
             Cow::Borrowed(s) => s,
             Cow::Owned(_) => {
                 unreachable!(
-                    "SourceUnitId::as_static_str is only valid on const-constructed (borrowed) ids"
+                    "SourceId::as_static_str is only valid on const-constructed (borrowed) ids"
                 )
             }
         }
@@ -191,13 +191,13 @@ impl SourceUnitId {
 
     fn validate_str(s: &str) -> Result<(), SinexError> {
         if s.is_empty() {
-            return Err(SinexError::validation("SourceUnitId must not be empty"));
+            return Err(SinexError::validation("SourceId must not be empty"));
         }
         if !s.chars().all(|c| {
             c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.'
         }) {
             return Err(SinexError::validation(
-                "SourceUnitId must contain only [a-z0-9_.-]",
+                "SourceId must contain only [a-z0-9_.-]",
             ));
         }
         Ok(())
@@ -222,7 +222,7 @@ impl SourceUnitId {
     }
 }
 
-impl std::fmt::Display for SourceUnitId {
+impl std::fmt::Display for SourceId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
@@ -577,7 +577,7 @@ pub type ParserResult<T> = Result<T, ParserError>;
 // =============================================================================
 
 /// Runtime configuration values that `#[suppress_if]` predicates and other
-/// binding-aware fields read at parse time. Supplied by the source-unit host
+/// binding-aware fields read at parse time. Supplied by the source host
 /// from the active source-binding.
 #[derive(Debug, Clone, Default)]
 pub struct BindingConfig {
@@ -609,7 +609,7 @@ impl BindingConfig {
 /// Adapts a specific input shape into a stream of [`SourceRecord`]s.
 ///
 /// Implementations own material access, enumeration, and cursor advancement.
-/// The source-unit runtime calls `open()` to get a record stream and
+/// The source runtime calls `open()` to get a record stream and
 /// `cursor_after()` to advance the checkpoint after each record.
 ///
 /// # Invariants
@@ -738,7 +738,7 @@ pub use occurrence_filter::{OccurrenceFilter, maybe_occurrence_key_string, occur
 
 /// A single event that a parser intends to publish.
 ///
-/// This is the parser's output contract. The source-unit host or transport
+/// This is the parser's output contract. The source host or transport
 /// layer owns admission, privacy, NATS publication, and confirmation
 /// tracking.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -752,8 +752,8 @@ pub struct ParsedEventIntent {
     #[builder(default = Id::new())]
     pub id: EventId,
 
-    /// Which source unit the parser belongs to.
-    pub source_unit_id: SourceUnitId,
+    /// Which source the parser belongs to.
+    pub source_id: SourceId,
 
     /// Which parser produced this intent.
     pub parser_id: ParserId,
@@ -813,7 +813,7 @@ impl ParsedEventIntent {
     /// `Derived { source_event_ids: [self.id] }`.
     ///
     /// The returned intent:
-    /// - Carries the parent's `source_unit_id`, `parser_id`, `parser_version`,
+    /// - Carries the parent's `source_id`, `parser_id`, `parser_version`,
     ///   `acquisition_time` (via `ts_orig`), and `anchor` (transport layer
     ///   ignores it for derived intents).
     /// - Has its own freshly-generated `id` (`UUIDv7`).
@@ -866,7 +866,7 @@ impl ParsedEventIntent {
 
         Ok(ParsedEventIntent {
             id: child_id,
-            source_unit_id: self.source_unit_id.clone(),
+            source_id: self.source_id.clone(),
             parser_id: self.parser_id.clone(),
             parser_version: self.parser_version.clone(),
             event_type: P::EVENT_TYPE,
@@ -902,11 +902,11 @@ impl ParsedEventIntent {
 ///
 /// Occurrence keys allow replay to produce the same logical event
 /// identity without relying on material anchor alone. They are
-/// parser-defined and source-unit-scoped.
+/// parser-defined and source-scoped.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct OccurrenceKey {
-    /// The source unit this key is scoped to.
-    pub source_unit_id: SourceUnitId,
+    /// The source this key is scoped to.
+    pub source_id: SourceId,
 
     /// The key fields that identify this occurrence.
     pub fields: Vec<(String, String)>,
@@ -932,8 +932,8 @@ pub struct ParserManifest {
     /// What input shape(s) the parser accepts.
     pub accepted_input_shapes: Vec<InputShapeKind>,
 
-    /// The source unit this parser belongs to.
-    pub source_unit_id: SourceUnitId,
+    /// The source this parser belongs to.
+    pub source_id: SourceId,
 
     /// Event types the parser can emit.
     pub declared_event_types: Vec<(EventSource, EventType)>,
@@ -947,14 +947,6 @@ pub struct ParserManifest {
     #[schemars(skip)]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sensitivity_hints: Vec<crate::privacy::SensitivityHint>,
-
-    /// Catalog obligation IDs or descriptor-local verification tags.
-    ///
-    /// Strings prefixed with `obligation:` are validated against the proof
-    /// catalog. Other strings are advisory local tags that make parser
-    /// invariants inspectable without pretending they are global gates.
-    #[serde(default)]
-    pub proof_obligations: Vec<String>,
 
     /// Human-readable description.
     #[serde(default)]
@@ -971,8 +963,8 @@ pub struct ParserManifest {
 /// owning transport, admission, or persistence.
 #[derive(Debug, Clone)]
 pub struct ParserContext {
-    /// Which source unit this parse is for.
-    pub source_unit_id: SourceUnitId,
+    /// Which source this parse is for.
+    pub source_id: SourceId,
 
     /// The source material being parsed.
     pub source_material_id: Id<crate::events::SourceMaterial>,
@@ -1026,7 +1018,7 @@ mod tests {
         let payload = DocumentIngestedPayload::test_default();
         ParsedEventIntent {
             id: Id::new(),
-            source_unit_id: SourceUnitId::from_static("document.staging"),
+            source_id: SourceId::from_static("document.staging"),
             parser_id: ParserId::from_static("document-ingestor"),
             parser_version: "1.0.0".into(),
             event_type: payload.event_type(),

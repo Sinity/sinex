@@ -45,7 +45,7 @@ let
     shell_integration no-title
   '';
 
-  terminalSourceUnitIdForShell = shell:
+  terminalSourceIdForShell = shell:
     let
       normalized = toLower shell;
     in
@@ -65,7 +65,7 @@ in
     ./monitoring.nix
     ./preflight-verification.nix
     ./kitty-shell-integration.nix
-    ./source-units.nix
+    ./sources.nix
     ./source-bindings.nix
   ];
 
@@ -173,13 +173,13 @@ in
           type = str;
           description = "Shell identifier (`bash`, `zsh`, `fish`, etc.).";
         };
-        sourceUnitId = mkOption {
+        sourceId = mkOption {
           type = nullOr str;
           default = null;
           description = ''
-            Optional stable source-unit identity. When null, the module derives
+            Optional stable source identity. When null, the module derives
             one from <option>shell</option> and passes it through
-            <literal>--source-unit</literal>.
+            <literal>--source</literal>.
           '';
         };
       };
@@ -1178,7 +1178,7 @@ in
                     ".crdownload"
                   ];
                   description = ''
-                    File-name suffixes excluded from fs source-unit host records.
+                    File-name suffixes excluded from fs source host records.
                     Volatile files (SQLite -wal/-shm, pytest testmondata,
                     editor swap/temp files) produce per-write churn with no
                     standalone capture value and bloat the CAS — issue #1543
@@ -2335,9 +2335,9 @@ in
               (source: {
                 path = source.path;
                 shell = source.shell;
-                source_unit_id =
-                  if source.sourceUnitId != null then source.sourceUnitId
-                  else terminalSourceUnitIdForShell source.shell;
+                source_id =
+                  if source.sourceId != null then source.sourceId
+                  else terminalSourceIdForShell source.shell;
                 runner_pack = "terminal";
                 runner_binary = "sinexd";
                 service = "sinexd.service";
@@ -2546,7 +2546,7 @@ in
           "sinex-document-scan"
         ];
       # Auxiliary units = bootstrap + standalone oneshots + the long-running
-      # core/automata/source-unit host services. The runtime target wants the
+      # core/automata/source host services. The runtime target wants the
       # whole graph so that pulling the target reliably brings the runtime
       # online (and stopping it tears the runtime down cleanly).
       runtimeAuxiliaryUnitNames = lib.unique (

@@ -133,7 +133,7 @@ impl ReplayState {
 ///
 /// ## Compatibility
 ///
-/// The four staged-source fields (`source_unit_id`, `source_material_id`,
+/// The four staged-source fields (`source_id`, `source_material_id`,
 /// `parser_id`, `parser_version`) are optional and backward-compatible:
 /// existing `node_id`-only scopes continue to work as before. A scope that
 /// specifies any staged-source field implies the replay planner should queue
@@ -152,9 +152,9 @@ pub struct ReplayScope {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub filters: HashMap<String, Value>,
     /// ── Staged-source architecture extension (#1060) ────────────
-    /// Replay only material registered by this source unit.
+    /// Replay only material registered by this source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_unit_id: Option<String>,
+    pub source_id: Option<String>,
     /// Replay only this specific source material (`UUIDv7`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_material_id: Option<String>,
@@ -168,11 +168,11 @@ pub struct ReplayScope {
 
 impl ReplayScope {
     /// Returns `true` when the scope references the staged-source architecture
-    /// (source units, materials, or parsers). Replay planning uses this to
+    /// (source contracts, materials, or parsers). Replay planning uses this to
     /// decide between live-ingestor scanning and parser-queue replay.
     #[must_use]
     pub fn is_staged_source_scope(&self) -> bool {
-        self.source_unit_id.is_some()
+        self.source_id.is_some()
             || self.source_material_id.is_some()
             || self.parser_id.is_some()
             || self.parser_version.is_some()

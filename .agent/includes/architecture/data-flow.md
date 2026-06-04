@@ -53,7 +53,7 @@ sinex-primitives         Foundation: types, validation, errors, domain enums, ID
 sinexd                  Unified daemon
     |
     +-- sinexd::node_sdk     Inline runtime support: lifecycle, checkpoints, replay
-    +-- sinexd::sources      Source-unit adapters
+    +-- sinexd::sources      Source contracts and adapters
     +-- sinexd::automata     All automata
     +-- sinexd::event_engine Persistence pipeline
     +-- sinexd::api          API layer

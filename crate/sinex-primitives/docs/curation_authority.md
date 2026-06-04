@@ -84,7 +84,7 @@ Proposal/judgment records do not create a third event provenance class.
 | Instruction/actuator loops | Model/agent instructions become proposals until judged or policy-approved. |
 | Task and health extraction | Ambiguous or inferred facts become proposals; accepted outputs become canonical domain events. |
 | Entity/relation extraction | Weak matches and merges become proposals; finalizer updates canonical graph/projections. |
-| Parser/workbench output | Generated mappings and source-unit changes become proposals, not direct repo/runtime mutation. |
+| Parser/workbench output | Generated mappings and source changes become proposals, not direct repo/runtime mutation. |
 | Semantic shadow lanes | Promotion requires judgment/finalizer or explicit operator operation. |
 
 ## Replay Behavior
@@ -122,7 +122,7 @@ Minimum proof:
 ## Non-Goals
 
 - Do not build a full curation TUI in the substrate slice.
-- Do not let proposals mutate code, Nix, source units, or external state
+- Do not let proposals mutate code, Nix, source contracts, or external state
   directly.
 - Do not make model confidence equivalent to authority.
 - Do not encode every domain ontology detail in the proposal core.

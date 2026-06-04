@@ -98,7 +98,7 @@ serde_path_to_error = { workspace = true }
 bytes = { workspace = true }
 
 
-# Source-units adapter substrate
+# Source adapter substrate
 csv = { workspace = true }
 async-trait = { workspace = true }
 inventory = { workspace = true }

@@ -106,7 +106,7 @@ events always use QueryBuilder with REPEATABLE READ transactions.
 ### ingestor
 A node that captures raw data from an external source (filesystem, terminal,
 desktop, system, browser, documents), registers source materials, and emits
-material-provenance events. Ingestors implement the `SourceUnit` trait with
+material-provenance events. Ingestors implement the `SourceDriver` trait with
 three scan modes: snapshot, historical, and continuous.
 
 ## M
@@ -128,7 +128,7 @@ The DB/user policy admission engine owned by the event engine. It applies
 redaction, encryption, hashing, and suppression rules from `privacy.*` policy
 tables to source and derived event payloads before persistence. The primitive
 rule compiler/catalog is implementation and seed material, not a parallel
-source-unit, parser, or automaton policy authority.
+source, parser, or automaton policy authority.
 
 ### provenance
 The origin of an event. Two mutually exclusive types: **material** (from source
@@ -147,14 +147,14 @@ current privacy rules and schema validation, not the original ones.
 ## S
 
 ### source binding
-An entry in the source-unit catalog (`SourceUnitBinding`, registered via
-`register_source_unit_binding!`) describing how a specific source unit is
+An entry in the source catalog (`SourceRuntimeBinding`, registered via
+`register_source_runtime_binding!`) describing how a specific source is
 wired at deployment time: implementation crate, adapter, output event type,
 privacy context, material policy, checkpoint policy, runtime shape, and
-package impact. Bindings are the durable contract between a Rust source-unit
+package impact. Bindings are the durable contract between a Rust source
 implementation and its NixOS-side runtime configuration. They are compiled
-into the source-unit registry and exercised through normal Rust/NixOS
-verification; the old generated catalog and source-unit drift gate no longer
+into the source registry and exercised through normal Rust/NixOS
+verification; the old generated catalog and source drift gate no longer
 exist.
 
 ### source material
@@ -169,16 +169,16 @@ material, plus optional metadata. The adapter owns enumeration and cursor
 advancement; the parser owns semantic interpretation that produces a
 `ParsedEventIntent`.
 
-### source unit
-The stable identity (`SourceUnitId`, e.g. `terminal.atuin-history`,
+### source
+The stable identity (`SourceId`, e.g. `terminal.atuin-history`,
 `browser.history`, `system.journald`) that groups a parser, its emitted event
-types, and its binding configuration. Source units are data declared via
-`register_source_unit!` against a `SourceUnitDescriptor`; runtime dispatch
-resolves source units by inventory lookup against this registry — no match
-arms. A source unit is NOT a process or deployment identity; multiple
-source-unit instances of the same kind can co-exist under the same `sinexd`
+types, and its binding configuration. Source contracts are data declared via
+`register_source_contract!` against a `SourceContract`; runtime dispatch
+resolves source contracts by inventory lookup against this registry — no match
+arms. A source is NOT a process or deployment identity; multiple
+source instances of the same kind can co-exist under the same `sinexd`
 deployment. Post-Wave-B fold (#1081), the per-domain ingestor crates and
-standalone source-unit binary were deleted; source-unit hosting is now part
+standalone source binary were deleted; source hosting is now part
 of `sinexd`.
 
 ### derived provenance

@@ -1,7 +1,7 @@
 //! Document ingestion + derived event payloads.
 //!
 //! `DocumentIngestedPayload` is the material-provenance event emitted by
-//! the document source unit when a file is staged into the source-material
+//! the document source when a file is staged into the source-material
 //! registry. The `DocumentParsedPayload` and `DocumentChunkedPayload` events
 //! are derived-provenance outputs of the document-layer parser (issues
 //! [#332]/[#733], `crate/sinex-schema/docs/document_layer.md`): a document
@@ -79,7 +79,7 @@ impl DocumentKind {
 #[event_payload(source = "document-parser", event_type = "document.parsed")]
 pub struct DocumentParsedPayload {
     /// Deterministic document identity. `UUIDv5` over `(NS_DOCUMENTS,
-    /// source_unit || "/" || natural_key)` — replay against the same source
+    /// source || "/" || natural_key)` — replay against the same source
     /// produces the same id.
     pub document_id: Uuid,
     /// Which corpus this document belongs to (see `DocumentKind`).

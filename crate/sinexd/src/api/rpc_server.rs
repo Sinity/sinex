@@ -1576,7 +1576,7 @@ fn load_rustls_config(
 /// `ServerConfig` is built anywhere in the process — reqwest is compiled with
 /// `rustls-no-provider`, so building a client without a default provider
 /// panics. Called once at daemon startup (`sinexd` main) so every entry point
-/// (supervisor, standalone gateway, source-unit scans) is covered regardless of
+/// (supervisor, standalone gateway, source scans) is covered regardless of
 /// which subsystem builds the first TLS client.
 pub fn ensure_rustls_crypto_provider() -> SinexResult<()> {
     if rustls::crypto::CryptoProvider::get_default().is_some() {

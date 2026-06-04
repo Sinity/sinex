@@ -364,7 +364,7 @@ impl NatsPublisher {
         tracing::debug!(
             event_count = intent.event_count(),
             envelope_version = %intent.envelope_version,
-            source_unit = %intent.source_unit_id,
+            source = %intent.source_id,
             traffic_class = class.traffic_class().as_header_value(),
             sequence = ack.sequence,
             stream = %ack.stream,

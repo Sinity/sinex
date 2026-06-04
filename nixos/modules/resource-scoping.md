@@ -3,10 +3,10 @@
 ## cgroup v2 Resource Scoping Mechanism
 
 Sinex runs under systemd, which uses Linux cgroup v2 (unified hierarchy) for
-resource control. The current NixOS deployment folds source units and automata
+resource control. The current NixOS deployment folds source contracts and automata
 into `sinexd.service`; per-source generated service emission is disabled. The
 resource profile still lives in the NixOS module and is applied through the
-service configuration helpers in `nixos/modules/source-units.nix`.
+service configuration helpers in `nixos/modules/sources.nix`.
 
 ### Per-Service Resource Limits
 

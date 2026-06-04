@@ -124,7 +124,7 @@ primary mitigation other docs rely on.
 ## Non-Goals
 
 - This document does not enumerate per-source classification. That belongs
-  to source-unit descriptors and privacy/lifecycle policy surfaces, not to
+  to source contracts and privacy/lifecycle policy surfaces, not to
   this threat model.
 - This document does not specify CLI surfaces. Operator surfaces for export,
   delete, audit, and redaction live in `crate/sinexctl/docs/operator_data_lifecycle.md`.

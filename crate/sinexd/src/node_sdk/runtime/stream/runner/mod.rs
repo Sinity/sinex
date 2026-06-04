@@ -48,11 +48,11 @@ use tracing::{debug, error, info, warn};
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
 
 /// Unified runner for nodes
-type NodeFactory<T> = Arc<dyn Fn() -> T + Send + Sync>;
+type SourceFactory<T> = Arc<dyn Fn() -> T + Send + Sync>;
 
 pub struct NodeRunner<T: Node> {
     node: T,
-    node_factory: Option<NodeFactory<T>>,
+    source_factory: Option<SourceFactory<T>>,
     lifecycle: RunnerLifecycle,
     handles: Option<NodeHandles>,
     service_info: Option<ServiceInfo>,

@@ -210,7 +210,7 @@ fn db_replay_scope(scope: RpcReplayScope) -> Result<DbReplayScope> {
             })
             .transpose()?,
         filters: scope.filters,
-        source_id: scope.source_unit_id.or(scope.parser_id),
+        source_id: scope.source_id.or(scope.parser_id),
         source_material_id: scope
             .source_material_id
             .map(|raw| {

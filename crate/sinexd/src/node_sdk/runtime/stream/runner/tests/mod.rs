@@ -4,7 +4,7 @@
 // Inline because these cover private control-plane encoding helpers.
 use super::*;
 use crate::node_sdk::checkpoint::CheckpointManager;
-use crate::node_sdk::{NatsPublisher, SourceUnit, SourceUnitRuntime};
+use crate::node_sdk::{NatsPublisher, SourceDriver, SourceDriverRuntime};
 use async_nats::jetstream;
 use serde::Serialize;
 use serde::ser::Error as _;
@@ -81,7 +81,7 @@ impl StartupSequenceTestNode {
 }
 
 #[cfg(feature = "messaging")]
-impl SourceUnit for DrainTestIngestor {
+impl SourceDriver for DrainTestIngestor {
     type Config = ();
     type State = ();
 

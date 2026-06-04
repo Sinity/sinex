@@ -87,7 +87,7 @@ async fn run_service_drain_persists_ingestor_checkpoint_and_updates_status(
     let release_exit = ingestor.release_exit.clone();
     let expected_checkpoint = ingestor.final_checkpoint.clone();
 
-    let mut runner = NodeRunner::new(SourceUnitRuntime::new(ingestor));
+    let mut runner = NodeRunner::new(SourceDriverRuntime::new(ingestor));
     runner
         .initialize_with_transport(
             "runtime-drain-ingestor-service".to_string(),

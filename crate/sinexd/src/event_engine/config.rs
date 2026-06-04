@@ -1079,7 +1079,7 @@ fn default_max_buffered_slices() -> usize {
 }
 
 fn default_slice_timeout_secs() -> u64 {
-    // 300s was too aggressive: any source-unit that legitimately idled
+    // 300s was too aggressive: any source that legitimately idled
     // between slices (atuin between commands, udev between hot-plugs,
     // SelfObserver between metric bursts) had its long-lived material
     // flagged as orphan and routed to DLQ. Live forensic (#1320) showed

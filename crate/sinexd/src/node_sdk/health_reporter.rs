@@ -452,7 +452,7 @@ impl HealthReporter {
     /// Notify the reporter that `count` real events were emitted upstream.
     ///
     /// Distinct from `record_success`, which is bumped by adapter-level keepalive
-    /// ticks (e.g. the 30s "alive but idle" pulse in `SourceUnitRuntime`).
+    /// ticks (e.g. the 30s "alive but idle" pulse in `SourceDriverRuntime`).
     /// `notify_emit` is the signal that the node is *actually doing work*, and
     /// is what feeds emit-stall detection.
     pub fn notify_emit(&self, count: u64) {

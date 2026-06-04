@@ -558,20 +558,20 @@ fn parse_health_status_field(
     })
 }
 
-// --- Source-unit descriptor (issue #690 / #734) ---
+// --- Source descriptor (issue #690 / #734) ---
 
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitDescriptor, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
+    SourceContract, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // Health is a ScopeReconciler over component scopes. State per-component is
 // reconciled and reported as `health.aggregated_report`.
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "health",
         namespace: "derived",
         event_types: &[
@@ -581,17 +581,16 @@ register_source_unit! {
         privacy_tier: SuPrivacyTier::Public,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Uuid5From(
-            "(source_unit, component_scope, parent_event_ids)",
+            "(source, component_scope, parent_event_ids)",
         ),
         access_policy: "event_stream_read",
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:health"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:health"),
         "health",
         "derived",
     )
@@ -602,12 +601,12 @@ register_source_unit_binding! {
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
-    .source_unit_id("health")
+    .source_id("health")
     .runner_pack("process")
     .checkpoint_family(SuCheckpointFamily::AppendStream)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
     .implementation_mode("rust_in_pack:process")
-    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
+    .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
     .build()
 }

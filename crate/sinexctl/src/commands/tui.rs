@@ -999,8 +999,8 @@ fn replay_scope_refs(operation: &ReplayOperation) -> Vec<String> {
     if let Some(materials) = &scope.material_filter {
         refs.push(format!("materials: {}", materials.len()));
     }
-    if let Some(source_unit_id) = &scope.source_unit_id {
-        refs.push(format!("source-unit: {source_unit_id}"));
+    if let Some(source_id) = &scope.source_id {
+        refs.push(format!("source: {source_id}"));
     }
     if let Some(source_material_id) = &scope.source_material_id {
         refs.push(format!("source-material: {source_material_id}"));
@@ -2125,7 +2125,7 @@ fn action_state_label(state: ActionAvailabilityState) -> &'static str {
 fn object_kind_label(kind: &SinexObjectKind) -> &'static str {
     match kind {
         SinexObjectKind::Event => "event",
-        SinexObjectKind::SourceUnit => "source-unit",
+        SinexObjectKind::SourceDriver => "source",
         SinexObjectKind::SourceMaterial => "source-material",
         SinexObjectKind::MaterialAnchor => "material-anchor",
         SinexObjectKind::Document => "document",
@@ -2408,7 +2408,7 @@ mod tests {
         SourceReadiness {
             binding_id: None,
             source_family: "ux-mk3".to_string(),
-            source_unit_id: None,
+            source_id: None,
             parser_id: None,
             source_identifier: id.to_string(),
             status,
@@ -2448,7 +2448,7 @@ mod tests {
                 family: "ux-mk3".to_string(),
                 raw: "fixture.source".to_string(),
                 unit_ref: Some(SinexObjectRef::new(
-                    SinexObjectKind::SourceUnit,
+                    SinexObjectKind::SourceDriver,
                     "ux.fixture-source",
                 )),
             },

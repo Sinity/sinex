@@ -2,10 +2,10 @@
 
 use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
 use sinex_primitives::{
-    parser::SourceUnitId,
+    parser::SourceId,
     rpc::sources::{CaveatSeverity, caveat_codes},
 };
-use sinexd::sources::sources::social::{WykopEntryCommentParser, WykopEntryParser};
+use sinexd::sources::source_contracts::social::{WykopEntryCommentParser, WykopEntryParser};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -32,7 +32,7 @@ async fn wykop_entry_required_timestamp_removal_blocks_readiness() -> TestResult
 "#,
     )?;
     let mut drift =
-        SourceRecordFingerprint::diff(SourceUnitId::from_static("wykop-entries"), &before, &after)
+        SourceRecordFingerprint::diff(SourceId::from_static("wykop-entries"), &before, &after)
             .expect("removing entry_created_at should produce JSONL shape drift");
     drift.required_input_keys = WykopEntryParser.required_input_keys();
 
@@ -57,7 +57,7 @@ async fn wykop_comment_required_id_removal_blocks_readiness() -> TestResult<()> 
 "#,
     )?;
     let mut drift = SourceRecordFingerprint::diff(
-        SourceUnitId::from_static("wykop-entry-comments"),
+        SourceId::from_static("wykop-entry-comments"),
         &before,
         &after,
     )

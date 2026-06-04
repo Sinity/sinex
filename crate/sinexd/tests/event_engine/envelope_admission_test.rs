@@ -37,7 +37,7 @@ fn make_event(source: &str, event_type: &str, payload: JsonValue) -> TestResult<
 
 fn make_intent(events: Vec<Event<JsonValue>>) -> EventIntent {
     EventIntent::new(
-        "test-source-unit",
+        "test-source",
         "test-parser",
         "1.0.0",
         events,
@@ -84,7 +84,7 @@ async fn envelope_serializes_and_deserializes(ctx: TestContext) -> TestResult<()
     let decoded: EventIntent = serde_json::from_slice(&json_bytes)?;
 
     assert_eq!(decoded.envelope_version, CURRENT_ENVELOPE_VERSION);
-    assert_eq!(decoded.source_unit_id, "test-source-unit");
+    assert_eq!(decoded.source_id, "test-source");
     assert_eq!(decoded.parser_id, "test-parser");
     assert_eq!(decoded.parser_version, "1.0.0");
     assert_eq!(decoded.events.len(), 1);
@@ -141,7 +141,7 @@ async fn envelope_rejects_invalid_version(ctx: TestContext) -> TestResult<()> {
 async fn envelope_rejects_empty_events(ctx: TestContext) -> TestResult<()> {
     let service = admission_service(&ctx);
     let intent = EventIntent::new(
-        "test-source-unit",
+        "test-source",
         "test-parser",
         "1.0.0",
         vec![], // empty events
@@ -167,11 +167,11 @@ async fn envelope_rejects_empty_events(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn envelope_rejects_missing_source_unit_id(ctx: TestContext) -> TestResult<()> {
+async fn envelope_rejects_missing_source_id(ctx: TestContext) -> TestResult<()> {
     let service = admission_service(&ctx);
     let intent = EventIntent {
         envelope_version: CURRENT_ENVELOPE_VERSION.to_string(),
-        source_unit_id: String::new(),
+        source_id: String::new(),
         parser_id: "test-parser".into(),
         parser_version: "1.0.0".into(),
         events: vec![make_event(
@@ -191,7 +191,7 @@ async fn envelope_rejects_missing_source_unit_id(ctx: TestContext) -> TestResult
         AdmissionDecision::Rejected(rejection) => {
             assert_eq!(rejection.kind, AdmissionRejectionKind::EnvelopeValidation);
             assert!(
-                rejection.reason.contains("source_unit_id"),
+                rejection.reason.contains("source_id"),
                 "reason should mention the missing field"
             );
         }
@@ -205,7 +205,7 @@ async fn envelope_rejects_missing_parser_version(ctx: TestContext) -> TestResult
     let service = admission_service(&ctx);
     let intent = EventIntent {
         envelope_version: CURRENT_ENVELOPE_VERSION.to_string(),
-        source_unit_id: "test-unit".into(),
+        source_id: "test-unit".into(),
         parser_id: "test-parser".into(),
         parser_version: String::new(),
         events: vec![make_event(
@@ -264,7 +264,7 @@ async fn external_producer_json_fixture_parses(ctx: TestContext) -> TestResult<(
     // This is the JSON shape an external (non-Rust) producer would publish.
     let fixture = serde_json::json!({
         "envelope_version": "1",
-        "source_unit_id": "external-producer",
+        "source_id": "external-producer",
         "parser_id": "python-parser",
         "parser_version": "0.5.0",
         "events": [
@@ -286,7 +286,7 @@ async fn external_producer_json_fixture_parses(ctx: TestContext) -> TestResult<(
     let intent: EventIntent = serde_json::from_slice(&payload)?;
 
     assert_eq!(intent.envelope_version, "1");
-    assert_eq!(intent.source_unit_id, "external-producer");
+    assert_eq!(intent.source_id, "external-producer");
     assert_eq!(intent.parser_id, "python-parser");
     assert_eq!(intent.events.len(), 1);
     assert_eq!(intent.events[0].source.as_str(), "external.source");
@@ -301,7 +301,7 @@ async fn polylogue_external_producer_metadata_fixture_admits(ctx: TestContext) -
     let payload = PolylogueConversationIndexedPayload {
         conversation_id: "claude-code:session-018f".into(),
         provider: "claude_code".into(),
-        title: Some("source-unit host drain review".into()),
+        title: Some("source host drain review".into()),
         tags: vec!["sinex".into(), "review".into()],
         content_hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
             .into(),
