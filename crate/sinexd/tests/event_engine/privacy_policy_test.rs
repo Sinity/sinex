@@ -113,6 +113,64 @@ async fn spawn_presidio_fixture() -> TestResult<String> {
     Ok(format!("http://{addr}/analyze"))
 }
 
+type CapturedContext = std::sync::Arc<std::sync::Mutex<Vec<Vec<String>>>>;
+
+/// A Presidio fixture that records each request's `context` array and only
+/// returns a PERSON span when `required_context_word` was forwarded. This lets a
+/// test assert context words are both *sent* (via the capture) and *influence
+/// the mapped response* (via context-gated redaction).
+async fn spawn_presidio_context_capture_fixture(
+    required_context_word: &'static str,
+) -> TestResult<(String, CapturedContext)> {
+    use axum::{Json, Router, extract::State, routing::post};
+
+    let captured: CapturedContext = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    async fn analyze(
+        State((captured, required)): State<(CapturedContext, &'static str)>,
+        Json(payload): Json<serde_json::Value>,
+    ) -> Json<serde_json::Value> {
+        let text = payload
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let context: Vec<String> = payload
+            .get("context")
+            .and_then(serde_json::Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let has_required = context.iter().any(|word| word == required);
+        captured.lock().expect("capture lock poisoned").push(context);
+        let matches = match (has_required, text.find("SECRET_PERSON")) {
+            (true, Some(start)) => json!([{
+                "start": text[..start].chars().count(),
+                "end": text[..start + "SECRET_PERSON".len()].chars().count(),
+                "entity_type": "PERSON",
+                "score": 0.99
+            }]),
+            _ => json!([]),
+        };
+        Json(matches)
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let app = Router::new()
+        .route("/analyze", post(analyze))
+        .with_state((captured.clone(), required_context_word));
+    tokio::spawn(async move {
+        if let Err(error) = axum::serve(listener, app).await {
+            tracing::warn!(%error, "Presidio context-capture fixture exited");
+        }
+    });
+    Ok((format!("http://{addr}/analyze"), captured))
+}
+
 // ─── DB rule loading ─────────────────────────────────────────────────────────
 
 /// Rules inserted into the DB are returned by `load_enabled_rules`.
@@ -460,6 +518,124 @@ async fn privacy_presidio_global_rule_walks_nested_json(ctx: TestContext) -> Tes
         .unwrap_or("");
     assert!(!title.contains("SECRET_PERSON"), "got: {title}");
     assert!(title.contains("<PERSON>"), "got: {title}");
+
+    Ok(())
+}
+
+/// #1612: Presidio context words configured on a rule are forwarded to the
+/// analyzer request and influence its response. The capture fixture only
+/// returns a span when the expected context word arrives, so successful
+/// redaction proves the words were both sent and acted upon.
+#[sinex_test]
+async fn privacy_presidio_context_words_forwarded_to_analyzer(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let pool = ctx.pool();
+    let repo = pool.privacy_policy();
+    let (endpoint, captured) = spawn_presidio_context_capture_fixture("meeting").await?;
+
+    let backend_id = repo
+        .add_recognizer_backend(
+            "presidio-context-fixture",
+            "presidio",
+            Some(&endpoint),
+            json!({ "language": "en" }),
+            true,
+        )
+        .await?;
+    repo.add_recognizer_rule(
+        "presidio-context-person",
+        "Presidio PERSON rule with context words",
+        "presidio_entity",
+        "PERSON",
+        json!({
+            "entities": ["PERSON"],
+            "language": "en",
+            "context": ["meeting", "call"]
+        }),
+        Some(backend_id),
+        "presidio_entity",
+        false,
+        "redact",
+        Some("<PERSON>"),
+        "default",
+    )
+    .await?;
+    repo.bind_field_rule("presidio-context-person", None, None, Some("/title"), 0)
+        .await?;
+
+    let engine = PolicyEngine::load(pool.clone()).await?;
+    let payload = json!({ "title": "met SECRET_PERSON yesterday" });
+    let event = make_material_event("test.source", "test.event", payload);
+    let result = engine.redact_batch(vec![admit(event)]).await;
+
+    // The analyzer was called with the configured context words.
+    let seen = captured.lock().expect("capture lock poisoned").clone();
+    assert!(!seen.is_empty(), "Presidio analyzer was never called");
+    assert!(
+        seen.iter().any(|context| {
+            context.contains(&"meeting".to_string()) && context.contains(&"call".to_string())
+        }),
+        "context words were not forwarded to the analyzer: {seen:?}"
+    );
+
+    // Because the fixture only matches when context arrived, redaction landing
+    // proves the words influenced the response.
+    let title = result[0].event.payload["title"].as_str().unwrap_or("");
+    assert!(
+        !title.contains("SECRET_PERSON"),
+        "context-gated redaction did not occur: {title}"
+    );
+    assert!(title.contains("<PERSON>"), "got: {title}");
+
+    Ok(())
+}
+
+/// #1612: typed `context_words` on the rule-add request round-trip through the
+/// RPC handler + repository, projected back onto the list response without a
+/// schema change (persisted under `matcher_config["context"]`).
+#[sinex_test]
+async fn privacy_policy_rule_context_words_round_trip(ctx: TestContext) -> TestResult<()> {
+    use sinex_primitives::rpc::privacy::{PrivacyPolicyListRequest, PrivacyPolicyRuleAddRequest};
+    use sinexd::api::handlers::privacy::{
+        handle_privacy_policy_list, handle_privacy_policy_rule_add,
+    };
+
+    let pool = ctx.pool();
+    handle_privacy_policy_rule_add(
+        pool,
+        PrivacyPolicyRuleAddRequest {
+            name: "ctx-roundtrip".to_string(),
+            description: "context words round-trip".to_string(),
+            matcher_type: "presidio_entity".to_string(),
+            matcher_value: "PERSON".to_string(),
+            matcher_config: json!({ "entities": ["PERSON"] }),
+            context_words: vec!["meeting".to_string(), "call".to_string()],
+            recognizer_backend_id: None,
+            recognizer_kind: "presidio_entity".to_string(),
+            case_sensitive: false,
+            action: "redact".to_string(),
+            action_label: Some("<PERSON>".to_string()),
+            key_namespace: "default".to_string(),
+        },
+    )
+    .await?;
+
+    let listing = handle_privacy_policy_list(
+        pool,
+        PrivacyPolicyListRequest {
+            include_disabled: true,
+        },
+    )
+    .await?;
+
+    let rule = listing
+        .rules
+        .iter()
+        .find(|rule| rule.name == "ctx-roundtrip")
+        .expect("seeded rule should be listed");
+    assert_eq!(rule.context_words, vec!["meeting", "call"]);
+    assert_eq!(rule.matcher_config["context"][0], "meeting");
 
     Ok(())
 }
