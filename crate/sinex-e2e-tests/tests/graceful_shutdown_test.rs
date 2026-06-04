@@ -77,6 +77,7 @@ fn build_test_event_bytes(
         equivalence_key: None,
         created_by_operation_id: None,
         node_model: None,
+        ts_quality: None,
         anchor_payload_hash: None,
     };
 
@@ -296,6 +297,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
                 equivalence_key: None,
                 created_by_operation_id: None,
                 node_model: None,
+                ts_quality: None,
                 anchor_payload_hash: None,
             };
             if let Ok(p) = serde_json::to_vec(&event) {

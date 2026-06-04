@@ -189,6 +189,7 @@ impl<'ctx> PipelineScope<'ctx> {
             equivalence_key: None,
             created_by_operation_id: None,
             node_model: None,
+            ts_quality: None,
         })
     }
 

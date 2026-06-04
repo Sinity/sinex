@@ -129,6 +129,7 @@ struct PublishEvent<'a> {
     equivalence_key: Option<&'a str>,
     created_by_operation_id: Option<String>,
     node_model: Option<String>,
+    ts_quality: None,
 }
 
 impl NatsPublisher {
@@ -667,6 +668,7 @@ fn build_publish_payload(
         equivalence_key: event.equivalence_key.as_deref(),
         created_by_operation_id: event.created_by_operation_id.map(|id| id.to_string()),
         node_model: event.node_model.map(|model| model.to_string()),
+        ts_quality: None,
     };
 
     let encoded = serde_json::to_vec(&payload).map_err(sinex_primitives::SinexError::from)?;

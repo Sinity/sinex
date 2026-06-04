@@ -358,6 +358,7 @@ mod tests {
             event_type: crate::domain::EventType::from_static("test.type"),
             payload: serde_json::json!({"key": "value"}),
             ts_orig: Some(Timestamp::now()),
+            ts_quality: None,
             host: crate::domain::HostName::from_static("test-host"),
             source_run_id: None,
             payload_schema_id: None,

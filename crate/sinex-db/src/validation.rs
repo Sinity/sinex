@@ -349,6 +349,7 @@ impl EventValidator {
             event_type: EventType::from(event_type.to_string()),
             payload: payload.clone(),
             ts_orig: Some(Timestamp::now()),
+            ts_quality: None,
             host: HostName::from_static("validator"),
             source_run_id: None,
             payload_schema_id: None,

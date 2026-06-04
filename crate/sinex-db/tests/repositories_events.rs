@@ -45,6 +45,7 @@ fn stream_batch_material_row(
         equivalence_key: None,
         created_by_operation_id: None,
         node_model: None,
+        ts_quality: None,
     })
 }
 
@@ -313,6 +314,7 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             equivalence_key: None,
             created_by_operation_id: None,
             node_model: None,
+            ts_quality: None,
         });
     }
 
@@ -598,6 +600,7 @@ async fn stream_batch_insert_rejects_self_referential_synthesis_rows(
         equivalence_key: None,
         created_by_operation_id: None,
         node_model: None,
+        ts_quality: None,
     }];
 
     let error = ctx
@@ -646,6 +649,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             equivalence_key: None,
             created_by_operation_id: None,
             node_model: None,
+            ts_quality: None,
         },
         StreamBatchRow {
             id: second_id,
@@ -670,6 +674,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             equivalence_key: None,
             created_by_operation_id: None,
             node_model: None,
+            ts_quality: None,
         },
     ];
 

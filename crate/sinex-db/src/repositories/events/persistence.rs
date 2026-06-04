@@ -2599,6 +2599,7 @@ mod tests {
             equivalence_key: None,
             created_by_operation_id: None,
             node_model: None,
+            ts_quality: None,
         })
     }
 
@@ -2631,6 +2632,7 @@ mod tests {
             equivalence_key: None,
             created_by_operation_id: None,
             node_model: None,
+            ts_quality: None,
         }
     }
 
@@ -2723,6 +2725,7 @@ mod tests {
             host: HostName::from_static("localhost"),
             payload: json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
+            ts_quality: None,
             source_run_id: None,
             payload_schema_id: None,
             provenance: crate::models::Provenance::from_derived([

@@ -1288,6 +1288,7 @@ mod tests {
             equivalence_key: None,
             created_by_operation_id: None,
             node_model: None,
+            ts_quality: None,
             anchor_payload_hash: None,
         };
         let report = build_privacy_export_report(
