@@ -30,12 +30,13 @@ pub async fn handle_replay_create_operation(
     req: ReplayCreateRequest,
     auth: &RpcAuthContext,
 ) -> Result<ReplayCreateResponse> {
+    // Propagate the planner's classified error directly. The duplicate-operation
+    // guard returns `SinexError::InvalidState` (JSON-RPC -32803); flattening every
+    // failure into a generic service error (-32820) would erase the error code
+    // clients depend on to distinguish "already active" from a real internal fault.
     let operation = client
         .plan(auth.replay_actor(), db_replay_scope(req.scope)?)
-        .await
-        .map_err(|error| {
-            SinexError::service("failed to plan replay operation").with_source(error)
-        })?;
+        .await?;
     Ok(ReplayCreateResponse {
         operation: into_replay_operation(operation)?,
     })

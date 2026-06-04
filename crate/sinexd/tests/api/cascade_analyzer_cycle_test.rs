@@ -111,6 +111,12 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
     let parent = CoreUuid::now_v7();
     let child = CoreUuid::now_v7();
     let stray_uuid = Uuid::new_v4();
+    // The anchor references a synthetic root rather than itself: the
+    // `events_no_self_parent` CHECK constraint forbids an event listing its own id
+    // in source_event_ids. Like `stray_uuid`, this id is intentionally dangling —
+    // source_event_ids carries no FK, which is exactly the "mixed uuid arrays" case
+    // under test.
+    let anchor_root = Uuid::new_v4();
 
     sqlx::query!(
         r#"
@@ -129,7 +135,7 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
             $4,
             $5,
             $6,
-            ARRAY[$1::uuid]::uuid[]::uuid[]
+            ARRAY[$7::uuid]::uuid[]::uuid[]
         )
         "#,
         parent,
@@ -137,7 +143,8 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
         "mixed.anchor",
         "localhost",
         json!({"kind": "anchor"}),
-        *temporal::now()
+        *temporal::now(),
+        anchor_root
     )
     .execute(&pool)
     .await?;
