@@ -229,6 +229,12 @@ struct PolicyRuleAddArgs {
     #[arg(long, default_value = "{}")]
     matcher_config: String,
 
+    /// Presidio context word (repeatable): a term whose presence near a
+    /// candidate span boosts the recognizer's confidence. Folded into
+    /// matcher_config["context"]. Ignored by non-Presidio recognizers.
+    #[arg(long = "context-word")]
+    context_word: Vec<String>,
+
     /// Optional recognizer backend UUID.
     #[arg(long)]
     recognizer_backend_id: Option<Uuid>,
@@ -534,6 +540,7 @@ impl PolicyRuleAddArgs {
             matcher_type: self.matcher_type.clone(),
             matcher_value: self.matcher_value.clone(),
             matcher_config,
+            context_words: self.context_word.clone(),
             recognizer_backend_id: self.recognizer_backend_id,
             recognizer_kind: self.recognizer_kind.clone(),
             case_sensitive: self.case_sensitive,
@@ -1352,6 +1359,7 @@ mod tests {
                 matcher_type: "regex".to_string(),
                 matcher_value: "SECRET_TOKEN_SHOULD_NOT_RENDER".to_string(),
                 matcher_config: json!({}),
+                context_words: vec![],
                 recognizer_backend_id: None,
                 recognizer_kind: "local_pattern".to_string(),
                 case_sensitive: false,
@@ -1384,6 +1392,7 @@ mod tests {
             matcher_type: "regex".to_string(),
             matcher_value: "SECRET_TOKEN_SHOULD_NOT_RENDER".to_string(),
             matcher_config: r#"{"entity":"API_KEY","score_threshold":0.8}"#.to_string(),
+            context_word: vec![],
             recognizer_backend_id: None,
             recognizer_kind: "local_pattern".to_string(),
             case_sensitive: false,
