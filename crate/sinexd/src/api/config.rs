@@ -453,6 +453,12 @@ impl GatewayConfig {
         if let Some(token) = sinex_primitives::env::strict_var("SINEX_RPC_TOKEN")? {
             self.rpc_token = Some(token.trim().to_string());
         }
+        // `default_content_store_path()` reads the shared `SINEX_CONTENT_STORE_PATH`
+        // leniently and silently falls back to the default on a non-UTF8 value.
+        // Enforce the same strict UTF-8 contract the macro applies to other
+        // env-backed fields (e.g. DATABASE_URL) so an invalid override fails loudly
+        // instead of silently resolving to a different path.
+        sinex_primitives::env::strict_var("SINEX_CONTENT_STORE_PATH")?;
         Ok(self)
     }
 
