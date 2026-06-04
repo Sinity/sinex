@@ -497,6 +497,11 @@ mod coverage_matrix {
             "production_path/desktop.rs",
         ),
         entry(
+            "desktop.notification",
+            SmokeCoverage::ObligationHarness,
+            "production_path/system.rs test_desktop_notification_initial_ingestion",
+        ),
+        entry(
             "desktop.window-manager",
             SmokeCoverage::ObligationHarness,
             "production_path/desktop.rs unix socket fixture",
