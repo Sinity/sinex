@@ -419,21 +419,17 @@ fn files_to_packages(files: &[String]) -> HashSet<String> {
 pub(crate) fn package_for_path(path: &str) -> Option<String> {
     let parts: Vec<&str> = path.split('/').collect();
 
-    // crate/{lib,core,nodes,tools,cli}/<name>/... -> package name (with hyphens)
-    if parts.len() >= 3 && parts[0] == "crate" {
-        let category = parts[1];
-        let name = parts[2];
+    // Post-fold flat layout: every workspace crate lives directly at
+    // crate/<package>/... (crate/sinexd, crate/sinex-db, crate/sinexctl,
+    // crate/sinex-e2e-tests, crate/sinex-workspace-tests, ...). The pre-fold
+    // crate/{lib,core,nodes,cli}/<name> grouping and the top-level tests/e2e,
+    // tests/workspace crates no longer exist (#1559 gateway/source-worker fold).
+    if parts.len() >= 2 && parts[0] == "crate" {
+        let name = parts[1];
         if name.starts_with('.') {
             return None;
         }
-        let pkg_name = name.replace('_', "-");
-
-        return match category {
-            "lib" | "core" | "nodes" | "tools" => Some(pkg_name),
-            // crate/cli/ contains the sinexctl binary
-            "cli" => Some("sinexctl".to_string()),
-            _ => None,
-        };
+        return Some(name.replace('_', "-"));
     }
 
     // xtask/ changes affect xtask itself
@@ -441,16 +437,9 @@ pub(crate) fn package_for_path(path: &str) -> Option<String> {
         return Some("xtask".to_string());
     }
 
-    if parts.len() >= 2 && parts[0] == "tests" {
-        return match parts[1] {
-            "e2e" => Some("sinex-e2e-tests".to_string()),
-            "workspace" => Some("sinex-workspace-tests".to_string()),
-            _ => None,
-        };
-    }
-
-    // Workspace-level files (Cargo.toml, Cargo.lock, .config/) are handled
-    // upstream in affected_packages() as workspace-wide changes.
+    // Workspace-level files (Cargo.toml, Cargo.lock, .config/) and the
+    // top-level tests/ fixture tree are handled upstream as workspace-wide
+    // changes rather than mapped to a single package.
     None
 }
 
@@ -790,27 +779,27 @@ mod tests {
 
     #[sinex_test]
     async fn test_path_to_package() -> TestResult<()> {
-        // Standard crate paths
+        // Post-fold flat layout: crate/<package>/... -> <package>
         assert_eq!(
-            package_for_path("crate/lib/sinex-db/src/lib.rs"),
+            package_for_path("crate/sinex-db/src/lib.rs"),
             Some("sinex-db".to_string())
         );
         assert_eq!(
-            package_for_path("crate/core/sinex-gateway/src/main.rs"),
-            Some("sinex-gateway".to_string())
+            package_for_path("crate/sinexd/src/main.rs"),
+            Some("sinexd".to_string())
         );
         assert_eq!(
-            package_for_path("crate/nodes/sinex-fs-ingestor/src/lib.rs"),
-            Some("sinex-fs-ingestor".to_string())
+            package_for_path("crate/sinex-primitives/src/lib.rs"),
+            Some("sinex-primitives".to_string())
         );
 
-        // CLI crate
+        // CLI crate is crate/sinexctl directly (no more crate/cli/)
         assert_eq!(
-            package_for_path("crate/cli/src/main.rs"),
+            package_for_path("crate/sinexctl/src/main.rs"),
             Some("sinexctl".to_string())
         );
         assert_eq!(
-            package_for_path("crate/cli/Cargo.toml"),
+            package_for_path("crate/sinexctl/Cargo.toml"),
             Some("sinexctl".to_string())
         );
 
@@ -824,14 +813,14 @@ mod tests {
             Some("xtask".to_string())
         );
 
-        // e2e tests
+        // Test crates are flat workspace members too
         assert_eq!(
-            package_for_path("tests/e2e/tests/some_test.rs"),
+            package_for_path("crate/sinex-e2e-tests/tests/some_test.rs"),
             Some("sinex-e2e-tests".to_string())
         );
         assert_eq!(
-            package_for_path("tests/e2e/Cargo.toml"),
-            Some("sinex-e2e-tests".to_string())
+            package_for_path("crate/sinex-workspace-tests/Cargo.toml"),
+            Some("sinex-workspace-tests".to_string())
         );
 
         // Non-package paths return None (workspace-level handled upstream)
@@ -839,12 +828,11 @@ mod tests {
         assert_eq!(package_for_path("Cargo.toml"), None);
         assert_eq!(package_for_path("Cargo.lock"), None);
         assert_eq!(package_for_path(".config/nextest.toml"), None);
+        // Top-level tests/ holds shared fixtures, not a package.
+        assert_eq!(package_for_path("tests/fixtures/tls/ca.pem"), None);
+        // A dotfile directly under crate/ is not a package.
         assert_eq!(
-            package_for_path("crate/lib/.sinex/test-artifacts/report.json"),
-            None
-        );
-        assert_eq!(
-            package_for_path("crate/cli/.sinex/test-artifacts/report.json"),
+            package_for_path("crate/.sinex/test-artifacts/report.json"),
             None
         );
         Ok(())
@@ -872,13 +860,13 @@ mod tests {
     #[sinex_test]
     async fn test_files_to_packages_maps_multiple() -> TestResult<()> {
         let files = vec![
-            "crate/lib/sinex-db/src/lib.rs".into(),
-            "crate/core/sinex-gateway/src/main.rs".into(),
+            "crate/sinex-db/src/lib.rs".into(),
+            "crate/sinexd/src/main.rs".into(),
             "xtask/src/affected.rs".into(),
         ];
         let pkgs = files_to_packages(&files);
         assert!(pkgs.contains("sinex-db"));
-        assert!(pkgs.contains("sinex-gateway"));
+        assert!(pkgs.contains("sinexd"));
         assert!(pkgs.contains("xtask"));
         assert_eq!(pkgs.len(), 3);
         Ok(())
@@ -887,9 +875,9 @@ mod tests {
     #[sinex_test]
     async fn test_files_to_packages_deduplicates() -> TestResult<()> {
         let files = vec![
-            "crate/lib/sinex-db/src/lib.rs".into(),
-            "crate/lib/sinex-db/src/pool.rs".into(),
-            "crate/lib/sinex-db/Cargo.toml".into(),
+            "crate/sinex-db/src/lib.rs".into(),
+            "crate/sinex-db/src/pool.rs".into(),
+            "crate/sinex-db/Cargo.toml".into(),
         ];
         let pkgs = files_to_packages(&files);
         assert_eq!(pkgs.len(), 1);
@@ -930,9 +918,11 @@ mod tests {
         let repo = tempfile::tempdir()?;
         let graceful = repo
             .path()
-            .join("tests/e2e/tests/graceful_shutdown_test.rs");
+            .join("crate/sinex-e2e-tests/tests/graceful_shutdown_test.rs");
         let xtask_test = repo.path().join("xtask/src/example_test.rs");
-        let workspace_test = repo.path().join("tests/workspace/tests/smoke.rs");
+        let workspace_test = repo
+            .path()
+            .join("crate/sinex-workspace-tests/tests/smoke.rs");
         fs::create_dir_all(graceful.parent().expect("graceful parent"))?;
         fs::create_dir_all(xtask_test.parent().expect("xtask parent"))?;
         fs::create_dir_all(workspace_test.parent().expect("workspace parent"))?;
@@ -1303,7 +1293,7 @@ mod tests {
     async fn test_path_to_package_underscore_to_hyphen() -> TestResult<()> {
         // Package directories with underscores should map to hyphenated package names
         assert_eq!(
-            package_for_path("crate/lib/sinex_primitives/src/lib.rs"),
+            package_for_path("crate/sinex_primitives/src/lib.rs"),
             Some("sinex-primitives".to_string())
         );
         Ok(())
