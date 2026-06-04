@@ -1,20 +1,4 @@
 {
-  "env": {
-    "CARGO_HOME": "/workspace/.cargo",
-    "CARGO_TARGET_DIR": "/workspace/.target",
-    "SINEX_AUTO_INFRA": "0",
-    "SINEX_AUTO_STATUS": "0",
-    "RUSTC_WRAPPER": ""
-  },
-  "permissions": {
-    "allow": [
-      "Bash(cargo:*)",
-      "Bash(xtask:*)",
-      "Bash(rustup:*)",
-      "Bash(docker:*)",
-      "Bash(docker-compose:*)"
-    ]
-  },
   "hooks": {
     "PreToolUse": [
       {

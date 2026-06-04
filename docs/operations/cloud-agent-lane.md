@@ -54,16 +54,41 @@ Both surfaces honour `.claude/setup.sh`:
   by [`rust-toolchain.toml`](../../rust-toolchain.toml).
 - Runs `cargo fetch --locked` to pre-warm the registry.
 - Installs `cargo-nextest` (best-effort).
+- Writes `.claude/settings.local.json` with the sandbox environment and
+  permission allowances (see below).
 
-Environment defaults are set by `.claude/settings.json`:
+### Settings: committed vs sandbox-only
 
-| Variable             | Value           | Why                                                        |
-| -------------------- | --------------- | ---------------------------------------------------------- |
-| `CARGO_HOME`         | `/workspace/.cargo` | Survives within the sandbox lifetime.                  |
-| `CARGO_TARGET_DIR`   | `/workspace/.target` | Same.                                                  |
-| `SINEX_AUTO_INFRA`   | `0`             | Disables autostart of local infra in cloud.                |
-| `SINEX_AUTO_STATUS`  | `0`             | Disables status polling daemons.                           |
-| `RUSTC_WRAPPER`      | empty           | No sccache; the sandbox cache is local-only anyway.        |
+The committed `.claude/settings.json` is deliberately **minimal** — it carries
+only the `forbid-bare-cargo` PreToolUse hook used by the local Nix dev
+environment. It is **not** specialised for the cloud, so it never perturbs a
+contributor's local workstation.
+
+The cloud sandbox's environment and permissions are written by
+`.claude/setup.sh` into `.claude/settings.local.json`, which Claude Code reads
+and merges over `settings.json`. That path is gitignored
+(`.claude/*.local.json`), so the sandbox config is never committed. The
+generated file sets:
+
+| Variable             | Value                       | Why                                            |
+| -------------------- | --------------------------- | ---------------------------------------------- |
+| `CARGO_HOME`         | `<repo>/.cargo`             | Survives within the sandbox lifetime.          |
+| `CARGO_TARGET_DIR`   | `<repo>/.target`            | Same.                                          |
+| `DATABASE_URL`       | resolved sidecar URL        | So `sqlx::query!()` macros see the live DB.     |
+| `NATS_URL`           | resolved sidecar URL        | Integration tests.                             |
+| `SINEX_AUTO_INFRA`   | `0`                         | Disables autostart of local infra in cloud.    |
+| `SINEX_AUTO_STATUS`  | `0`                         | Disables status polling daemons.               |
+| `RUSTC_WRAPPER`      | empty                       | No sccache; the sandbox cache is local-only.   |
+
+It also allows `cargo`, `rustup`, `docker`, and `docker-compose` without
+prompts.
+
+### Bare cargo is allowed in the cloud lane
+
+The `forbid-bare-cargo` hook only blocks bare `cargo` inside the sinex Nix
+devshell (detected via `SINEX_DEV_ROOT` / `IN_NIX_SHELL`). The cloud sandbox
+has neither marker — and no `xtask` — so the hook is a no-op there and bare
+`cargo check` / `cargo test` are the intended entrypoints.
 
 ## Database / NATS sidecars
 

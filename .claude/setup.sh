@@ -92,4 +92,39 @@ export NATS_URL="${NATS_URL:-nats://localhost:4222}"
 log "DATABASE_URL=${DATABASE_URL}"
 log "NATS_URL=${NATS_URL}"
 
+# ---------------------------------------------------------------------------
+# Claude Code Web sandbox settings (gitignored, sandbox-only)
+# ---------------------------------------------------------------------------
+# The committed .claude/settings.json stays minimal so it never perturbs the
+# local Nix dev environment. The cloud sandbox needs different cargo paths,
+# the resolved DATABASE_URL/NATS_URL, and permission allowances for bare
+# cargo/rustup/docker. Write them to .claude/settings.local.json, which Claude
+# Code reads and merges over settings.json and which .gitignore excludes
+# (.claude/*.local.json). The committed forbid-bare-cargo hook is already a
+# no-op here because SINEX_DEV_ROOT / IN_NIX_SHELL are unset outside the Nix
+# devshell, so bare `cargo` works as the cloud lane intends.
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cat > "${repo_root}/.claude/settings.local.json" <<JSON
+{
+  "env": {
+    "CARGO_HOME": "${CARGO_HOME:-${repo_root}/.cargo}",
+    "CARGO_TARGET_DIR": "${CARGO_TARGET_DIR:-${repo_root}/.target}",
+    "DATABASE_URL": "${DATABASE_URL}",
+    "NATS_URL": "${NATS_URL}",
+    "RUSTC_WRAPPER": "",
+    "SINEX_AUTO_INFRA": "0",
+    "SINEX_AUTO_STATUS": "0"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(cargo:*)",
+      "Bash(rustup:*)",
+      "Bash(docker:*)",
+      "Bash(docker-compose:*)"
+    ]
+  }
+}
+JSON
+log "wrote .claude/settings.local.json (sandbox-only Claude Code overrides)"
+
 log "setup complete"
