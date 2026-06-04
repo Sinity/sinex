@@ -135,10 +135,14 @@ gethostname = { workspace = true }
 xtask = { path = "../../xtask" }
 xtask-macros = { path = "../../xtask/macros" }
 sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
-sinexd = { path = ".", features = ["testing"] }
+sinexd = { path = ".", features = ["testing", "test-support"] }
 # Re-wired tests/api/ integration tests (#1625): TLS-boundary tests mint certs
 # via rcgen.
 rcgen = { workspace = true }
+# SSE integration tests drive a real HTTPS gateway: `stream` for `bytes_stream`,
+# `query` for `.query(..)` URL params, `rustls` for the self-signed TLS client,
+# `json` for typed bodies. Test-only; the runtime dependency (above) stays minimal.
+reqwest = { workspace = true, features = ["stream", "query", "json", "rustls"] }
 
 [lints]
 workspace = true
@@ -289,3 +293,62 @@ path = "tests/api/token_rotation_test.rs"
 [[test]]
 name = "transport_security_test"
 path = "tests/api/transport_security_test.rs"
+
+# Remaining tests/api/ files, conservatively deferred during the first re-wiring
+# pass (#1625) and now wired. Drift repaired where the 4-month-uncompiled gap
+# surfaced it.
+[[test]]
+name = "automata_handlers_test"
+path = "tests/api/automata_handlers_test.rs"
+
+[[test]]
+name = "cascade_analyzer_test"
+path = "tests/api/cascade_analyzer_test.rs"
+
+[[test]]
+name = "curation_handlers_test"
+path = "tests/api/curation_handlers_test.rs"
+
+[[test]]
+name = "dlq_handlers_test"
+path = "tests/api/dlq_handlers_test.rs"
+
+[[test]]
+name = "documents_handlers_test"
+path = "tests/api/documents_handlers_test.rs"
+
+[[test]]
+name = "lifecycle_handlers_test"
+path = "tests/api/lifecycle_handlers_test.rs"
+
+[[test]]
+name = "llm_handlers_test"
+path = "tests/api/llm_handlers_test.rs"
+
+[[test]]
+name = "pkm_handlers_test"
+path = "tests/api/pkm_handlers_test.rs"
+
+[[test]]
+name = "replay_state_machine_test"
+path = "tests/api/replay_state_machine_test.rs"
+
+[[test]]
+name = "semantic_handlers_test"
+path = "tests/api/semantic_handlers_test.rs"
+
+[[test]]
+name = "shadow_handlers_test"
+path = "tests/api/shadow_handlers_test.rs"
+
+[[test]]
+name = "sources_handlers_test"
+path = "tests/api/sources_handlers_test.rs"
+
+[[test]]
+name = "sse_real_confirmations_test"
+path = "tests/api/sse_real_confirmations_test.rs"
+
+[[test]]
+name = "sse_stream_test"
+path = "tests/api/sse_stream_test.rs"

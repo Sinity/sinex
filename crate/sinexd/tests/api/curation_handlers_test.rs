@@ -121,7 +121,11 @@ async fn curation_duplicate_candidates_list_cross_material_clusters(
     assert_eq!(cluster.natural_key_hash, "visit-1");
     assert_eq!(cluster.event_count, 2);
     assert_eq!(cluster.material_count, 2);
-    let listed_ids: Vec<_> = cluster.events.iter().map(|event| event.event_id).collect();
+    let listed_ids: Vec<_> = cluster
+        .events
+        .iter()
+        .map(|event| *event.event_id.as_uuid())
+        .collect();
     assert!(listed_ids.contains(&candidate_a));
     assert!(listed_ids.contains(&candidate_b));
     Ok(())
