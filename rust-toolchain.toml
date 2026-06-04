@@ -1,0 +1,15 @@
+[toolchain]
+# Pinned to match the fenix `complete` channel currently resolved by flake.nix
+# (fenix tracks the latest nightly; we pin a specific date so rustup-based
+# environments — cloud agent sandboxes, CI runners without Nix — install the
+# same toolchain a Nix devshell would).
+#
+# TODO(operator): re-pin periodically to stay close to fenix's moving target.
+# To verify the active flake toolchain:
+#   nix eval --raw '.#devShells.x86_64-linux.default.passthru.toolchain.version' 2>/dev/null
+# or inside `nix develop`: `rustc --version`.
+# If fenix's resolution drifts substantially from this pin, either bump this
+# date or switch to a fixed stable channel (e.g. `channel = "1.83.0"`).
+channel = "nightly-2026-01-28"
+components = ["rustfmt", "clippy", "rust-src", "rust-analyzer"]
+profile = "minimal"
