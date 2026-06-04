@@ -16,8 +16,9 @@ All PRs must pass the following before merge:
   iteration. Use the workspace gate below when the PR needs CI-parity breadth.
 - **`xtask docs check`** — Generated docs drift detection (CLAUDE.md transclusions,
   schema bundle, command reference).
-- **`xtask ci compat --base master`** — Schema compatibility check against the
-  default branch.
+- **`xtask ci compat --base master`** — Schema-contract drift check against the
+  default branch. Despite the command name, this is not an N-1 runtime
+  compatibility gate.
 
 ### Broad / Phase-Boundary Gate
 
@@ -69,7 +70,7 @@ All PRs must pass the following before merge:
 | `check (full)` | Local before merge; manual workflow if requested | ~3-5 min |
 | `test (postgres, workspace)` | Local broad/phase gate; manual workflow if requested | ~8-12 min |
 | `docs (check)` | Local before merge when generated surfaces may drift | ~30 sec |
-| `schema (compat)` | Local before merge when schema/payload contracts change | ~1 min |
+| `schema (contract drift)` | Local before merge when schema/payload contracts change | ~1 min |
 | `schema (bootstrap)` | Local for schema changes; manual workflow if requested | ~2 min |
 | `test (heavy)` | Local/manual for heavy-risk surfaces | ~15-30 min |
 | `test (vm smoke)` | Local/manual for NixOS/deployment changes | ~5-10 min |

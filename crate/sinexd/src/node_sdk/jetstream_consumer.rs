@@ -849,21 +849,10 @@ impl JetStreamEventConsumer {
     }
 
     fn event_from_unbuffered_confirmation(confirmation: &EventConfirmation) -> ProvisionalEvent {
-        // Per #1306: synthesize a stand-in event using the real kind from the
-        // watermark when present. Falls back to the legacy `confirmed`/`confirmed.event`
-        // marker when the payload predates #1306.
-        let source = if confirmation.source.is_empty() {
-            EventSource::from_static("confirmed")
-        } else {
-            EventSource::new(&confirmation.source)
-                .unwrap_or_else(|_| EventSource::from_static("confirmed"))
-        };
-        let event_type = if confirmation.event_type.is_empty() {
-            EventType::from_static("confirmed.event")
-        } else {
-            EventType::new(&confirmation.event_type)
-                .unwrap_or_else(|_| EventType::from_static("confirmed.event"))
-        };
+        let source = EventSource::new(&confirmation.source)
+            .unwrap_or_else(|_| EventSource::from_static("confirmed"));
+        let event_type = EventType::new(&confirmation.event_type)
+            .unwrap_or_else(|_| EventType::from_static("confirmed.event"));
         ProvisionalEvent {
             event_id: confirmation.event_id,
             source,
@@ -934,11 +923,13 @@ impl JetStreamEventConsumer {
             SinexError::processing(format!("Invalid ts_ingest '{ts_ingest_str}': {e}"))
         })?;
 
-        // #1306 per-kind fields; absent on legacy per-event-id payloads.
-        let source = payload["source"].as_str().unwrap_or_default().to_string();
+        let source = payload["source"]
+            .as_str()
+            .ok_or_else(|| SinexError::processing("Missing source".to_string()))?
+            .to_string();
         let event_type = payload["event_type"]
             .as_str()
-            .unwrap_or_default()
+            .ok_or_else(|| SinexError::processing("Missing event_type".to_string()))?
             .to_string();
 
         Ok(EventConfirmation {
@@ -1005,14 +996,14 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn unbuffered_confirmation_event_carries_only_event_identity()
+    async fn unbuffered_confirmation_event_carries_confirmation_kind()
     -> xtask::sandbox::TestResult<()> {
         let event_id = EventId::from_uuid(Uuid::now_v7());
         let ts_ingest = sinex_primitives::temporal::now();
         let confirmation = EventConfirmation {
             event_id,
-            source: String::new(),
-            event_type: String::new(),
+            source: "shell.atuin".to_string(),
+            event_type: "command.executed".to_string(),
             persisted: true,
             ts_ingest,
         };
@@ -1020,8 +1011,8 @@ mod tests {
         let event = JetStreamEventConsumer::event_from_unbuffered_confirmation(&confirmation);
 
         assert_eq!(event.event_id, event_id);
-        assert_eq!(event.source.as_ref(), "confirmed");
-        assert_eq!(event.event_type.as_ref(), "confirmed.event");
+        assert_eq!(event.source.as_ref(), "shell.atuin");
+        assert_eq!(event.event_type.as_ref(), "command.executed");
         assert!(event.payload.is_null());
         assert_eq!(event.ts_orig, ts_ingest);
         Ok(())

@@ -2507,7 +2507,7 @@ in
 
       # Auxiliary sinex-owned units that should be gated alongside the
       # long-running runtime services. Long-running services
-      # (sinexd, source unit hosts, automata) already wire their own wantedBy
+      # (sinexd, hosted source bindings, automata) already wire their own wantedBy
       # from cfg.runtime.target.attachToMultiUser and publish their service
       # names via config.sinex._generatedUnits. The auxiliary list here
       # covers the one-shots, the standalone sinex-document-scan and its

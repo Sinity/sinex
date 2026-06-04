@@ -537,7 +537,7 @@ let
     if !coreEnabled then { } else
     {
       "sinexd" = {
-        description = "Sinex daemon (event engine + API + automata + source unit hosts)";
+        description = "Sinex daemon (event engine + API + automata + hosted source bindings)";
         wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
         restartIfChanged = cfg.runtime.restartOnSwitch;
         after = gatewayAfter ++ (nodesOverlay.afterUnits or [ ]);
@@ -896,7 +896,7 @@ let
           extraArgs = [ ];
         };
       };
-      # Post-collapse: all source-unit host units fold into sinexd.service. The
+      # Post-collapse: all source bindings fold into sinexd.service. The
       # ACL setup must run before sinexd so the in-process terminal source
       # units can traverse target-user paths.
       supportUnits = mkAccessSetupUnit {
@@ -1473,8 +1473,8 @@ let
         serviceConfigOverrides = { };
       };
     in
-    # system.dbus emits a source-unit host unit since #1235 wired
-    # `RealDbusBackend` into `DbusStreamAdapter::open` (zbus 5.x).
+    # system.dbus is hosted in-process since #1235 wired `RealDbusBackend`
+    # into `DbusStreamAdapter::open` (zbus 5.x).
     {
       bindings = {
         "system.journald" = mkSystemBinding "system.journald" "systemd journal (source-unit host)";

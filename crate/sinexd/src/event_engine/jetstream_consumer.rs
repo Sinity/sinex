@@ -88,9 +88,7 @@ struct ConfirmationRetryRequest {
     /// Per #1306: confirmations are published per `(source, event_type)`
     /// watermark, not per event id. The retry path needs the kind to
     /// reconstruct the correct subject.
-    #[serde(default)]
     source: String,
-    #[serde(default)]
     event_type: String,
 }
 
@@ -1175,7 +1173,10 @@ impl JetStreamConsumer {
     }
 
     #[instrument(skip(self, msg))]
-    async fn prepare_events(&self, msg: jetstream::Message) -> EventEngineResult<Vec<PreparedEvent>> {
+    async fn prepare_events(
+        &self,
+        msg: jetstream::Message,
+    ) -> EventEngineResult<Vec<PreparedEvent>> {
         let decisions = self.admission.admit_intent_bytes(&msg.payload).await?;
         let mut prepared = Vec::with_capacity(decisions.len());
 
@@ -1876,7 +1877,7 @@ impl JetStreamConsumer {
     }
 
     async fn record_admission_rejection(&self, rejection: &AdmissionRejection) {
-        // Update legacy per-kind in-memory counters for backward compatibility.
+        // Keep operator-facing rejection counters in sync with admission decisions.
         match rejection.kind {
             AdmissionRejectionKind::PastTimestamp => {
                 self.stats
@@ -1949,7 +1950,11 @@ impl JetStreamConsumer {
                 .emit_counter("event_engine.admission_rejections_total", 1, labels)
                 .await
             {
-                Self::log_observer_error(&self.stats, "event_engine.admission_rejections_total", &error);
+                Self::log_observer_error(
+                    &self.stats,
+                    "event_engine.admission_rejections_total",
+                    &error,
+                );
             }
         }
     }
@@ -2562,18 +2567,6 @@ impl JetStreamConsumer {
                     continue;
                 }
             };
-
-            if retry.source.is_empty() || retry.event_type.is_empty() {
-                warn!(
-                    event_id = %event_id,
-                    "Confirmation retry payload missing source/event_type (legacy pre-#1306 payload); acknowledging without re-publish — downstream will rely on next batch's watermark"
-                );
-                if let Err(ack_err) = message.ack().await {
-                    warn!(error = %ack_err, "Failed to ack legacy confirmation retry message");
-                    self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
-                }
-                continue;
-            }
 
             match self
                 .publish_confirmation_with_retry(&event_id, &retry.source, &retry.event_type)

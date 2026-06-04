@@ -80,7 +80,7 @@ pub struct CasExtras {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateExtras {
-    /// Source units discovered from the captured state surface.
+    /// Source units registered in the `sinexctl` binary that created the snapshot.
     pub source_unit_ids: Vec<String>,
     /// Whether runtime private-mode state was present in the captured state.
     pub private_mode_state_present: bool,

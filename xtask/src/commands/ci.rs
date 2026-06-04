@@ -751,7 +751,7 @@ fn git_show_reports_missing_object(stderr: &str) -> bool {
         || stderr.contains("unknown revision or path not in the working tree")
 }
 
-/// Check that a schema change is backwards-compatible.
+/// Check schema-contract drift against another branch.
 ///
 /// Three classes of breaking changes are detected:
 ///

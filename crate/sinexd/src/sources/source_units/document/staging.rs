@@ -1,5 +1,5 @@
-//! `document.staging` source unit — folds the legacy `sinex-document-ingestor`
-//! into the source-unit dispatch and node-factory registries.
+//! `document.staging` source unit — document parser dispatch plus node-factory
+//! registration for the imperative document runtime.
 //!
 //! The ingestor scans configured root directories for documents, fingerprints
 //! them for skip-unchanged logic, stages their bytes via `AcquisitionManager`,
@@ -15,8 +15,8 @@
 //! + `register_node_factory!` is required.
 //!
 //! The `DocumentStagingParser` handles the dispatch-path (replay, testing).
-//! The full ingestion path uses `DocumentNode` from `sinex-document-ingestor`
-//! directly via `register_node_factory!`.
+//! The full ingestion path uses `DocumentNode` directly via
+//! `register_node_factory!`.
 
 use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult};
 use crate::node_sdk::tags;
@@ -103,8 +103,7 @@ pub struct DocumentStagingParserConfig {}
 /// Imperative parser for the `document.staging` source unit.
 ///
 /// Used in the dispatch path (replay, testing). The full ingestion path uses
-/// `DocumentNode` (the legacy `SourceUnit` from `sinex-document-ingestor`)
-/// registered via `register_node_factory!`.
+/// `DocumentNode` registered via `register_node_factory!`.
 #[derive(Debug, Default)]
 pub struct DocumentStagingParser;
 
@@ -213,9 +212,8 @@ impl MaterialParser for DocumentStagingParser {
 
 crate::register_parser!("document.staging", DocumentStagingParser);
 
-// The full node lifecycle uses DocumentNode (moved verbatim from the legacy
-// `sinex-document-ingestor` crate during the Wave-B fold; see `super::node`).
-// It is an `SourceUnit` implementation that manages its own checkpoint state
+// The full node lifecycle uses DocumentNode; see `super::node`.
+// It is a `SourceUnit` implementation that manages its own checkpoint state
 // (`manages_own_checkpoints: true`) and supports snapshot + historical scans
 // but not continuous mode.
 crate::register_node_factory!("document.staging", super::node::DocumentNode);

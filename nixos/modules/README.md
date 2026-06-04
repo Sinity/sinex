@@ -255,7 +255,7 @@ The module then:
   long-running service, every bootstrap one-shot (`sinex-schema-apply`,
   `sinex-tls-init`, `sinex-blob-init`, `sinex-nats-bootstrap`,
   `sinex-kitty-setup`, `sinex-preflight`, `sinex-document-scan`, the managed
-  `nats.service`), and every generated source-unit host / automaton unit;
+  `nats.service`), plus generated automaton/support units;
 - when `includeDatabase = true`, also strips it from `postgresql.service`,
   `postgresql-setup.service`, and `postgresql.target`;
 - populates `sinex-runtime.target.wants` with the union, so pulling the target

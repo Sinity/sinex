@@ -34,9 +34,9 @@ WHERE c.command LIKE 'cargo test%'
 | Capture | source units over staged materials, input-shape adapters, and parsers under `crate/sinexd/src/sources/` |
 | Query / control | `sinexd::api` + `sinexctl` |
 | Persistence | `sinexd::event_engine` + PostgreSQL |
-| Derived state | `sinexd::automata` and replay-aware node runtime |
+| Derived state | `sinexd::automata` and replay-aware stream runtime |
 | Deployment | NixOS modules + systemd |
-| Runtime extension | inline `sinexd::node_sdk` and source-unit/automaton traits |
+| Runtime extension | inline `sinexd` runtime support and source-unit/automaton traits |
 
 ## Architecture
 

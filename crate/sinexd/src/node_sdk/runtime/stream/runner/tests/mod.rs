@@ -578,10 +578,15 @@ async fn publish_confirmed_raw_event(
         .id
         .as_ref()
         .ok_or_else(|| color_eyre::eyre::eyre!("test event is missing an id"))?;
-    let confirmation_subject =
-        env.nats_subject(&format!("events.confirmations.{}", event_id.as_uuid()));
+    let confirmation_subject = env.nats_subject(&format!(
+        "events.confirmations.{}.{}",
+        event.source.as_str(),
+        event.event_type.as_str()
+    ));
     let confirmation = serde_json::json!({
         "event_id": event_id.to_string(),
+        "source": event.source.as_str(),
+        "event_type": event.event_type.as_str(),
         "persisted": true,
         "ts_ingest": Timestamp::now().format_rfc3339(),
     });

@@ -1,10 +1,9 @@
 //! Filesystem source unit (`fs`).
 //!
-//! Moved from the legacy `sinex-fs-ingestor` crate during Wave B. The runtime
-//! now uses the SDK's content-materializing file-drop adapter plus the
-//! filesystem parser, so watcher policy, source-material staging, and parser
-//! dispatch share the same adapter-backed source-unit surface as the rest of
-//! the source unit host.
+//! Uses the SDK's content-materializing file-drop adapter plus the filesystem
+//! parser, so watcher policy, source-material staging, and parser dispatch
+//! share the same adapter-backed source-unit surface as the rest of the source
+//! unit host.
 
 pub mod parser;
 

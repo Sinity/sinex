@@ -59,7 +59,7 @@ xtask ci postgres -- xtask ci schema-only
 # Main Postgres-backed workspace lane used in GitHub Actions
 xtask ci postgres -- xtask ci workspace
 
-# Schema compatibility against the default branch
+# Schema-contract drift against the default branch
 xtask ci compat --base master
 ```
 
@@ -88,7 +88,7 @@ The default GitHub Actions gate does not run the NixOS VM suite; use the VM
 commands separately when a change touches deployment/runtime behavior.
 
 Do not model source-ingestion correctness as an `xtask exercise`. Source
-material, SDK adapter, node runtime, replay, and provenance behavior belong in
+material, source adapter, stream runtime, replay, and provenance behavior belong in
 Rust tests and VM integration tests. `xtask` may orchestrate those tests, but it
 does not own their semantics. The command-plane split is documented in
 [`xtask/docs/runtime-target-boundaries.md`](xtask/docs/runtime-target-boundaries.md).

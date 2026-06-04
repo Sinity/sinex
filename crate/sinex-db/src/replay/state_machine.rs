@@ -112,7 +112,7 @@ pub struct ReplayScope {
     pub filters: HashMap<String, serde_json::Value>,
     /// ── Staged-source replay (#1060) ───────────────────────────────
     /// Source to replay material through (e.g. "weechat-log", "fs-watcher").
-    /// When set, routes execution through source-unit host instead of legacy node scan.
+    /// When set, routes execution through the source-unit host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_id: Option<String>,
     /// Replay only this specific source material by UUID.
@@ -136,8 +136,7 @@ pub struct ReplayScopeFilters {
 
 impl ReplayScope {
     /// Returns `true` when the scope targets the staged-source architecture
-    /// (source identity or specific material). Replay planning uses this to
-    /// decide between source-unit host and legacy node-scan execution.
+    /// (source identity or specific material).
     #[must_use]
     pub fn is_staged_source_scope(&self) -> bool {
         self.source_id.is_some()

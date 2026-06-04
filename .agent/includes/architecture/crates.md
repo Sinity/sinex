@@ -9,7 +9,7 @@
 | Dynamic events | `sinex_primitives::events::{DynamicPayload, builder::EventBuilder}` | For runtime source/type |
 | DB access | `sinex_db::DbPoolExt` | `pool.events()`, `pool.blobs()`, `pool.source_materials()` etc. |
 | DB schema | `sinex_schema` (or `sinex_db::schema` re-export) | Schema definitions + declarative convergence engine |
-| Node SDK | `crate::node_sdk::*` (inside sinexd) | `SourceUnit`, `NodeConfig`, `NodeCliRunner`, runtime adapters |
+| Runtime support | `crate::node_sdk::*` (inside sinexd; historical module name) | `SourceUnit`, `NodeConfig`, `NodeCliRunner`, runtime adapters |
 | Derived nodes | `crate::node_sdk::{Transducer, Windowed, ScopeReconciler}` | Via `AutomatonRuntime<N>` |
 | Privacy | `sinex_primitives::privacy::*` | `privacy::engine()`, `ProcessingContext` |
 | Domain enums | `sinex_primitives::domain::*` | `OperationStatus`, `HealthStatus`, `DataTier`, `NodeType` etc. |
@@ -29,7 +29,7 @@ crate/
     sinexd::event_engine   NATS consumer -> batch writes -> confirmations
     sinexd::api            JSON-RPC, SSE subscriptions, native messaging
     sinexd::sources        Source-unit host; parser/input-shape adapters
-    sinexd::node_sdk       Inline node runtime: lifecycle, checkpoints, replay,
+    sinexd::node_sdk       Inline runtime support: lifecycle, checkpoints, replay,
                            source-unit adapters, automaton runtime
     sinexd::automata       Consolidated automata: canonicalizer, analytics, health,
                            session-detector, hourly/daily summarizers, entity/relation workers

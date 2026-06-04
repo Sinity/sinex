@@ -631,11 +631,11 @@ impl XtaskCommand for CheckCommand {
             result = result.with_detail("nix flake check passed");
         }
 
-        // If NixOS modules are dirty, suggest running the NixOS compatibility gate.
+        // If NixOS modules are dirty, suggest running the NixOS VM deployment gate.
         match crate::affected::nixos_modules_dirty() {
             Ok(true) if ctx.is_human() => {
                 eprintln!(
-                    "→ NixOS modules modified. Run the NixOS compatibility gate: \
+                    "→ NixOS modules modified. Run the NixOS VM deployment gate: \
                      xtask test vm --category smoke"
                 );
             }

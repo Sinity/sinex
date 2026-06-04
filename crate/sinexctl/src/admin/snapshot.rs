@@ -8,6 +8,7 @@
 use clap::Parser;
 use color_eyre::eyre::{Context, Result, bail, eyre};
 use serde::Serialize;
+use sinex_primitives::proof;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
@@ -460,7 +461,7 @@ impl AdminSnapshotCommand {
         }
 
         if component_set.contains("state") {
-            let source_unit_ids = discover_source_unit_ids(state_dir);
+            let source_unit_ids = registered_source_unit_ids();
             let private_mode_state_present = state_dir.join("private-mode/state.json").exists();
             let mut record = self.capture_state_component(
                 state_dir,
@@ -477,7 +478,7 @@ impl AdminSnapshotCommand {
 
         // 9. Write manifest.
         let uncompressed_bytes: u64 = component_records.iter().map(|r| r.bytes).sum();
-        let source_unit_ids = discover_source_unit_ids(state_dir);
+        let source_unit_ids = registered_source_unit_ids();
 
         let manifest = SnapshotManifest {
             snapshot_id: snapshot_id.to_string(),
@@ -981,33 +982,13 @@ fn git_sha() -> Option<String> {
     }
 }
 
-fn discover_source_unit_ids(state_dir: &Path) -> Vec<String> {
-    let candidates = [state_dir.join("source-units.json")];
-
-    for candidate in candidates {
-        if let Ok(data) = std::fs::read_to_string(&candidate)
-            && let Some(ids) = parse_source_unit_ids(&data)
-            && !ids.is_empty()
-        {
-            return ids;
-        }
-    }
-
-    Vec::new()
-}
-
-fn parse_source_unit_ids(data: &str) -> Option<Vec<String>> {
-    let value: serde_json::Value = serde_json::from_str(data).ok()?;
-    let mut ids: Vec<String> = value
-        .get("source_units")?
-        .as_array()?
-        .iter()
-        .filter_map(|unit| unit.get("id")?.as_str())
-        .map(str::to_string)
+fn registered_source_unit_ids() -> Vec<String> {
+    let mut ids: Vec<String> = proof::all_source_units()
+        .map(|descriptor| descriptor.id.to_string())
         .collect();
     ids.sort();
     ids.dedup();
-    Some(ids)
+    ids
 }
 
 fn inspect_snapshot_archive(archive_path: &Path) -> Result<SnapshotInspectResult> {
@@ -1223,7 +1204,7 @@ fn observe_restored_target(
     target_dir: &Path,
     postgres_row_counts: Option<&BTreeMap<String, i64>>,
 ) -> RestoreObservedChecks {
-    let source_unit_ids = discover_source_unit_ids(&target_dir.join("state"));
+    let source_unit_ids = registered_source_unit_ids();
     let expected_postgres_row_counts = expected_postgres_row_counts(manifest);
     let expected_cas_blob_count = manifest
         .components

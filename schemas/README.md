@@ -76,7 +76,7 @@ sinexctl gitops sync <source-id>
 xtask gitops list
 ```
 
-Schema compatibility checks against another branch are wired through CI helpers:
+Schema-contract drift checks against another branch are wired through CI helpers:
 
 ```bash
 xtask ci compat --base master --glob schemas
@@ -88,7 +88,7 @@ When you change the schema contract for an event:
 
 1. update the Rust `EventPayload` and any related validation/runtime logic,
 2. regenerate the checked-in JSON bundle under `schemas/`,
-3. run the relevant tests / compatibility checks,
+3. run the relevant tests / contract drift checks,
 4. review both the Rust-side and JSON-side diff together.
 
 Typical local sequence:

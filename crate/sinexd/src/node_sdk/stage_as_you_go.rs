@@ -354,7 +354,7 @@ pub struct StageReconciliationSummary {
 }
 
 impl StageAsYouGoContext {
-    /// Create a Stage-as-You-Go context from node runtime handles
+    /// Create a Stage-as-You-Go context from stream-runtime handles.
     #[must_use]
     pub fn from_runtime(runtime: &NodeRuntimeState) -> Self {
         Self::from_optional_emitter(runtime.event_emitter().clone())

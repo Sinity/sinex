@@ -737,7 +737,7 @@ fn package_dependency_closure_from_forward(
 
 /// Returns true when any `nixos/**/*.nix` or `flake.nix`/`flake.lock` file is dirty.
 ///
-/// Used by `xtask check --full` to suggest running the NixOS compatibility gate:
+/// Used by `xtask check --full` to suggest running the NixOS VM deployment gate:
 ///   `xtask test vm --category smoke`
 pub fn nixos_modules_dirty() -> Result<bool> {
     let repo_root =
@@ -926,9 +926,7 @@ mod tests {
             .path()
             .join("tests/e2e/tests/graceful_shutdown_test.rs");
         let xtask_test = repo.path().join("xtask/src/example_test.rs");
-        let workspace_test = repo
-            .path()
-            .join("tests/workspace/tests/smoke.rs");
+        let workspace_test = repo.path().join("tests/workspace/tests/smoke.rs");
         fs::create_dir_all(graceful.parent().expect("graceful parent"))?;
         fs::create_dir_all(xtask_test.parent().expect("xtask parent"))?;
         fs::create_dir_all(workspace_test.parent().expect("workspace parent"))?;
@@ -1015,9 +1013,7 @@ mod tests {
     #[sinex_test]
     async fn test_infer_lib_target_for_test_filter_maps_inline_unit_tests() -> TestResult<()> {
         let repo = tempfile::tempdir()?;
-        let inline_test = repo
-            .path()
-            .join("crate/lib/sinexd/src/coordination.rs");
+        let inline_test = repo.path().join("crate/lib/sinexd/src/coordination.rs");
         fs::create_dir_all(inline_test.parent().expect("inline parent"))?;
         fs::write(
             &inline_test,
@@ -1098,9 +1094,9 @@ mod tests {
         let root = repo
             .path()
             .join("crate/sinexd/tests/sources/production_path.rs");
-        let nested = repo.path().join(
-            "crate/sinexd/tests/sources/production_path/obligations/initial_ingestion.rs",
-        );
+        let nested = repo
+            .path()
+            .join("crate/sinexd/tests/sources/production_path/obligations/initial_ingestion.rs");
         fs::create_dir_all(nested.parent().expect("nested parent"))?;
         fs::write(
             &root,

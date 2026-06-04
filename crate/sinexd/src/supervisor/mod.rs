@@ -21,7 +21,7 @@ use crate::api::config::GatewayConfig;
 use crate::api::rpc_server;
 use crate::api::service_container::ServiceContainer;
 use crate::automata::registry::{self as automata_registry, AutomatonSpec};
-use crate::event_engine::{IngestService, EventEngineConfig};
+use crate::event_engine::{EventEngineConfig, IngestService};
 use crate::sources::bindings::{self as source_bindings, SourceBinding};
 
 /// Environment variable selecting which automata `sinexd` hosts.
@@ -32,7 +32,7 @@ const ENV_AUTOMATA_ENABLED: &str = "SINEX_AUTOMATA_ENABLED";
 
 /// Environment variable pointing at the source-bindings manifest JSON.
 ///
-/// Unset / empty means no source unit hosts are hosted in this `sinexd`
+/// Unset / empty means no source bindings are hosted in this `sinexd`
 /// instance (used during single-binary local development against an
 /// out-of-band source unit, for example).
 const ENV_SOURCE_BINDINGS_PATH: &str = "SINEX_SOURCE_BINDINGS_PATH";

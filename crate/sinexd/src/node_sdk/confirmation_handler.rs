@@ -51,10 +51,8 @@ pub struct EventConfirmation {
     /// High-watermark event id for this kind.
     pub event_id: EventId,
     /// Source of the kind (matches `event.source`).
-    #[serde(default)]
     pub source: String,
     /// Event type of the kind (matches `event.event_type`).
-    #[serde(default)]
     pub event_type: String,
     pub persisted: bool,
     pub ts_ingest: sinex_primitives::temporal::Timestamp,

@@ -1,9 +1,9 @@
-//! # Sinex Node SDK
+//! # Sinex Runtime Support
 //!
-//! This crate provides the current authoring and runtime surface for Sinex
-//! ingestors and derived nodes. The included markdown docs are the primary
-//! architecture reference; vision-only material lives in `docs/vision.md`
-//! rather than in the current-runtime pages.
+//! This module provides the current authoring and runtime surface for Sinex
+//! source units, automata, transport, checkpointing, content storage, and
+//! source-material staging. The `node_sdk` path is historical and should not be
+//! read as a separate node crate or deployment boundary.
 //!
 //! # Clock Skew Considerations
 //!

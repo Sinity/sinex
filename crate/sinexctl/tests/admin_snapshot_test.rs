@@ -45,17 +45,6 @@ fn make_fake_state_dir() -> TestResult<TempDir> {
     fs::create_dir_all(&spool)?;
     fs::write(spool.join("checkpoint.bin"), b"checkpoint-data")?;
 
-    fs::write(
-        root.join("source-units.json"),
-        r#"{
-          "source_units": [
-            { "id": "terminal.atuin-history" },
-            { "id": "desktop.clipboard" },
-            { "id": "desktop.clipboard" }
-          ]
-        }"#,
-    )?;
-
     Ok(dir)
 }
 
@@ -96,10 +85,6 @@ fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
     fs::write(
         staging.join("state").join("checkpoint.bin"),
         b"checkpoint-data",
-    )?;
-    fs::write(
-        staging.join("state").join("source-units.json"),
-        r#"{"source_units":[{"id":"terminal.atuin-history"}]}"#,
     )?;
     fs::create_dir_all(staging.join("state").join("private-mode"))?;
     fs::write(
@@ -435,11 +420,16 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
         "archive should contain every non-empty manifest component path: {:?}",
         inspect.missing_component_paths
     );
-    assert_eq!(inspect.state_source_unit_count, Some(2));
+    assert!(
+        inspect
+            .state_source_unit_count
+            .is_some_and(|count| count > 0),
+        "state extras should carry compiled source-unit inventory"
+    );
     assert_eq!(inspect.state_private_mode_state_present, Some(false));
     let inspect_table = sinexctl::admin::snapshot::format_snapshot_inspect_result(&inspect);
     assert!(
-        inspect_table.contains("State source units: 2"),
+        inspect_table.contains("State source units: "),
         "inspect table should summarize state source units\n{inspect_table}"
     );
     assert!(
@@ -480,12 +470,11 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
             ));
         }
     };
-    assert_eq!(
-        state_extras.source_unit_ids,
-        vec![
-            "desktop.clipboard".to_string(),
-            "terminal.atuin-history".to_string()
-        ]
+    assert!(
+        state_extras
+            .source_unit_ids
+            .contains(&"desktop.clipboard".to_string()),
+        "state extras should include compiled source-unit descriptor ids"
     );
     assert!(!state_extras.private_mode_state_present);
 
@@ -1159,12 +1148,11 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
         !result.components_captured.is_empty(),
         "dry-run must return at least one component record"
     );
-    assert_eq!(
-        result.source_unit_ids,
-        vec![
-            "desktop.clipboard".to_string(),
-            "terminal.atuin-history".to_string()
-        ]
+    assert!(
+        result
+            .source_unit_ids
+            .contains(&"desktop.clipboard".to_string()),
+        "snapshot should report compiled source-unit descriptor ids"
     );
 
     // Nats, CAS, and state should all appear.

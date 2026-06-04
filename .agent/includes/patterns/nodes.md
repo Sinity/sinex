@@ -1,6 +1,6 @@
-## Node Patterns
+## Source And Automaton Runtime Patterns
 
-### Choosing Your Node Type
+### Choosing Your Runtime Shape
 
 | You're building... | Use | Key trait |
 |--------------------|-----|-----------|
@@ -9,7 +9,12 @@
 | Accumulate-then-emit (sessions, summaries) | `Windowed` + `AutomatonRuntime` | accumulate() + emit_window() |
 | Per-scope state reconciliation | `ScopeReconciler` + `AutomatonRuntime` | Per-scope state + reconcile() |
 
-Automata are registered via `AutomatonSpec` in `automata::registry` and driven by `NodeCliRunner`. Source units are registered via `register_node_factory!` / `register_adapter_ingestor!` and driven by `NodeCliRunner` through `sources::bindings`.
+Automata are registered via `AutomatonSpec` in `automata::registry`. Source
+units are semantic capture/parser contracts registered via
+`register_source_unit!`; deployment bindings come from
+`register_source_unit_binding!` plus the NixOS-generated binding manifest.
+The historical `NodeCliRunner`/`node_sdk` names still exist in code, but do not
+imply a separate node crate or per-source systemd unit.
 
 ### Ingestor Pattern
 
@@ -122,7 +127,7 @@ impl Windowed for SessionDetector {
 }
 ```
 
-### Node SDK Components Reference
+### Runtime Support Components Reference
 
 ```rust
 use crate::node_sdk::{
@@ -142,4 +147,4 @@ use crate::node_sdk::{
 };
 ```
 
-Reference: `crate/sinexd/src/node_sdk/` (the node SDK lives inline in sinexd post-collapse)
+Reference: `crate/sinexd/src/node_sdk/` (historical module name; runtime support lives inline in sinexd)

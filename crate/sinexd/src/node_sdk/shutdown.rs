@@ -1,6 +1,6 @@
 //! Shutdown-related runtime configuration helpers.
 //!
-//! The active node runtimes handle their own signal wiring and checkpoint
+//! The active stream runtimes handle their own signal wiring and checkpoint
 //! persistence directly. This module keeps only the shared checkpoint-path and
 //! shutdown-configuration surface that the runtimes still use.
 

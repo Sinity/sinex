@@ -5,13 +5,15 @@
 //! 2. Rejection paths: invalid envelope version, missing fields, empty events
 //! 3. The low-level escape hatch (`publish_raw_event_batch`) is grep-detectable
 
-use sinexd::event_engine::IngestEventValidator;
-use sinexd::event_engine::admission::{AdmissionDecision, AdmissionRejectionKind, AdmissionService};
 use sinex_primitives::domain::HostName;
 use sinex_primitives::events::Event;
-use sinex_primitives::events::admission::{EventIntent, CURRENT_ENVELOPE_VERSION};
+use sinex_primitives::events::admission::{CURRENT_ENVELOPE_VERSION, EventIntent};
 use sinex_primitives::events::payloads::PolylogueConversationIndexedPayload;
 use sinex_primitives::{DynamicPayload, Id, JsonValue, Uuid};
+use sinexd::event_engine::IngestEventValidator;
+use sinexd::event_engine::admission::{
+    AdmissionDecision, AdmissionRejectionKind, AdmissionService,
+};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use xtask::sandbox::prelude::*;
@@ -228,41 +230,29 @@ async fn envelope_rejects_missing_parser_version(ctx: TestContext) -> TestResult
     Ok(())
 }
 
-// === Backward compat: legacy raw events still work ===
+// === Durable transport boundary: raw events are rejected ===
 
 #[sinex_test]
-async fn legacy_raw_event_still_deserializes(ctx: TestContext) -> TestResult<()> {
+async fn raw_event_is_not_a_transport_envelope(ctx: TestContext) -> TestResult<()> {
     let service = admission_service(&ctx);
     let event = make_event(
-        "legacy.source",
-        "legacy.type",
-        serde_json::json!({"old": "format"}),
+        "test.source",
+        "test.type",
+        serde_json::json!({"not": "an envelope"}),
     )?;
 
     let payload = serde_json::to_vec(&event)?;
     let decisions = service.admit_intent_bytes(&payload).await?;
 
-    // Legacy events without envelope_version should fall through to single-event path.
-    // Note: they'll fail admission because the material FK doesn't exist in test.
-    // We just verify the path doesn't crash on deserialization.
-    assert!(!decisions.is_empty());
-    // The event should at least be attempted; admission may reject it for
-    // schema or FK reasons but not for envelope deserialization.
-    for decision in &decisions {
-        if let AdmissionDecision::Rejected(rejection) = decision {
-            // Rejection is expected (no registered source material in test),
-            // but it should NOT be an envelope validation error.
-            assert_ne!(
+    assert_eq!(decisions.len(), 1);
+    match &decisions[0] {
+        AdmissionDecision::Rejected(rejection) => {
+            assert_eq!(
                 rejection.kind,
-                AdmissionRejectionKind::EnvelopeValidation,
-                "legacy events should not be rejected as envelope validation failures"
-            );
-            assert_ne!(
-                rejection.kind,
-                AdmissionRejectionKind::EnvelopeDeserialization,
-                "legacy events should not be rejected as envelope deserialization failures"
+                AdmissionRejectionKind::EnvelopeDeserialization
             );
         }
+        other => panic!("expected raw event rejection, got {other:?}"),
     }
     Ok(())
 }

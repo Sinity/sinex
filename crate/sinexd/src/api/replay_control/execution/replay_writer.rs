@@ -743,8 +743,7 @@ impl ReplayExecutionEngine {
         }
     }
 
-    /// Dispatches a staged-source replay through the source-unit host (#1081)
-    /// instead of the legacy node scan path.
+    /// Dispatches a staged-source replay through the source-unit host.
     ///
     /// Publishes a parse command to the source-unit NATS control subject
     /// and polls for operation completion. The source-unit is responsible for

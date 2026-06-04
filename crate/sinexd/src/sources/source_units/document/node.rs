@@ -1,11 +1,9 @@
 //! Document ingestor that captures materials directly into `JetStream` via
 //! the `AcquisitionManager` (Stage-as-You-Go).
 //!
-//! Moved verbatim from the legacy `sinex-document-ingestor` crate during the
-//! Wave-B fold (#1081). The legacy crate had a single `SourceUnit` impl
-//! plus a handful of helpers; carrying them here lets the legacy crate
-//! disappear without requiring an SDK extension. The source-unit descriptor
-//! and binding live in `sources/document/staging.rs`, not in this file.
+//! This imperative runtime owns configured-root scanning and document material
+//! staging. The source-unit descriptor and binding live in
+//! `sources/document/staging.rs`, not in this file.
 
 use crate::node_sdk::{
     ActivityEntry, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,

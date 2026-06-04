@@ -4,16 +4,16 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 
 ## Documentation Structure
 
-- **examples/workstation.nix** - Minimal workstation deployment (filesystem + terminal + browser nodes)
+- **examples/workstation.nix** - Minimal workstation deployment (filesystem + terminal + browser capture)
 - **examples/monitoring.nix** - Staging configuration with maintenance + observability stack
 - **examples/dev-sandbox.nix** - Comprehensive developer sandbox with all services enabled
-- **examples/headless.nix** - Headless/server capture (filesystem + system nodes)
-- **examples/remote-node.nix** - Edge node forwarding events to remote ingest
+- **examples/headless.nix** - Headless/server capture (filesystem + system capture)
+- **examples/remote-node.nix** - Edge capture forwarding events to remote ingest
 - **examples/coordination.nix** - Hot standby deployment with coordination enabled
 - **modules/** - Implementation modules:
   - `default.nix` - Main module entry point and base options
   - `database.nix` - PostgreSQL provisioning, pooling, and health monitoring
-  - `source-units.nix` - Ingestor and automaton service configurations
+  - `source-units.nix` - Source-binding and automaton configuration
   - `monitoring.nix` - Prometheus/Grafana monitoring setup
   - `preflight-verification.nix` - Pre-deployment validation checks
   - `nats.nix` - NATS JetStream configuration
@@ -39,10 +39,10 @@ Key architectural decisions and implementation details are documented at their i
 - **Ingestion & JetStream Overview**: [`README.md#architecture`](../README.md#architecture)
   - Provenance model and replay responsibilities: [`README.md#the-provenance-model-read-this-first`](../README.md#the-provenance-model-read-this-first)
   - Stream bootstrap defaults + environment namespacing: [`modules/nats.nix`](modules/nats.nix)
-- **Source-unit and node runtime patterns**: [`crate/sinexd/docs/sources/README.md`](../crate/sinexd/docs/sources/README.md)
+- **Source-unit and stream runtime patterns**: [`crate/sinexd/docs/sources/README.md`](../crate/sinexd/docs/sources/README.md)
   - Source-unit host shape, source-material staging, and parser boundaries
   - Inline node SDK runtime and checkpoint semantics
-- **Node stream runtime**: [`crate/sinexd/src/node_sdk/runtime/stream/mod.rs`](../crate/sinexd/src/node_sdk/runtime/stream/mod.rs)
+- **Stream runtime implementation**: [`crate/sinexd/src/node_sdk/runtime/stream/mod.rs`](../crate/sinexd/src/node_sdk/runtime/stream/mod.rs)
   - Snapshot, historical, and continuous modes
 
 ### Node Implementations
@@ -79,7 +79,7 @@ Add to your NixOS configuration:
   # Recommended: use agenix (token is auto-resolved from sinex-api-admin-token.age):
   #   age.secrets.sinex-api-admin-token.file = ./secrets/sinex-api-admin-token.age;
   #
-  # Alternative: point the legacy-named option directly at a runtime secret file:
+  # Alternative: point the option directly at a runtime secret file:
   #   services.sinex.secrets.apiAdminTokenFile = "/run/secrets/sinex-api-admin-token";
   #
   # The module asserts that one of the above is present and refuses to start without it.
@@ -486,19 +486,16 @@ services.sinex = {
 **Check service status:**
 ```bash
 systemctl status sinexd
-systemctl status 'sinex-source-unit-*'
 ```
 
 **View logs:**
 ```bash
 journalctl -u sinexd -f
-journalctl -u 'sinex-source-unit-*' -f
 ```
 
 **Restart services:**
 ```bash
 sudo systemctl restart sinexd
-sudo systemctl restart 'sinex-source-unit-*'
 ```
 
 **Stop all Sinex services:**
@@ -509,7 +506,6 @@ sudo systemctl stop 'sinex-*'
 **Start all Sinex services:**
 ```bash
 sudo systemctl start sinexd
-sudo systemctl start 'sinex-source-unit-*'
 ```
 
 ### Coordination System Operations
@@ -734,7 +730,8 @@ for ad-hoc debugging, not as the primary configuration surface.
 
 Default resource limits per service:
 - **sinexd**: unified event engine/API/supervisor resource envelope
-- **source-unit services**: per-unit limits from `services.sinex.nodes.defaults.resources`
+- **source bindings hosted in sinexd**: default per-binding limits/config from
+  `services.sinex.nodes.defaults.resources` feed the generated binding manifest
 
 Adjust in configuration:
 ```nix
@@ -768,9 +765,8 @@ df -h /var/lib/sinex
 
 **Events not being captured:**
 ```bash
-# Check node status
-systemctl status 'sinex-source-unit-*'
-journalctl -u 'sinex-source-unit-*' -f
+# Check hosted source binding logs
+journalctl -u sinexd --since "10 minutes ago"
 
 # Verify API readiness
 curl -k https://127.0.0.1:9999/ready
@@ -833,8 +829,6 @@ sudo systemctl restart sinexd
 # Restart all services in order
 sudo systemctl stop 'sinex-*'
 sudo systemctl start sinexd
-sleep 2
-sudo systemctl start 'sinex-source-unit-*'
 ```
 
 **Database recovery:**

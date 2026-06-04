@@ -326,16 +326,30 @@ impl EventBatcher {
                 }
             };
 
+            let event_id = event.id;
             let publish_result = match &self.transport {
-                // Replay re-emits provenance-bearing events from the local
-                // recovery spool — declared as Critical for the original
-                // ingestor lane.
                 EventTransport::Nats(publisher) => {
+                    let intent = EventIntent::new(
+                        if self.config.source_unit_id.is_empty() {
+                            "recovery-spool"
+                        } else {
+                            &self.config.source_unit_id
+                        },
+                        if self.config.parser_id.is_empty() {
+                            "recovery-spool"
+                        } else {
+                            &self.config.parser_id
+                        },
+                        if self.config.parser_version.is_empty() {
+                            "0.0.0"
+                        } else {
+                            &self.config.parser_version
+                        },
+                        vec![event],
+                        HostName::from_static("sinex-batcher"),
+                    );
                     publisher
-                        .publish_raw_event_batch(
-                            &[&event],
-                            sinex_primitives::transport::Class::Critical,
-                        )
+                        .publish_intent(&intent, sinex_primitives::transport::Class::Critical)
                         .await
                 }
             };
@@ -350,14 +364,14 @@ impl EventBatcher {
                         target: "sinex_metrics",
                         metric = "node.recovery_spool_discards_total",
                         path = ?recovery_spool_path,
-                        event_id = ?event.id,
+                        event_id = ?event_id,
                         error = %error,
                         "Discarding recovery-spool event after replay publish failure (remaining-lines cap of {MAX_REMAINING_LINES} reached); event is permanently lost"
                     );
                 } else {
                     warn!(
                         path = ?recovery_spool_path,
-                        event_id = ?event.id,
+                        event_id = ?event_id,
                         error = %error,
                         "Preserving recovery-spool entry after replay publish failure"
                     );

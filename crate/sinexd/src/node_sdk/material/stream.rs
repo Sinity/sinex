@@ -5,8 +5,7 @@
 //! It coordinates material lifecycle (begin → append → finalize) without
 //! holding locks across I/O operations.
 //!
-//! Adapted from patterns in `sinex-system-ingestor::RealWatcherMaterialContext`
-//! and `sinex-fs-ingestor` watcher material handling.
+//! Adapted from the source-unit host's stream and file-drop material handling.
 //!
 //! # Example
 //!

@@ -319,7 +319,10 @@ impl AdmissionService {
     }
 
     /// Admit a candidate event already decoded into the canonical event model.
-    pub async fn admit_event(&self, event: Event<JsonValue>) -> EventEngineResult<AdmissionDecision> {
+    pub async fn admit_event(
+        &self,
+        event: Event<JsonValue>,
+    ) -> EventEngineResult<AdmissionDecision> {
         self.admit_event_with_metadata(event, None).await
     }
 
@@ -582,12 +585,10 @@ impl AdmissionService {
         self.admit_event(event).await
     }
 
-    /// Admit bytes that may contain an `EventIntent` envelope.
+    /// Admit bytes containing an `EventIntent` envelope.
     ///
-    /// First attempts to deserialize as an envelope. If successful, validates
-    /// the envelope (version, required fields) and admits each event inside.
-    /// If the payload is not an envelope (missing `envelope_version` field),
-    /// falls back to the legacy single-event deserialization path.
+    /// Durable transport ingress is envelope-only. Raw `Event` JSON is accepted
+    /// only by direct test/bootstrap helpers that call `admit_bytes()`.
     pub async fn admit_intent_bytes(
         &self,
         payload: &[u8],
@@ -627,50 +628,38 @@ impl AdmissionService {
             ))]);
         }
 
-        // Try to deserialize as an EventIntent envelope first.
-        // Detection heuristic: presence of "envelope_version" field.
-        let is_envelope = payload_str.contains("\"envelope_version\"");
-
-        if is_envelope {
-            let intent: EventIntent = match serde_json::from_slice(payload) {
-                Ok(intent) => intent,
-                Err(error) => {
-                    return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
-                        AdmissionRejectionKind::EnvelopeDeserialization,
-                        format!("Failed to deserialize admission envelope: {error}"),
-                    ))]);
-                }
-            };
-
-            // Validate the envelope.
-            if let Err(error) = intent.validate() {
+        let intent: EventIntent = match serde_json::from_slice(payload) {
+            Ok(intent) => intent,
+            Err(error) => {
                 return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
-                    AdmissionRejectionKind::EnvelopeValidation,
-                    format!("Admission envelope validation failed: {error}"),
+                    AdmissionRejectionKind::EnvelopeDeserialization,
+                    format!("Failed to deserialize admission envelope: {error}"),
                 ))]);
             }
+        };
 
-            if !ACCEPTED_ENVELOPE_VERSIONS.contains(&intent.envelope_version.as_str()) {
-                return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
-                    AdmissionRejectionKind::EnvelopeValidation,
-                    format!(
-                        "Envelope version {} is not accepted. Accepted versions: {:?}",
-                        intent.envelope_version, ACCEPTED_ENVELOPE_VERSIONS
-                    ),
-                ))]);
-            }
-
-            // Admit each event in the envelope.
-            let mut decisions = Vec::with_capacity(intent.events.len());
-            for event in intent.events {
-                decisions.push(self.admit_event(event).await?);
-            }
-            return Ok(decisions);
+        if let Err(error) = intent.validate() {
+            return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
+                AdmissionRejectionKind::EnvelopeValidation,
+                format!("Admission envelope validation failed: {error}"),
+            ))]);
         }
 
-        // Fall back to legacy single-event deserialization.
-        let decision = self.admit_bytes(payload).await?;
-        Ok(vec![decision])
+        if !ACCEPTED_ENVELOPE_VERSIONS.contains(&intent.envelope_version.as_str()) {
+            return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
+                AdmissionRejectionKind::EnvelopeValidation,
+                format!(
+                    "Envelope version {} is not accepted. Accepted versions: {:?}",
+                    intent.envelope_version, ACCEPTED_ENVELOPE_VERSIONS
+                ),
+            ))]);
+        }
+
+        let mut decisions = Vec::with_capacity(intent.events.len());
+        for event in intent.events {
+            decisions.push(self.admit_event(event).await?);
+        }
+        Ok(decisions)
     }
 
     pub async fn persist_batch(

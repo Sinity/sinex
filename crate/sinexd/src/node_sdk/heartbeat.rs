@@ -47,7 +47,7 @@ fn env_usize_with_default(var: &str, default: usize) -> usize {
 /// Heartbeat metrics and status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeartbeatMetrics {
-    /// Service name (e.g., "sinex-fs-ingestor")
+    /// Service name (e.g., "sinexd")
     pub service_name: ServiceName,
     /// Current status: healthy, degraded, failed
     pub status: HealthStatus,

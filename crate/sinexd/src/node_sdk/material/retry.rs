@@ -1,7 +1,7 @@
 //! Generic retry wrapper for transient material capture errors.
 //!
-//! This module abstracts the retry-with-exponential-backoff pattern seen in
-//! `sinex-fs-ingestor::capture_material_from_file`. It's generic over:
+//! This module abstracts the retry-with-exponential-backoff pattern used by
+//! material capture paths. It's generic over:
 //!
 //! - The error type (typically `SinexError`)
 //! - The success type
@@ -34,7 +34,7 @@ pub trait TransientErrorPredicate: Send + Sync {
     fn is_transient(&self, err: &SinexError) -> bool;
 }
 
-/// Default transient error classifier matching `sinex-fs-ingestor` patterns.
+/// Default transient error classifier for file-backed material capture.
 ///
 /// Classifies these I/O error kinds as transient:
 /// - `WouldBlock`: Resource temporarily unavailable
