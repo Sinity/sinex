@@ -472,10 +472,27 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
         ))
     })?;
 
+    // Stream names must match how the pipeline actually creates them under a
+    // test namespace. The raw-events and source-material streams take the
+    // namespace as a suffix (`..._<NS>`), but the confirmations stream is
+    // derived from the *already-namespaced* raw-events base with a trailing
+    // `_CONFIRMATIONS` (see `JetStreamTopology::new`), so the namespace lands in
+    // the middle (`DEV_SINEX_RAW_EVENTS_<NS>_CONFIRMATIONS`). Reconstructing it
+    // with `nats_stream_name_with_namespace("SINEX_RAW_EVENTS_CONFIRMATIONS")`
+    // would wrongly place the namespace at the end and 404 every namespaced run.
+    let namespace = crate::node_sdk::error_helpers::env_nonempty_string_optional(
+        "SINEX_NAMESPACE",
+        "service integration preflight namespace",
+    );
+    let raw_events_stream =
+        env.nats_stream_name_with_namespace(namespace.as_deref(), "SINEX_RAW_EVENTS");
     let required_streams = [
-        env.nats_stream_name("SINEX_RAW_EVENTS"),
-        env.nats_stream_name("SINEX_RAW_EVENTS_CONFIRMATIONS"),
-        env.nats_stream_name(crate::node_sdk::SOURCE_MATERIAL_STREAM),
+        raw_events_stream.clone(),
+        format!("{raw_events_stream}_CONFIRMATIONS"),
+        env.nats_stream_name_with_namespace(
+            namespace.as_deref(),
+            crate::node_sdk::SOURCE_MATERIAL_STREAM,
+        ),
     ];
     let mut checked_streams = Vec::with_capacity(required_streams.len());
     let mut missing_streams = Vec::new();

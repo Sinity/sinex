@@ -106,21 +106,20 @@ fn insecure_https_client() -> TestResult<reqwest::Client> {
 /// DB inserts and synthetic confirmation messages, which validated the bus
 /// but not the full HTTP-fed-by-real-ingestd path.
 ///
-/// `#[ignore]`d (#1626) — two-layer issue, one fixed:
-///   1. FIXED: `TestCoreStack` started the gateway without a namespace while
-///      ingestd ran namespaced, so the SSE SubscriptionBus subscribed to
-///      `{default}.events.confirmations.>` and never saw the ingestd's
-///      `{namespace}.events.confirmations.*` confirmations. Now the pipeline
-///      namespace is threaded into the gateway (`TestGatewayConfig::namespace`).
-///   2. STILL OPEN: the JetStream confirmations stream is named/looked up
-///      non-namespaced (`nats_stream_name("SINEX_RAW_EVENTS_CONFIRMATIONS")` →
-///      `DEV_SINEX_RAW_EVENTS_CONFIRMATIONS`) while the raw-events and
-///      source-material streams ARE namespaced (`..._with_namespace`). Under the
-///      per-test namespace the confirmations stream is therefore "not found"
-///      (404), so confirmations never publish → SSE never delivers. Re-enable
-///      once the confirmations stream naming is made consistent (#1626).
+/// Previously `#[ignore]`d (#1626). The delivery path is core-NATS pub/sub
+/// (`SubscriptionBus` subscribes to `events.confirmations.>`), independent of
+/// the JetStream confirmations *stream* — so the fix is a subject-namespace
+/// match, not a stream-naming one:
+///   - `#1631` threaded the pipeline namespace into the gateway *process*
+///     (`SINEX_NAMESPACE`), but the `SubscriptionBus` ignored it and subscribed
+///     to the un-namespaced `{env}.events.confirmations.>`, while a namespaced
+///     ingestd publishes to `{env}.{namespace}.events.confirmations.*`.
+///   - Fixed here: `GatewayConfig::namespace` is now consumed by the bus, which
+///     subscribes via `nats_subject_with_namespace`, matching the publisher.
+///   - Separately, the node preflight stream-existence check was made
+///     namespace-aware so it stops 404-ing on `..._CONFIRMATIONS` under a
+///     per-test namespace.
 #[sinex_test(timeout = 90)]
-#[ignore = "blocked on #1626 layer 2: confirmations JetStream stream is not namespaced like raw-events/source-material"]
 async fn test_sse_delivers_event_after_real_ingestd_confirmation(
     ctx: TestContext,
 ) -> TestResult<()> {

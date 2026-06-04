@@ -288,6 +288,15 @@ pub struct GatewayConfig {
         default_expr = "default_rate_limit_per_minute()"
     )]
     pub rpc_rate_limit_per_minute: u32,
+
+    /// Pipeline namespace (`SINEX_NAMESPACE`), used for NATS subject/stream
+    /// isolation in tests. The SSE SubscriptionBus subscribes to
+    /// `{namespace}.events.confirmations.>`; it MUST match the namespace the
+    /// paired ingestd publishes confirmations under, or the bus never sees them
+    /// and SSE delivery silently never completes. Unset in production.
+    #[serde(default)]
+    #[sinex_config(env = "SINEX_NAMESPACE")]
+    pub namespace: Option<String>,
 }
 
 fn default_database_url() -> String {
@@ -440,6 +449,7 @@ impl Default for GatewayConfig {
             rpc_rate_limit_idle_timeout_secs: default_rate_limit_idle_timeout_secs(),
             rpc_rate_limit_window_secs: default_rate_limit_window_secs(),
             rpc_rate_limit_per_minute: default_rate_limit_per_minute(),
+            namespace: None,
         }
     }
 }
