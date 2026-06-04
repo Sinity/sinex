@@ -110,7 +110,11 @@ pub struct ScanArgs {
     /// Maximum events to process (0 = unlimited)
     pub max_events: u64,
 
-    /// Skip duplicate detection
+    /// Reserved for the #1050 offline-import dedup path (DB-backed
+    /// `build_occurrence_filter`). Live source-unit scans have no DB pool, so
+    /// this is not consumed at the live boundary; live occurrence identity is
+    /// carried via `equivalence_key` (#1570 Prong C) for the curation workbench,
+    /// and automatic admission-side suppression is tracked separately.
     pub skip_duplicates: bool,
 
     /// Node-specific configuration
