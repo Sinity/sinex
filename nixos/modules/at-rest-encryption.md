@@ -107,7 +107,7 @@ control is not in scope for this doc.
 
 ## Related
 
-- `docs/security/threat_model.md` (T1, T3, T5)
+- `nixos/modules/security-threat-model.md` (T1, T3, T5)
 - `nixos/modules/deployment-topology.md` (agenix secret inventory,
   service-user permissions)
 - `crate/sinexctl/docs/operator_data_lifecycle.md` (operator data lifecycle)

@@ -28,21 +28,21 @@ Key architectural decisions and implementation details are documented at their i
   - UUIDv7-native schema provisioning
   - TimescaleDB setup for hypertable partitioning  
   - Guidance for WAL/UUIDv7 write-path tuning
-- **TimescaleDB Hypertable Creation**: [`crate/lib/sinex-schema/src/schema/events.rs`](../crate/lib/sinex-schema/src/schema/events.rs)
+- **TimescaleDB Hypertable Creation**: [`crate/sinex-schema/src/defs/events.rs`](../crate/sinex-schema/src/defs/events.rs)
   - Chunk interval optimization guidelines
   - Compression strategy documentation
-- **Identifier model (UUIDv7 + typed wrappers)**: [`crate/lib/sinex-primitives/docs/type_safe_units_and_identifiers.md`](../crate/lib/sinex-primitives/docs/type_safe_units_and_identifiers.md)
+- **Identifier model (UUIDv7 + typed wrappers)**: [`crate/sinex-primitives/docs/type_safe_units_and_identifiers.md`](../crate/sinex-primitives/docs/type_safe_units_and_identifiers.md)
   - Persisted identifiers are UUIDv7
   - Rust code keeps compile-time safety with typed `Id<T>`
 
 ### Event Processing
 - **Ingestion & JetStream Overview**: [`README.md#architecture`](../README.md#architecture)
-  - Provenance and Stage-as-you-go responsibilities: [`crate/lib/sinex-node-sdk/docs/provenance.md`](../crate/lib/sinex-node-sdk/docs/provenance.md)
+  - Provenance model and replay responsibilities: [`README.md#the-provenance-model-read-this-first`](../README.md#the-provenance-model-read-this-first)
   - Stream bootstrap defaults + environment namespacing: [`modules/nats.nix`](modules/nats.nix)
-- **Node SDK Patterns**: [`crate/lib/sinex-node-sdk/docs/overview.md`](../crate/lib/sinex-node-sdk/docs/overview.md)
-  - Unified node interface and checkpoint semantics
-  - Replay patterns and lifecycle hooks
-- **Node stream runtime**: [`sinex-node-sdk/src/runtime/stream/mod.rs`](../crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs)
+- **Source-unit and node runtime patterns**: [`crate/sinexd/docs/sources/README.md`](../crate/sinexd/docs/sources/README.md)
+  - Source-unit host shape, source-material staging, and parser boundaries
+  - Inline node SDK runtime and checkpoint semantics
+- **Node stream runtime**: [`crate/sinexd/src/node_sdk/runtime/stream/mod.rs`](../crate/sinexd/src/node_sdk/runtime/stream/mod.rs)
   - Snapshot, historical, and continuous modes
 
 ### Node Implementations
@@ -72,14 +72,14 @@ Add to your NixOS configuration:
     users.target = "yourusername";  # REQUIRED: match the user defined above
   };
 
-  # Gateway admin token MUST come from a runtime-only secret, not a plain text= value.
+  # API admin token MUST come from a runtime-only secret, not a plain text= value.
   # Using environment.etc."...".text = "..." bakes the token into the world-readable
   # Nix store — do NOT do that for real tokens.
   #
   # Recommended: use agenix (token is auto-resolved from sinex-gateway-admin-token.age):
   #   age.secrets.sinex-gateway-admin-token.file = ./secrets/sinex-gateway-admin-token.age;
   #
-  # Alternative: point directly at a runtime secret file:
+  # Alternative: point the legacy-named option directly at a runtime secret file:
   #   services.sinex.secrets.gatewayAdminTokenFile = "/run/secrets/sinex-gateway-admin-token";
   #
   # The module asserts that one of the above is present and refuses to start without it.
@@ -98,7 +98,7 @@ sudo nixos-rebuild switch --flake .#your-host
 > **REQUIRED**: You MUST apply the sinex flake overlay to your pkgs. The overlay provides:
 > - `pkgs.sinex` (all binaries bundled)
 > - `pkgs.sinexctl` (CLI tool)
-> - `pkgs.sinex-ingestd`, `pkgs.sinex-gateway`, etc. (individual packages)
+> - `pkgs.sinexd` and `pkgs.sinexctl` (individual binaries)
 > - `pkgs.postgresql18Packages.pg_jsonschema` (required PostgreSQL extension)
 >
 > ```nix
@@ -135,7 +135,7 @@ The upstream module exposes real feature toggles directly:
 
 ```nix
 services.sinex = {
-  core.enable = true;                    # ingestd + gateway
+  core.enable = true;                    # unified sinexd daemon
   nodes.enable = true;                   # node units
   lifecycle.maintenance.enable = false;  # DLQ/blob maintenance timers
   observability.enable = false;          # journald/logging integration
@@ -309,12 +309,12 @@ sudo nixos-rebuild test --flake .#devSandbox
 
 Switch permanently only after merging the example into your host configuration.
 > **Note**: The remote node example expects an existing remote NATS endpoint (feeding a central
-> ingestd/gateway deployment) and explicitly disables local PostgreSQL/NATS provisioning.
+> `sinexd` deployment) and explicitly disables local PostgreSQL/NATS provisioning.
 
 Grafana, when enabled, now provisions:
 - a fixed Prometheus datasource (`sinex-prometheus`)
 - a fixed PostgreSQL datasource (`sinex-postgres`) pointed at the Sinex database
-- tracked dashboards from `nixos/monitoring/grafana-dashboards/`
+- generated/provisioned dashboards derived from the current telemetry surfaces
 
 Those dashboards are built around the current `sinex_telemetry.*` surfaces: hourly operator
 views for ingest/runtime telemetry and live event-time views for recent activity.
@@ -324,20 +324,20 @@ views for ingest/runtime telemetry and live event-time views for recent activity
 Sinex uses a node architecture:
 
 ```
-External Data → Nodes → NATS JetStream → sinex-ingestd → PostgreSQL (`core.events`)
+External Data → Source units → NATS JetStream → sinexd::event_engine → PostgreSQL (`core.events`)
                                     ↓
-                      confirmations/DLQ → Automata → Gateway/CLI
+                      confirmations/DLQ → Automata → sinexd::api / sinexctl
 ```
 
 Current implementation:
-- Collector nodes publish provisional events and source material slices directly to JetStream (`events.raw.*`, `source_material.*`).
-- ingestd consumes from JetStream, validates, persists to PostgreSQL (TimescaleDB), then publishes confirmations (`events.confirmations.*`) and DLQ entries back to JetStream.
-- Automata consume confirmations via durable JetStream consumers; Gateway/CLI query PostgreSQL via JSON-RPC or direct DB mode.
+- Source units publish provisional events and source material slices directly to JetStream (`events.raw.*`, `source_material.*`).
+- `sinexd::event_engine` consumes from JetStream, validates, persists to PostgreSQL (TimescaleDB), then publishes confirmations (`events.confirmations.*`) and DLQ entries back to JetStream.
+- Automata consume confirmations via durable JetStream consumers; `sinexd::api` / `sinexctl` query PostgreSQL via JSON-RPC or direct DB mode.
 
 **Core Components:**
-- **ingestd**: JetStream consumer + validator + single-writer persistence + confirmations/DLQ publisher
-- **Gateway**: HTTP/JSON-RPC API for CLI and web access
-- **Nodes**: Independent services for data capture and processing
+- **sinexd::event_engine**: JetStream consumer + validator + single-writer persistence + confirmations/DLQ publisher
+- **sinexd::api**: HTTP/JSON-RPC API for CLI and web access
+- **Source units / automata**: source capture and derived processing hosted by `sinexd`
 - **PostgreSQL**: Event storage with TimescaleDB for time-series data
 - **NATS JetStream**: Message bus for real-time event distribution
 
@@ -485,24 +485,20 @@ services.sinex = {
 
 **Check service status:**
 ```bash
-systemctl status sinex-ingestd
-systemctl status sinex-gateway
-systemctl status sinex-filesystem-1
-systemctl status sinex-terminal-1
-systemctl status sinex-browser-1
+systemctl status sinexd
+systemctl status 'sinex-source-unit-*'
 ```
 
 **View logs:**
 ```bash
-journalctl -u sinex-ingestd -f
-journalctl -u sinex-gateway -f
-journalctl -u sinex-filesystem-1 -f
+journalctl -u sinexd -f
+journalctl -u 'sinex-source-unit-*' -f
 ```
 
 **Restart services:**
 ```bash
-sudo systemctl restart sinex-ingestd
-sudo systemctl restart sinex-filesystem-1
+sudo systemctl restart sinexd
+sudo systemctl restart 'sinex-source-unit-*'
 ```
 
 **Stop all Sinex services:**
@@ -512,13 +508,8 @@ sudo systemctl stop 'sinex-*'
 
 **Start all Sinex services:**
 ```bash
-sudo systemctl start sinex-ingestd
-sudo systemctl start sinex-gateway
-sudo systemctl start sinex-filesystem-1
-sudo systemctl start sinex-terminal-1
-sudo systemctl start sinex-browser-1
-sudo systemctl start sinex-desktop-1
-sudo systemctl start sinex-system-1
+sudo systemctl start sinexd
+sudo systemctl start 'sinex-source-unit-*'
 ```
 
 ### Coordination System Operations
@@ -661,8 +652,7 @@ sudo rm -rf /var/lib/sinex/*
 sudo rm -rf /var/log/sinex/*
 
 # Restart services
-sudo systemctl start sinex-ingestd
-sudo systemctl start sinex-gateway
+sudo systemctl start sinexd
 # ... other services
 ```
 
@@ -693,11 +683,11 @@ sudo -u sinex psql sinex_dev -c "SELECT 1;"
 # Check JetStream status
 nats --server nats://127.0.0.1:4222 server report jetstream
 
-# Check the gateway readiness surface
+# Check the API readiness surface
 curl -k https://127.0.0.1:9999/ready
 
 # Inspect the managed unit contract
-systemctl show sinex-ingestd --property=Type,NotifyAccess,WatchdogUSec
+systemctl show sinexd --property=Type,NotifyAccess,WatchdogUSec
 
 # Run full preflight check
 sudo -u sinex /run/current-system/sw/bin/sinex-preflight verify
@@ -714,7 +704,7 @@ curl -k https://127.0.0.1:9999/health
 curl -k https://127.0.0.1:9999/ready
 
 # Check service startup
-journalctl -u sinex-ingestd --since "5 minutes ago"
+journalctl -u sinexd --since "5 minutes ago"
 ```
 
 ## Configuration Reference
@@ -743,13 +733,12 @@ for ad-hoc debugging, not as the primary configuration surface.
 ### Resource Limits
 
 Default resource limits per service:
-- **ingestd**: 1GB memory, 100% CPU
-- **gateway**: 512MB memory, 50% CPU  
-- **nodes**: 256MB memory, 50% CPU each
+- **sinexd**: unified event engine/API/supervisor resource envelope
+- **source-unit services**: per-unit limits from `services.sinex.nodes.defaults.resources`
 
 Adjust in configuration:
 ```nix
-services.sinex.core.ingestd.resources = {
+services.sinex.core.resources = {
   memoryMax = "2G";
   cpuQuota = "200%";
 };
@@ -780,12 +769,12 @@ df -h /var/lib/sinex
 **Events not being captured:**
 ```bash
 # Check node status
-systemctl status sinex-filesystem-1
-journalctl -u sinex-filesystem-1 -f
+systemctl status 'sinex-source-unit-*'
+journalctl -u 'sinex-source-unit-*' -f
 
-# Verify gateway readiness
+# Verify API readiness
 curl -k https://127.0.0.1:9999/ready
-journalctl -u sinex-ingestd --since "10 minutes ago"
+journalctl -u sinexd --since "10 minutes ago"
 
 # Check database connectivity
 sudo -u sinex psql sinex_dev -c "SELECT COUNT(*) FROM core.events;"
@@ -839,17 +828,13 @@ journalctl -u sinex-* | grep -i "memory\|oom\|killed"
 **Service recovery:**
 ```bash
 # Restart single service
-sudo systemctl restart sinex-ingestd
+sudo systemctl restart sinexd
 
 # Restart all services in order
 sudo systemctl stop 'sinex-*'
-sudo systemctl start sinex-ingestd
+sudo systemctl start sinexd
 sleep 2
-sudo systemctl start sinex-gateway
-sudo systemctl start sinex-filesystem-1
-sudo systemctl start sinex-terminal-1
-sudo systemctl start sinex-desktop-1
-sudo systemctl start sinex-system-1
+sudo systemctl start 'sinex-source-unit-*'
 ```
 
 **Database recovery:**
@@ -900,7 +885,7 @@ services.grafana = {
   enable = true;
   provision.dashboards.settings.providers = [{
     name = "sinex";
-    options.path = ./nixos/monitoring/grafana-dashboards;
+    options.path = ./path/to/generated/sinex-grafana-dashboards;
   }];
 };
 ```
@@ -1040,7 +1025,7 @@ in
     systemd.services.sinex-my-service = {
       description = "Sinex My Service";
       wantedBy = [ "multi-user.target" ];
-      after = [ "postgresql.service" "sinex-ingestd.service" ];
+      after = [ "postgresql.service" "sinexd.service" ];
       
       serviceConfig = {
         Type = "simple";

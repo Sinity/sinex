@@ -152,8 +152,10 @@ An entry in the source-unit catalog (`SourceUnitBinding`, registered via
 wired at deployment time: implementation crate, adapter, output event type,
 privacy context, material policy, checkpoint policy, runtime shape, and
 package impact. Bindings are the durable contract between a Rust source-unit
-implementation and its NixOS-side runtime configuration; the API-ext-G
-drift gate (`xtask verify source-worker`) checks them for consistency.
+implementation and its NixOS-side runtime configuration. They are compiled
+into the source-unit registry and exercised through normal Rust/NixOS
+verification; the old generated catalog and source-worker drift gate no longer
+exist.
 
 ### source material
 A file or data source registered in `raw.source_material_registry` that serves

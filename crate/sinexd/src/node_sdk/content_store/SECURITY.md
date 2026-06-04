@@ -8,7 +8,7 @@ A comprehensive path validation security review has been completed for the core 
 
 ### ✅ Completed Implementations
 
-#### 1. **sinex-node-sdk** - CLI and Configuration
+#### 1. **sinexd::node_sdk** - CLI and Configuration
 - **Status**: SECURED
 - **Key Changes**:
   - Added SanitizedPath imports to CLI module
@@ -16,7 +16,7 @@ A comprehensive path validation security review has been completed for the core 
   - Created comprehensive path validation utilities in `path_validator.rs`
   - Implemented secure temporary file creation patterns
 
-#### 2. **sinex-node-sdk** - Content Store and File Operations
+#### 2. **sinexd::node_sdk** - Content Store and File Operations
 - **Status**: SECURED
 - **Key Changes**:
   - Created secure path validator module with `validate_and_convert_path()`
@@ -30,11 +30,11 @@ A comprehensive path validation security review has been completed for the core 
   - `SanitizedPath` and `validate_path` are available throughout the shared primitives layer
   - No direct filesystem operations found that bypass validation
 
-#### 4. **sinex-gateway** - Content Storage API
+#### 4. **sinexd::api** - Content Storage API
 - **Status**: SECURED
 - **Key Changes**:
-  - Gateway-local content service properly delegates to the content-store manager
-  - Securing the content-store manager automatically secures gateway content operations
+  - API-local content service properly delegates to the content-store manager
+  - Securing the content-store manager automatically secures API content operations
   - No direct filesystem access bypassing content-store manager validation
 
 #### 5. **sinex-test-utils** - Test Path Validation
@@ -66,7 +66,7 @@ A comprehensive path validation security review has been completed for the core 
    - Checks for malicious patterns (../../../, etc.)
    - Returns validated, safe paths
 
-3. **Path Validation Utilities** (`sinex_node_sdk::content_store::path_validator`)
+3. **Path Validation Utilities** (`sinexd::node_sdk::content_store::path_validator`)
    - Helper functions for common path operations
    - Secure temporary file creation
    - Path existence and accessibility validation
@@ -221,8 +221,8 @@ The implementation provides strong protection against common path-based attack v
 
 ## Files
 
-- `/realm/project/sinex/crate/lib/sinex-node-sdk/src/content_store/path_validator.rs` - Core path validation utilities.
-- `/realm/project/sinex/crate/lib/sinex-node-sdk/src/content_store/manager.rs` - Content-store manager API that consumes validated paths.
+- `/realm/project/sinex/crate/sinexd/src/node_sdk/content_store/path_validator.rs` - Core path validation utilities.
+- `/realm/project/sinex/crate/sinexd/src/node_sdk/content_store/manager.rs` - Content-store manager API that consumes validated paths.
 - `sinex_primitives::domain::SanitizedPath` - Validated path type.
 - `sinex_primitives::validation::validate_path` - Core validation function.
 - `xtask::sandbox` path helpers - Test-specific secure temporary path utilities.

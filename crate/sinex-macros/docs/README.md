@@ -20,4 +20,4 @@ pub struct FileCreatedPayload {
 }
 ```
 
-See `docs/overview.md` for behavior details and limitations.
+This file is the crate-local behavior reference for the derive surface.

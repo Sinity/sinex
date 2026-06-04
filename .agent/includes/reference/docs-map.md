@@ -44,7 +44,7 @@
 | Issue operating model | `.github/issue-operating-model.md` |
 | CI policy | `.github/ci-policy.md` |
 | Target-vision claim ledger | `.github/target-vision-claim-ledger.md` |
-| Threat model / at-rest encryption | `docs/security/` |
+| Threat model / at-rest encryption | `nixos/modules/security-threat-model.md`, `nixos/modules/at-rest-encryption.md` |
 | Contributing | `CONTRIBUTING.md` |
 | Issue / PR workflow | `CONTRIBUTING.md`, `.github/ISSUE_TEMPLATE/*`, `.github/pull_request_template.md` |
 | Testing | `TESTING.md`, `xtask/docs/sandbox/README.md` |

@@ -1,7 +1,7 @@
 # Pipeline Testing
 
 Pipeline tests exercise the same flow that production uses: nodes publish to NATS JetStream,
-sinex-ingestd consumes, and the database observes the persisted events. This ensures tests
+the in-process `sinexd::event_engine` consumer persists events, and the database observes them. This ensures tests
 validate real behavior, not just mock wiring.
 
 ## The Pipeline-First Rule
@@ -70,7 +70,7 @@ names. This is the only safe way to share NATS across parallel tests.
 
 ## PipelineScope
 
-PipelineScope provides full pipeline testing with in-process ingestd:
+PipelineScope provides full pipeline testing with an in-process event-engine consumer:
 
 ```rust
 #[sinex_test]
@@ -98,9 +98,9 @@ async fn test_full_pipeline(ctx: TestContext) -> TestResult<()> {
 ### PipelineScope Lifecycle
 
 1. **Creation**: Calls `ctx.reset_database_slot()` to ensure clean state
-2. **Ingestd**: Starts in-process using test's database URL and NATS context
-3. **Work Directory**: Reuses per-database directory under `/tmp/sinex-ingestd-shared/`
-4. **Cleanup**: Stops ingestd on drop
+2. **Event engine**: Starts in-process using the test database URL and NATS context
+3. **Work Directory**: Reuses the per-database pipeline work directory
+4. **Cleanup**: Stops the in-process consumer on drop
 
 ### PipelineScope API
 
@@ -127,7 +127,7 @@ impl PipelineScope {
 
 ## Manual JetStream Provisioning
 
-PipelineScope provisions ingestd streams automatically. For additional streams or custom
+PipelineScope provisions event-engine streams automatically. For additional streams or custom
 consumers, use the namespace helper:
 
 ```rust

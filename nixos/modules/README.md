@@ -289,15 +289,15 @@ sops-nix), use `services.sinex.database.setupWaitForPaths` to gate
   (`allowed_roots`, boot/timer execution mode, and scan/timer unit names) so
   readiness checks can verify that non-daemon runtime surfaces are genuinely
   configured and active.
-- That descriptor now carries the gateway probe base URL, whether the gateway
+- That descriptor now carries the API probe base URL, whether the API endpoint
   requires client TLS, the effective NATS server list, and all secret-material
-  paths needed for readiness checks, including the generated gateway TLS trust
+  paths needed for readiness checks, including the generated API TLS trust
   anchor when `core.gateway.autoGenerateTls = true`.
 - The module also emits `/etc/sinex/runtime-target.json`. This narrower
   descriptor is the runtime connection/status target for `sinexctl` and other
-  status probes: gateway URL, auth/TLS material, database URL, NATS servers,
+  status probes: API URL, auth/TLS material, database URL, NATS servers,
   state directories, managed service units, target kind, and descriptor source.
-  When the gateway service stages a role-suffixed admin token from a raw secret,
+  When `sinexd::api` stages a role-suffixed admin token from a raw secret,
   the descriptor records `gateway.token_role = "admin"` so clients can derive
   the same bearer token from the readable raw secret file.
 - Pre-flight verification lives under `lifecycle.preflight`. Disable individual

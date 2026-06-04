@@ -1,10 +1,10 @@
-# Gateway Transport Security
+# API Transport Security
 
-TLS and authentication requirements for the Gateway control plane.
+TLS and authentication requirements for the `sinexd::api` control plane.
 
 ## Trust Boundaries
 
-The Gateway exposes RPC endpoints for user interaction and system control.
+The API exposes RPC endpoints for user interaction and system control.
 
 - **Localhost**: **MUST** use TLS (`https://...`); trust the local CA via `SINEX_RPC_CA_CERT` when using self-signed certs.
 - **Network Exposed**: **MUST** be encrypted. Any TCP binding to a non-loopback interface requires TLS + mTLS (`SINEX_API_TLS_CLIENT_CA`).
@@ -16,7 +16,7 @@ The Gateway exposes RPC endpoints for user interaction and system control.
 
 ## Enforcement
 
-- **TCP**: TLS is mandatory; the gateway refuses to start without `SINEX_API_TLS_CERT` and `SINEX_API_TLS_KEY`.
+- **TCP**: TLS is mandatory; `sinexd::api` refuses to start without `SINEX_API_TLS_CERT` and `SINEX_API_TLS_KEY`.
 
 ## Environment Variables
 
@@ -31,4 +31,4 @@ The Gateway exposes RPC endpoints for user interaction and system control.
 ## See Also
 
 - System-wide security model: `README.md#security`
-- Gateway overview: `docs/overview.md`
+- API overview: `crate/sinexd/docs/api/overview.md`

@@ -4,7 +4,8 @@ This document captures the current design of `sinexctl`.
 
 ## Scope
 
-`sinexctl` is an operator CLI for Sinex. Its control path is the gateway RPC surface.
+`sinexctl` is an operator CLI for Sinex. Its control path is the
+`sinexd::api` RPC surface.
 
 ## Command Shape
 
@@ -22,12 +23,12 @@ Global options are layered with runtime env and local preferences:
 
 Runtime target descriptors bridge deployed-host configuration into the live
 operator CLI without making `xtask` the production control surface. They supply
-gateway URL, auth token file, TLS trust material, and target identity. Explicit
+API URL, auth token file, TLS trust material, and target identity. Explicit
 CLI flags still win so one-off overrides remain possible.
 
 ## Command Families
 
-- Gateway/system: `gateway`, `core`
+- API/system: `gateway`, `core`
 - Query/inspection: `query`, `verify` (bounded runtime evidence checks plus optional active document deployment smoke and descriptor-aware collector-surface evidence, distinguishing recent `ts_orig` samples from merely historical persisted rows, with local deployment-descriptor awareness for managed oneshot surfaces), `automata`, `status`, `recent`, `errors`, `watch`, `tui`
 - Operations: `ops`, `audit`, `node`, `replay`, `dlq`, `lifecycle`, `gitops`
 - Local tooling: `config`, `completions`

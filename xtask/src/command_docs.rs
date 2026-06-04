@@ -92,7 +92,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 path: "build",
                 fallback_summary: "Build workspace packages",
                 when: "you need binaries or build artifacts",
-                examples: &["xtask build", "xtask build -p sinex-gateway"],
+                examples: &["xtask build", "xtask build -p sinexd"],
                 notes: &[],
             },
         ],
@@ -237,7 +237,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 path: "deps impact",
                 fallback_summary: "Analyze rebuild impact",
                 when: "a dependency change might widen the rebuild/test blast radius",
-                examples: &["xtask deps impact", "xtask deps impact sinex-gateway"],
+                examples: &["xtask deps impact", "xtask deps impact sinexd"],
                 notes: &[],
             },
             GuideEntry {

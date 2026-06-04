@@ -375,4 +375,4 @@ Critical Invariant: Confirmations published AFTER commit, ACKs AFTER confirmatio
 
 - Patterns: [patterns.md](./patterns.md)
 - Architecture: [architecture.md](./architecture.md)
-- Database diagrams: `crate/lib/sinex-db/docs/diagrams.md`
+- Database diagrams: `crate/sinex-db/docs/diagrams.md`

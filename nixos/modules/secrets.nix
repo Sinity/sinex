@@ -88,7 +88,7 @@ let
 
   nonExport = [
     "sinex-local-db"
-    "sinex-gateway-admin-token"  # gateway reads via SINEX_API_ADMIN_TOKEN_FILE (file path, not raw content)
+    "sinex-gateway-admin-token"  # sinexd::api reads via SINEX_API_ADMIN_TOKEN_FILE (file path, not raw content)
     "sinex-grafana-secret-key"
     "sinex-nats-ca"
     "sinex-nats-client-ca"

@@ -481,14 +481,14 @@ let
               fi
 
               if [ ! -r "$source_path" ]; then
-                echo "[sinex] gateway admin token $source_path is not readable" >&2
+                echo "[sinex] API admin token $source_path is not readable" >&2
                 exit 1
               fi
 
               raw_token="$(${pkgs.coreutils}/bin/cat "$source_path")"
               raw_token="$(${pkgs.coreutils}/bin/printf '%s' "$raw_token" | ${pkgs.gnused}/bin/sed -e 's/[[:space:]]*$//')"
               if [ -z "$raw_token" ]; then
-                echo "[sinex] gateway admin token $source_path is empty" >&2
+                echo "[sinex] API admin token $source_path is empty" >&2
                 exit 1
               fi
 
@@ -497,7 +497,7 @@ let
                   staged_token="$raw_token"
                   ;;
                 *:readonly|*:write)
-                  echo "[sinex] gateway admin token $source_path must be raw or already end with :admin" >&2
+                  echo "[sinex] API admin token $source_path must be raw or already end with :admin" >&2
                   exit 1
                   ;;
                 *)

@@ -2188,11 +2188,11 @@ in
             type = nullOr str;
             default = null;
             description = ''
-              Optional path to the gateway admin token file.
+              Optional path to the API admin token file.
               When unset, the module first looks for the conventional secret sources
               <literal>sinex-gateway-admin-token</literal> (agenix) and
               <literal>/etc/sinex/gateway-admin-token</literal> (declarative environment.etc),
-              and the gateway refuses to start only if none of those exist.
+              and the API refuses to start only if none of those exist.
             '';
           };
         };

@@ -36,7 +36,7 @@ WHERE c.command LIKE 'cargo test%'
 | Persistence | `sinexd::event_engine` + PostgreSQL |
 | Derived state | `sinexd::automata` and replay-aware node runtime |
 | Deployment | NixOS modules + systemd |
-| Extension | `sinex-node-sdk` |
+| Runtime extension | inline `sinexd::node_sdk` and source-unit/automaton traits |
 
 ## Architecture
 
@@ -96,7 +96,7 @@ sinexd::sources    sinexd::automata      Clients
 - observability is journald-first; service logs are part of the event universe
 - nodes and derived automata recover through checkpoints and replay
 - replay, archive, and restore are explicit control-plane operations
-- direct DB access is diagnostic; the normal control/query boundary is the gateway
+- direct DB access is diagnostic; the normal control/query boundary is `sinexd::api`
 
 ### Stack
 

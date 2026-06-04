@@ -17,7 +17,7 @@ Set `SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true` to suppress Rust-side bootstrap
 
 All subjects are prefixed with the environment name (`dev`, `staging`, `prod`) via `SinexEnvironment::nats_subject()`. For example, `events.raw.fs.file.created` becomes `dev.events.raw.fs.file.created` in development.
 
-Reference: `crate/lib/sinex-primitives/src/environment.rs`
+Reference: `crate/sinex-primitives/src/environment.rs`
 
 ## Subject Naming
 
