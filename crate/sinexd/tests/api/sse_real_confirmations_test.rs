@@ -105,13 +105,22 @@ fn insecure_https_client() -> TestResult<reqwest::Client> {
 /// Replaces the gap that #1136 documented: previous SSE coverage used direct
 /// DB inserts and synthetic confirmation messages, which validated the bus
 /// but not the full HTTP-fed-by-real-ingestd path.
-// The real-ingestd → NATS confirmation → gateway SubscriptionBus → SSE delivery
-// path does not complete under `TestCoreStack`: the warmup loop never observes a
-// published event over SSE within 45s (the real-subprocess stack is fragile
-// post-fold; see #1614/#1616). Kept compiled so it doesn't re-orphan. The sibling
-// HTTP-layer test below still runs. Tracked by #1626.
+///
+/// `#[ignore]`d (#1626) — two-layer issue, one fixed:
+///   1. FIXED: `TestCoreStack` started the gateway without a namespace while
+///      ingestd ran namespaced, so the SSE SubscriptionBus subscribed to
+///      `{default}.events.confirmations.>` and never saw the ingestd's
+///      `{namespace}.events.confirmations.*` confirmations. Now the pipeline
+///      namespace is threaded into the gateway (`TestGatewayConfig::namespace`).
+///   2. STILL OPEN: the JetStream confirmations stream is named/looked up
+///      non-namespaced (`nats_stream_name("SINEX_RAW_EVENTS_CONFIRMATIONS")` →
+///      `DEV_SINEX_RAW_EVENTS_CONFIRMATIONS`) while the raw-events and
+///      source-material streams ARE namespaced (`..._with_namespace`). Under the
+///      per-test namespace the confirmations stream is therefore "not found"
+///      (404), so confirmations never publish → SSE never delivers. Re-enable
+///      once the confirmations stream naming is made consistent (#1626).
 #[sinex_test(timeout = 90)]
-#[ignore = "blocked on #1626: real ingestd→bus→SSE delivery never completes under TestCoreStack"]
+#[ignore = "blocked on #1626 layer 2: confirmations JetStream stream is not namespaced like raw-events/source-material"]
 async fn test_sse_delivers_event_after_real_ingestd_confirmation(
     ctx: TestContext,
 ) -> TestResult<()> {
