@@ -1,0 +1,37 @@
+# Cloud-safe crates manifest
+# ===========================
+#
+# Crates listed here are safe to `cargo check -p <crate>` and
+# `cargo test -p <crate>` inside cloud-agent sandboxes
+# (Claude Code Web, Codex Cloud). "Safe" means:
+#
+#   1. No `sqlx::query!` / `sqlx::query_as!` macros at compile time
+#      (those require either a live Postgres URL via DATABASE_URL or a
+#      prepared `.sqlx/` cache committed to the repo).
+#   2. No `std::process::Command` invocations of `nats-server`, `postgres`,
+#      `docker`, or similar external binaries during normal test runs.
+#   3. No `tokio::net::TcpListener` / `UdpSocket` bound at module-init
+#      time (constructors fine; auto-bind on import is not).
+#   4. Test working set fits in ~16 GB RAM and ~30 GB disk; no full
+#      workspace dependency cone.
+#   5. No nested KVM, no host systemd, no real Wayland session needed.
+#
+# Anything NOT listed: do NOT exercise in cloud. Route to the Hetzner
+# self-hosted runner (`[self-hosted, linux, x64, sinex-heavy]`).
+#
+# This file is a manifest only. No xtask command consumes it yet — a
+# follow-up will add `xtask cloud-check` that reads this list and runs
+# `cargo check`/`cargo test` only against entries below. Curate by hand:
+# adding a crate means you have verified its source against the criteria
+# above on the current master.
+
+[[safe]]
+crate = "sinex-primitives"
+reason = "pure types and helpers; no IO, no macros against a live DB, no external binaries"
+
+# Add more entries here as they are individually verified.
+# Verification recipe (run from repo root):
+#   rg -n 'sqlx::query!|sqlx::query_as!|sqlx::query_file!' crate/<path>
+#   rg -n 'Command::new\("(nats-server|postgres|psql|docker|systemctl)"' crate/<path>
+#   rg -n 'TcpListener::bind|UdpSocket::bind' crate/<path>
+# Any non-empty result disqualifies the crate from this manifest.
