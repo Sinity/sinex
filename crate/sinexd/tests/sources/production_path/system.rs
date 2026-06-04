@@ -25,6 +25,10 @@ const DBUS_FIXTURE: &[u8] = br#"{"key":"value"}"#;
 /// A udev path payload (UTF-8 device path).
 const UDEV_FIXTURE: &[u8] = b"/sys/bus/usb/devices/1-1";
 
+/// A desktop-notification JSON record (the shape `NotificationParser` expects from
+/// the D-Bus `Notify` stream): app_name, summary, body, urgency, timeout, …
+const DESKTOP_NOTIFICATION_FIXTURE: &[u8] = br#"{"app_name":"sinex-tests","summary":"Build complete","body":"All checks passed","urgency":1,"timeout":-1,"actions":[],"hints":{}}"#;
+
 // ---------------------------------------------------------------------------
 // system.journald
 // ---------------------------------------------------------------------------
@@ -78,16 +82,37 @@ async fn test_system_dbus_initial_ingestion() -> TestResult<()> {
 }
 
 // ---------------------------------------------------------------------------
+// desktop.notification (D-Bus Notify stream → NotificationParser)
+// ---------------------------------------------------------------------------
+
+#[sinex_test]
+async fn test_desktop_notification_initial_ingestion() -> TestResult<()> {
+    super::obligations::initial_ingestion::run(
+        "desktop.notification",
+        super::AdapterKind::Dbus,
+        DESKTOP_NOTIFICATION_FIXTURE,
+        &["notification.sent"],
+    )
+    .await
+    .map_err(|e| color_eyre::eyre::eyre!("{e}"))
+}
+
+// ---------------------------------------------------------------------------
 // system.udev
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
 async fn test_system_udev_initial_ingestion() -> TestResult<()> {
+    // The bare-path fixture carries no add/remove/change action metadata, so the
+    // parser classifies it as `device.other` rather than guessing a connect (see
+    // UdevParser: "emitting Other action instead of guessing kind"). Real udev
+    // events carry an ACTION and classify as connected/disconnected — covered by
+    // the unit tests in `sources/source_units/system/udev.rs`.
     super::obligations::initial_ingestion::run(
         "system.udev",
         super::AdapterKind::FileDrop,
         UDEV_FIXTURE,
-        &["device.connected"],
+        &["device.other"],
     )
     .await
     .map_err(|e| color_eyre::eyre::eyre!("{e}"))
