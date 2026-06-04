@@ -6,7 +6,7 @@
 //! - Row/byte anchors identify each bookmark in its source material.
 //! - Sensitive URL/note/excerpt/tag content is gated via privacy context;
 //!   `cover` and `highlights` are dropped entirely.
-//! - Parser satisfies source-worker registration and manifest obligations
+//! - Parser satisfies source-unit registration and manifest obligations
 //!   (Bus-First admission path verified via `declared_event_types` + `privacy_contexts`).
 
 use std::collections::HashSet;
@@ -268,13 +268,13 @@ async fn privacy_tier_is_sensitive_in_manifest() {
 }
 
 // ---------------------------------------------------------------------------
-// AC: Output flows through source-worker + Bus-First admission path
+// AC: Output flows through source-unit host + Bus-First admission path
 //
 // We verify that:
 // - The manifest declares the expected (source, event_type) pair.
 // - The parser_id and source_unit_id match the registered constants.
 // - Every intent carries the source-unit-id and parser-id linking it to the
-//   Bus-First admission path (#1081 source-worker registry).
+//   Bus-First admission path (#1081 source-unit host registry).
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -301,7 +301,7 @@ async fn manifest_declares_raindrop_bookmark_created() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn intents_carry_source_worker_routing_fields() {
+async fn intents_carry_source_unit_host_routing_fields() {
     let mut parser = RaindropBookmarkParser;
     let intents = parser
         .parse_record(record_for(SNAPSHOT_A.as_bytes()), &test_ctx())

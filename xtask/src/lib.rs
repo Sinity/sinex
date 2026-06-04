@@ -37,12 +37,10 @@ pub mod output;
 pub mod planner;
 pub mod preflight;
 pub mod process;
-pub mod proof_catalog;
 pub mod resources;
 pub mod runtime_metrics;
 pub mod runtime_target;
 pub mod sandbox;
-mod source_unit_inventory;
 pub mod strict_changed;
 pub use sandbox::context::Sandbox;
 pub use sandbox::events::EventPublisher;
@@ -59,8 +57,7 @@ use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, FreshnessCommand,
     GitStackCommand, ImpactCommand, JobsCommand, PrivacyCommand, RaDiagnoseCommand,
     RecordDriftBypassCommand, ResetCommand, SchemaCommand, StatusCommand, TestCommand,
-    ci::CiCommand, completions::CompletionsCommand, source_units::SourceUnitsCommand,
-    verify::VerifyCommand,
+    ci::CiCommand, completions::CompletionsCommand, verify::VerifyCommand,
 };
 use config::config;
 pub use config::workspace_target_dir_for;
@@ -315,8 +312,6 @@ enum Commands {
     // ─── Generation ────────────────────────────────────────────────
     #[command(hide = true)]
     Docs(commands::DocsCommand),
-    #[command(hide = true)]
-    SourceUnits(SourceUnitsCommand),
 
     // ─── Maintenance ───────────────────────────────────────────────
     #[command(hide = true)]
@@ -398,7 +393,6 @@ fn command_dispatch_metadata(
         Commands::Impact(cmd) => ("impact", None, None, cmd.metadata()),
         Commands::GitStack(cmd) => ("git-stack", None, None, cmd.metadata()),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata()),
-        Commands::SourceUnits(cmd) => ("source-units", None, None, cmd.metadata()),
         Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata()),
         Commands::RaDiagnose(cmd) => ("ra-diagnose", None, None, cmd.metadata()),
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata()),
@@ -546,7 +540,6 @@ pub async fn run_cli() -> Result<()> {
             Commands::Impact(cmd) => cmd.execute(&ctx).await,
             Commands::GitStack(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
-            Commands::SourceUnits(cmd) => cmd.execute(&ctx).await,
             Commands::Doctor(cmd) => cmd.execute(&ctx).await,
             Commands::RaDiagnose(cmd) => cmd.execute(&ctx).await,
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,

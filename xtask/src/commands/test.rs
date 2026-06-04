@@ -2572,9 +2572,9 @@ mod tests {
         _guard.clear("SINEX_TEST_DB_POOL_SIZE");
         let command = TestCommand::default();
         let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-source-worker".to_string()],
+            runner_packages: vec!["sinexd".to_string()],
             excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-source-worker".to_string()]),
+            workload_scope: WorkloadScope::Packages(vec!["sinexd".to_string()]),
         };
 
         assert_eq!(
@@ -2598,9 +2598,9 @@ mod tests {
     async fn test_narrow_test_db_pool_size_skips_broad_or_configured_runs()
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-source-worker".to_string()],
+            runner_packages: vec!["sinexd".to_string()],
             excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-source-worker".to_string()]),
+            workload_scope: WorkloadScope::Packages(vec!["sinexd".to_string()]),
         };
         let broad = TestCommand {
             all: true,

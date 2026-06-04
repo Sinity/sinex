@@ -65,9 +65,8 @@ in
     ./monitoring.nix
     ./preflight-verification.nix
     ./kitty-shell-integration.nix
-    ./source-workers.nix
+    ./source-units.nix
     ./source-bindings.nix
-    ./source-bindings-generated.nix
   ];
 
   options.services.sinex = with types; let
@@ -1179,7 +1178,7 @@ in
                     ".crdownload"
                   ];
                   description = ''
-                    File-name suffixes excluded from fs source-worker records.
+                    File-name suffixes excluded from fs source-unit host records.
                     Volatile files (SQLite -wal/-shm, pytest testmondata,
                     editor swap/temp files) produce per-write churn with no
                     standalone capture value and bloat the CAS — issue #1543
@@ -2547,7 +2546,7 @@ in
           "sinex-document-scan"
         ];
       # Auxiliary units = bootstrap + standalone oneshots + the long-running
-      # core/automata/source-worker services. The runtime target wants the
+      # core/automata/source-unit host services. The runtime target wants the
       # whole graph so that pulling the target reliably brings the runtime
       # online (and stopping it tears the runtime down cleanly).
       runtimeAuxiliaryUnitNames = lib.unique (

@@ -311,7 +311,7 @@ async fn polylogue_external_producer_metadata_fixture_admits(ctx: TestContext) -
     let payload = PolylogueConversationIndexedPayload {
         conversation_id: "claude-code:session-018f".into(),
         provider: "claude_code".into(),
-        title: Some("source-worker drain review".into()),
+        title: Some("source-unit host drain review".into()),
         tags: vec!["sinex".into(), "review".into()],
         content_hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
             .into(),

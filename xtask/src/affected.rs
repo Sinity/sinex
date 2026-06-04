@@ -419,11 +419,8 @@ fn files_to_packages(files: &[String]) -> HashSet<String> {
 pub(crate) fn package_for_path(path: &str) -> Option<String> {
     let parts: Vec<&str> = path.split('/').collect();
 
-    // Post-fold flat layout: every workspace crate lives directly at
-    // crate/<package>/... (crate/sinexd, crate/sinex-db, crate/sinexctl,
-    // crate/sinex-e2e-tests, crate/sinex-workspace-tests, ...). The pre-fold
-    // crate/{lib,core,nodes,cli}/<name> grouping and the top-level tests/e2e,
-    // tests/workspace crates no longer exist (#1559 gateway/source-worker fold).
+    // Runtime crates live under crate/<package>/... while workspace-member
+    // test crates live under tests/<kind>/....
     if parts.len() >= 2 && parts[0] == "crate" {
         let name = parts[1];
         if name.starts_with('.') {
@@ -432,14 +429,23 @@ pub(crate) fn package_for_path(path: &str) -> Option<String> {
         return Some(name.replace('_', "-"));
     }
 
+    if parts.len() >= 2 && parts[0] == "tests" {
+        return match parts[1] {
+            "e2e" => Some("sinex-e2e-tests".to_string()),
+            "workspace" => Some("sinex-workspace-tests".to_string()),
+            "vm-suite" => Some("sinex-vm-test-suite".to_string()),
+            _ => None,
+        };
+    }
+
     // xtask/ changes affect xtask itself
     if parts.first() == Some(&"xtask") {
         return Some("xtask".to_string());
     }
 
-    // Workspace-level files (Cargo.toml, Cargo.lock, .config/) and the
-    // top-level tests/ fixture tree are handled upstream as workspace-wide
-    // changes rather than mapped to a single package.
+    // Workspace-level files (Cargo.toml, Cargo.lock, .config/) and shared
+    // test fixtures are handled upstream as workspace-wide changes rather
+    // than mapped to a single package.
     None
 }
 
@@ -813,13 +819,13 @@ mod tests {
             Some("xtask".to_string())
         );
 
-        // Test crates are flat workspace members too
+        // Test crates are workspace members under the top-level tests/ tree.
         assert_eq!(
-            package_for_path("crate/sinex-e2e-tests/tests/some_test.rs"),
+            package_for_path("tests/e2e/tests/some_test.rs"),
             Some("sinex-e2e-tests".to_string())
         );
         assert_eq!(
-            package_for_path("crate/sinex-workspace-tests/Cargo.toml"),
+            package_for_path("tests/workspace/Cargo.toml"),
             Some("sinex-workspace-tests".to_string())
         );
 
@@ -828,7 +834,7 @@ mod tests {
         assert_eq!(package_for_path("Cargo.toml"), None);
         assert_eq!(package_for_path("Cargo.lock"), None);
         assert_eq!(package_for_path(".config/nextest.toml"), None);
-        // Top-level tests/ holds shared fixtures, not a package.
+        // Other top-level tests/ entries are shared fixtures, not packages.
         assert_eq!(package_for_path("tests/fixtures/tls/ca.pem"), None);
         // A dotfile directly under crate/ is not a package.
         assert_eq!(
@@ -918,11 +924,11 @@ mod tests {
         let repo = tempfile::tempdir()?;
         let graceful = repo
             .path()
-            .join("crate/sinex-e2e-tests/tests/graceful_shutdown_test.rs");
+            .join("tests/e2e/tests/graceful_shutdown_test.rs");
         let xtask_test = repo.path().join("xtask/src/example_test.rs");
         let workspace_test = repo
             .path()
-            .join("crate/sinex-workspace-tests/tests/smoke.rs");
+            .join("tests/workspace/tests/smoke.rs");
         fs::create_dir_all(graceful.parent().expect("graceful parent"))?;
         fs::create_dir_all(xtask_test.parent().expect("xtask parent"))?;
         fs::create_dir_all(workspace_test.parent().expect("workspace parent"))?;
@@ -1064,10 +1070,10 @@ mod tests {
         let repo = tempfile::tempdir()?;
         let root = repo
             .path()
-            .join("crate/core/sinex-source-worker/tests/production_path.rs");
+            .join("crate/sinexd/tests/sources/production_path.rs");
         let nested = repo
             .path()
-            .join("crate/core/sinex-source-worker/tests/production_path/browser.rs");
+            .join("crate/sinexd/tests/sources/production_path/browser.rs");
         fs::create_dir_all(nested.parent().expect("nested parent"))?;
         fs::write(
             &root,
@@ -1091,9 +1097,9 @@ mod tests {
         let repo = tempfile::tempdir()?;
         let root = repo
             .path()
-            .join("crate/core/sinex-source-worker/tests/production_path.rs");
+            .join("crate/sinexd/tests/sources/production_path.rs");
         let nested = repo.path().join(
-            "crate/core/sinex-source-worker/tests/production_path/obligations/initial_ingestion.rs",
+            "crate/sinexd/tests/sources/production_path/obligations/initial_ingestion.rs",
         );
         fs::create_dir_all(nested.parent().expect("nested parent"))?;
         fs::write(
@@ -1102,12 +1108,12 @@ mod tests {
         )?;
         fs::write(
             &nested,
-            "#[sinex_test]\nasync fn source_worker_binary_scan_private_mode_matrix() {}\n",
+            "#[sinex_test]\nasync fn source_unit_host_scan_private_mode_matrix() {}\n",
         )?;
 
         let inferred = infer_test_binaries_for_test_filter_in(
             repo.path(),
-            "test(source_worker_binary_scan_private_mode_matrix)",
+            "test(source_unit_host_scan_private_mode_matrix)",
         )?;
         assert_eq!(inferred, vec!["production_path".to_string()]);
         Ok(())

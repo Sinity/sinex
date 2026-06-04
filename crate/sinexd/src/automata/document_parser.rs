@@ -21,7 +21,7 @@
 //! Chunk text is emitted as parsed text. DB/user privacy policy applies at the
 //! event-engine chokepoint using the emitted event metadata and payload hints.
 //!
-//! Ref: `docs/architecture/document-layer-v1.md`.
+//! Ref: `crate/sinex-schema/docs/document_layer.md`.
 
 use crate::node_sdk::derived_node::{
     AutomatonContext, DerivedOutput, InputProvenanceFilter, MultiOutputTransducerNode,

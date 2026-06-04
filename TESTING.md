@@ -28,14 +28,10 @@ xtask impact seed-coverage -p xtask -E 'test(name)'
 xtask test --impact-mode=off --all
 xtask test --impact-mode=aggressive
 
-# Source-material resource profiles
-xtask test -p sinex-node-sdk -E 'test(source_material_scenario_batches_row_stream_records_with_stable_anchors)'
-xtask test -p sinex-node-sdk -E 'test(source_material_scenario_duplicate_content_reuses_blob_identity)'
-xtask test -p sinex-node-sdk --heavy -E 'test(source_material_resource_storage_backend_profile)'
 ```
 
 `xtask test` is the primary test entrypoint. It handles the repo's preflight,
-runtime binary preparation for e2e/node-sdk tests, and nextest wiring; use
+runtime binary preparation for e2e/sinexd tests, and nextest wiring; use
 `xtask test --help` for the current option surface.
 Bare `xtask test` uses machine-derived impact planning in balanced mode by
 default. It runs affected package scopes unless the changed hunks have recorded
@@ -95,7 +91,7 @@ Do not model source-ingestion correctness as an `xtask exercise`. Source
 material, SDK adapter, node runtime, replay, and provenance behavior belong in
 Rust tests and VM integration tests. `xtask` may orchestrate those tests, but it
 does not own their semantics. The command-plane split is documented in
-[`docs/architecture/runtime-target-boundaries.md`](docs/architecture/runtime-target-boundaries.md).
+[`xtask/docs/runtime-target-boundaries.md`](xtask/docs/runtime-target-boundaries.md).
 
 ## Harness and Layout
 

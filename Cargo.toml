@@ -13,9 +13,9 @@ members = [
   "crate/sinexctl",
 
   # Test crates
-  "crate/sinex-e2e-tests",
-  "crate/sinex-workspace-tests",
-  "crate/sinex-vm-suite",
+  "tests/e2e",
+  "tests/workspace",
+  "tests/vm-suite",
 
   # Developer tooling
   "xtask",

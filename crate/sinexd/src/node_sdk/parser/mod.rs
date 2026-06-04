@@ -14,7 +14,7 @@
 //! - **`ParserFixtureHarness`** provides reusable test infrastructure.
 //!
 //! Parser authors implement `MaterialParser::parse_record()` and declare their
-//! manifest. The source-worker runtime owns adapter opening, cursor persistence,
+//! manifest. The source-unit runtime owns adapter opening, cursor persistence,
 //! retry, admission, transport, and confirmation tracking.
 
 #[cfg(feature = "messaging")]

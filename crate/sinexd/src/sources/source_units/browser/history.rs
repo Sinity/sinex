@@ -64,7 +64,7 @@ register_source_unit_binding! {
         "browser.history",
         "web",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>")
     .output_event_type("page.visited")
     .privacy_context("url")
@@ -72,14 +72,14 @@ register_source_unit_binding! {
     .checkpoint_policy("mutable_snapshot")
     .resource_shape("linear_rows_bounded_memory")
     .source_unit_id("browser.history")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::MutableSnapshot {
         backing_store_kind: "sqlite",
         occurrence_anchor: "visit_id",
     })
     .runtime_shape(RuntimeShape::Continuous)
     .package_impact("browser_history_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

@@ -181,8 +181,6 @@ fn check_generated_drift() -> Result<Option<Vec<PlannedAction>>> {
             "--",
             "docs/command-guide.md",
             "docs/command-reference.md",
-            "docs/source-units.json",
-            "docs/proof-catalog.json",
         ])
         .output()?;
 
@@ -246,7 +244,7 @@ fn affected_packages(dirty: &[&str]) -> Vec<String> {
 
     for path in dirty {
         // Post-fold flat layout: workspace crates live at crate/<package>/...
-        // (#1559 gateway/source-worker fold removed the crate/{lib,core,nodes,cli}
+        // (#1559 runtime fold removed the crate/{lib,core,nodes,cli}
         // grouping). Derive the package directly from the first path segment.
         let pkg: String = if let Some(rest) = path.strip_prefix("crate/") {
             match rest.split('/').next() {

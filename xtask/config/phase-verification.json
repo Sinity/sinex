@@ -58,7 +58,7 @@
     },
     {
       "id": "2",
-      "title": "Implement acquisition and the source-worker host",
+      "title": "Implement acquisition and the sinexd source-unit host",
       "issues": [1055, 1061, 1067, 1081, 1083, 1084, 1125],
       "required_checks": [
         "xtask check -p sinex-node-sdk",

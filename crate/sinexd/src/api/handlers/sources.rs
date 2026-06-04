@@ -1673,7 +1673,7 @@ mod tests {
     async fn source_shape_drift_extraction_reads_checkpoint_user_state()
     -> xtask::sandbox::TestResult<()> {
         let drifts = extract_checkpoint_drifts(
-            "source-worker.default.host-a",
+            "source-unit.default.host-a",
             Some(&json!({
                 "user_state": {
                     "recent_input_drifts": [
@@ -1702,7 +1702,7 @@ mod tests {
 
         assert_eq!(drifts.len(), 1);
         let drift = &drifts[0];
-        assert_eq!(drift.checkpoint_key, "source-worker.default.host-a");
+        assert_eq!(drift.checkpoint_key, "source-unit.default.host-a");
         assert_eq!(drift.source_unit_id.as_str(), "browser.history");
         assert_eq!(drift.consumer_group.as_deref(), Some("default"));
         assert_eq!(drift.consumer_name.as_deref(), Some("host-a"));
@@ -1722,7 +1722,7 @@ mod tests {
     async fn source_shape_drift_extraction_ignores_checkpoints_without_drift()
     -> xtask::sandbox::TestResult<()> {
         let drifts = extract_checkpoint_drifts(
-            "source-worker.default.host-a",
+            "source-unit.default.host-a",
             Some(&json!({ "user_state": { "other": [] } })),
         )?;
 
@@ -1739,7 +1739,7 @@ mod tests {
 
         let drifts = vec![
             SourceShapeDriftObservation {
-                checkpoint_key: "source-worker.default.host-a".to_string(),
+                checkpoint_key: "source-unit.default.host-a".to_string(),
                 source_unit_id: source_unit_id.clone(),
                 consumer_group: Some("default".to_string()),
                 consumer_name: Some("host-a".to_string()),
@@ -1753,7 +1753,7 @@ mod tests {
                 observed_at: "2026-05-21T09:00:00Z".to_string(),
             },
             SourceShapeDriftObservation {
-                checkpoint_key: "source-worker.default.host-a".to_string(),
+                checkpoint_key: "source-unit.default.host-a".to_string(),
                 source_unit_id,
                 consumer_group: Some("default".to_string()),
                 consumer_name: Some("host-a".to_string()),
@@ -1810,7 +1810,7 @@ mod tests {
         sources[0].source_unit_id = Some(source_unit_id.clone());
 
         let drifts = vec![SourceShapeDriftObservation {
-            checkpoint_key: "source-worker.default.host-a".to_string(),
+            checkpoint_key: "source-unit.default.host-a".to_string(),
             source_unit_id,
             consumer_group: Some("default".to_string()),
             consumer_name: Some("host-a".to_string()),
@@ -1845,7 +1845,7 @@ mod tests {
         ];
 
         let drifts = vec![SourceShapeDriftObservation {
-            checkpoint_key: "source-worker.default.host-a".to_string(),
+            checkpoint_key: "source-unit.default.host-a".to_string(),
             source_unit_id: sinex_primitives::parser::SourceUnitId::new("browser.history")?,
             consumer_group: Some("default".to_string()),
             consumer_name: Some("host-a".to_string()),
@@ -1879,7 +1879,7 @@ mod tests {
         sources[0].source_unit_id = Some(source_unit_id.clone());
 
         let drifts = vec![SourceShapeDriftObservation {
-            checkpoint_key: "source-worker.default.host-a".to_string(),
+            checkpoint_key: "source-unit.default.host-a".to_string(),
             source_unit_id,
             consumer_group: Some("default".to_string()),
             consumer_name: Some("host-a".to_string()),

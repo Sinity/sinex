@@ -1,6 +1,6 @@
 //! Per-unit drain controller with material tracking and crash recovery.
 //!
-//! The [`SourceWorkerDrainController`] wraps the SDK's [`RuntimeDrainController`]
+//! The [`SourceUnitDrainController`] wraps the SDK's [`RuntimeDrainController`]
 //! and adds:
 //!
 //! - **Active-work gating**: track in-flight work units; drain waits for them
@@ -100,9 +100,9 @@ impl GapEvidence {
 /// Per-unit drain controller with phased drain protocol and crash recovery
 /// evidence.
 ///
-/// Each source unit in the source-worker host gets its own controller,
+/// Each source unit in the source-unit host gets its own controller,
 /// providing independent drain lifecycle management.
-pub struct SourceWorkerDrainController {
+pub struct SourceUnitDrainController {
     /// The SDK-level drain signal (broadcast to all subscribers).
     inner: Arc<RuntimeDrainController>,
     /// Whether drain has been requested (set once, never cleared).
@@ -116,7 +116,7 @@ pub struct SourceWorkerDrainController {
     active_work: AtomicUsize,
 }
 
-impl SourceWorkerDrainController {
+impl SourceUnitDrainController {
     /// Create a new per-unit drain controller.
     #[must_use]
     pub fn new() -> Self {
@@ -316,15 +316,15 @@ impl SourceWorkerDrainController {
     }
 }
 
-impl Default for SourceWorkerDrainController {
+impl Default for SourceUnitDrainController {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl fmt::Debug for SourceWorkerDrainController {
+impl fmt::Debug for SourceUnitDrainController {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SourceWorkerDrainController")
+        f.debug_struct("SourceUnitDrainController")
             .field("draining", &self.draining.load(Ordering::Acquire))
             .field("active_work", &self.active_work.load(Ordering::Acquire))
             .finish_non_exhaustive()
@@ -335,11 +335,11 @@ impl fmt::Debug for SourceWorkerDrainController {
 
 /// RAII guard that decrements the active work counter on drop.
 ///
-/// Created by [`SourceWorkerDrainController::work_guard`]. The guard holds
+/// Created by [`SourceUnitDrainController::work_guard`]. The guard holds
 /// a shared reference to the controller — it does not own or lock anything.
 /// The only effect is the atomic counter decrement on drop.
 pub struct ActiveWorkGuard<'a> {
-    controller: &'a SourceWorkerDrainController,
+    controller: &'a SourceUnitDrainController,
 }
 
 impl Drop for ActiveWorkGuard<'_> {
@@ -356,7 +356,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_drain_phases_transition_in_order() -> xtask::sandbox::TestResult<()> {
-        let controller = SourceWorkerDrainController::new();
+        let controller = SourceUnitDrainController::new();
         assert_eq!(controller.current_phase().await, DrainPhase::Idle);
 
         controller.request_drain("test-unit").await;
@@ -401,7 +401,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_work_guard_increments_and_decrements_counter() -> xtask::sandbox::TestResult<()> {
-        let controller = SourceWorkerDrainController::new();
+        let controller = SourceUnitDrainController::new();
         assert_eq!(controller.active_work_count(), 0);
 
         {
@@ -417,7 +417,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_drain_waits_for_active_work() -> xtask::sandbox::TestResult<()> {
-        let controller = SourceWorkerDrainController::new();
+        let controller = SourceUnitDrainController::new();
         controller.enter_work();
         assert_eq!(controller.active_work_count(), 1);
 
@@ -440,7 +440,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_double_drain_is_idempotent() -> xtask::sandbox::TestResult<()> {
-        let controller = SourceWorkerDrainController::new();
+        let controller = SourceUnitDrainController::new();
         controller.request_drain("test-unit").await;
         assert_eq!(controller.current_phase().await, DrainPhase::StoppingAccept);
 
@@ -453,7 +453,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_gap_evidence_on_restart() -> xtask::sandbox::TestResult<()> {
-        let controller = SourceWorkerDrainController::new();
+        let controller = SourceUnitDrainController::new();
         controller.request_drain("test-unit").await;
         // Simulate crash mid-drain
         let evidence = controller.record_gap_evidence("test-unit").await;
@@ -468,7 +468,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_clean_start_evidence() -> xtask::sandbox::TestResult<()> {
-        let controller = SourceWorkerDrainController::new();
+        let controller = SourceUnitDrainController::new();
         let evidence = controller.clean_start_evidence("test-unit");
         assert_eq!(evidence.unit_id, "test-unit");
         assert_eq!(evidence.drain_phase_at_crash, None);

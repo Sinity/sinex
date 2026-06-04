@@ -456,7 +456,7 @@ register_source_unit_binding! {
         "git-commit-history",
         "vcs",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("StaticFileAdapter")
     .output_event_type("commit.created")
     .privacy_context("Document")
@@ -464,11 +464,11 @@ register_source_unit_binding! {
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")
     .source_unit_id("git-commit-history")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .package_impact("git_commit_history_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
@@ -676,7 +676,7 @@ mod tests {
     #[sinex_test]
     async fn parses_real_repo() -> TestResult<()> {
         let repo_path = env!("CARGO_MANIFEST_DIR");
-        // Walk up from crate/core/sinex-source-worker to workspace root
+        // Walk up from crate/sinexd to workspace root
         let workspace_root = std::path::Path::new(repo_path)
             .ancestors()
             .find(|p| p.join(".git").exists())

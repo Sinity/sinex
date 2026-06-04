@@ -16,7 +16,7 @@ pub mod unix_socket;
 use std::path::PathBuf;
 
 /// The binding parameters produced by a fixture — passed to the obligation
-/// layer so it can configure the source-worker invocation.
+/// layer so it can configure the source-unit invocation.
 #[derive(Debug, Clone)]
 pub enum FixtureBinding {
     /// A filesystem path (file or watched directory).

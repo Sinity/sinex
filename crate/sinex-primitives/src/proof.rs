@@ -253,10 +253,9 @@ pub struct SourceUnitBinding {
     pub capabilities: &'static [&'static str],
     /// Stable id of the [`SourceUnitDescriptor`] this binding belongs to.
     ///
-    /// String FK across the inventory boundary: `xtask source-units check`
-    /// validates that this resolves to a registered descriptor id. Empty
-    /// string means "no descriptor yet" (legacy bindings registered before
-    /// the FK was introduced).
+    /// String FK across the inventory boundary. Empty string means "no
+    /// descriptor yet" (legacy bindings registered before the FK was
+    /// introduced).
     pub source_unit_id: &'static str,
     /// True for "future-state" bindings that describe a planned but
     /// not-yet-deployed adapter shape. Proposed bindings are surfaced
@@ -265,9 +264,8 @@ pub struct SourceUnitBinding {
     pub proposed: bool,
     // ────────────────────────────────────────────────────────────
     // Deployment-shape fields (#1175). These live ONLY on the binding
-    // — `SourceUnitDescriptor` is now strictly semantic. Renderers that
-    // need deployment shape (xtask source-units render, xtask
-    // proof_catalog) look up the binding via `source_unit_id` FK.
+    // — `SourceUnitDescriptor` is now strictly semantic. Inventory consumers
+    // that need deployment shape look up the binding via `source_unit_id` FK.
     // ────────────────────────────────────────────────────────────
     /// Logical runner pack hosting this binding (e.g. "terminal", "process").
     pub runner_pack: &'static str,
@@ -409,10 +407,8 @@ impl<O, P, M, C, CF, RS, BI> SourceUnitBindingBuilder<O, P, M, C, CF, RS, BI> {
 
     /// Attach the binding to a registered source-unit descriptor by id.
     ///
-    /// The id is treated as a string foreign key resolved by
-    /// `xtask source-units check`. Bindings that omit this default to
-    /// the empty string and are flagged as unresolved by the manifest
-    /// validator until they are wired up.
+    /// The id is treated as a string foreign key into the descriptor
+    /// inventory. Bindings that omit this default to the empty string.
     #[must_use]
     pub const fn source_unit_id(mut self, source_unit_id: &'static str) -> Self {
         self.descriptor.source_unit_id = source_unit_id;
@@ -512,7 +508,7 @@ impl<O, P, M, CF, RS, BI> SourceUnitBindingBuilder<O, P, M, MissingCheckpoint, C
 
 impl<O, P, M, C, RS, BI> SourceUnitBindingBuilder<O, P, M, C, MissingCheckpointFamily, RS, BI> {
     /// Shape of the source's checkpoint state machine. Required: codex P2 follow-up
-    /// on PR #1189 — concrete defaults silently passed `xtask source-units check`
+    /// on PR #1189 — concrete defaults silently passed descriptor validation
     /// for new bindings that forgot to set it. Typestate forces every binding to
     /// declare the family explicitly.
     #[must_use]
@@ -687,15 +683,6 @@ inventory::submit! {
 }
 
 inventory::submit! {
-    Claim {
-        id: "claim:source_unit.package_impact_visible",
-        kind: ProofClaimKind::CommandContract,
-        subject: SubjectQuery::from_static("source_unit:*"),
-        statement: "source-unit manifests expose crate, binary, package-output, derivation, SQLx validation, and service-instance impact",
-    }
-}
-
-inventory::submit! {
     RunnerBinding {
         id: "runner:rust.sdk.source_laws",
         runner: "cargo-nextest",
@@ -729,19 +716,6 @@ inventory::submit! {
 }
 
 inventory::submit! {
-    RunnerBinding {
-        id: "runner:xtask.source_units",
-        runner: "xtask",
-        subject: SubjectQuery::from_static("source_unit:*"),
-        claims: &[
-            "claim:source_unit.identity_axes_are_decoupled",
-            "claim:source_unit.package_impact_visible",
-        ],
-        command: "xtask source-units check",
-    }
-}
-
-inventory::submit! {
     ProofObligation {
         id: "obligation:runtime_unit.source_material_laws",
         level: ProofObligationLevel::Required,
@@ -760,17 +734,6 @@ inventory::submit! {
         claim_id: "claim:source_material.material_provenance",
         runner_binding_id: "runner:rust.sdk.source_laws",
         reason: "source units are the semantic leaves that must carry replayable material provenance; current runner proves runtime-unit material laws, so this remains advisory until source-unit-specific pass evidence exists",
-    }
-}
-
-inventory::submit! {
-    ProofObligation {
-        id: "obligation:source_unit.package_impact_rationale",
-        level: ProofObligationLevel::Required,
-        subject: SubjectQuery::from_static("source_unit:*"),
-        claim_id: "claim:source_unit.package_impact_visible",
-        runner_binding_id: "runner:xtask.source_units",
-        reason: "new source units must make build/cache/service impact visible before adding more physical artifacts",
     }
 }
 
@@ -907,8 +870,7 @@ impl SourceUnitBuildImpact {
 /// pairs, privacy tier, time horizons, retention, occurrence identity, and
 /// access policy. Deployment-shape fields (`runner_pack`, `checkpoint_family`,
 /// `runtime_shape`, `package_impact`, `implementation_mode`, `build_impact`)
-/// live on the matching [`SourceUnitBinding`] and are the source of truth for
-/// `xtask source-units render`. See issue #1175.
+/// live on the matching [`SourceUnitBinding`]. See issue #1175.
 ///
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct SourceUnitDescriptor {
@@ -1052,8 +1014,6 @@ mod tests {
 
         assert!(bindings.contains(&"source_unit:terminal.atuin-history"));
         assert!(claims().any(|claim| claim.id == "claim:source_material.material_provenance"));
-        assert!(claims().any(|claim| claim.id == "claim:source_unit.package_impact_visible"));
-        assert!(runner_bindings().any(|binding| binding.id == "runner:xtask.source_units"));
         Ok(())
     }
 }

@@ -1,7 +1,7 @@
 //! `sinexd` — the Sinex local daemon.
 //!
 //! Single binary hosting the event engine, the operator API, the enabled
-//! derived-node automata, and the configured source-worker bindings. The
+//! derived-node automata, and the configured source-unit bindings. The
 //! default subcommand (`serve`, also the no-subcommand path) starts the
 //! supervisor; auxiliary subcommands run one-off scans against a single
 //! source unit (used by oneshot units like the document snapshot scan).
@@ -85,7 +85,7 @@ enum Command {
 
     /// Run a single source unit to completion against the given subcommand.
     ///
-    /// Mirrors the deleted `sinex-source-worker` trampoline for one-off uses
+    /// Runs a source unit through the `sinexd scan-source-unit` entrypoint
     /// like the document snapshot scan. Reuses the source-binding manifest
     /// shape so operator-facing tooling matches the supervisor's catalog.
     ScanSourceUnit {
@@ -115,7 +115,7 @@ enum Command {
         )]
         extra_args: Vec<String>,
 
-        /// Extra environment variables to set in the source-worker process
+        /// Extra environment variables to set in the source-unit host process
         /// (repeatable, format `KEY=VAL`). Used to reproduce operator-side
         /// issues that need session-specific env like `DISPLAY` or
         /// `XAUTHORITY` for desktop.clipboard.

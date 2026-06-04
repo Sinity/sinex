@@ -16,7 +16,7 @@ pub mod registry;
 pub mod runner;
 pub mod source_units;
 
-pub use drain::{GapEvidence, SourceWorkerDrainController};
+pub use drain::{GapEvidence, SourceUnitDrainController};
 pub use monitor_node::{MonitorDriverNode, MonitorEmitFn, MonitorPhase, MonitorState};
 pub use noop::NoopSourceUnit;
 pub use registry::SourceUnitRegistry;

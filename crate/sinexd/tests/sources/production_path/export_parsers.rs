@@ -1,7 +1,7 @@
 //! Production-path obligation tests for file/export parsers.
 //!
 //! These cases upgrade source units that previously had parser-only fixture
-//! coverage into the shared source-worker obligation harness.
+//! coverage into the shared source-unit host obligation harness.
 
 #[cfg(test)]
 mod tests {

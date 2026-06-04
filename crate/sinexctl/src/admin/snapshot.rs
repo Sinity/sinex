@@ -2,7 +2,7 @@
 //! surface.
 //!
 //! Captures Postgres (via `pg_dump`), NATS `JetStream` state, the CAS blob
-//! repository, and remaining per-source-worker state files into a single
+//! repository, and remaining per-source-unit host state files into a single
 //! zstd-compressed tar archive.
 
 use clap::Parser;
@@ -85,7 +85,7 @@ RESTORE:
         sinexctl state restore --archive <archive> --target-dir /tmp/restore-drill --dry-run
         sinexctl state restore --archive <archive> --target-dir /tmp/restore-drill \\
             --confirm-restore --allow-active-services
-    See docs/operations/snapshot.md for the full restore runbook.
+    See crate/sinexctl/docs/state_snapshot.md for the full restore runbook.
 ")]
 pub struct AdminSnapshotCommand {
     /// Path to write the snapshot archive (e.g. /var/backup/sinex/2026-05.tar.zst).
@@ -982,10 +982,7 @@ fn git_sha() -> Option<String> {
 }
 
 fn discover_source_unit_ids(state_dir: &Path) -> Vec<String> {
-    let candidates = [
-        state_dir.join("source-units.json"),
-        PathBuf::from("docs/source-units.json"),
-    ];
+    let candidates = [state_dir.join("source-units.json")];
 
     for candidate in candidates {
         if let Ok(data) = std::fs::read_to_string(&candidate)

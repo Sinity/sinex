@@ -91,7 +91,7 @@ register_source_unit_binding! {
         "docs-library-index",
         "library",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("DirectoryWalkAdapter")
     .output_event_type("document.indexed")
     .privacy_context("Metadata")
@@ -99,11 +99,11 @@ register_source_unit_binding! {
     .checkpoint_policy("directory_walk_cursor")
     .resource_shape("file_reader")
     .source_unit_id("docs-library-index")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .package_impact("docs_library_index_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

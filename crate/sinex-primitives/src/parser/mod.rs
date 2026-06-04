@@ -3,7 +3,7 @@
 //! These types define the boundary-crossing contracts for the staged-source
 //! parser architecture (#1097). They are shared across `sinex-primitives`,
 //! `sinex-node-sdk`, `sinex-db`, and `sinex-schema` so that parser authors,
-//! source-worker runtime, and schema/repository layers share a single
+//! source-unit runtime, and schema/repository layers share a single
 //! vocabulary.
 //!
 //! # Relationship to other modules
@@ -577,7 +577,7 @@ pub type ParserResult<T> = Result<T, ParserError>;
 // =============================================================================
 
 /// Runtime configuration values that `#[suppress_if]` predicates and other
-/// binding-aware fields read at parse time. Supplied by the source-worker host
+/// binding-aware fields read at parse time. Supplied by the source-unit host
 /// from the active source-binding.
 #[derive(Debug, Clone, Default)]
 pub struct BindingConfig {
@@ -609,7 +609,7 @@ impl BindingConfig {
 /// Adapts a specific input shape into a stream of [`SourceRecord`]s.
 ///
 /// Implementations own material access, enumeration, and cursor advancement.
-/// The source-worker runtime calls `open()` to get a record stream and
+/// The source-unit runtime calls `open()` to get a record stream and
 /// `cursor_after()` to advance the checkpoint after each record.
 ///
 /// # Invariants
@@ -738,7 +738,7 @@ pub use occurrence_filter::{OccurrenceFilter, maybe_occurrence_key_string, occur
 
 /// A single event that a parser intends to publish.
 ///
-/// This is the parser's output contract. The source-worker or transport
+/// This is the parser's output contract. The source-unit host or transport
 /// layer owns admission, privacy, NATS publication, and confirmation
 /// tracking.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]

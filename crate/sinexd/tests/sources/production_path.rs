@@ -657,7 +657,7 @@ mod coverage_matrix {
     }
 
     #[sinex_test]
-    async fn source_worker_smoke_matrix_covers_every_registered_factory() -> TestResult<()> {
+    async fn source_unit_host_smoke_matrix_covers_every_registered_factory() -> TestResult<()> {
         let factory_ids: BTreeSet<String> = registered_node_factory_ids()
             .into_iter()
             .map(|id| id.as_str().to_string())
@@ -672,7 +672,7 @@ mod coverage_matrix {
 
         assert!(
             missing.is_empty(),
-            "source-worker node factories missing smoke-matrix entries: {missing:#?}"
+            "source-unit host node factories missing smoke-matrix entries: {missing:#?}"
         );
         assert!(
             stale.is_empty(),
@@ -683,7 +683,7 @@ mod coverage_matrix {
     }
 
     #[sinex_test]
-    async fn source_worker_smoke_matrix_entries_are_actionable() -> TestResult<()> {
+    async fn source_unit_host_smoke_matrix_entries_are_actionable() -> TestResult<()> {
         let registry = SourceUnitRegistry::from_inventory();
         let mut seen = BTreeMap::new();
 
@@ -751,8 +751,8 @@ mod coverage_matrix {
     }
 
     #[sinex_test]
-    async fn source_worker_drain_obligation_covers_shared_controller() -> TestResult<()> {
-        drain::run("source-worker.shared-drain", AdapterKind::StaticFile, b"")
+    async fn source_unit_host_drain_obligation_covers_shared_controller() -> TestResult<()> {
+        drain::run("source-unit host.shared-drain", AdapterKind::StaticFile, b"")
             .await
             .map_err(SinexError::processing)?;
 

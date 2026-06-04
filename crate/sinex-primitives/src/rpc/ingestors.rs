@@ -1,7 +1,7 @@
 //! Operator-facing ingestor status RPC types.
 //!
 //! Mirrors `rpc::automata` for the source-side: every registered ingestor (and
-//! source-worker source unit) manifest, joined to its latest run, latest
+//! source-unit) manifest, joined to its latest run, latest
 //! `health.status` event, and recent event-emission stats. Distinct from
 //! `rpc::nodes` (which carries coordinator-style state — drain/resume/horizon).
 

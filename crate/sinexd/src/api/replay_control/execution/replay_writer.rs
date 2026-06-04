@@ -394,9 +394,9 @@ impl ReplayExecutionEngine {
 
         checkpoint.total_events = material_roots.len() as u64;
 
-        // Step 2: Route staged-source scopes through source-worker, not node scan.
+        // Step 2: Route staged-source scopes through source-unit, not node scan.
         // Node scan publishes a NodeScanCommand to sinex.control.nodes.{node}.scan;
-        // staged-source replay creates a source_run and dispatches to the source-worker
+        // staged-source replay creates a source_run and dispatches to the source-unit
         // host (#1081) via a parse command. The routing decision is made here so both
         // paths share the archive + invalidation + checkpoint machinery above.
         if scope.is_staged_source_scope() {
@@ -743,11 +743,11 @@ impl ReplayExecutionEngine {
         }
     }
 
-    /// Dispatches a staged-source replay through the source-worker host (#1081)
+    /// Dispatches a staged-source replay through the source-unit host (#1081)
     /// instead of the legacy node scan path.
     ///
-    /// Publishes a parse command to the source-worker NATS control subject
-    /// and polls for operation completion. The source-worker is responsible for
+    /// Publishes a parse command to the source-unit NATS control subject
+    /// and polls for operation completion. The source-unit is responsible for
     /// invoking the parser capability and publishing admitted event intents.
     async fn dispatch_staged_source_replay(
         &self,
@@ -780,7 +780,7 @@ impl ReplayExecutionEngine {
             operation_id = %operation_id,
             source_id = source_id,
             subject = %parse_subject,
-            "Dispatching staged-source replay to source-worker"
+            "Dispatching staged-source replay to source-unit"
         );
 
         let ack_msg = match tokio::time::timeout(
@@ -811,7 +811,7 @@ impl ReplayExecutionEngine {
                         scope_metadata,
                         operation_id,
                         SinexError::timeout(format!(
-                            "Timed out waiting for source-worker parse ack from '{source_id}' after {:?}",
+                            "Timed out waiting for source-unit parse ack from '{source_id}' after {:?}",
                             self.scan_ack_timeout
                         )),
                     )
@@ -847,7 +847,7 @@ impl ReplayExecutionEngine {
             "Source-worker accepted parse command, waiting for completion"
         );
 
-        // Poll replay operation state for terminal status. The source-worker
+        // Poll replay operation state for terminal status. The source-unit
         // processes the parse, publishes event intents through NATS → ingestd,
         // and the operation state machine transitions to Completed/Failed/Cancelled.
         let replay = self.replay.clone();

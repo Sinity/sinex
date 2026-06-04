@@ -1,11 +1,10 @@
 //! Source-binding manifest loader and in-process spawner.
 //!
-//! Replaces the per-binding `sinex-source-worker` systemd unit fleet with
+//! Replaces the old per-binding source-unit systemd fleet with
 //! one tokio task per binding under the `sinexd` supervisor. The supervisor
 //! reads `SINEX_SOURCE_BINDINGS_PATH`, deserializes the manifest, and
 //! dispatches each enabled binding through the existing node-factory
-//! registry — the same factory the deleted `sinex-source-worker` binary
-//! used, just invoked in-process.
+//! registry in-process.
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
@@ -57,8 +56,8 @@ static BINDING_ENV_LOCK: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mu
 
 /// One row in the manifest file at `SINEX_SOURCE_BINDINGS_PATH`.
 ///
-/// The NixOS module generates this from `services.sinex.generatedBindings.*`
-/// at activation time and writes it into the Nix store. The Rust side
+/// The NixOS module generates this from the enabled source binding options at
+/// activation time and writes it into the Nix store. The Rust side
 /// validates the manifest structure but defers source-unit-id validity
 /// checking to the descriptor registry (so an unknown source unit fails
 /// loudly at startup with a list of registered alternatives).
@@ -68,15 +67,13 @@ pub struct SourceBinding {
     /// in the descriptor registry via `register_source_unit!`.
     pub source_unit_id: String,
 
-    /// 1-based instance index. Preserved from the historical
-    /// `sinex-source-worker-<id>-<idx>.service` unit name convention so
-    /// log output and checkpoint identities stay comparable across the
-    /// collapse.
+    /// 1-based instance index used to derive a stable per-binding service
+    /// label.
     #[serde(default = "default_instance_idx")]
     pub instance_idx: u32,
 
     /// Optional service-name override. Defaults to
-    /// `sinex-source-worker-<id>-<idx>` when absent.
+    /// `sinex-source-unit-<id>-<idx>` when absent.
     #[serde(default)]
     pub service_name: Option<String>,
 
@@ -94,7 +91,7 @@ pub struct SourceBinding {
 
     /// Environment variables injected into the binding's process scope.
     /// Replaces the per-unit `EnvironmentFile` overlays that existed when
-    /// each source-worker was a separate systemd unit. Keys set here
+    /// each source unit was a separate systemd unit. Keys set here
     /// override the daemon's inherited environment for the duration of
     /// the binding's lifecycle.
     #[serde(default)]
@@ -167,9 +164,8 @@ pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
 
 /// Drive one binding through the standard SDK lifecycle.
 ///
-/// Mirrors the deleted `sinex-source-worker` trampoline: look up the
-/// node factory for the source-unit id, then call it with a synthesized
-/// argv equivalent to the old systemd `ExecStart`.
+/// Look up the node factory for the source-unit id, then call it with a
+/// synthesized argv equivalent to the old per-unit `ExecStart`.
 pub async fn run_binding(binding: SourceBinding) -> Result<()> {
     let unit_id = SourceUnitId::new(&binding.source_unit_id).map_err(|error| {
         SinexError::configuration(format!(
@@ -186,13 +182,13 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
 
     let service_name = binding.service_name.clone().unwrap_or_else(|| {
         format!(
-            "sinex-source-worker-{}-{}",
+            "sinex-source-unit-{}-{}",
             binding.source_unit_id, binding.instance_idx
         )
     });
 
     let mut argv: Vec<std::ffi::OsString> = vec![
-        std::ffi::OsString::from("sinexd-source-worker"),
+        std::ffi::OsString::from("sinexd-source-unit"),
         std::ffi::OsString::from("--source-unit"),
         std::ffi::OsString::from(&binding.source_unit_id),
         std::ffi::OsString::from("--service-name"),
@@ -225,7 +221,7 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
         source_unit = %binding.source_unit_id,
         instance_idx = binding.instance_idx,
         service_name = %service_name,
-        "starting in-process source-worker binding"
+        "starting in-process source-unit binding"
     );
 
     // Per-binding environment variables (#1562 item 1).
@@ -245,7 +241,7 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
     if binding.extra_env.is_empty() {
         factory(argv).await.map_err(|error| {
             SinexError::service(format!(
-                "source-worker binding '{}' exited with error: {error}",
+                "source-unit binding '{}' exited with error: {error}",
                 binding.source_unit_id
             ))
         })
@@ -258,7 +254,7 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
         };
         locked.await.map_err(|error| {
             SinexError::service(format!(
-                "source-worker binding '{}' exited with error: {error}",
+                "source-unit binding '{}' exited with error: {error}",
                 binding.source_unit_id
             ))
         })

@@ -1169,7 +1169,7 @@ expression: json
       "name": "run",
       "subcommands": [
         {
-          "about": "Run sinex-ingestd",
+          "about": "Run sinexd (alias preserved post-collapse; runs the full supervisor)",
           "args": [
             {
               "global": false,
@@ -1186,7 +1186,7 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "Run sinex-gateway",
+          "about": "Run sinexd (alias preserved post-collapse; runs the full supervisor)",
           "args": [
             {
               "global": false,
@@ -4288,7 +4288,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "Processing context (command, clipboard, window_title, journal, dbus, notification, document, metadata)",
+              "help": "Processing context (command, clipboard, journal, dbus, notification, document, metadata)",
               "long": "context",
               "name": "context",
               "possible_values": [],
@@ -4640,36 +4640,6 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "Source-worker evidence gate: NixOS binding drift, parser registration, and privacy invocation",
-          "args": [
-            {
-              "global": false,
-              "help": "Path to the JSON file exported by `config.services.sinex.sources.exportedJson` (from the NixOS module)",
-              "long": "bindings-json",
-              "name": "bindings_json",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Emit JSON output",
-              "long": "json",
-              "name": "json",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "source-worker",
-          "subcommands": []
-        },
-        {
           "about": "Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command",
           "args": [
             {
@@ -4710,52 +4680,6 @@ expression: json
             }
           ],
           "name": "closure",
-          "subcommands": []
-        },
-        {
-          "about": "Summarize executable verification claims, runner commands, and deferrals",
-          "args": [
-            {
-              "global": false,
-              "help": "Emit JSON output",
-              "long": "json",
-              "name": "json",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Show advisory obligations as well as required obligations",
-              "long": "advisory",
-              "name": "advisory",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Include deferred obligations and exemptions",
-              "long": "deferrals",
-              "name": "deferrals",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "claims",
           "subcommands": []
         }
       ]
@@ -5011,92 +4935,6 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "Generate the proof catalog from Rust descriptors, payloads, commands, and scenarios",
-          "args": [
-            {
-              "global": false,
-              "help": "Output file (default: docs/proof-catalog.json)",
-              "long": "output",
-              "name": "output",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Print to stdout instead of writing a file",
-              "long": "stdout",
-              "name": "stdout",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Exit non-zero if the generated output would change",
-              "long": "check",
-              "name": "check",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "proof-catalog",
-          "subcommands": []
-        },
-        {
-          "about": "Generate the public RPC method catalog from typed descriptors",
-          "args": [
-            {
-              "global": false,
-              "help": "Output file (default: docs/rpc-catalog.json)",
-              "long": "output",
-              "name": "output",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Print to stdout instead of writing a file",
-              "long": "stdout",
-              "name": "stdout",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Exit non-zero if the generated output would change",
-              "long": "check",
-              "name": "check",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "rpc-catalog",
-          "subcommands": []
-        },
-        {
           "about": "Generate the live ast-grep rule catalog from `.config/ast-grep/rules/`",
           "args": [
             {
@@ -5274,60 +5112,6 @@ expression: json
             }
           ],
           "name": "snapshot",
-          "subcommands": []
-        }
-      ]
-    },
-    {
-      "about": "Source-unit manifest operations",
-      "args": [],
-      "name": "source-units",
-      "subcommands": [
-        {
-          "about": "Render the source-unit manifest",
-          "args": [
-            {
-              "global": false,
-              "help": "Output file (default: docs/source-units.json)",
-              "long": "output",
-              "name": "output",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Print to stdout instead of writing a file",
-              "long": "stdout",
-              "name": "stdout",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "render",
-          "subcommands": []
-        },
-        {
-          "about": "Validate source-unit descriptors and the generated manifest",
-          "args": [
-            {
-              "global": false,
-              "help": "Manifest path to check (default: docs/source-units.json)",
-              "long": "output",
-              "name": "output",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "check",
           "subcommands": []
         }
       ]
@@ -5788,6 +5572,33 @@ expression: json
         }
       ],
       "name": "__reap",
+      "subcommands": []
+    },
+    {
+      "about": "Internal: record drift guard bypass events from the pre-push hook (#1565)",
+      "args": [
+        {
+          "global": false,
+          "help": "The git branch being pushed",
+          "long": "branch",
+          "name": "branch",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "The HEAD commit SHA at the time of bypass",
+          "long": "sha",
+          "name": "sha",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        }
+      ],
+      "name": "record-drift-bypass",
       "subcommands": []
     }
   ]

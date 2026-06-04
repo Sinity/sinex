@@ -131,7 +131,7 @@ macro_rules! __submit_registry_entry {
 /// 1. Registers `parser` in the `ParserRegistryEntry` inventory under
 ///    `source_unit_id` so the replay dispatch can reach it.
 /// 2. Registers an `AdapterBackedIngestor<adapter, parser>` in the
-///    `NodeFactoryEntry` inventory so `sinex-source-worker --source-unit
+///    `NodeFactoryEntry` inventory so `sinexd scan-source-unit --source-unit
 ///    <source_unit_id>` can start it.
 ///
 /// Both `adapter` and `parser` must implement `Default`.

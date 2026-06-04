@@ -1,7 +1,7 @@
 //! `terminal.bash-history` — bash history append-only file adapter.
 //!
 //! Folds the bash history source unit from `sinex-terminal-ingestor` into the
-//! source-worker registries.
+//! source-unit registries.
 //!
 //! Adapter: [`AppendOnlyFileAdapter`] — tails `~/.bash_history` line by line.
 //! Parser:  [`BashHistoryParser`] — one `command.imported` event per line.
@@ -54,7 +54,7 @@ register_source_unit_binding! {
         "terminal.bash-history",
         "terminal",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("command.imported")
     .privacy_context("Command")
@@ -62,11 +62,11 @@ register_source_unit_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("linear_rows_bounded_memory")
     .source_unit_id("terminal.bash-history")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::Continuous)
     .package_impact("bash_history_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

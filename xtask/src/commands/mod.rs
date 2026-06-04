@@ -24,7 +24,6 @@ pub mod reset;
 pub mod run;
 pub mod schema;
 pub mod snapshot;
-pub mod source_units;
 pub mod status;
 pub mod test;
 pub mod verify;
@@ -47,7 +46,6 @@ pub use record_drift_bypass::RecordDriftBypassCommand;
 pub use reset::ResetCommand;
 pub use run::RunCommand;
 pub use schema::SchemaCommand;
-pub use source_units::SourceUnitsCommand;
 pub use status::StatusCommand;
 pub use test::TestCommand;
 

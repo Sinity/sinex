@@ -2,7 +2,7 @@
 //!
 //! `sinexd` is a single daemon hosting the event engine (admission +
 //! persistence + confirmation), the operator API, the enabled derived-node
-//! automata, and the configured source-worker bindings. Each module starts
+//! automata, and the configured source-unit bindings. Each module starts
 //! as a tokio task under the supervisor. The shutdown signal is sourced from
 //! `crate::node_sdk::service_runtime::spawn_shutdown_task` which handles
 //! SIGINT/SIGTERM; tasks observe it via a shared `watch` receiver and unwind
@@ -143,7 +143,7 @@ impl Supervisor {
         // single automaton crash does not take down siblings or the daemon.
         let automaton_handles = start_automata(shutdown_rx.clone())?;
 
-        // Hosted source-worker bindings. Same isolation property: one
+        // Hosted source-unit bindings. Same isolation property: one
         // binding crash is logged and contained, sibling captures continue.
         let source_binding_handles = start_source_bindings(shutdown_rx.clone())?;
 
@@ -399,7 +399,7 @@ fn start_source_bindings(
 
     info!(
         count = manifest.bindings.len(),
-        "starting hosted source-worker bindings"
+        "starting hosted source-unit bindings"
     );
 
     let mut handles = Vec::with_capacity(manifest.bindings.len());
@@ -419,11 +419,11 @@ fn spawn_source_binding(
     tokio::spawn(async move {
         let _shutdown_rx = shutdown_rx;
         match source_bindings::run_binding(binding).await {
-            Ok(()) => info!(source_binding = %label, "source-worker exited"),
+            Ok(()) => info!(source_binding = %label, "source-unit host exited"),
             Err(error) => warn!(
                 source_binding = %label,
                 ?error,
-                "source-worker exited with error"
+                "source-unit host exited with error"
             ),
         }
     })

@@ -2,7 +2,7 @@
 //!
 //! Registers `terminal.monitor` with the source-unit descriptor inventory and
 //! with the node factory registry via [`register_monitor_unit!`]. On every
-//! source-worker boot this emits one [`TerminalMonitoringStartedPayload`]
+//! source-unit boot this emits one [`TerminalMonitoringStartedPayload`]
 //! anchored to a synthetic material, then exits.
 //!
 //! Deployment shape: a `Type=oneshot` systemd unit that runs at boot under
@@ -52,7 +52,7 @@ register_source_unit_binding! {
         "terminal.monitor",
         "terminal",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("MonitorDriverNode")
     .output_event_type("shell.terminal_monitoring_started")
     .privacy_context("Metadata")
@@ -60,11 +60,11 @@ register_source_unit_binding! {
     .checkpoint_policy("stateless")
     .resource_shape("oneshot_bounded_memory")
     .source_unit_id("terminal.monitor")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::OnDemand)
     .package_impact("terminal_monitor_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

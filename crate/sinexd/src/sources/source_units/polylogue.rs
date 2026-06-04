@@ -15,7 +15,7 @@
 //!   so the source unit appears in the catalog and in `sinexctl sources list`.
 //!
 //! There is **no** `register_adapter_ingestor!` or `register_node_factory!`
-//! here. The Polylogue daemon is the producer; sinex-source-worker does not
+//! here. The Polylogue daemon is the producer; sinexd does not
 //! need to run a consumer process for this source unit. The NixOS module
 //! option `sinex.sources.polylogue.enable` (default `false`) gates a future
 //! companion service that may perform post-admission enrichment.

@@ -464,12 +464,9 @@
                   subcommand_name="$(_sinex_xtask_command_arg 1 "$@")"
 
                   case "$command_name" in
-                    source-units)
-                      return 0
-                      ;;
                     docs)
                       case "$subcommand_name" in
-                        sync|check|proof-catalog)
+                        sync|check)
                           return 0
                           ;;
                       esac

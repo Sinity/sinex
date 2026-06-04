@@ -548,7 +548,7 @@ where
     /// Refresh runtime-derived binding flags before an acquisition attempt.
     ///
     /// Static flags remain stable, but fields derived from the private-mode
-    /// state file must be re-read so live source-worker poll loops can react
+    /// state file must be re-read so live source-unit poll loops can react
     /// to operator toggles without waiting for process restart.
     fn refresh_binding_config(&mut self) -> NodeResult<()> {
         let Some(config) = &self.node_config else {

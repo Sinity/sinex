@@ -61,7 +61,7 @@ use sinex_primitives::{
 /// Determines when a monitor unit's closure fires relative to the node lifecycle.
 #[derive(Debug, Clone)]
 pub enum MonitorPhase {
-    /// Fire once immediately at source-worker boot (inside `run_continuous`).
+    /// Fire once immediately at source-unit boot (inside `run_continuous`).
     ///
     /// The runner fires the closure, emits events, then returns. The node exits
     /// cleanly. Use this for startup-annotation events.
@@ -650,7 +650,7 @@ mod tests {
                     "monitor-fire-once-test".to_string(),
                     "test.monitor".to_string(),
                     Some("test.monitor".to_string()),
-                    Some("source-worker".to_string()),
+                    Some("source-unit host".to_string()),
                     HostName::from_static("test-host"),
                     work_dir_path,
                     false,

@@ -13,7 +13,7 @@
 //!
 //! The default obligation still drives the parser dispatch function directly
 //! so Wave-B cases can cover many source units cheaply. The `binary_path`
-//! canary below separately launches the real `sinex-source-worker` binary,
+//! canary below separately launches the real `sinexd` binary,
 //! publishes through NATS, runs ingestd, and verifies the resulting DB row.
 //!
 //! ## Per-domain fenced regions
@@ -167,7 +167,7 @@ mod binary_path {
     use sinex_primitives::temporal::Timestamp;
     use xtask::sandbox::prelude::*;
 
-    const WEECHAT_MESSAGE: &str = "hello from source-worker binary";
+    const WEECHAT_MESSAGE: &str = "hello from source-unit host binary";
     const WEECHAT_SUPPRESSED_MESSAGE: &str = "private mode should suppress this";
     const WEECHAT_MALFORMED_STATE_MESSAGE: &str =
         "malformed private-mode state should suppress this";
@@ -188,12 +188,12 @@ mod binary_path {
         })
     }
 
-    struct SourceWorkerIngestStack {
+    struct SourceUnitHostIngestStack {
         ingestd: TestIngestdHandle,
         _work_dir: tempfile::TempDir,
     }
 
-    impl SourceWorkerIngestStack {
+    impl SourceUnitHostIngestStack {
         async fn start(ctx: &Sandbox) -> TestResult<Self> {
             ctx.reset_database_slot().await?;
 
@@ -281,14 +281,14 @@ mod binary_path {
         let worker_dir = tempdir.path().join(format!("worker-{case}"));
         tokio::fs::create_dir_all(&worker_dir).await?;
 
-        let mut config = TestSourceWorkerConfig::new("weechat");
+        let mut config = TestSourceUnitConfig::new("weechat");
         config.nats = ctx.nats_handle()?.connection_config();
         config.database_url = ctx.database_url().to_string();
         config.namespace = Some(ctx.pipeline_namespace().prefix().to_string());
         config.work_dir = Some(worker_dir);
         config.node_config = Some(node_config.to_string());
 
-        let output = run_test_source_worker_scan(config, &[], Some(ctx)).await?;
+        let output = run_test_source_unit_scan(config, &[], Some(ctx)).await?;
         Ok(output.stdout)
     }
 
@@ -301,24 +301,24 @@ mod binary_path {
         let worker_dir = tempdir.path().join(format!("worker-{case}"));
         tokio::fs::create_dir_all(&worker_dir).await?;
 
-        let mut config = TestSourceWorkerConfig::new("terminal.bash-history");
+        let mut config = TestSourceUnitConfig::new("terminal.bash-history");
         config.nats = ctx.nats_handle()?.connection_config();
         config.database_url = ctx.database_url().to_string();
         config.namespace = Some(ctx.pipeline_namespace().prefix().to_string());
         config.work_dir = Some(worker_dir);
         config.node_config = Some(node_config.to_string());
 
-        let output = run_test_source_worker_scan(config, &[], Some(ctx)).await?;
+        let output = run_test_source_unit_scan(config, &[], Some(ctx)).await?;
         Ok(output.stdout)
     }
 
-    /// Proves the real `sinex-source-worker scan` path for adapter-backed
+    /// Proves the real `sinexd scan-source-unit` path for adapter-backed
     /// source units: binary launch, adapter config, parser, NATS publish,
     /// ingestd persistence, DB payload visibility, and private-mode policy.
     #[sinex_test(timeout = 120)]
-    async fn source_worker_binary_scan_private_mode_matrix(ctx: TestContext) -> TestResult<()> {
+    async fn source_unit_host_scan_private_mode_matrix(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let stack = SourceWorkerIngestStack::start(&ctx).await?;
+        let stack = SourceUnitHostIngestStack::start(&ctx).await?;
         let tempdir = tempfile::tempdir()?;
 
         let baseline_log_path = tempdir.path().join("weechat.log");
@@ -397,7 +397,7 @@ mod binary_path {
                 run_weechat_scan(&ctx, &tempdir, "weechat-out-of-scope", out_of_scope_config),
             )?;
 
-        ctx.assert("source-worker scan processed one event").that(
+        ctx.assert("source-unit host scan processed one event").that(
             baseline_output.contains("Events processed: 1"),
             "scan output should report one processed event",
         )?;

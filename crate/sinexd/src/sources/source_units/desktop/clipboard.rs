@@ -61,7 +61,7 @@ register_source_unit_binding! {
         "desktop.clipboard",
         "desktop",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("ClipboardPollingAdapter")
     .output_event_type("clipboard.copied")
     .privacy_context("clipboard")
@@ -69,11 +69,11 @@ register_source_unit_binding! {
     .checkpoint_policy("live_stream")
     .resource_shape("polling_watcher")
     .source_unit_id("desktop.clipboard")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
     .package_impact("desktop_clipboard")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

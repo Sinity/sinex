@@ -1,6 +1,6 @@
 pub mod baseline;
 
-use std::{collections::BTreeSet, path::PathBuf, time::Duration};
+use std::{collections::BTreeSet, time::Duration};
 
 use clap::{Args, Subcommand};
 use color_eyre::{Result, eyre::eyre};
@@ -41,12 +41,8 @@ pub struct VerifyCommand {
     /// declares a (source, `event_type`) with no matching payload) and
     /// unclaimed payloads (payload has no `register_source_unit!` entry).
     ///
-    /// Uses `docs/source-units.json` if present (xtask renders the manifest
-    /// from the full descriptor graph including node crates); otherwise
-    /// falls back to the descriptors compiled into this binary, which
-    /// generally only covers the infra/primitives descriptors and will
-    /// report node-crate-claimed payloads as unclaimed. Use
-    /// `xtask source-units check` for the deeper, fully-linked validation.
+    /// Uses descriptors compiled into this binary. Source-unit catalog JSON
+    /// files are not a runtime authority.
     #[arg(long = "source-units", default_value_t = false)]
     source_units: bool,
 
@@ -502,9 +498,7 @@ fn run_source_units_check(summary: &mut VerificationSummary) {
             }
         ));
     }
-    summary.skip(
-        "Use `xtask source-units check` for the deeper, fully-linked validation across every node crate",
-    );
+    summary.skip("Generated source-unit catalogs are not a verification authority");
 }
 
 #[derive(Debug, Default)]
@@ -514,43 +508,26 @@ struct SourceUnitsReport {
     payload_count: usize,
     orphan_descriptor_pairs: Vec<String>,
     unclaimed_payloads: Vec<String>,
-    /// Set when descriptor pairs were loaded from `docs/source-units.json`
-    /// instead of the in-binary `proof::all_source_units()` inventory; or
-    /// when neither source could be loaded.
+    /// Set when no in-binary descriptor inventory is available.
     descriptor_source_note: Option<String>,
 }
 
 fn build_source_units_report() -> SourceUnitsReport {
-    let manifest_pairs = load_descriptor_pairs_from_manifest();
-    let (descriptor_count, declared_pairs, source_note) = if let Some((count, pairs)) =
-        manifest_pairs
-    {
-        (
-            count,
-            pairs,
-            Some(format!(
-                "loaded from {MANIFEST_RELATIVE_PATH} (xtask-rendered manifest with full crate linkage)"
-            )),
+    let mut descriptor_count = 0usize;
+    let mut declared_pairs = BTreeSet::new();
+    for descriptor in proof::all_source_units() {
+        descriptor_count += 1;
+        for (src, ty) in descriptor.event_types {
+            declared_pairs.insert(((*src).to_string(), (*ty).to_string()));
+        }
+    }
+    let source_note = if descriptor_count == 0 {
+        Some(
+            "no descriptors compiled into this binary — descriptor coverage cannot be verified"
+                .to_string(),
         )
     } else {
-        let mut count = 0usize;
-        let mut pairs = BTreeSet::new();
-        for descriptor in proof::all_source_units() {
-            count += 1;
-            for (src, ty) in descriptor.event_types {
-                pairs.insert(((*src).to_string(), (*ty).to_string()));
-            }
-        }
-        let note = if count == 0 {
-            Some(
-                "no manifest at docs/source-units.json and no descriptors compiled into this binary — descriptor coverage cannot be verified".to_string(),
-            )
-        } else {
-            Some(format!(
-                "no manifest at {MANIFEST_RELATIVE_PATH}; falling back to {count} in-binary descriptor(s); node-crate descriptors will not be visible — run `xtask source-units check` for full coverage"
-            ))
-        };
-        (count, pairs, note)
+        None
     };
 
     let mut payload_pairs: BTreeSet<(String, String)> = BTreeSet::new();
@@ -577,40 +554,6 @@ fn build_source_units_report() -> SourceUnitsReport {
         unclaimed_payloads,
         descriptor_source_note: source_note,
     }
-}
-
-const MANIFEST_RELATIVE_PATH: &str = "docs/source-units.json";
-
-/// Try to load descriptor pairs from the xtask-rendered manifest, which
-/// reflects the full descriptor graph (including node crates not linked into
-/// the CLI binary). Searches a small set of candidate paths anchored at the
-/// current working directory, falling back to None if the manifest is not
-/// present (e.g. deployed CLI run from `/`).
-fn load_descriptor_pairs_from_manifest() -> Option<(usize, BTreeSet<(String, String)>)> {
-    let candidates: [PathBuf; 3] = [
-        PathBuf::from(MANIFEST_RELATIVE_PATH),
-        PathBuf::from("../").join(MANIFEST_RELATIVE_PATH),
-        PathBuf::from("../../").join(MANIFEST_RELATIVE_PATH),
-    ];
-    let path = candidates.iter().find(|candidate| candidate.is_file())?;
-    let content = std::fs::read_to_string(path).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let units = value.get("source_units")?.as_array()?;
-    let mut pairs = BTreeSet::new();
-    for unit in units {
-        let event_pairs = unit.get("output_event_types").and_then(|v| v.as_array());
-        let Some(event_pairs) = event_pairs else {
-            continue;
-        };
-        for pair in event_pairs {
-            let source = pair.get("source").and_then(|v| v.as_str());
-            let event_type = pair.get("event_type").and_then(|v| v.as_str());
-            if let (Some(source), Some(event_type)) = (source, event_type) {
-                pairs.insert((source.to_string(), event_type.to_string()));
-            }
-        }
-    }
-    Some((units.len(), pairs))
 }
 
 fn print_verification_footer(summary: &VerificationSummary) {

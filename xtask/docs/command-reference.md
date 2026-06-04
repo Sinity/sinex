@@ -42,7 +42,6 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `schema` | Schema verification command group |
 | `verify` | Verify phase plans and performance contracts |
 | `docs` | Generate and verify repo documentation surfaces |
-| `source-units` | Source-unit manifest operations |
 | `exercise` | Full surface area validation for xtask commands |
 | `reset` | Reset developer state for a fresh start |
 | `__reap` | Internal detached process watchdog — not for human use |
@@ -1559,9 +1558,7 @@ Verify phase plans and performance contracts
 | `report` | Print summary from a perf report JSON |
 | `compare` | Compare two perf reports |
 | `all` | Run perf only |
-| `source-worker` | Source-worker evidence gate: NixOS binding drift, parser registration, and privacy metadata |
 | `closure` | Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command |
-| `claims` | Summarize executable verification claims, runner commands, and deferrals |
 
 ### `xtask verify plan`
 
@@ -1634,18 +1631,6 @@ Run perf only
 | `--history-db` | yes | no |  |
 
 
-### `xtask verify source-worker`
-
-Source-worker evidence gate: NixOS binding drift, parser registration, and privacy metadata
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--bindings-json` | yes | no | Path to the JSON file exported by `config.services.sinex.sources.exportedJson` (from the NixOS module) |
-| `--json` | no | no | Emit JSON output |
-
-
 ### `xtask verify closure`
 
 Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command
@@ -1657,19 +1642,6 @@ Operationalize the 2026-05-11 closure-verification policy: fetch an issue body v
 | `issue` | yes | yes | GitHub issue number to verify |
 | `--json` | no | no | Emit JSON output |
 | `--dry-run` | no | no | Dry-run: parse and print commands without executing them |
-
-
-### `xtask verify claims`
-
-Summarize executable verification claims, runner commands, and deferrals
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--json` | no | no | Emit JSON output |
-| `--advisory` | no | no | Show advisory obligations as well as required obligations |
-| `--deferrals` | no | no | Include deferred obligations and exemptions |
 
 
 ## `xtask docs`
@@ -1686,8 +1658,6 @@ Generate and verify repo documentation surfaces
 | `command-guide` | Generate the concise xtask command guide used for agent memory and humans |
 | `command-reference` | Generate the exhaustive xtask public command reference from the live clap tree |
 | `schema-bundle` | Generate the checked-in JSON schema bundle from the Rust EventPayload registry |
-| `proof-catalog` | Generate the proof catalog from Rust descriptors, payloads, commands, and scenarios |
-| `rpc-catalog` | Generate the public RPC method catalog from typed descriptors |
 | `ast-grep-catalog` | Generate the live ast-grep rule catalog from `.config/ast-grep/rules/` |
 | `sync` | Refresh all generated repo surfaces tracked in the repo |
 | `check` | Verify that all generated repo surfaces are up to date |
@@ -1770,32 +1740,6 @@ Generate the checked-in JSON schema bundle from the Rust EventPayload registry
 | `--check` | no | no | Exit non-zero if the generated bundle would change |
 
 
-### `xtask docs proof-catalog`
-
-Generate the proof catalog from Rust descriptors, payloads, commands, and scenarios
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--output` | yes | no | Output file (default: docs/proof-catalog.json) |
-| `--stdout` | no | no | Print to stdout instead of writing a file |
-| `--check` | no | no | Exit non-zero if the generated output would change |
-
-
-### `xtask docs rpc-catalog`
-
-Generate the public RPC method catalog from typed descriptors
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--output` | yes | no | Output file (default: docs/rpc-catalog.json) |
-| `--stdout` | no | no | Print to stdout instead of writing a file |
-| `--check` | no | no | Exit non-zero if the generated output would change |
-
-
 ### `xtask docs ast-grep-catalog`
 
 Generate the live ast-grep rule catalog from `.config/ast-grep/rules/`
@@ -1837,40 +1781,6 @@ Generate a codebase snapshot for AI context (via repomix)
 | `--context` | no | no | U3: Inject structured xtask state (recent checks, diagnostics, jobs) into the snapshot |
 | `--project-memory` | no | no | U4: Include CLAUDE.md and .agent/includes/ (project memory) in the snapshot |
 | `--scope` | yes | no | U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests) |
-
-
-## `xtask source-units`
-
-Source-unit manifest operations
-
-**Subcommands**
-
-| Command | Purpose |
-|---|---|
-| `render` | Render the source-unit manifest |
-| `check` | Validate source-unit descriptors and the generated manifest |
-
-### `xtask source-units render`
-
-Render the source-unit manifest
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--output` | yes | no | Output file (default: docs/source-units.json) |
-| `--stdout` | no | no | Print to stdout instead of writing a file |
-
-
-### `xtask source-units check`
-
-Validate source-unit descriptors and the generated manifest
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--output` | yes | no | Manifest path to check (default: docs/source-units.json) |
 
 
 ## `xtask exercise`

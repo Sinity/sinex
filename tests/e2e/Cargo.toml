@@ -35,7 +35,7 @@ path = "../../xtask"
 
 
 [dev-dependencies.sinexd]
-path = "../sinexd"
+path = "../../crate/sinexd"
 features = ["test-support"]
 
 [dev-dependencies.async-nats]
@@ -69,11 +69,11 @@ workspace = true
 workspace = true
 
 [dev-dependencies.sinex-primitives]
-path = "../sinex-primitives"
+path = "../../crate/sinex-primitives"
 features = [ "testing",]
 
 [dev-dependencies.sinex-db]
-path = "../sinex-db"
+path = "../../crate/sinex-db"
 
 [dev-dependencies.toml]
 workspace = true

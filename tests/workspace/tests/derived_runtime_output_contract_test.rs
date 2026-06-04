@@ -7,7 +7,9 @@
 use std::collections::HashMap;
 
 use camino::Utf8PathBuf;
-use sinex_primitives::domain::{DerivedNodeModel, HealthStatus, SyntheticTemporalPolicy};
+use sinex_primitives::domain::{
+    DerivedNodeModel, HealthStatus, SyntheticTemporalPolicy, TemporalSourceType,
+};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     ActivitySessionBoundaryPayload, ActivityWindowSummaryPayload, BashCommandExecutedPayload,
@@ -92,6 +94,7 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
         CanonicalCommandPayload::SOURCE.as_str(),
         CanonicalCommandPayload::EVENT_TYPE.as_str(),
         DerivedNodeModel::Transducer,
+        None,
         SyntheticTemporalPolicy::InheritParent,
         1,
         &command_parent_ids,
@@ -121,6 +124,7 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
         ActivityWindowSummaryPayload::SOURCE.as_str(),
         ActivityWindowSummaryPayload::EVENT_TYPE.as_str(),
         DerivedNodeModel::Windowed,
+        None,
         SyntheticTemporalPolicy::WindowBoundary,
         1,
         &command_parent_ids,
@@ -146,6 +150,7 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
         ActivitySessionBoundaryPayload::SOURCE.as_str(),
         ActivitySessionBoundaryPayload::EVENT_TYPE.as_str(),
         DerivedNodeModel::Windowed,
+        None,
         SyntheticTemporalPolicy::WindowBoundary,
         1,
         &activity_parent_ids,
@@ -197,6 +202,7 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
         HealthAggregatedReportPayload::SOURCE.as_str(),
         HealthAggregatedReportPayload::EVENT_TYPE.as_str(),
         DerivedNodeModel::ScopeReconciler,
+        None,
         SyntheticTemporalPolicy::DeclaredEffective,
         2,
         &health_parent_ids,
@@ -358,6 +364,7 @@ fn assert_synthesis_events(
     source: &str,
     event_type: &str,
     node_model: DerivedNodeModel,
+    expected_ts_quality: Option<TemporalSourceType>,
     temporal_policy: SyntheticTemporalPolicy,
     max_parent_count: usize,
     allowed_parent_ids: &[Uuid],
@@ -370,6 +377,7 @@ fn assert_synthesis_events(
         assert_eq!(event.source.as_str(), source);
         assert_eq!(event.event_type.as_str(), event_type);
         assert_eq!(event.node_model, Some(node_model));
+        assert_eq!(event.ts_quality, expected_ts_quality);
         assert_eq!(event.temporal_policy, Some(temporal_policy));
 
         let parents = event

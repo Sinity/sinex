@@ -126,8 +126,9 @@ in
 
           nix eval --raw .#nixosConfigurations.YOUR_HOSTNAME.config.services.sinex.sources.exportedJson
 
-        The resulting path can be passed to `xtask verify source-worker
-        --bindings-json <path>` for drift detection against Rust descriptors.
+        The resulting path is consumed by the sinexd source-binding loader and
+        can be inspected when debugging host activation. It is not a generated
+        Rust descriptor catalog or a verifier input.
 
         Shape: { bindings: [{ name, sourceUnitId, sourceFamily, bindingMode,
           inputShapeKind, privacyPolicyId, parserId, enabled }] }

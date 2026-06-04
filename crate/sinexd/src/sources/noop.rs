@@ -1,7 +1,7 @@
 //! Noop source unit — minimal `SourceUnit` serving as a template and test vehicle.
 //!
 //! This source unit emits no events and idles in continuous mode until shutdown.
-//! It exists to prove the source-worker host dispatch infrastructure works
+//! It exists to prove the source-unit host dispatch infrastructure works
 //! without depending on external ingestor crates. Real source units follow the
 //! same pattern with actual ingestion logic.
 
@@ -44,7 +44,7 @@ register_source_unit_binding! {
         "noop",
         "sinex",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("SourceUnitRuntime")
     .output_event_type("noop")
     .privacy_context("none")
@@ -52,11 +52,11 @@ register_source_unit_binding! {
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
     .source_unit_id("noop")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
     .package_impact("noop_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
@@ -66,7 +66,7 @@ register_source_unit_binding! {
 pub struct NoopState;
 
 /// A source unit that emits no events. Used as a template for real
-/// implementations and as a test vehicle for the source-worker host.
+/// implementations and as a test vehicle for the source-unit host.
 #[derive(Default)]
 pub struct NoopSourceUnit;
 

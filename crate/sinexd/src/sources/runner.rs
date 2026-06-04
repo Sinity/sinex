@@ -2,19 +2,19 @@
 //! [`NodeRunner`](crate::node_sdk::runtime::stream::NodeRunner) takes over.
 //!
 //! Each source unit gets:
-//! - A per-unit [`SourceWorkerDrainController`] for the enhanced drain protocol
+//! - A per-unit [`SourceUnitDrainController`] for the enhanced drain protocol
 //! - Per-unit checkpoint isolation via the `--source-unit` flag (routed through
 //!   [`ServiceInfo::checkpoint_identity`](crate::node_sdk::runtime::stream::ServiceInfo))
 //! - Per-unit health reporting (auto-enabled by [`SourceUnitRuntime`])
 //!
 //! The runner itself is thin — most lifecycle work is handled by the SDK's
-//! [`NodeRunner`] and [`SourceUnitRuntime`]. The source-worker adds drain
+//! [`NodeRunner`] and [`SourceUnitRuntime`]. The source-unit host adds drain
 //! protocol and recovery context on top.
 
-use crate::sources::drain::SourceWorkerDrainController;
+use crate::sources::drain::SourceUnitDrainController;
 use std::sync::Arc;
 
-/// Per-unit runtime context assembled during source-worker startup.
+/// Per-unit runtime context assembled during source-unit startup.
 ///
 /// Holds the enhanced drain controller for the unit. The SDK's `NodeRunner`
 /// already provides checkpoint, health, NATS, and DB handles through
@@ -22,7 +22,7 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct SourceUnitRunner {
     unit_id: String,
-    drain_controller: Arc<SourceWorkerDrainController>,
+    drain_controller: Arc<SourceUnitDrainController>,
 }
 
 impl SourceUnitRunner {
@@ -31,7 +31,7 @@ impl SourceUnitRunner {
     pub fn new(unit_id: String) -> Self {
         Self {
             unit_id,
-            drain_controller: Arc::new(SourceWorkerDrainController::new()),
+            drain_controller: Arc::new(SourceUnitDrainController::new()),
         }
     }
 
@@ -43,7 +43,7 @@ impl SourceUnitRunner {
 
     /// Access the per-unit drain controller.
     #[must_use]
-    pub fn drain_controller(&self) -> Arc<SourceWorkerDrainController> {
+    pub fn drain_controller(&self) -> Arc<SourceUnitDrainController> {
         Arc::clone(&self.drain_controller)
     }
 }

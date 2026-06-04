@@ -50,7 +50,7 @@ register_source_unit_binding! {
         "terminal.text-history",
         "terminal",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("command.imported")
     .privacy_context("Command")
@@ -58,11 +58,11 @@ register_source_unit_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("linear_rows_bounded_memory")
     .source_unit_id("terminal.text-history")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::Continuous)
     .package_impact("text_history_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

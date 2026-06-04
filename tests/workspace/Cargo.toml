@@ -21,6 +21,6 @@ time = { workspace = true }
 tokio = { workspace = true }
 xtask = { path = "../../xtask", features = ["runtime-introspection"] }
 
-sinex-db = { path = "../sinex-db" }
-sinex-primitives = { path = "../sinex-primitives" }
-sinexd = { path = "../sinexd" }
+sinex-db = { path = "../../crate/sinex-db" }
+sinex-primitives = { path = "../../crate/sinex-primitives" }
+sinexd = { path = "../../crate/sinexd" }

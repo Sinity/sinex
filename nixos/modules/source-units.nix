@@ -291,7 +291,7 @@ let
     IOSchedulingClass = resources.ioSchedulingClass;
     Nice = resources.nice;
     TimeoutStopSec = resources.shutdownTimeoutSec;
-    # Single-daemon sinexd hosts every automaton + source-worker binding;
+    # Single-daemon sinexd hosts every automaton + source-unit binding;
     # DB pool warm-up + per-binding init can exceed the 30s default before
     # the supervisor calls sd_notify(READY=1).
     TimeoutStartSec = 600;
@@ -667,8 +667,8 @@ let
     };
 
   # ── Filesystem support glue ─────────────────────────────────────────────
-  # Service emission delegated to source-bindings-generated.nix.
-  # This function returns the generatedBindings attrs for the fs source unit.
+  # Filesystem binding contribution consumed by the in-process sinexd source
+  # binding manifest below.
   mkFilesystemBindings =
     let
       sat = nodesCfg.filesystem;
@@ -688,7 +688,7 @@ let
       bindings = {
         "fs" = {
           enable = sat.enable;
-          description = "Filesystem watcher (source-worker)";
+          description = "Filesystem watcher (source-unit host)";
           adapterType = null;
           adapterConfig = nodeConfig;
           inherit instances resources;
@@ -703,9 +703,7 @@ let
     };
 
   # ── Terminal support glue ───────────────────────────────────────────────
-  # Service emission delegated to source-bindings-generated.nix.
-  # Returns {bindings, supportUnits} where bindings feeds generatedBindings
-  # and supportUnits provides the ACL setup one-shot service.
+  # Returns source-unit bindings plus the ACL setup one-shot service.
   mkTerminalGlue =
     let
       sat = nodesCfg.terminal;
@@ -866,7 +864,7 @@ let
           fi
         '';
       # Post-collapse: per-binding service overrides become contributions
-      # to the sinexd unit's overlay. We do not emit per-source-worker
+      # to the sinexd unit's overlay. We do not emit per-source-unit host
       # systemd units anymore.
       serviceConfigOverrides = { };
       terminalBindings =
@@ -888,7 +886,7 @@ let
       monitorBinding = {
         "terminal.monitor" = {
           enable = true;
-          description = "Terminal monitoring lifecycle event (source-worker)";
+          description = "Terminal monitoring lifecycle event (source-unit host)";
           adapterType = null;
           adapterConfig = { };
           instances = 1;
@@ -898,7 +896,7 @@ let
           extraArgs = [ ];
         };
       };
-      # Post-collapse: all source-worker units fold into sinexd.service. The
+      # Post-collapse: all source-unit host units fold into sinexd.service. The
       # ACL setup must run before sinexd so the in-process terminal source
       # units can traverse target-user paths.
       supportUnits = mkAccessSetupUnit {
@@ -922,8 +920,7 @@ let
     };
 
   # ── Desktop support glue ────────────────────────────────────────────────
-  # Service emission delegated to source-bindings-generated.nix.
-  # Returns {bindings, supportUnits, paths}.
+  # Returns source-unit bindings, support units, and desktop bridge paths.
   mkDesktopGlue =
     let
       sat = nodesCfg.desktop;
@@ -1236,10 +1233,10 @@ let
         # which makes SQLite's immutable=1 path fail SQLITE_CANTOPEN. Without
         # this override the worker spams "unable to open database file" every
         # 30 s. The rest of the SqliteRow defaults stay (read_only=true, etc.).
-        "desktop.activitywatch" = mkDesktopBinding "ActivityWatch SQLite (source-worker)" { path = activitywatchDbPath; immutable = false; } false;
-        "desktop.window-manager" = mkDesktopBinding "Desktop window manager (source-worker)" { } false;
+        "desktop.activitywatch" = mkDesktopBinding "ActivityWatch SQLite (source-unit host)" { path = activitywatchDbPath; immutable = false; } false;
+        "desktop.window-manager" = mkDesktopBinding "Desktop window manager (source-unit host)" { } false;
       } // optionalAttrs sat.clipboard.enable {
-        "desktop.clipboard" = mkDesktopBinding "Desktop clipboard (source-worker)" { } false;
+        "desktop.clipboard" = mkDesktopBinding "Desktop clipboard (source-unit host)" { } false;
       };
     in
     {
@@ -1258,7 +1255,7 @@ let
     };
 
   # ── Browser support glue ─────────────────────────────────────────────────
-  # Service emission delegated to source-bindings-generated.nix.
+  # Browser source-unit binding contribution.
   mkBrowserGlue =
     let
       sat = nodesCfg.browser;
@@ -1365,7 +1362,7 @@ let
       bindings = {
         "browser.history" = {
           enable = sat.enable;
-          description = "Browser history (source-worker)";
+          description = "Browser history (source-unit host)";
           adapterType = "ChainedAdapter";
           # ChainedConfig: primary=SqliteRowConfig, secondary=AppendOnlyFileConfig.
           # qutebrowser's history.sqlite is in WAL mode with a live writer:
@@ -1402,7 +1399,7 @@ let
     };
 
   # ── System support glue ──────────────────────────────────────────────────
-  # Service emission delegated to source-bindings-generated.nix.
+  # System source-unit binding contribution.
   mkSystemGlue =
     let
       sat = nodesCfg.system;
@@ -1476,17 +1473,17 @@ let
         serviceConfigOverrides = { };
       };
     in
-    # system.dbus emits a source-worker unit since #1235 wired
+    # system.dbus emits a source-unit host unit since #1235 wired
     # `RealDbusBackend` into `DbusStreamAdapter::open` (zbus 5.x).
     {
       bindings = {
-        "system.journald" = mkSystemBinding "system.journald" "systemd journal (source-worker)";
-        "system.systemd" = mkSystemBinding "system.systemd" "systemd unit state (source-worker)";
-        "system.udev" = mkSystemBinding "system.udev" "udev events (source-worker)";
-        "system.dbus" = mkSystemBinding "system.dbus" "D-Bus signal stream (source-worker)";
+        "system.journald" = mkSystemBinding "system.journald" "systemd journal (source-unit host)";
+        "system.systemd" = mkSystemBinding "system.systemd" "systemd unit state (source-unit host)";
+        "system.udev" = mkSystemBinding "system.udev" "udev events (source-unit host)";
+        "system.dbus" = mkSystemBinding "system.dbus" "D-Bus signal stream (source-unit host)";
         "system.monitor" = {
           enable = sat.enable;
-          description = "System monitoring lifecycle event (source-worker)";
+          description = "System monitoring lifecycle event (source-unit host)";
           adapterType = null;
           adapterConfig = { };
           instances = 1;
@@ -1517,7 +1514,7 @@ let
           # `scan-source-unit`. Extra args are forwarded into the SDK CLI
           # subcommand (so `--extra-arg scan --extra-arg --until --extra-arg
           # snapshot` runs the snapshot scan exactly as the deleted
-          # sinex-source-worker trampoline did).
+          # sinexd scan-source-unit entrypoint did).
           "${sinexPackage}/bin/sinexd"
           "scan-source-unit"
           "--source-unit"
@@ -1655,7 +1652,7 @@ let
       (filter (spec: nodesCfg.automata.${spec.optionName}.enable) automataLib.specs);
 
   # ── Support-glue assembly ────────────────────────────────────────────────
-  # Post-collapse: source-worker unit emission is gone. Each domain glue
+  # Post-collapse: per-source-unit service emission is gone. Each domain glue
   # contributes: `bindings` (passed to sinexd via the source-binding manifest
   # JSON), `supportUnits` (ACL/env bridge oneshot units that still need to
   # run before sinexd), and `overlay` (per-domain serviceConfig contributions
@@ -1678,7 +1675,7 @@ let
     if nodesEnabled && nodesCfg.filesystem.enable then mkFilesystemBindings
     else { bindings = { }; overlay = { }; };
 
-  # All domain-specific generatedBindings attrs merged together.
+  # All domain-specific source-unit bindings merged together.
   allDomainBindings =
     filesystemGlue.bindings
     // terminalGlue.bindings
@@ -1742,7 +1739,7 @@ let
               (idx: {
                 source_unit_id = id;
                 instance_idx = idx;
-                service_name = "sinex-source-worker-${id}-${toString idx}";
+                service_name = "sinex-source-unit-${id}-${toString idx}";
                 node_config = nodeConfig;
                 extra_args = extraArgs;
               })
@@ -1765,13 +1762,13 @@ let
     inherit sourceBindingsManifestFile nodesOverlay;
   };
 
-  # Preflight only needs to guard the collapsed sinexd unit. Source-worker
+  # Preflight only needs to guard the collapsed sinexd unit. Source-unit
   # and per-automaton unit names no longer exist.
   generatedUnits = [ ];
 in
 {
   # Internal option declared here to break the evaluation cycle.
-  # source-workers.nix reads config.services.sinex (via cfg) and must
+  # source-units.nix reads config.services.sinex (via cfg) and must
   # communicate generated unit names to preflight-verification.nix.
   # Writing back to services.sinex.nodes.* from a module that reads
   # config.services.sinex causes infinite recursion because the module
@@ -1781,18 +1778,14 @@ in
     type = with types; listOf str;
     default = [ ];
     internal = true;
-    description = "Systemd units generated by source-workers.nix (internal, breaks cycle).";
+    description = "Systemd units generated by source-units.nix (internal, breaks cycle).";
   };
 
   config = mkMerge [
     (mkIf sinexEnabled {
-      # Per-domain generated bindings — service emission is handled by
-      # source-bindings-generated.nix which reads these opts.
-      services.sinex.generatedBindings = mkIf nodesEnabled allDomainBindings;
-
       systemd.services = mkMerge [
         coreServices
-        # ACL/env bridge support units (not source-worker services).
+        # ACL/env bridge support units (not source-unit host services).
         nodesSupportUnits
         documentScanService.units
         documentScanService.supportUnits

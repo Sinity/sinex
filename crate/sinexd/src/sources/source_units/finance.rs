@@ -450,7 +450,7 @@ register_source_unit_binding! {
         "hledger-journal",
         "finance",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("StaticFileAdapter")
     .output_event_type("transaction.posted")
     .privacy_context("Document")
@@ -458,11 +458,11 @@ register_source_unit_binding! {
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")
     .source_unit_id("hledger-journal")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .package_impact("hledger_journal_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

@@ -237,7 +237,7 @@ register_source_unit_binding! {
         "reddit-gdpr-comments",
         "social",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("StaticFileAdapter")
     .output_event_type("social.comment.posted")
     .privacy_context("Document")
@@ -245,11 +245,11 @@ register_source_unit_binding! {
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")
     .source_unit_id("reddit-gdpr-comments")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .package_impact("reddit_gdpr_comments_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
@@ -433,7 +433,7 @@ register_source_unit_binding! {
         "reddit-gdpr-posts",
         "social",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("StaticFileAdapter")
     .output_event_type("social.post.created")
     .privacy_context("Document")
@@ -441,11 +441,11 @@ register_source_unit_binding! {
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")
     .source_unit_id("reddit-gdpr-posts")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .package_impact("reddit_gdpr_posts_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
@@ -620,7 +620,7 @@ register_source_unit_binding! {
         "wykop-entries",
         "social",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("StaticFileAdapter")
     .output_event_type("social.entry.created")
     .privacy_context("Document")
@@ -628,11 +628,11 @@ register_source_unit_binding! {
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")
     .source_unit_id("wykop-entries")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .package_impact("wykop_entries_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
@@ -811,7 +811,7 @@ register_source_unit_binding! {
         "wykop-entry-comments",
         "social",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("StaticFileAdapter")
     .output_event_type("social.entry_comment.posted")
     .privacy_context("Document")
@@ -819,11 +819,11 @@ register_source_unit_binding! {
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")
     .source_unit_id("wykop-entry-comments")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .package_impact("wykop_entry_comments_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

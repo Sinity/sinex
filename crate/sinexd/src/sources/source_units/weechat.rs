@@ -1,4 +1,4 @@
-//! `WeeChat` source unit — binds the `WeeChat` log parser to the source-worker
+//! `WeeChat` source unit — binds the `WeeChat` log parser to the source-unit host
 //! dispatch and node factory registries.
 //!
 //! Two parsers are registered in the dispatch registry:
@@ -63,7 +63,7 @@ register_source_unit_binding! {
         "weechat",
         "irc",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("irc.message")
     .privacy_context("Command")
@@ -71,11 +71,11 @@ register_source_unit_binding! {
     .checkpoint_policy("append_only_cursor")
     .resource_shape("file_watcher")
     .source_unit_id("weechat")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .package_impact("weechat_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
@@ -147,7 +147,7 @@ register_source_unit_binding! {
         "weechat.message",
         "irc",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("irc.message")
     .privacy_context("Command")
@@ -155,11 +155,11 @@ register_source_unit_binding! {
     .checkpoint_policy("append_only_cursor")
     .resource_shape("file_watcher")
     .source_unit_id("weechat.message")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .package_impact("weechat_message_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

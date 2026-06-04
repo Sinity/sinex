@@ -584,7 +584,7 @@ impl DocumentNode {
                         Err(err) => {
                             error!(
                                 target: "sinex_metrics",
-                                metric = "source_worker.document_ingest_failures_total",
+                                metric = "source_unit.document_ingest_failures_total",
                                 path = %document.path,
                                 error = %err,
                                 "Failed to ingest document"
@@ -607,7 +607,7 @@ impl DocumentNode {
                 Err(err) => {
                     error!(
                         target: "sinex_metrics",
-                        metric = "source_worker.document_inspect_failures_total",
+                        metric = "source_unit.document_inspect_failures_total",
                         path = %target.path,
                         error = %err,
                         "Failed to inspect document"

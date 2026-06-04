@@ -56,7 +56,7 @@ register_source_unit_binding! {
         "system.systemd",
         "system",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("JournalctlStreamAdapter")
     .output_event_type("unit.started")
     .privacy_context("Journal")
@@ -64,11 +64,11 @@ register_source_unit_binding! {
     .checkpoint_policy("journal")
     .resource_shape("journal_tail")
     .source_unit_id("system.systemd")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::Journal)
     .runtime_shape(RuntimeShape::Continuous)
     .package_impact("system_systemd_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

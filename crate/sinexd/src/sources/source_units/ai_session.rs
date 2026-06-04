@@ -301,7 +301,7 @@ register_source_unit_binding! {
         "ai-session-claude",
         "ai_session",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("StaticFileAdapter")
     .output_event_type("ai.message")
     .privacy_context("Document")
@@ -309,11 +309,11 @@ register_source_unit_binding! {
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")
     .source_unit_id("ai-session-claude")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .package_impact("ai_session_claude_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
@@ -605,7 +605,7 @@ register_source_unit_binding! {
         "ai-session-chatgpt",
         "ai_session",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("StaticFileAdapter")
     .output_event_type("ai.message")
     .privacy_context("Document")
@@ -613,11 +613,11 @@ register_source_unit_binding! {
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")
     .source_unit_id("ai-session-chatgpt")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .package_impact("ai_session_chatgpt_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

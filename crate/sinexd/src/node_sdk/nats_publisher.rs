@@ -636,9 +636,9 @@ fn build_publish_payload(
     let event_id = event.id.as_ref().ok_or_else(|| {
         sinex_primitives::SinexError::processing("Event ID is required".to_string())
     })?;
-    // #1570 Prong B: material-provenance events defer `ts_orig` to ingestd
-    // admission (resolved post-readiness from the source-material timing tier),
-    // so it may legitimately be absent on the wire. Serialize what we have.
+    // #1570 Prong B: a material event may publish with `ts_orig = None` (deferred
+    // to the ingestd admission stage, which resolves it from the source-material
+    // timing tier). The wire format omits ts_orig in that case.
     let ts_orig = event.ts_orig.map(|ts| ts.format_rfc3339());
     let event_id_str = event_id.to_string();
 

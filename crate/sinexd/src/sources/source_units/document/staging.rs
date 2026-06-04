@@ -1,5 +1,5 @@
 //! `document.staging` source unit — folds the legacy `sinex-document-ingestor`
-//! into the source-worker dispatch and node-factory registries.
+//! into the source-unit dispatch and node-factory registries.
 //!
 //! The ingestor scans configured root directories for documents, fingerprints
 //! them for skip-unchanged logic, stages their bytes via `AcquisitionManager`,
@@ -68,7 +68,7 @@ register_source_unit_binding! {
         "document.staging",
         "document",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("DocumentStagingParser")
     .output_event_type("document.ingested")
     .privacy_context("document_body")
@@ -76,11 +76,11 @@ register_source_unit_binding! {
     .checkpoint_policy("fingerprint_dedup")
     .resource_shape("on_demand_batch")
     .source_unit_id("document.staging")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

@@ -92,7 +92,7 @@ async fn mcp_tool_schemas_are_closed_objects() -> TestResult<()> {
 #[sinex_test]
 async fn mcp_docs_tool_table_matches_live_tools() -> TestResult<()> {
     let docs_path =
-        workspace_root_from_manifest_dir()?.join("docs/architecture/mcp-readonly-server.md");
+        workspace_root_from_manifest_dir()?.join("crate/sinexctl/docs/mcp_readonly_server.md");
     let docs = std::fs::read_to_string(&docs_path)?;
     let documented = docs
         .lines()
@@ -1843,7 +1843,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                 "sources.drift.list" => json!({
                     "drifts": [
                         {
-                            "checkpoint_key": "source-worker.default.fixture",
+                            "checkpoint_key": "source-unit.default.fixture",
                             "source_unit_id": body["params"]["source_unit_id"].as_str().unwrap_or("browser.history"),
                             "consumer_group": "default",
                             "consumer_name": "fixture",
@@ -2100,7 +2100,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "description": "fixture ingestor",
                             "manifest_status": "registered",
                             "live": true,
-                            "service_name": "sinex-source-worker@terminal.atuin-history.service",
+                            "service_name": "sinex-source-unit@terminal.atuin-history.service",
                             "instance_id": "terminal-atuin-1",
                             "source_run_id": null,
                             "host": "test-host",
@@ -2129,7 +2129,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "node_type": "ingestor",
                             "version": "0.4.2",
                             "description": "fixture source worker",
-                            "service_name": "sinex-source-worker@terminal.atuin-history.service",
+                            "service_name": "sinex-source-unit@terminal.atuin-history.service",
                             "instance_id": "terminal-atuin-1",
                             "source_run_id": null,
                             "host": "test-host",

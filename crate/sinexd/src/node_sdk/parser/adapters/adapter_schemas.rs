@@ -1,9 +1,9 @@
 //! JSON Schema export for all adapter Config types.
 //!
 //! Each adapter's `*Config` struct derives [`schemars::JsonSchema`] and is
-//! registered here. Callers (e.g. `xtask source-units render`) call
-//! [`all_adapter_schemas`] to obtain a map of adapter name → JSON Schema
-//! together with the set of required field names.
+//! registered here. Runtime binding loaders call [`all_adapter_schemas`] to
+//! obtain a map of adapter name → JSON Schema together with the set of
+//! required field names.
 //!
 //! # Coverage
 //!

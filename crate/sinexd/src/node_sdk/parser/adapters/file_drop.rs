@@ -231,7 +231,7 @@ pub struct FileDropConfig {
     /// hundreds of materials per minute and bloat the CAS without producing
     /// meaningful user signal. Surfaced by issue #1543 — the live
     /// `sinex_prod` deployment accumulated 449 GB of duckdb.wal and
-    /// testmondata-wal captures before the fs source-worker was stopped.
+    /// testmondata-wal captures before the fs source-unit was stopped.
     #[serde(default)]
     pub ignored_file_suffixes: Vec<String>,
 

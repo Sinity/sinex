@@ -55,7 +55,7 @@ register_source_unit_binding! {
         "fs",
         "filesystem",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("FileContentDropAdapter")
     .output_event_type("file.created")
     .privacy_context("fs_path")
@@ -63,11 +63,11 @@ register_source_unit_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("continuous_inotify")
     .source_unit_id("fs")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }

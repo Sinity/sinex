@@ -58,7 +58,7 @@ register_source_unit_binding! {
         "system.udev",
         "system",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("FileDropAdapter")
     .output_event_type("device.connected")
     .privacy_context("Metadata")
@@ -66,11 +66,11 @@ register_source_unit_binding! {
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
     .source_unit_id("system.udev")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
     .package_impact("system_udev_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

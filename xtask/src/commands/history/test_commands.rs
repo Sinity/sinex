@@ -44,12 +44,7 @@ fn classify_slow_test(test: &HistoricalSlowTest) -> SlowTestClassification {
     if package == "xtask"
         && contains_any(
             &name,
-            &[
-                "command_catalog",
-                "proof_catalog",
-                "docs",
-                "format_registry",
-            ],
+            &["command_catalog", "docs", "format_registry"],
         )
     {
         return SlowTestClassification {
@@ -90,7 +85,7 @@ fn classify_slow_test(test: &HistoricalSlowTest) -> SlowTestClassification {
         ],
     ) || matches!(
         package,
-        "sinex-source-worker" | "sinex-gateway" | "sinex-ingestd"
+        "sinexd" | "sinex-gateway" | "sinex-ingestd"
     ) {
         return SlowTestClassification {
             kind: "runtime_path_candidate",

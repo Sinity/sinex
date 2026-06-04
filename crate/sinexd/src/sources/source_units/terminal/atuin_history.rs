@@ -1,7 +1,7 @@
 //! `terminal.atuin-history` — Atuin `SQLite` history adapter.
 //!
 //! Folds the Atuin history source unit from `sinex-terminal-ingestor` into
-//! the source-worker dispatch and node factory registries.
+//! the source-unit dispatch and node factory registries.
 //!
 //! Adapter: [`SqliteRowAdapter`] — reads from `~/.local/share/atuin/history.db`.
 //! Parser:  [`AtuinHistoryParser`] — maps each `SQLite` row to
@@ -10,7 +10,7 @@
 //! The source-unit descriptor and binding are registered here; the
 //! `terminal.atuin-history` binding in `sinex-primitives/src/proof.rs` is
 //! the canonical primitive-level binding — this module registers the
-//! source-worker implementation binding on top of it.
+//! source-unit host implementation binding on top of it.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -58,7 +58,7 @@ register_source_unit_binding! {
         "terminal.atuin-history",
         "terminal",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("SqliteRowAdapter")
     .output_event_type("command.executed")
     .privacy_context("Command")
@@ -66,14 +66,14 @@ register_source_unit_binding! {
     .checkpoint_policy("mutable_snapshot")
     .resource_shape("linear_rows_bounded_memory")
     .source_unit_id("terminal.atuin-history")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::MutableSnapshot {
         backing_store_kind: "sqlite",
         occurrence_anchor: "atuin_history_id",
     })
     .runtime_shape(RuntimeShape::Continuous)
     .package_impact("atuin_history_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

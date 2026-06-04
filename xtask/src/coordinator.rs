@@ -914,23 +914,20 @@ fn tree_fingerprint() -> Result<String> {
 /// misses but never incorrect freshness. Under-inclusion would be incorrect.
 fn package_to_path(pkg: &str) -> String {
     match pkg {
-        "sinexctl" => "crate/cli/".to_string(),
+        "sinexctl" => "crate/sinexctl/".to_string(),
         "xtask" => "xtask/".to_string(),
-        "xtask-macros" => "xtask/macros/".to_string(),
         "sinex-e2e-tests" => "tests/e2e/".to_string(),
+        "sinex-workspace-tests" => "tests/workspace/".to_string(),
+        "sinex-vm-test-suite" => "tests/vm-suite/".to_string(),
         _ => {
             let name_underscore = pkg.replace('-', "_");
-            for category in &["lib", "core", "nodes", "tools"] {
-                // Try hyphenated form first (canonical package naming)
-                let path_hyphen = format!("crate/{category}/{pkg}/");
-                if std::path::Path::new(&path_hyphen).exists() {
-                    return path_hyphen;
-                }
-                // Try underscored form (directory may use underscores)
-                let path_under = format!("crate/{category}/{name_underscore}/");
-                if std::path::Path::new(&path_under).exists() {
-                    return path_under;
-                }
+            let path_hyphen = format!("crate/{pkg}/");
+            if std::path::Path::new(&path_hyphen).exists() {
+                return path_hyphen;
+            }
+            let path_under = format!("crate/{name_underscore}/");
+            if std::path::Path::new(&path_under).exists() {
+                return path_under;
             }
             // Unknown package — include crate/ broadly (over-includes, never misses)
             "crate/".to_string()
@@ -3845,16 +3842,17 @@ sinex-primitives = { path = "../sinex-primitives" }
 
     #[sinex_test]
     async fn test_package_to_path_well_known() -> TestResult<()> {
-        assert_eq!(package_to_path("sinexctl"), "crate/cli/");
+        assert_eq!(package_to_path("sinexctl"), "crate/sinexctl/");
         assert_eq!(package_to_path("xtask"), "xtask/");
-        assert_eq!(package_to_path("xtask-macros"), "xtask/macros/");
         assert_eq!(package_to_path("sinex-e2e-tests"), "tests/e2e/");
+        assert_eq!(package_to_path("sinex-workspace-tests"), "tests/workspace/");
+        assert_eq!(package_to_path("sinex-vm-test-suite"), "tests/vm-suite/");
         Ok(())
     }
 
     #[sinex_test]
     async fn test_package_to_path_known_crate() -> TestResult<()> {
-        // sinex-primitives should resolve to crate/lib/sinex-primitives/
+        // sinex-primitives should resolve to crate/sinex-primitives/
         let path = package_to_path("sinex-primitives");
         assert!(
             path.starts_with("crate/"),

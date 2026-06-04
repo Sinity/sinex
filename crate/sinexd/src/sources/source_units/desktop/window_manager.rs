@@ -70,7 +70,7 @@ register_source_unit_binding! {
         "desktop.window-manager",
         "desktop",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("UnixSocketStreamAdapter")
     .output_event_type("window.opened")
     .privacy_context("document")
@@ -78,11 +78,11 @@ register_source_unit_binding! {
     .checkpoint_policy("live_stream")
     .resource_shape("unix_socket_watcher")
     .source_unit_id("desktop.window-manager")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
     .package_impact("desktop_window_manager")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
@@ -93,7 +93,7 @@ register_source_unit_binding! {
 
 /// Configuration for [`HyprlandParser`].
 ///
-/// At runtime the source-worker deserialises the node JSON config into this
+/// At runtime the source-unit host deserialises the node JSON config into this
 /// struct via `UnixSocketStreamAdapter::Config` (the outer socket config), and
 /// passes parser-specific fields here.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

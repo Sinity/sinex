@@ -345,7 +345,7 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         // Replay control request/reply and invalidation publishers.
         "crate/sinexd/src/api/replay_control/server.rs",
         "crate/sinexd/src/api/replay_control/execution/collect.rs",
-        // Source parse command request/reply acknowledgements (folded source-worker).
+        // Source parse command request/reply acknowledgements (folded source-unit host).
         "crate/sinexd/src/sources/parse_listener.rs",
     ];
 
@@ -688,7 +688,7 @@ fn check_anyhow_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec
 /// Shared skip predicate for the "no X in library code" checks
 /// (`anyhow::`, `color_eyre::`, `println!`). Exempts build tooling, tests,
 /// binaries, CLI, and examples. Paths are post-fold (#1559): the CLI crate
-/// is `crate/sinexctl/` and the VM test-suite binary is `crate/sinex-vm-suite/`.
+/// is `crate/sinexctl/` and the VM test-suite binary is `tests/vm-suite/`.
 fn is_lib_check_skip(path: &str) -> bool {
     path.starts_with("xtask/")
         || is_tests_path(path)
@@ -697,7 +697,7 @@ fn is_lib_check_skip(path: &str) -> bool {
         || path.contains("/bin/")
         || path.contains("/examples/")
         || path.starts_with("crate/sinexctl/")
-        || path.starts_with("crate/sinex-vm-suite/")
+        || path.starts_with("tests/vm-suite/")
 }
 
 /// Check for `color_eyre::` usage in library code (use SinexError error stack).

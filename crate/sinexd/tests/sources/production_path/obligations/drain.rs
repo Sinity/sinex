@@ -5,7 +5,7 @@
 //!
 //! ## What this obligation proves
 //!
-//! - `SourceWorkerDrainController::request_drain()` advances state from `Idle`
+//! - `SourceUnitDrainController::request_drain()` advances state from `Idle`
 //!   to `StoppingAccept`.
 //! - `finish_active_work()` + subsequent phases reach `Drained` without error
 //!   and within the configured timeout.
@@ -17,7 +17,7 @@
 //! isolation.
 
 use crate::AdapterKind;
-use sinexd::sources::drain::{DrainPhase, SourceWorkerDrainController};
+use sinexd::sources::drain::{DrainPhase, SourceUnitDrainController};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,7 +31,7 @@ pub async fn run(
     _adapter_kind: AdapterKind,
     _fixture_data: &[u8],
 ) -> Result<(), String> {
-    let controller = Arc::new(SourceWorkerDrainController::new());
+    let controller = Arc::new(SourceUnitDrainController::new());
 
     // Simulate one unit of in-flight work.
     controller.enter_work();

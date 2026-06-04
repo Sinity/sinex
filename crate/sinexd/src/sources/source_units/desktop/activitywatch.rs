@@ -69,7 +69,7 @@ register_source_unit_binding! {
         "desktop.activitywatch",
         "desktop",
     )
-    .implementation("sinex-source-worker")
+    .implementation("sinexd")
     .adapter("SqliteRowAdapter")
     .output_event_type("window.active")
     .privacy_context("document")
@@ -77,14 +77,14 @@ register_source_unit_binding! {
     .checkpoint_policy("mutable_snapshot")
     .resource_shape("linear_rows_bounded_memory")
     .source_unit_id("desktop.activitywatch")
-    .runner_pack("source-worker")
+    .runner_pack("sinexd-source-unit")
     .checkpoint_family(CheckpointFamily::MutableSnapshot {
         backing_store_kind: "sqlite",
         occurrence_anchor: "bucket_event_timestamp",
     })
     .runtime_shape(RuntimeShape::Continuous)
     .package_impact("desktop_activitywatch")
-    .implementation_mode("rust_in_pack:source-worker")
+    .implementation_mode("sinexd:source-unit")
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

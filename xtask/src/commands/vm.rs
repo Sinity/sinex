@@ -51,7 +51,7 @@ const CHAOS_TESTS: &[&str] = &[
     "chaos-clock-skew",
     "xtask-concurrency",
 ];
-/// End-to-end production-shape proof (#1135): real source-worker → NATS → ingestd → DB → gateway.
+/// End-to-end production-shape proof (#1135): real source-unit host → NATS → ingestd → DB → gateway.
 const PRODUCTION_SHAPE_TESTS: &[&str] = &["production-shape"];
 
 /// Default timeout per test in seconds (15 minutes).

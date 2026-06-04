@@ -20,7 +20,7 @@
 //!
 //! The harness can operate at two levels:
 //! - **Unit**: no NATS, no Postgres — pure adapter → parser → assertions.
-//! - **Integration** (future): route accepted intents through source-worker path.
+//! - **Integration** (future): route accepted intents through source-unit path.
 
 use std::collections::HashMap;
 
@@ -47,7 +47,7 @@ use super::{InputShapeAdapter, MaterialParser};
 /// Minimal test context for a parser fixture.
 ///
 /// Provides identifiers and helpers that parsers need during testing without
-/// requiring a live source-worker, NATS, or Postgres.
+/// requiring a live source-unit, NATS, or Postgres.
 #[derive(Debug, Clone)]
 pub struct ParserTestContext {
     /// The source unit this test belongs to.
