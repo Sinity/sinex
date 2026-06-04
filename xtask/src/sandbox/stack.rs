@@ -122,6 +122,11 @@ impl<'ctx> TestCoreStack<'ctx> {
             tls_key: key_file.path().to_path_buf(),
             rpc_token: Some(rpc_token.clone()),
             rpc_rate_limit_disabled: true,
+            // MUST match the ingestd namespace above: the SSE SubscriptionBus
+            // subscribes to `{namespace}.events.confirmations.>`, so without this
+            // the bus never sees the namespaced ingestd's confirmations and the
+            // real ingestd → bus → SSE delivery path silently never completes.
+            namespace: Some(namespace.clone()),
         };
         let gateway = start_test_gateway(gateway_config).await?;
 
