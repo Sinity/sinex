@@ -382,6 +382,13 @@ pub struct TestGatewayConfig {
     pub rpc_token: Option<String>,
     /// Disable RPC rate limiting (default: true — rate limiting disabled in tests).
     pub rpc_rate_limit_disabled: bool,
+    /// Pipeline namespace (`SINEX_NAMESPACE`). MUST match the ingestd it pairs
+    /// with: NATS subjects are namespace-prefixed, so the gateway's SSE
+    /// SubscriptionBus only sees ingestd confirmations when both use the same
+    /// namespace. Leaving this unset makes the bus subscribe to the default
+    /// namespace while a namespaced ingestd publishes elsewhere (real
+    /// ingestd → bus → SSE delivery then silently never completes).
+    pub namespace: Option<String>,
 }
 
 impl TestGatewayConfig {
@@ -407,6 +414,7 @@ impl TestGatewayConfig {
             tls_key: tls_dir.join("server-key.pem"),
             rpc_token: None,
             rpc_rate_limit_disabled: true,
+            namespace: None,
         })
     }
 }
@@ -496,6 +504,9 @@ async fn start_test_gateway_inner(
     }
     if let Some(token) = &config.rpc_token {
         cmd.env("SINEX_RPC_TOKEN", token);
+    }
+    if let Some(ns) = &config.namespace {
+        cmd.env("SINEX_NAMESPACE", ns);
     }
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
