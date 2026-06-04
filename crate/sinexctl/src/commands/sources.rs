@@ -1128,7 +1128,7 @@ mod tests {
     async fn drift_table_surfaces_readiness_impact() -> TestResult<()> {
         let response = SourcesDriftListResponse {
             drifts: vec![SourceShapeDriftObservation {
-                checkpoint_key: "source-worker.default.fixture".to_string(),
+                checkpoint_key: "source-unit.default.fixture".to_string(),
                 source_unit_id: SourceUnitId::from_static("browser.history"),
                 consumer_group: Some("default".to_string()),
                 consumer_name: Some("fixture".to_string()),

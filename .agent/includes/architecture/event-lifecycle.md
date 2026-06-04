@@ -4,7 +4,7 @@ This is the complete path of an event through the system. Each step is a decisio
 
 ```
  1. Source data exists (file change, shell command, window focus, systemd event)
- 2. Ingestor detects change (inotify/polling/socket/journal API)
+ 2. Source unit detects change (inotify/polling/socket/journal API)
  3. Source material registered in DB (raw.source_material_registry) — provenance root
  4. Ingestor parses source bytes into typed payload struct
  5. EventPayload trait provides (SOURCE, EVENT_TYPE) as compile-time constants
@@ -13,7 +13,7 @@ This is the complete path of an event through the system. Each step is a decisio
  8. Privacy engine runs synchronously (per-event, in ingestor process)
  9. EventBatcher accumulates (100 events OR 1 second, whichever first)
 10. Batch published to NATS JetStream (Events stream)
-11. ingestd consumer receives batch from NATS
+11. `sinexd::event_engine` consumer receives batch from NATS
 12. JSON parse + event ID presence check (fail -> DLQ)
 13. Schema validation against sinex_schemas registry (lenient: unknown types pass)
 14. MaterialReadySet pre-check for FK constraint (not ready -> NAK + retry)
@@ -25,7 +25,7 @@ This is the complete path of an event through the system. Each step is a decisio
 20. ConfirmationBuffer delivers to automata (AutomatonRuntime)
 21. Automaton processes event -> emits derived event with .from_parents()
 22. Derived event enters pipeline at step 10 (back to NATS)
-23. Event queryable via gateway RPC (events.query, sinexctl, telemetry CAs)
+23. Event queryable via `sinexd::api` RPC (events.query, sinexctl, telemetry CAs)
 ```
 
 ### Where Things Break (Ordered by Likelihood)
@@ -50,17 +50,17 @@ else              -> QueryBuilder (VALUES path)
                      (no staging overhead for small batches)
 ```
 
-Implication: automaton-heavy workloads never hit the COPY fast path. COPY only benefits material-provenance batches from ingestors.
+Implication: automaton-heavy workloads never hit the COPY fast path. COPY only benefits material-provenance batches from source units.
 
 ### Trust Boundaries
 
 | Boundary | Validated | NOT validated |
 |----------|-----------|---------------|
-| Ingestor -> NATS | Privacy engine (per-event, synchronous) | Payload size (10MB NATS-payload cap, enforced in Rust only at ingestor side — `ingestion_helpers.rs:32`, `file_drop.rs:268`) |
-| NATS -> ingestd | JSON parse, event ID, schema (lenient) | ts_orig plausibility, anchor_byte sign |
-| ingestd -> DB | XOR provenance CHECK, material FK, self-ref cycle | Payload-to-material correspondence |
-| DB -> gateway | Client message sanitization, role authorization | — |
-| gateway -> CLI | Token-suffix RBAC (stateless, no revocation) | HTTP request body capped at 2MB (`SINEX_API_MAX_BODY_BYTES`, `api/config.rs`) — separate from the 10MB ingestor NATS-payload limit |
+| Source unit -> NATS | Privacy engine (per-event, synchronous) | Payload size (10MB NATS-payload cap, enforced in Rust only at source-unit side — `ingestion_helpers.rs:32`, `file_drop.rs:268`) |
+| NATS -> `sinexd::event_engine` | JSON parse, event ID, schema (lenient) | ts_orig plausibility, anchor_byte sign |
+| `sinexd::event_engine` -> DB | XOR provenance CHECK, material FK, self-ref cycle | Payload-to-material correspondence |
+| DB -> `sinexd::api` | Client message sanitization, role authorization | — |
+| `sinexd::api` -> CLI | Token-suffix RBAC (stateless, no revocation) | HTTP request body capped at 2MB (`SINEX_API_MAX_BODY_BYTES`, `api/config.rs`) — separate from the 10MB source-unit NATS-payload limit |
 
 ### Key Thresholds
 

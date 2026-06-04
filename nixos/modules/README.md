@@ -5,6 +5,9 @@ all service wiring, directories, and lifecycle management for the platform. The
 option tree mirrors the running system so that every knob you set maps directly
 to a systemd unit, CLI argument, or generated configuration file.
 
+Host wiring, systemd ordering, hardening, and secret inventory are documented in
+[`deployment-topology.md`](deployment-topology.md).
+
 ## Key Namespaces
 
 | Namespace | Purpose |
@@ -116,7 +119,8 @@ disabled (e.g. staging migrations).
   `core.sinexd.automata`.
 - node defaults (`nodes.defaults`) cover instances, batching, and
   resource limits. Individual nodes can override by setting their field to
-  `null` (inherit) or a concrete value.
+  `null` (inherit) or a concrete value. See
+  [`resource-scoping.md`](resource-scoping.md).
 - `nodes.document` is intentionally not a long-running daemon. It renders a
   managed oneshot service (`sinex-document-scan.service`) plus an optional
   timer (`sinex-document-scan.timer`), and the module requires that at least
@@ -181,7 +185,7 @@ disabled (e.g. staging migrations).
   secured local NATS deployments do not need a separate bootstrap-only secret path.
 
 ### Secret Conventions
-- gateway admin token falls back to `sinex-gateway-admin-token`, which can come
+- API admin token falls back to `sinex-gateway-admin-token`, which can come
   from agenix or from declarative `environment.etc."sinex/gateway-admin-token"`
 - database password surfaces fall back to `sinex-local-db` / `sinex-remote-db`
   and the conventional declarative files `/etc/sinex/db-password` /
@@ -251,7 +255,7 @@ The module then:
   long-running service, every bootstrap one-shot (`sinex-schema-apply`,
   `sinex-tls-init`, `sinex-blob-init`, `sinex-nats-bootstrap`,
   `sinex-kitty-setup`, `sinex-preflight`, `sinex-document-scan`, the managed
-  `nats.service`), and every generated source-worker / automaton unit;
+  `nats.service`), and every generated source-unit host / automaton unit;
 - when `includeDatabase = true`, also strips it from `postgresql.service`,
   `postgresql-setup.service`, and `postgresql.target`;
 - populates `sinex-runtime.target.wants` with the union, so pulling the target
@@ -317,7 +321,7 @@ sops-nix), use `services.sinex.database.setupWaitForPaths` to gate
 - `blob-storage.nix` – content-store backend initialization and maintenance timers.
 - `monitoring.nix` – Prometheus/Grafana/exporter configuration.
 - `preflight-verification.nix` – `sinex-preflight` and `sinex-update` units.
-- `source-workers.nix` – `sinexd` service unit, node/automata units.
+- `source-units.nix` – `sinexd` service unit, source-binding, and automata wiring.
 - `kitty-shell-integration.nix` – Kitty auto-configuration helper.
 
 ## Testing Tips

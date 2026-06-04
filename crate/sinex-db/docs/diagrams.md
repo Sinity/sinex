@@ -209,4 +209,4 @@ Benefits:
 ## See Also
 
 - Patterns: [patterns.md](./patterns.md)
-- Schema design: `crate/lib/sinex-schema/docs/schema_design.md`
+- Schema design: `crate/sinex-db/docs/schema/schema_design.md`

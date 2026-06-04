@@ -9,12 +9,12 @@
 
 ## Strict Validation
 
-`sinex-ingestd` supports a stricter schema gate for environments that want
+`sinexd::event_engine` supports a stricter schema gate for environments that want
 schema coverage to be mandatory instead of best-effort.
 
 - default behavior is permissive: events without registered schemas are accepted
 - with strict validation enabled, schema-less events are rejected before persistence
-- this is an ingestd behavior/config knob, not a system-wide architectural mode
+- this is an event-engine behavior/config knob, not a system-wide architectural mode
 
 ### Configuration
 

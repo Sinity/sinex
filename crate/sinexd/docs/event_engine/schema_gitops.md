@@ -1,12 +1,12 @@
 # Schema GitOps
 
-Schema GitOps is implemented by `sinex-ingestd` plus the gateway/CLI control
+Schema GitOps is implemented by `sinexd::event_engine` plus the API/CLI control
 plane.
 
 ## What It Does
 
 1. You register a Git repository containing JSON schema files.
-2. `sinex-ingestd` polls that repository on its background sync loop.
+2. `sinexd::event_engine` polls that repository on its background sync loop.
 3. Matching schema files are discovered and upserted into
    `sinex_schemas.event_payload_schemas`.
 4. The validator reload path and schema broadcast path pick up the updated
@@ -54,4 +54,4 @@ sinexctl gitops sync <SOURCE_UUID>
 ## See Also
 
 - `schema_sync.md`
-- `crate/lib/sinex-schema/docs/gitops-schema-sources-status.md`
+- `crate/sinex-db/docs/schema/gitops-schema-sources-status.md`

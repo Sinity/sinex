@@ -78,7 +78,7 @@ agent-facing helpers should go through `xtask`.
 `xtask` is a development-plane tool, not the production control plane. Live
 runtime operation belongs to `sinexctl`, while host activation proof belongs to
 NixOS activation checks and VM tests. Keep these responsibilities explicit; see
-[`docs/architecture/runtime-target-boundaries.md`](docs/architecture/runtime-target-boundaries.md).
+[`xtask/docs/runtime-target-boundaries.md`](xtask/docs/runtime-target-boundaries.md).
 
 ## Planning, Issues, and Source Documents
 
@@ -88,7 +88,7 @@ starts.
 
 Target-vision-derived claims that may steer architecture, issue scope, naming,
 or proof obligations should also be checked against
-[`docs/target-vision-claim-ledger.md`](docs/target-vision-claim-ledger.md).
+[`target-vision-claim-ledger.md`](.github/target-vision-claim-ledger.md).
 The ledger records whether a claim is raw, issue-backed, implemented, verified,
 semantic debt, superseded, or rejected. Do not copy full target-vision prose
 into issues; summarize the claim, link the source, and keep GitHub as the
@@ -223,24 +223,6 @@ Two antipatterns to avoid:
 - **"Status: done" comments listing work** that exists only in a working
   tree. If you're describing what *will* land, say so. If you're
   describing what *did* land, the verification commands prove it.
-
-## Source-unit promotion gate
-
-A new source unit is not promotable until its
-[`SourceUnitDescriptor`](crate/lib/sinex-primitives/docs/source_unit.md)
-is filled in and the declared proof obligations pass. The descriptor is
-the executable form of the contract — identity, emitted
-`(source, event_type)` pairs, checkpoint family, privacy tier, runtime
-shape, horizons, retention, proof obligations, occurrence identity.
-
-Register with `register_source_unit!` in the source-unit module. See
-`crate/core/sinex-source-worker/src/sources/terminal/zsh_history.rs` for a
-canonical terminal-history example.
-
-This is a hard gate, not a convention: a PR adding a new source unit
-without a descriptor should be sent back. The descriptor compiles
-against typed fields, so a missing or malformed one fails at build
-time.
 
 ## Generated Agent Docs
 

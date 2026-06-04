@@ -1,16 +1,19 @@
-# Ingestd Architecture
+# sinexd Event Engine Architecture
 
 ## Service Role
 
-sinex-ingestd is the **high-speed ingestion engine** for Sinex. It handles:
+`sinexd::event_engine` is the **high-speed ingestion engine** for Sinex. It handles:
 
 - High-throughput, low-complexity stream ingestion
 - Millions of events from trusted internal sources
 - Write-optimized database persistence
 
-## Why Ingestd is Separate from Gateway
+## Why Event Engine and API Stay Separated
 
-| Dimension | Ingestd | Gateway |
+The old `sinex-ingestd` and `sinex-gateway` binaries have been folded into
+`sinexd`, but the module boundary remains load-bearing.
+
+| Dimension | Event engine module | API module |
 |-----------|---------|---------|
 | **Workload** | High-throughput, simple writes | Low-throughput, complex queries |
 | **Protocol** | NATS JetStream (internal) | JSON-RPC/HTTP/S, native messaging |
@@ -20,7 +23,7 @@ sinex-ingestd is the **high-speed ingestion engine** for Sinex. It handles:
 
 ## Internal Trust Model
 
-Ingestd operates in an internal trust zone:
+The event engine operates in an internal trust zone:
 
 - Clients (nodes) are trusted parts of the system
 - Primary concern: performance and DoS prevention from buggy nodes
@@ -38,9 +41,9 @@ A long-running analytical query (via gateway) must not block ingestion of real-t
 
 ## Failure Isolation
 
-If ingestd fails:
+If the event engine fails:
 - Data collection pauses
-- Users can still query all existing data via gateway
+- Users can still query all existing data via the API
 - System remains read-only but useful
 
 See also:

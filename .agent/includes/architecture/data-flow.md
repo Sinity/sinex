@@ -49,16 +49,15 @@ sinex-primitives         Foundation: types, validation, errors, domain enums, ID
     |   |                 sinex_db::schema: DB schema + declarative convergence
     |   |
     |   +-- sinex-macros      #[derive(EventPayload)]
-    |   |
-    |   +-- sinex-node-sdk    Node runtime + CLI: lifecycle, checkpoints, replay
-    |           |
-    |           +-- sinexd    Unified daemon
-    |                   |
-    |                   +-- sinexd::sources   Source-unit adapters
-    |                   +-- sinexd::automata  All automata
-    |                   +-- sinexd::event_engine  Persistence pipeline
-    |                   +-- sinexd::api       API layer
-    |                   +-- sinexd::supervisor  Orchestration
+
+sinexd                  Unified daemon
+    |
+    +-- sinexd::node_sdk     Inline node runtime: lifecycle, checkpoints, replay
+    +-- sinexd::sources      Source-unit adapters
+    +-- sinexd::automata     All automata
+    +-- sinexd::event_engine Persistence pipeline
+    +-- sinexd::api          API layer
+    +-- sinexd::supervisor   Orchestration
 
 sinexctl                 Unified CLI (query, trace, telemetry, context, report, import)
 

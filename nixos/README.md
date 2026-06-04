@@ -13,7 +13,7 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 - **modules/** - Implementation modules:
   - `default.nix` - Main module entry point and base options
   - `database.nix` - PostgreSQL provisioning, pooling, and health monitoring
-  - `source-workers.nix` - Ingestor and automaton service configurations
+  - `source-units.nix` - Ingestor and automaton service configurations
   - `monitoring.nix` - Prometheus/Grafana monitoring setup
   - `preflight-verification.nix` - Pre-deployment validation checks
   - `nats.nix` - NATS JetStream configuration
@@ -46,7 +46,7 @@ Key architectural decisions and implementation details are documented at their i
   - Snapshot, historical, and continuous modes
 
 ### Node Implementations
-- **Filesystem Monitoring**: [`sinex-source-worker/src/sources/fs/mod.rs`](../crate/core/sinex-source-worker/src/sources/fs/mod.rs)
+- **Filesystem Monitoring**: [`sinexd/src/sources/source_units/fs/mod.rs`](../crate/sinexd/src/sources/source_units/fs/mod.rs)
   - SDK `FileContentDropAdapter` registration
   - inotify-backed file-drop watch planning
   - content staging plus metadata-only observations
@@ -553,7 +553,7 @@ ORDER BY created_at DESC;
 ```bash
 # Release current leadership to trigger election
 sudo -u sinex psql sinex_prod -c "
-DELETE FROM core.service_leadership WHERE service_name = 'sinex-source-worker';
+DELETE FROM core.service_leadership WHERE service_name = 'sinexd';
 "
 # Healthy standby instances will immediately compete for leadership
 ```

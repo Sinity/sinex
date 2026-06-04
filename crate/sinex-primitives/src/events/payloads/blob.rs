@@ -52,13 +52,10 @@ pub struct StorageStatisticsPayload {
 // content-addressable BLOB store, which emits operational events as it
 // retrieves, ingests, verifies blobs and reports aggregate statistics. We
 // register a descriptor so the (source, event_type) pairs declared via
-// `#[event_payload(...)]` are claimed by *something* in the source-unit
-// inventory, instead of showing up as unclaimed payloads in
+// `#[event_payload(...)]` are claimed by the descriptor inventory used by
 // `sinexctl verify --source-units`. The descriptor has no `SourceUnitBinding`
-// because there is no per-host systemd unit named "blob storage" — the events
-// are produced from inside other binaries (ingestd, gateway, node SDK) that
-// already have their own bindings. The "infra source unit, descriptor-only"
-// shape is documented in Section 9 of `docs/design/event-taxonomy-v2.md`.
+// because there is no per-host service named "blob storage"; these events are
+// produced from inside long-running sinex processes.
 // ─────────────────────────────────────────────────────────────────────────────
 
 use crate::proof::{

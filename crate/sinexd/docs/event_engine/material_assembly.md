@@ -1,6 +1,8 @@
 # Material Assembly Subsystem
 
-The Material Assembly subsystem in \`sinex-ingestd\` is responsible for reconstructing source materials (files, streams, blobs) from fragmented data slices arriving over NATS `JetStream`.
+The material assembly subsystem in `sinexd::event_engine` reconstructs source
+materials (files, streams, blobs) from fragmented data slices arriving over
+NATS JetStream.
 
 ## State Machine & Assembly Workflow
 

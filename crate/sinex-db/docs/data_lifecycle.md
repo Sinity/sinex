@@ -200,7 +200,7 @@ Replay archives first, ensuring original events preserved before re-derivation.
 ## Source Of Truth
 
 Lifecycle behavior is managed in declarative schema apply SQL:
-1. `TOMBSTONE_LIFECYCLE_SQL` in `crate/lib/sinex-schema/src/apply.rs` creates `core.event_tombstones` and lifecycle functions.
+1. `TOMBSTONE_LIFECYCLE_SQL` in `crate/sinex-schema/src/apply.rs` creates `core.event_tombstones` and lifecycle functions.
 2. `configure_timescaledb()` in the same file configures hypertable/chunk behavior and removes automatic retention policy.
 
 If retention policy semantics change, update this document and `apply.rs` in the same change to prevent policy drift.

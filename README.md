@@ -44,7 +44,7 @@ The capture layer is being reframed from "one ingestor crate per source domain"
 to a staged-source parser substrate: source material is registered, an
 input-shape adapter enumerates records or bytes, and a parser emits
 material-provenance events. See
-[`docs/architecture/staged-source-parser-substrate.md`](docs/architecture/staged-source-parser-substrate.md).
+[`crate/sinexd/docs/sources/staged_source_parser_substrate.md`](crate/sinexd/docs/sources/staged_source_parser_substrate.md).
 The diagram below shows the deployed runtime shape; #1054 owns the remaining
 decision about whether staged local parsers always cross NATS or can run closer
 to persistence.
@@ -136,7 +136,7 @@ There is no separate top-level operations runbook anymore.
 
 Hardening defaults that are already part of the repo:
 
-- gateway RPC is TLS-only and non-loopback binds require mTLS policy
+- API RPC is TLS-only and non-loopback binds require mTLS policy
 - managed long-running units and helper/maintenance oneshots use systemd sandboxing
 - managed local NATS now has typed server TLS under `services.sinex.nats.tls.*`
 - managed local NATS now has typed subject-level authz for the current shared runtime identity under `services.sinex.nats.authorization.sharedClient.*`
@@ -144,7 +144,7 @@ Hardening defaults that are already part of the repo:
 
 Conventional secret names that the module now resolves automatically through agenix:
 
-- gateway admin token: `sinex-gateway-admin-token`
+- API admin token: `sinex-gateway-admin-token`
 - local NATS server TLS: `sinex-nats-server-cert`, `sinex-nats-server-key`, `sinex-nats-client-ca`
 - shared NATS client TLS/auth: `sinex-nats-ca`, `sinex-nats-client-cert`, `sinex-nats-client-key`, `sinex-nats-client-creds`, `sinex-nats-client-nkey`, `sinex-nats-token`
 - compatibility aliases are also accepted for the NATS client path: `nats-ca`, `nats-client-cert`, `nats-client-key`, `nats-client-creds`, `nats-client-nkey`, `nats-token`
@@ -166,31 +166,34 @@ journalctl -u sinexd -f
 | Understand the system shape | [README.md#architecture](README.md#architecture) |
 | Deploy and harden the common NixOS path | [README.md#deployment--operations](README.md#deployment--operations) |
 | Deploy on NixOS | [nixos/README.md](nixos/README.md) |
-| Build a node or derived service | [crate/sinex-node-sdk/docs/overview.md](crate/sinex-node-sdk/docs/overview.md) |
+| Build a source unit or derived service | [crate/sinexd/docs/sources/README.md](crate/sinexd/docs/sources/README.md) |
 | Understand event schemas | [crate/sinex-db/docs/schema/event-taxonomy.md](crate/sinex-db/docs/schema/event-taxonomy.md) |
-| Separate notes, typed records, graph, and artifacts | [docs/architecture/knowledge-boundaries.md](docs/architecture/knowledge-boundaries.md) |
-| Define current-state projections for event-native domains | [docs/architecture/domain-reducers.md](docs/architecture/domain-reducers.md) |
+| Separate notes, typed records, graph, and artifacts | [crate/sinex-primitives/docs/knowledge_boundaries.md](crate/sinex-primitives/docs/knowledge_boundaries.md) |
+| Define current-state projections for event-native domains | [crate/sinex-primitives/docs/domain_reducers.md](crate/sinex-primitives/docs/domain_reducers.md) |
 | Model tasks as event-native workflow objects | [issue #1107](https://github.com/Sinity/sinex/issues/1107) |
 | Model sensitive health and self-observation logs | [issue #1108](https://github.com/Sinity/sinex/issues/1108) |
-| Model declarations, omissions, and conceptual time | [docs/architecture/declarations-and-conceptual-time.md](docs/architecture/declarations-and-conceptual-time.md) |
-| Design interval-backed moment queries | [docs/architecture/moment-evidence-windows.md](docs/architecture/moment-evidence-windows.md) |
-| Define versioned SQL-shaped derivations | [docs/architecture/sql-derivation-engine.md](docs/architecture/sql-derivation-engine.md) |
+| Model declarations, omissions, and conceptual time | [issue #1113](https://github.com/Sinity/sinex/issues/1113) |
+| Design interval-backed moment queries | [issue #1110](https://github.com/Sinity/sinex/issues/1110) |
+| Define versioned SQL-shaped derivations | [issue #1117](https://github.com/Sinity/sinex/issues/1117) |
 | Record replayable inference confidence and seeds | [issue #1118](https://github.com/Sinity/sinex/issues/1118) |
-| Explain semantic composition beyond ancestry trace | [docs/architecture/semantic-trace-teardown.md](docs/architecture/semantic-trace-teardown.md) |
-| Run replay-safe semantic experiments | [docs/architecture/semantic-epochs-shadow-lanes.md](docs/architecture/semantic-epochs-shadow-lanes.md) |
+| Explain semantic composition beyond ancestry trace | [issue #1114](https://github.com/Sinity/sinex/issues/1114) |
+| Run replay-safe semantic experiments | [issue #1109](https://github.com/Sinity/sinex/issues/1109) |
 | Route model calls through prompts, policy, and budgets | [issue #1116](https://github.com/Sinity/sinex/issues/1116) |
-| Promote generated suggestions through human or policy authority | [docs/architecture/proposal-judgment-finalizer.md](docs/architecture/proposal-judgment-finalizer.md) |
+| Promote generated suggestions through human or policy authority | [crate/sinex-primitives/docs/curation_authority.md](crate/sinex-primitives/docs/curation_authority.md) |
 | Bound active instruction and actuator loops | [issue #1104](https://github.com/Sinity/sinex/issues/1104) |
-| Expose read-only evidence to coding agents | [docs/architecture/mcp-readonly-server.md](docs/architecture/mcp-readonly-server.md) |
-| Rename event taxonomy labels without parser replay | [docs/architecture/audited-semantic-renames.md](docs/architecture/audited-semantic-renames.md) |
-| Reason about replay evidence and source snapshots | [docs/architecture/evidence-lanes.md](docs/architecture/evidence-lanes.md) |
-| Reason about large aggregate provenance | [docs/architecture/high-fan-in-lineage.md](docs/architecture/high-fan-in-lineage.md) |
-| Coordinate late-arriving evidence in derived outputs | [docs/architecture/late-arriving-event-temporal-coordination.md](docs/architecture/late-arriving-event-temporal-coordination.md) |
-| Reason about runtime backpressure and loss policy | [docs/architecture/runtime-qos.md](docs/architecture/runtime-qos.md) |
-| Suppress live capture through private mode | [docs/architecture/runtime-private-mode.md](docs/architecture/runtime-private-mode.md) |
-| Drain and recover source-worker material cleanly | [docs/design/source-worker-drain-protocol.md](docs/design/source-worker-drain-protocol.md) |
-| Decide which surface owns a runtime or data concern | [docs/architecture/authority-surfaces.md](docs/architecture/authority-surfaces.md) |
-| Integrate an external tool or sibling project | [docs/architecture/integration-authority.md](docs/architecture/integration-authority.md) |
+| Expose read-only evidence to coding agents | [crate/sinexctl/docs/mcp_readonly_server.md](crate/sinexctl/docs/mcp_readonly_server.md) |
+| Rename event taxonomy labels without parser replay | [issue #1101](https://github.com/Sinity/sinex/issues/1101) |
+| Reason about replay evidence and source snapshots | [crate/sinexd/docs/sources/evidence_lanes.md](crate/sinexd/docs/sources/evidence_lanes.md) |
+| Reason about large aggregate provenance | [crate/sinexd/docs/automata/high_fan_in_lineage.md](crate/sinexd/docs/automata/high_fan_in_lineage.md) |
+| Coordinate late-arriving evidence in derived outputs | [issue #1111](https://github.com/Sinity/sinex/issues/1111) |
+| Reason about runtime backpressure and loss policy | [crate/sinexd/docs/runtime_qos.md](crate/sinexd/docs/runtime_qos.md) |
+| Suppress live capture through private mode | [crate/sinexctl/docs/private_mode.md](crate/sinexctl/docs/private_mode.md) |
+| Add a staged personal-export parser | [crate/sinexd/docs/sources/adding_staged_export_parser.md](crate/sinexd/docs/sources/adding_staged_export_parser.md) |
+| Drain and recover source-unit material cleanly | [crate/sinexd/docs/sources/source_unit_drain.md](crate/sinexd/docs/sources/source_unit_drain.md) |
+| Snapshot or restore runtime state | [crate/sinexctl/docs/state_snapshot.md](crate/sinexctl/docs/state_snapshot.md) |
+| Configure PostgreSQL backup/restore | [crate/sinex-db/docs/backup_restore.md](crate/sinex-db/docs/backup_restore.md) |
+| Decide which surface owns a runtime or data concern | [.github/authority-surfaces.md](.github/authority-surfaces.md) |
+| Integrate an external tool or sibling project | [crate/sinexd/docs/sources/integration_authority.md](crate/sinexd/docs/sources/integration_authority.md) |
 | Work on repo workflow or verification | [CONTRIBUTING.md](CONTRIBUTING.md), [TESTING.md](TESTING.md) |
 | Work on the CLI/tooling loop | [xtask/docs/README.md](xtask/docs/README.md) |
 
@@ -199,14 +202,14 @@ journalctl -u sinexd -f
 Threat model shorthand:
 
 - trusted single-user local host
-- nodes submit over NATS; the gateway is the hardened external boundary
-- canonical persistence stays single-writer through `sinex-ingestd`
+- nodes submit over NATS; the `sinexd` API is the hardened external boundary
+- canonical persistence stays single-writer through `sinexd::event_engine`
 - host full-disk encryption and capture-time privacy controls are the intended baseline
 
 Current controls:
 
 - typed payload validation with schema checks
-- TLS-only gateway RPC; non-loopback binds require stronger transport policy
+- TLS-only API RPC; non-loopback binds require stronger transport policy
 - bearer-token auth with constant-time comparison
 - per-token rate limiting
 - structured request access audit logs on RPC, SSE, and native-messaging dispatch paths

@@ -9,7 +9,7 @@ Material provenance (source_material_id set, source_event_ids NULL):
   "I translated this byte range of this source file into this event."
   - Can be replayed by re-reading the source material
   - The source material is the ground truth; the event is interpretation
-  - Created by: ingestors (fs, terminal, desktop, system, document)
+  - Created by: source units (fs, terminal, desktop, system, document)
 
 Derived provenance (source_material_id NULL, source_event_ids set):
   "I derived this conclusion from these parent events."

@@ -1,7 +1,7 @@
-# Ingestd Architecture Diagrams
+# sinexd Event Engine Architecture Diagrams
 
 > Note: these diagrams are conceptual. For exact stream/consumer settings,
-> use `crate/core/sinex-ingestd/src/jetstream_consumer.rs`.
+> use `crate/sinexd/src/event_engine/jetstream_consumer.rs`.
 
 ## Event Sourcing & CQRS Flow
 
@@ -59,7 +59,7 @@ PHASE 2: TRANSPORT (NATS JetStream)
                ↓
 ═══════════════════════════════════════════════════════════════════════════════
 
-PHASE 3: INGESTION (sinex-ingestd)
+PHASE 3: INGESTION (`sinexd::event_engine`)
 ───────────────────────────────────
   ┌──────────────────────────┐
   │ JetStreamConsumer        │
@@ -80,7 +80,7 @@ PHASE 3: INGESTION (sinex-ingestd)
                ↓                         ↓ (validation failure)
   ┌──────────────────────────┐  ┌─────────────────────────┐
   │ Persist to Postgres       │  │ Route to DLQ            │
-  │ - INSERT INTO core.events │  │ events.dlq.ingestd      │
+  │ - INSERT INTO core.events │  │ events.dlq.event_engine │
   │ - ts_coided = NOW()       │  │ - Original message      │
   │ - RETURNING *             │  │ - Error details         │
   └────────────┬─────────────┘  │ - Retry count           │

@@ -1,7 +1,7 @@
 {
   "$defs": {
     "DocumentKind": {
-      "description": "Corpus that produced a document. v1 ships exactly two — see the document\nlayer design doc's \"Two corpora, no more\" table.",
+      "description": "Corpus that produced a document. v1 ships exactly two; see\n`crate/sinex-schema/docs/document_layer.md`.",
       "oneOf": [
         {
           "const": "dendron_markdown",
@@ -45,7 +45,7 @@
       "type": "string"
     },
     "side_data": {
-      "description": "Kind-specific structured fields. For Dendron: `{ frontmatter,\nwikilinks, title }`. For terminal: `{ command, exit_code, shell }`.\nSchema-less by design — see the design doc's \"Open questions\" item\non frontmatter schema."
+      "description": "Kind-specific structured fields. For Dendron: `{ frontmatter,\nwikilinks, title }`. For terminal: `{ command, exit_code, shell }`.\nSchema-less by design; corpus-specific consumers validate the fields\nthey depend on."
     },
     "text_byte_len": {
       "description": "Total bytes of *post-redaction* extracted text across all chunks.",

@@ -264,9 +264,9 @@ Graceful Upgrade (Zero-Downtime)
   │  Format: Binary, indexed by timestamp, unit, priority               │
   └─────────────────┬───────────────────────────────────────────────────┘
                     │
-                    ↓ sinex-system-ingestor journal watcher reads
+                    ↓ system source unit journal watcher reads
   ┌─────────────────────────────────────────────────────────────────────┐
-  │         sinex-system-ingestor journal watcher (Event Capture)        │
+  │             sinexd system source unit (Event Capture)                │
   │                                                                       │
   │  1. journalctl --follow --output=json --unit=*.service              │
   │  2. Filter: MESSAGE matches heartbeat pattern                        │
@@ -276,7 +276,7 @@ Graceful Upgrade (Zero-Downtime)
                     │
                     ↓ NATS events.raw.system.heartbeat
   ┌─────────────────────────────────────────────────────────────────────┐
-  │                        sinex-ingestd                                 │
+  │                   sinexd::event_engine                               │
   │                                                                       │
   │  Standard ingestion path → core.events                               │
   └─────────────────┬───────────────────────────────────────────────────┘
@@ -291,9 +291,9 @@ Graceful Upgrade (Zero-Downtime)
   │  4. Store aggregated metrics in core.service_health                  │
   └─────────────────┬───────────────────────────────────────────────────┘
                     │
-                    ↓ Query via gateway
+                    ↓ Query via sinexd API
   ┌─────────────────────────────────────────────────────────────────────┐
-  │                      sinex-gateway (RPC)                             │
+  │                         sinexd::api                                  │
   │                                                                       │
   │  Endpoints:                                                           │
   │  - GET /health/services              (all services)                  │
@@ -347,6 +347,6 @@ Graceful Upgrade (Zero-Downtime)
 
 ## See Also
 
-- Patterns: `crate/lib/sinex-node-sdk/docs/distributed_patterns.md`
-- Observability: `crate/lib/sinex-node-sdk/docs/observability.md`
-- Type system: `crate/lib/sinex-primitives/docs/type_system_patterns.md`
+- Source runtime docs: `crate/sinexd/docs/sources/`
+- Transport catalog: `transport.md`
+- Type system: `type_system_patterns.md`

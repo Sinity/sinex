@@ -345,7 +345,7 @@ SINEX_NATS_URL=nats://localhost:4222
 ## References
 
 - Hot Reload Orchestrator: `xtask/src/devtools/orchestrator.rs`
-- Distributed Rate Limiter: `crate/core/sinex-gateway/src/distributed_rate_limit.rs`
-- Connection Tracking: `crate/core/sinex-gateway/src/rpc_server.rs`
-- Version Comparison: `crate/lib/sinex-node-sdk/src/version.rs`
-- Node Coordination: `crate/lib/sinex-node-sdk/src/coordination.rs`
+- Distributed Rate Limiter: `crate/sinexd/src/api/distributed_rate_limit.rs`
+- Connection Tracking: `crate/sinexd/src/api/rpc_server.rs`
+- Version Comparison: `crate/sinexd/src/node_sdk/version.rs`
+- Node Coordination: `crate/sinexd/src/node_sdk/coordination.rs`

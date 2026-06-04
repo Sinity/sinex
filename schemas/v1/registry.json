@@ -216,14 +216,14 @@
       "event_type": "document.chunked",
       "version": "1.0.0",
       "path": "document-parser/document.chunked.json",
-      "content_hash": "0e9089894b90fee49a15821d4fbb176b9222d3ed8dbece54c8b5c51c0e66a8bb"
+      "content_hash": "d4c0ccee06a0d81c351283f860fcd354ef2b00ef650839b73d4e455c7e8f358c"
     },
     {
       "source": "document-parser",
       "event_type": "document.parsed",
       "version": "1.0.0",
       "path": "document-parser/document.parsed.json",
-      "content_hash": "dcb86c5c915e526337251c866996f535bf04262c28df6d425735b8bcd7583117"
+      "content_hash": "857bcfbda334d110de9aaf07545c4af9a1dcbf880d8a3017eee3fd6ed16d709b"
     },
     {
       "source": "entity-enricher",

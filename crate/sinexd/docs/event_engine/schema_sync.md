@@ -9,4 +9,4 @@ loads active schemas from the database.
 - Broadcast path: metadata is published to `system.schemas.active`; full schema
   documents are stored in NATS KV for node-side schema validator refresh.
 
-Cross-reference `crate/lib/sinex-schema/docs/overview.md` for schema structure.
+Cross-reference `crate/sinex-db/docs/schema/overview.md` for schema structure.

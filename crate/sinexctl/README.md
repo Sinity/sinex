@@ -1,11 +1,11 @@
 # sinexctl
 
-`sinexctl` is the Rust CLI for operating Sinex through `sinex-gateway`.
+`sinexctl` is the Rust CLI for operating Sinex through the `sinexd` API.
 
 ## Quick Start
 
 ```bash
-# Check gateway reachability
+# Check API reachability
 sinexctl gateway ping --token "$SINEX_RPC_TOKEN"
 
 # Query recent events
@@ -28,7 +28,7 @@ sinexctl dlq list --token "$SINEX_RPC_TOKEN"
 
 ## Command Groups
 
-- `gateway`: connectivity/version checks
+- `gateway`: API connectivity/version checks
 - `core`: system health
 - `query`: event search and filtering
 - `verify`: bounded runtime evidence checks for pipeline activity, gateway reachability, passive derived outputs, managed document-scan smoke, enabled long-running collector surfaces, locally declared deployment surfaces, and historical backfill
@@ -63,7 +63,7 @@ Environment variables (directly supported by CLI flags/token loader):
 - `SINEX_RUNTIME_TARGET_CONFIG`
 
 When `--runtime-target` or `SINEX_RUNTIME_TARGET_CONFIG` is set, descriptor
-values populate the gateway URL, token file, and TLS material before explicit
+values populate the API URL, token file, and TLS material before explicit
 CLI flags are applied. `sinexctl status` prints the loaded target so live
 runtime health is tied to the descriptor that supplied the connection settings.
 
@@ -95,4 +95,4 @@ The file stores local preferences only:
 - `aliases`
 - `theme`
 
-Gateway URL, auth token, TLS paths, and timeouts come from CLI flags or env vars.
+API URL, auth token, TLS paths, and timeouts come from CLI flags or env vars.

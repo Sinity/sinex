@@ -1,6 +1,6 @@
-# Gateway Environment Variables
+# sinexd API Environment Variables
 
-Environment variables specific to direct `sinex-gateway` runs.
+Environment variables specific to direct `sinexd` API runs.
 
 For deployed systems, prefer typed `services.sinex.*` NixOS module options. The module is the
 canonical deployment surface and exports the matching `SINEX_API_*`, `SINEX_RPC_*`, and shared

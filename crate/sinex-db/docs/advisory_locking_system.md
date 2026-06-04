@@ -25,7 +25,8 @@ The system employs an **RAII (Resource Acquisition Is Initialization)** pattern 
 ## Usage Patterns
 
 Advisory locks are primarily used for:
-- **Migration Coordination**: Ensuring that only one instance of `sinex-ingestd` applies schema updates at a time.
+- **Migration Coordination**: Ensuring that only one `sinexd::event_engine`
+  instance applies schema updates at a time.
 - **Singleton Services**: Coordinating tasks that should only run on a single node in a cluster (e.g., certain maintenance or archival jobs).
 
 ## Observability

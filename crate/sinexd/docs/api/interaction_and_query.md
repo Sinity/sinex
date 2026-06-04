@@ -1,39 +1,39 @@
 # User Interaction & Query Architecture
 
-* **Purpose:** Describe how users and tools interact with Sinex today: gateway service, CLI, and
-  the db-owned/content-owned modules they invoke.
+* **Purpose:** Describe how users and tools interact with Sinex today:
+  `sinexd::api`, `sinexctl`, and the db-owned/content-owned modules they invoke.
 * **Scope:** Current behaviour.
 
 ## 1. Components Overview
 
 | Component | Location | Role | Status |
 |-----------|----------|------|--------|
-| `sinex-gateway` | `crate/core/sinex-gateway` | Hosts a JSON-RPC server (TLS-only TCP) and an optional native-messaging bridge | ✅ operational |
-| `sinexctl` CLI | `crate/cli` | Primary operator tooling for gateway RPC; also exposes direct DB commands under `db` | ✅ operational |
-| PKM module | `crate/lib/sinex-db/src/pkm.rs` | DB-owned PKM orchestration invoked by gateway handlers | ✅ operational |
-## 2. Gateway Architecture
+| `sinexd::api` | `crate/sinexd/src/api` | Hosts a JSON-RPC server (TLS-only TCP) and an optional native-messaging bridge | operational |
+| `sinexctl` CLI | `crate/sinexctl` | Primary operator tooling for API RPC; also exposes direct DB commands under `db` | operational |
+| PKM module | `crate/sinex-db/src/pkm.rs` | DB-owned PKM orchestration invoked by API handlers | operational |
+## 2. API Architecture
 
 ### 2.1 Execution Modes
 
-- **RPC server (`sinex-gateway rpc-server`)**  
+- **RPC server (`sinexd api rpc-server`)**
   * Binds to TLS TCP by default on `127.0.0.1:9999` (override with `--tcp-listen <host:port>` or `SINEX_API_TCP_LISTEN`).
   * Accepts JSON-RPC 2.0 POST requests at `/rpc`.
-* **Native messaging (`sinex-gateway native-messaging`)**  
+* **Native messaging (`sinexd api native-messaging`)**
   * Runs a stdin/stdout loop for a browser extension; reuses the same RPC dispatch table.
 
 ### 2.2 Request Handling
 
 1. Client submits JSON-RPC payload (method + params).
 2. `rpc_server::handle_rpc` deserialises the message and forwards it to `dispatch_rpc_method`.
-3. Dispatch routes into gateway-local handlers plus their owned services; PKM currently flows
-   through `sinex-db::pkm`, while blob/content workflows stay inside `sinex-gateway`.
+3. Dispatch routes into API-local handlers plus their owned services; PKM currently flows
+   through `sinex-db::pkm`, while blob/content workflows stay inside `sinexd::api`.
 4. Responses are sent synchronously; errors become JSON-RPC failures (`-32601` unknown method, `-32603` internal error).
 
 **Key point:** the gateway does **not** publish or consume `api.command.*` / `api.response.*` events on `JetStream` today. All work is handled within the process using synchronous database calls.
 
 ### 2.3 Authentication & Transport Limits
 
-- RPC traffic is guarded by a shared secret exported via `SINEX_RPC_TOKEN` (or `SINEX_API_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`). Gateway startup fails if no token is present.
+- RPC traffic is guarded by a shared secret exported via `SINEX_RPC_TOKEN` (or `SINEX_API_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`). API startup fails if no token is present.
 * Tokens must include a role suffix (`<token>:readonly|write|admin`), and clients present them via `Authorization: Bearer <token-with-role>`. `sinexctl` injects the header when `--token`, `--token-file`, or `SINEX_RPC_TOKEN` are configured.
 * TLS is mandatory; set `SINEX_API_TLS_CERT` + `SINEX_API_TLS_KEY` (optional `SINEX_API_TLS_CLIENT_CA` for mTLS).
 * Non-loopback binds require mTLS; configure `SINEX_API_TLS_CLIENT_CA` and pass `SINEX_RPC_CLIENT_CERT` + `SINEX_RPC_CLIENT_KEY` to clients.
@@ -43,7 +43,7 @@
   * `SINEX_API_REQUEST_TIMEOUT_SECS` (default 30 seconds).
   * `SINEX_API_MAX_BODY_BYTES` (default 2 MiB).
   * `SINEX_API_MAX_BLOB_BYTES` (default 5 MiB) limits decoded blob payloads before writing to the content store.
-* NixOS deployments should set these via `services.sinex.core.gateway.limits` rather than ad-hoc env vars.
+* NixOS deployments should set these via the `sinexd` API module options rather than ad-hoc env vars.
 * Requests that exceed these guards receive JSON-RPC errors (`401` for missing token, `429/504/413` for the respective limits).
 
 ### 2.3 Method Surface (current)
@@ -52,13 +52,13 @@
 * Write/mutate: `pkm.*`, `content.store_blob`, `nodes.{drain,resume,set_horizon}`, `ops.start`, replay create/preview.
 * Admin-only: replay approve/execute/cancel, `dlq.requeue/purge`, lifecycle archive/restore/tombstone, `ops.cancel`, gitops source management, shadow create/delete.
 
-Adding a method requires registering it in `rpc_registry.rs`, wiring a handler in the gateway or db-owned module surface, and optionally exposing it in `sinexctl`.
+Adding a method requires registering it in `rpc_registry.rs`, wiring a handler in the API or db-owned module surface, and optionally exposing it in `sinexctl`.
 
 ### 2.4 Deployment Considerations
 
 - Keep RPC on loopback unless you explicitly need remote access; enable mTLS + firewalling for non-local binds.
-* Gateway shares database pools with its PKM/content execution surfaces; long-running queries block the handler thread. Move heavy work to background tasks before revisiting asynchronous fan-out.
-* Authentication is enforced by bearer token + role checks; transport and request guards (timeouts/concurrency/body size/rate limiting) are enforced in the gateway middleware stack.
+* The API shares database pools with its PKM/content execution surfaces; long-running queries block the handler task. Move heavy work to background tasks before revisiting asynchronous fan-out.
+* Authentication is enforced by bearer token + role checks; transport and request guards (timeouts/concurrency/body size/rate limiting) are enforced in the API middleware stack.
 
 ## 3. CLI Integration (`sinexctl`)
 
@@ -80,15 +80,15 @@ Adding a method requires registering it in `rpc_registry.rs`, wiring a handler i
 
 ## 4. Service Layer Responsibilities
 
-Gateway handlers split across two ownership shapes today:
+API handlers split across two ownership shapes today:
 * **PKM (`sinex-db::pkm`)** – entity/relation/source-material orchestration owned by the database layer.
-* **Content (`sinex-gateway::content_service`)** – blob storage/retrieval via the content store.
+* **Content (`sinexd::api::content_service`)** – blob storage/retrieval via the content store.
 
 These modules run synchronously and use shared database pools. Keep transactions small to avoid
 blocking other RPCs.
 
 ## 5. Reference Material
 
-- Gateway source: `crate/core/sinex-gateway/src/main.rs`, `rpc_server.rs`, `handlers.rs`, `service_container.rs`.
-* CLI docs: `crate/cli/README.md`, `crate/cli/DESIGN.md`.
-* PKM module documentation: `crate/lib/sinex-db/docs/pkm.md`.
+- API source: `crate/sinexd/src/api/`.
+* CLI docs: `crate/sinexctl/README.md`, `crate/sinexctl/DESIGN.md`.
+* PKM module documentation: `crate/sinex-db/docs/pkm.md`.
