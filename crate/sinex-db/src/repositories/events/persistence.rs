@@ -687,14 +687,22 @@ impl<'a> EventRepository<'a> {
         });
         let associated_blob_uuids = event.associated_blob_ids.clone();
 
-        // Prepare timestamps
-        let (ts_orig, ts_orig_subnano) = match event.ts_orig {
-            Some(ts) => {
-                let (pg, sub) = ts.to_postgres_parts();
-                (Some(pg), Some(sub))
-            }
-            None => (None, None),
-        };
+        // Prepare timestamps.
+        //
+        // #1570 Prong B: a material event can carry `ts_orig = None` (the
+        // "derive at persistence" deferral). Source-unit events resolve that at
+        // ingestd admission and reach the DB via the batch/COPY path, never this
+        // single-event insert. This direct path is used by API handlers (which
+        // always set `at_time`) and tests; a direct insert with no explicit
+        // timestamp gets the creation-time default — the pre-#1570 builder
+        // behaviour, relocated to the insert boundary so the NOT-NULL column is
+        // always satisfied without re-introducing a parse-time `now()` for the
+        // quality-derived source pipeline.
+        let (pg, sub) = event
+            .ts_orig
+            .unwrap_or_else(Timestamp::now)
+            .to_postgres_parts();
+        let (ts_orig, ts_orig_subnano) = (Some(pg), Some(sub));
 
         // Clone data needed for the closure
         let event_source = event.source.clone();
@@ -878,13 +886,14 @@ impl<'a> EventRepository<'a> {
 
         // Postgres timestamps are microsecond precision. Persist the sub-microsecond
         // remainder separately so we can reconstruct full nanosecond timestamps on read.
-        let (ts_orig, ts_orig_subnano) = match event.ts_orig {
-            Some(ts) => {
-                let (pg, sub) = ts.to_postgres_parts();
-                (Some(pg), Some(sub))
-            }
-            None => (None, None),
-        };
+        // #1570 Prong B: deferred (`None`) material ts_orig is resolved at ingestd
+        // admission via the batch path; this single-event direct insert defaults
+        // an absent timestamp to creation time (see `insert`).
+        let (pg, sub) = event
+            .ts_orig
+            .unwrap_or_else(Timestamp::now)
+            .to_postgres_parts();
+        let (ts_orig, ts_orig_subnano) = (Some(pg), Some(sub));
 
         // Synthetic event metadata
         let temporal_policy_str = event.temporal_policy.map(|p| p.to_string());
@@ -1149,13 +1158,14 @@ impl<'a> EventRepository<'a> {
 
             // Postgres timestamps are microsecond precision. Persist the sub-microsecond
             // remainder separately so we can reconstruct full nanosecond timestamps on read.
-            let (ts_orig, ts_orig_subnano) = match event.ts_orig {
-                Some(ts) => {
-                    let (pg_ts, sub_nano) = ts.to_postgres_parts();
-                    (Some(pg_ts), Some(sub_nano))
-                }
-                None => (None, None),
-            };
+            // #1570 Prong B: a deferred (`None`) material ts_orig on this direct
+            // QueryBuilder batch path defaults to creation time (see `insert`);
+            // source-unit deferral resolves at ingestd admission.
+            let (pg_ts, sub_nano) = event
+                .ts_orig
+                .unwrap_or_else(Timestamp::now)
+                .to_postgres_parts();
+            let (ts_orig, ts_orig_subnano) = (Some(pg_ts), Some(sub_nano));
 
             ids.push(event_id);
             sources.push(event.source.as_str().to_string());
@@ -2792,7 +2802,7 @@ mod tests {
     /// catches that by asserting the same names appear in both. (#1575)
     #[sinex_test]
     async fn query_as_insert_columns_match_copy_contract() -> Result<()> {
-        // These are the 23 columns listed in both `insert` and `insert_with_tx`
+        // These are the 24 columns listed in both `insert` and `insert_with_tx`
         // `query_as!` sites. If those sites ever gain or lose a column, this
         // constant must be updated — which forces an explicit review of whether
         // EVENT_COPY_COLUMNS was updated too.
@@ -2804,6 +2814,7 @@ mod tests {
             "payload",
             "ts_orig",
             "ts_orig_subnano",
+            "ts_quality",
             "source_run_id",
             "payload_schema_id",
             "source_event_ids",
