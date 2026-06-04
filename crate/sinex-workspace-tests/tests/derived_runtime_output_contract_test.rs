@@ -358,7 +358,6 @@ fn assert_synthesis_events(
     source: &str,
     event_type: &str,
     node_model: DerivedNodeModel,
-    ts_quality: None,
     temporal_policy: SyntheticTemporalPolicy,
     max_parent_count: usize,
     allowed_parent_ids: &[Uuid],

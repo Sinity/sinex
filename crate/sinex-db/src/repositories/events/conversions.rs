@@ -209,6 +209,7 @@ mod tests {
             payload: serde_json::json!({"ok": true}),
             ts_orig: now,
             ts_orig_subnano: None,
+            ts_quality: None,
             ts_coided: now,
             ts_persisted: now,
             source_material_id: Some(uuid::Uuid::now_v7()),

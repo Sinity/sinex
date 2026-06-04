@@ -7,11 +7,9 @@
 
 use crate::event_engine::validator::{IngestEventValidator, ValidationResult};
 use crate::event_engine::{IngestdResult, SinexError};
-use crate::node_sdk::ingestion_helpers::{LedgerEntry, LedgerReader, MaterialTiming};
 use sinex_db::DbPool;
 use sinex_db::repositories::{DbPoolExt, StreamBatchRow};
 use sinex_primitives::constants::limits::MAX_EVENT_PAYLOAD_BYTES;
-use sinex_primitives::domain::SourceMaterialTimingInfoType;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::admission::{ACCEPTED_ENVELOPE_VERSIONS, EventIntent};
 use sinex_primitives::events::builder::Provenance;
@@ -389,91 +387,22 @@ impl AdmissionService {
         self.admit_event_with_metadata(event, Some(metadata)).await
     }
 
-    /// Resolve a deferred `ts_orig` for a material-provenance event from the
-    /// source-material timing tier (#1570 Prong B).
-    ///
-    /// The parser owns the `IntrinsicContent` case and sets `ts_orig` directly;
-    /// when it defers (wrapper-ledger or staged-at fallback), the event arrives
-    /// with `ts_orig = None`. Here we read the material registry timing summary
-    /// plus any sub-material temporal-ledger entries and resolve a stable
-    /// `(ts_orig, rung)`. The `staged_at` floor guarantees a value, so this
-    /// never fails to resolve a material event.
-    ///
-    /// Derived events have no material to resolve against and keep `ts_orig`
-    /// unset here; the downstream `MissingTimestamp` guard rejects them (a bug).
-    async fn resolve_deferred_ts_orig(
-        &self,
-        event: &mut Event<JsonValue>,
-    ) -> IngestdResult<()> {
-        if event.ts_orig.is_some() {
-            return Ok(());
-        }
-        let (material_id, anchor_byte) = match &event.provenance {
-            Provenance::Material {
-                id, anchor_byte, ..
-            } => (*id.as_uuid(), *anchor_byte),
-            Provenance::Derived { .. } => return Ok(()),
-        };
-
-        let materials = self.pool.source_materials();
-        let record = materials
-            .get_by_id(Id::from_uuid(material_id))
-            .await
-            .map_err(|e| {
-                SinexError::database("failed to read source material for ts_orig resolution")
-                    .with_context("material_id", material_id.to_string())
-                    .with_source(e)
-            })?;
-        let Some(record) = record else {
-            // No registry row yet (FK not ready). Leave ts_orig unresolved so the
-            // MaterialReadySet pre-check NAKs + retries rather than mis-stamping.
-            return Ok(());
-        };
-
-        let timing_info_type = record
-            .timing_info_type
-            .parse::<SourceMaterialTimingInfoType>()
-            .unwrap_or(SourceMaterialTimingInfoType::Unknown);
-        let material_timing = MaterialTiming {
-            timing_info_type,
-            start_time: record.start_time,
-            staged_at: record.staged_at,
-        };
-
-        let ledger_rows = materials.read_temporal_ledger(material_id).await.map_err(|e| {
-            SinexError::database("failed to read temporal ledger for ts_orig resolution")
-                .with_context("material_id", material_id.to_string())
-                .with_source(e)
-        })?;
-        let ledger_entries: Vec<LedgerEntry> = ledger_rows
-            .into_iter()
-            .map(|entry| LedgerEntry {
-                offset_start: entry.offset_start,
-                offset_end: entry.offset_end,
-                ts_capture: entry.ts_capture,
-                precision: entry.precision,
-                source_type: entry.source_type,
-            })
-            .collect();
-        let reader = LedgerReader::new(material_id, ledger_entries);
-
-        let (ts_orig, rung) = reader.derive_ts_orig(anchor_byte, &material_timing);
-        event.ts_orig = Some(ts_orig);
-        event.ts_quality = Some(rung);
-        Ok(())
-    }
-
     async fn admit_event_with_metadata(
         &self,
         mut event: Event<JsonValue>,
         metadata: Option<CandidateEventMetadata>,
     ) -> IngestdResult<AdmissionDecision> {
-        // #1570 Prong B: resolve a deferred material ts_orig before the
-        // plausibility/rejection gates below.
-        self.resolve_deferred_ts_orig(&mut event).await?;
-
-        if event.ts_orig.is_none() {
-            warn!(event_id = ?event.id, "Event validation failed: missing ts_orig");
+        // #1570 Prong B: material-provenance events legitimately arrive with
+        // `ts_orig = None` — they defer resolution to the persistence stage,
+        // which reads the source-material timing tier *after* the
+        // `MaterialReadySet` FK gate confirms the registry row is visible (see
+        // `JetStreamConsumer::resolve_ready_ts_orig`). Resolving here would run
+        // before that gate and false-reject the FK-race case. Only derived
+        // events (which the builder always stamps with a synthesis `now()`)
+        // truly must carry `ts_orig` by admission time; a missing one there is a
+        // bug, so reject it.
+        if event.ts_orig.is_none() && !matches!(event.provenance, Provenance::Material { .. }) {
+            warn!(event_id = ?event.id, "Event validation failed: missing ts_orig on derived event");
             return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
                 AdmissionRejectionKind::MissingTimestamp,
                 "Validation failed: missing ts_orig",
