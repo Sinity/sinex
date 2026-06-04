@@ -216,18 +216,29 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
     Ok(())
 }
 
-// Asserts ts_orig (event-time) bucketing, but the telemetry continuous aggregates
-// bucket on the UUIDv7 `id` (ts_coided / interpretation-time) by design — see
-// `current_window_focus` in sinex-schema (`time_bucket('5 minutes', id)`). Events
-// seeded with a historical ts_orig but a now-minted id land in a current-time
-// bucket, so a historical-window query returns nothing. Re-enable once ts_orig is
-// the bucketing key (#1570 Prong B); kept compiled so it doesn't re-orphan.
+// Telemetry buckets on interpretation-time (`ts_coided`), NOT event-time (`ts_orig`)
+// — and that is a deliberate contract, not a gap (#1570).
+//
+// The telemetry continuous aggregates `time_bucket` on the UUIDv7 `id`
+// (= `ts_coided`, the moment sinex minted the interpretation): `core.events` is a
+// hypertable partitioned `by_range('id')`, and a TimescaleDB continuous aggregate
+// must bucket on its partitioning column. Bucketing on `ts_orig` (when the
+// datapoint happened in the real world) is therefore impossible for these CAs, and
+// event-time telemetry bucketing is an explicit non-goal.
+//
+// This test pins both halves of that contract: events seeded with a historical
+// `ts_orig` but a now-minted `id` are ABSENT from a query over their event-time
+// window (the non-goal) and PRESENT in a query over the current
+// interpretation-time window (the contract).
 #[sinex_test]
-#[ignore = "blocked on #1570 Prong B: telemetry CAs bucket on ts_coided (id), not ts_orig"]
-async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> TestResult<()> {
+async fn telemetry_handlers_bucket_by_interpretation_time_not_event_time(
+    ctx: TestContext,
+) -> TestResult<()> {
     sinex_db::schema::apply::apply(ctx.pool()).await?;
 
-    let imported_at = time::OffsetDateTime::parse("2026-01-02T03:15:00Z", &Rfc3339)?;
+    // Seed events whose real-world time (`ts_orig`) is far in the past. Their `id`
+    // (and therefore `ts_coided`) is still minted now, at insert time.
+    let event_time = time::OffsetDateTime::parse("2026-01-02T03:15:00Z", &Rfc3339)?;
 
     insert_event(
         &ctx,
@@ -239,7 +250,7 @@ async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> T
             "window_title": "imported focus",
             "window_id": "0x42",
         }),
-        Some(imported_at),
+        Some(event_time),
     )
     .await?;
     insert_event(
@@ -251,7 +262,7 @@ async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> T
             "exit_code": 0,
             "duration_ms": 15.0,
         }),
-        Some(imported_at),
+        Some(event_time),
     )
     .await?;
     insert_event(
@@ -261,7 +272,7 @@ async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> T
         json!({
             "path": "/tmp/imported/session.log",
         }),
-        Some(imported_at),
+        Some(event_time),
     )
     .await?;
     insert_event(
@@ -273,7 +284,7 @@ async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> T
             "memory_percent": 33.0,
             "disk_percent": 44.0,
         }),
-        Some(imported_at),
+        Some(event_time),
     )
     .await?;
     insert_event(
@@ -286,24 +297,72 @@ async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> T
             "memory_percent": 31.0,
             "disk_percent": 40.0,
         }),
-        Some(imported_at),
+        Some(event_time),
     )
     .await?;
 
-    let params = json!({
+    refresh_telemetry_read_models(&ctx).await?;
+
+    // ── Non-goal: querying the event-time window finds nothing ────────────────
+    // The data "happened" on 2026-01-02, but it is bucketed at the (current)
+    // interpretation time, so an event-time-window query returns no rows.
+    let event_time_params = json!({
         "from": "2026-01-02T00:00:00Z",
         "to": "2026-01-03T00:00:00Z",
         "limit": 10
     });
+    let wf: TelemetryWindowFocusResponse =
+        handle_telemetry_window_focus(ctx.pool(), telemetry_request(event_time_params.clone())?)
+            .await?;
+    let cf: TelemetryCommandFrequencyResponse = handle_telemetry_command_frequency(
+        ctx.pool(),
+        telemetry_request(event_time_params.clone())?,
+    )
+    .await?;
+    let fa: TelemetryFileActivityResponse =
+        handle_telemetry_file_activity(ctx.pool(), telemetry_request(event_time_params.clone())?)
+            .await?;
+    let ss: TelemetrySystemStateResponse =
+        handle_telemetry_system_state(ctx.pool(), telemetry_request(event_time_params)?).await?;
+    assert!(
+        wf.buckets.is_empty(),
+        "telemetry must not bucket window focus by event time (ts_orig): {:?}",
+        wf.buckets
+    );
+    assert!(
+        cf.entries.is_empty(),
+        "telemetry must not bucket command frequency by event time: {:?}",
+        cf.entries
+    );
+    assert!(
+        fa.entries.is_empty(),
+        "telemetry must not bucket file activity by event time: {:?}",
+        fa.entries
+    );
+    assert!(
+        ss.buckets.is_empty(),
+        "telemetry must not bucket system state by event time: {:?}",
+        ss.buckets
+    );
 
+    // ── Contract: the same events ARE present in the interpretation-time window ─
+    let now = time::OffsetDateTime::now_utc();
+    let interp_params = json!({
+        "from": (now - time::Duration::hours(1)).format(&Rfc3339)?,
+        "to": (now + time::Duration::hours(1)).format(&Rfc3339)?,
+        "limit": 10
+    });
     let window_focus: TelemetryWindowFocusResponse =
-        handle_telemetry_window_focus(ctx.pool(), telemetry_request(params.clone())?).await?;
+        handle_telemetry_window_focus(ctx.pool(), telemetry_request(interp_params.clone())?)
+            .await?;
     let command_frequency: TelemetryCommandFrequencyResponse =
-        handle_telemetry_command_frequency(ctx.pool(), telemetry_request(params.clone())?).await?;
+        handle_telemetry_command_frequency(ctx.pool(), telemetry_request(interp_params.clone())?)
+            .await?;
     let file_activity: TelemetryFileActivityResponse =
-        handle_telemetry_file_activity(ctx.pool(), telemetry_request(params.clone())?).await?;
+        handle_telemetry_file_activity(ctx.pool(), telemetry_request(interp_params.clone())?)
+            .await?;
     let system_state: TelemetrySystemStateResponse =
-        handle_telemetry_system_state(ctx.pool(), telemetry_request(params)?).await?;
+        handle_telemetry_system_state(ctx.pool(), telemetry_request(interp_params)?).await?;
 
     assert_eq!(window_focus.buckets.len(), 1);
     assert_eq!(window_focus.buckets[0].workspace.as_deref(), Some("42"));
