@@ -1,4 +1,4 @@
-//! RuntimeActor runtime scaffold for integration tests.
+//! RuntimeModule runtime scaffold for integration tests.
 //!
 //! Provides fully wired runtime infrastructure for testing nodes,
 //! including NATS connections, checkpoint management, and event emission.

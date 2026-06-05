@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::runtime::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
 use crate::runtime::stream::{
-    Checkpoint, ContinuousStart, RuntimeActor, RuntimeCapabilities, RuntimeInitContext, RuntimeContext,
+    Checkpoint, ContinuousStart, RuntimeModule, RuntimeCapabilities, RuntimeInitContext, RuntimeContext,
     ModuleKind, RuntimeDrainController, ScanArgs, ScanReport, TimeHorizon,
 };
 use crate::runtime::shutdown::ShutdownConfig;
@@ -140,7 +140,7 @@ pub trait SourceDriver: Send + Sync + 'static {
     }
 }
 
-/// Adapter implementing `RuntimeActor` for `SourceDriver`.
+/// Adapter implementing `RuntimeModule` for `SourceDriver`.
 pub struct SourceDriverRuntime<I: SourceDriver> {
     ingestor: I,
     state: IngestorState<I::State>,
@@ -474,7 +474,7 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
     }
 }
 
-impl<I: SourceDriver> RuntimeActor for SourceDriverRuntime<I> {
+impl<I: SourceDriver> RuntimeModule for SourceDriverRuntime<I> {
     type Config = I::Config;
 
     async fn initialize(&mut self, init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {

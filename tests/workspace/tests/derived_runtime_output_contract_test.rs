@@ -1,7 +1,7 @@
-//! Runtime proof for production derived-node outputs.
+//! Runtime proof for production automaton outputs.
 //!
 //! This is intentionally stronger than the per-crate logic tests: each production automaton is
-//! initialized through the node runtime, emits derived envelopes through the SDK adapter, and
+//! initialized through the runtime module host, emits derived envelopes through the automaton adapter, and
 //! those envelopes are then persisted through the normal NATS -> event_engine -> Postgres path.
 
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ use sinexd::automata::session::SessionDetector;
 use sinexd::runtime::automaton::{
     AutomatonAdapterConfig, ScopeReconcilerWrapper, TransducerWrapper, WindowedWrapper,
 };
-use sinexd::runtime::stream::{RuntimeActor, RuntimeInitContext};
+use sinexd::runtime::stream::{RuntimeModule, RuntimeInitContext};
 use sinexd::runtime::{ShutdownConfig, automaton::Automaton};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::{TestRuntime, TestRuntimeBuilder};
@@ -227,7 +227,7 @@ async fn production_automatons_emit_queryable_synthesis_events(
 async fn process_derived_batch<N>(
     ctx: &TestContext,
     service_name: &str,
-    node: N,
+    automaton: N,
     inputs: Vec<Event<JsonValue>>,
 ) -> TestResult<Vec<Event<JsonValue>>>
 where
@@ -240,7 +240,7 @@ where
         ..Default::default()
     };
     let mut adapter =
-        sinexd::runtime::AutomatonRuntime::with_shutdown_config(node, shutdown_config);
+        sinexd::runtime::AutomatonRuntime::with_shutdown_config(automaton, shutdown_config);
     let mut runtime = TestRuntimeBuilder::new(ctx, service_name).build().await?;
     let init = derived_init_context(&runtime, service_name)?;
     adapter.initialize(init).await?;
@@ -365,7 +365,7 @@ fn assert_synthesis_events(
     events: &[Event<JsonValue>],
     source: &str,
     event_type: &str,
-    node_model: AutomatonModel,
+    automaton_model: AutomatonModel,
     expected_ts_quality: Option<TemporalSourceType>,
     temporal_policy: SyntheticTemporalPolicy,
     max_parent_count: usize,
@@ -378,7 +378,7 @@ fn assert_synthesis_events(
     for event in events {
         assert_eq!(event.source.as_str(), source);
         assert_eq!(event.event_type.as_str(), event_type);
-        assert_eq!(event.node_model, Some(node_model));
+        assert_eq!(event.automaton_model, Some(automaton_model));
         assert_eq!(event.ts_quality, expected_ts_quality);
         assert_eq!(event.temporal_policy, Some(temporal_policy));
 

@@ -172,7 +172,7 @@ impl SourceDriver for DrainTestIngestor {
     }
 }
 
-impl RuntimeActor for RuntimeTestNode {
+impl RuntimeModule for RuntimeTestNode {
     type Config = ();
 
     async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
@@ -246,7 +246,7 @@ async fn automaton_consumer_config_keeps_raw_buffering_for_db_backed_confirmatio
     Ok(())
 }
 
-impl RuntimeActor for FailingShutdownNode {
+impl RuntimeModule for FailingShutdownNode {
     type Config = ();
 
     async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
@@ -284,11 +284,11 @@ impl RuntimeActor for FailingShutdownNode {
     }
 
     async fn shutdown(&mut self) -> RuntimeResult<()> {
-        Err(SinexError::processing("node shutdown failed"))
+        Err(SinexError::processing("module shutdown failed"))
     }
 }
 
-impl RuntimeActor for FailingBatchNode {
+impl RuntimeModule for FailingBatchNode {
     type Config = ();
 
     async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
@@ -333,7 +333,7 @@ impl RuntimeActor for FailingBatchNode {
     }
 }
 
-impl RuntimeActor for StartupSequenceTestNode {
+impl RuntimeModule for StartupSequenceTestNode {
     type Config = ();
 
     async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
@@ -389,7 +389,7 @@ impl RuntimeActor for StartupSequenceTestNode {
 }
 
 #[cfg(feature = "messaging")]
-impl RuntimeActor for DrainBridgeTestNode {
+impl RuntimeModule for DrainBridgeTestNode {
     type Config = ();
 
     async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
@@ -538,7 +538,7 @@ fn runtime_test_material_event(
         payload,
         ts_orig: Some(Timestamp::now()),
         host: HostName::from_static("runtime-test-host"),
-        source_run_id: None,
+        module_run_id: None,
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: Id::<SourceMaterial>::from_uuid(Uuid::now_v7()),
@@ -553,7 +553,7 @@ fn runtime_test_material_event(
         scope_key: None,
         equivalence_key: None,
         created_by_operation_id: None,
-        node_model: None,
+        automaton_model: None,
         ts_quality: None,
         anchor_payload_hash: None,
     })
@@ -601,10 +601,10 @@ async fn publish_confirmed_raw_event(
 }
 
 #[cfg(feature = "messaging")]
-async fn node_run_status(pool: &sinex_db::DbPool, source_run_id: Uuid) -> TestResult<String> {
+async fn node_run_status(pool: &sinex_db::DbPool, module_run_id: Uuid) -> TestResult<String> {
     let status =
         sqlx::query_scalar::<_, String>("SELECT status::text FROM core.runs WHERE id = $1")
-            .bind(source_run_id)
+            .bind(module_run_id)
             .fetch_one(pool)
             .await?;
     Ok(status)

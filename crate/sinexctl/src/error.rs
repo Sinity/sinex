@@ -136,14 +136,14 @@ fn connection_error_help() -> &'static str {
     "Troubleshooting:\n\
      • Verify gateway is running: systemctl status sinexd\n\
      • Check network connectivity\n\
-     • Verify RPC URL: echo $SINEX_RPC_URL\n\
+     • Verify RPC URL: echo $SINEX_API_URL\n\
      • Try --insecure if using self-signed certificates (dev only)"
 }
 
 /// Help text for authentication errors
 fn auth_error_help() -> &'static str {
     "Troubleshooting:\n\
-     • Set token: export SINEX_RPC_TOKEN=your-token\n\
+     • Set token: export SINEX_API_TOKEN=your-token\n\
      • Or use token file: --token-file ~/.config/sinex/token\n\
      • Verify token is valid: sinexctl gateway ping\n\
      • Check token permissions in gateway config"

@@ -9,11 +9,11 @@ use std::path::PathBuf;
 #[command(name = "sinex-mcp-server", about = "Read-only Sinex MCP stdio server")]
 struct Args {
     /// Gateway RPC URL.
-    #[arg(long, env = "SINEX_RPC_URL")]
+    #[arg(long, env = "SINEX_API_URL")]
     rpc_url: Option<String>,
 
     /// Authentication token.
-    #[arg(long, env = "SINEX_RPC_TOKEN")]
+    #[arg(long, env = "SINEX_API_TOKEN")]
     token: Option<String>,
 
     /// Token file path.

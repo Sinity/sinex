@@ -161,7 +161,7 @@ impl DemoCommand {
                     offset_kind: Some("byte".to_string()),
                     source_event_ids: None,
                     payload_schema_id: None,
-                    source_run_id: None,
+                    module_run_id: None,
                     anchor_payload_hash: None,
                     associated_blob_ids: None,
                     temporal_policy: None,
@@ -169,7 +169,7 @@ impl DemoCommand {
                     scope_key: None,
                     equivalence_key: None,
                     created_by_operation_id: None,
-                    node_model: None,
+                    automaton_model: None,
                     ts_quality: None,
                 };
                 batch.push(row);

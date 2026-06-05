@@ -138,7 +138,7 @@ impl EventPublisher for Sandbox {
             payload: sanitized_payload,
             ts_orig: Some(timestamp_override.unwrap_or_else(sinex_primitives::Timestamp::now)),
             host: crate::sandbox::local_test_host(),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             anchor_payload_hash: None,
             provenance: Provenance::Material {
@@ -154,7 +154,7 @@ impl EventPublisher for Sandbox {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             ts_quality: None,
         };
 
@@ -262,7 +262,7 @@ impl Sandbox {
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
                 host: crate::sandbox::local_test_host(),
-                source_run_id: None,
+                module_run_id: None,
                 payload_schema_id: None,
                 anchor_payload_hash: None,
                 provenance: Provenance::Material {
@@ -278,7 +278,7 @@ impl Sandbox {
                 scope_key: None,
                 equivalence_key: None,
                 created_by_operation_id: None,
-                node_model: None,
+                automaton_model: None,
                 ts_quality: None,
             };
             events.push(event);
@@ -322,7 +322,7 @@ impl Sandbox {
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
                 host: crate::sandbox::local_test_host(),
-                source_run_id: None,
+                module_run_id: None,
                 payload_schema_id: None,
                 anchor_payload_hash: None,
                 provenance: Provenance::Material {
@@ -338,7 +338,7 @@ impl Sandbox {
                 scope_key: None,
                 equivalence_key: None,
                 created_by_operation_id: None,
-                node_model: None,
+                automaton_model: None,
                 ts_quality: None,
             };
 

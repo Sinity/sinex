@@ -3,7 +3,7 @@ mod control_protocol;
 mod handles;
 mod kernel;
 mod listener;
-mod runtime_actor;
+mod runtime_module;
 mod runner;
 mod runtime_state;
 mod stats;
@@ -22,7 +22,7 @@ pub use kernel::{
     create_shadow_consumer, delete_consumer, ensure_pull_consumer, list_consumers, pull_batch,
     validate_pull_consumer_config,
 };
-pub use runtime_actor::RuntimeActor;
+pub use runtime_module::RuntimeModule;
 pub use runner::RuntimeRunner;
 pub use runtime_state::RuntimeContext;
 pub use stats::ProcessingStats;

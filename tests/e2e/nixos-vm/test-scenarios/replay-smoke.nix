@@ -55,11 +55,7 @@ pkgs.testers.nixosTest {
         machine.wait_for_unit("multi-user.target")
         machine.wait_for_unit("postgresql.service", timeout=60)
         machine.wait_for_unit("sinexd.service", timeout=60)
-        machine.wait_for_unit("sinex-filesystem-1.service", timeout=60)
-        machine.wait_for_unit("sinex-canonicalizer.service", timeout=60)
-        machine.wait_for_unit("sinex-health-automaton.service", timeout=60)
-        machine.wait_for_unit("sinex-analytics-automaton.service", timeout=60)
-        machine.wait_for_unit("sinex-session-detector.service", timeout=60)
+        machine.fail("systemctl list-unit-files 'sinex-filesystem-*.service' 'sinex-*automaton.service' 'sinex-canonicalizer.service' --no-legend --plain | grep -v '^$'")
         machine.wait_until_succeeds(
             "curl -k -s https://127.0.0.1:9999/health",
             timeout=30

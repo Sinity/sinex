@@ -6,25 +6,28 @@
 //! `drain_completion_checkpoint_description`) that only touch `&self` fields.
 
 use super::{
-    Checkpoint, RuntimeActor, SourceFactory, RuntimeRunner, RuntimeContext, ModuleKind, ProcessingModel,
+    Checkpoint, RuntimeModule, SourceFactory, RuntimeRunner, RuntimeContext, ModuleKind, ProcessingModel,
     RunnerLifecycle,
 };
 use std::collections::HashMap;
 
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
-    /// Create a new node runner
-    pub fn new(node: T) -> Self {
-        Self::new_with_optional_factory(node, None)
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+    /// Create a new module runner
+    pub fn new(module: T) -> Self {
+        Self::new_with_optional_factory(module, None)
     }
 
-    /// Create a node runner with a factory for fresh worker instances.
-    pub fn new_with_factory(node: T, source_factory: SourceFactory<T>) -> Self {
-        Self::new_with_optional_factory(node, Some(source_factory))
+    /// Create a module runner with a factory for fresh worker instances.
+    pub fn new_with_factory(module: T, source_factory: SourceFactory<T>) -> Self {
+        Self::new_with_optional_factory(module, Some(source_factory))
     }
 
-    pub(super) fn new_with_optional_factory(node: T, source_factory: Option<SourceFactory<T>>) -> Self {
+    pub(super) fn new_with_optional_factory(
+        module: T,
+        source_factory: Option<SourceFactory<T>>,
+    ) -> Self {
         Self {
-            node,
+            module,
             source_factory,
             lifecycle: RunnerLifecycle::Created,
             handles: None,
@@ -58,7 +61,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
     }
 
     pub(super) async fn drain_completion_checkpoint_description(&self) -> Option<String> {
-        let node_checkpoint = self.node.current_checkpoint().await.ok();
+        let node_checkpoint = self.module.current_checkpoint().await.ok();
         if let Some(checkpoint) = node_checkpoint.clone()
             && !matches!(checkpoint, Checkpoint::None)
         {
@@ -80,9 +83,9 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         self.lifecycle
     }
 
-    /// Return the underlying node type.
+    /// Return the underlying module type.
     pub fn module_kind(&self) -> ModuleKind {
-        self.node.module_kind()
+        self.module.module_kind()
     }
 
     /// Reconstruct the current runtime state if the runner has been initialized

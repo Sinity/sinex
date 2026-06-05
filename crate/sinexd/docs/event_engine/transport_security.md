@@ -56,5 +56,5 @@ grant each component family the narrowest NATS permissions that let it do its jo
 ## See Also
 
 - System-wide security model: `README.md#security`
-- RuntimeActor transport patterns: `crate/sinexd/docs/sources/` and
+- RuntimeModule transport patterns: `crate/sinexd/docs/sources/` and
   `crate/sinex-primitives/docs/transport.md`

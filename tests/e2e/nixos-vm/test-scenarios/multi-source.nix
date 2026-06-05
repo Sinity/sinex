@@ -491,23 +491,7 @@ SQL
     machine.wait_for_unit("sinexd.service")
 
     # Ensure node instances are online
-    terminal_source_units = [
-        "sinex-source@terminal.atuin-history.service",
-        "sinex-source@terminal.bash-history.service",
-        "sinex-source@terminal.fish-history.service",
-        "sinex-source@terminal.zsh-history.service",
-    ]
-    node_units = [
-        "sinex-filesystem-1.service",
-        "sinex-filesystem-2.service",
-        "sinex-canonicalizer.service",
-        "sinex-health-automaton.service",
-        "sinex-analytics-automaton.service",
-        "sinex-session-detector.service",
-    ] + terminal_source_units
-    for unit in node_units:
-        machine.wait_for_unit(unit)
-        machine.succeed(f"systemctl is-active {unit}")
+    machine.fail("systemctl list-unit-files 'sinex-source@*.service' 'sinex-filesystem-*.service' 'sinex-*automaton.service' 'sinex-canonicalizer.service' --no-legend --plain | grep -v '^$'")
 
     # Verify core hubs are active
     machine.succeed("systemctl is-active sinexd")

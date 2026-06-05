@@ -54,7 +54,7 @@ EXAMPLES:
 pub enum ReplayCommands {
     /// Create a replay plan (planning state)
     Plan {
-        /// RuntimeActor ID to replay events for
+        /// RuntimeModule ID to replay events for
         #[arg(long)]
         node: String,
 
@@ -175,7 +175,7 @@ pub enum ReplayCommands {
 
     /// Full lifecycle: plan + preview + approve + execute (convenience)
     Run {
-        /// RuntimeActor ID to replay events for
+        /// RuntimeModule ID to replay events for
         #[arg(long)]
         node: String,
 

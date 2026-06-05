@@ -423,7 +423,7 @@ mod environment_tests {
     async fn test_rpc_url_env_recognized() -> TestResult<()> {
         // Help should mention the environment variable
         sinexctl().args(["--help"]).assert().success().stdout(
-            predicate::str::contains("SINEX_RPC_URL").or(predicate::str::contains("rpc-url")),
+            predicate::str::contains("SINEX_API_URL").or(predicate::str::contains("rpc-url")),
         );
         Ok(())
     }

@@ -60,12 +60,12 @@ async fn process_batch_halts_after_three_consecutive_checkpoint_save_failures(
 }
 
 #[sinex_test]
-async fn derived_outputs_propagate_runtime_source_run_id(ctx: TestContext) -> TestResult<()> {
+async fn derived_outputs_propagate_runtime_module_run_id(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let source_run_id = Uuid::now_v7();
+    let module_run_id = Uuid::now_v7();
     let mut adapter = AutomatonRuntime::new(TransducerWrapper(EmittingAutomaton));
     adapter.runtime =
-        Some(make_runtime_state(&ctx, "derived-adapter-emitting-test", Some(source_run_id)).await?);
+        Some(make_runtime_state(&ctx, "derived-adapter-emitting-test", Some(module_run_id)).await?);
 
     let outputs = adapter.process_one(make_input_event("emit")?).await?;
     let output = outputs
@@ -73,7 +73,7 @@ async fn derived_outputs_propagate_runtime_source_run_id(ctx: TestContext) -> Te
         .next()
         .expect("emitting node should produce one output event");
 
-    assert_eq!(output.source_run_id, Some(source_run_id));
+    assert_eq!(output.module_run_id, Some(module_run_id));
     Ok(())
 }
 
@@ -718,7 +718,7 @@ async fn historical_replay_fails_when_dlq_routing_fails(ctx: TestContext) -> Tes
         .expect_err("historical replay must fail when DLQ routing fails");
 
     let rendered = format!("{error:#}");
-    assert!(rendered.contains("failed to send derived-node event to processing-failure stream"));
+    assert!(rendered.contains("failed to send automaton event to processing-failure stream"));
     assert!(rendered.contains("route me to dlq"));
     assert!(rendered.contains("derived-adapter-dlq-retry-test"));
     assert!(

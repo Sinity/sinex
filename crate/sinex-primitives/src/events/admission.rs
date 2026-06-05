@@ -360,7 +360,7 @@ mod tests {
             ts_orig: Some(Timestamp::now()),
             ts_quality: None,
             host: crate::domain::HostName::from_static("test-host"),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,
@@ -369,7 +369,7 @@ mod tests {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             anchor_payload_hash: None,
         }
     }

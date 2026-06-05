@@ -706,7 +706,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .style(Style::default().fg(Color::White));
     f.render_widget(overview, chunks[0]);
 
-    // Right: RuntimeActor list
+    // Right: RuntimeModule list
     let node_items: Vec<ListItem> = app
         .modules
         .iter()

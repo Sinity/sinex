@@ -27,7 +27,7 @@ impl DerivedAggregationMeta {
     }
 }
 
-/// Output from a derived node's processing logic.
+/// Output from a automaton's processing logic.
 ///
 /// Carries the full synthetic metadata required for replay-correct provenance chains.
 #[derive(Debug, Clone)]
@@ -122,7 +122,7 @@ impl<T> DerivedOutput<T> {
     /// Create a windowed output using wall-clock `Timestamp::now()`.
     ///
     /// Only use this when the output genuinely represents an observation at the
-    /// current wall-clock time. For most derived nodes, prefer [`windowed`](Self::windowed)
+    /// current wall-clock time. For most automatons, prefer [`windowed`](Self::windowed)
     /// with a timestamp derived from input events.
     pub fn windowed_now(payload: T, source_event_ids: Vec<Uuid>) -> Self {
         Self {

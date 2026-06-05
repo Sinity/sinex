@@ -31,14 +31,14 @@ where
     /// subscription) is unreachable in deployment. See #1569.
     pub(super) async fn run_continuous(&mut self, _from: Checkpoint) -> RuntimeResult<ScanReport> {
         let start = Instant::now();
-        let module_name = self.node.name().to_string();
+        let module_name = self.automaton.name().to_string();
         let mut invalidations_processed: u64 = 0;
 
         info!(
-            node = %module_name,
-            model = %self.node.node_model(),
-            input_type = %self.node.input_event_type(),
-            output_type = %self.node.output_event_type(),
+            automaton = %module_name,
+            model = %self.automaton.automaton_model(),
+            input_type = %self.automaton.input_event_type(),
+            output_type = %self.automaton.output_event_type(),
             "Automaton initialized — running invalidation-driven continuous loop"
         );
 
@@ -61,7 +61,7 @@ where
             if let Some(client) = nats_client {
                 let env = sinex_primitives::environment::environment();
                 let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS");
-                let queue_group = format!("derived.invalidation.{}", self.node.name());
+                let queue_group = format!("derived.invalidation.{}", self.automaton.name());
                 let deliver_subject = client.new_inbox();
                 let js = async_nats::jetstream::new(client.clone());
 
@@ -76,7 +76,7 @@ where
                             Ok(consumer) => match consumer.messages().await {
                                 Ok(messages) => {
                                     info!(
-                                        node = %module_name,
+                                        automaton = %module_name,
                                         stream = %stream_name,
                                         queue_group = %queue_group,
                                         "Subscribed to invalidation signals via JetStream push consumer"
@@ -85,7 +85,7 @@ where
                                 }
                                 Err(e) => {
                                     warn!(
-                                        node = %module_name,
+                                        automaton = %module_name,
                                         error = %e,
                                         "Failed to start invalidation consumer message stream"
                                     );
@@ -94,7 +94,7 @@ where
                             },
                             Err(e) => {
                                 warn!(
-                                    node = %module_name,
+                                    automaton = %module_name,
                                     queue_group = %queue_group,
                                     error = %e,
                                     "Failed to create invalidation push consumer"
@@ -105,7 +105,7 @@ where
                     }
                     Err(e) => {
                         warn!(
-                            node = %module_name,
+                            automaton = %module_name,
                             stream = %stream_name,
                             error = %e,
                             "Failed to get invalidation stream"
@@ -114,7 +114,7 @@ where
                     }
                 }
             } else {
-                debug!(node = %module_name, "No NATS client — invalidation subscription skipped");
+                debug!(automaton = %module_name, "No NATS client — invalidation subscription skipped");
                 None
             }
         };
@@ -147,12 +147,12 @@ where
                 shutdown_result = shutdown_rx.changed() => {
                     if shutdown_result.is_err() {
                         warn!(
-                            node = %module_name,
-                            "Derived-node invalidation shutdown channel dropped before explicit shutdown"
+                            automaton = %module_name,
+                            "Automaton invalidation shutdown channel dropped before explicit shutdown"
                         );
                     }
                     if shutdown_result.is_err() || *shutdown_rx.borrow() {
-                        info!(node = %module_name, "Shutdown signal received");
+                        info!(automaton = %module_name, "Shutdown signal received");
                         // Process any pending invalidations before shutdown.
                         // A halt-class error from `handle_invalidation_message`
                         // (`Err`) means the next invalidation will hit the
@@ -188,7 +188,7 @@ where
                 } => {
                     let batch_size = pending_invalidations.len();
                     debug!(
-                        node = %module_name,
+                        automaton = %module_name,
                         batch_size,
                         debounce_ms,
                         "Processing debounced invalidation batch"
@@ -218,7 +218,7 @@ where
                                 error!(
                                     target: "sinex_metrics",
                                     metric = "derive.checkpoint_failures_total",
-                                    node = %module_name,
+                                    automaton = %module_name,
                                     error = %e,
                                     consecutive_failures = self.consecutive_checkpoint_failures,
                                     "Failed to save periodic checkpoint"
@@ -249,7 +249,7 @@ where
             error!(
                 target: "sinex_metrics",
                 metric = "derive.checkpoint_failures_total",
-                node = %module_name,
+                automaton = %module_name,
                 error = %e,
                 "Failed to save final checkpoint after invalidation run"
             );
@@ -297,16 +297,16 @@ where
             runtime.db_pool().clone()
         };
 
-        let input_event_type = self.node.input_event_type();
+        let input_event_type = self.automaton.input_event_type();
         let input_provenance_filter = self.input_provenance_filter();
         info!(
-            node = %self.node.name(),
-            model = %self.node.node_model(),
+            automaton = %self.automaton.name(),
+            model = %self.automaton.automaton_model(),
             input_type = %input_event_type,
             input_provenance = ?input_provenance_filter,
             end_time = %end_time,
             replay = args.replay.is_some(),
-            "Starting derived node historical replay"
+            "Starting automaton historical replay"
         );
 
         let (time_range, mut cursor) = historical_resume_position(&from, end_time)?;
@@ -367,7 +367,7 @@ where
                 let trigger_event_id = ctx.trigger_event_id;
 
                 match self
-                    .node
+                    .automaton
                     .process_derived(
                         &mut self.persisted_state.state,
                         query_event.event.clone(),
@@ -384,9 +384,9 @@ where
                             for output_event in output_events {
                                 emitter.emit(output_event).await.map_err(|error| {
                                     SinexError::lifecycle(
-                                        "failed to emit derived-node replay output event",
+                                        "failed to emit automaton replay output event",
                                     )
-                                    .with_context("node", self.node.name())
+                                    .with_context("automaton", self.automaton.name())
                                     .with_context("trigger_event_id", trigger_event_id.to_string())
                                     .with_source(error)
                                 })?;
@@ -397,7 +397,7 @@ where
                     Err(e) => {
                         let sinex_error = e.to_sinex_error();
                         let failure_ctx = FailureContext {
-                            unit_id: self.node.name().to_string(),
+                            unit_id: self.automaton.name().to_string(),
                             operation: RuntimeOperation::ProcessBatch,
                             phase: RuntimePhase::ProcessInput,
                             input_scope: None,
@@ -408,12 +408,12 @@ where
                         let settlement = DefaultFailurePolicy.settle(&sinex_error, &failure_ctx);
                         match settlement {
                             Settlement::Commit => {
-                                warn!(node = %self.node.name(), error = %e, "Committing (settled as benign) during historical replay");
+                                warn!(automaton = %self.automaton.name(), error = %e, "Committing (settled as benign) during historical replay");
                             }
                             Settlement::SendToProcessingFailure
                             | Settlement::Park { .. }
                             | Settlement::Quarantine { .. } => {
-                                warn!(node = %self.node.name(), error = %e, "Routing to processing-failure queue during historical replay");
+                                warn!(automaton = %self.automaton.name(), error = %e, "Routing to processing-failure queue during historical replay");
                                 let failed_event = query_event.event.clone();
                                 let failure_err = self
                                     .send_to_processing_failure_queue_or_fail(&failed_event, &e)
@@ -422,7 +422,7 @@ where
                                     error!(
                                         target: "sinex_metrics",
                                         metric = "derive.checkpoint_failures_total",
-                                        node = %self.node.name(),
+                                        automaton = %self.automaton.name(),
                                         error = %cp_err,
                                         "Failed to save checkpoint after replay processing-failure routing error"
                                     );
@@ -433,7 +433,7 @@ where
                                 error!(
                                     target: "sinex_metrics",
                                     metric = "derive.replay_retry_halts_total",
-                                    node = %self.node.name(),
+                                    automaton = %self.automaton.name(),
                                     error = %e,
                                     "Retryable error in historical replay; halting replay"
                                 );
@@ -441,7 +441,7 @@ where
                                     error!(
                                         target: "sinex_metrics",
                                         metric = "derive.checkpoint_failures_total",
-                                        node = %self.node.name(),
+                                        automaton = %self.automaton.name(),
                                         error = %cp_err,
                                         "Failed to save checkpoint after replay error"
                                     );
@@ -453,12 +453,12 @@ where
                                 // / process.rs for the same shape) so systemd
                                 // records the unit as cleanly exited.
                                 if let Some(drain) = self.shutdown_tx.as_ref() {
-                                    let _ = drain.request_drain_and_warn(self.node.name());
+                                    let _ = drain.request_drain_and_warn(self.automaton.name());
                                 }
                                 error!(
                                     target: "sinex_metrics",
                                     metric = "derive.node_halts_total",
-                                    node = %self.node.name(),
+                                    automaton = %self.automaton.name(),
                                     error = %e,
                                     reason = ?reason,
                                     "Halting node during historical replay; runtime drain requested"
@@ -467,23 +467,23 @@ where
                                     error!(
                                         target: "sinex_metrics",
                                         metric = "derive.checkpoint_failures_total",
-                                        node = %self.node.name(),
+                                        automaton = %self.automaton.name(),
                                         error = %cp_err,
                                         "Failed to save checkpoint after replay halt error"
                                     );
                                 }
                                 return Err(SinexError::processing(format!(
-                                    "RuntimeActor halted during replay: {reason:?} — {e}"
+                                    "RuntimeModule halted during replay: {reason:?} — {e}"
                                 )));
                             }
                             Settlement::DrainRuntimeUnit { reason } => {
                                 if let Some(drain) = self.shutdown_tx.as_ref() {
-                                    let _ = drain.request_drain_and_warn(self.node.name());
+                                    let _ = drain.request_drain_and_warn(self.automaton.name());
                                 }
                                 error!(
                                     target: "sinex_metrics",
                                     metric = "derive.runtime_drains_total",
-                                    node = %self.node.name(),
+                                    automaton = %self.automaton.name(),
                                     error = %e,
                                     reason = %reason,
                                     "Draining runtime unit during historical replay"
@@ -492,7 +492,7 @@ where
                                     error!(
                                         target: "sinex_metrics",
                                         metric = "derive.checkpoint_failures_total",
-                                        node = %self.node.name(),
+                                        automaton = %self.automaton.name(),
                                         error = %cp_err,
                                         "Failed to save checkpoint after replay drain error"
                                     );
@@ -514,7 +514,7 @@ where
                     error!(
                         target: "sinex_metrics",
                         metric = "derive.checkpoint_failures_total",
-                        node = %self.node.name(),
+                        automaton = %self.automaton.name(),
                         error = %e,
                         "Failed to save checkpoint during historical replay"
                     );
@@ -534,7 +534,7 @@ where
             error!(
                 target: "sinex_metrics",
                 metric = "derive.checkpoint_failures_total",
-                node = %self.node.name(),
+                automaton = %self.automaton.name(),
                 error = %e,
                 "Failed to save checkpoint after replay"
             );
@@ -544,7 +544,7 @@ where
         }
 
         info!(
-            node = %self.node.name(),
+            automaton = %self.automaton.name(),
             events_processed,
             events_emitted,
             duration_ms = start.elapsed().as_millis(),

@@ -33,13 +33,13 @@ macro_rules! event_select_columns {
          anchor_payload_hash, \
          associated_blob_ids::uuid[] as associated_blob_ids, \
          payload_schema_id::uuid as payload_schema_id, \
-         source_run_id::uuid as source_run_id, \
+         module_run_id::uuid as module_run_id, \
          temporal_policy, \
          semantics_version, \
          scope_key, \
          equivalence_key, \
          created_by_operation_id::uuid as created_by_operation_id, \
-         node_model, \
+         automaton_model, \
          ts_quality"
     };
 }
@@ -97,13 +97,13 @@ mod tests {
         "anchor_payload_hash",
         "associated_blob_ids",
         "payload_schema_id",
-        "source_run_id",
+        "module_run_id",
         "temporal_policy",
         "semantics_version",
         "scope_key",
         "equivalence_key",
         "created_by_operation_id",
-        "node_model",
+        "automaton_model",
         "ts_quality",
     ];
 

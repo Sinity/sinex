@@ -116,7 +116,7 @@ Query-defined lineage without member rows is acceptable only when:
 ## Trace Semantics
 
 `sinexctl trace` for hierarchical aggregation should render the parent stack
-naturally — each layer shows up as a normal derived node with its small
+naturally — each layer shows up as a normal automaton with its small
 parent array, and trace traversal walks layer by layer.
 
 For scope-backed derived, trace should render:

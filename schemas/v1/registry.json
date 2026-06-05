@@ -55,7 +55,7 @@
       "event_type": "ai.message",
       "version": "1.0.0",
       "path": "chatgpt/ai.message.json",
-      "content_hash": "c0a3d06161ce0e1cbff1b4774d7b8fa18d348ebade107f8a97853c97d39441f3"
+      "content_hash": "747da738aab33cdf535d16ea4b7e577a2d521bb877947f121717e82444ef623f"
     },
     {
       "source": "claude",
@@ -300,7 +300,7 @@
       "event_type": "health.aggregated_report",
       "version": "1.0.0",
       "path": "health-aggregator/health.aggregated_report.json",
-      "content_hash": "c5c7317c7bf32a3824c3c7efdbfebbdf0be5d870023da35956023e2d606285da"
+      "content_hash": "25b2ef08e6e1cd9880603e3391acc6aee44b99c446a74b279f2678dad3742188"
     },
     {
       "source": "integration.polylogue",
@@ -685,7 +685,7 @@
       "event_type": "latency_snapshot",
       "version": "1.0.0",
       "path": "sinexd.automaton/latency_snapshot.json",
-      "content_hash": "fd2fd09469590458f2e45331f62bbb8d4ebf7ada041eff3f8220850be8a4e1ee"
+      "content_hash": "234a5cd8ebe40c1e922679509f4f4bb675f69a7334e5e5a5b953dc73fa7ed50e"
     },
     {
       "source": "sinexd.event_engine",
@@ -720,7 +720,7 @@
       "event_type": "processing.stats",
       "version": "1.0.0",
       "path": "sinexd.source/processing.stats.json",
-      "content_hash": "2ca205bf457c46cdd22b9245a8a02ecc8d869eac7681b5ef04f99b7ec35875df"
+      "content_hash": "775bb2ff119754c062c2342c2be312579de08e44422084962e01e5ff300d0da1"
     },
     {
       "source": "spotify",

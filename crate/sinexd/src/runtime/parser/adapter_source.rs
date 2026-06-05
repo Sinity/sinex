@@ -123,7 +123,7 @@ const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
 // Typed runtime config — wraps adapter config + optional binding flags
 // =============================================================================
 
-/// RuntimeActor-level config for [`AdapterBackedSource`].
+/// RuntimeModule-level config for [`AdapterBackedSource`].
 ///
 /// The adapter config is stored as raw JSON (`serde_json::Value`) and
 /// deserialized into `A::Config` during `initialize`. This avoids requiring

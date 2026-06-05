@@ -140,7 +140,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     assert_eq!(event_from_db.event_type.as_str(), "test.event");
 
     info!("🎉 E2E JetStream test PASSED");
-    info!("   ✓ RuntimeActor → JetStream (events.raw)");
+    info!("   ✓ RuntimeModule → JetStream (events.raw)");
     info!("   ✓ event_engine → Database persistence");
     info!("   ✓ event_engine → JetStream (events.confirmations)");
     info!("   ✓ Automaton → Confirmed event consumption");

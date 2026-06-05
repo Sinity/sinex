@@ -1,6 +1,6 @@
 //! `RuntimeRunner<T>` and its associated lifecycle/runtime helpers.
 //!
-//! This is the long-lived runtime kernel of stream nodes. Keeping it isolated
+//! This is the long-lived runtime kernel of stream modules. Keeping it isolated
 //! from wire types, listener plumbing, and control-message helpers makes the
 //! file navigable; further role splits inside this module are tracked as
 //! follow-up work.
@@ -13,7 +13,7 @@ use super::listener::{
     run_resubscribing_listener,
 };
 use super::{
-    Checkpoint, EventEmitter, RuntimeActor, RuntimeCapabilities, RuntimeHandles, RuntimeInitContext,
+    Checkpoint, EventEmitter, RuntimeModule, RuntimeCapabilities, RuntimeHandles, RuntimeInitContext,
     RuntimeContext, SourceScanAck, SourceScanCommand, SourceScanProgress, ModuleKind, RunnerLifecycle,
     RuntimeDrainController, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
 };
@@ -47,11 +47,11 @@ use tracing::{debug, error, info, warn};
 
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
 
-/// Unified runner for nodes
+/// Unified runner for source drivers and automata.
 type SourceFactory<T> = Arc<dyn Fn() -> T + Send + Sync>;
 
-pub struct RuntimeRunner<T: RuntimeActor> {
-    node: T,
+pub struct RuntimeRunner<T: RuntimeModule> {
+    module: T,
     source_factory: Option<SourceFactory<T>>,
     lifecycle: RunnerLifecycle,
     handles: Option<RuntimeHandles>,
@@ -110,10 +110,10 @@ mod registration;
 mod service;
 mod shutdown_helpers;
 
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
-    /// Get node capabilities
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+    /// Get module capabilities
     pub fn get_capabilities(&self) -> RuntimeCapabilities {
-        self.node.capabilities()
+        self.module.capabilities()
     }
 
     /// Get scan estimate
@@ -123,7 +123,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         until: &TimeHorizon,
         args: &ScanArgs,
     ) -> RuntimeResult<ScanEstimate> {
-        self.node.estimate_scan_scope(from, until, args).await
+        self.module.estimate_scan_scope(from, until, args).await
     }
 }
 

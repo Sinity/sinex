@@ -93,8 +93,8 @@ enum Command {
         #[arg(long)]
         source: String,
 
-        /// Service name reported by systemd / heartbeats. Defaults to
-        /// `sinex-source-<id>` when absent.
+        /// Runtime label reported by heartbeats. Defaults to the source id
+        /// when absent.
         #[arg(long)]
         service_name: Option<String>,
 

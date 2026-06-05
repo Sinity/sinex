@@ -16,7 +16,7 @@ Closes: #326, #327, #338, #693.
 | `Derived` | Derived events from automata | `{env}.sinex.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | processing-failure stream | wait for ACKs + save checkpoint |
 | `SourceMaterial` | Ordered material begin/slice/end frames | `{env}.source_material.frames.*` | JetStream, ordered stream, ACK required | material acquisition fails before event publish | wait for ACKs before anchor use |
 | `Confirmation` | Persistence ACK signals from the event engine | `{env}.events.confirmations.{event_id}` | JetStream, best-effort | retry queue -> durability-gap warn | best-effort flush |
-| `Invalidation` | Scope fan-out to derived nodes | `{env}.sinex.derived.invalidation` | JetStream, durable consumers | error propagated to caller | no special drain (JetStream holds) |
+| `Invalidation` | Scope fan-out to automatons | `{env}.sinex.derived.invalidation` | JetStream, durable consumers | error propagated to caller | no special drain (JetStream holds) |
 | `Control` | Lifecycle and coordination traffic | `{env}.sinex.control.>` / request-reply | Core NATS, request-reply + timeout | error returned (`SinexError::network`) | drop pending |
 | `Telemetry` | Self-observation metrics and health | `{env}.sinex.events.raw.sinex.*` | JetStream, semaphore 16 | drop with warn log | best-effort flush |
 
@@ -120,7 +120,7 @@ confusion; the boundaries below are authoritative.
 |---|---|
 | Event engine could not persist a raw event | Raw-ingest DLQ |
 | Automaton could not process a derived event | Processing-failure stream |
-| RuntimeActor could not reach NATS to publish | Local recovery spool |
+| RuntimeModule could not reach NATS to publish | Local recovery spool |
 | Confirmation could not be published | Retry queue → durability-gap warn |
 
 ---
@@ -145,7 +145,7 @@ The protocol per class:
 2. In-flight event processing completes.
 3. Derived events are published and ACKed.
 4. Checkpoint is saved (NATS KV + optional local backup).
-5. RuntimeActor exits cleanly.
+5. RuntimeModule exits cleanly.
 
 On crash (no SIGTERM): JetStream NAK timeout causes redelivery; automaton
 deduplicates via equivalence key or scope reconciliation.

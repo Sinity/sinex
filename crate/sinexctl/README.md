@@ -6,24 +6,24 @@
 
 ```bash
 # Check API reachability
-sinexctl gateway ping --token "$SINEX_RPC_TOKEN"
+sinexctl gateway ping --token "$SINEX_API_TOKEN"
 
 # Query recent events
-sinexctl query -s 1h --token "$SINEX_RPC_TOKEN"
+sinexctl query -s 1h --token "$SINEX_API_TOKEN"
 
 # List nodes and replay operations
-sinexctl node list --token "$SINEX_RPC_TOKEN"
-sinexctl replay list --token "$SINEX_RPC_TOKEN"
+sinexctl node list --token "$SINEX_API_TOKEN"
+sinexctl replay list --token "$SINEX_API_TOKEN"
 
 # Inspect derived-node/automata runtime health and checkpoint position
-sinexctl automata --token "$SINEX_RPC_TOKEN"
+sinexctl automata --token "$SINEX_API_TOKEN"
 
 # Run runtime evidence checks, including passive derived-signal checks, managed
 # document-scan smoke, collector-surface evidence, and historical-backfill evidence
-sinexctl verify --document-smoke --source-evidence --historical-evidence --token "$SINEX_RPC_TOKEN"
+sinexctl verify --document-smoke --source-evidence --historical-evidence --token "$SINEX_API_TOKEN"
 
 # Inspect DLQ state
-sinexctl dlq list --token "$SINEX_RPC_TOKEN"
+sinexctl dlq list --token "$SINEX_API_TOKEN"
 ```
 
 ## Command Groups
@@ -58,8 +58,8 @@ Global flags (available on most commands):
 
 Environment variables (directly supported by CLI flags/token loader):
 
-- `SINEX_RPC_URL`
-- `SINEX_RPC_TOKEN`
+- `SINEX_API_URL`
+- `SINEX_API_TOKEN`
 - `SINEX_RUNTIME_TARGET_CONFIG`
 
 When `--runtime-target` or `SINEX_RUNTIME_TARGET_CONFIG` is set, descriptor

@@ -109,7 +109,7 @@ fn format_automata_status_table(response: &AutomataStatusResponse) -> String {
             style("no").red().to_string()
         };
         let run = automaton
-            .source_run_id
+            .module_run_id
             .as_ref()
             .map_or_else(|| style("-").dim().to_string(), short_uuid);
 

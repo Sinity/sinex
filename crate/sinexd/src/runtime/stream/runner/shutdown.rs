@@ -6,10 +6,10 @@
 //! runners.
 
 use super::{
-    RuntimeActor, RuntimeResult, RuntimeRunner, RunnerLifecycle, TASK_SHUTDOWN_GRACE_PERIOD, debug, info, watch,
+    RuntimeModule, RuntimeResult, RuntimeRunner, RunnerLifecycle, TASK_SHUTDOWN_GRACE_PERIOD, debug, info, watch,
 };
 
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// Graceful shutdown.
     ///
     /// Idempotent: safe to call multiple times or on a never-initialized runner.
@@ -24,7 +24,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             return Ok(());
         }
 
-        info!("Shutting down stream node runner");
+        info!("Shutting down stream module runner");
 
         let mut shutdown_errors = Vec::new();
         Self::push_shutdown_error(
@@ -65,8 +65,8 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         // events if the batcher's 250ms grace period expired mid-flush.
         Self::push_shutdown_error(
             &mut shutdown_errors,
-            "node shutdown",
-            self.node.shutdown().await,
+            "module shutdown",
+            self.module.shutdown().await,
         );
         Self::push_shutdown_error(
             &mut shutdown_errors,

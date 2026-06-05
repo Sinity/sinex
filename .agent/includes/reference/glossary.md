@@ -8,7 +8,7 @@ data originates. Combined with `source_material_id`, it forms a stable
 real-world occurrence identifier. Stored on `core.events`.
 
 ### automaton (pl. automata)
-A derived node that processes existing events and emits derived-provenance
+A automaton that processes existing events and emits derived-provenance
 events. Three processing models: **Transducer** (1:1 stateless transform),
 **Windowed** (accumulate-then-emit), **ScopeReconciler** (per-scope state
 reconciliation). All managed by `AutomatonRuntime`.
@@ -72,7 +72,7 @@ A NATS JetStream stream (`sinex.events.dlq.>`) where events that fail
 validation, parsing, or FK constraints are routed for operator inspection and
 manual recovery.
 
-### derived node
+### automaton
 See **automaton**.
 
 ## E

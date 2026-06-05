@@ -778,7 +778,6 @@
                 export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"
                 export SINEX_API_TCP_LISTEN="127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
                 export SINEX_API_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
-                export SINEX_RPC_URL="$SINEX_API_URL"
 
                 if [ -z "''${SINEX_TEST_TMPDIR:-}" ]; then
                   _sinex_test_tmp_root="$SINEX_DEV_ROOT/.sinex/test-tmp"

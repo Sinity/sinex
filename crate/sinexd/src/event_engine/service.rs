@@ -429,7 +429,7 @@ impl IngestService {
             {
                 Ok(run) => {
                     info!(run_id = %run.id, "Started event_engine run");
-                    self.observer.set_source_run_id(run.id.to_uuid());
+                    self.observer.set_module_run_id(run.id.to_uuid());
                 }
                 Err(e) => warn!(%e, "Failed to start event_engine run"),
             }

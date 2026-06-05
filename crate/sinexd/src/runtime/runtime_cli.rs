@@ -25,7 +25,7 @@ use tracing::{info, warn};
 
 /// Standard CLI arguments for all nodes
 #[derive(Parser, Debug, Clone)]
-#[command(name = "sinex-runtime", about = "Sinex Stream RuntimeActor", version)]
+#[command(name = "sinex-runtime", about = "Sinex Stream RuntimeModule", version)]
 pub struct RuntimeCli {
     /// NATS connection configuration
     #[command(flatten)]
@@ -59,7 +59,7 @@ pub struct RuntimeCli {
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
 
-    /// RuntimeActor-specific configuration as JSON
+    /// RuntimeModule-specific configuration as JSON
     #[arg(long)]
     pub runtime_config: Option<String>,
 
@@ -384,10 +384,10 @@ pub fn parse_time_horizon(horizon_str: &str) -> RuntimeResult<TimeHorizon> {
 
 /// Generic CLI runner for nodes
 ///
-/// This provides a standardized way to run any RuntimeActor with
+/// This provides a standardized way to run any RuntimeModule with
 /// the unified CLI interface supporting service/scan/explore subcommands.
 pub struct RuntimeCliRunner<
-    T: crate::runtime::stream::RuntimeActor + ExplorationProvider + Default + 'static,
+    T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 'static,
 > {
     node: Option<T>,
     source_factory: Arc<dyn Fn() -> T + Send + Sync>,
@@ -455,7 +455,7 @@ fn default_service_name(args: &RuntimeCli) -> ServiceName {
     ServiceName::new(name)
 }
 
-impl<T: crate::runtime::stream::RuntimeActor + ExplorationProvider + Default + 'static>
+impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 'static>
     RuntimeCliRunner<T>
 {
     /// Create new CLI runner with a node instance
@@ -519,7 +519,7 @@ impl<T: crate::runtime::stream::RuntimeActor + ExplorationProvider + Default + '
         let node = self
             .node
             .take()
-            .ok_or_else(|| SinexError::unknown("RuntimeActor already consumed"))?;
+            .ok_or_else(|| SinexError::unknown("RuntimeModule already consumed"))?;
 
         match args.command {
             RuntimeCommand::Service { dry_run, .. } => {
@@ -573,9 +573,9 @@ impl<T: crate::runtime::stream::RuntimeActor + ExplorationProvider + Default + '
         args: RuntimeCli,
         dry_run: bool,
     ) -> RuntimeResult<()> {
-        info!("Starting node service mode");
+        info!("Starting runtime module service mode");
 
-        // Create node runner
+        // Create runtime module runner.
         let mut runner = RuntimeRunner::new_with_factory(node, self.source_factory.clone());
 
         // Set up dependencies
@@ -655,7 +655,7 @@ impl<T: crate::runtime::stream::RuntimeActor + ExplorationProvider + Default + '
                         // Only leader processes events
                         let mut runner = runner.lock().await;
                         runner.run_service().await.map_err(|e| {
-                            sinex_primitives::SinexError::service(format!("RuntimeActor error: {e}"))
+                            sinex_primitives::SinexError::service(format!("RuntimeModule error: {e}"))
                         })
                     }
                 })
@@ -812,7 +812,7 @@ impl<T: crate::runtime::stream::RuntimeActor + ExplorationProvider + Default + '
         }
 
         if !report.runtime_stats.is_empty() {
-            println!("  RuntimeActor stats:");
+            println!("  RuntimeModule stats:");
             for (key, value) in &report.runtime_stats {
                 println!("    {key}: {value}");
             }

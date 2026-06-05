@@ -5,7 +5,7 @@
 //! identity to operators and downstream automation.
 
 #[cfg(feature = "db")]
-use super::{RuntimeActor, RuntimeRunner, ServiceInfo};
+use super::{RuntimeModule, RuntimeRunner, ServiceInfo};
 #[cfg(feature = "db")]
 use crate::runtime::{RuntimeResult, SinexError};
 #[cfg(feature = "db")]
@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use tracing::warn;
 
 #[cfg(feature = "db")]
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     pub(super) async fn register_runtime_identity(
         &self,
         pool: &PgPool,
@@ -32,8 +32,8 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         version: &str,
         raw_config: &HashMap<String, serde_json::Value>,
     ) -> RuntimeResult<Option<Uuid>> {
-        let module_name = ModuleName::new(self.node.module_name());
-        let module_kind = self.node.module_kind();
+        let module_name = ModuleName::new(self.module.module_name());
+        let module_kind = self.module.module_kind();
         let manifest = pool
             .state()
             .register_module(&module_name, module_kind, version, None)
@@ -88,19 +88,19 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         service_info: &ServiceInfo,
         status: ModuleState,
     ) {
-        let Some(source_run_id) = service_info.source_run_id() else {
+        let Some(module_run_id) = service_info.module_run_id() else {
             return;
         };
-        let source_run_id = Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(source_run_id);
+        let module_run_id = Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(module_run_id);
         if let Err(error) = pool
             .state()
-            .update_module_run_status(source_run_id, status)
+            .update_module_run_status(module_run_id, status)
             .await
         {
             warn!(
-                node = %service_info.module_name(),
+                module = %service_info.module_name(),
                 service = %service_info.service_name(),
-                source_run_id = %source_run_id,
+                module_run_id = %module_run_id,
                 target_status = %status,
                 error = %error,
                 "Failed to persist node run terminal status"

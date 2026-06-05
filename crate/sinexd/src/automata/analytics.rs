@@ -311,7 +311,7 @@ impl Windowed for AnalyticsAutomaton {
     }
 }
 
-/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type AnalyticsAutomatonNode = WindowedAdapter<AnalyticsAutomaton>;
 
 // --- Source descriptor (issue #690 / #734) ---

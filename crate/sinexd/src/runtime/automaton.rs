@@ -1,4 +1,4 @@
-//! # Derived RuntimeActor Model Family
+//! # Derived RuntimeModule Model Family
 //!
 //! Four explicit processing models:
 //!

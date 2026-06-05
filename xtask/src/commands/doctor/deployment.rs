@@ -1179,7 +1179,7 @@ pub(super) fn check_secret_materials(
     let gateway_trust_anchor = descriptor_secret_path(
         descriptor,
         |value| value.secrets.gateway_tls_trust_anchor_file.clone(),
-        "SINEX_RPC_CA_CERT",
+        "SINEX_API_CA_CERT",
         default_tls_dir.join("ca.pem"),
     );
     let gateway_client_ca = descriptor_secret_path(

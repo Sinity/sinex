@@ -1103,7 +1103,7 @@ impl StateRepository<'_> {
     /// might have left in a non-terminal-but-non-'running' state. Terminal
     /// rows are still excluded so a crashed run does not silently
     /// resurrect via heartbeats.
-    pub async fn update_module_run_heartbeat(&self, source_run_id: Id<ModuleRun>) -> DbResult<bool> {
+    pub async fn update_module_run_heartbeat(&self, module_run_id: Id<ModuleRun>) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
             UPDATE core.runs
@@ -1111,7 +1111,7 @@ impl StateRepository<'_> {
             WHERE id = $1::uuid
               AND status NOT IN ('failed', 'stopped')
             "#,
-            source_run_id.as_uuid(),
+            module_run_id.as_uuid(),
         )
         .execute(self.pool)
         .await
@@ -1122,7 +1122,7 @@ impl StateRepository<'_> {
     /// Mark a module run as terminal or transitional.
     pub async fn update_module_run_status(
         &self,
-        source_run_id: Id<ModuleRun>,
+        module_run_id: Id<ModuleRun>,
         status: ModuleState,
     ) -> DbResult<bool> {
         let ended_at = matches!(status, ModuleState::Failed | ModuleState::Stopped)
@@ -1145,7 +1145,7 @@ impl StateRepository<'_> {
             WHERE id = $1::uuid
               AND status NOT IN ('failed', 'stopped')
             "#,
-            source_run_id.as_uuid(),
+            module_run_id.as_uuid(),
             status.to_string(),
             ended_at,
         )
@@ -1173,7 +1173,7 @@ impl StateRepository<'_> {
                     nm.description,
                     nr.service_name,
                     nr.instance_id,
-                    nr.id as source_run_id,
+                    nr.id as module_run_id,
                     nr.host,
                     nr.status,
                     nr.last_heartbeat_at,
@@ -1191,7 +1191,7 @@ impl StateRepository<'_> {
                 description,
                 service_name,
                 instance_id,
-                source_run_id as "source_run_id: uuid::Uuid",
+                module_run_id as "module_run_id: uuid::Uuid",
                 host,
                 live_modules.status as "status!",
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
@@ -1205,7 +1205,7 @@ impl StateRepository<'_> {
                     description,
                     service_name,
                     instance_id,
-                    source_run_id,
+                    module_run_id,
                     host,
                     status,
                     last_heartbeat_at,
@@ -1222,7 +1222,7 @@ impl StateRepository<'_> {
                     nm.description,
                     NULL::text as service_name,
                     NULL::text as instance_id,
-                    NULL::uuid as source_run_id,
+                    NULL::uuid as module_run_id,
                     NULL::text as host,
                     nr.status,
                     nr.last_heartbeat_at,
@@ -1370,7 +1370,7 @@ impl StateRepository<'_> {
                 ) as "live!",
                 nr.service_name,
                 nr.instance_id,
-                nr.id as "source_run_id: uuid::Uuid",
+                nr.id as "module_run_id: uuid::Uuid",
                 nr.host,
                 nr.status as run_status,
                 nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
@@ -1418,7 +1418,7 @@ impl StateRepository<'_> {
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.events_processed.run'
                   AND e.payload->'labels'->>'node' = nm.name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) processed ON true
@@ -1433,7 +1433,7 @@ impl StateRepository<'_> {
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.checkpoint.revision'
                   AND e.payload->'labels'->>'node' = nm.name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) checkpoint ON true
@@ -1446,7 +1446,7 @@ impl StateRepository<'_> {
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.invalidations.pending'
                   AND e.payload->'labels'->>'node' = nm.name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) pending ON true
@@ -1458,7 +1458,7 @@ impl StateRepository<'_> {
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.error_rate_5m'
                   AND e.payload->'labels'->>'node' = nm.name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) error_rate ON true
@@ -1475,7 +1475,7 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinexd.automaton'
                   AND e.event_type = 'latency_snapshot'
                   AND e.payload->>'module_name' = nm.name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) latency ON true
@@ -1489,7 +1489,7 @@ impl StateRepository<'_> {
                         AS last_replay_at
                 FROM core.events e
                 WHERE nr.id IS NOT NULL
-                  AND e.source_run_id = nr.id
+                  AND e.module_run_id = nr.id
                   AND e.source_event_ids IS NOT NULL
             ) outputs ON true
             WHERE nm.manifest_type = 'automaton'
@@ -1537,7 +1537,7 @@ impl StateRepository<'_> {
                 ) as "live!",
                 nr.service_name,
                 nr.instance_id,
-                nr.id as "source_run_id: uuid::Uuid",
+                nr.id as "module_run_id: uuid::Uuid",
                 nr.host,
                 nr.status as run_status,
                 nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
@@ -1584,7 +1584,7 @@ impl StateRepository<'_> {
                     MAX(e.ts_coided) AS last_output_at
                 FROM core.events e
                 WHERE nr.id IS NOT NULL
-                  AND e.source_run_id = nr.id
+                  AND e.module_run_id = nr.id
                   AND e.source_material_id IS NOT NULL
             ) outputs ON true
             WHERE nm.manifest_type = 'ingestor'
@@ -1799,7 +1799,7 @@ pub struct LiveModulePresence {
     pub description: Option<String>,
     pub service_name: Option<String>,
     pub instance_id: Option<String>,
-    pub source_run_id: Option<Uuid>,
+    pub module_run_id: Option<Uuid>,
     pub host: Option<String>,
     pub status: String,
     pub last_heartbeat_at: Option<Timestamp>,
@@ -1829,7 +1829,7 @@ pub struct AutomataStatusRow {
     pub live: bool,
     pub service_name: Option<String>,
     pub instance_id: Option<String>,
-    pub source_run_id: Option<Uuid>,
+    pub module_run_id: Option<Uuid>,
     pub host: Option<String>,
     pub run_status: Option<String>,
     pub started_at: Option<Timestamp>,
@@ -1862,7 +1862,7 @@ pub struct IngestorsStatusRow {
     pub live: bool,
     pub service_name: Option<String>,
     pub instance_id: Option<String>,
-    pub source_run_id: Option<Uuid>,
+    pub module_run_id: Option<Uuid>,
     pub host: Option<String>,
     pub run_status: Option<String>,
     pub started_at: Option<Timestamp>,

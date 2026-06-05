@@ -83,8 +83,8 @@ impl RuntimeContext {
     }
 
     #[must_use]
-    pub fn source_run_id(&self) -> Option<Uuid> {
-        self.service_info.source_run_id()
+    pub fn module_run_id(&self) -> Option<Uuid> {
+        self.service_info.module_run_id()
     }
 
     #[must_use]

@@ -123,7 +123,7 @@ impl Windowed for EntityResolver {
     }
 }
 
-/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type EntityResolverNode = WindowedAdapter<EntityResolver>;
 
 // ── Canonicalization logic ──────────────────────────────────────────────────

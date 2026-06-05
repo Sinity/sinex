@@ -5,11 +5,11 @@
 //! helper that persists progress through the bridge.
 
 use super::{
-    Checkpoint, CheckpointManager, Event, EventTransport, JsonValue, RuntimeActor, RuntimeResult, RuntimeRunner,
+    Checkpoint, CheckpointManager, Event, EventTransport, JsonValue, RuntimeModule, RuntimeResult, RuntimeRunner,
     SinexError, Uuid, debug, error, info, warn,
 };
 
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// Process a batch of events, falling back to per-event processing with DLQ
     /// routing if the batch fails. Returns the total number of events processed
     /// (including those routed to the DLQ).
@@ -35,9 +35,9 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             }
             Err(batch_err) => {
                 // Fatal errors (NodeFatal, TransportDegraded) apply to the
-                // entire node, not to any one event. Per-event DLQ fallback
+                // entire module, not to any one event. Per-event DLQ fallback
                 // would route every event in the batch — and every subsequent
-                // batch — to DLQ while the node keeps consuming, generating
+                // batch — to DLQ while the module keeps consuming, generating
                 // an unbounded log/IO storm. Issue #581 observed 221K
                 // consecutive failures producing 1.6M journal entries and
                 // 54 GB of NATS traffic on sinnix-prime before I/O saturation
@@ -90,7 +90,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
                                 metric = "derived.events_dlq_routed",
                                 error = %event_err,
                                 ?event_id,
-                                node = %module_name,
+                                module = %module_name,
                                 "Event processing failed; routing to DLQ"
                             );
                             if let Err(dlq_err) = transport

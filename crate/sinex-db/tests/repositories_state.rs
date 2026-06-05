@@ -459,7 +459,7 @@ async fn node_manifest_heartbeat_updates_only_requested_version(
     assert_eq!(live_modules.len(), 1);
     assert_eq!(live_modules[0].module_name, module_name);
     assert_eq!(live_modules[0].version, "2.0.0");
-    assert!(live_modules[0].source_run_id.is_none());
+    assert!(live_modules[0].module_run_id.is_none());
     assert_eq!(live_modules[0].heartbeat_source, "manifest");
 
     let health = repo.get_runtime_health(Duration::from_mins(2)).await?;

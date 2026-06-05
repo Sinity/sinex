@@ -454,7 +454,7 @@ impl ReplayExecutionEngine {
 
     /// Publish scope invalidation signals for archived events.
     ///
-    /// Notifies derived nodes that scopes need recomputation because events
+    /// Notifies automatons that scopes need recomputation because events
     /// were archived. Only publishes for events that had `scope_keys`.
     pub(crate) async fn publish_scope_invalidations(
         &self,

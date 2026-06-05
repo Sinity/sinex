@@ -87,14 +87,14 @@ pub struct GatewayConfig {
     pub state_dir: PathBuf,
 
     /// Bearer token used for RPC authentication.
-    /// Read from `SINEX_RPC_TOKEN`; value is trimmed.
+    /// Read from `SINEX_API_TOKEN`; value is trimmed.
     #[serde(default)]
     #[sinex_config(skip)]
     pub rpc_token: Option<String>,
 
     /// File containing the bearer token used for RPC authentication.
     #[serde(default)]
-    #[sinex_config(env = "SINEX_RPC_TOKEN_FILE")]
+    #[sinex_config(env = "SINEX_API_TOKEN_FILE")]
     pub rpc_token_file: Option<String>,
 
     /// Higher-priority file containing the API admin token.
@@ -219,7 +219,7 @@ pub struct GatewayConfig {
     /// Whether RPC rate limiting is enabled.
     #[serde(default = "default_rate_limit_enabled")]
     #[sinex_config(
-        env = "SINEX_RPC_RATE_LIMIT_ENABLED",
+        env = "SINEX_API_RATE_LIMIT_ENABLED",
         default_expr = "default_rate_limit_enabled()"
     )]
     pub rpc_rate_limit_enabled: bool,
@@ -227,7 +227,7 @@ pub struct GatewayConfig {
     /// In-memory token bucket refill rate.
     #[serde(default = "default_rate_limit_requests_per_second")]
     #[sinex_config(
-        env = "SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC",
+        env = "SINEX_API_RATE_LIMIT_REQUESTS_PER_SEC",
         default_expr = "default_rate_limit_requests_per_second()"
     )]
     pub rpc_rate_limit_requests_per_sec: u32,
@@ -235,7 +235,7 @@ pub struct GatewayConfig {
     /// Per-role refill rate for `ReadOnly` tokens (overrides the global rate).
     #[serde(default = "default_rate_limit_readonly_rps")]
     #[sinex_config(
-        env = "SINEX_RPC_RATE_LIMIT_READONLY_RPS",
+        env = "SINEX_API_RATE_LIMIT_READONLY_RPS",
         default_expr = "default_rate_limit_readonly_rps()"
     )]
     pub rpc_rate_limit_readonly_rps: u32,
@@ -243,7 +243,7 @@ pub struct GatewayConfig {
     /// Per-role refill rate for `Write` tokens (overrides the global rate).
     #[serde(default = "default_rate_limit_write_rps")]
     #[sinex_config(
-        env = "SINEX_RPC_RATE_LIMIT_WRITE_RPS",
+        env = "SINEX_API_RATE_LIMIT_WRITE_RPS",
         default_expr = "default_rate_limit_write_rps()"
     )]
     pub rpc_rate_limit_write_rps: u32,
@@ -252,7 +252,7 @@ pub struct GatewayConfig {
     /// tighter than write because admin operations have higher impact).
     #[serde(default = "default_rate_limit_admin_rps")]
     #[sinex_config(
-        env = "SINEX_RPC_RATE_LIMIT_ADMIN_RPS",
+        env = "SINEX_API_RATE_LIMIT_ADMIN_RPS",
         default_expr = "default_rate_limit_admin_rps()"
     )]
     pub rpc_rate_limit_admin_rps: u32,
@@ -260,7 +260,7 @@ pub struct GatewayConfig {
     /// In-memory token bucket burst capacity.
     #[serde(default = "default_rate_limit_burst")]
     #[sinex_config(
-        env = "SINEX_RPC_RATE_LIMIT_BURST",
+        env = "SINEX_API_RATE_LIMIT_BURST",
         default_expr = "default_rate_limit_burst()"
     )]
     pub rpc_rate_limit_burst: u32,
@@ -268,7 +268,7 @@ pub struct GatewayConfig {
     /// How long to retain idle in-memory token buckets.
     #[serde(default = "default_rate_limit_idle_timeout_secs")]
     #[sinex_config(
-        env = "SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS",
+        env = "SINEX_API_RATE_LIMIT_IDLE_TIMEOUT_SECS",
         default_expr = "default_rate_limit_idle_timeout_secs()"
     )]
     pub rpc_rate_limit_idle_timeout_secs: u64,
@@ -276,7 +276,7 @@ pub struct GatewayConfig {
     /// Distributed rate-limit window in seconds.
     #[serde(default = "default_rate_limit_window_secs")]
     #[sinex_config(
-        env = "SINEX_RPC_RATE_LIMIT_WINDOW_SECS",
+        env = "SINEX_API_RATE_LIMIT_WINDOW_SECS",
         default_expr = "default_rate_limit_window_secs()"
     )]
     pub rpc_rate_limit_window_secs: u64,
@@ -284,7 +284,7 @@ pub struct GatewayConfig {
     /// Distributed rate-limit allowance per minute.
     #[serde(default = "default_rate_limit_per_minute")]
     #[sinex_config(
-        env = "SINEX_RPC_RATE_LIMIT_PER_MINUTE",
+        env = "SINEX_API_RATE_LIMIT_PER_MINUTE",
         default_expr = "default_rate_limit_per_minute()"
     )]
     pub rpc_rate_limit_per_minute: u32,
@@ -455,12 +455,12 @@ impl Default for GatewayConfig {
 }
 
 impl GatewayConfig {
-    /// Post-construction normalization: read `SINEX_RPC_TOKEN` (with trim),
+    /// Post-construction normalization: read `SINEX_API_TOKEN` (with trim),
     /// and fall back to the shared `SINEX_CONTENT_STORE_PATH` override if the
     /// gateway-specific key wasn't set.
     fn normalize(mut self) -> Result<Self, SinexError> {
         // rpc_token is skipped in the macro because it needs whitespace trimming.
-        if let Some(token) = sinex_primitives::env::strict_var("SINEX_RPC_TOKEN")? {
+        if let Some(token) = sinex_primitives::env::strict_var("SINEX_API_TOKEN")? {
             self.rpc_token = Some(token.trim().to_string());
         }
         // `default_content_store_path()` reads the shared `SINEX_CONTENT_STORE_PATH`

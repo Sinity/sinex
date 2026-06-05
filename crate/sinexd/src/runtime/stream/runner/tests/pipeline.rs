@@ -105,8 +105,8 @@ async fn run_service_drain_persists_ingestor_checkpoint_and_updates_status(
     let control_identity = runtime.control_identity().to_string();
     let drain_controller = runtime.runtime_drain();
     let checkpoint_manager = runtime.checkpoint_manager();
-    let source_run_id = runtime
-        .source_run_id()
+    let module_run_id = runtime
+        .module_run_id()
         .ok_or_else(|| color_eyre::eyre::eyre!("node run id missing after db-backed init"))?;
     let drain_complete_subject = sinex_primitives::environment().nats_subject(&format!(
         "sinex.control.sources.{control_identity}.drain_complete"
@@ -130,7 +130,7 @@ async fn run_service_drain_persists_ingestor_checkpoint_and_updates_status(
         .map_err(|_| color_eyre::eyre::eyre!("ingestor did not observe runtime drain"))?;
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {
-            if node_run_status(ctx.pool(), source_run_id).await? == "draining" {
+            if node_run_status(ctx.pool(), module_run_id).await? == "draining" {
                 return Ok::<(), color_eyre::Report>(());
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -159,7 +159,7 @@ async fn run_service_drain_persists_ingestor_checkpoint_and_updates_status(
 
     let saved = checkpoint_manager.load_checkpoint().await?;
     assert_eq!(saved.checkpoint, expected_checkpoint);
-    assert_eq!(node_run_status(ctx.pool(), source_run_id).await?, "stopped");
+    assert_eq!(node_run_status(ctx.pool(), module_run_id).await?, "stopped");
     Ok(())
 }
 
@@ -270,7 +270,7 @@ async fn resolve_provisionals_to_events_surfaces_missing_confirmed_event(
 }
 
 #[sinex_test]
-async fn build_event_from_provisional_rejects_invalid_source_run_id() -> TestResult<()> {
+async fn build_event_from_provisional_rejects_invalid_module_run_id() -> TestResult<()> {
     let provisional = ProvisionalEvent {
         event_id: EventId::from(Uuid::now_v7()),
         source: EventSource::new("runtime-test-source")?,
@@ -281,15 +281,15 @@ async fn build_event_from_provisional_rejects_invalid_source_run_id() -> TestRes
             "host": "runtime-test-host",
             "payload": {"ok": true},
             "source_event_ids": [Uuid::now_v7().to_string()],
-            "source_run_id": "not-a-uuid"
+            "module_run_id": "not-a-uuid"
         }),
         ts_orig: Timestamp::now(),
         received_at: Timestamp::now(),
     };
 
     let error = RuntimeRunner::<RuntimeTestNode>::build_event_from_provisional(&provisional)
-        .expect_err("invalid persisted source_run_id must fail honestly");
-    assert!(error.to_string().contains("Invalid UUID for source_run_id"));
+        .expect_err("invalid persisted module_run_id must fail honestly");
+    assert!(error.to_string().contains("Invalid UUID for module_run_id"));
     Ok(())
 }
 
@@ -384,7 +384,7 @@ async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db() ->
             "host": "runtime-test-host",
             "payload": {"ok": true},
             "source_event_ids": [Uuid::now_v7().to_string()],
-            "source_run_id": "not-a-uuid"
+            "module_run_id": "not-a-uuid"
         }),
         ts_orig: Timestamp::now(),
         received_at: Timestamp::now(),
@@ -402,17 +402,17 @@ async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db() ->
     assert!(
         message.contains("Confirmed event could not be reconstructed from provisional payload")
     );
-    assert!(message.contains("Invalid UUID for source_run_id"));
+    assert!(message.contains("Invalid UUID for module_run_id"));
     Ok(())
 }
 
-/// RuntimeActor that returns a checkpoint error from `process_event_batch`. The
+/// RuntimeModule that returns a checkpoint error from `process_event_batch`. The
 /// real adapter does this after 3 consecutive checkpoint CAS failures
 /// (see `automaton::adapter::process_batch`); we shortcut that
 /// behaviour to drive the runtime fallback path directly.
 struct CheckpointErrorBatchNode;
 
-impl RuntimeActor for CheckpointErrorBatchNode {
+impl RuntimeModule for CheckpointErrorBatchNode {
     type Config = ();
 
     async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
@@ -488,7 +488,7 @@ async fn process_batch_with_dlq_fallback_propagates_checkpoint_errors(
         payload: serde_json::json!({"ok": true}),
         ts_orig: Some(Timestamp::now()),
         host: HostName::from_static("runtime-test-host"),
-        source_run_id: None,
+        module_run_id: None,
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: Id::<SourceMaterial>::from_uuid(Uuid::now_v7()),
@@ -503,7 +503,7 @@ async fn process_batch_with_dlq_fallback_propagates_checkpoint_errors(
         scope_key: None,
         equivalence_key: None,
         created_by_operation_id: None,
-        node_model: None,
+        automaton_model: None,
         ts_quality: None,
         anchor_payload_hash: None,
     };
@@ -547,7 +547,7 @@ async fn process_batch_with_dlq_fallback_fails_when_dlq_route_fails(
         payload: serde_json::json!({"ok": true}),
         ts_orig: Some(Timestamp::now()),
         host: HostName::from_static("runtime-test-host"),
-        source_run_id: None,
+        module_run_id: None,
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: Id::<SourceMaterial>::from_uuid(Uuid::now_v7()),
@@ -562,7 +562,7 @@ async fn process_batch_with_dlq_fallback_fails_when_dlq_route_fails(
         scope_key: None,
         equivalence_key: None,
         created_by_operation_id: None,
-        node_model: None,
+        automaton_model: None,
         ts_quality: None,
         anchor_payload_hash: None,
     };

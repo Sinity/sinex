@@ -178,7 +178,7 @@ pub mod env_vars {
     pub const NATS_STREAMS_MANAGED_EXTERNALLY: &str = "SINEX_NATS_STREAMS_MANAGED_EXTERNALLY";
 
     /// CLI/gateway RPC endpoint URL.
-    pub const RPC_URL: &str = "SINEX_RPC_URL";
+    pub const RPC_URL: &str = "SINEX_API_URL";
 
     /// Explicit privacy config TOML path.
     pub const PRIVACY_CONFIG: &str = "SINEX_PRIVACY_CONFIG";

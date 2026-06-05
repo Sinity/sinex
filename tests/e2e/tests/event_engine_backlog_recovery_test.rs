@@ -93,7 +93,7 @@ async fn event_engine_processes_backlog_after_downtime(ctx: TestContext) -> Test
             payload: json!({"seq": idx}),
             ts_orig: Some(sinex_primitives::Timestamp::now()),
             host: HostName::new("test-host")?,
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: material_id,
@@ -108,7 +108,7 @@ async fn event_engine_processes_backlog_after_downtime(ctx: TestContext) -> Test
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             ts_quality: None,
             anchor_payload_hash: None,
         };

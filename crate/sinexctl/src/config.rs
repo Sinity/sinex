@@ -290,14 +290,14 @@ impl Config {
 
     fn apply_runtime_env_overrides(&mut self) {
         env_override(env_vars::RPC_URL, &mut self.rpc_url);
-        env_option_override("SINEX_RPC_TOKEN", &mut self.token);
-        env_option_override("SINEX_RPC_TOKEN_FILE", &mut self.token_file);
-        env_option_override("SINEX_RPC_CA_CERT", &mut self.ca_cert);
-        env_option_override("SINEX_RPC_CLIENT_CERT", &mut self.client_cert);
-        env_option_override("SINEX_RPC_CLIENT_KEY", &mut self.client_key);
-        self.insecure = shared_env::bool_or("SINEX_RPC_INSECURE", self.insecure, "sinexctl config");
+        env_option_override("SINEX_API_TOKEN", &mut self.token);
+        env_option_override("SINEX_API_TOKEN_FILE", &mut self.token_file);
+        env_option_override("SINEX_API_CA_CERT", &mut self.ca_cert);
+        env_option_override("SINEX_API_CLIENT_CERT", &mut self.client_cert);
+        env_option_override("SINEX_API_CLIENT_KEY", &mut self.client_key);
+        self.insecure = shared_env::bool_or("SINEX_API_INSECURE", self.insecure, "sinexctl config");
         self.timeout =
-            shared_env::parse_or("SINEX_RPC_TIMEOUT_SECS", self.timeout, "sinexctl config");
+            shared_env::parse_or("SINEX_API_TIMEOUT_SECS", self.timeout, "sinexctl config");
         self.timeout = shared_env::parse_or("SINEX_TIMEOUT", self.timeout, "sinexctl config");
     }
 

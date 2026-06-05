@@ -123,7 +123,7 @@ fn intents_to_events(
                 payload: intent.payload.clone(),
                 ts_orig: Some(intent.ts_orig),
                 host: HostName::from_static("test-host"),
-                source_run_id: None,
+                module_run_id: None,
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,
@@ -138,7 +138,7 @@ fn intents_to_events(
                 scope_key: None,
                 equivalence_key: None,
                 created_by_operation_id: None,
-                node_model: None,
+                automaton_model: None,
                 ts_quality: None,
                 anchor_payload_hash: None,
             }

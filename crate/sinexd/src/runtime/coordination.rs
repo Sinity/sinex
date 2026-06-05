@@ -238,7 +238,7 @@ mod tests {
     ) -> TestResult<()> {
         let harness = build_runtime_with_identity(
             &ctx,
-            "sinex-source@terminal.atuin-history",
+            "source-driver-terminal.atuin-history",
             "terminal-watcher",
             Some("terminal.atuin-history"),
             Some("terminal"),

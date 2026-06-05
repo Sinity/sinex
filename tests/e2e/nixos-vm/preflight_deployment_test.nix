@@ -29,11 +29,6 @@ pkgs.testers.nixosTest {
       diskSize = 16384;
     };
 
-    # common/test-base relaxes filesystem readiness for broad VM tests. This
-    # scenario is specifically about deployed preflight contracts, so restore
-    # the managed notify/watchdog unit shape before preflight inspects systemd.
-    systemd.services.sinex-filesystem-1.serviceConfig.Type = lib.mkOverride 40 "notify";
-
     services.sinex = {
       # Exercise preflight-enabled wiring but keep other features minimal.
       lifecycle.preflight.enable = lib.mkOverride 60 true;

@@ -67,7 +67,7 @@ No automated enforcement. Correctness depends on developer discipline.
 | Payload-to-material correspondence | Event can claim any anchor_byte — no cross-check with blob content |
 | Privacy invocation in source parsers | Parsers can omit `privacy::engine()` calls; no compile-time or lint check that a `SourceContract` with `privacy_tier != Public` actually invokes the engine. **Top Wave-B regression risk.** |
 | Health check truthfulness | Defaults to `true` — no verification of actual health |
-| `source_run_id` tracking | Field exists in the `Event` struct and builder, but is `None` at every construction site in the codebase (always unset) |
+| `module_run_id` tracking | Field exists in the `Event` struct and builder, but is `None` at every construction site in the codebase (always unset) |
 
 ### Decision: Which Level to Target
 

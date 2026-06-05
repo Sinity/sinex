@@ -117,7 +117,7 @@ pub struct ScanArgs {
     /// and automatic admission-side suppression is tracked separately.
     pub skip_duplicates: bool,
 
-    /// RuntimeActor-specific configuration
+    /// RuntimeModule-specific configuration
     pub config: HashMap<String, serde_json::Value>,
 
     /// Replay context when this scan was triggered by a material replay operation.
@@ -162,7 +162,7 @@ impl ContinuousStart {
     }
 }
 
-// ── RuntimeActor-Dispatch Replay Wire Types ──────────────────────────────────────────
+// ── RuntimeModule-Dispatch Replay Wire Types ──────────────────────────────────────────
 //
 // These types implement the node-dispatch replay protocol. Instead of the
 // gateway republishing stored event rows to NATS (reinjection), it dispatches
@@ -193,7 +193,7 @@ pub struct SourceScanCommand {
 pub struct SourceScanAck {
     /// Correlates with the `SourceScanCommand.operation_id`.
     pub operation_id: Uuid,
-    /// RuntimeActor that received the command.
+    /// RuntimeModule that received the command.
     pub module_name: String,
     /// Whether the command was accepted.
     pub accepted: bool,
@@ -207,7 +207,7 @@ pub struct SourceScanAck {
 pub struct SourceScanProgress {
     /// Correlates with the `SourceScanCommand.operation_id`.
     pub operation_id: Uuid,
-    /// RuntimeActor executing the scan.
+    /// RuntimeModule executing the scan.
     pub module_name: String,
     /// Events processed so far.
     pub events_processed: u64,
@@ -237,7 +237,7 @@ pub struct ScanReport {
         sinex_primitives::temporal::Timestamp,
     )>,
 
-    /// RuntimeActor-specific statistics
+    /// RuntimeModule-specific statistics
     pub runtime_stats: HashMap<String, u64>,
 
     /// Targets that were successfully processed
@@ -255,7 +255,7 @@ pub struct ScanReport {
 /// silently during RPC round-trips — see issue #746 (A5).
 pub use sinex_primitives::domain::ModuleKind;
 
-/// RuntimeActor capabilities
+/// RuntimeModule capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeCapabilities {
     /// Supports continuous scanning (sensor mode)
@@ -276,10 +276,10 @@ pub struct RuntimeCapabilities {
     /// Supports concurrent processing
     pub supports_concurrent: bool,
 
-    /// RuntimeActor manages its own continuous loop (runner skips `JetStream` bridge)
+    /// RuntimeModule manages its own continuous loop (runner skips `JetStream` bridge)
     pub manages_own_continuous_loop: bool,
 
-    /// RuntimeActor persists its own event-processing checkpoint/state.
+    /// RuntimeModule persists its own event-processing checkpoint/state.
     ///
     /// When true, the generic automaton bridge must not create or advance a
     /// second checkpoint entry for the same runtime, because that would race

@@ -1048,7 +1048,7 @@ impl ReplayStateMachine {
         tx.commit().await?;
 
         info!(
-            "RuntimeActor {} executing replay operation {}",
+            "RuntimeModule {} executing replay operation {}",
             executor_node, operation_id
         );
         Ok(())

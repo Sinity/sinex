@@ -218,7 +218,7 @@ fn batch_depends_only_on_source_material_fk(batch: &[&PreparedEvent]) -> bool {
     batch.iter().all(|prepared| {
         matches!(prepared.event.provenance, Provenance::Material { .. })
             && prepared.event.payload_schema_id.is_none()
-            && prepared.event.source_run_id.is_none()
+            && prepared.event.module_run_id.is_none()
     })
 }
 
@@ -775,7 +775,7 @@ impl JetStreamConsumer {
                 SinexError::network("Failed to create processing-failures stream").with_source(e)
             })?;
 
-        // Derived invalidation stream — scope invalidation signals for derived nodes.
+        // Derived invalidation stream — scope invalidation signals for automatons.
         // Short retention since invalidations are only relevant for running automata.
         self.js
             .create_or_update_stream(jetstream::stream::Config {

@@ -35,7 +35,7 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
             "SINEX_API_TLS_KEY",
             key_file.path().to_string_lossy().to_string(),
         );
-        std::env::set_var("SINEX_RPC_TOKEN", "test-token");
+        std::env::set_var("SINEX_API_TOKEN", "test-token");
         // Ensure host environment CA settings don't bleed into the test
         std::env::remove_var("SINEX_API_TLS_CLIENT_CA");
 

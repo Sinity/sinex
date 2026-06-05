@@ -169,7 +169,7 @@ async fn wait_for_material_staged_floor(ctx: &TestContext, material_id: Uuid) ->
     Ok(())
 }
 
-/// RuntimeActor crashes immediately after registering a material (begin published, no slices/end).
+/// RuntimeModule crashes immediately after registering a material (begin published, no slices/end).
 #[sinex_test]
 async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Result<()> {
     let EventEngineSetup {
@@ -207,7 +207,7 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
     Ok(())
 }
 
-/// RuntimeActor crashes mid-acquisition after several slices (no end).
+/// RuntimeModule crashes mid-acquisition after several slices (no end).
 #[sinex_test]
 async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<()> {
     let EventEngineSetup {

@@ -24,17 +24,17 @@ async fn insert_material_event(
 async fn insert_metric_gauge(
     ctx: &TestContext,
     module_name: &str,
-    source_run_id: sinex_primitives::Uuid,
+    module_run_id: sinex_primitives::Uuid,
     name: &str,
     value: f64,
     labels: serde_json::Value,
 ) -> TestResult<()> {
     let mut labels = labels.as_object().cloned().unwrap_or_default();
     labels.insert("node".to_string(), json!(module_name));
-    labels.insert("node_model".to_string(), json!("transducer"));
+    labels.insert("automaton_model".to_string(), json!("transducer"));
     labels.insert(
-        "source_run_id".to_string(),
-        json!(source_run_id.to_string()),
+        "module_run_id".to_string(),
+        json!(module_run_id.to_string()),
     );
 
     insert_material_event(
@@ -123,7 +123,7 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
         insert_material_event(&ctx, "test.input", "test.input", json!({ "command": "ls" })).await?;
     let parent_id = parent.id.expect("inserted parent must have id");
     let output = DynamicPayload::new("test.output", "test.output", json!({ "canonical": "ls" }))
-        .source_run_id(run.id.to_uuid())
+        .module_run_id(run.id.to_uuid())
         .from_parents(vec![parent_id])?
         .build()?;
     pool.events().insert(output).await?;
@@ -143,7 +143,7 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
     assert_eq!(status.module_name, ModuleName::new("canonicalizer-test"));
     assert_eq!(status.version, "1.0.0-test");
     assert!(status.live);
-    assert_eq!(status.source_run_id, Some(run.id.to_uuid()));
+    assert_eq!(status.module_run_id, Some(run.id.to_uuid()));
     assert_eq!(status.events_processed_current_run, Some(42));
     assert_eq!(status.pending_invalidation_count, Some(3));
     assert_eq!(status.checkpoint_kind.as_deref(), Some("internal"));
@@ -197,7 +197,7 @@ async fn automata_status_handles_live_run_without_metric_events(
 
     assert_eq!(status.module_name, ModuleName::new("session-detector-test"));
     assert!(status.live);
-    assert_eq!(status.source_run_id, Some(run.id.to_uuid()));
+    assert_eq!(status.module_run_id, Some(run.id.to_uuid()));
     assert!(status.events_processed_current_run.is_none());
     assert!(status.pending_invalidation_count.is_none());
     assert!(status.checkpoint_kind.is_none());

@@ -125,7 +125,7 @@ pub struct ServiceInfo {
     dry_run: bool,
     instance_id: String,
     version: String,
-    source_run_id: Option<Uuid>,
+    module_run_id: Option<Uuid>,
 }
 
 impl ServiceInfo {
@@ -138,7 +138,7 @@ impl ServiceInfo {
         dry_run: bool,
         instance_id: String,
         version: String,
-        source_run_id: Option<Uuid>,
+        module_run_id: Option<Uuid>,
     ) -> Self {
         Self {
             service_name: service_name.into(),
@@ -150,7 +150,7 @@ impl ServiceInfo {
             dry_run,
             instance_id,
             version,
-            source_run_id,
+            module_run_id,
         }
     }
 
@@ -166,7 +166,7 @@ impl ServiceInfo {
         dry_run: bool,
         instance_id: String,
         version: String,
-        source_run_id: Option<Uuid>,
+        module_run_id: Option<Uuid>,
     ) -> Self {
         Self {
             service_name: service_name.into(),
@@ -178,7 +178,7 @@ impl ServiceInfo {
             dry_run,
             instance_id,
             version,
-            source_run_id,
+            module_run_id,
         }
     }
 
@@ -242,8 +242,8 @@ impl ServiceInfo {
     }
 
     #[must_use]
-    pub fn source_run_id(&self) -> Option<Uuid> {
-        self.source_run_id
+    pub fn module_run_id(&self) -> Option<Uuid> {
+        self.module_run_id
     }
 }
 
@@ -252,7 +252,7 @@ impl ServiceInfo {
 pub struct EventEmitter {
     sender: Arc<EventSender>,
     dry_run: bool,
-    default_source_run_id: Option<Uuid>,
+    default_module_run_id: Option<Uuid>,
     default_created_by_operation_id: Option<Uuid>,
     #[cfg(feature = "messaging")]
     validator: Option<Arc<crate::runtime::schema_validator::NodeSchemaValidator>>,
@@ -270,7 +270,7 @@ impl EventEmitter {
         Self {
             sender: Arc::new(sender),
             dry_run,
-            default_source_run_id: None,
+            default_module_run_id: None,
             default_created_by_operation_id: None,
             #[cfg(feature = "messaging")]
             validator: None,
@@ -289,7 +289,7 @@ impl EventEmitter {
         Self {
             sender: Arc::new(sender),
             dry_run,
-            default_source_run_id: None,
+            default_module_run_id: None,
             default_created_by_operation_id: None,
             validator: Some(validator),
             emit_tracker: Arc::new(parking_lot::RwLock::new(None)),
@@ -320,8 +320,8 @@ impl EventEmitter {
     }
 
     #[must_use]
-    pub fn with_default_source_run_id(mut self, source_run_id: Uuid) -> Self {
-        self.default_source_run_id = Some(source_run_id);
+    pub fn with_default_module_run_id(mut self, module_run_id: Uuid) -> Self {
+        self.default_module_run_id = Some(module_run_id);
         self
     }
 
@@ -337,7 +337,7 @@ impl EventEmitter {
         Self {
             sender: Arc::new(sender),
             dry_run: self.dry_run,
-            default_source_run_id: self.default_source_run_id,
+            default_module_run_id: self.default_module_run_id,
             default_created_by_operation_id: self.default_created_by_operation_id,
             #[cfg(feature = "messaging")]
             validator: self.validator.clone(),
@@ -350,8 +350,8 @@ impl EventEmitter {
             event.id = Some(Id::new());
         }
 
-        if event.source_run_id.is_none() {
-            event.source_run_id = self.default_source_run_id;
+        if event.module_run_id.is_none() {
+            event.module_run_id = self.default_module_run_id;
         }
 
         if event.created_by_operation_id.is_none() {
@@ -434,7 +434,7 @@ mod tests {
             payload: serde_json::json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("runtime-test-host"),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: Id::from_uuid(Uuid::now_v7()),
@@ -449,7 +449,7 @@ mod tests {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             ts_quality: None,
             anchor_payload_hash: None,
         };
@@ -493,7 +493,7 @@ mod tests {
             payload: serde_json::json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("runtime-test-host"),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: Some(explicit_schema_id),
             provenance: Provenance::Material {
                 id: Id::from_uuid(Uuid::now_v7()),
@@ -508,7 +508,7 @@ mod tests {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             ts_quality: None,
             anchor_payload_hash: None,
         };
@@ -534,7 +534,7 @@ mod tests {
             payload: serde_json::json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("runtime-test-host"),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: Id::from_uuid(Uuid::now_v7()),
@@ -549,7 +549,7 @@ mod tests {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             ts_quality: None,
             anchor_payload_hash: None,
         };
@@ -577,7 +577,7 @@ mod tests {
             payload: serde_json::json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("runtime-test-host"),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: Id::from_uuid(Uuid::now_v7()),
@@ -592,7 +592,7 @@ mod tests {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             ts_quality: None,
             anchor_payload_hash: None,
         };

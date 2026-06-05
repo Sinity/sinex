@@ -1,4 +1,4 @@
-//! RuntimeActor version information and utilities
+//! RuntimeModule version information and utilities
 //!
 //! This module provides access to compile-time version information generated
 //! by shadow-rs, including semantic versioning, git metadata, and

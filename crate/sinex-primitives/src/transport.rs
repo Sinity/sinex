@@ -51,7 +51,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 ///
 /// ### [`Class::Derived`] — automaton derived outputs
 ///
-/// Derived events produced by derived nodes. Same subject plane as critical
+/// Derived events produced by automatons. Same subject plane as critical
 /// but semantically distinct: a derived event can be replayed from its parents
 /// if lost; a critical event cannot be replayed without its source material.
 ///
@@ -95,7 +95,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 ///
 /// ### [`Class::Invalidation`] — scope invalidation signals
 ///
-/// Fan-out signals to derived nodes when persisted facts change (replay,
+/// Fan-out signals to automatons when persisted facts change (replay,
 /// archival). JetStream-backed; consumers have durable subscriptions.
 ///
 /// - **Subject pattern**: `{env}.sinex.derived.invalidation`
@@ -151,11 +151,11 @@ pub enum Class {
     /// Loss breaks material provenance and must fail the acquisition operation.
     SourceMaterial,
 
-    /// Persistence acknowledgement signals from event_engine to derived nodes.
+    /// Persistence acknowledgement signals from event_engine to automatons.
     /// Loss causes duplicate processing; best-effort with retry queue.
     Confirmation,
 
-    /// Scope invalidation fan-out to derived nodes.
+    /// Scope invalidation fan-out to automatons.
     /// JetStream-backed; delivery guaranteed to active consumers.
     Invalidation,
 

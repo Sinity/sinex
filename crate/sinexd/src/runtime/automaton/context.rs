@@ -1,4 +1,4 @@
-//! Trigger context for derived nodes.
+//! Trigger context for automatons.
 
 use sinex_primitives::domain::{EventSource, EventType, ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;

@@ -519,7 +519,7 @@ impl HealthAggregator {
     }
 }
 
-/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type HealthAggregatorNode = ScopeReconcilerAdapter<HealthAggregator>;
 
 fn parse_component_name(input: &JsonValue) -> Result<&str, AutomatonLogicError> {

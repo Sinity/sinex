@@ -12,7 +12,7 @@ let
     class TestHelpers:
         def __init__(self, machine):
             self.machine = machine
-            self._last_node_units: List[str] = []
+            self._last_runtime_support_units: List[str] = []
             self._last_sinex_units: List[str] = []
 
         def _list_units(self, pattern: str) -> List[str]:
@@ -37,26 +37,26 @@ let
             self._last_sinex_units = units
             return units
 
-        def list_active_nodes(self) -> List[str]:
-            """Return active node units (sinex-* excluding core services)."""
+        def list_active_runtime_support_units(self) -> List[str]:
+            """Return active Sinex support units excluding the unified daemon."""
             units = [
                 unit for unit in self.list_active_sinex_units()
                 if unit not in {
                     "sinexd.service",
                 }
             ]
-            self._last_node_units = units
+            self._last_runtime_support_units = units
             return units
 
-        def wait_for_nodes(self, timeout: int = 60) -> List[str]:
-            """Wait for at least one node unit to become active."""
+        def wait_for_runtime_support(self, timeout: int = 60) -> List[str]:
+            """Wait for at least one Sinex support unit to become active."""
             deadline = time.time() + timeout
             while time.time() < deadline:
-                nodes = self.list_active_nodes()
-                if nodes:
-                    return nodes
+                units = self.list_active_runtime_support_units()
+                if units:
+                    return units
                 time.sleep(1)
-            raise RuntimeError("Timed out waiting for Sinex node services to start")
+            raise RuntimeError("Timed out waiting for Sinex support units to start")
             
         def wait_for_sinex_ready(self, timeout: int = 60) -> None:
             """Wait for Sinex services to be fully ready."""
@@ -69,11 +69,11 @@ let
                 timeout=30
             )
 
-            # Wait for node services when they are enabled
+            # Wait for support units when they are enabled.
             try:
-                self.wait_for_nodes(timeout=timeout)
+                self.wait_for_runtime_support(timeout=timeout)
             except RuntimeError:
-                # RuntimeActor services might be disabled for some test profiles; continue anyway
+                # RuntimeModule services might be disabled for some test profiles; continue anyway
                 pass
             
         def get_event_count(self) -> int:

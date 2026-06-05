@@ -37,7 +37,7 @@ This is the complete path of an event through the system. Each step is a decisio
 | 12 | JSON parse failure | Immediate in `prepare_event()` | Route to DLQ |
 | 14 | Material FK not ready | MaterialReadySet pre-check | NAK + retry after delay (safe) |
 | 18 | NATS confirmation publish failure | Per-event result check | Warn log only — event persisted but node doesn't know |
-| 20 | Checkpoint save failure (NATS KV slow) | Warn log only | RuntimeActor continues with stale checkpoint; crash -> duplicates |
+| 20 | Checkpoint save failure (NATS KV slow) | Warn log only | RuntimeModule continues with stale checkpoint; crash -> duplicates |
 
 ### Batch Insert Routing Decision
 

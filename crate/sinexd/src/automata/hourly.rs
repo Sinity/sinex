@@ -258,7 +258,7 @@ impl Windowed for HourlySummarizer {
     }
 }
 
-/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type HourlySummarizerNode = WindowedAdapter<HourlySummarizer>;
 
 // --- Source descriptor (issue #690 / #734) ---

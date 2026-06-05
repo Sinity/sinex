@@ -41,13 +41,8 @@ fn sample_nixos_descriptor() -> DeploymentReadinessDescriptor {
         source: Some("nixos".to_string()),
         managed_units: vec![
             "sinexd.service".to_string(),
-            "sinex-filesystem-1.service".to_string(),
-            "sinex-source@terminal.atuin-history.service".to_string(),
-            "sinex-source@terminal.bash-history.service".to_string(),
-            "sinex-source@terminal.fish-history.service".to_string(),
-            "sinex-source@terminal.zsh-history.service".to_string(),
-            "sinex-system-1.service".to_string(),
-            "sinex-health-automaton.service".to_string(),
+            "sinex-blob-init.service".to_string(),
+            "sinex-terminal-target-access.service".to_string(),
         ],
         ..Default::default()
     }
@@ -1378,9 +1373,9 @@ async fn test_check_hyprland_socket_ignores_ambient_env_when_descriptor_present(
 async fn test_build_gateway_probe_client_allows_http_without_ca() -> ::xtask::sandbox::TestResult<()>
 {
     let mut env = EnvGuard::new();
-    env.clear("SINEX_RPC_CA_CERT");
-    env.clear("SINEX_RPC_CLIENT_CERT");
-    env.clear("SINEX_RPC_CLIENT_KEY");
+    env.clear("SINEX_API_CA_CERT");
+    env.clear("SINEX_API_CLIENT_CERT");
+    env.clear("SINEX_API_CLIENT_KEY");
 
     let _client = build_gateway_probe_client("http://127.0.0.1:9999", None).await?;
     Ok(())
@@ -1393,9 +1388,9 @@ async fn test_build_gateway_probe_client_requires_readable_ca_for_https()
     let missing_ca = temp.path().join("missing-ca.pem");
 
     let mut env = EnvGuard::new();
-    env.set("SINEX_RPC_CA_CERT", missing_ca.display().to_string());
-    env.clear("SINEX_RPC_CLIENT_CERT");
-    env.clear("SINEX_RPC_CLIENT_KEY");
+    env.set("SINEX_API_CA_CERT", missing_ca.display().to_string());
+    env.clear("SINEX_API_CLIENT_CERT");
+    env.clear("SINEX_API_CLIENT_KEY");
 
     let error = build_gateway_probe_client("https://127.0.0.1:9999", None)
         .await
@@ -1421,9 +1416,9 @@ async fn test_build_gateway_probe_client_uses_descriptor_trust_anchor()
     })?;
 
     let mut env = EnvGuard::new();
-    env.clear("SINEX_RPC_CA_CERT");
-    env.clear("SINEX_RPC_CLIENT_CERT");
-    env.clear("SINEX_RPC_CLIENT_KEY");
+    env.clear("SINEX_API_CA_CERT");
+    env.clear("SINEX_API_CLIENT_CERT");
+    env.clear("SINEX_API_CLIENT_KEY");
 
     let descriptor = DeploymentReadinessDescriptor {
         secrets: sinex_primitives::DeploymentSecrets {
@@ -1447,7 +1442,7 @@ async fn test_resolve_gateway_probe_tls_paths_prefers_descriptor_trust_anchor()
     std::fs::write(&env_ca, "env")?;
 
     let mut env = EnvGuard::new();
-    env.set("SINEX_RPC_CA_CERT", env_ca.display().to_string());
+    env.set("SINEX_API_CA_CERT", env_ca.display().to_string());
 
     let descriptor = DeploymentReadinessDescriptor {
         secrets: sinex_primitives::DeploymentSecrets {
@@ -1470,7 +1465,7 @@ async fn test_resolve_gateway_probe_tls_paths_falls_back_when_descriptor_omits_t
     std::fs::write(&env_ca, "env")?;
 
     let mut env = EnvGuard::new();
-    env.set("SINEX_RPC_CA_CERT", env_ca.display().to_string());
+    env.set("SINEX_API_CA_CERT", env_ca.display().to_string());
 
     let descriptor = DeploymentReadinessDescriptor::default();
 
@@ -1893,13 +1888,9 @@ async fn test_nixos_descriptor_managed_units_are_consumed_directly()
 -> ::xtask::sandbox::TestResult<()> {
     let units = sample_nixos_descriptor().managed_units;
     assert!(units.contains(&"sinexd.service".to_string()));
-    assert!(units.contains(&"sinex-filesystem-1.service".to_string()));
-    assert!(units.contains(&"sinex-source@terminal.atuin-history.service".to_string()));
-    assert!(units.contains(&"sinex-source@terminal.bash-history.service".to_string()));
-    assert!(units.contains(&"sinex-source@terminal.fish-history.service".to_string()));
-    assert!(units.contains(&"sinex-source@terminal.zsh-history.service".to_string()));
-    assert!(units.contains(&"sinex-system-1.service".to_string()));
-    assert!(units.contains(&"sinex-health-automaton.service".to_string()));
+    assert!(units.contains(&"sinex-blob-init.service".to_string()));
+    assert!(units.contains(&"sinex-terminal-target-access.service".to_string()));
+    assert!(!units.iter().any(|unit| unit.starts_with("sinex-source@")));
     assert!(!units.iter().any(|unit| unit == "sinex-desktop-1.service"));
     Ok(())
 }
@@ -1937,6 +1928,7 @@ async fn test_rust_analyzer_workspace_contract_lists_xtask_dev_deps()
     let dir = tempfile::tempdir()?;
     fs::create_dir_all(dir.path().join("crate/lib/uses-xtask"))?;
     fs::create_dir_all(dir.path().join("crate/lib/no-xtask"))?;
+    fs::create_dir_all(dir.path().join(".claude/worktrees/stale/crate/core/old-runtime"))?;
     fs::create_dir_all(dir.path().join("target/ignored"))?;
     fs::write(
         dir.path().join("crate/lib/uses-xtask/Cargo.toml"),
@@ -1958,6 +1950,18 @@ version = "0.1.0"
 
 [dev-dependencies]
 serde = "1"
+"#,
+    )?;
+    fs::write(
+        dir.path()
+            .join(".claude/worktrees/stale/crate/core/old-runtime/Cargo.toml"),
+        r#"
+[package]
+name = "ignored-stale-worktree"
+version = "0.1.0"
+
+[dev-dependencies]
+xtask = { path = "../../../../../xtask" }
 "#,
     )?;
     fs::write(

@@ -1,13 +1,13 @@
-//! Example implementation of RuntimeActor for filesystem monitoring
+//! Example implementation of RuntimeModule for filesystem monitoring
 //!
 //! This example demonstrates how to refactor an existing `EventSource` to use
-//! the new unified RuntimeActor interface from Part 16.
+//! the new unified RuntimeModule interface from Part 16.
 
 use crate::runtime::{
     RuntimeResult, SinexError,
     acquisition_manager::{AcquisitionManager, RotationPolicy, SourceMaterialHandle},
     stream::{
-        Checkpoint, RuntimeActor, RuntimeCapabilities, RuntimeInitContext, RuntimeContext, ModuleKind, ScanArgs,
+        Checkpoint, RuntimeModule, RuntimeCapabilities, RuntimeInitContext, RuntimeContext, ModuleKind, ScanArgs,
         ScanEstimate, ScanReport, TimeHorizon,
     },
 };
@@ -269,7 +269,7 @@ impl FilesystemSource {
     }
 }
 
-impl RuntimeActor for FilesystemSource {
+impl RuntimeModule for FilesystemSource {
     type Config = FilesystemSourceConfig;
 
     async fn initialize(&mut self, init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {

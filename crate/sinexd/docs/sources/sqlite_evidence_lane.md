@@ -234,7 +234,7 @@ The important invariant is direction:
 - `row_stream_material --backed_by--> sqlite_snapshot_material`
 
 The SDK API makes the relationship automatic for SQLite source contracts that enable
-snapshots and provide a `SqliteSnapshotLinker`. RuntimeActor code supplies only the
+snapshots and provide a `SqliteSnapshotLinker`. RuntimeModule code supplies only the
 runtime DB pool; it does not manually insert material links.
 
 ## Non-Goals

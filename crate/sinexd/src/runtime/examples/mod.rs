@@ -1,6 +1,6 @@
 //! Example implementations of the unified runtime actor architecture
 //!
-//! This module contains example implementations of the current RuntimeActor trait APIs.
+//! This module contains example implementations of the current RuntimeModule trait APIs.
 
 pub mod filesystem_source;
 

@@ -87,7 +87,7 @@ impl Config {
             nats_url: env::var("SINEX_NATS_URL").ok(),
             gateway_url: env::var("SINEX_API_URL")
                 .ok()
-                .or_else(|| env::var("SINEX_RPC_URL").ok())
+                .or_else(|| env::var("SINEX_API_URL").ok())
                 .or_else(|| {
                     env::var("SINEX_API_TCP_LISTEN")
                         .ok()

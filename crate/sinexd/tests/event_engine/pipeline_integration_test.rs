@@ -192,7 +192,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
             "ts_orig should be populated"
         );
         assert!(
-            stored_event.source_run_id.is_none(),
+            stored_event.module_run_id.is_none(),
             "external pipeline events should not claim a managed node run"
         );
 

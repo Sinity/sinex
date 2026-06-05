@@ -7,11 +7,11 @@
 
 use super::{
     CheckpointManager, DbPoolExt, Deserialize, Event, EventId, EventSource, EventType, HostName,
-    Id, JsonValue, RuntimeActor, RuntimeResult, RuntimeRunner, NonEmptyVec, OffsetKind, PgPool, Provenance,
+    Id, JsonValue, RuntimeModule, RuntimeResult, RuntimeRunner, NonEmptyVec, OffsetKind, PgPool, Provenance,
     ProvisionalEvent, ResolvedBatch, SinexError, SourceMaterial, Uuid,
 };
 
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     #[cfg(feature = "messaging")]
     pub(super) async fn load_bridge_checkpoint_state(
         checkpoint_manager: &CheckpointManager,
@@ -63,7 +63,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             host: String,
             #[serde(rename = "payload")]
             event_payload: JsonValue,
-            source_run_id: Option<String>,
+            module_run_id: Option<String>,
             payload_schema_id: Option<String>,
             associated_blob_ids: Option<Vec<String>>,
             source_material_id: Option<String>,
@@ -136,10 +136,10 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             }
             None => None,
         };
-        let source_run_id = published
-            .source_run_id
+        let module_run_id = published
+            .module_run_id
             .as_deref()
-            .map(|value| Self::parse_uuid(value, "source_run_id"))
+            .map(|value| Self::parse_uuid(value, "module_run_id"))
             .transpose()?;
 
         Ok(Event {
@@ -152,7 +152,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
                 SinexError::processing("Invalid host in provisional event payload")
                     .with_source(error)
             })?,
-            source_run_id,
+            module_run_id,
             payload_schema_id,
             provenance,
             anchor_payload_hash: None,
@@ -162,7 +162,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             ts_quality: None,
         })
     }

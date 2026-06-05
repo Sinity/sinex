@@ -1801,7 +1801,7 @@ impl std::str::FromStr for TemporalClock {
 
 /// How a synthetic event's `ts_orig` was determined.
 ///
-/// Declared per-output by derived nodes. Persisted as `temporal_policy`
+/// Declared per-output by automatons. Persisted as `temporal_policy`
 /// on `core.events` for synthetic rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1841,9 +1841,9 @@ impl std::str::FromStr for SyntheticTemporalPolicy {
     }
 }
 
-/// Classification of a derived node's computation model.
+/// Classification of a automaton's computation model.
 ///
-/// Each derived node must declare which model it uses, which determines
+/// Each automaton must declare which model it uses, which determines
 /// how the SDK prepares inputs and manages scope/window state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1874,7 +1874,7 @@ impl std::str::FromStr for AutomatonModel {
             "transducer" => Ok(Self::Transducer),
             "windowed" => Ok(Self::Windowed),
             "scope_reconciler" => Ok(Self::ScopeReconciler),
-            _ => Err(format!("unknown derived node model: {s}")),
+            _ => Err(format!("unknown automaton model: {s}")),
         }
     }
 }
@@ -1921,7 +1921,7 @@ impl std::str::FromStr for ProcessingMode {
     }
 }
 
-/// What caused a derived node to be triggered.
+/// What caused a automaton to be triggered.
 ///
 /// Provided in the trigger context so nodes can distinguish between
 /// new evidence, late backfill, scope invalidation, etc.
@@ -1965,7 +1965,7 @@ impl std::str::FromStr for TriggerKind {
 
 /// What happened to a persisted fact that triggered scope invalidation.
 ///
-/// Carried by `DerivedScopeInvalidation` so derived nodes know whether
+/// Carried by `DerivedScopeInvalidation` so automatons know whether
 /// to recompute, archive their outputs, or both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -2002,7 +2002,7 @@ impl std::str::FromStr for InvalidationAction {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Coordination and RuntimeActor Types
+// Coordination and RuntimeModule Types
 // ─────────────────────────────────────────────────────────────
 
 define_string_type!(
@@ -2030,17 +2030,17 @@ define_string_type!(
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum ModuleState {
-    /// RuntimeActor is actively processing events
+    /// RuntimeModule is actively processing events
     Running,
-    /// RuntimeActor is gracefully stopping (finishing current work)
+    /// RuntimeModule is gracefully stopping (finishing current work)
     Draining,
-    /// RuntimeActor is paused and not processing
+    /// RuntimeModule is paused and not processing
     Paused,
-    /// RuntimeActor has encountered a fatal error
+    /// RuntimeModule has encountered a fatal error
     Failed,
-    /// RuntimeActor has stopped after completing its run
+    /// RuntimeModule has stopped after completing its run
     Stopped,
-    /// RuntimeActor state is unknown
+    /// RuntimeModule state is unknown
     #[default]
     Unknown,
 }

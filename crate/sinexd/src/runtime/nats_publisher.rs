@@ -115,7 +115,7 @@ struct PublishEvent<'a> {
     ts_orig: Option<String>,
     host: &'a str,
     payload: &'a JsonValue,
-    source_run_id: Option<String>,
+    module_run_id: Option<String>,
     payload_schema_id: Option<String>,
     associated_blob_ids: Option<Vec<String>>,
     source_material_id: Option<String>,
@@ -129,7 +129,7 @@ struct PublishEvent<'a> {
     scope_key: Option<&'a str>,
     equivalence_key: Option<&'a str>,
     created_by_operation_id: Option<String>,
-    node_model: Option<String>,
+    automaton_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ts_quality: Option<String>,
 }
@@ -656,7 +656,7 @@ fn build_publish_payload(
         ts_orig,
         host: event.host.as_str(),
         payload: &event.payload,
-        source_run_id: event.source_run_id.map(|id| id.to_string()),
+        module_run_id: event.module_run_id.map(|id| id.to_string()),
         payload_schema_id,
         associated_blob_ids,
         source_material_id,
@@ -670,7 +670,7 @@ fn build_publish_payload(
         scope_key: event.scope_key.as_deref(),
         equivalence_key: event.equivalence_key.as_deref(),
         created_by_operation_id: event.created_by_operation_id.map(|id| id.to_string()),
-        node_model: event.node_model.map(|model| model.to_string()),
+        automaton_model: event.automaton_model.map(|model| model.to_string()),
         ts_quality: event.ts_quality.map(|quality| quality.to_string()),
     };
 
@@ -766,7 +766,7 @@ mod tests {
         event.scope_key = Some("scope:publisher".to_string());
         event.equivalence_key = Some("publisher-slot".to_string());
         event.created_by_operation_id = Some(operation_id);
-        event.node_model = Some(AutomatonModel::Windowed);
+        event.automaton_model = Some(AutomatonModel::Windowed);
 
         let prov = destructure_provenance(event.provenance());
         let (_, payload) = build_publish_payload(
@@ -788,7 +788,7 @@ mod tests {
         assert_eq!(decoded.scope_key.as_deref(), Some("scope:publisher"));
         assert_eq!(decoded.equivalence_key.as_deref(), Some("publisher-slot"));
         assert_eq!(decoded.created_by_operation_id, Some(operation_id));
-        assert_eq!(decoded.node_model, Some(AutomatonModel::Windowed));
+        assert_eq!(decoded.automaton_model, Some(AutomatonModel::Windowed));
         Ok(())
     }
 

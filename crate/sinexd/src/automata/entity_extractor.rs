@@ -49,7 +49,7 @@ static COMMAND_PATTERN: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(||
 static EMAIL_PATTERN: LazyLock<Result<Regex, regex::Error>> =
     LazyLock::new(|| Regex::new("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"));
 
-// ── RuntimeActor ───────────────────────────────────────────────────────────────
+// ── RuntimeModule ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]
 pub struct EntityExtractor;

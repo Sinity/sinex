@@ -141,9 +141,9 @@ let (rate_limiter, cleanup_task) = match services.nats_client() {
 
 **Environment Variables:**
 
-- `SINEX_RPC_RATE_LIMIT_ENABLED` - Enable/disable rate limiting (default: true)
-- `SINEX_RPC_RATE_LIMIT_PER_MINUTE` - Requests per minute per token (default: 6000)
-- `SINEX_RPC_RATE_LIMIT_WINDOW_SECS` - Window duration in seconds (default: 60)
+- `SINEX_API_RATE_LIMIT_ENABLED` - Enable/disable rate limiting (default: true)
+- `SINEX_API_RATE_LIMIT_PER_MINUTE` - Requests per minute per token (default: 6000)
+- `SINEX_API_RATE_LIMIT_WINDOW_SECS` - Window duration in seconds (default: 60)
 
 ## TCP Listener Binding
 
@@ -322,9 +322,9 @@ Load Balancer
 
 ```bash
 # Rate Limiting
-SINEX_RPC_RATE_LIMIT_ENABLED=true
-SINEX_RPC_RATE_LIMIT_PER_MINUTE=6000
-SINEX_RPC_RATE_LIMIT_WINDOW_SECS=60
+SINEX_API_RATE_LIMIT_ENABLED=true
+SINEX_API_RATE_LIMIT_PER_MINUTE=6000
+SINEX_API_RATE_LIMIT_WINDOW_SECS=60
 
 # TLS Binding
 SINEX_API_TCP_LISTEN=127.0.0.1:9999
@@ -348,4 +348,4 @@ SINEX_NATS_URL=nats://localhost:4222
 - Distributed Rate Limiter: `crate/sinexd/src/api/distributed_rate_limit.rs`
 - Connection Tracking: `crate/sinexd/src/api/rpc_server.rs`
 - Version Comparison: `crate/sinexd/src/runtime/version.rs`
-- RuntimeActor Coordination: `crate/sinexd/src/runtime/coordination.rs`
+- RuntimeModule Coordination: `crate/sinexd/src/runtime/coordination.rs`

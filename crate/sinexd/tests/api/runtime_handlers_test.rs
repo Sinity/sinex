@@ -143,7 +143,7 @@ async fn runtime_list_surfaces_invalid_state_json(ctx: TestContext) -> TestResul
     let error = handle_runtime_list(&harness.client, &harness.env, RuntimeListRequest {})
         .await
         .expect_err("invalid node state should surface");
-    assert!(error.to_string().contains("RuntimeActor state is not valid JSON"));
+    assert!(error.to_string().contains("RuntimeModule state is not valid JSON"));
     assert!(error.to_string().contains("broken-node"));
     Ok(())
 }

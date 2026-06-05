@@ -17,7 +17,7 @@ Global options are layered with runtime env and local preferences:
 
 - CLI flags
 - Runtime target descriptor (`--runtime-target` / `SINEX_RUNTIME_TARGET_CONFIG`)
-- Runtime environment variables (`SINEX_RPC_URL`, `SINEX_RPC_TOKEN`, TLS/token path vars)
+- Runtime environment variables (`SINEX_API_URL`, `SINEX_API_TOKEN`, TLS/token path vars)
 - Local preference file (`~/.config/sinexctl/config.toml`) for format/theme/editor/aliases
 - Built-in defaults
 
@@ -39,7 +39,7 @@ CLI flags still win so one-off overrides remain possible.
 - Auth header: `Authorization: Bearer <token>`
 - Token resolution order:
   1. `--token`
-  2. `SINEX_RPC_TOKEN`
+  2. `SINEX_API_TOKEN`
   3. `--token-file`
   4. `~/.config/sinex/token`
 - TLS options:

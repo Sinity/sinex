@@ -114,7 +114,7 @@ pub enum TelemetryCommands {
         limit: i64,
     },
 
-    /// RuntimeActor hourly operator telemetry
+    /// RuntimeModule hourly operator telemetry
     SourceStats {
         #[arg(long)]
         from: Option<String>,

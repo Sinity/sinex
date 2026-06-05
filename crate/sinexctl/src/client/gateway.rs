@@ -647,7 +647,7 @@ impl GatewayClient {
         self.call_typed(SYSTEM_HEALTH_METHOD, &req).await
     }
 
-    // ==================== RuntimeActor Commands ====================
+    // ==================== RuntimeModule Commands ====================
 
     /// List automata status.
     pub async fn automata_status(

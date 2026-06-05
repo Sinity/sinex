@@ -4,13 +4,13 @@
 //! collating errors from multiple shutdown steps, and building stable
 //! identifiers used during runner setup.
 
-use super::{RuntimeActor, RuntimeRunner};
+use super::{RuntimeModule, RuntimeRunner};
 use crate::runtime::{RuntimeResult, SinexError};
 use sinex_primitives::Uuid;
 use tokio::sync::watch;
 use tracing::{debug, warn};
 
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     pub(super) fn signal_shutdown_channel(
         shutdown_tx: tokio::sync::oneshot::Sender<()>,
         task_name: &str,

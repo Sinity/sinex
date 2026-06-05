@@ -54,7 +54,7 @@ pub async fn handle_runtime_list_active(
                     description: module.description,
                     service_name: module.service_name,
                     instance_id: module.instance_id,
-                    source_run_id: module.source_run_id,
+                    module_run_id: module.module_run_id,
                     host: module.host,
                     status: module.status,
                     last_heartbeat_at: module.last_heartbeat_at,

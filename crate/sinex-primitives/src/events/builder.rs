@@ -23,7 +23,7 @@ pub struct EventBuilder<T, P> {
     pub(crate) timestamp: Option<Timestamp>,
     pub(crate) ts_quality: Option<TemporalSourceType>,
     pub(crate) hostname: Option<crate::domain::HostName>,
-    pub(crate) source_run_id: Option<Uuid>,
+    pub(crate) module_run_id: Option<Uuid>,
     pub(crate) payload_schema_id: Option<Uuid>,
     pub(crate) provenance_data: Option<Provenance>,
     pub(crate) associated_blob_ids: Option<Vec<Uuid>>,
@@ -47,7 +47,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             timestamp: None,
             ts_quality: None,
             hostname: None,
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             provenance_data: None,
             associated_blob_ids: None,
@@ -65,8 +65,8 @@ impl<T> EventBuilder<T, NoProvenance> {
     }
 
     /// Set the node run ID (references `core.runs`)
-    pub fn source_run_id(mut self, run_id: Uuid) -> Self {
-        self.source_run_id = Some(run_id);
+    pub fn module_run_id(mut self, run_id: Uuid) -> Self {
+        self.module_run_id = Some(run_id);
         self
     }
 
@@ -94,7 +94,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             timestamp: self.timestamp,
             ts_quality: self.ts_quality,
             hostname: self.hostname,
-            source_run_id: self.source_run_id,
+            module_run_id: self.module_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance_data: Some(provenance),
             associated_blob_ids: self.associated_blob_ids,
@@ -294,7 +294,7 @@ impl<T> EventBuilder<T, HasProvenance> {
             ts_orig,
             ts_quality: self.ts_quality,
             host: self.hostname.unwrap_or_else(get_hostname),
-            source_run_id: self.source_run_id,
+            module_run_id: self.module_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance,
             anchor_payload_hash,
@@ -304,7 +304,7 @@ impl<T> EventBuilder<T, HasProvenance> {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id,
-            node_model: None,
+            automaton_model: None,
         })
     }
 }

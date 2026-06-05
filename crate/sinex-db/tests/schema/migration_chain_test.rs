@@ -374,7 +374,7 @@ async fn insert_test_event(
 
     sqlx::query(
         r"
-        INSERT INTO core.events (id, source, event_type, payload, ts_orig, host, source_run_id, source_material_id, anchor_byte)
+        INSERT INTO core.events (id, source, event_type, payload, ts_orig, host, module_run_id, source_material_id, anchor_byte)
         VALUES ($1::uuid, $2, $3, $4::jsonb, NOW(), $5, $6, $7::uuid, $8)
         ",
     )

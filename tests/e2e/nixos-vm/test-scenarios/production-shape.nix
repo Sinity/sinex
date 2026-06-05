@@ -1,11 +1,11 @@
 # Production-shape end-to-end proof for Sinex (#1135).
 #
 # Proves the FULL production pipeline in a real NixOS VM:
-#   source-unit host (fs) → NATS JetStream → event_engine → PostgreSQL → gateway RPC
+#   source-driver host (fs) → NATS JetStream → event_engine → PostgreSQL → gateway RPC
 #
 # Design choices:
 #   - Source unit: `fs` (filesystem watcher). Chosen because it is the
-#     simplest real source unit — no external data, no target-user ACL
+#     simplest real source driver — no external data, no target-user ACL
 #     gymnastics, no SQLite side-car. Write a file, expect a persisted event.
 #   - preflight: KEPT ENABLED (unlike the base config's mkDefault false) so
 #     this scenario proves that preflight passes on a production-shaped stack.
@@ -18,7 +18,7 @@
 # Acceptance criteria addressed from #1135:
 #   - "VM smoke/integration can boot a production-shaped Sinex stack with no
 #     failed sinex-* units and with preflight enabled." ✅
-#   - "source binding/source-unit host deployment state appears in readiness/
+#   - "source binding/source-driver host deployment state appears in readiness/
 #     preflight output." ✅ (sinexctl verify --source-evidence check)
 #   - "emit a smoke event through the deployed runtime path; wait for event_engine
 #     persistence; query it back through the production-facing surface." ✅
@@ -90,7 +90,7 @@ pkgs.testers.nixosTest {
         machine.wait_for_unit("postgresql.service", timeout=60)
         # Schema is applied by sinexd before runtime modules start.
         machine.wait_for_unit("sinexd.service", timeout=60)
-        # Source units are hosted in sinexd; there is no per-source-unit unit.
+        # Source units are hosted in sinexd; there is no per-source-driver unit.
         # Gateway health probe — confirms TLS is up.
         machine.wait_until_succeeds(
             f"curl -k -sf {GATEWAY_URL}/health",
@@ -98,10 +98,10 @@ pkgs.testers.nixosTest {
         )
         print("All production-stack units active.")
 
-    # ── Phase 2: Preflight must pass with source-unit host bindings ────────────
+    # ── Phase 2: Preflight must pass with source-driver host bindings ────────────
     with subtest("Preflight passes on production-shaped stack"):
         machine.succeed("systemctl is-active sinex-preflight.service || true")
-        # sinexctl verify surfaces source-unit host deployment state.
+        # sinexctl verify surfaces source-driver host deployment state.
         # Tolerate sinexctl not being in PATH in all build configurations.
         rc, out = machine.execute(
             "sinexctl --insecure verify --source-evidence 2>&1 || true"
@@ -109,7 +109,7 @@ pkgs.testers.nixosTest {
         print(f"verify output (rc={rc}): {out[:500]}")
 
     # ── Phase 3: Write a fixture and wait for ingestion ──────────────────────
-    with subtest("Smoke event emitted through source-unit host → NATS → event_engine"):
+    with subtest("Smoke event emitted through source-driver host → NATS → event_engine"):
         machine.succeed(f"mkdir -p /var/lib/sinex/watched")
         machine.succeed(
             f"echo '{SMOKE_CONTENT}' > {SMOKE_FILE}"
@@ -166,6 +166,6 @@ pkgs.testers.nixosTest {
             f"Expected event_type to start with 'file.', got '{event_type}'. Full event: {ev}"
 
         print(f"Proof: source={source!r}, event_type={event_type!r}")
-        print("Production-shape proof PASSED: source-unit host → event_engine → DB → gateway verified.")
+        print("Production-shape proof PASSED: source-driver host → event_engine → DB → gateway verified.")
   '';
 }

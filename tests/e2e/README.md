@@ -1,7 +1,7 @@
 # Sinex End-to-End Tests
 
 This crate hosts Rust integration coverage that spans the deployed runtime path
-(source units -> event engine -> core storage -> API) as well as the NixOS module
+(source drivers -> event engine -> core storage -> API) as well as the NixOS module
 assertions and VM harness.
 
 ## Prerequisites

@@ -71,7 +71,7 @@ pub struct IngestorStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_run_id: Option<Uuid>,
+    pub module_run_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -268,7 +268,7 @@ mod emit_stall_tests {
             live: true,
             service_name: None,
             instance_id: None,
-            source_run_id: None,
+            module_run_id: None,
             host: None,
             run_status: Some("running".into()),
             started_at: Some(now - Duration::seconds(3600)),

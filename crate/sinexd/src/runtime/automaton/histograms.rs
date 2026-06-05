@@ -1,8 +1,8 @@
-//! Lightweight in-process latency / throughput histograms for derived nodes.
+//! Lightweight in-process latency / throughput histograms for automatons.
 //!
 //! # Why not t-digest / HDR-histogram?
 //!
-//! `sinex` is a single-user system with a small number of derived nodes
+//! `sinex` is a single-user system with a small number of automatons
 //! (currently six). The percentile signal we need is "operator-facing under
 //! prod-equivalent traffic" — we are not building a high-throughput observability
 //! stack, and we are not the storage layer for the percentiles (Prometheus /

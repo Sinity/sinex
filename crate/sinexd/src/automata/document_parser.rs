@@ -54,7 +54,7 @@ pub struct DocumentParserState {
     pub chunk_count: u64,
 }
 
-// ── RuntimeActor ───────────────────────────────────────────────────────────────
+// ── RuntimeModule ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]
 pub struct DocumentParserNode {

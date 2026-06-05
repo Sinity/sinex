@@ -75,7 +75,7 @@ pub struct Event<T = JsonValue> {
     /// UUID of the node run (session) that created this event.
     /// References `core.runs.id`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_run_id: Option<Uuid>,
+    pub module_run_id: Option<Uuid>,
 
     /// Schema ID for payload validation
     pub payload_schema_id: Option<Uuid>,
@@ -114,9 +114,9 @@ pub struct Event<T = JsonValue> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by_operation_id: Option<Uuid>,
 
-    /// Which derived node model produced this event
+    /// Which automaton model produced this event
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub node_model: Option<AutomatonModel>,
+    pub automaton_model: Option<AutomatonModel>,
 }
 
 /// Marker type for source material IDs
@@ -148,8 +148,8 @@ impl<T> Event<T> {
     }
 
     /// Set the node run ID (references `core.runs`)
-    pub fn with_source_run_id(mut self, run_id: Uuid) -> Self {
-        self.source_run_id = Some(run_id);
+    pub fn with_module_run_id(mut self, run_id: Uuid) -> Self {
+        self.module_run_id = Some(run_id);
         self
     }
 
@@ -216,7 +216,7 @@ impl<T: Serialize> Event<T> {
             ts_orig: self.ts_orig,
             ts_quality: self.ts_quality,
             host: self.host,
-            source_run_id: self.source_run_id,
+            module_run_id: self.module_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance: self.provenance,
             anchor_payload_hash: self.anchor_payload_hash.clone(),
@@ -226,7 +226,7 @@ impl<T: Serialize> Event<T> {
             scope_key: self.scope_key,
             equivalence_key: self.equivalence_key,
             created_by_operation_id: self.created_by_operation_id,
-            node_model: self.node_model,
+            automaton_model: self.automaton_model,
         })
     }
 }
@@ -246,7 +246,7 @@ impl Event<JsonValue> {
             ts_orig: self.ts_orig,
             ts_quality: self.ts_quality,
             host: self.host.clone(),
-            source_run_id: self.source_run_id,
+            module_run_id: self.module_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance: self.provenance.clone(),
             anchor_payload_hash: self.anchor_payload_hash.clone(),
@@ -256,7 +256,7 @@ impl Event<JsonValue> {
             scope_key: self.scope_key.clone(),
             equivalence_key: self.equivalence_key.clone(),
             created_by_operation_id: self.created_by_operation_id,
-            node_model: self.node_model,
+            automaton_model: self.automaton_model,
         })
     }
 
@@ -278,7 +278,7 @@ impl Event<JsonValue> {
             ts_orig: Some(Timestamp::now()),
             ts_quality: None,
             host: builder::get_hostname(),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             provenance,
             anchor_payload_hash: None,
@@ -288,7 +288,7 @@ impl Event<JsonValue> {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id,
-            node_model: None,
+            automaton_model: None,
         }
     }
 }

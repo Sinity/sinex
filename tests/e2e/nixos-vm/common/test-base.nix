@@ -78,7 +78,7 @@ in
   environment.etc."sinex/api-admin-token".text = "test-admin-token:admin";
   environment.variables = {
     SINEX_TEST_DB_NAME = databaseName;
-    SINEX_RPC_TOKEN_FILE = "/etc/sinex/api-admin-token";
+    SINEX_API_TOKEN_FILE = "/etc/sinex/api-admin-token";
   };
 
   # sinexd applies schema at startup in the NixOS deployment shape.
@@ -86,9 +86,6 @@ in
   systemd.services.sinexd.requires = [ "sinex-blob-init.service" ];
   systemd.services.sinexd.path = [ pkgs.git pkgs.git-annex ];
   systemd.services.sinex-blob-init.path = [ pkgs.git pkgs.git-annex ];
-  systemd.services.sinex-filesystem-1.serviceConfig.Type = lib.mkForce "simple";
-  systemd.services.sinex-filesystem-1.serviceConfig.TimeoutStartSec = lib.mkForce "infinity";
-
   # Relax Postgres authentication for disposable VM tests.
   services.postgresql.authentication = lib.mkForce ''
 local   all             all                                     trust

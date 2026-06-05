@@ -1,4 +1,4 @@
-//! RuntimeActor operations handlers
+//! RuntimeModule operations handlers
 //!
 //! This module provides RPC endpoints for managing runtime operations:
 //! - List modules and their status
@@ -119,17 +119,17 @@ pub async fn handle_runtime_list(
                     .with_source(e)
             })?
             .ok_or_else(|| {
-                SinexError::not_found("RuntimeActor state disappeared during listing")
+                SinexError::not_found("RuntimeModule state disappeared during listing")
                     .with_context("runtime_state_key", key.clone())
             })?;
 
         let state_json = String::from_utf8(entry.to_vec()).map_err(|error| {
-            SinexError::serialization("RuntimeActor state is not valid UTF-8")
+            SinexError::serialization("RuntimeModule state is not valid UTF-8")
                 .with_context("runtime_state_key", key.clone())
                 .with_std_error(&error)
         })?;
         let state = serde_json::from_str::<RuntimeStatus>(&state_json).map_err(|error| {
-            SinexError::serialization("RuntimeActor state is not valid JSON")
+            SinexError::serialization("RuntimeModule state is not valid JSON")
                 .with_context("runtime_state_key", key.clone())
                 .with_std_error(&error)
         })?;
@@ -143,7 +143,7 @@ pub async fn handle_runtime_list(
 ///
 /// # Authorization
 ///
-/// RuntimeActor drain is a production-impacting operation. The auth context is
+/// RuntimeModule drain is a production-impacting operation. The auth context is
 /// logged for audit purposes.
 pub async fn handle_runtime_drain(
     nats_client: &async_nats::Client,
@@ -157,7 +157,7 @@ pub async fn handle_runtime_drain(
         actor = %auth.actor_id(),
         module_name = %drain_params.module_name,
         reason = ?drain_params.reason,
-        "RuntimeActor drain initiated"
+        "RuntimeModule drain initiated"
     );
 
     // Publish drain command to NATS control subject
@@ -185,7 +185,7 @@ pub async fn handle_runtime_drain(
 ///
 /// # Authorization
 ///
-/// RuntimeActor resume is a production-impacting operation. The auth context is
+/// RuntimeModule resume is a production-impacting operation. The auth context is
 /// logged for audit purposes.
 pub async fn handle_runtime_resume(
     nats_client: &async_nats::Client,
@@ -198,7 +198,7 @@ pub async fn handle_runtime_resume(
     info!(
         actor = %auth.actor_id(),
         module_name = %resume_params.module_name,
-        "RuntimeActor resume initiated"
+        "RuntimeModule resume initiated"
     );
 
     // Publish resume command to NATS control subject
@@ -239,7 +239,7 @@ pub async fn handle_runtime_set_horizon(
         actor = %auth.actor_id(),
         module_name = %horizon_params.module_name,
         horizon = %horizon_params.horizon,
-        "RuntimeActor set-horizon initiated"
+        "RuntimeModule set-horizon initiated"
     );
 
     // Publish set-horizon command to NATS control subject

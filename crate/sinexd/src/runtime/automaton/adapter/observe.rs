@@ -21,14 +21,14 @@ where
     #[cfg(feature = "messaging")]
     pub(super) fn derived_metric_labels(&self) -> HashMap<String, String> {
         let mut labels = HashMap::new();
-        labels.insert("node".to_string(), self.node.name().to_string());
-        labels.insert("node_model".to_string(), self.node.node_model().to_string());
-        if let Some(source_run_id) = self
+        labels.insert("automaton".to_string(), self.automaton.name().to_string());
+        labels.insert("automaton_model".to_string(), self.automaton.automaton_model().to_string());
+        if let Some(module_run_id) = self
             .runtime
             .as_ref()
-            .and_then(RuntimeContext::source_run_id)
+            .and_then(RuntimeContext::module_run_id)
         {
-            labels.insert("source_run_id".to_string(), source_run_id.to_string());
+            labels.insert("module_run_id".to_string(), module_run_id.to_string());
         }
         labels
     }
@@ -82,7 +82,7 @@ where
             )
             .await
         {
-            log_self_observation_failure(self.node.name(), "derived.events_processed.run", &error);
+            log_self_observation_failure(self.automaton.name(), "derived.events_processed.run", &error);
         }
 
         if let Some(reporter) = self.health_reporter.as_ref() {
@@ -91,7 +91,7 @@ where
                 .emit_gauge("derived.error_rate_5m", error_rate, Some(labels))
                 .await
             {
-                log_self_observation_failure(self.node.name(), "derived.error_rate_5m", &error);
+                log_self_observation_failure(self.automaton.name(), "derived.error_rate_5m", &error);
             }
         }
     }
@@ -100,7 +100,7 @@ where
     pub(super) async fn observe_runtime_snapshot(&self) {}
 
     /// Emit a per-event processing-latency snapshot so operators can see how a
-    /// derived node is keeping up with its input stream. Each call records the
+    /// automaton is keeping up with its input stream. Each call records the
     /// latest sample into the in-process reservoirs and publishes a single
     /// `derived.latency_snapshot` event capturing the last sample plus the
     /// current reservoir/window readings.
@@ -137,7 +137,7 @@ where
 
         if let Err(error) = obs
             .emit_automaton_latency_snapshot(
-                self.node.name(),
+                self.automaton.name(),
                 lag_ms.is_finite().then_some(lag_ms),
                 runtime_ms.is_finite().then_some(runtime_ms),
                 self.lag_window.percentile(0.5),
@@ -148,7 +148,7 @@ where
             )
             .await
         {
-            log_self_observation_failure(self.node.name(), "derived.latency_snapshot", &error);
+            log_self_observation_failure(self.automaton.name(), "derived.latency_snapshot", &error);
         }
     }
 
@@ -191,7 +191,7 @@ where
                 .emit_gauge("derived.event_lag_ms", lag_ms, Some(labels.clone()))
                 .await
         {
-            log_self_observation_failure(self.node.name(), "derived.event_lag_ms", &error);
+            log_self_observation_failure(self.automaton.name(), "derived.event_lag_ms", &error);
         }
 
         if batch_runtime_ms.is_finite()
@@ -203,7 +203,7 @@ where
                 )
                 .await
         {
-            log_self_observation_failure(self.node.name(), "derived.batch_runtime_ms", &error);
+            log_self_observation_failure(self.automaton.name(), "derived.batch_runtime_ms", &error);
         }
     }
 
@@ -235,7 +235,7 @@ where
             )
             .await
         {
-            log_self_observation_failure(self.node.name(), "derived.checkpoint.revision", &error);
+            log_self_observation_failure(self.automaton.name(), "derived.checkpoint.revision", &error);
         }
     }
 
@@ -256,7 +256,7 @@ where
             )
             .await
         {
-            log_self_observation_failure(self.node.name(), "derived.invalidations.pending", &error);
+            log_self_observation_failure(self.automaton.name(), "derived.invalidations.pending", &error);
         }
     }
 
@@ -274,7 +274,7 @@ where
         tracing::debug!(
             target: "sinex_metrics",
             metric = "derived.events_filtered",
-            node = %self.node.name(),
+            automaton = %self.automaton.name(),
             filtered_count,
         );
         let Some(obs) = self.self_observer.as_ref() else {
@@ -288,7 +288,7 @@ where
             )
             .await
         {
-            log_self_observation_failure(self.node.name(), "derived.events_filtered_total", &error);
+            log_self_observation_failure(self.automaton.name(), "derived.events_filtered_total", &error);
         }
     }
 

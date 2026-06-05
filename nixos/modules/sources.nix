@@ -581,12 +581,12 @@ let
                 "SINEX_API_POOL_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}"
                 "SINEX_API_POOL_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}"
                 "SINEX_API_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
-                "SINEX_RPC_RATE_LIMIT_ENABLED=${if coreCfg.gateway.limits.rateLimit.enable then "true" else "false"}"
-                "SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC=${toString coreCfg.gateway.limits.rateLimit.requestsPerSec}"
-                "SINEX_RPC_RATE_LIMIT_BURST=${toString coreCfg.gateway.limits.rateLimit.burst}"
-                "SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS=${toString coreCfg.gateway.limits.rateLimit.idleTimeoutSec}"
-                "SINEX_RPC_RATE_LIMIT_PER_MINUTE=${toString coreCfg.gateway.limits.rateLimit.distributedPerMinute}"
-                "SINEX_RPC_RATE_LIMIT_WINDOW_SECS=${toString coreCfg.gateway.limits.rateLimit.distributedWindowSec}"
+                "SINEX_API_RATE_LIMIT_ENABLED=${if coreCfg.gateway.limits.rateLimit.enable then "true" else "false"}"
+                "SINEX_API_RATE_LIMIT_REQUESTS_PER_SEC=${toString coreCfg.gateway.limits.rateLimit.requestsPerSec}"
+                "SINEX_API_RATE_LIMIT_BURST=${toString coreCfg.gateway.limits.rateLimit.burst}"
+                "SINEX_API_RATE_LIMIT_IDLE_TIMEOUT_SECS=${toString coreCfg.gateway.limits.rateLimit.idleTimeoutSec}"
+                "SINEX_API_RATE_LIMIT_PER_MINUTE=${toString coreCfg.gateway.limits.rateLimit.distributedPerMinute}"
+                "SINEX_API_RATE_LIMIT_WINDOW_SECS=${toString coreCfg.gateway.limits.rateLimit.distributedWindowSec}"
                 "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES=${toString coreCfg.gateway.nativeMessagingMaxSizeBytes}"
                 "SINEX_API_TCP_LISTEN=${coreCfg.gateway.listenAddress}"
                 # Collapsed-daemon selectors: tell sinexd which automata to
@@ -1736,7 +1736,7 @@ let
               (idx: {
                 source_id = id;
                 instance_idx = idx;
-                service_name = "sinex-source-${id}-${toString idx}";
+                service_name = "source-driver-${id}-${toString idx}";
                 runtime_config = runtimeConfig;
                 extra_args = extraArgs;
               })

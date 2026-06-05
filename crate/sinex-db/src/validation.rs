@@ -351,7 +351,7 @@ impl EventValidator {
             ts_orig: Some(Timestamp::now()),
             ts_quality: None,
             host: HostName::from_static("validator"),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
             anchor_payload_hash: None,
@@ -361,7 +361,7 @@ impl EventValidator {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
         };
         self.validate(&event)
     }

@@ -25,7 +25,7 @@ fn test_event(source: EventSource, event_type: EventType, payload: JsonValue) ->
         ts_quality: None,
         host: HostName::from_static("localhost"),
         payload,
-        source_run_id: Some(Uuid::now_v7()),
+        module_run_id: Some(Uuid::now_v7()),
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: Id::from_uuid(Uuid::now_v7()),
@@ -40,7 +40,7 @@ fn test_event(source: EventSource, event_type: EventType, payload: JsonValue) ->
         scope_key: None,
         equivalence_key: None,
         created_by_operation_id: None,
-        node_model: None,
+        automaton_model: None,
         anchor_payload_hash: None,
     }
 }
@@ -206,7 +206,7 @@ sinex_proptest! {
         prop_assert_eq!(a, b);
         prop_assert_eq!(event.ts_orig, deserialized.ts_orig);
         prop_assert_eq!(event.host, deserialized.host);
-        prop_assert_eq!(event.source_run_id, deserialized.source_run_id);
+        prop_assert_eq!(event.module_run_id, deserialized.module_run_id);
         prop_assert_eq!(event.payload_schema_id, deserialized.payload_schema_id);
         prop_assert!(json_values_equal(&event.payload, &deserialized.payload));
         Ok(())
@@ -480,7 +480,7 @@ mod unit_tests {
         assert!(ts_orig <= now);
         assert!(now - ts_orig < TimeDuration::seconds(5));
         assert!(!event.host.is_empty()); // Should get hostname
-        assert!(event.source_run_id.is_some());
+        assert!(event.module_run_id.is_some());
         assert!(event.payload_schema_id.is_none());
         Ok(())
     }

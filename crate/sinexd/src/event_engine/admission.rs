@@ -960,7 +960,7 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
                 offset_kind,
                 source_event_ids,
                 payload_schema_id: event.payload_schema_id,
-                source_run_id: event.source_run_id,
+                module_run_id: event.module_run_id,
                 associated_blob_ids: event.associated_blob_ids.clone(),
                 anchor_payload_hash: event.anchor_payload_hash.clone(),
                 temporal_policy: event.temporal_policy.map(|policy| policy.to_string()),
@@ -968,7 +968,7 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
                 scope_key: event.scope_key.clone(),
                 equivalence_key: event.equivalence_key.clone(),
                 created_by_operation_id: event.created_by_operation_id,
-                node_model: event.node_model.map(|model| model.to_string()),
+                automaton_model: event.automaton_model.map(|model| model.to_string()),
                 ts_quality: event.ts_quality.map(|quality| quality.to_string()),
             })
         })
@@ -1056,7 +1056,7 @@ fn batch_depends_only_on_source_material_fk(batch: &[&AdmittedEvent]) -> bool {
     batch.iter().all(|admitted| {
         matches!(admitted.event.provenance, Provenance::Material { .. })
             && admitted.event.payload_schema_id.is_none()
-            && admitted.event.source_run_id.is_none()
+            && admitted.event.module_run_id.is_none()
     })
 }
 
@@ -1068,7 +1068,7 @@ fn rows_depend_only_on_source_material_fk(batch: &[StreamBatchRow]) -> bool {
                 .as_ref()
                 .is_none_or(std::vec::Vec::is_empty)
             && row.payload_schema_id.is_none()
-            && row.source_run_id.is_none()
+            && row.module_run_id.is_none()
     })
 }
 

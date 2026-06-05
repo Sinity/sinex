@@ -5,12 +5,12 @@
 //! with the `messaging` feature.
 
 use super::{
-    Arc, AtomicBool, ControlCommandKind, EventTransport, LISTENER_RETRY_DELAY, RuntimeActor, RuntimeRunner,
+    Arc, AtomicBool, ControlCommandKind, EventTransport, LISTENER_RETRY_DELAY, RuntimeModule, RuntimeRunner,
     SourceScanAck, SourceScanCommand, SourceScanProgress, ModuleKind, Ordering, StreamExt, Uuid,
     control_command_kind, debug, error, info, run_resubscribing_listener, warn, watch,
 };
 
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// Start the NATS command listener for node-dispatch replay.
     ///
     /// Subscribes to `sinex.control.sources.<module_name>.scan` using NATS request-reply.
@@ -47,8 +47,8 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         };
 
         let module_name = service_info.control_identity().to_string();
-        let module_kind = self.node.module_kind();
-        let supports_historical = self.node.capabilities().supports_historical;
+        let module_kind = self.module.module_kind();
+        let supports_historical = self.module.capabilities().supports_historical;
         let env = sinex_primitives::environment::environment().clone();
         let raw_config = self.raw_config.clone().unwrap_or_default();
         let dry_run = service_info.dry_run();
@@ -172,7 +172,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
                                             operation_id,
                                             module_name: loop_node_name.clone(),
                                             accepted: false,
-                                            error: Some("RuntimeActor is draining and cannot accept replay scans".to_string()),
+                                            error: Some("RuntimeModule is draining and cannot accept replay scans".to_string()),
                                         };
                                         if let Err(error) =
                                             Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
@@ -193,7 +193,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
                                             module_name: loop_node_name.clone(),
                                             accepted: false,
                                             error: Some(format!(
-                                                "RuntimeActor '{loop_node_name}' is a {module_kind:?}, not an Ingestor. Automata receive replay events via JetStream."
+                                                "RuntimeModule '{loop_node_name}' is a {module_kind:?}, not an Ingestor. Automata receive replay events via JetStream."
                                             )),
                                         };
                                         if let Err(error) =
@@ -215,7 +215,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
                                             module_name: loop_node_name.clone(),
                                             accepted: false,
                                             error: Some(format!(
-                                                "RuntimeActor '{loop_node_name}' does not support historical scans (supports_historical = false)"
+                                                "RuntimeModule '{loop_node_name}' does not support historical scans (supports_historical = false)"
                                             )),
                                         };
                                         if let Err(error) =
@@ -237,7 +237,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
                                             module_name: loop_node_name.clone(),
                                             accepted: false,
                                             error: Some(
-                                                "RuntimeActor is running in dry-run mode and cannot execute replay scans"
+                                                "RuntimeModule is running in dry-run mode and cannot execute replay scans"
                                                     .to_string(),
                                             ),
                                         };
@@ -259,7 +259,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
                                             operation_id,
                                             module_name: loop_node_name.clone(),
                                             accepted: false,
-                                            error: Some("RuntimeActor was started without a replay worker factory".to_string()),
+                                            error: Some("RuntimeModule was started without a replay worker factory".to_string()),
                                         };
                                         if let Err(error) =
                                             Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await

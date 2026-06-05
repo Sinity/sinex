@@ -33,10 +33,10 @@
 
 ### 2.3 Authentication & Transport Limits
 
-- RPC traffic is guarded by a shared secret exported via `SINEX_RPC_TOKEN` (or `SINEX_API_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`). API startup fails if no token is present.
-* Tokens must include a role suffix (`<token>:readonly|write|admin`), and clients present them via `Authorization: Bearer <token-with-role>`. `sinexctl` injects the header when `--token`, `--token-file`, or `SINEX_RPC_TOKEN` are configured.
+- RPC traffic is guarded by a shared secret exported via `SINEX_API_TOKEN` (or `SINEX_API_ADMIN_TOKEN_FILE` / `SINEX_API_TOKEN_FILE`). API startup fails if no token is present.
+* Tokens must include a role suffix (`<token>:readonly|write|admin`), and clients present them via `Authorization: Bearer <token-with-role>`. `sinexctl` injects the header when `--token`, `--token-file`, or `SINEX_API_TOKEN` are configured.
 * TLS is mandatory; set `SINEX_API_TLS_CERT` + `SINEX_API_TLS_KEY` (optional `SINEX_API_TLS_CLIENT_CA` for mTLS).
-* Non-loopback binds require mTLS; configure `SINEX_API_TLS_CLIENT_CA` and pass `SINEX_RPC_CLIENT_CERT` + `SINEX_RPC_CLIENT_KEY` to clients.
+* Non-loopback binds require mTLS; configure `SINEX_API_TLS_CLIENT_CA` and pass `SINEX_API_CLIENT_CERT` + `SINEX_API_CLIENT_KEY` to clients.
 * Set `SINEX_API_REQUIRE_CLIENT_TLS=1` to enforce mTLS even on loopback/test hosts.
 * Resource guards are configurable via:
   * `SINEX_API_MAX_CONCURRENCY` (default 100).
@@ -65,8 +65,8 @@ Adding a method requires registering it in `rpc_registry.rs`, wiring a handler i
 ### 3.1 Modes of Operation
 
 - **Gateway-backed commands (default):**
-  * `sinexctl` creates a `GatewayClient` targeting `--rpc-url` / `SINEX_RPC_URL` (default `https://127.0.0.1:9999`).
-  * Auth is configured via `--token`, `--token-file`, or `SINEX_RPC_TOKEN`.
+  * `sinexctl` creates a `GatewayClient` targeting `--rpc-url` / `SINEX_API_URL` (default `https://127.0.0.1:9999`).
+  * Auth is configured via `--token`, `--token-file`, or `SINEX_API_TOKEN`.
   * TLS trust is configured via `--ca-cert`; mTLS client auth uses `--client-cert` + `--client-key` (or env equivalents).
 * **Direct database commands (`sinexctl db ...`):**
   * The `db` command family bypasses the gateway and connects directly via `DATABASE_URL`.

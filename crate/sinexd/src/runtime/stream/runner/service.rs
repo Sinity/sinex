@@ -6,13 +6,13 @@
 //! and automaton processing.
 
 use super::{
-    Checkpoint, RuntimeActor, RuntimeDrainComplete, RuntimeResult, RuntimeRunner, ModuleState, ModuleKind,
+    Checkpoint, RuntimeModule, RuntimeDrainComplete, RuntimeResult, RuntimeRunner, ModuleState, ModuleKind,
     RunnerLifecycle, ScanArgs, ScanReport, SinexError, TimeHorizon, Timestamp, info,
     systemd_notify, warn,
 };
 use sinex_primitives::env as shared_env;
 
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// Run a scan operation
     pub async fn run_scan(
         &mut self,
@@ -30,7 +30,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         }
 
         info!(
-            node = %self.node.module_name(),
+            module = %self.module.module_name(),
             from = %from.description(),
             until = ?until,
             dry_run = args.dry_run,
@@ -38,12 +38,12 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         );
 
         let start_time = std::time::Instant::now();
-        let result = self.node.scan(from, until, args).await;
+        let result = self.module.scan(from, until, args).await;
 
         match &result {
             Ok(report) => {
                 info!(
-                    node = %self.node.module_name(),
+                    module = %self.module.module_name(),
                     events_processed = report.events_processed,
                     duration_ms = start_time.elapsed().as_millis(),
                     "Scan operation completed successfully"
@@ -51,7 +51,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             }
             Err(e) => {
                 warn!(
-                    node = %self.node.module_name(),
+                    module = %self.module.module_name(),
                     error = %e,
                     duration_ms = start_time.elapsed().as_millis(),
                     "Scan operation failed"
@@ -71,7 +71,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             RunnerLifecycle::Initialized => {}
             RunnerLifecycle::Running => {
                 return Err(SinexError::lifecycle(
-                    "RuntimeActor is already running (concurrent run_service call detected)".to_string(),
+                    "RuntimeModule is already running (concurrent run_service call detected)".to_string(),
                 ));
             }
             other => {
@@ -82,9 +82,9 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         }
         self.lifecycle = RunnerLifecycle::Running;
 
-        let module_kind = self.node.module_kind();
+        let module_kind = self.module.module_kind();
         info!(
-            node = %self.node.module_name(),
+            module = %self.module.module_name(),
             module_kind = ?module_kind,
             "Starting service with startup sequence"
         );
@@ -109,7 +109,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             "checkpoint_identity": runtime.checkpoint_identity(),
             "control_identity": runtime.control_identity(),
             "host": runtime.service_info().host().as_str(),
-            "run_id": runtime.source_run_id().map(|id| id.to_string()),
+            "run_id": runtime.module_run_id().map(|id| id.to_string()),
         });
         let (heartbeat_shutdown_tx, heartbeat_shutdown_rx) = tokio::sync::oneshot::channel();
         let heartbeat_handle = tokio::spawn(async move {

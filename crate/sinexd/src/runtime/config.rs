@@ -1,4 +1,4 @@
-//! Configuration management for node services.
+//! Configuration management for runtime modules.
 //!
 //! This module provides environment-based configuration with the following precedence:
 //! 1. Command-line arguments (highest priority)
@@ -7,7 +7,7 @@
 //!
 //! # Configuration Loading
 //!
-//! All node services use environment-based configuration only:
+//! All runtime modules use environment-based configuration only:
 //!
 //! ```rust
 //! use crate::runtime::RuntimeConfig;
@@ -25,7 +25,7 @@
 //! - `SINEX_DB_POOL_SIZE`: Database connection pool size
 //! - `SINEX_WORK_DIR`: Working directory for temporary files
 //! - `SINEX_DRY_RUN`: Enable dry-run mode (true/false)
-//! - `SINEX_<SERVICE>_LOG_LEVEL`: Per-node override (service name uppercased with `_`)
+//! - `SINEX_<SERVICE>_LOG_LEVEL`: Per-module override (service name uppercased with `_`)
 //!
 //! # Validation
 //!
@@ -102,10 +102,10 @@ impl From<ConfigError> for sinex_primitives::error::SinexError {
     }
 }
 
-/// Base configuration for all node services.
+/// Base configuration for runtime modules.
 ///
 /// This structure contains common configuration fields shared by all
-/// node services (both ingestors and automata). Service-specific
+/// runtime modules (both source drivers and automata). Service-specific
 /// configuration should extend this via `EventSourceConfig` or `AutomatonConfig`.
 ///
 /// # Field Defaults

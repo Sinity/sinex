@@ -180,7 +180,7 @@ pub(crate) fn event_engine_debug_log_path_for_test_process() -> PathBuf {
 pub(crate) fn source_driver_debug_log_path_for_test_process(source_id: &str) -> PathBuf {
     let safe_unit = source_id.replace(['/', ':'], "_");
     PathBuf::from(format!(
-        "/tmp/sinex-source-{safe_unit}-{}.log",
+        "/tmp/sinex-source-driver-{safe_unit}-{}.log",
         std::process::id()
     ))
 }
@@ -500,10 +500,10 @@ async fn start_test_gateway_inner(
         .env_remove("SINEX_API_TLS_CLIENT_CA")
         .env("NOTIFY_SOCKET", &notify_socket_path);
     if config.rpc_rate_limit_disabled {
-        cmd.env("SINEX_RPC_RATE_LIMIT_ENABLED", "false");
+        cmd.env("SINEX_API_RATE_LIMIT_ENABLED", "false");
     }
     if let Some(token) = &config.rpc_token {
-        cmd.env("SINEX_RPC_TOKEN", token);
+        cmd.env("SINEX_API_TOKEN", token);
     }
     if let Some(ns) = &config.namespace {
         cmd.env("SINEX_NAMESPACE", ns);

@@ -1,4 +1,4 @@
-//! RuntimeActor operations types
+//! RuntimeModule operations types
 
 use crate::Timestamp;
 use crate::Uuid;
@@ -56,7 +56,7 @@ pub const RUNTIME_SET_HORIZON_METHOD: RpcMethod<RuntimeSetHorizonRequest, Runtim
         RpcMutability::Mutating,
     );
 
-/// RuntimeActor status information
+/// RuntimeModule status information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeStatus {
     pub module_name: ModuleName,
@@ -125,7 +125,7 @@ pub struct RuntimeInfo {
     pub description: Option<String>,
     pub service_name: Option<String>,
     pub instance_id: Option<String>,
-    pub source_run_id: Option<Uuid>,
+    pub module_run_id: Option<Uuid>,
     pub host: Option<String>,
     pub status: String,
     pub last_heartbeat_at: Option<Timestamp>,

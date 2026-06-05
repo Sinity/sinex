@@ -41,9 +41,9 @@ where
                 let mut error = SinexError::validation(
                     "derived output exceeds derived parent hard limit before persistence",
                 )
-                .with_context("node", self.node.name())
+                .with_context("automaton", self.automaton.name())
                 .with_context("phase", phase)
-                .with_context("output_event_type", self.node.output_event_type())
+                .with_context("output_event_type", self.automaton.output_event_type())
                 .with_context("parent_count", parent_count.to_string())
                 .with_context("hard_limit", DERIVED_OUTPUT_PARENT_HARD_LIMIT.to_string());
 
@@ -63,9 +63,9 @@ where
 
         if max_parent_count > DERIVED_OUTPUT_PARENT_WARN_THRESHOLD {
             warn!(
-                node = %self.node.name(),
+                automaton = %self.automaton.name(),
                 phase,
-                output_event_type = %self.node.output_event_type(),
+                output_event_type = %self.automaton.output_event_type(),
                 output_count = outputs.len(),
                 max_parent_count,
                 threshold = DERIVED_OUTPUT_PARENT_WARN_THRESHOLD,
@@ -92,7 +92,7 @@ where
             labels.insert("phase".to_string(), phase.to_string());
             labels.insert(
                 "output_event_type".to_string(),
-                self.node.output_event_type().to_string(),
+                self.automaton.output_event_type().to_string(),
             );
 
             let count = outputs.len() as u64;
@@ -113,7 +113,7 @@ where
                 )
                 .await
             {
-                log_self_observation_failure(self.node.name(), "derived.outputs_emitted", &error);
+                log_self_observation_failure(self.automaton.name(), "derived.outputs_emitted", &error);
             }
 
             if let Err(error) = obs
@@ -129,7 +129,7 @@ where
                 .await
             {
                 log_self_observation_failure(
-                    self.node.name(),
+                    self.automaton.name(),
                     "derived.output.parent_count",
                     &error,
                 );
@@ -161,7 +161,7 @@ where
                     .await
                 {
                     log_self_observation_failure(
-                        self.node.name(),
+                        self.automaton.name(),
                         "derived.output.logical_input_count",
                         &error,
                     );
@@ -205,7 +205,7 @@ where
             event_type,
         } = output;
 
-        let resolved_event_type = event_type.unwrap_or_else(|| self.node.output_event_type());
+        let resolved_event_type = event_type.unwrap_or_else(|| self.automaton.output_event_type());
 
         let typed_ids: Vec<Id<Event<JsonValue>>> =
             source_event_ids.into_iter().map(Id::from_uuid).collect();
@@ -218,7 +218,7 @@ where
                     return Err(SinexError::validation(
                         "derived invalidation output missing source event ids",
                     )
-                    .with_context("node", self.node.name())
+                    .with_context("automaton", self.automaton.name())
                     .with_context("output_event_type", resolved_event_type)
                     .with_context("processing_mode", format!("{:?}", context.processing_mode))
                     .with_context("trigger_kind", format!("{:?}", context.trigger_kind))
@@ -242,7 +242,7 @@ where
             // ON CONFLICT (id) DO NOTHING dedup operates on the id minted here and
             // carried unchanged through NATS redelivery.
             id: Some(Id::new()),
-            source: EventSource::new(self.node.output_event_source())?,
+            source: EventSource::new(self.automaton.output_event_source())?,
             event_type: EventType::new(resolved_event_type)?,
             payload,
             ts_orig: Some(ts_orig),
@@ -250,10 +250,10 @@ where
             // synthesis-time value chosen by the temporal policy.
             ts_quality: None,
             host: HostName::new(&self.host)?,
-            source_run_id: self
+            module_run_id: self
                 .runtime
                 .as_ref()
-                .and_then(RuntimeContext::source_run_id),
+                .and_then(RuntimeContext::module_run_id),
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,
@@ -262,7 +262,7 @@ where
             scope_key,
             equivalence_key,
             created_by_operation_id,
-            node_model: Some(self.node.node_model()),
+            automaton_model: Some(self.automaton.automaton_model()),
             anchor_payload_hash: None,
         })
     }

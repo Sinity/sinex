@@ -84,7 +84,7 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
         "SINEX_API_TLS_CERT",
         "SINEX_API_TLS_KEY",
         "SINEX_API_TLS_CLIENT_CA",
-        "SINEX_RPC_TOKEN",
+        "SINEX_API_TOKEN",
         "SINEX_NATS_URL",
     ]);
     env.set(
@@ -96,7 +96,7 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
         key_file.path().to_string_lossy().to_string(),
     );
     env.clear("SINEX_API_TLS_CLIENT_CA");
-    env.set("SINEX_RPC_TOKEN", "test-token:admin");
+    env.set("SINEX_API_TOKEN", "test-token:admin");
     env.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
 
     let port = reserve_port()?;

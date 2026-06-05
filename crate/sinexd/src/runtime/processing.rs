@@ -68,7 +68,7 @@ impl From<AutomatonLogicError> for SinexError {
     }
 }
 
-/// Persisted state wrapper used by derived node checkpointing.
+/// Persisted state wrapper used by automaton checkpointing.
 #[cfg(feature = "messaging")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PersistedState<S> {

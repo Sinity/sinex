@@ -149,7 +149,7 @@ async fn synthetic_event_projected_inline(ctx: TestContext) -> TestResult<()> {
     derived.scope_key = Some("test-scope".to_string());
     derived.equivalence_key = Some("test-equiv".to_string());
     derived.created_by_operation_id = Some(operation_id);
-    derived.node_model = Some(AutomatonModel::Windowed);
+    derived.automaton_model = Some(AutomatonModel::Windowed);
 
     let inserted = ctx.pool.events().insert(derived).await?;
     let event_id = inserted.id.unwrap();
@@ -167,7 +167,7 @@ async fn synthetic_event_projected_inline(ctx: TestContext) -> TestResult<()> {
             scope_key,
             equivalence_key,
             created_by_operation_id,
-            node_model
+            automaton_model
         FROM core.event_temporal_facts
         WHERE event_id = $1"#,
         event_id.as_uuid()
@@ -187,7 +187,7 @@ async fn synthetic_event_projected_inline(ctx: TestContext) -> TestResult<()> {
     assert_eq!(row.equivalence_key.as_deref(), Some("test-equiv"));
     assert_eq!(row.created_by_operation_id, Some(operation_id));
     // AutomatonModel uses snake_case serde in storage and query surfaces.
-    assert_eq!(row.node_model.as_deref(), Some("windowed"));
+    assert_eq!(row.automaton_model.as_deref(), Some("windowed"));
 
     Ok(())
 }

@@ -260,7 +260,7 @@ async fn test_event_ordering(ctx: TestContext) -> Result<()> {
 - **DATABASE_URL**: Optional — only needed for nodes that query events
 - **`SINEX_EDGE_MODE=1`**: Suppresses DATABASE_URL requirement + enables schema cache
 
-### Database Dependency by RuntimeActor Type
+### Database Dependency by RuntimeModule Type
 
 | Type | Needs DATABASE_URL? | Example |
 |------|---------------------|---------|

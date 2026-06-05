@@ -18,8 +18,8 @@ use xtask::sandbox::{EnvGuard, sinex_test};
 
 fn reset_token_env(env: &mut EnvGuard) {
     env.clear("SINEX_API_ADMIN_TOKEN_FILE");
-    env.clear("SINEX_RPC_TOKEN_FILE");
-    env.clear("SINEX_RPC_TOKEN");
+    env.clear("SINEX_API_TOKEN_FILE");
+    env.clear("SINEX_API_TOKEN");
 }
 
 // =============================================================================
@@ -176,7 +176,7 @@ async fn test_constant_time_eq_unicode() -> TestResult<()> {
 async fn test_read_token_from_env_direct() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_token_env(&mut env);
-    env.set("SINEX_RPC_TOKEN", "test-token-123");
+    env.set("SINEX_API_TOKEN", "test-token-123");
 
     let token = rpc_test_support::read_token_from_env().unwrap();
     assert_eq!(token, Some("test-token-123".to_string()));
@@ -191,7 +191,7 @@ async fn test_read_token_from_env_file() -> TestResult<()> {
     let token_file = temp_dir.path().join("token");
     fs::write(&token_file, "  file-based-token  \n").unwrap();
 
-    env.set("SINEX_RPC_TOKEN_FILE", token_file.to_str().unwrap());
+    env.set("SINEX_API_TOKEN_FILE", token_file.to_str().unwrap());
 
     let token = rpc_test_support::read_token_from_env().unwrap();
     assert_eq!(token, Some("file-based-token".to_string()));
@@ -206,8 +206,8 @@ async fn test_read_token_file_takes_precedence() -> TestResult<()> {
     let token_file = temp_dir.path().join("token");
     fs::write(&token_file, "file-token").unwrap();
 
-    env.set("SINEX_RPC_TOKEN_FILE", token_file.to_str().unwrap());
-    env.set("SINEX_RPC_TOKEN", "direct-token");
+    env.set("SINEX_API_TOKEN_FILE", token_file.to_str().unwrap());
+    env.set("SINEX_API_TOKEN", "direct-token");
 
     let token = rpc_test_support::read_token_from_env().unwrap();
     assert_eq!(token, Some("file-token".to_string()));
@@ -226,7 +226,7 @@ async fn test_admin_token_file_takes_precedence() -> TestResult<()> {
     fs::write(&rpc_file, "rpc-token").unwrap();
 
     env.set("SINEX_API_ADMIN_TOKEN_FILE", admin_file.to_str().unwrap());
-    env.set("SINEX_RPC_TOKEN_FILE", rpc_file.to_str().unwrap());
+    env.set("SINEX_API_TOKEN_FILE", rpc_file.to_str().unwrap());
 
     let token = rpc_test_support::read_token_from_env().unwrap();
     assert_eq!(token, Some("admin-token".to_string()));
@@ -237,7 +237,7 @@ async fn test_admin_token_file_takes_precedence() -> TestResult<()> {
 async fn test_read_token_from_nonexistent_file() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_token_env(&mut env);
-    env.set("SINEX_RPC_TOKEN_FILE", "/nonexistent/path/to/token");
+    env.set("SINEX_API_TOKEN_FILE", "/nonexistent/path/to/token");
 
     assert!(rpc_test_support::read_token_from_env().is_err());
     Ok(())
@@ -247,7 +247,7 @@ async fn test_read_token_from_nonexistent_file() -> TestResult<()> {
 async fn test_read_token_empty_after_trim() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_token_env(&mut env);
-    env.set("SINEX_RPC_TOKEN", "   \n\t  ");
+    env.set("SINEX_API_TOKEN", "   \n\t  ");
 
     let token = rpc_test_support::read_token_from_env().unwrap();
 

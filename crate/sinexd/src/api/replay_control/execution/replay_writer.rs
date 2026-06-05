@@ -395,7 +395,7 @@ impl ReplayExecutionEngine {
         checkpoint.total_events = material_roots.len() as u64;
 
         // Step 2: Route staged-source scopes through source, not node scan.
-        // RuntimeActor scan publishes a SourceScanCommand to sinex.control.sources.{source}.scan;
+        // RuntimeModule scan publishes a SourceScanCommand to sinex.control.sources.{source}.scan;
         // staged-source replay creates a source_run and dispatches to the source
         // host (#1081) via a parse command. The routing decision is made here so both
         // paths share the archive + invalidation + checkpoint machinery above.
@@ -529,7 +529,7 @@ impl ReplayExecutionEngine {
                     &scope_metadata,
                     operation_id,
                     SinexError::invalid_state(format!(
-                        "RuntimeActor '{}' rejected scan command: {}",
+                        "RuntimeModule '{}' rejected scan command: {}",
                         ack.module_name,
                         ack.error.unwrap_or_else(|| "unknown reason".to_string())
                     )),
@@ -540,7 +540,7 @@ impl ReplayExecutionEngine {
         info!(
             operation_id = %operation_id,
             node = %ack.module_name,
-            "RuntimeActor accepted scan command, waiting for completion"
+            "RuntimeModule accepted scan command, waiting for completion"
         );
 
         let replay = self.replay.clone();
@@ -575,7 +575,7 @@ impl ReplayExecutionEngine {
                                 if let Some(error) = progress.error {
                                     return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
                                         error: SinexError::processing(format!(
-                                            "RuntimeActor '{}' failed replay scan: {}",
+                                            "RuntimeModule '{}' failed replay scan: {}",
                                             progress.module_name,
                                             error
                                         )),
@@ -614,7 +614,7 @@ impl ReplayExecutionEngine {
                                     info!(
                                         operation_id = %operation_id,
                                         events_processed = report.events_processed,
-                                        "RuntimeActor scan completed"
+                                        "RuntimeModule scan completed"
                                     );
                                     return Ok::<u64, ReplayScanFailure>(report.events_processed);
                                 }

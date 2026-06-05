@@ -1,6 +1,6 @@
-//! `AutomatonRuntime` — shared runtime adapter for all derived node models.
+//! `AutomatonRuntime` — shared runtime adapter for all automaton models.
 //!
-//! Wraps any [`Automaton`] and implements the stream [`RuntimeActor`] trait,
+//! Wraps any [`Automaton`] and implements the stream [`RuntimeModule`] trait,
 //! handling checkpoints, health monitoring, shutdown, and event emission.
 
 mod filter;
@@ -50,7 +50,7 @@ fn stale_output_ids_or_fail_scope(
         Err(error) => Err(SinexError::processing(
             "Failed to query stale outputs for invalidation recompute",
         )
-        .with_context("node", module_name)
+        .with_context("automaton", module_name)
         .with_context("scope_key", scope_key)
         .with_source(error)),
     }
@@ -63,14 +63,14 @@ fn log_self_observation_failure(
     error: &crate::runtime::self_observation::SelfObservationError,
 ) {
     warn!(
-        node = module_name,
+        automaton = module_name,
         metric = metric_name,
         error = %error,
-        "Derived-node self-observation emit failed"
+        "Automaton self-observation emit failed"
     );
 }
 
-/// Shared runtime adapter for all derived node models.
+/// Shared runtime adapter for all automaton models.
 ///
 /// Generic over `N: Automaton`, which is implemented by the wrapper types
 /// `TransducerWrapper`, `WindowedWrapper`, `ScopeReconcilerWrapper`.
@@ -85,7 +85,7 @@ pub struct AutomatonRuntime<N>
 where
     N: Automaton,
 {
-    node: N,
+    automaton: N,
     persisted_state: PersistedState<N::State>,
     config: AutomatonAdapterConfig,
     shutdown_config: ShutdownConfig,
@@ -108,7 +108,7 @@ where
     /// Drives the `event_lag_p50_ms` / `event_lag_p99_ms` fields of the
     /// `derived.latency_snapshot` event.
     lag_window: super::histograms::LatencyWindow,
-    /// Per-tick wall-time samples (ms inside `node.process_derived`).
+    /// Per-tick wall-time samples (ms inside `automaton.process_derived`).
     /// Drives the `tick_runtime_p99_ms` field of `derived.latency_snapshot`.
     runtime_window: super::histograms::LatencyWindow,
     /// Sliding-window event count for the `throughput_eps` field of
@@ -124,10 +124,10 @@ impl<N> AutomatonRuntime<N>
 where
     N: Automaton,
 {
-    /// Create a new adapter wrapping the given node implementation.
-    pub fn with_node(node: N) -> Self {
+    /// Create a new adapter wrapping the given automaton implementation.
+    pub fn with_automaton(automaton: N) -> Self {
         Self {
-            node,
+            automaton,
             persisted_state: PersistedState::default(),
             config: AutomatonAdapterConfig::default(),
             shutdown_config: ShutdownConfig::default(),
@@ -158,21 +158,21 @@ where
         }
     }
 
-    /// Create a new adapter (alias for `with_node`).
-    pub fn new(node: N) -> Self {
-        Self::with_node(node)
+    /// Create a new adapter (alias for `with_automaton`).
+    pub fn new(automaton: N) -> Self {
+        Self::with_automaton(automaton)
     }
 
     /// Create with custom config.
-    pub fn with_config(node: N, config: AutomatonAdapterConfig) -> Self {
-        let mut adapter = Self::with_node(node);
+    pub fn with_config(automaton: N, config: AutomatonAdapterConfig) -> Self {
+        let mut adapter = Self::with_automaton(automaton);
         adapter.config = config;
         adapter
     }
 
     /// Create with custom shutdown config.
-    pub fn with_shutdown_config(node: N, shutdown_config: ShutdownConfig) -> Self {
-        let mut adapter = Self::with_node(node);
+    pub fn with_shutdown_config(automaton: N, shutdown_config: ShutdownConfig) -> Self {
+        let mut adapter = Self::with_automaton(automaton);
         adapter.shutdown_config = shutdown_config;
         adapter
     }
@@ -183,7 +183,7 @@ where
     N: Automaton + Default,
 {
     fn default() -> Self {
-        Self::with_node(N::default())
+        Self::with_automaton(N::default())
     }
 }
 
@@ -206,7 +206,7 @@ where
     /// Signal shutdown.
     pub fn signal_shutdown(&self) {
         if let Some(tx) = &self.shutdown_tx {
-            let _ = tx.request_drain_and_warn(self.node.name());
+            let _ = tx.request_drain_and_warn(self.automaton.name());
         }
     }
 
@@ -342,9 +342,9 @@ fn historical_resume_position(
     }
 }
 
-// ── RuntimeActor trait implementation ──────────────────────────────────────────
+// ── RuntimeModule trait implementation ──────────────────────────────────────────
 
-impl<N> crate::runtime::stream::RuntimeActor for AutomatonRuntime<N>
+impl<N> crate::runtime::stream::RuntimeModule for AutomatonRuntime<N>
 where
     N: Automaton,
 {
@@ -367,12 +367,12 @@ where
                 let health_enabled = shared_env::bool_or(
                     "SINEX_HEALTH_MONITORING_ENABLED",
                     true,
-                    "derived node health monitoring",
+                    "automaton health monitoring",
                 );
 
                 if health_enabled {
                     let config = SelfObserverConfig {
-                        component: self.node.name().to_string(),
+                        component: self.automaton.name().to_string(),
                         namespace: None,
                         enabled: true,
                         min_emission_interval: std::time::Duration::from_secs(1),
@@ -381,7 +381,7 @@ where
                     let observer = Arc::new(SelfObserver::new(nats_client, config));
                     let thresholds = HealthThresholds::from_env().unwrap_or_else(|error| {
                         warn!(
-                            node = %self.node.name(),
+                            automaton = %self.automaton.name(),
                             error = %error,
                             "Invalid health monitoring threshold override; using defaults"
                         );
@@ -389,7 +389,7 @@ where
                     });
 
                     self.health_reporter = Some(Arc::new(HealthReporter::new(
-                        self.node.name().to_string(),
+                        self.automaton.name().to_string(),
                         Arc::clone(&observer),
                         thresholds,
                     )));
@@ -403,7 +403,7 @@ where
                     // entirely rather than depend on the retry window.
                     if let Err(prime_error) = observer.prime().await {
                         warn!(
-                            node = %self.node.name(),
+                            automaton = %self.automaton.name(),
                             error = %prime_error,
                             "Failed to prime self-observation materializer; \
                              telemetry events may be deferred by event_engine retry"
@@ -411,7 +411,7 @@ where
                     }
                     self.self_observer = Some(observer);
 
-                    info!(node = %self.node.name(), "Health monitoring auto-enabled");
+                    info!(automaton = %self.automaton.name(), "Health monitoring auto-enabled");
                 }
             }
         }
@@ -419,14 +419,14 @@ where
         self.runtime = Some(runtime);
         self.load_state().await?;
 
-        self.node
+        self.automaton
             .on_initialize_derived(&self.persisted_state.state)
             .await
             .map_err(|e| SinexError::processing(format!("Initialize hook failed: {e}")))?;
 
         info!(
-            node = %self.node.name(),
-            model = %self.node.node_model(),
+            automaton = %self.automaton.name(),
+            model = %self.automaton.automaton_model(),
             events_processed = self.persisted_state.events_processed,
             "Automaton initialized"
         );
@@ -450,7 +450,7 @@ where
     }
 
     fn module_name(&self) -> &str {
-        self.node.name()
+        self.automaton.name()
     }
 
     fn module_kind(&self) -> ModuleKind {
@@ -518,7 +518,7 @@ where
         }
 
         debug!(
-            node = %self.node.name(),
+            automaton = %self.automaton.name(),
             input_count = batch_size,
             output_count,
             "Processed event batch via bridge"
@@ -532,18 +532,18 @@ where
     }
 
     async fn shutdown(&mut self) -> RuntimeResult<()> {
-        info!(node = %self.node.name(), "Shutting down Automaton");
+        info!(automaton = %self.automaton.name(), "Shutting down Automaton");
 
         self.signal_shutdown();
 
-        self.node
+        self.automaton
             .on_shutdown_derived(&self.persisted_state.state)
             .await
             .map_err(|e| {
                 error!(
                     target: "sinex_metrics",
                     metric = "derive.shutdown_hook_failures_total",
-                    node = %self.node.name(),
+                    automaton = %self.automaton.name(),
                     error = %e,
                     "Shutdown hook failed"
                 );
@@ -552,21 +552,21 @@ where
 
         let mut file_save_success = true;
         if let Err(e) = self.save_state_to_file().await {
-            warn!(node = %self.node.name(), error = %e, "Failed to save state to file");
+            warn!(automaton = %self.automaton.name(), error = %e, "Failed to save state to file");
             file_save_success = false;
         }
 
         let mut nats_save_success = true;
         if let Err(e) = self.save_state().await {
-            warn!(node = %self.node.name(), error = %e, "Failed to save final checkpoint");
+            warn!(automaton = %self.automaton.name(), error = %e, "Failed to save final checkpoint");
             nats_save_success = false;
         }
 
         if !nats_save_success {
             return Err(SinexError::checkpoint(format!(
-                "RuntimeActor {} failed to save final checkpoint to NATS KV during shutdown \
+                "RuntimeModule {} failed to save final checkpoint to NATS KV during shutdown \
                  (file save {})",
-                self.node.name(),
+                self.automaton.name(),
                 if file_save_success {
                     "succeeded"
                 } else {
@@ -600,8 +600,8 @@ where
 {
     fn get_source_state(&self) -> RuntimeResult<crate::runtime::exploration::SourceState> {
         let runtime_initialized = self.runtime.is_some();
-        let module_name = self.node.name();
-        let node_model = self.node.node_model();
+        let module_name = self.automaton.name();
+        let automaton_model = self.automaton.automaton_model();
         let total_processed = self.persisted_state.events_processed;
         let run_processed = self.run_events_processed;
         let health_status = self
@@ -612,11 +612,11 @@ where
             && health_status
                 .is_none_or(|status| status == sinex_primitives::domain::HealthStatus::Healthy);
         let description = if !runtime_initialized {
-            format!("{module_name} derived node ({node_model}, runtime not initialized)")
+            format!("{module_name} automaton ({automaton_model}, runtime not initialized)")
         } else if let Some(status) = health_status {
-            format!("{module_name} derived node ({node_model}, status={status})")
+            format!("{module_name} automaton ({automaton_model}, status={status})")
         } else {
-            format!("{module_name} derived node ({node_model})")
+            format!("{module_name} automaton ({automaton_model})")
         };
 
         Ok(crate::runtime::exploration::SourceState {
@@ -632,7 +632,7 @@ where
                     "runtime_initialized".to_string(),
                     serde_json::json!(runtime_initialized),
                 ),
-                ("node_model".to_string(), serde_json::json!(node_model)),
+                ("automaton_model".to_string(), serde_json::json!(automaton_model)),
                 (
                     "total_processed".to_string(),
                     serde_json::json!(total_processed),
@@ -658,7 +658,7 @@ where
         _limit: u64,
     ) -> RuntimeResult<Vec<crate::runtime::exploration::IngestionHistoryEntry>> {
         Err(SinexError::invalid_state(
-            "ingestion history is not implemented for derived nodes",
+            "ingestion history is not implemented for automatons",
         ))
     }
 
@@ -668,7 +668,7 @@ where
         _format: crate::runtime::exploration::ExportFormat,
     ) -> RuntimeResult<()> {
         Err(SinexError::invalid_state(
-            "data export is not implemented for derived nodes",
+            "data export is not implemented for automatons",
         ))
     }
 }

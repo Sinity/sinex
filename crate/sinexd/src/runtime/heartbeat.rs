@@ -1,7 +1,7 @@
-//! Structured heartbeat logging for node services
+//! Structured heartbeat logging for runtime modules
 //!
 //! This module implements the Journald Heartbeat Idea from the design discussion:
-//! Nodes emit structured JSON logs to stdout, which systemd captures in journald,
+//! Runtime modules emit structured JSON logs to stdout, which systemd captures in journald,
 //! which gets picked up by the journald ingestor as regular events, and processed
 //! by the health aggregator automaton.
 
@@ -106,7 +106,7 @@ pub struct HeartbeatEmitter {
     last_emitted_status: Arc<parking_lot::Mutex<HealthStatus>>,
     /// Sliding window for error tracking (last 5 minutes).
     error_window: Arc<parking_lot::Mutex<Vec<Instant>>>,
-    source_run_id: Option<Uuid>,
+    module_run_id: Option<Uuid>,
     /// Counter for rate-limiting persistence failure warn! logs (every 100th).
     persistence_warn_count: Arc<AtomicU64>,
     /// Optional database pool for persisting heartbeat status to `core.runs`.
@@ -149,7 +149,7 @@ impl HeartbeatEmitter {
             log_sink: Arc::new(StdoutHeartbeatSink),
             last_emitted_status: Arc::new(parking_lot::Mutex::new(HealthStatus::Healthy)),
             error_window: Arc::new(parking_lot::Mutex::new(Vec::new())),
-            source_run_id: None,
+            module_run_id: None,
             persistence_warn_count: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "db")]
             db_pool: None,
@@ -175,8 +175,8 @@ impl HeartbeatEmitter {
     }
 
     #[must_use]
-    pub fn with_source_run_id(mut self, source_run_id: Uuid) -> Self {
-        self.source_run_id = Some(source_run_id);
+    pub fn with_module_run_id(mut self, module_run_id: Uuid) -> Self {
+        self.module_run_id = Some(module_run_id);
         self
     }
 
@@ -201,8 +201,8 @@ impl HeartbeatEmitter {
         .with_module_name(ModuleName::new(runtime.module_name()))
         .with_version(runtime.version().to_string());
 
-        let emitter = if let Some(source_run_id) = runtime.source_run_id() {
-            emitter.with_source_run_id(source_run_id)
+        let emitter = if let Some(module_run_id) = runtime.module_run_id() {
+            emitter.with_module_run_id(module_run_id)
         } else {
             emitter
         };
@@ -408,7 +408,7 @@ impl HeartbeatEmitter {
             let log_persistence_warn = warn_skipped.is_multiple_of(100);
 
             use sinex_db::DbPoolExt;
-            if self.module_name.is_none() && self.source_run_id.is_none() && log_persistence_warn {
+            if self.module_name.is_none() && self.module_run_id.is_none() && log_persistence_warn {
                 warn!(
                     service = %metrics.service_name,
                     skipped = warn_skipped,
@@ -453,23 +453,23 @@ impl HeartbeatEmitter {
                 }
             }
 
-            if let Some(source_run_id) = self.source_run_id {
-                let typed_source_run_id =
-                    Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(source_run_id);
+            if let Some(module_run_id) = self.module_run_id {
+                let typed_module_run_id =
+                    Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(module_run_id);
                 match pool
                     .state()
-                    .update_module_run_heartbeat(typed_source_run_id)
+                    .update_module_run_heartbeat(typed_module_run_id)
                     .await
                 {
                     Ok(true) => {}
                     Ok(false) => {
                         self.record_error(&format!(
-                            "Heartbeat did not persist because the module run row is missing for {source_run_id}"
+                            "Heartbeat did not persist because the module run row is missing for {module_run_id}"
                         ));
                         if log_persistence_warn {
                             warn!(
                                 service = %metrics.service_name,
-                                source_run_id = %source_run_id,
+                                module_run_id = %module_run_id,
                                 skipped = warn_skipped,
                                 "Heartbeat did not persist because the module run row is missing (rate-limited)"
                             );
@@ -482,7 +482,7 @@ impl HeartbeatEmitter {
                         if log_persistence_warn {
                             warn!(
                                 service = %metrics.service_name,
-                                source_run_id = %source_run_id,
+                                module_run_id = %module_run_id,
                                 error = %e,
                                 skipped = warn_skipped,
                                 "Failed to persist module run heartbeat to database (rate-limited)"
@@ -691,7 +691,7 @@ impl HeartbeatCounterHandle {
     }
 }
 
-/// Helper macro for creating heartbeat logs in node services
+/// Helper macro for creating heartbeat logs in runtime modules
 #[macro_export]
 macro_rules! emit_heartbeat {
     ($service_name:expr) => {

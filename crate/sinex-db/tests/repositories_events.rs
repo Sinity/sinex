@@ -36,7 +36,7 @@ fn stream_batch_material_row(
         offset_kind: None,
         source_event_ids: None,
         payload_schema_id: None,
-        source_run_id: None,
+        module_run_id: None,
         anchor_payload_hash: None,
         associated_blob_ids: None,
         temporal_policy: None,
@@ -44,7 +44,7 @@ fn stream_batch_material_row(
         scope_key: None,
         equivalence_key: None,
         created_by_operation_id: None,
-        node_model: None,
+        automaton_model: None,
         ts_quality: None,
     })
 }
@@ -158,7 +158,7 @@ async fn filter_tombstoned_accepts_typed_event_ids(ctx: TestContext) -> TestResu
 }
 
 #[sinex_test]
-async fn events_repository_rejects_unknown_source_run_id(ctx: TestContext) -> TestResult<()> {
+async fn events_repository_rejects_unknown_module_run_id(ctx: TestContext) -> TestResult<()> {
     let material_record = ctx
         .pool
         .source_materials()
@@ -178,14 +178,14 @@ async fn events_repository_rejects_unknown_source_run_id(ctx: TestContext) -> Te
         .with_provenance(Provenance::from_material(material_id, 0, None, None))
         .build()
         .expect("valid provenance")
-        .with_source_run_id(Uuid::now_v7());
+        .with_module_run_id(Uuid::now_v7());
 
     let error = ctx
         .pool
         .events()
         .insert(event)
         .await
-        .expect_err("unknown source_run_id must be rejected");
+        .expect_err("unknown module_run_id must be rejected");
     let message = error.to_string();
     let normalized_message = message.to_lowercase();
     assert!(
@@ -305,7 +305,7 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             offset_kind,
             source_event_ids: None,
             payload_schema_id: None,
-            source_run_id: None,
+            module_run_id: None,
             anchor_payload_hash: None,
             associated_blob_ids: None,
             temporal_policy: None,
@@ -313,7 +313,7 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             ts_quality: None,
         });
     }
@@ -411,8 +411,8 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             "payload_schema_id should be None at index {i}"
         );
         assert!(
-            event.source_run_id.is_none(),
-            "source_run_id should be None at index {i}"
+            event.module_run_id.is_none(),
+            "module_run_id should be None at index {i}"
         );
         assert!(
             event.associated_blob_ids.is_none(),
@@ -439,8 +439,8 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             "created_by_operation_id should be None at index {i}"
         );
         assert!(
-            event.node_model.is_none(),
-            "node_model should be None at index {i}"
+            event.automaton_model.is_none(),
+            "automaton_model should be None at index {i}"
         );
     }
 
@@ -591,7 +591,7 @@ async fn stream_batch_insert_rejects_self_referential_synthesis_rows(
         offset_kind: None,
         source_event_ids: Some(vec![EventId::from_uuid(event_id)]),
         payload_schema_id: None,
-        source_run_id: None,
+        module_run_id: None,
         anchor_payload_hash: None,
         associated_blob_ids: None,
         temporal_policy: None,
@@ -599,7 +599,7 @@ async fn stream_batch_insert_rejects_self_referential_synthesis_rows(
         scope_key: None,
         equivalence_key: None,
         created_by_operation_id: None,
-        node_model: None,
+        automaton_model: None,
         ts_quality: None,
     }];
 
@@ -640,7 +640,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             offset_kind: None,
             source_event_ids: Some(vec![EventId::from_uuid(second_id)]),
             payload_schema_id: None,
-            source_run_id: None,
+            module_run_id: None,
             anchor_payload_hash: None,
             associated_blob_ids: None,
             temporal_policy: None,
@@ -648,7 +648,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             ts_quality: None,
         },
         StreamBatchRow {
@@ -665,7 +665,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             offset_kind: None,
             source_event_ids: Some(vec![EventId::from_uuid(first_id)]),
             payload_schema_id: None,
-            source_run_id: None,
+            module_run_id: None,
             anchor_payload_hash: None,
             associated_blob_ids: None,
             temporal_policy: None,
@@ -673,7 +673,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             ts_quality: None,
         },
     ];
@@ -1269,7 +1269,7 @@ async fn synthetic_metadata_roundtrips_through_insert(ctx: TestContext) -> TestR
     derived.scope_key = Some("analytics:daily:2026-03-14".to_string());
     derived.equivalence_key = Some("analytics:daily:2026-03-14:host-a".to_string());
     derived.created_by_operation_id = Some(operation_id);
-    derived.node_model = Some(AutomatonModel::Windowed);
+    derived.automaton_model = Some(AutomatonModel::Windowed);
 
     let inserted = ctx.pool.events().insert(derived).await?;
     let event_id = inserted.id.unwrap();
@@ -1289,7 +1289,7 @@ async fn synthetic_metadata_roundtrips_through_insert(ctx: TestContext) -> TestR
         Some("analytics:daily:2026-03-14:host-a")
     );
     assert_eq!(inserted.created_by_operation_id, Some(operation_id));
-    assert_eq!(inserted.node_model, Some(AutomatonModel::Windowed));
+    assert_eq!(inserted.automaton_model, Some(AutomatonModel::Windowed));
 
     // Verify fields survive load (get_by_id reads from DB)
     let loaded = ctx.pool.events().get_by_id(event_id).await?.unwrap();
@@ -1307,7 +1307,7 @@ async fn synthetic_metadata_roundtrips_through_insert(ctx: TestContext) -> TestR
         Some("analytics:daily:2026-03-14:host-a")
     );
     assert_eq!(loaded.created_by_operation_id, Some(operation_id));
-    assert_eq!(loaded.node_model, Some(AutomatonModel::Windowed));
+    assert_eq!(loaded.automaton_model, Some(AutomatonModel::Windowed));
 
     Ok(())
 }
@@ -1344,7 +1344,7 @@ async fn material_events_have_null_synthetic_metadata(ctx: TestContext) -> TestR
     assert!(loaded.scope_key.is_none());
     assert!(loaded.equivalence_key.is_none());
     assert!(loaded.created_by_operation_id.is_none());
-    assert!(loaded.node_model.is_none());
+    assert!(loaded.automaton_model.is_none());
 
     Ok(())
 }
@@ -1408,7 +1408,7 @@ async fn all_temporal_policy_variants_roundtrip(ctx: TestContext) -> TestResult<
 
 /// All node model enum variants roundtrip correctly.
 #[sinex_test]
-async fn all_node_model_variants_roundtrip(ctx: TestContext) -> TestResult<()> {
+async fn all_automaton_model_variants_roundtrip(ctx: TestContext) -> TestResult<()> {
     let material_record = ctx
         .pool
         .source_materials()
@@ -1442,7 +1442,7 @@ async fn all_node_model_variants_roundtrip(ctx: TestContext) -> TestResult<()> {
         let mut event = Event::builder(payload)
             .from_parents(vec![source_id])?
             .build()?;
-        event.node_model = Some(model);
+        event.automaton_model = Some(model);
 
         let inserted = ctx.pool.events().insert(event).await?;
         let loaded = ctx
@@ -1452,7 +1452,7 @@ async fn all_node_model_variants_roundtrip(ctx: TestContext) -> TestResult<()> {
             .await?
             .unwrap();
         assert_eq!(
-            loaded.node_model,
+            loaded.automaton_model,
             Some(model),
             "model {model} should roundtrip"
         );
@@ -1501,7 +1501,7 @@ async fn synthetic_metadata_survives_batch_insert(ctx: TestContext) -> TestResul
         event.scope_key = Some(format!("batch-scope:{i}"));
         event.equivalence_key = Some(format!("batch-equiv:{i}"));
         event.created_by_operation_id = Some(operation_id);
-        event.node_model = Some(AutomatonModel::Transducer);
+        event.automaton_model = Some(AutomatonModel::Transducer);
         events.push(event);
     }
 
@@ -1527,7 +1527,7 @@ async fn synthetic_metadata_survives_batch_insert(ctx: TestContext) -> TestResul
             Some(format!("batch-equiv:{i}").as_str())
         );
         assert_eq!(loaded.created_by_operation_id, Some(operation_id));
-        assert_eq!(loaded.node_model, Some(AutomatonModel::Transducer));
+        assert_eq!(loaded.automaton_model, Some(AutomatonModel::Transducer));
     }
 
     Ok(())

@@ -7,7 +7,7 @@
 #[cfg(feature = "messaging")]
 use super::super::control_protocol::RuntimeDrainComplete;
 use super::super::control_protocol::{encode_control_message, ensure_control_payload_fits};
-use super::{RuntimeActor, RuntimeRunner, SourceScanAck, SourceScanProgress, RuntimeDrainController, ServiceInfo};
+use super::{RuntimeModule, RuntimeRunner, SourceScanAck, SourceScanProgress, RuntimeDrainController, ServiceInfo};
 use crate::runtime::{RuntimeResult, SinexError};
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
@@ -15,7 +15,7 @@ use sinex_primitives::domain::ModuleState;
 use sinex_primitives::transport;
 use tracing::{info, warn};
 
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     pub(super) async fn publish_scan_ack(
         nats_client: &async_nats::Client,
         reply: Option<async_nats::Subject>,
@@ -158,7 +158,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
                 Ok(command) => command,
                 Err(error) => {
                     warn!(
-                        node = %module_name,
+                        module = %module_name,
                         error = %error,
                         "Ignoring malformed drain command"
                     );
@@ -168,7 +168,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
 
         if command.module_name.as_ref() != module_name {
             warn!(
-                node = %module_name,
+                module = %module_name,
                 requested = %command.module_name,
                 "Ignoring drain command addressed to a different node"
             );
@@ -178,7 +178,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         let first_request = drain.request_drain();
         let aborted_runtime_work = drain.abort_runtime_work();
         info!(
-            node = %module_name,
+            module = %module_name,
             reason = ?command.reason,
             first_request,
             aborted_runtime_work,

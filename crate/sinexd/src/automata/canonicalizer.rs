@@ -256,7 +256,7 @@ fn canonicalize_history(
     }))
 }
 
-/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type TerminalCommandCanonicalizerNode = TransducerAdapter<TerminalCommandCanonicalizer>;
 
 // --- Source descriptor (issue #690 / #734) ---

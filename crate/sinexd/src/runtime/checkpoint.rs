@@ -20,7 +20,7 @@
 //! # Storage Layout
 //!
 //! The NATS KV entries store:
-//! - `module_name`: RuntimeActor identifier
+//! - `module_name`: RuntimeModule identifier
 //! - `consumer_group`: Consumer group (for stream processing)
 //! - `consumer_name`: Instance identifier (hostname + PID)
 //! - `checkpoint_data`: JSON-serialized unified checkpoint
@@ -58,7 +58,7 @@ use tracing::{debug, info, warn};
 /// - `checkpoint`: The actual checkpoint data (position, event ID, etc.)
 /// - `processed_count`: Total messages/events processed (for monitoring)
 /// - `last_activity`: When this checkpoint was last updated
-/// - `data`: RuntimeActor-specific state (arbitrary JSON)
+/// - `data`: RuntimeModule-specific state (arbitrary JSON)
 /// - `version`: Checkpoint format version for schema evolution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointState {
@@ -71,7 +71,7 @@ pub struct CheckpointState {
     /// Last activity timestamp
     pub last_activity: Timestamp,
 
-    /// RuntimeActor-specific state data
+    /// RuntimeModule-specific state data
     pub data: Option<serde_json::Value>,
 
     /// Checkpoint version (for schema evolution)
@@ -435,7 +435,7 @@ impl CheckpointManager {
                 node = %self.module_name,
                 consumer_group = %self.consumer_group,
                 consumer_name = %self.consumer_name,
-                "No existing checkpoint found; derived node will replay all historical events"
+                "No existing checkpoint found; automaton will replay all historical events"
             );
         } else {
             info!(

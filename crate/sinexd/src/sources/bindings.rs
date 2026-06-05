@@ -72,8 +72,8 @@ pub struct SourceBinding {
     #[serde(default = "default_instance_idx")]
     pub instance_idx: u32,
 
-    /// Optional service-name override. Defaults to
-    /// `sinex-source-<id>-<idx>` when absent.
+    /// Optional runtime label override. Defaults to
+    /// `source-driver-<id>-<idx>` when absent.
     #[serde(default)]
     pub service_name: Option<String>,
 
@@ -182,7 +182,7 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
 
     let service_name = binding.service_name.clone().unwrap_or_else(|| {
         format!(
-            "sinex-source-{}-{}",
+            "source-driver-{}-{}",
             binding.source_id, binding.instance_idx
         )
     });

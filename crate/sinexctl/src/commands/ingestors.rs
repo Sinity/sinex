@@ -86,7 +86,7 @@ fn format_ingestors_status_table(response: &IngestorsStatusResponse) -> String {
             style("no").red().to_string()
         };
         let run = ing
-            .source_run_id
+            .module_run_id
             .as_ref()
             .map_or_else(|| style("-").dim().to_string(), short_uuid);
 

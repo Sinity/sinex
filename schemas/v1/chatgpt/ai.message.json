@@ -17,7 +17,7 @@
       ]
     },
     "message_id": {
-      "description": "RuntimeActor id of the message.",
+      "description": "RuntimeModule id of the message.",
       "type": "string"
     },
     "message_ts": {

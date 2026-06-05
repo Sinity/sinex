@@ -63,7 +63,7 @@ where
                         "{query_kind} unexpectedly returned non-event result during invalidation: {other:?}"
                     ))
                     .with_context("scope_key", scope_key)
-                    .with_context("node", self.node.name()));
+                    .with_context("automaton", self.automaton.name()));
                 }
             };
 
@@ -83,7 +83,7 @@ where
 
         if pages > 1 {
             info!(
-                node = %self.node.name(),
+                automaton = %self.automaton.name(),
                 scope_key,
                 query_kind,
                 pages,
@@ -103,22 +103,22 @@ where
     ) -> RuntimeResult<()> {
         let Some(runtime) = self.runtime.as_ref() else {
             return Err(SinexError::lifecycle(
-                "derived-node requested processing-failure routing but no transport runtime is available",
+                "automaton requested processing-failure routing but no transport runtime is available",
             )
-            .with_context("node", self.node.name())
+            .with_context("automaton", self.automaton.name())
             .with_context("event_type", event.event_type.as_ref())
             .with_context("source", event.source.as_ref())
             .with_context("reason", error.to_string()));
         };
         let transport = runtime.handles().transport();
         transport
-            .send_to_processing_failure_queue(event, &error.to_string(), self.node.name())
+            .send_to_processing_failure_queue(event, &error.to_string(), self.automaton.name())
             .await
             .map_err(|failure_err| {
                 SinexError::processing(
-                    "failed to send derived-node event to processing-failure stream",
+                    "failed to send automaton event to processing-failure stream",
                 )
-                .with_context("node", self.node.name())
+                .with_context("automaton", self.automaton.name())
                 .with_context("event_type", event.event_type.as_ref())
                 .with_context("source", event.source.as_ref())
                 .with_context("reason", error.to_string())
@@ -137,8 +137,8 @@ where
         }
 
         let emitter = self.event_emitter.as_ref().ok_or_else(|| {
-            SinexError::lifecycle("derived-node output channel is not initialized")
-                .with_context("node", self.node.name())
+            SinexError::lifecycle("automaton output channel is not initialized")
+                .with_context("automaton", self.automaton.name())
                 .with_context("context", context)
         })?;
 
@@ -150,8 +150,8 @@ where
             let event_type = event.event_type.as_ref().to_string();
 
             emitter.emit(event).await.map_err(|error| {
-                SinexError::lifecycle("failed to emit derived-node output event")
-                    .with_context("node", self.node.name())
+                SinexError::lifecycle("failed to emit automaton output event")
+                    .with_context("automaton", self.automaton.name())
                     .with_context("context", context)
                     .with_context("event_id", event_id)
                     .with_context("source", event_source)
@@ -163,7 +163,7 @@ where
         Ok(count)
     }
 
-    /// Process a single event through the derived node's logic.
+    /// Process a single event through the automaton's logic.
     pub async fn process_one(
         &mut self,
         event: Event<JsonValue>,
@@ -179,7 +179,7 @@ where
         let process_started_at = std::time::Instant::now();
 
         let result = self
-            .node
+            .automaton
             .process_derived(&mut self.persisted_state.state, event.clone(), &context)
             .await;
 
@@ -208,7 +208,7 @@ where
                             .await
                         {
                             warn!(
-                                node = %self.node.name(),
+                                automaton = %self.automaton.name(),
                                 error = %obs_err,
                                 "Failed to emit automaton error counter"
                             );
@@ -218,7 +218,7 @@ where
             }
 
             if let Err(e) = reporter.check_and_emit().await {
-                warn!(node = %self.node.name(), error = %e, "Failed to emit health status");
+                warn!(automaton = %self.automaton.name(), error = %e, "Failed to emit health status");
             }
         }
 
@@ -237,7 +237,7 @@ where
                 // to Settlement variants with backoff and retry budgets.
                 let sinex_error = e.to_sinex_error();
                 let failure_ctx = FailureContext {
-                    unit_id: self.node.name().to_string(),
+                    unit_id: self.automaton.name().to_string(),
                     operation: RuntimeOperation::ProcessBatch,
                     phase: RuntimePhase::ProcessInput,
                     input_scope: None,
@@ -249,7 +249,7 @@ where
 
                 match settlement {
                     Settlement::Commit => {
-                        warn!(node = %self.node.name(), error = %e, "Committing (settled as benign)");
+                        warn!(automaton = %self.automaton.name(), error = %e, "Committing (settled as benign)");
                         self.record_processed_input(source_event_id);
                         self.observe_runtime_snapshot().await;
                         Ok(Vec::new())
@@ -257,7 +257,7 @@ where
                     Settlement::SendToProcessingFailure
                     | Settlement::Park { .. }
                     | Settlement::Quarantine { .. } => {
-                        warn!(node = %self.node.name(), error = %e, "Routing to processing-failure queue");
+                        warn!(automaton = %self.automaton.name(), error = %e, "Routing to processing-failure queue");
                         self.send_to_processing_failure_queue_or_fail(&event, &e)
                             .await?;
                         self.record_processed_input(source_event_id);
@@ -268,7 +268,7 @@ where
                         error!(
                             target: "sinex_metrics",
                             metric = "derive.batch_retry_halts_total",
-                            node = %self.node.name(),
+                            automaton = %self.automaton.name(),
                             error = %e,
                             "Retryable error; halting batch"
                         );
@@ -280,30 +280,30 @@ where
                         // into a hot loop. The error still propagates so the
                         // caller can record the failure.
                         if let Some(drain) = self.shutdown_tx.as_ref() {
-                            let _ = drain.request_drain_and_warn(self.node.name());
+                            let _ = drain.request_drain_and_warn(self.automaton.name());
                         }
                         error!(
                             target: "sinex_metrics",
                             metric = "derive.node_halts_total",
-                            node = %self.node.name(),
+                            automaton = %self.automaton.name(),
                             error = %e,
                             reason = ?reason,
                             "Halting node; runtime drain requested"
                         );
                         Err(SinexError::processing(format!(
-                            "RuntimeActor halted: {reason:?} — {e}"
+                            "RuntimeModule halted: {reason:?} — {e}"
                         )))
                     }
                     Settlement::DrainRuntimeUnit { reason } => {
                         // Same shape as HaltNode — request drain, then return
                         // the error so the in-flight batch unwinds.
                         if let Some(drain) = self.shutdown_tx.as_ref() {
-                            let _ = drain.request_drain_and_warn(self.node.name());
+                            let _ = drain.request_drain_and_warn(self.automaton.name());
                         }
                         error!(
                             target: "sinex_metrics",
                             metric = "derive.runtime_drains_total",
-                            node = %self.node.name(),
+                            automaton = %self.automaton.name(),
                             error = %e,
                             reason = %reason,
                             "Draining runtime unit"
@@ -332,12 +332,12 @@ where
         let context = AutomatonContext::timer_flush(now)?;
 
         let outputs = self
-            .node
+            .automaton
             .timer_flush_derived(&mut self.persisted_state.state, now, &context)
             .await
             .map_err(|e| {
                 SinexError::processing("windowed timer flush failed")
-                    .with_context("node", self.node.name())
+                    .with_context("automaton", self.automaton.name())
                     .with_source(e)
             })?;
 
@@ -376,7 +376,7 @@ where
                     error!(
                         target: "sinex_metrics",
                         metric = "derive.batch_retry_halts_total",
-                        node = %self.node.name(),
+                        automaton = %self.automaton.name(),
                         error = %e,
                         "Retryable error processing event in batch; halting batch"
                     );
@@ -396,7 +396,7 @@ where
                     error!(
                         target: "sinex_metrics",
                         metric = "derive.checkpoint_failures_total",
-                        node = %self.node.name(),
+                        automaton = %self.automaton.name(),
                         error = %e,
                         consecutive_failures = self.consecutive_checkpoint_failures,
                         "Failed to save checkpoint after batch"

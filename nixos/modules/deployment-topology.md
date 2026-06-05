@@ -22,9 +22,9 @@ surfaces:
 | `sinex-nats-bootstrap` | JetStream bootstrap | Created when managed NATS stream bootstrap is enabled. |
 | Source support units | ACL/env/setup bridges | Generated for enabled workstation source families when they need target-user access or setup. |
 
-There are no live per-domain ingestor, `sinexd`, `sinexd`, or
-`sinex-process` binaries in the current topology. Historical target-vision
-prose that names them is superseded by the `sinexd` fold.
+There are no live per-domain ingestor or per-automaton binaries in the current
+topology. Historical target-vision prose that names split runtime binaries is
+superseded by the `sinexd` fold.
 
 ## Service User Permission Model
 

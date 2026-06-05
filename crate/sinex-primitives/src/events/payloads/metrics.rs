@@ -257,13 +257,13 @@ pub struct PoolStatsPayload {
     pub timeout_count: u64,
 }
 
-/// RuntimeActor event processing statistics
+/// RuntimeModule event processing statistics
 ///
 /// Addresses Issues 24, 29: Event Processing Metrics
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinexd.source", event_type = "processing.stats")]
 pub struct SourceProcessingStatsPayload {
-    /// RuntimeActor type (fs-ingestor, terminal-ingestor, etc.)
+    /// RuntimeModule type (fs-ingestor, terminal-ingestor, etc.)
     pub module_kind: String,
     /// Events processed since last report
     pub events_processed: u64,
@@ -330,7 +330,7 @@ pub struct AutomatonLatencySnapshotPayload {
     /// Events per second over the live throughput window
     #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
     pub throughput_eps: f64,
-    /// Dimensional labels (`node_model`, `source_run_id`, etc.)
+    /// Dimensional labels (`automaton_model`, `module_run_id`, etc.)
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub labels: HashMap<String, String>,
 }

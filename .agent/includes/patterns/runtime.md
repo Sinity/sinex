@@ -56,7 +56,7 @@ impl SourceDriver for MyIngestor {
 pub type MyIngestorNode = SourceDriverRuntime<MyIngestor>;
 ```
 
-### Derived RuntimeActor Pattern (Transducer — Stateless)
+### Derived RuntimeModule Pattern (Transducer — Stateless)
 
 ```rust
 use crate::runtime::{Transducer, AutomatonRuntime, AutomatonLogicError};
@@ -81,7 +81,7 @@ impl Transducer for MyTransducer {
 }
 ```
 
-### Derived RuntimeActor Pattern (Windowed — Accumulate Then Emit)
+### Derived RuntimeModule Pattern (Windowed — Accumulate Then Emit)
 
 ```rust
 use crate::runtime::{Windowed, AutomatonRuntime, DerivedOutput, AutomatonLogicError};

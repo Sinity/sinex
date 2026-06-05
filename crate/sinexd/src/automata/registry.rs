@@ -157,7 +157,7 @@ pub fn parse_enabled(raw: Option<&str>) -> Result<Vec<&'static AutomatonSpec>> {
 /// the process environment at parse time.
 async fn run_one<T>(name: &'static str) -> Result<()>
 where
-    T: crate::runtime::stream::RuntimeActor
+    T: crate::runtime::stream::RuntimeModule
         + crate::runtime::ExplorationProvider
         + Default
         + 'static,

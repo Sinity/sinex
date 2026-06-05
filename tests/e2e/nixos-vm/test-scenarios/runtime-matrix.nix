@@ -1,4 +1,4 @@
-# RuntimeActor constellation coverage test for Sinex
+# RuntimeModule constellation coverage test for Sinex
 { pkgs
 , pg_jsonschema
 , sinex ? null
@@ -136,7 +136,7 @@ CREATE TABLE History (
   redirect INTEGER NOT NULL DEFAULT 0
 );
 INSERT INTO History (url, title, atime, redirect)
-VALUES ('https://example.com/runtime-matrix-qute', 'RuntimeActor Matrix Qutebrowser', 1700100000, 0);
+VALUES ('https://example.com/runtime-matrix-qute', 'RuntimeModule Matrix Qutebrowser', 1700100000, 0);
 SQL
 
       rm -f /home/test/.local/share/qutebrowser/webengine/History
@@ -155,7 +155,7 @@ CREATE TABLE visits (
   visit_duration INTEGER DEFAULT 0 NOT NULL
 );
 INSERT INTO urls (id, url, title)
-VALUES (1, 'https://example.com/runtime-matrix-chromium', 'RuntimeActor Matrix Chromium');
+VALUES (1, 'https://example.com/runtime-matrix-chromium', 'RuntimeModule Matrix Chromium');
 INSERT INTO visits (id, url, visit_time, external_referrer_url, transition, visit_duration)
 VALUES (1, 1, 13344473601000000, NULL, 805306368, 1000000);
 SQL
@@ -215,39 +215,11 @@ SQL
         machine.succeed("su - postgres -c 'psql -d sinex -At -c \"SELECT 1\"' | grep '^1$'")
         machine.succeed("su - postgres -c \"psql -d sinex_dev -At -c \\\"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'core' AND table_name = 'events'\\\"\" | grep '^1$'")
 
-    terminal_source_units = [
-        "sinex-source@terminal.atuin-history.service",
-        "sinex-source@terminal.bash-history.service",
-        "sinex-source@terminal.fish-history.service",
-        "sinex-source@terminal.zsh-history.service",
-    ]
-
-    # Event source nodes
-    nodes = [
-        "sinex-filesystem-1.service",
-        "sinex-filesystem-2.service",
-        "sinex-browser-1.service",
-        "sinex-desktop-1.service",
-        "sinex-system-1.service"
-    ] + terminal_source_units
-    for unit in nodes:
-        machine.wait_for_unit(unit, timeout=120)
-        machine.succeed(f"systemctl is-active {unit}")
-
     machine.wait_for_unit("sinex-document-scan.timer", timeout=120)
     machine.succeed("systemctl is-active sinex-document-scan.timer")
     machine.succeed("test \"$(systemctl show -p LoadState --value sinex-document-scan.service)\" = loaded")
 
-    # Automata
-    automata = [
-        "sinex-canonicalizer.service",
-        "sinex-health-automaton.service",
-        "sinex-analytics-automaton.service",
-        "sinex-session-detector.service"
-    ]
-    for unit in automata:
-        machine.wait_for_unit(unit, timeout=120)
-        machine.succeed(f"systemctl is-active {unit}")
+    machine.fail("systemctl list-unit-files 'sinex-source@*.service' 'sinex-filesystem-*.service' 'sinex-browser-*.service' 'sinex-desktop-*.service' 'sinex-system-*.service' 'sinex-*automaton.service' 'sinex-canonicalizer.service' --no-legend --plain | grep -v '^$'")
 
     with subtest("Target-user bridge access"):
         for unit in [
@@ -300,8 +272,7 @@ SQL
     with subtest("Managed service restart proof"):
         restart_units = [
             "sinexd.service",
-            "sinex-browser-1.service",
-        ] + terminal_source_units
+        ]
         for unit in restart_units:
             machine.systemctl(f"restart {unit}")
             machine.wait_for_unit(unit, timeout=60)
@@ -309,7 +280,7 @@ SQL
         machine.succeed("sinexctl --insecure verify")
         assert_no_failed_sinex_units()
 
-    with subtest("Managed node units are generated"):
+    with subtest("Collapsed runtime units are not generated"):
         unit_files = machine.succeed("systemctl list-unit-files 'sinex-*.service' --no-legend --plain")
         for unit in [
             "sinex-filesystem-1.service",
@@ -317,7 +288,10 @@ SQL
             "sinex-browser-1.service",
             "sinex-desktop-1.service",
             "sinex-system-1.service",
-        ] + terminal_source_units:
-            assert unit in unit_files
+            "sinex-canonicalizer.service",
+            "sinex-health-automaton.service",
+            "sinex-analytics-automaton.service",
+        ]:
+            assert unit not in unit_files
   '';
 }

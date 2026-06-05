@@ -1,4 +1,4 @@
-//! RuntimeActor-side schema validation
+//! RuntimeModule-side schema validation
 //!
 //! Enables nodes to validate events before publishing to NATS,
 //! reducing bandwidth and providing early feedback on schema errors.

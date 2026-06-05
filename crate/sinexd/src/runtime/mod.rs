@@ -141,7 +141,7 @@ pub use record_source::{
     process_record_batch_lenient, stable_json_line,
 };
 pub use stream::{
-    Checkpoint, ContinuousStart, EventSender, EventStream, MaterialReplayContext, RuntimeActor,
+    Checkpoint, ContinuousStart, EventSender, EventStream, MaterialReplayContext, RuntimeModule,
     RuntimeCapabilities, RuntimeRunner, SourceScanAck, SourceScanCommand, SourceScanProgress, ModuleKind,
     ReplayScopeFilters, ResolvedReplayMaterial, RunnerLifecycle, ScanArgs, ScanEstimate,
     ScanReport, TimeHorizon,

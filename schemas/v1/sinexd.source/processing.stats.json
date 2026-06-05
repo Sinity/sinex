@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "RuntimeActor event processing statistics\n\nAddresses Issues 24, 29: Event Processing Metrics",
+  "description": "RuntimeModule event processing statistics\n\nAddresses Issues 24, 29: Event Processing Metrics",
   "properties": {
     "avg_latency_ms": {
       "description": "Average processing latency (ms)",
@@ -29,7 +29,7 @@
       "type": "integer"
     },
     "module_kind": {
-      "description": "RuntimeActor type (fs-ingestor, terminal-ingestor, etc.)",
+      "description": "RuntimeModule type (fs-ingestor, terminal-ingestor, etc.)",
       "type": "string"
     },
     "queue_depth": {

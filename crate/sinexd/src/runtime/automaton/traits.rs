@@ -23,7 +23,7 @@ const DEFAULT_CHECKPOINT_INTERVAL_EVENTS: u64 = 1000;
 const DEFAULT_CHECKPOINT_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_PROCESSING_BATCH_SIZE: usize = 100;
 
-/// Configuration for the derived node adapter.
+/// Configuration for the automaton adapter.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct AutomatonAdapterConfig {
     /// How often to checkpoint (in events processed).
@@ -75,7 +75,7 @@ fn serialize_outputs<T: Serialize>(
     outputs.into_iter().map(serialize_output).collect()
 }
 
-/// Which provenance class a derived node consumes from its input stream.
+/// Which provenance class a automaton consumes from its input stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputProvenanceFilter {
     /// Accept both material and synthesized events.
@@ -116,7 +116,7 @@ impl InputProvenanceFilter {
 /// A 1:1 event transducer: one input event produces zero or one output event.
 ///
 /// Transducers are deterministic transforms with inherited `ts_orig`.
-/// The default `node_model` is `AutomatonModel::Transducer`.
+/// The default `automaton_model` is `AutomatonModel::Transducer`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not implement `Transducer`",
     label = "missing Transducer implementation",
@@ -139,7 +139,7 @@ pub trait Transducer: Send + Sync + 'static {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }
-    fn node_model(&self) -> AutomatonModel {
+    fn automaton_model(&self) -> AutomatonModel {
         AutomatonModel::Transducer
     }
 
@@ -211,7 +211,7 @@ pub trait Windowed: Send + Sync + 'static {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }
-    fn node_model(&self) -> AutomatonModel {
+    fn automaton_model(&self) -> AutomatonModel {
         AutomatonModel::Windowed
     }
 
@@ -324,7 +324,7 @@ pub trait ScopeReconciler: Send + Sync + 'static {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }
-    fn node_model(&self) -> AutomatonModel {
+    fn automaton_model(&self) -> AutomatonModel {
         AutomatonModel::ScopeReconciler
     }
 
@@ -423,7 +423,7 @@ pub trait MultiOutputTransducer: Send + Sync + 'static {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }
-    fn node_model(&self) -> AutomatonModel {
+    fn automaton_model(&self) -> AutomatonModel {
         AutomatonModel::Transducer
     }
 
@@ -454,7 +454,7 @@ pub trait MultiOutputTransducer: Send + Sync + 'static {
 
 // ── Automaton — unified dispatch trait ───────────────────────────
 
-/// Internal trait that unifies all three derived node models for the adapter.
+/// Internal trait that unifies all three automaton models for the adapter.
 ///
 /// Implemented via wrapper types: `TransducerWrapper<N>`, `WindowedWrapper<N>`,
 /// `ScopeReconcilerWrapper<N>`. Users never implement this directly.
@@ -466,7 +466,7 @@ pub trait Automaton: Send + Sync + 'static {
     fn input_provenance_filter(&self) -> InputProvenanceFilter;
     fn output_event_type(&self) -> &'static str;
     fn output_event_source(&self) -> &'static str;
-    fn node_model(&self) -> AutomatonModel;
+    fn automaton_model(&self) -> AutomatonModel;
 
     /// Process a single event through the node's model-specific logic.
     fn process_derived(
@@ -548,8 +548,8 @@ impl<N: Transducer> Automaton for TransducerWrapper<N> {
     fn output_event_source(&self) -> &'static str {
         self.0.output_event_source()
     }
-    fn node_model(&self) -> AutomatonModel {
-        self.0.node_model()
+    fn automaton_model(&self) -> AutomatonModel {
+        self.0.automaton_model()
     }
 
     async fn process_derived(
@@ -614,8 +614,8 @@ impl<N: Windowed> Automaton for WindowedWrapper<N> {
     fn output_event_source(&self) -> &'static str {
         self.0.output_event_source()
     }
-    fn node_model(&self) -> AutomatonModel {
-        self.0.node_model()
+    fn automaton_model(&self) -> AutomatonModel {
+        self.0.automaton_model()
     }
 
     async fn process_derived(
@@ -740,8 +740,8 @@ where
     fn output_event_source(&self) -> &'static str {
         self.0.output_event_source()
     }
-    fn node_model(&self) -> AutomatonModel {
-        self.0.node_model()
+    fn automaton_model(&self) -> AutomatonModel {
+        self.0.automaton_model()
     }
 
     async fn process_derived(
@@ -850,8 +850,8 @@ impl<N: MultiOutputTransducer> Automaton for MultiOutputTransducerWrapper<N> {
     fn output_event_source(&self) -> &'static str {
         self.0.output_event_source()
     }
-    fn node_model(&self) -> AutomatonModel {
-        self.0.node_model()
+    fn automaton_model(&self) -> AutomatonModel {
+        self.0.automaton_model()
     }
 
     async fn process_derived(

@@ -70,7 +70,7 @@ pub struct SelfObserver {
     min_interval: Duration,
     /// The `core.runs` row ID for this component instance, stamped on every emitted event.
     /// Shared across clones via `Arc<OnceLock>` so it can be set once after DB registration.
-    source_run_id: Arc<OnceLock<sinex_primitives::Uuid>>,
+    module_run_id: Arc<OnceLock<sinex_primitives::Uuid>>,
 }
 
 impl std::fmt::Debug for SelfObserver {
@@ -167,7 +167,7 @@ impl SelfObserver {
             enabled,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: min_emission_interval,
-            source_run_id: Arc::new(OnceLock::new()),
+            module_run_id: Arc::new(OnceLock::new()),
         }
     }
 
@@ -181,7 +181,7 @@ impl SelfObserver {
             enabled: false,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: Duration::from_secs(1),
-            source_run_id: Arc::new(OnceLock::new()),
+            module_run_id: Arc::new(OnceLock::new()),
         }
     }
 
@@ -191,8 +191,8 @@ impl SelfObserver {
     /// Can be called after construction (even after clones are taken) because
     /// the backing `OnceLock` is shared across all clones. Subsequent calls are
     /// silently ignored — the first write wins.
-    pub fn set_source_run_id(&self, run_id: sinex_primitives::Uuid) {
-        let _ = self.source_run_id.set(run_id);
+    pub fn set_module_run_id(&self, run_id: sinex_primitives::Uuid) {
+        let _ = self.module_run_id.set(run_id);
     }
 
     /// Check if self-observation is enabled
@@ -375,7 +375,7 @@ impl SelfObserver {
             .build()
         {
             Ok(mut event) => {
-                event.source_run_id = self.source_run_id.get().copied();
+                event.module_run_id = self.module_run_id.get().copied();
                 event.with_timestamp(ts_orig).with_host(host)
             }
             Err(error) => {
@@ -704,7 +704,7 @@ impl SelfObserver {
         .await
     }
 
-    /// Emit a per-event latency snapshot for a derived node.
+    /// Emit a per-event latency snapshot for a automaton.
     ///
     /// One event collapses what was previously six separate `metric.gauge`
     /// emissions (`derived.event_lag_ms`, `derived.tick_runtime_ms`, the two
@@ -973,7 +973,7 @@ mod tests {
             enabled: true,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: Duration::from_secs(1),
-            source_run_id: Arc::new(OnceLock::new()),
+            module_run_id: Arc::new(OnceLock::new()),
         }
     }
 

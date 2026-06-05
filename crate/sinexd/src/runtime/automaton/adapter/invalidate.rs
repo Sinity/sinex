@@ -54,8 +54,8 @@ where
 
         // Only process invalidations for our declared input type/provenance contract.
         if !invalidation.matches_input(
-            self.node.input_event_type(),
-            self.node.input_provenance_filter(),
+            self.automaton.input_event_type(),
+            self.automaton.input_provenance_filter(),
         ) {
             return Ok(PreparedInvalidation {
                 outputs: Vec::new(),
@@ -86,7 +86,7 @@ where
             .map(Id::<Event<JsonValue>>::from_uuid)
             .ok_or_else(|| {
                 SinexError::validation("scope invalidation is missing affected event ids")
-                    .with_context("node", self.node.name())
+                    .with_context("automaton", self.automaton.name())
                     .with_context("action", invalidation.action.to_string())
                     .with_context("event_type", invalidation.event_type.as_ref())
                     .with_context("source", invalidation.event_source.as_ref())
@@ -113,7 +113,7 @@ where
                     }
                     Ok(None) => {
                         debug!(
-                            node = %self.node.name(),
+                            automaton = %self.automaton.name(),
                             event_id = %id,
                             "Event not found in DB while deriving invalidation scope keys; \
                              skipping (may be archived or not yet persisted)"
@@ -124,7 +124,7 @@ where
                             "Failed to load affected event while deriving invalidation scope keys",
                         )
                         .with_context("event_id", id.to_string())
-                        .with_context("node", self.node.name())
+                        .with_context("automaton", self.automaton.name())
                         .with_source(error));
                     }
                 }
@@ -136,7 +136,7 @@ where
 
         if scope_keys.is_empty() {
             debug!(
-                node = %self.node.name(),
+                automaton = %self.automaton.name(),
                 action = %invalidation.action,
                 "No scope keys to recompute"
             );
@@ -147,8 +147,8 @@ where
             });
         }
 
-        let output_source = self.node.output_event_source();
-        let output_type = self.node.output_event_type();
+        let output_source = self.automaton.output_event_source();
+        let output_type = self.automaton.output_event_type();
         let mut all_outputs = Vec::new();
         let mut prepared_scopes = Vec::new();
 
@@ -164,7 +164,7 @@ where
             };
 
             let stale_ids = stale_output_ids_or_fail_scope(
-                self.node.name(),
+                self.automaton.name(),
                 scope_key,
                 self.load_query_events_paginated(&pool, stale_query, scope_key, "stale outputs")
                     .await,
@@ -201,7 +201,7 @@ where
             };
 
             info!(
-                node = %self.node.name(),
+                automaton = %self.automaton.name(),
                 scope_key,
                 working_set_size = working_set.len(),
                 action = %invalidation.action,
@@ -210,7 +210,7 @@ where
 
             // ── Step 3: Recompute via trait implementation ──
             let outputs = self
-                .node
+                .automaton
                 .process_invalidation_derived(
                     &mut self.persisted_state.state,
                     scope_key,
@@ -237,8 +237,8 @@ where
                         return Err(SinexError::processing(
                             "derived output builder returned event without id",
                         )
-                        .with_context("node", self.node.name())
-                        .with_context("output_event_type", self.node.output_event_type()));
+                        .with_context("automaton", self.automaton.name())
+                        .with_context("output_event_type", self.automaton.output_event_type()));
                     }
                 };
                 new_event_ids.push((new_id, equivalence_key));
@@ -282,7 +282,7 @@ where
                         &scope.stale_ids,
                         "scope_invalidation_recompute",
                         &operation_uuid.to_string(),
-                        &format!("derived:{}", self.node.name()),
+                        &format!("derived:{}", self.automaton.name()),
                     )
                     .await
                     .map_err(|error| {
@@ -290,12 +290,12 @@ where
                             "Failed to archive stale outputs after recomputation",
                         )
                         .with_context("scope_key", scope.scope_key.clone())
-                        .with_context("node", self.node.name())
+                        .with_context("automaton", self.automaton.name())
                         .with_source(error)
                     })?;
 
                 info!(
-                    node = %self.node.name(),
+                    automaton = %self.automaton.name(),
                     scope_key = scope.scope_key,
                     archived_count = archived,
                     "Archived stale derived outputs after successful recomputation emission"
@@ -328,7 +328,7 @@ where
                     .await
                 {
                     warn!(
-                        node = %self.node.name(),
+                        automaton = %self.automaton.name(),
                         scope_key = %scope.scope_key,
                         error = %error,
                         "Failed to record replacement relations — events still correct"
@@ -366,7 +366,7 @@ where
             .await?;
 
         info!(
-            node = %self.node.name(),
+            automaton = %self.automaton.name(),
             scopes_recomputed = scope_count,
             outputs_produced = output_count,
             "Invalidation processing complete"
@@ -396,7 +396,7 @@ where
         &mut self,
         payload: &[u8],
     ) -> RuntimeResult<Option<u64>> {
-        let module_name = self.node.name();
+        let module_name = self.automaton.name();
         let processing_start = Instant::now();
 
         // Emit "received" counter
@@ -411,7 +411,7 @@ where
             Ok(inv) => inv,
             Err(e) => {
                 warn!(
-                    node = %module_name,
+                    automaton = %module_name,
                     error = %e,
                     payload_len = payload.len(),
                     "Failed to deserialize invalidation signal"
@@ -427,7 +427,7 @@ where
         };
 
         debug!(
-            node = %module_name,
+            automaton = %module_name,
             action = %invalidation.action,
             affected_events = invalidation.affected_event_ids.len(),
             scope_keys = ?invalidation.affected_scope_keys,
@@ -452,7 +452,7 @@ where
                             error!(
                                 target: "sinex_metrics",
                                 metric = "derive.invalidation_errors_total",
-                                node = %module_name,
+                                automaton = %module_name,
                                 error = %error,
                                 action = %invalidation.action,
                                 "Invalidation output emission failed"
@@ -478,7 +478,7 @@ where
                         error!(
                             target: "sinex_metrics",
                             metric = "derive.invalidation_errors_total",
-                            node = %module_name,
+                            automaton = %module_name,
                             error = %error,
                             action = %invalidation.action,
                             "Invalidation archive finalization failed after output emission"
@@ -509,7 +509,7 @@ where
                                 error!(
                                     target: "sinex_metrics",
                                     metric = "derive.checkpoint_failures_total",
-                                    node = %module_name,
+                                    automaton = %module_name,
                                     error = %e,
                                     consecutive_failures =
                                         self.consecutive_checkpoint_failures,
@@ -603,7 +603,7 @@ where
                     error!(
                         target: "sinex_metrics",
                         metric = "derive.invalidation_errors_total",
-                        node = %module_name,
+                        automaton = %module_name,
                         error = %e,
                         action = %invalidation.action,
                         "Invalidation processing failed"
@@ -631,7 +631,7 @@ where
             let _ = invalidation;
             let _ = processing_start;
             warn!(
-                node = %module_name,
+                automaton = %module_name,
                 "Invalidation received but db feature not enabled — cannot process"
             );
             Ok(None)

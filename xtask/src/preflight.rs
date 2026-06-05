@@ -835,8 +835,8 @@ fn dev_rpc_token_if_missing() -> Option<String> {
         return None;
     }
 
-    let has_token = env_var_present_and_nonempty("SINEX_RPC_TOKEN")
-        || env_var_present_and_nonempty("SINEX_RPC_TOKEN_FILE")
+    let has_token = env_var_present_and_nonempty("SINEX_API_TOKEN")
+        || env_var_present_and_nonempty("SINEX_API_TOKEN_FILE")
         || env_var_present_and_nonempty("SINEX_API_ADMIN_TOKEN_FILE");
 
     (!has_token).then(default_dev_rpc_token)
@@ -861,7 +861,7 @@ pub(crate) fn local_runtime_env_overrides() -> Vec<(String, String)> {
         ));
     }
     if let Some(token) = dev_rpc_token_if_missing() {
-        overrides.push(("SINEX_RPC_TOKEN".to_string(), token));
+        overrides.push(("SINEX_API_TOKEN".to_string(), token));
     }
 
     overrides
@@ -872,8 +872,8 @@ pub(crate) fn local_runtime_env_overrides() -> Vec<(String, String)> {
 /// Only sets the token in non-production environments.
 fn set_dev_token_if_missing() {
     if let Some(dev_token) = dev_rpc_token_if_missing() {
-        unsafe { std::env::set_var("SINEX_RPC_TOKEN", &dev_token) };
-        eprintln!("⚡ Auto-set SINEX_RPC_TOKEN={dev_token} (dev mode)");
+        unsafe { std::env::set_var("SINEX_API_TOKEN", &dev_token) };
+        eprintln!("⚡ Auto-set SINEX_API_TOKEN={dev_token} (dev mode)");
     }
 }
 
@@ -1927,13 +1927,13 @@ mod tests {
     async fn test_set_dev_token_if_missing_adds_admin_role_suffix() -> TestResult<()> {
         let mut _guard = EnvGuard::new();
         _guard.set_optional("SINEX_ENVIRONMENT", None);
-        _guard.set_optional("SINEX_RPC_TOKEN", None);
-        _guard.set_optional("SINEX_RPC_TOKEN_FILE", None);
+        _guard.set_optional("SINEX_API_TOKEN", None);
+        _guard.set_optional("SINEX_API_TOKEN_FILE", None);
         _guard.set_optional("SINEX_API_ADMIN_TOKEN_FILE", None);
 
         set_dev_token_if_missing();
 
-        let token = std::env::var("SINEX_RPC_TOKEN")?;
+        let token = std::env::var("SINEX_API_TOKEN")?;
         assert!(token.starts_with("dev-token-"));
         assert!(token.ends_with(":admin"));
         Ok(())
@@ -1944,8 +1944,8 @@ mod tests {
     {
         let mut _guard = EnvGuard::new();
         _guard.set_optional("SINEX_ENVIRONMENT", None);
-        _guard.set_optional("SINEX_RPC_TOKEN", None);
-        _guard.set_optional("SINEX_RPC_TOKEN_FILE", None);
+        _guard.set_optional("SINEX_API_TOKEN", None);
+        _guard.set_optional("SINEX_API_TOKEN_FILE", None);
         _guard.set_optional("SINEX_API_ADMIN_TOKEN_FILE", None);
         _guard.set_optional("SINEX_API_TLS_CERT", None);
         _guard.set_optional("SINEX_API_TLS_KEY", None);
@@ -1953,7 +1953,7 @@ mod tests {
         let overrides = local_runtime_env_overrides();
 
         assert!(overrides.iter().any(|(key, value)| {
-            key == "SINEX_RPC_TOKEN" && value.starts_with("dev-token-") && value.ends_with(":admin")
+            key == "SINEX_API_TOKEN" && value.starts_with("dev-token-") && value.ends_with(":admin")
         }));
         assert!(
             overrides.iter().any(|(key, value)| {

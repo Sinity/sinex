@@ -76,14 +76,14 @@ pkgs.testers.nixosTest {
     def ensure_ready(timeout: int = 120):
         helpers.wait_for_sinex_ready(timeout=timeout)
         machine.wait_until_succeeds("sinex-health-check", timeout=timeout)
-        nodes = helpers.list_active_nodes()
-        print(f"Active nodes: {nodes}")
-        return nodes
+        support_units = helpers.list_active_runtime_support_units()
+        print(f"Active Sinex support units: {support_units}")
+        return support_units
 
     with subtest("Production environment readiness"):
         machine.wait_for_unit("multi-user.target")
-        nodes = ensure_ready()
-        assert nodes, "Expected node services to be active"
+        support_units = ensure_ready()
+        assert "sinexd.service" in helpers.list_active_sinex_units()
         baseline_events = helpers.get_event_count()
         print(f"Baseline events: {baseline_events}")
 
@@ -171,12 +171,12 @@ pkgs.testers.nixosTest {
             assert worst_time < 6000, "Worst-case query latency exceeded tolerance"
 
     with subtest("Post-load validation"):
-        nodes = ensure_ready()
+        support_units = ensure_ready()
         before = helpers.get_event_count()
         produced = helpers.generate_events(20, "final")
         assert helpers.wait_for_event_processing(before + produced, timeout=60)
-        final_nodes = helpers.list_active_nodes()
-        print(f"Final nodes: {final_nodes}")
+        final_support_units = helpers.list_active_runtime_support_units()
+        print(f"Final Sinex support units: {final_support_units}")
         machine.succeed("sinex-health-check")
   '';
 }

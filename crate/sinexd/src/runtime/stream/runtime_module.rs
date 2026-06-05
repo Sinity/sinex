@@ -1,4 +1,4 @@
-//! The unified `RuntimeActor` trait implemented by source drivers and automata.
+//! The unified `RuntimeModule` trait implemented by source drivers and automata.
 
 use super::{
     Checkpoint, RuntimeCapabilities, RuntimeInitContext, ModuleKind, ProcessingStats, ScanArgs,
@@ -12,7 +12,7 @@ use sinex_primitives::temporal::Timestamp;
 use tracing::info;
 
 /// Unified trait for runtime modules that participate in event streams.
-pub trait RuntimeActor: Send + Sync {
+pub trait RuntimeModule: Send + Sync {
     type Config: for<'de> Deserialize<'de> + Default + Send + Sync;
 
     fn initialize(

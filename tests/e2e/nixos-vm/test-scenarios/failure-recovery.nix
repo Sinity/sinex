@@ -161,13 +161,7 @@ let
         sleep $DURATION
         echo "Restarting PostgreSQL..."
         systemctl start postgresql
-        systemctl start \
-          sinexd \
-          sinex-filesystem-1 \
-          'sinex-source@terminal.atuin-history.service' \
-          'sinex-source@terminal.bash-history.service' \
-          'sinex-source@terminal.fish-history.service' \
-          'sinex-source@terminal.zsh-history.service'
+        systemctl start sinexd
         ;;
       collector-crash)
         echo "Stopping sinexd for $DURATION seconds..."
@@ -254,17 +248,6 @@ let
         sleep 2
     done
 
-    while ! systemctl is-active sinex-filesystem-1 >/dev/null 2>&1; do
-        current_time=$(date +%s)
-        elapsed=$((current_time - start_time))
-        if [ $elapsed -gt $MAX_WAIT ]; then
-            echo "FAIL: Filesystem node not recovered within ''${MAX_WAIT}s"
-            exit 1
-        fi
-        echo "Waiting for filesystem node... (''${elapsed}s)"
-        sleep 2
-    done
-    
     # Test basic functionality
     echo "Testing basic functionality..."
     
@@ -383,16 +366,6 @@ host    all             all             ::1/128                 trust
 
       systemd.services.sinexd.path = [ pkgs.git pkgs.git-annex ];
       systemd.services.sinex-blob-init.path = [ pkgs.git pkgs.git-annex ];
-      systemd.services.sinex-system-1.enable = lib.mkForce false;
-      systemd.services.sinex-system-1.wantedBy = lib.mkForce [ ];
-      systemd.services.sinex-canonicalizer.enable = lib.mkForce false;
-      systemd.services.sinex-canonicalizer.wantedBy = lib.mkForce [ ];
-      systemd.services.sinex-health-automaton.enable = lib.mkForce false;
-      systemd.services.sinex-health-automaton.wantedBy = lib.mkForce [ ];
-      systemd.services.sinex-analytics-automaton.enable = lib.mkForce false;
-      systemd.services.sinex-analytics-automaton.wantedBy = lib.mkForce [ ];
-      systemd.services.sinex-session-detector.enable = lib.mkForce false;
-      systemd.services.sinex-session-detector.wantedBy = lib.mkForce [ ];
       
       services.dbus.enable = true;
       
@@ -495,7 +468,7 @@ SQL
           Restart = lib.mkForce "always";
           RestartSec = lib.mkForce "5";
         };
-        environment.SINEX_RPC_TOKEN_FILE = "/etc/sinex/api-admin-token";
+        environment.SINEX_API_TOKEN_FILE = "/etc/sinex/api-admin-token";
       };
     };
 
@@ -545,18 +518,6 @@ SQL
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service")
     machine.wait_for_unit("sinexd.service")
-
-    # Ensure node instances are online
-    terminal_source_units = [
-        "sinex-source@terminal.atuin-history.service",
-        "sinex-source@terminal.bash-history.service",
-        "sinex-source@terminal.fish-history.service",
-        "sinex-source@terminal.zsh-history.service",
-    ]
-    node_units = [
-        "sinex-filesystem-1.service",
-    ] + terminal_source_units
-    wait_for_services(node_units)
 
     # Verify core hubs are active
     machine.succeed("systemctl is-active sinexd")

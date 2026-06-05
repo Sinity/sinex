@@ -194,7 +194,7 @@ impl ScopeReconciler for EntityEnricher {
     }
 }
 
-/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type EntityEnricherNode = ScopeReconcilerAdapter<EntityEnricher>;
 
 // ── Helper functions ────────────────────────────────────────────────────────

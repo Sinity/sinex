@@ -1,7 +1,7 @@
-//! Scope invalidation signal for derived nodes.
+//! Scope invalidation signal for automatons.
 //!
 //! When a persisted fact changes (insert, archive, replace), the gateway
-//! publishes a `DerivedScopeInvalidation` to notify derived nodes. Scope-based
+//! publishes a `DerivedScopeInvalidation` to notify automatons. Scope-based
 //! and windowed nodes use this to trigger recomputation of affected scopes.
 //! Transducer nodes ignore it (their outputs are archived along with their inputs).
 
@@ -11,9 +11,9 @@ use sinex_primitives::domain::{EventSource, EventType, InvalidationAction};
 
 use super::traits::InputProvenanceFilter;
 
-/// A typed invalidation signal for derived nodes.
+/// A typed invalidation signal for automatons.
 ///
-/// Carries enough data for a derived node to decide:
+/// Carries enough data for a automaton to decide:
 /// - Which scopes need recomputation
 /// - What changed (action) and why (`operation_id`)
 /// - Which event identity was affected

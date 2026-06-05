@@ -451,8 +451,8 @@ pub enum RunSubcommand {
         instance_id: Option<String>,
     },
     /// Run a specific node by name
-    RuntimeActor {
-        /// RuntimeActor name (e.g., fs-ingestor, analytics-automaton)
+    RuntimeModule {
+        /// RuntimeModule name (e.g., fs-ingestor, analytics-automaton)
         name: String,
         /// Instance ID for multi-instance coordination
         #[arg(long)]
@@ -487,7 +487,7 @@ pub enum RunSubcommand {
     /// # Environment Variables
     ///
     /// - `SINEX_API_URL` or SINEX_{TARGET}_`GATEWAY_URL`: Gateway RPC URL
-    /// - `SINEX_RPC_TOKEN` or SINEX_{TARGET}_`RPC_TOKEN`: RPC auth token (required)
+    /// - `SINEX_API_TOKEN` or SINEX_{TARGET}_`RPC_TOKEN`: RPC auth token (required)
     /// - `SINEX_TETHER_NATS_URL` or SINEX_{TARGET}_`NATS_URL`: Production NATS URL
     /// - `SINEX_TETHER_NATS`_*: NATS TLS config (`CA_CERT`, `CLIENT_CERT`, `CLIENT_KEY`, CREDS)
     Tether {
@@ -581,7 +581,7 @@ impl XtaskCommand for RunCommand {
             RunSubcommand::Gateway { instance_id } => {
                 self.run_binary("gateway", instance_id.clone(), ctx).await
             }
-            RunSubcommand::RuntimeActor { name, instance_id } => {
+            RunSubcommand::RuntimeModule { name, instance_id } => {
                 self.run_binary(name, instance_id.clone(), ctx).await
             }
             RunSubcommand::Core { instance_id } => {
@@ -623,7 +623,7 @@ impl RunCommand {
             self.subcommand,
             RunSubcommand::EventEngine { .. }
                 | RunSubcommand::Gateway { .. }
-                | RunSubcommand::RuntimeActor { .. }
+                | RunSubcommand::RuntimeModule { .. }
         )
     }
 
@@ -1536,7 +1536,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_build_cargo_run_args_target_sinexd() -> ::xtask::sandbox::TestResult<()> {
-        let command = base_command(RunSubcommand::RuntimeActor {
+        let command = base_command(RunSubcommand::RuntimeModule {
             name: "terminal-ingestor".to_string(),
             instance_id: None,
         });
@@ -1640,7 +1640,7 @@ mod tests {
     #[sinex_test]
     async fn test_logs_reject_background_mode() -> ::xtask::sandbox::TestResult<()> {
         let ctx = test_context(true);
-        let mut command = base_command(RunSubcommand::RuntimeActor {
+        let mut command = base_command(RunSubcommand::RuntimeModule {
             name: "fs-ingestor".to_string(),
             instance_id: None,
         });

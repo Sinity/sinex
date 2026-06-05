@@ -176,7 +176,7 @@ impl LiveGateway {
             key_file.path().to_string_lossy().to_string(),
         );
         env_guard.clear("SINEX_API_TLS_CLIENT_CA");
-        env_guard.set("SINEX_RPC_TOKEN", token);
+        env_guard.set("SINEX_API_TOKEN", token);
         env_guard.set("DATABASE_URL", database_url);
         if let Some(nats_url) = nats_url {
             env_guard.set("SINEX_NATS_URL", nats_url);

@@ -259,7 +259,7 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
 | Subject pattern | `namespace.subject("subject.>")` |
 | Publish event | `ctx.publish_event(...)` |
 | Full pipeline + event_engine | `ctx.pipeline_scope().await?` |
-| RuntimeActor-style publisher | `TestNodePublisher::with_namespace(...)` |
+| RuntimeModule-style publisher | `TestNodePublisher::with_namespace(...)` |
 | Wait for persistence | `scope.wait_for_event_count(n)` |
 
 ## When to Use What

@@ -1,19 +1,19 @@
 //! `initialize_with_transport` for `RuntimeRunner<T>`.
 //!
-//! The node initialization sequence: lifecycle gate, transport wiring,
+//! The module initialization sequence: lifecycle gate, transport wiring,
 //! checkpoint manager bootstrap, schema/checkpoint listeners, leader election
 //! preparation, DB-backed registration, and runtime state assembly.
 
 use super::{
     Arc, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, Event, EventBatcherConfig, EventEmitter,
-    EventTransport, HashMap, JsonValue, RuntimeActor, RuntimeHandles, RuntimeInitContext, RuntimeResult, RuntimeRunner,
+    EventTransport, HashMap, JsonValue, RuntimeModule, RuntimeHandles, RuntimeInitContext, RuntimeResult, RuntimeRunner,
     ModuleState, ModuleKind, PgPool, ProcessingModel, RunnerLifecycle, ServiceInfo, SinexError,
     Utf8PathBuf, create_checkpoint_kv, info, maybe_start_schema_listener, mpsc,
     spawn_event_batcher, watch,
 };
 use sinex_primitives::domain::ServiceName;
 
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// Initialize the node with a specific transport
     pub async fn initialize_with_transport(
         &mut self,
@@ -29,7 +29,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             RunnerLifecycle::Created => {}
             RunnerLifecycle::Initializing => {
                 return Err(SinexError::lifecycle(
-                    "RuntimeActor is already being initialized (concurrent initialize call detected)"
+                    "RuntimeModule is already being initialized (concurrent initialize call detected)"
                         .to_string(),
                 ));
             }
@@ -38,7 +38,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             | RunnerLifecycle::ShutdownFailed
             | RunnerLifecycle::ShutDown => {
                 return Err(SinexError::lifecycle(format!(
-                    "Cannot initialize node: runner is in '{}' state (expected 'Created')",
+                    "Cannot initialize module: runner is in '{}' state (expected 'Created')",
                     self.lifecycle,
                 )));
             }
@@ -135,14 +135,14 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             checkpoint_identity.clone(),
             consumer_group,
             consumer_name.clone(),
-            matches!(self.node.module_kind(), ModuleKind::Automaton),
+            matches!(self.module.module_kind(), ModuleKind::Automaton),
         ));
 
         // NATS is the only transport
         let transport_type = "NATS";
 
         // Determine if automaton to enable LeaderStandby
-        let confirmation_buffer_opt = if matches!(self.node.module_kind(), ModuleKind::Automaton) {
+        let confirmation_buffer_opt = if matches!(self.module.module_kind(), ModuleKind::Automaton) {
             self.processing_model = ProcessingModel::LeaderStandby;
             Some(Arc::new(crate::runtime::ConfirmationBuffer::new(
                 std::time::Duration::from_mins(1),
@@ -153,7 +153,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         };
 
         #[cfg(feature = "db")]
-        let source_run_id = if let Some(pool) = db_pool.as_ref() {
+        let module_run_id = if let Some(pool) = db_pool.as_ref() {
             self.register_runtime_identity(
                 pool,
                 &service_name,
@@ -167,7 +167,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             None
         };
         #[cfg(not(feature = "db"))]
-        let source_run_id = None;
+        let module_run_id = None;
 
         let mut event_emitter = {
             #[cfg(feature = "messaging")]
@@ -181,8 +181,8 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             EventEmitter::new(event_sender_raw, dry_run)
         };
 
-        if let Some(source_run_id) = source_run_id {
-            event_emitter = event_emitter.with_default_source_run_id(source_run_id);
+        if let Some(module_run_id) = module_run_id {
+            event_emitter = event_emitter.with_default_module_run_id(module_run_id);
         }
 
         // No LeaseManager passed to handles
@@ -220,7 +220,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
 
         let service_info = ServiceInfo::new_with_runtime_identity(
             service_name.clone(),
-            self.node.module_name().to_string(),
+            self.module.module_name().to_string(),
             source_id.clone(),
             runner_pack.clone(),
             host.clone(),
@@ -228,7 +228,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             dry_run,
             instance_id,
             version,
-            source_run_id,
+            module_run_id,
         );
         let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir).unwrap_or_else(|_| {
             Utf8PathBuf::from_path_buf(sinex_primitives::environment::environment().temp_dir())
@@ -254,7 +254,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             work_dir_utf8.clone(),
         );
 
-        if let Err(e) = self.node.initialize(init_context).await {
+        if let Err(e) = self.module.initialize(init_context).await {
             #[cfg(feature = "db")]
             if let Some(pool) = handles.db_pool().cloned() {
                 Self::update_registered_run_status(&pool, &service_info, ModuleState::Failed).await;
@@ -285,7 +285,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             }
             // Set envelope identity fields from runtime configuration.
             cfg.source_id = source_id.clone().unwrap_or_default();
-            cfg.parser_id = self.node.module_name().to_string();
+            cfg.parser_id = self.module.module_name().to_string();
             cfg.parser_version = env!("CARGO_PKG_VERSION").to_string();
             cfg
         };
@@ -301,13 +301,13 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
 
         info!(
             service = %service_name,
-            node = %self.node.module_name(),
+            module = %self.module.module_name(),
             source = source_id.as_deref().unwrap_or("none"),
             runner_pack = runner_pack.as_deref().unwrap_or("none"),
             checkpoint_identity = %checkpoint_identity,
-            module_kind = ?self.node.module_kind(),
+            module_kind = ?self.module.module_kind(),
             transport = transport_type,
-            "RuntimeActor initialized"
+            "RuntimeModule initialized"
         );
 
         Ok(())

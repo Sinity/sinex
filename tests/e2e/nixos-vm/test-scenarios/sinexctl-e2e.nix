@@ -132,7 +132,7 @@ pkgs.testers.nixosTest {
         assert "timeout" in config_json, "Config should have timeout"
         print(f"Config loaded successfully with {len(config_json)} fields")
 
-    # Test 3: RuntimeActor listing with JSON output
+    # Test 3: RuntimeModule listing with JSON output
     with subtest("sinexctl node list with JSON"):
         # List nodes - may be empty initially
         nodes_output = sinexctl("node list -f json", check=False)

@@ -3,16 +3,16 @@
 //! Runs the automaton continuous mode entry point, drives leader-standby
 //! coordination over the NATS coordination KV, and operates the
 //! confirmation-event bridge that resolves provisional events to fully
-//! materialized inputs and feeds them into the node implementation.
+//! materialized inputs and feeds them into the module implementation.
 
 use super::{
     Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, EventTransport, JetStreamEventConsumer,
-    JetStreamEventConsumerConfig, LeaderState, RuntimeActor, RuntimeResult, RuntimeRunner, ProcessingModel,
+    JetStreamEventConsumerConfig, LeaderState, RuntimeModule, RuntimeResult, RuntimeRunner, ProcessingModel,
     ProvisionalEvent, RunnerConfirmedEventHandler, ScanArgs, SinexError, TimeHorizon, Uuid, debug,
     info, mpsc, systemd_notify, warn,
 };
 
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// Run automaton in continuous mode
     #[cfg(feature = "messaging")]
     pub(super) async fn run_automaton_continuous_mode(&mut self) -> RuntimeResult<()> {
@@ -24,8 +24,8 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             .runtime_drain();
 
         // Get current checkpoint to resume from previous state if available
-        let current_checkpoint = self.node.current_checkpoint().await?;
-        let capabilities = self.node.capabilities();
+        let current_checkpoint = self.module.current_checkpoint().await?;
+        let capabilities = self.module.capabilities();
 
         if capabilities.supports_continuous {
             info!("Starting continuous event processing for automaton");
@@ -45,7 +45,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
 
             if capabilities.manages_own_continuous_loop {
                 let _continuous_report = self
-                    .node
+                    .module
                     .scan(
                         current_checkpoint,
                         TimeHorizon::Continuous,
@@ -68,7 +68,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
 
                 // Process all historical events up to now
                 let _historical_report = self
-                    .node
+                    .module
                     .scan(
                         current_checkpoint,
                         TimeHorizon::Historical {
@@ -200,7 +200,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         let transport = handles.transport().clone();
 
         let service_name = self.service_info.as_ref().map_or_else(
-            || self.node.module_name().to_string(),
+            || self.module.module_name().to_string(),
             |info| info.service_name().to_string(),
         );
 
@@ -231,10 +231,10 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         // Process historical backlog BEFORE starting the JetStream consumer.
         // This ensures events published after consumer creation but present in
         // the DB at scan time are not processed twice.
-        if !matches!(from, Checkpoint::None) && self.node.capabilities().supports_historical {
+        if !matches!(from, Checkpoint::None) && self.module.capabilities().supports_historical {
             info!("Processing historical backlog before entering continuous mode");
             let _ = self
-                .node
+                .module
                 .scan(
                     from,
                     TimeHorizon::Historical {
@@ -263,11 +263,11 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             info!("Drain requested before automaton bridge entered live processing");
         }
 
-        let bridge_manages_checkpoints = !self.node.capabilities().manages_own_checkpoints;
+        let bridge_manages_checkpoints = !self.module.capabilities().manages_own_checkpoints;
         if !bridge_manages_checkpoints {
             debug!(
-                node = %self.node.module_name(),
-                "Skipping generic automaton-bridge checkpoint tracking because the node persists its own state"
+                module = %self.module.module_name(),
+                "Skipping generic automaton-bridge checkpoint tracking because the module persists its own state"
             );
         }
 
@@ -327,10 +327,10 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             match action {
                 LoopAction::FlushTick => {
                     let now = sinex_primitives::temporal::Timestamp::now();
-                    if let Err(e) = self.node.periodic_flush(now).await {
+                    if let Err(e) = self.module.periodic_flush(now).await {
                         warn!(
                             error = %e,
-                            node = %self.node.module_name(),
+                            module = %self.module.module_name(),
                             "Windowed periodic flush failed; continuing"
                         );
                     }
@@ -365,7 +365,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
                     }
 
                     let batch_count = Self::process_batch_with_dlq_fallback(
-                        &mut self.node,
+                        &mut self.module,
                         &transport,
                         resolve_result.events,
                     )

@@ -493,7 +493,7 @@ inventory::submit! {
         "terminal.atuin-history",
         "terminal",
     )
-    .implementation("sinex-terminal-ingestor::atuin")
+    .implementation("sinexd::sources::terminal::atuin_history")
     .adapter("sqlite_row_stream")
     .output_event_type("command.executed")
     .privacy_context("command")

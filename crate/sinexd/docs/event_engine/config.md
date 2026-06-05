@@ -29,7 +29,7 @@ On NixOS, prefer the typed transport surface:
 - `services.sinex.runtime.nats.tls.clientCertFile`
 - `services.sinex.runtime.nats.tls.clientKeyFile`
 
-The module exports the matching `SINEX_NATS_*` variables for event_engine and node services.
+The module exports the matching `SINEX_NATS_*` variables for event_engine and runtime modules.
 
 ## `JetStream` Consumer Knobs
 

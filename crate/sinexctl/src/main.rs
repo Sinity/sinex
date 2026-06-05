@@ -30,11 +30,11 @@ use std::path::PathBuf;
 #[command(name = "sinexctl", about = "Sinex control CLI", version)]
 struct Cli {
     /// Gateway RPC URL
-    #[arg(long, env = "SINEX_RPC_URL", global = true)]
+    #[arg(long, env = "SINEX_API_URL", global = true)]
     rpc_url: Option<String>,
 
     /// Authentication token
-    #[arg(long, env = "SINEX_RPC_TOKEN", global = true)]
+    #[arg(long, env = "SINEX_API_TOKEN", global = true)]
     token: Option<String>,
 
     /// Token file path
@@ -782,7 +782,7 @@ mod tests {
     #[sinex_serial_test]
     async fn env_token_is_not_treated_as_explicit_cli_override() -> TestResult<()> {
         let mut env = EnvGuard::new();
-        env.set("SINEX_RPC_TOKEN", "env-token");
+        env.set("SINEX_API_TOKEN", "env-token");
 
         let (matches, cli) = parse_cli(&["sinexctl", "status"])?;
         let token_override = cli_value_is_explicit(&matches, "token")
@@ -816,7 +816,7 @@ mod tests {
     #[sinex_serial_test]
     async fn rpc_url_is_only_explicit_when_passed_on_command_line() -> TestResult<()> {
         let mut env = EnvGuard::new();
-        env.clear("SINEX_RPC_URL");
+        env.clear("SINEX_API_URL");
 
         let (default_matches, default_cli) = parse_cli(&["sinexctl", "status"])?;
         assert!(
@@ -864,7 +864,7 @@ mod tests {
     #[sinex_serial_test]
     async fn env_provided_rpc_url_is_not_treated_as_cli_override() -> TestResult<()> {
         let mut env = EnvGuard::new();
-        env.set("SINEX_RPC_URL", "https://env-only:9443");
+        env.set("SINEX_API_URL", "https://env-only:9443");
 
         let (matches, cli) = parse_cli(&["sinexctl", "status"])?;
         assert!(

@@ -96,7 +96,7 @@ Three processing models for derived events:
 
 All share `AutomatonRuntime<N>` for: NATS consumer, checkpoint persistence, health reporting, self-observation, shutdown, scope invalidation.
 
-Each derived event carries `node_model`, `temporal_policy`, and `semantics_version` — self-documenting provenance metadata.
+Each derived event carries `automaton_model`, `temporal_policy`, and `semantics_version` — self-documenting provenance metadata.
 
 **Current automata** (in `sinexd::automata`, deployed as per-automaton systemd services via `sinexd`):
 - Command canonicalizer — Transducer, `command.canonical`

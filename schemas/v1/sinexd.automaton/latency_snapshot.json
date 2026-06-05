@@ -30,7 +30,7 @@
       "additionalProperties": {
         "type": "string"
       },
-      "description": "Dimensional labels (`node_model`, `source_run_id`, etc.)",
+      "description": "Dimensional labels (`automaton_model`, `module_run_id`, etc.)",
       "type": "object"
     },
     "module_name": {

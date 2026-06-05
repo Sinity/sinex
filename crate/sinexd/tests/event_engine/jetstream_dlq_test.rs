@@ -577,7 +577,7 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
         "source_material_id": missing_material_id.to_string(),
         "anchor_byte": 0,
         "payload_schema_id": schema.id.to_string(),
-        "source_run_id": node_run.id.to_string(),
+        "module_run_id": node_run.id.to_string(),
     });
 
     publish_custom_event(
@@ -661,7 +661,7 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
         .await?
         .ok_or_else(|| SinexError::not_found("persisted event after material registration"))?;
     assert_eq!(persisted.payload_schema_id, Some(*schema.id.as_uuid()));
-    assert_eq!(persisted.source_run_id, Some(node_run.id.to_uuid()));
+    assert_eq!(persisted.module_run_id, Some(node_run.id.to_uuid()));
 
     setup.handle.abort();
     let _ = setup.handle.await;

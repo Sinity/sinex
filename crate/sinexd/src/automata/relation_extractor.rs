@@ -213,7 +213,7 @@ fn drain_and_emit_pairs(
     outputs
 }
 
-/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type RelationExtractorNode = ScopeReconcilerAdapter<RelationExtractor>;
 
 // ── Source descriptor (issue #690 / #734) ──────────────────────────────

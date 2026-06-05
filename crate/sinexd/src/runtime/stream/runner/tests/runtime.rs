@@ -416,7 +416,7 @@ async fn shutdown_marks_runner_failed_when_cleanup_errors() -> TestResult<()> {
         .await
         .expect_err("failing shutdowns must surface as errors");
 
-    assert!(error.to_string().contains("node shutdown failed"));
+    assert!(error.to_string().contains("module shutdown failed"));
     assert_eq!(runner.lifecycle(), RunnerLifecycle::ShutdownFailed);
     Ok(())
 }

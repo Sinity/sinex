@@ -86,8 +86,8 @@ It follows the scenario registry in `tests/e2e/nixos-vm/default.nix`.
   when you touch scenario files or shared VM helper modules.
 - `basic` is the fast evidence check that gateway ingress, automata, and the managed
   document scan surface all function on a booted VM.
-- `runtime-matrix` is the deployment-honesty evidence check: every long-running
-  node/automaton unit and terminal runner-pack source unit must start,
+- `runtime-matrix` is the deployment-honesty evidence check: the collapsed
+  `sinexd` runtime host and terminal runner-pack source driver wiring must start,
   target-user terminal/browser history bridges and the desktop runtime bridge
   must be reachable by the `sinex` service user, the managed document surface
   must actually ingest,

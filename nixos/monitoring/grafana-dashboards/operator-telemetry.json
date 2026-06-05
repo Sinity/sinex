@@ -274,7 +274,7 @@
           "refId": "A"
         }
       ],
-      "title": "RuntimeActor Throughput",
+      "title": "RuntimeModule Throughput",
       "type": "timeseries"
     },
     {

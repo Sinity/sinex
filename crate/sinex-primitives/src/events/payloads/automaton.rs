@@ -84,7 +84,7 @@ pub struct HealthAggregatedComponentReportPayload {
     pub window_seconds: u64,
 }
 
-/// Reports emitted by `sinex-health-automaton`.
+/// Reports emitted by the health automaton.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[serde(untagged)]
 #[event_payload(

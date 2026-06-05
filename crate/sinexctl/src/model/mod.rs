@@ -21,7 +21,7 @@ pub enum OutputFormat {
     Dot,
 }
 
-/// RuntimeActor role enum (matches backend)
+/// RuntimeModule role enum (matches backend)
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum RuntimeModuleRole {

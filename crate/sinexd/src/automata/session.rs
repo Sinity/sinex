@@ -201,7 +201,7 @@ impl Windowed for SessionDetector {
     }
 }
 
-/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type SessionDetectorNode = WindowedAdapter<SessionDetector>;
 
 // --- Source descriptor (issue #690 / #734) ---

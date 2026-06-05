@@ -144,7 +144,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
-    // ── RuntimeActor ─────────────────────────────────────────────────────────────────
+    // ── RuntimeModule ─────────────────────────────────────────────────────────────────
     m.insert("runtime list", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "runtime status",

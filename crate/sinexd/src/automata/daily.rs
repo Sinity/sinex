@@ -262,7 +262,7 @@ impl Windowed for DailySummarizer {
     }
 }
 
-/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type DailySummarizerNode = WindowedAdapter<DailySummarizer>;
 
 // --- Source descriptor (issue #690 / #734) ---

@@ -45,7 +45,7 @@ Key architectural decisions and implementation details are documented at their i
 - **Stream runtime implementation**: [`crate/sinexd/src/runtime/stream/mod.rs`](../crate/sinexd/src/runtime/stream/mod.rs)
   - Snapshot, historical, and continuous modes
 
-### RuntimeActor Implementations
+### RuntimeModule Implementations
 - **Filesystem Monitoring**: [`sinexd/src/sources/source_contracts/fs/mod.rs`](../crate/sinexd/src/sources/source_contracts/fs/mod.rs)
   - SDK `FileContentDropAdapter` registration
   - inotify-backed file-drop watch planning
@@ -209,7 +209,7 @@ For real secrets, prefer agenix over `environment.etc.*.text`; the inline
 `environment.etc` examples here are just the smallest declarative shape that
 exercises the module conventions.
 
-### User-Session RuntimeActor Wiring
+### User-Session RuntimeModule Wiring
 
 Terminal, browser, and desktop capture now default to the interactive target user more
 honestly. When `services.sinex.users.target` is set, the module:

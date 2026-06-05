@@ -5,14 +5,14 @@
 //! phases.
 
 use super::{
-    Checkpoint, RuntimeActor, RuntimeResult, RuntimeRunner, ScanArgs, SinexError, TimeHorizon, debug, info,
+    Checkpoint, RuntimeModule, RuntimeResult, RuntimeRunner, ScanArgs, SinexError, TimeHorizon, debug, info,
     systemd_notify, warn,
 };
 
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// Run ingestor startup sequence (Snapshot -> Gap-fill -> Continuous)
     pub(super) async fn run_ingestor_startup_sequence(&mut self) -> RuntimeResult<()> {
-        let preexisting_checkpoint = self.node.current_checkpoint().await?;
+        let preexisting_checkpoint = self.module.current_checkpoint().await?;
         let drain_controller = self
             .runtime_state()
             .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?
@@ -32,10 +32,10 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         systemd_notify::notify_ready("sinex-runtime");
 
         // Phase 1: Snapshot (if supported)
-        if self.node.capabilities().supports_snapshot {
+        if self.module.capabilities().supports_snapshot {
             info!("Phase 1: Taking initial snapshot");
             let snapshot_report = self
-                .node
+                .module
                 .scan(Checkpoint::None, TimeHorizon::Snapshot, ScanArgs::default())
                 .await?;
 
@@ -51,12 +51,12 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         }
 
         // Phase 2: Gap-filling (if supported and needed)
-        if self.node.capabilities().supports_historical {
+        if self.module.capabilities().supports_historical {
             // Only gap-fill from a checkpoint that existed before startup began.
             if !matches!(preexisting_checkpoint, Checkpoint::None) {
                 info!("Phase 2: Gap-filling from last checkpoint");
                 let gap_fill_report = self
-                    .node
+                    .module
                     .scan(
                         preexisting_checkpoint.clone(),
                         TimeHorizon::Historical {
@@ -79,16 +79,16 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         }
 
         // Phase 3: Continuous processing (traditional scan method)
-        if self.node.capabilities().supports_continuous {
+        if self.module.capabilities().supports_continuous {
             info!("Phase 3: Starting continuous processing");
-            let current_checkpoint = self.node.current_checkpoint().await?;
+            let current_checkpoint = self.module.current_checkpoint().await?;
             // notify_ready was called at the top of this function — adapter-
             // backed ingestors can spend minutes in snapshot/gap-fill, so we
             // must signal readiness before those phases or systemd kills us.
 
             // This should run indefinitely until shutdown
             let continuous_report = self
-                .node
+                .module
                 .scan(
                     current_checkpoint,
                     TimeHorizon::Continuous,
@@ -111,7 +111,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
                 );
             }
         } else {
-            warn!("RuntimeActor does not support continuous mode - service will exit");
+            warn!("RuntimeModule does not support continuous mode - service will exit");
         }
 
         Ok(())

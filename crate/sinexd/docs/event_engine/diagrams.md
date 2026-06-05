@@ -13,10 +13,10 @@
 │                      Provisional → Confirmed Pipeline                         │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-PHASE 1: CAPTURE (RuntimeActor)
+PHASE 1: CAPTURE (RuntimeModule)
 ────────────────────────────
   ┌──────────────────────────┐
-  │   RuntimeActor detects           │
+  │   RuntimeModule detects           │
   │   filesystem change      │
   └────────────┬─────────────┘
                │

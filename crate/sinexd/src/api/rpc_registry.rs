@@ -730,7 +730,7 @@ fn build_registry_impl() -> RpcRegistry {
         // DLQ read methods (ReadOnly)
         .service_typed_rpc(DLQ_LIST_METHOD, boxed!(handle_dlq_list))
         .service_typed_rpc(DLQ_PEEK_METHOD, boxed!(handle_dlq_peek))
-        // RuntimeActor listing (ReadOnly)
+        // RuntimeModule listing (ReadOnly)
         .nats_typed_rpc(RUNTIME_LIST_METHOD, boxed!(handle_runtime_list, 3))
         // Replay status/list (ReadOnly)
         .replay_typed_rpc(
@@ -741,7 +741,7 @@ fn build_registry_impl() -> RpcRegistry {
             REPLAY_LIST_OPERATIONS_METHOD,
             boxed!(handle_replay_list_operations, 3),
         )
-        // RuntimeActor registry status methods (ReadOnly)
+        // RuntimeModule registry status methods (ReadOnly)
         .pool_typed_rpc(RUNTIME_LIST_ACTIVE_METHOD, boxed!(handle_runtime_list_active))
         .pool_typed_rpc(RUNTIME_HEALTH_METHOD, boxed!(handle_runtime_health))
         .pool_typed_rpc(AUTOMATA_STATUS_METHOD, boxed!(handle_automata_status))
@@ -928,7 +928,7 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // Source annotation (Write — modifies metadata)
         .pool_typed_rpc(SOURCES_ANNOTATE_METHOD, boxed!(handle_sources_annotate))
-        // RuntimeActor operations (Write - affects system but not destructive)
+        // RuntimeModule operations (Write - affects system but not destructive)
         .nats_auth_typed_rpc(RUNTIME_DRAIN_METHOD, boxed!(handle_runtime_drain, 4))
         .nats_auth_typed_rpc(RUNTIME_RESUME_METHOD, boxed!(handle_runtime_resume, 4))
         .nats_auth_typed_rpc(

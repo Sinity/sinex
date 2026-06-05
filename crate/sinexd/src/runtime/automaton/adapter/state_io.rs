@@ -30,7 +30,7 @@ where
     ) {
         if let Err(error) = CheckpointState::delete_file(path).await {
             warn!(
-                node = module_name,
+                automaton = module_name,
                 path = %path.display(),
                 error = %error,
                 reason,
@@ -51,7 +51,7 @@ where
             Ok(()) => Ok(()),
             Err(delete_error) => {
                 warn!(
-                    node = %self.node.name(),
+                    automaton = %self.automaton.name(),
                     path = %path.display(),
                     error = %delete_error,
                     "Failed to delete restored hot reload checkpoint file after syncing to NATS KV; rewriting it with the latest durable state"
@@ -60,7 +60,7 @@ where
                     SinexError::io(
                         "Failed to synchronize restored hot reload file after checkpoint save",
                     )
-                    .with_context("node", self.node.name())
+                    .with_context("automaton", self.automaton.name())
                     .with_context("path", path.display().to_string())
                     .with_context("delete_error", delete_error.to_string())
                     .with_std_error(&error)
@@ -70,7 +70,7 @@ where
     }
 
     pub(super) async fn load_state(&mut self) -> RuntimeResult<()> {
-        let hot_reload_path = self.shutdown_config.checkpoint_path(self.node.name());
+        let hot_reload_path = self.shutdown_config.checkpoint_path(self.automaton.name());
         let mut invalid_hot_reload_file = None;
 
         // Priority 1: file-based checkpoint (hot reload)
@@ -84,7 +84,7 @@ where
                 Ok(None) => {}
                 Err(error) if self.checkpoint_manager.is_some() => {
                     warn!(
-                        node = %self.node.name(),
+                        automaton = %self.automaton.name(),
                         path = %hot_reload_path.display(),
                         error = %error,
                         "Failed to restore hot reload checkpoint file; falling back to NATS KV"
@@ -107,11 +107,11 @@ where
                     crate::runtime::checkpoint::decode_checkpoint_data(
                         data,
                         "derived checkpoint state",
-                        self.node.name(),
+                        self.automaton.name(),
                     )?;
                 restore_resume_position(&mut persisted, &checkpoint_state.checkpoint);
                 info!(
-                    node = %self.node.name(),
+                    automaton = %self.automaton.name(),
                     events_processed = persisted.events_processed,
                     "Restored state from NATS KV checkpoint"
                 );
@@ -120,8 +120,8 @@ where
             }
             None if matches!(checkpoint_state.checkpoint, Checkpoint::None) => {
                 warn!(
-                    node = %self.node.name(),
-                    "No valid checkpoint for derived node; replaying full historical input"
+                    automaton = %self.automaton.name(),
+                    "No valid checkpoint for automaton; replaying full historical input"
                 );
                 self.persisted_state = PersistedState::default();
                 self.last_revision = checkpoint_state.revision;
@@ -130,14 +130,14 @@ where
                 return Err(SinexError::checkpoint(
                     "Derived checkpoint KV entry is missing state data",
                 )
-                .with_context("node", self.node.name()));
+                .with_context("automaton", self.automaton.name()));
             }
         }
 
         if let Some(path) = invalid_hot_reload_file {
             Self::cleanup_hot_reload_file_best_effort(
                 &path,
-                self.node.name(),
+                self.automaton.name(),
                 "discarding invalid hot reload checkpoint file after successful NATS KV restore",
             )
             .await;
@@ -149,7 +149,7 @@ where
     pub(super) async fn try_restore_from_file(
         &mut self,
     ) -> RuntimeResult<Option<(PersistedState<N::State>, u64)>> {
-        let checkpoint_path = self.shutdown_config.checkpoint_path(self.node.name());
+        let checkpoint_path = self.shutdown_config.checkpoint_path(self.automaton.name());
         let Some(file_state) = CheckpointState::load_from_file(&checkpoint_path).await? else {
             return Ok(None);
         };
@@ -157,7 +157,7 @@ where
             return Err(SinexError::checkpoint(
                 "Derived hot reload checkpoint file is missing state data",
             )
-            .with_context("node", self.node.name())
+            .with_context("automaton", self.automaton.name())
             .with_context("path", checkpoint_path.display().to_string()));
         };
 
@@ -165,11 +165,11 @@ where
             crate::runtime::checkpoint::decode_checkpoint_data(
                 data,
                 "derived hot reload state",
-                self.node.name(),
+                self.automaton.name(),
             )?;
         restore_resume_position(&mut persisted, &file_state.checkpoint);
         info!(
-            node = %self.node.name(),
+            automaton = %self.automaton.name(),
             events_processed = persisted.events_processed,
             "Restored state from hot reload file"
         );
@@ -182,7 +182,7 @@ where
             return Ok(());
         }
 
-        let checkpoint_path = self.shutdown_config.checkpoint_path(self.node.name());
+        let checkpoint_path = self.shutdown_config.checkpoint_path(self.automaton.name());
         let state_json = serde_json::to_value(&self.persisted_state)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
@@ -225,7 +225,7 @@ where
         self.observe_checkpoint_state(&checkpoint_state).await;
 
         debug!(
-            node = %self.node.name(),
+            automaton = %self.automaton.name(),
             events_processed = self.persisted_state.events_processed,
             revision = self.last_revision,
             "Saved checkpoint"

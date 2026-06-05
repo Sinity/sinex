@@ -920,7 +920,7 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
         ON core.events (
             (payload->>'name'),
             ((payload->'labels'->>'node')),
-            ((payload->'labels'->>'source_run_id')),
+            ((payload->'labels'->>'module_run_id')),
             id DESC
         )
         WHERE source = 'sinex' AND event_type = 'metric.gauge'
@@ -931,8 +931,8 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
         pool,
         r"
         CREATE INDEX IF NOT EXISTS ix_events_node_run_synthesis_latest
-        ON core.events (source_run_id, id DESC)
-        WHERE source_run_id IS NOT NULL AND source_event_ids IS NOT NULL
+        ON core.events (module_run_id, id DESC)
+        WHERE module_run_id IS NOT NULL AND source_event_ids IS NOT NULL
         ",
     )
     .await?;
@@ -941,6 +941,11 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(pool, TELEMETRY_CONTINUOUS_AGGREGATES_SQL).await?;
     execute_sql(pool, TELEMETRY_SQL).await?;
     execute_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await?;
+    execute_sql(
+        pool,
+        "DROP VIEW IF EXISTS core.event_temporal_facts, core.derived_scope_summary",
+    )
+    .await?;
     execute_sql(pool, EVENT_TEMPORAL_FACTS_SQL).await?;
     execute_sql(pool, DERIVED_SCOPE_SUMMARY_SQL).await?;
 
@@ -1696,18 +1701,18 @@ BEGIN
             ts_orig, ts_orig_subnano,
             source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
             source_event_ids, associated_blob_ids,
-            payload_schema_id, source_run_id,
+            payload_schema_id, module_run_id,
             temporal_policy, semantics_version, scope_key, equivalence_key,
-            created_by_operation_id, node_model
+            created_by_operation_id, automaton_model
         )
         SELECT
             ae.id, ae.source, ae.event_type, ae.host, ae.payload,
             ae.ts_orig, ae.ts_orig_subnano,
             ae.source_material_id, ae.anchor_byte, ae.offset_start, ae.offset_end, ae.offset_kind,
             ae.source_event_ids, ae.associated_blob_ids,
-            ae.payload_schema_id, ae.source_run_id,
+            ae.payload_schema_id, ae.module_run_id,
             ae.temporal_policy, ae.semantics_version, ae.scope_key, ae.equivalence_key,
-            ae.created_by_operation_id, ae.node_model
+            ae.created_by_operation_id, ae.automaton_model
         FROM audit.archived_events ae
         WHERE ae.id = ANY(p_archived_ids)
         ON CONFLICT (id) DO NOTHING
@@ -2361,7 +2366,7 @@ SELECT
     NULL::text AS scope_key,
     NULL::text AS equivalence_key,
     NULL::uuid AS created_by_operation_id,
-    NULL::text AS node_model
+    NULL::text AS automaton_model
 FROM core.events e
 INNER JOIN LATERAL (
     SELECT
@@ -2407,12 +2412,12 @@ SELECT
     e.scope_key,
     e.equivalence_key,
     e.created_by_operation_id,
-    e.node_model
+    e.automaton_model
 FROM core.events e
 WHERE e.source_event_ids IS NOT NULL;
 ";
 
-/// Scope health dashboard for derived nodes.
+/// Scope health dashboard for automatons.
 ///
 /// Provides a per-node, per-scope summary of derived events: how many exist,
 /// when last updated, and what processing metadata (`semantics_version`, `temporal_policy`)

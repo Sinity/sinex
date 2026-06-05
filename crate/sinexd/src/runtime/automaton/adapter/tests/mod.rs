@@ -12,7 +12,7 @@ use crate::runtime::exploration::{ExplorationProvider, ExportFormat};
 #[cfg(feature = "messaging")]
 use crate::runtime::health_reporter::{HealthReporter, HealthThresholds};
 use crate::runtime::stream::{
-    Checkpoint, EventEmitter, RuntimeActor, RuntimeHandles, RuntimeContext, ScanArgs, ServiceInfo,
+    Checkpoint, EventEmitter, RuntimeModule, RuntimeHandles, RuntimeContext, ScanArgs, ServiceInfo,
 };
 #[cfg(feature = "messaging")]
 use crate::runtime::self_observation::{SelfObservationError, SelfObserver, SelfObserverConfig};
@@ -391,7 +391,7 @@ fn make_material_input_event(
 async fn make_runtime_state(
     ctx: &TestContext,
     module_name: &str,
-    source_run_id: Option<Uuid>,
+    module_run_id: Option<Uuid>,
 ) -> TestResult<RuntimeContext> {
     let kv = ctx.checkpoint_kv().await?;
     let checkpoint_manager = Arc::new(CheckpointManager::new(
@@ -424,7 +424,7 @@ async fn make_runtime_state(
             false,
             format!("instance-{}", Uuid::now_v7().simple()),
             env!("CARGO_PKG_VERSION").to_string(),
-            source_run_id,
+            module_run_id,
         ),
         handles,
         HashMap::new(),
@@ -435,7 +435,7 @@ async fn make_runtime_state(
 async fn make_runtime_state_with_db(
     ctx: &TestContext,
     module_name: &str,
-    source_run_id: Option<Uuid>,
+    module_run_id: Option<Uuid>,
 ) -> TestResult<(RuntimeContext, mpsc::Receiver<Event<JsonValue>>)> {
     let kv = ctx.checkpoint_kv().await?;
     let checkpoint_manager = Arc::new(CheckpointManager::new(
@@ -470,7 +470,7 @@ async fn make_runtime_state_with_db(
                 false,
                 format!("instance-{}", Uuid::now_v7().simple()),
                 env!("CARGO_PKG_VERSION").to_string(),
-                source_run_id,
+                module_run_id,
             ),
             handles,
             HashMap::new(),
@@ -484,7 +484,7 @@ async fn make_runtime_state_with_db(
 async fn make_runtime_state_with_validator(
     ctx: &TestContext,
     module_name: &str,
-    source_run_id: Option<Uuid>,
+    module_run_id: Option<Uuid>,
 ) -> TestResult<(RuntimeContext, mpsc::Receiver<Event<JsonValue>>, Uuid)> {
     let kv = ctx.checkpoint_kv().await?;
     let checkpoint_manager = Arc::new(CheckpointManager::new(
@@ -532,7 +532,7 @@ async fn make_runtime_state_with_validator(
                 false,
                 format!("instance-{}", Uuid::now_v7().simple()),
                 env!("CARGO_PKG_VERSION").to_string(),
-                source_run_id,
+                module_run_id,
             ),
             handles,
             HashMap::new(),
@@ -660,9 +660,9 @@ async fn derived_ingestion_history_is_explicitly_unavailable() -> TestResult<()>
     let adapter = AutomatonRuntime::new(TransducerWrapper(TestAutomaton));
 
     let error = ExplorationProvider::get_ingestion_history(&adapter, 10)
-        .expect_err("derived nodes must not report an empty ingestion history as success");
+        .expect_err("automatons must not report an empty ingestion history as success");
 
-    assert!(error.to_string().contains("derived nodes"));
+    assert!(error.to_string().contains("automatons"));
     Ok(())
 }
 
@@ -672,9 +672,9 @@ async fn derived_export_is_explicitly_unavailable() -> TestResult<()> {
     let path = SanitizedPath::from_static("/tmp/derived-export.json");
 
     let error = ExplorationProvider::export_data(&adapter, &path, ExportFormat::Json)
-        .expect_err("derived nodes must not report export success without writing data");
+        .expect_err("automatons must not report export success without writing data");
 
-    assert!(error.to_string().contains("derived nodes"));
+    assert!(error.to_string().contains("automatons"));
     Ok(())
 }
 
@@ -704,7 +704,7 @@ async fn derived_source_state_reflects_failed_health_reporter(ctx: TestContext) 
             emit_stall_seconds: 0,
         },
     ));
-    reporter.record_error(&SinexError::processing("derived node failure"));
+    reporter.record_error(&SinexError::processing("automaton failure"));
     adapter.health_reporter = Some(reporter);
 
     let state = ExplorationProvider::get_source_state(&adapter)?;
@@ -751,11 +751,11 @@ async fn derived_health_check_reflects_failed_health_reporter(ctx: TestContext) 
             emit_stall_seconds: 0,
         },
     ));
-    reporter.record_error(&SinexError::processing("derived node failure"));
+    reporter.record_error(&SinexError::processing("automaton failure"));
     adapter.health_reporter = Some(reporter);
 
     assert!(
-        !crate::runtime::stream::RuntimeActor::health_check(&adapter).await?,
+        !crate::runtime::stream::RuntimeModule::health_check(&adapter).await?,
         "health_check should fail once the reporter marks the node failed"
     );
     Ok(())

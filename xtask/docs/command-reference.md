@@ -243,7 +243,7 @@ Run command for binary lifecycle management
 |---|---|
 | `event-engine` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
 | `gateway` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
-| `runtime-actor` | Run a specific node by name |
+| `runtime-module` | Run a specific node by name |
 | `core` | Run core services bundle (event engine + API) |
 | `all-ingestors` | Run all ingestors |
 | `all-automatons` | Run all automatons |
@@ -272,7 +272,7 @@ Run sinexd (alias preserved post-collapse; runs the full supervisor)
 | `--instance-id` | yes | no | Instance ID for multi-instance coordination |
 
 
-### `xtask run runtime-actor`
+### `xtask run runtime-module`
 
 Run a specific node by name
 
@@ -280,7 +280,7 @@ Run a specific node by name
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `name` | yes | yes | RuntimeActor name (e.g., fs-ingestor, analytics-automaton) |
+| `name` | yes | yes | RuntimeModule name (e.g., fs-ingestor, analytics-automaton) |
 | `--instance-id` | yes | no | Instance ID for multi-instance coordination |
 
 

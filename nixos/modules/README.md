@@ -166,12 +166,10 @@ disabled (e.g. staging migrations).
   per-service `MemoryHigh`, `MemoryMax`, and `CPUQuota` settings.
 - Automata use named profiles defined under `runtime.automata.profiles`; set
   `profile = "light"|"standard"|"heavy"` to select batch and resource limits.
-- The module emits deterministic unit names (`sinexd`, `sinex-filesystem-1`,
-  `sinex-health-automaton`, etc.) and publishes them via
-  `config.sinex._generatedUnits` for other subsystems (pre-flight,
-  tests). `_generatedUnits` is limited to long-running notify/watchdog-backed
-  services; oneshot deployment surfaces such as `sinex-document-scan.service`
-  are verified separately and intentionally excluded.
+- The module emits `sinexd` as the only long-running Sinex runtime unit.
+  Support oneshots/timers such as preflight, blob init, document scan, and
+  target-user access bridges are verified separately and are not source or
+  automaton hosts.
 
 ### Transport Security
 - gateway TLS lives under `services.sinex.core.gateway.{tlsCertFile,tlsKeyFile,tlsClientCAFile,requireClientTLS,autoGenerateTls}`

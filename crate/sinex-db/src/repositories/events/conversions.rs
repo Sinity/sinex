@@ -125,7 +125,7 @@ impl EventRecordExt for EventRecord {
                 "ts_quality",
                 self.id,
             )?,
-            source_run_id: self.source_run_id,
+            module_run_id: self.module_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance,
             anchor_payload_hash: self.anchor_payload_hash.clone(),
@@ -141,9 +141,9 @@ impl EventRecordExt for EventRecord {
             scope_key: self.scope_key,
             equivalence_key: self.equivalence_key,
             created_by_operation_id: self.created_by_operation_id,
-            node_model: parse_optional_enum::<AutomatonModel>(
-                self.node_model,
-                "node_model",
+            automaton_model: parse_optional_enum::<AutomatonModel>(
+                self.automaton_model,
+                "automaton_model",
                 self.id,
             )?,
         })
@@ -220,13 +220,13 @@ mod tests {
             source_event_ids: None,
             associated_blob_ids: None,
             payload_schema_id: None,
-            source_run_id: None,
+            module_run_id: None,
             temporal_policy: None,
             semantics_version: None,
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             anchor_payload_hash: None,
         }
     }
@@ -244,13 +244,13 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_try_to_event_rejects_invalid_node_model() -> xtask::sandbox::TestResult<()> {
+    async fn test_try_to_event_rejects_invalid_automaton_model() -> xtask::sandbox::TestResult<()> {
         let mut record = base_event_record();
-        record.node_model = Some("not-a-model".to_string());
+        record.automaton_model = Some("not-a-model".to_string());
 
         let error = record.try_to_event().unwrap_err();
         let rendered = format!("{error:#}");
-        assert!(rendered.contains("event record has invalid node_model"));
+        assert!(rendered.contains("event record has invalid automaton_model"));
         assert!(rendered.contains("value: not-a-model"));
         Ok(())
     }

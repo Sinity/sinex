@@ -7,12 +7,12 @@
 
 use super::{
     Arc, AtomicU64, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, DispatchedScanOutcome, Event,
-    FailedDispatchedScanOutcome, HashMap, JsonValue, RuntimeActor, SourceFactory, RuntimeHandles,
+    FailedDispatchedScanOutcome, HashMap, JsonValue, RuntimeModule, SourceFactory, RuntimeHandles,
     RuntimeInitContext, RuntimeResult, RuntimeRunner, SourceScanCommand, Ordering, ServiceInfo, SinexError,
     Utf8PathBuf, Uuid, create_checkpoint_kv, mpsc,
 };
 
-impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     #[cfg(feature = "messaging")]
     pub(super) async fn execute_dispatched_scan(
         source_factory: SourceFactory<T>,
@@ -37,7 +37,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
             base_service_info.dry_run(),
             base_service_info.instance_id().to_string(),
             base_service_info.version().to_string(),
-            base_service_info.source_run_id(),
+            base_service_info.module_run_id(),
         );
 
         let (replay_handles, emitted_counter, forwarder_handle) =

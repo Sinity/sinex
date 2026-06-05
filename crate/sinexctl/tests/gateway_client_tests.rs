@@ -170,7 +170,7 @@ async fn test_gateway_client_creation_with_token() -> TestResult<()> {
 #[sinex_test]
 async fn test_gateway_client_creation_without_token_fails() -> TestResult<()> {
     // Clear environment
-    unsafe { std::env::remove_var("SINEX_RPC_TOKEN") };
+    unsafe { std::env::remove_var("SINEX_API_TOKEN") };
 
     let config = ClientConfig {
         url: "https://localhost:9999".to_string(),

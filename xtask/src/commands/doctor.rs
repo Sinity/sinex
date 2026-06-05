@@ -910,7 +910,7 @@ fn rust_analyzer_manifest_walk_entry(root: &Path, path: &Path) -> bool {
     };
     !matches!(
         name,
-        ".git" | ".direnv" | ".sinex" | "target" | "node_modules"
+        ".git" | ".direnv" | ".sinex" | ".claude" | "target" | "node_modules"
     ) && !name.starts_with("result")
 }
 

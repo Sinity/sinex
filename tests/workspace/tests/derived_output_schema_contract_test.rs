@@ -45,7 +45,7 @@ async fn production_automaton_outputs_have_registered_payload_schemas() -> TestR
             .any(|payload| payload.source == source && payload.event_type == event_type);
         assert!(
             has_schema,
-            "derived node {module_name} emits {source}/{event_type} without a registered EventPayload schema",
+            "automaton {module_name} emits {source}/{event_type} without a registered EventPayload schema",
         );
     }
 

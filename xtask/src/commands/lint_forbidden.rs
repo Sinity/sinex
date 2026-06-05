@@ -325,7 +325,7 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         "crate/sinexd/src/runtime/acquisition_manager.rs",
         // Raw-ingest DLQ retry re-publishes into the original raw-event subject.
         "crate/sinexd/src/runtime/dlq_retry.rs",
-        // RuntimeActor coordination control messages.
+        // RuntimeModule coordination control messages.
         "crate/sinexd/src/runtime/coordination.rs",
         // Runtime scan/drain control messages.
         "crate/sinexd/src/runtime/stream/runner/control_messages.rs",
