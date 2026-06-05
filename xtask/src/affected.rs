@@ -666,10 +666,10 @@ fn nested_integration_root(parts: &[&str]) -> Option<(String, String, String)> {
 fn is_library_unit_test_path(path: &str) -> bool {
     let parts: Vec<&str> = path.split('/').collect();
 
-    // Crate library unit tests: crate/<category>/<crate>/src/*.rs, excluding
-    // binary entrypoints and src/bin targets which are not covered by --lib.
-    if parts.len() >= 5 && parts[0] == "crate" && parts[3] == "src" {
-        return parts.get(4).copied() != Some("bin")
+    // Crate library unit tests: crate/<crate>/src/*.rs, excluding binary
+    // entrypoints and src/bin targets which are not covered by --lib.
+    if parts.len() >= 4 && parts[0] == "crate" && parts[2] == "src" {
+        return parts.get(3).copied() != Some("bin")
             && parts.last().copied() != Some("main.rs")
             && parts.last().copied() != Some("bin.rs");
     }
@@ -759,21 +759,44 @@ fn candidate_rust_paths(repo_root: &Path) -> Result<Vec<String>> {
 }
 
 fn content_mentions_test_name(content: &str, test_name: &str) -> bool {
-    signature_mentions_test_name(content, &format!("fn {test_name}"))
-        || signature_mentions_test_name(content, &format!("async fn {test_name}"))
+    test_function_names(content).any(|name| name.contains(test_name))
 }
 
-fn signature_mentions_test_name(content: &str, needle: &str) -> bool {
-    let mut offset = 0usize;
-    while let Some(relative_index) = content[offset..].find(needle) {
-        let index = offset + relative_index;
-        let after = content[index + needle.len()..].chars().next();
-        if after.is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_')) {
-            return true;
-        }
-        offset = index + needle.len();
-    }
-    false
+fn test_function_names(content: &str) -> impl Iterator<Item = &str> {
+    content
+        .lines()
+        .scan(false, |pending_test_attr, line| {
+            let trimmed = line.trim_start();
+            if is_test_attr_line(trimmed) {
+                *pending_test_attr = true;
+                return Some(None);
+            }
+
+            let test_name = if *pending_test_attr {
+                function_name_from_line(trimmed)
+            } else {
+                None
+            };
+
+            if !trimmed.is_empty() && !trimmed.starts_with("#[") {
+                *pending_test_attr = false;
+            }
+            Some(test_name)
+        })
+        .flatten()
+}
+
+fn is_test_attr_line(line: &str) -> bool {
+    line.starts_with("#[test")
+        || line.starts_with("#[tokio::test")
+        || line.starts_with("#[sinex_test")
+}
+
+fn function_name_from_line(line: &str) -> Option<&str> {
+    let (_, after_fn) = line.split_once("fn ")?;
+    let name_end = after_fn
+        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))?;
+    Some(&after_fn[..name_end])
 }
 
 /// Compute transitive dependents of the given packages.
@@ -1204,6 +1227,45 @@ path = "tests/sources/registry_dispatch_test.rs"
         assert!(infer_lib_target_for_test_filter_in(
             repo.path(),
             "test(leader_maintenance_heartbeat_refreshes_registered_metadata)",
+        )?);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infer_lib_target_accepts_nextest_name_fragments() -> TestResult<()> {
+        let repo = tempfile::tempdir()?;
+        let inline_test = repo.path().join("xtask/src/config.rs");
+        fs::create_dir_all(inline_test.parent().expect("inline parent"))?;
+        fs::write(
+            &inline_test,
+            "\
+pub fn workspace_state_dir_for() {}\n\
+\n\
+#[sinex_test]\n\
+async fn test_workspace_state_dir_rejects_sinnix_dev_cache_state() {}\n\
+\n\
+#[sinex_test]\n\
+async fn test_workspace_state_dir_honors_explicit_temp_override() {}\n\
+",
+        )?;
+
+        assert!(infer_lib_target_for_test_filter_in(
+            repo.path(),
+            "test(workspace_state_dir)",
+        )?);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infer_lib_target_ignores_non_test_function_fragments() -> TestResult<()> {
+        let repo = tempfile::tempdir()?;
+        let source = repo.path().join("xtask/src/config.rs");
+        fs::create_dir_all(source.parent().expect("source parent"))?;
+        fs::write(&source, "pub fn workspace_state_dir_for() {}\n")?;
+
+        assert!(!infer_lib_target_for_test_filter_in(
+            repo.path(),
+            "test(workspace_state_dir)",
         )?);
         Ok(())
     }
