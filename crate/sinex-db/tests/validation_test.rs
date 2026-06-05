@@ -12,6 +12,7 @@ async fn event_validator_rejects_future_ts_orig() -> xtask::sandbox::TestResult<
         event_type: EventType::from_static("test.event"),
         payload: json!({ "ok": true }),
         ts_orig: Some(Timestamp::now() + ::time::Duration::hours(2)),
+        ts_quality: None,
         host: HostName::from_static("validator"),
         source_run_id: None,
         payload_schema_id: None,

@@ -20,7 +20,9 @@ pub use occurrence::MaterialOccurrenceKey;
 pub use payload::*;
 pub use payloads::*;
 
-use crate::domain::{DerivedNodeModel, EventSource, EventType, HostName, SyntheticTemporalPolicy};
+use crate::domain::{
+    DerivedNodeModel, EventSource, EventType, HostName, SyntheticTemporalPolicy, TemporalSourceType,
+};
 use crate::ids::Id;
 use crate::primitives::Uuid;
 use serde::{Deserialize, Serialize};
@@ -49,9 +51,22 @@ pub struct Event<T = JsonValue> {
     /// Event payload (typed or JSON)
     pub payload: T,
 
-    /// Original timestamp when the event occurred
+    /// Original timestamp when the event occurred.
+    ///
+    /// `None` is the "derive me at persistence" signal for material-provenance
+    /// events: the ingestd admission stage resolves it from the source-material
+    /// timing tier (#1570 Prong B). Derived events and any caller that set an
+    /// explicit time carry `Some`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ts_orig: Option<Timestamp>,
+
+    /// Quality rung of `ts_orig` on the temporal ladder.
+    ///
+    /// Set by the parser to `IntrinsicContent` when a `#[timestamp]` field
+    /// resolves; left `None` for material-provenance events that defer
+    /// resolution to the persistence stage, which fills in the resolved rung.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ts_quality: Option<TemporalSourceType>,
 
     /// Hostname where the event was generated
     #[serde(default = "get_hostname_default")]
@@ -199,6 +214,7 @@ impl<T: Serialize> Event<T> {
             event_type: self.event_type,
             payload: serde_json::to_value(self.payload)?,
             ts_orig: self.ts_orig,
+            ts_quality: self.ts_quality,
             host: self.host,
             source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
@@ -228,6 +244,7 @@ impl Event<JsonValue> {
             event_type: self.event_type.clone(),
             payload: serde_json::from_value(self.payload.clone())?,
             ts_orig: self.ts_orig,
+            ts_quality: self.ts_quality,
             host: self.host.clone(),
             source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
@@ -259,6 +276,7 @@ impl Event<JsonValue> {
             event_type: event_type.into(),
             payload,
             ts_orig: Some(Timestamp::now()),
+            ts_quality: None,
             host: builder::get_hostname(),
             source_run_id: None,
             payload_schema_id: None,

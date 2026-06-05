@@ -250,6 +250,7 @@ impl<'ctx> TestCoreStack<'ctx> {
             equivalence_key: None,
             created_by_operation_id: None,
             node_model: None,
+            ts_quality: None,
         };
 
         let event_id: uuid::Uuid = self.ctx.publish_prebuilt_event(&event).await?;
@@ -351,6 +352,7 @@ impl<'ctx> TestCoreStack<'ctx> {
                 equivalence_key: Some(format!("{source}:{event_type}:{i}")),
                 created_by_operation_id: None,
                 node_model: None,
+                ts_quality: None,
             };
 
             let eid: uuid::Uuid = self.ctx.publish_prebuilt_event(&event).await?;

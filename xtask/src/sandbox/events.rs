@@ -155,6 +155,7 @@ impl EventPublisher for Sandbox {
             equivalence_key: None,
             created_by_operation_id: None,
             node_model: None,
+            ts_quality: None,
         };
 
         // Use the trait method recursion or self method?
@@ -278,6 +279,7 @@ impl Sandbox {
                 equivalence_key: None,
                 created_by_operation_id: None,
                 node_model: None,
+                ts_quality: None,
             };
             events.push(event);
         }
@@ -337,6 +339,7 @@ impl Sandbox {
                 equivalence_key: None,
                 created_by_operation_id: None,
                 node_model: None,
+                ts_quality: None,
             };
 
             material_uuids.push(material_uuid);
