@@ -38,7 +38,7 @@ Three-layer defense achieving exactly-once semantics:
 
 ### Layer 1: NATS Message Deduplication
 ```rust
-let msg_id = format!("{}:{}", node_id, event.id);
+let msg_id = format!("{}:{}", producer_id, event.id);
 headers.insert("Nats-Msg-Id", msg_id);
 ```
 

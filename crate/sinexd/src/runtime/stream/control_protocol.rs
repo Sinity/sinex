@@ -69,7 +69,7 @@ pub(super) fn encode_control_message<TPayload: Serialize>(
 ) -> RuntimeResult<Vec<u8>> {
     serde_json::to_vec(payload).map_err(|error| {
         SinexError::serialization(format!(
-            "Failed to serialize {payload_kind} for node '{module_name}' operation {operation_id}: {error}"
+            "Failed to serialize {payload_kind} for module '{module_name}' operation {operation_id}: {error}"
         ))
     })
 }

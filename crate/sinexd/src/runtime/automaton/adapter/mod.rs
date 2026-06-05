@@ -193,7 +193,7 @@ where
 {
     // ── Public Accessors ───────────────────────────────────────────────
 
-    /// Get the node's current state.
+    /// Get the automaton's current state.
     pub fn state(&self) -> &N::State {
         &self.persisted_state.state
     }

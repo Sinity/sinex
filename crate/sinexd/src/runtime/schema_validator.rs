@@ -1,6 +1,6 @@
 //! RuntimeModule-side schema validation
 //!
-//! Enables nodes to validate events before publishing to NATS,
+//! Enables runtime modules to validate events before publishing to NATS,
 //! reducing bandwidth and providing early feedback on schema errors.
 //!
 //! Uses schema broadcasts from event_engine and fetches full schemas from
@@ -26,7 +26,7 @@ use uuid::Uuid;
 use crate::runtime::RuntimeResult;
 use crate::runtime::stream::SchemaBroadcastEntry;
 
-/// Schema validator for nodes
+/// Schema validator for runtime modules.
 ///
 /// This validator:
 /// 1. Receives schema metadata via NATS broadcasts from event_engine

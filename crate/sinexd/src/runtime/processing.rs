@@ -4,7 +4,7 @@ use std::{error::Error, fmt};
 
 use crate::runtime::SinexError;
 
-/// Errors returned by node processing logic before transport/runtime handling.
+/// Errors returned by automaton processing logic before transport/runtime handling.
 #[derive(Debug)]
 pub enum AutomatonLogicError {
     Processing(String),
@@ -45,7 +45,7 @@ impl From<serde_json::Error> for AutomatonLogicError {
 }
 
 impl AutomatonLogicError {
-    /// Convert a node-logic failure into the structured Sinex error class that
+    /// Convert an automaton-logic failure into the structured Sinex error class that
     /// settlement should use. This intentionally preserves the distinction
     /// between transient processing failures and data-shaped input/output
     /// failures.

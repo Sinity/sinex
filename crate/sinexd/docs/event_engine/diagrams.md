@@ -148,7 +148,7 @@ PHASE 4: CONSUMPTION (Automata)
 │                    3 Streams + Key-Value Buckets                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-STREAM 1: events.raw (Raw Events from Nodes)
+STREAM 1: events.raw (Raw Events from Sources)
 ═══════════════════════════════════════════════════════════════════════════════
 
   Subjects: events.raw.{source}.{event_type}
@@ -167,7 +167,7 @@ STREAM 1: events.raw (Raw Events from Nodes)
   │  │ - Max Age: 90 days                                                ││
   │  │ - Max Msgs: 10,000,000                                           ││
   │  │ - Max Bytes: (not explicitly limited here)                        ││
-  │  │ - Replicas: 1 (single-node)                                      ││
+  │  │ - Replicas: 1 (single NATS server)                               ││
   │  │ - Discard: Old (FIFO when full)                                  ││
   │  └─────────────────────────────────────────────────────────────────┘│
   │                                                                       │

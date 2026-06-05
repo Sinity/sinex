@@ -174,7 +174,7 @@ pub struct RuntimeConfig {
     pub retry_config: RetryConfig,
 }
 
-/// Configuration for event source nodes
+/// Configuration for event source runtime modules.
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, bon::Builder)]
 #[builder(on(String, into))]
 pub struct EventSourceConfig {
@@ -199,7 +199,7 @@ pub struct EventSourceConfig {
     pub source_config: HashMap<String, serde_json::Value>,
 }
 
-/// Configuration for automaton nodes
+/// Configuration for automaton runtime modules.
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, bon::Builder)]
 #[builder(on(String, into))]
 pub struct AutomatonConfig {

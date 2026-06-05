@@ -329,7 +329,7 @@ impl AcquisitionManager {
         }
     }
 
-    /// Create an acquisition manager directly from node handles
+    /// Create an acquisition manager directly from runtime handles.
     pub fn from_handles(
         handles: &RuntimeHandles,
         rotation_policy: RotationPolicy,

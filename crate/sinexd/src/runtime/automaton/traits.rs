@@ -399,7 +399,7 @@ pub trait ScopeReconciler: Send + Sync + 'static {
 /// A 1:N event transducer: one input event produces zero or more output events,
 /// each potentially of a different event type.
 ///
-/// Unlike [`Transducer`], which emits at most one output per input, this node
+/// Unlike [`Transducer`], which emits at most one output per input, this automaton
 /// can emit multiple outputs with distinct event types — necessary when a single
 /// logical operation (e.g. document parsing) produces events of multiple kinds
 /// (`document.parsed` + N× `document.chunked`). Each output carries its own
@@ -416,7 +416,7 @@ pub trait MultiOutputTransducer: Send + Sync + 'static {
 
     fn name(&self) -> &'static str;
     fn input_event_type(&self) -> &'static str;
-    /// The set of event types this node can produce. Callers stamp each output
+    /// The set of event types this automaton can produce. Callers stamp each output
     /// with the appropriate type from this list via
     /// [`DerivedOutput::with_event_type`].
     fn output_event_types(&self) -> &[&'static str];
@@ -473,7 +473,7 @@ pub trait Automaton: Send + Sync + 'static {
     fn output_event_source(&self) -> &'static str;
     fn automaton_model(&self) -> AutomatonModel;
 
-    /// Process a single event through the node's model-specific logic.
+    /// Process a single event through the automaton's model-specific logic.
     fn process_derived(
         &mut self,
         state: &mut Self::State,

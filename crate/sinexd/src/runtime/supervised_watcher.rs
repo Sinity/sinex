@@ -1,7 +1,7 @@
 //! Supervised watcher task spawning with panic catch, backoff restart, and health reporting.
 //!
 //! Watcher tasks (filesystem inotify, journald, dbus, udev, terminal-tail, etc.) are
-//! long-running and must equal the node's lifetime. A bare `tokio::spawn` drops the
+//! long-running and must equal the module's lifetime. A bare `tokio::spawn` drops the
 //! `JoinHandle` silently: when the task panics or returns an error, data capture stops
 //! and nothing surfaces the failure.
 //!
@@ -162,7 +162,7 @@ where
 ///
 /// # Arguments
 /// - `watcher_name`: stable identifier used in all log lines and health records.
-/// - `shutdown_rx`: the node's shutdown receiver; supervisor exits when `*shutdown_rx.borrow() == true`.
+/// - `shutdown_rx`: the module's shutdown receiver; supervisor exits when `*shutdown_rx.borrow() == true`.
 /// - `health_tracker`: optional shared health state to update on error.
 /// - `config`: restart and limit settings.
 /// - `factory`: closure that produces a new watcher future on each start.

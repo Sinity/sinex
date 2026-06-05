@@ -72,7 +72,7 @@ use tracing::{error, info, instrument, warn};
 use futures::{Stream, StreamExt};
 use std::future::Future;
 
-/// Instance mode determines node behavior
+/// Instance mode determines runtime module behavior.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InstanceMode {
     /// Process all events (single leader)
@@ -1742,7 +1742,7 @@ impl RuntimeCoordination {
 
     /// Initiate handoff from older version (if any) during startup
     ///
-    /// This should be called during node startup to detect and request
+    /// This should be called during module startup to detect and request
     /// handoff from any older running versions. Returns true if handoff was
     /// initiated, false if no older version was found.
     ///

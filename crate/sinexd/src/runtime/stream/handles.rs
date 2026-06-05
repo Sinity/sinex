@@ -607,7 +607,7 @@ mod tests {
     }
 }
 
-/// Handles made available to nodes during initialization and runtime.
+/// Handles made available to modules during initialization and runtime.
 #[derive(Clone)]
 pub struct RuntimeHandles {
     #[cfg(feature = "db")]
@@ -679,7 +679,7 @@ impl RuntimeHandles {
     pub fn require_db_pool(&self) -> &PgPool {
         self.db_pool.as_ref().expect(
             "Database pool required but not available. \
-             This node cannot run in Edge Mode (SINEX_EDGE_MODE=1). \
+             This module cannot run in Edge Mode (SINEX_EDGE_MODE=1). \
              Either provide DATABASE_URL or refactor to use NATS-only data flow.",
         )
     }
@@ -713,7 +713,7 @@ impl RuntimeHandles {
     }
 }
 
-/// Initialization context passed to nodes.
+/// Initialization context passed to modules.
 pub struct RuntimeInitContext<C> {
     config: C,
     raw_config: std::collections::HashMap<String, serde_json::Value>,

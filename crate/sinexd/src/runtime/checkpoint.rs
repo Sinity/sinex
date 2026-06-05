@@ -274,19 +274,19 @@ pub fn checkpoint_bucket_name(prefix: Option<&str>) -> String {
     format!("KV_{namespaced_base}")
 }
 
-/// Parse a checkpoint KV key into (node, group, consumer) components.
+/// Parse a checkpoint KV key into (module, group, consumer) components.
 #[must_use]
 pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
     let mut parts = key.splitn(3, '.');
-    let node = parts.next()?.trim();
+    let module = parts.next()?.trim();
     let group = parts.next()?.trim();
     let consumer = parts.next()?.trim();
 
-    if node.is_empty() || group.is_empty() || consumer.is_empty() {
+    if module.is_empty() || group.is_empty() || consumer.is_empty() {
         return None;
     }
 
-    Some((node.to_string(), group.to_string(), consumer.to_string()))
+    Some((module.to_string(), group.to_string(), consumer.to_string()))
 }
 
 /// Manager for unified checkpoint persistence (both sources and automata).
@@ -300,7 +300,7 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
 ///
 /// let manager = CheckpointManager::new(
 ///     pool,
-///     "my-node".to_string(),
+///     "my-source".to_string(),
 ///     "default".to_string(),
 ///     "hostname-1234".to_string(),
 /// );
@@ -328,7 +328,7 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
 /// - `SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS=30` - Max age before deletion (default: 30)
 /// - `SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS=24` - Run interval (default: 24)
 ///
-/// To enable in your node, call [`spawn_checkpoint_cleanup_task`] during startup:
+/// To enable in your module, call [`spawn_checkpoint_cleanup_task`] during startup:
 ///
 /// ```rust,ignore
 /// let config = CheckpointCleanupConfig::from_env();
@@ -394,7 +394,7 @@ impl CheckpointManager {
     ///
     /// # Behavior
     /// - If no checkpoint exists for this consumer, a default checkpoint is returned
-    /// - First-time nodes get a default checkpoint with `processed_count: 0`
+    /// - First-time modules get a default checkpoint with `processed_count: 0`
     pub async fn load_checkpoint(&self) -> RuntimeResult<CheckpointState> {
         let key = self.kv_key();
         if let Some(state) = self.load_checkpoint_for_key(&key).await? {
@@ -405,7 +405,7 @@ impl CheckpointManager {
                 "Loaded checkpoint from KV"
             );
 
-            // Warn if the restored checkpoint is stale — the node may replay already-processed events.
+            // Warn if the restored checkpoint is stale — the module may replay already-processed events.
             // Only warn for non-empty checkpoints (Checkpoint::None means a fresh/reset state).
             if !matches!(state.checkpoint, Checkpoint::None) {
                 let max_age_hours: u64 = shared_env::parse_or(
@@ -422,7 +422,7 @@ impl CheckpointManager {
                         module = %self.module_name,
                         checkpoint_age_hours = age_hours,
                         max_age_hours = max_age_hours,
-                        "checkpoint is stale — node may replay already-processed events"
+                        "checkpoint is stale — module may replay already-processed events"
                     );
                 }
             }
@@ -600,11 +600,11 @@ impl CheckpointManager {
     }
 
     fn kv_key(&self) -> String {
-        let node = sanitize_kv_key_component(&self.module_name);
+        let module = sanitize_kv_key_component(&self.module_name);
         let consumer_group = sanitize_kv_key_component(&self.consumer_group);
         let consumer = sanitize_kv_key_component(&self.consumer_name);
 
-        format!("{node}.{consumer_group}.{consumer}")
+        format!("{module}.{consumer_group}.{consumer}")
     }
 
     /// Get checkpoint history for debugging.
@@ -974,7 +974,7 @@ mod tests {
         let kv = ctx.with_nats().shared().await?.checkpoint_kv().await?;
         let manager = CheckpointManager::with_missing_checkpoint_warning(
             kv,
-            "checkpoint-test-node".to_string(),
+            "checkpoint-test-module".to_string(),
             "test-group".to_string(),
             "test-consumer".to_string(),
             true,

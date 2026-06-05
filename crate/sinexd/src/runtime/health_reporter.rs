@@ -1,4 +1,4 @@
-//! Standardized health reporting for all nodes
+//! Standardized health reporting for runtime modules.
 //!
 //! Provides uniform health tracking that automatically monitors success/error rates
 //! and emits health.status events via `SelfObserver` when status changes.
@@ -57,7 +57,7 @@ struct OutcomeSample {
 /// Emission tracker shared with `EventEmitter` to record real upstream emissions.
 ///
 /// Unlike `HealthMetrics::events_processed` (bumped on every adapter tick, including
-/// idle keepalives), this tracker is incremented **only when a node actually pushes
+/// idle keepalives), this tracker is incremented **only when a module actually pushes
 /// an event** through the runtime's `EventEmitter::emit`. The monotonic last-emit
 /// seconds drives the emit-stall detector in `HealthReporter::calculate_status`.
 #[derive(Debug)]
@@ -243,7 +243,7 @@ pub struct HealthThresholds {
     /// Sliding window for error rate calculation (in seconds)
     #[sinex_config(env = "SINEX_HEALTH_WINDOW_SECONDS", default_expr = "300_u64")]
     pub window_seconds: u64,
-    /// Seconds without any real emission, *after* the node has been up at least this
+    /// Seconds without any real emission, *after* the module has been up at least this
     /// long, before degrading to `Degraded`. Defaults to 600s (10 min). Set to `0`
     /// to disable emit-stall detection entirely. Only meaningful when an
     /// `EmitTracker` has been wired into the reporter (otherwise the check is a
@@ -311,11 +311,11 @@ impl HealthThresholds {
     }
 }
 
-/// Liveness probe: an async function that returns `true` when the node's
+/// Liveness probe: an async function that returns `true` when the module's
 /// dependencies (NATS, DB, external socket) are reachable.
 pub type LivenessProbe = Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>;
 
-/// Standardized health reporter for nodes
+/// Standardized health reporter for runtime modules.
 ///
 /// Tracks events/errors and automatically emits health.status events
 /// when the component's health status changes.
@@ -326,7 +326,7 @@ pub struct HealthReporter {
     last_status: Arc<RwLock<HealthStatus>>,
     thresholds: HealthThresholds,
     clock: Arc<dyn HealthClock>,
-    /// Optional async probe that verifies node dependencies are reachable.
+    /// Optional async probe that verifies module dependencies are reachable.
     /// When set, `check_and_emit()` calls the probe and caches the result in
     /// `liveness_ok`. `calculate_status()` demotes `Healthy` → `Degraded` when
     /// `liveness_ok = false`.
@@ -381,7 +381,7 @@ impl HealthReporter {
         }
     }
 
-    /// Attach a liveness probe that verifies node dependencies are reachable.
+    /// Attach a liveness probe that verifies module dependencies are reachable.
     ///
     /// The probe is called once per `check_and_emit()` invocation. If it returns
     /// `false`, `calculate_status()` downgrades `Healthy` → `Degraded` so the
@@ -453,7 +453,7 @@ impl HealthReporter {
     ///
     /// Distinct from `record_success`, which is bumped by adapter-level keepalive
     /// ticks (e.g. the 30s "alive but idle" pulse in `SourceDriverRuntime`).
-    /// `notify_emit` is the signal that the node is *actually doing work*, and
+    /// `notify_emit` is the signal that the module is *actually doing work*, and
     /// is what feeds emit-stall detection.
     pub fn notify_emit(&self, count: u64) {
         if count == 0 {
@@ -464,13 +464,13 @@ impl HealthReporter {
         }
     }
 
-    /// Whether the node's emit rate has stalled past the configured threshold.
+    /// Whether the module's emit rate has stalled past the configured threshold.
     ///
     /// Returns `false` (i.e. healthy) when stall detection is disabled, when no
-    /// tracker has been installed, or when the node has not yet been up long
+    /// tracker has been installed, or when the module has not yet been up long
     /// enough to be considered overdue. Once both `uptime` and "seconds since
     /// last emit" cross the threshold, this returns `true`. If no emit has been
-    /// observed yet, uptime alone gates the verdict — a node that runs for
+    /// observed yet, uptime alone gates the verdict — a module that runs for
     /// > `emit_stall_seconds` without ever emitting is degraded.
     fn emit_stalled(&self) -> bool {
         if !self.thresholds.emit_stall_enabled() {

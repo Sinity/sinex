@@ -17,7 +17,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// Subscribes to `sinex.control.sources.<module_name>.scan` using NATS request-reply.
     /// When a `SourceScanCommand` arrives, the listener:
     /// 1. Replies with `SourceScanAck` (accepted or rejected)
-    /// 2. If accepted, spawns an isolated replay worker for the same node type/config
+    /// 2. If accepted, spawns an isolated replay worker for the same module type/config
     /// 3. Publishes `SourceScanProgress` updates to `sinex.control.replay.progress.<operation_id>`
     ///
     /// Only source modules accept scan commands; automata reject them (they receive
@@ -80,7 +80,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                 move |mut sub| {
                     let loop_client = nats_client.clone();
                     let loop_env = env.clone();
-                    let loop_node_name = module_name.clone();
+                    let loop_module_name = module_name.clone();
                     let loop_handles = handles.clone();
                     let loop_service_info = service_info.clone();
                     let loop_raw_config = raw_config.clone();
@@ -102,7 +102,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                 }
                                 changed = shutdown_rx.changed() => {
                                     if changed.is_err() || *shutdown_rx.borrow() {
-                                        debug!(module = %loop_node_name, "Command listener subscription received shutdown");
+                                        debug!(module = %loop_module_name, "Command listener subscription received shutdown");
                                         return false;
                                     }
                                     continue;
@@ -111,7 +111,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                             match control_command_kind(msg.subject.as_ref()) {
                                 Some(ControlCommandKind::Drain) => {
                                     Self::handle_drain_command(
-                                        &loop_node_name,
+                                        &loop_module_name,
                                         &msg.payload,
                                         &loop_drain_controller,
                                         #[cfg(feature = "db")]
@@ -122,7 +122,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                 }
                                 Some(ControlCommandKind::Resume) => {
                                     warn!(
-                                        module = %loop_node_name,
+                                        module = %loop_module_name,
                                         "Resume command received, but runtime drain is currently a one-way shutdown signal"
                                     );
                                 }
@@ -133,14 +133,14 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                             warn!(
                                                 target: "sinex_metrics",
                                                 metric = "runtime.scan_command_deser_failures_total",
-                                                module = %loop_node_name,
+                                                module = %loop_module_name,
                                                 error = %err,
                                                 "Failed to deserialize SourceScanCommand"
                                             );
                                             if let Some(reply) = msg.reply {
                                                 let nack = SourceScanAck {
                                                     operation_id: Uuid::now_v7(),
-                                                    module_name: loop_node_name.clone(),
+                                                    module_name: loop_module_name.clone(),
                                                     accepted: false,
                                                     error: Some(format!("Failed to deserialize command: {err}")),
                                                 };
@@ -148,7 +148,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                                     Self::publish_scan_ack(&loop_client, Some(reply), &nack).await
                                                 {
                                                     warn!(
-                                                        module = %loop_node_name,
+                                                        module = %loop_module_name,
                                                         error = %error,
                                                         "Failed to publish malformed-command rejection"
                                                     );
@@ -162,7 +162,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                     let Some(reply) = msg.reply.clone() else {
                                         warn!(
                                             operation_id = %operation_id,
-                                            module = %loop_node_name,
+                                            module = %loop_module_name,
                                             "Ignoring scan command without reply subject"
                                         );
                                         continue;
@@ -171,7 +171,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                     if loop_drain_controller.is_requested() {
                                         let ack = SourceScanAck {
                                             operation_id,
-                                            module_name: loop_node_name.clone(),
+                                            module_name: loop_module_name.clone(),
                                             accepted: false,
                                             error: Some("RuntimeModule is draining and cannot accept replay scans".to_string()),
                                         };
@@ -180,7 +180,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         {
                                             warn!(
                                                 operation_id = %operation_id,
-                                                module = %loop_node_name,
+                                                module = %loop_module_name,
                                                 error = %error,
                                                 "Failed to publish scan rejection"
                                             );
@@ -191,10 +191,10 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                     if module_kind != ModuleKind::Source {
                                         let ack = SourceScanAck {
                                             operation_id,
-                                            module_name: loop_node_name.clone(),
+                                            module_name: loop_module_name.clone(),
                                             accepted: false,
                                             error: Some(format!(
-                                                "RuntimeModule '{loop_node_name}' is a {module_kind:?}, not a source. Automata receive replay events via JetStream."
+                                                "RuntimeModule '{loop_module_name}' is a {module_kind:?}, not a source. Automata receive replay events via JetStream."
                                             )),
                                         };
                                         if let Err(error) =
@@ -202,7 +202,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         {
                                             warn!(
                                                 operation_id = %operation_id,
-                                                module = %loop_node_name,
+                                                module = %loop_module_name,
                                                 error = %error,
                                                 "Failed to publish scan rejection"
                                             );
@@ -213,10 +213,10 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                     if !supports_historical {
                                         let ack = SourceScanAck {
                                             operation_id,
-                                            module_name: loop_node_name.clone(),
+                                            module_name: loop_module_name.clone(),
                                             accepted: false,
                                             error: Some(format!(
-                                                "RuntimeModule '{loop_node_name}' does not support historical scans (supports_historical = false)"
+                                                "RuntimeModule '{loop_module_name}' does not support historical scans (supports_historical = false)"
                                             )),
                                         };
                                         if let Err(error) =
@@ -224,7 +224,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         {
                                             warn!(
                                                 operation_id = %operation_id,
-                                                module = %loop_node_name,
+                                                module = %loop_module_name,
                                                 error = %error,
                                                 "Failed to publish scan rejection"
                                             );
@@ -235,7 +235,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                     if dry_run {
                                         let ack = SourceScanAck {
                                             operation_id,
-                                            module_name: loop_node_name.clone(),
+                                            module_name: loop_module_name.clone(),
                                             accepted: false,
                                             error: Some(
                                                 "RuntimeModule is running in dry-run mode and cannot execute replay scans"
@@ -247,7 +247,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         {
                                             warn!(
                                                 operation_id = %operation_id,
-                                                module = %loop_node_name,
+                                                module = %loop_module_name,
                                                 error = %error,
                                                 "Failed to publish scan rejection"
                                             );
@@ -258,7 +258,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                     let Some(factory) = loop_source_factory.clone() else {
                                         let ack = SourceScanAck {
                                             operation_id,
-                                            module_name: loop_node_name.clone(),
+                                            module_name: loop_module_name.clone(),
                                             accepted: false,
                                             error: Some("RuntimeModule was started without a replay worker factory".to_string()),
                                         };
@@ -267,7 +267,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         {
                                             warn!(
                                                 operation_id = %operation_id,
-                                                module = %loop_node_name,
+                                                module = %loop_module_name,
                                                 error = %error,
                                                 "Failed to publish scan rejection"
                                             );
@@ -278,16 +278,16 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                     if loop_active_scan.swap(true, Ordering::SeqCst) {
                                         let ack = SourceScanAck {
                                             operation_id,
-                                            module_name: loop_node_name.clone(),
+                                            module_name: loop_module_name.clone(),
                                             accepted: false,
-                                            error: Some("A scan is already in progress on this node".to_string()),
+                                            error: Some("A scan is already in progress on this module".to_string()),
                                         };
                                         if let Err(error) =
                                             Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
                                         {
                                             warn!(
                                                 operation_id = %operation_id,
-                                                module = %loop_node_name,
+                                                module = %loop_module_name,
                                                 error = %error,
                                                 "Failed to publish scan rejection"
                                             );
@@ -297,7 +297,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
 
                                     let ack = SourceScanAck {
                                         operation_id,
-                                        module_name: loop_node_name.clone(),
+                                        module_name: loop_module_name.clone(),
                                         accepted: true,
                                         error: None,
                                     };
@@ -308,7 +308,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                             target: "sinex_metrics",
                                             metric = "runtime.scan_ack_failures_total",
                                             operation_id = %operation_id,
-                                            module = %loop_node_name,
+                                            module = %loop_module_name,
                                             error = %error,
                                             "Failed to publish scan acceptance; aborting dispatched scan"
                                         );
@@ -318,13 +318,13 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
 
                                     info!(
                                         operation_id = %operation_id,
-                                        module = %loop_node_name,
+                                        module = %loop_module_name,
                                         "Accepted scan command, spawning historical scan task"
                                     );
 
                                     let scan_client = loop_client.clone();
                                     let scan_env = loop_env.clone();
-                                    let scan_node_name = loop_node_name.clone();
+                                    let scan_module_name = loop_module_name.clone();
                                     let scan_active = loop_active_scan.clone();
                                     let scan_handles = loop_handles.clone();
                                     let scan_service_info = loop_service_info.clone();
@@ -347,7 +347,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
 
                                         let start_progress = SourceScanProgress {
                                             operation_id,
-                                            module_name: scan_node_name.clone(),
+                                            module_name: scan_module_name.clone(),
                                             events_processed: 0,
                                             events_emitted: 0,
                                             final_report: None,
@@ -364,7 +364,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                                 target: "sinex_metrics",
                                                 metric = "runtime.scan_progress_failures_total",
                                                 operation_id = %operation_id,
-                                                module = %scan_node_name,
+                                                module = %scan_module_name,
                                                 error = %error,
                                                 "Failed to publish initial scan progress; aborting dispatched scan"
                                             );
@@ -390,7 +390,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                                     .or_insert(outcome.events_emitted);
                                                 SourceScanProgress {
                                                     operation_id,
-                                                    module_name: scan_node_name.clone(),
+                                                    module_name: scan_module_name.clone(),
                                                     events_processed: report.events_processed,
                                                     events_emitted: outcome.events_emitted,
                                                     final_report: Some(report),
@@ -402,14 +402,14 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                                     target: "sinex_metrics",
                                                     metric = "runtime.dispatched_scan_failures_total",
                                                     operation_id = %operation_id,
-                                                    module = %scan_node_name,
+                                                    module = %scan_module_name,
                                                     error = %outcome.error,
                                                     events_emitted = outcome.events_emitted,
                                                     "Dispatched scan failed"
                                                 );
                                                 SourceScanProgress {
                                                     operation_id,
-                                                    module_name: scan_node_name.clone(),
+                                                    module_name: scan_module_name.clone(),
                                                     events_processed: outcome.events_emitted,
                                                     events_emitted: outcome.events_emitted,
                                                     final_report: None,
@@ -426,7 +426,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                                 target: "sinex_metrics",
                                                 metric = "runtime.scan_progress_failures_total",
                                                 operation_id = %operation_id,
-                                                module = %scan_node_name,
+                                                module = %scan_module_name,
                                                 error = %error,
                                                 "Failed to publish final scan progress"
                                             );
@@ -435,9 +435,9 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                 }
                                 None => {
                                     warn!(
-                                        module = %loop_node_name,
+                                        module = %loop_module_name,
                                         subject = %msg.subject,
-                                        "Ignoring unsupported node control subject"
+                                        "Ignoring unsupported module control subject"
                                     );
                                 }
                             }

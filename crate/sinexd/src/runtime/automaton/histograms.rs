@@ -7,7 +7,7 @@
 //! prod-equivalent traffic" — we are not building a high-throughput observability
 //! stack, and we are not the storage layer for the percentiles (Prometheus /
 //! external scrape is). A 1024-sample reservoir computed by sort-on-read is
-//! 8 KiB per node, runs in microseconds at p50/p99 read time, and adds zero
+//! 8 KiB per automaton, runs in microseconds at p50/p99 read time, and adds zero
 //! per-event allocation on the write path. That is the right operating point.
 //!
 //! When this becomes wrong (more modules, higher rates, or external scrape

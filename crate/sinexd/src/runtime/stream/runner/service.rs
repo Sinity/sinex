@@ -93,7 +93,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         let heartbeat_interval = shared_env::parse_or(
             "SINEX_COORDINATION_HEARTBEAT",
             30_u64,
-            "node coordination heartbeat",
+            "runtime coordination heartbeat",
         );
         let runtime = self
             .runtime_state()
@@ -123,7 +123,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         let drain_controller = runtime.handles().runtime_drain();
 
         // Start command listener for source-dispatch replay (scan commands via NATS).
-        // This allows the gateway to dispatch historical scans to running nodes.
+        // This allows the API to dispatch historical scans to running sources.
         #[cfg(feature = "messaging")]
         self.start_command_listener();
 

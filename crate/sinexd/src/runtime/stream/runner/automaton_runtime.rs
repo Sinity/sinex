@@ -296,13 +296,13 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         // Block on the first event, then non-blocking drain whatever else is queued.
         const BATCH_SIZE: usize = 100;
 
-        // Periodic flush for Windowed nodes (trailing-bucket emission).
+        // Periodic flush for Windowed automata (trailing-bucket emission).
         // Configurable via SINEX_WINDOWED_FLUSH_INTERVAL_SECS; default 60 s.
-        // Non-windowed nodes return 0 from `periodic_flush` immediately.
+        // Non-windowed automata return 0 from `periodic_flush` immediately.
         let flush_interval_secs = sinex_primitives::env::parse_or(
             "SINEX_WINDOWED_FLUSH_INTERVAL_SECS",
             60_u64,
-            "windowed node flush interval",
+            "windowed automaton flush interval",
         );
         let mut flush_ticker =
             tokio::time::interval(std::time::Duration::from_secs(flush_interval_secs));

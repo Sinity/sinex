@@ -1,4 +1,4 @@
-//! Wire-format and configuration data types for stream nodes.
+//! Wire-format and configuration data types for runtime stream modules.
 //!
 //! Pure data structures plus their `Default`/`Display` impls. No runtime logic.
 
@@ -33,11 +33,11 @@ pub struct SchemaBroadcastEntry {
     pub schema_id: String,
 }
 
-/// Coordinator-resolved replay metadata passed into node scans.
+/// Coordinator-resolved replay metadata passed into source scans.
 ///
 /// When a replay operation triggers a historical scan, the coordinator resolves the
-/// source material record and scope filters once, then passes them typed into the node.
-/// This prevents nodes from re-querying `source_material_registry` as a second authority.
+/// source material record and scope filters once, then passes them typed into the source.
+/// This prevents sources from re-querying `source_material_registry` as a second authority.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedReplayMaterial {
     /// Stable registry identity of the source material.
@@ -144,7 +144,7 @@ impl Default for ScanArgs {
 ///
 /// The runtime startup runner performs snapshot and bounded gap-fill before it
 /// constructs this value. The embedded checkpoint is a live-tail resume cursor,
-/// not permission for a node to widen continuous startup into a historical scan.
+/// not permission for a source to widen continuous startup into a historical scan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContinuousStart {
     checkpoint: Checkpoint,
@@ -166,13 +166,13 @@ impl ContinuousStart {
 //
 // These types implement the source-dispatch replay protocol. Instead of the
 // gateway republishing stored event rows to NATS (reinjection), it dispatches
-// a scan command to the running source node. The node re-reads source material
+// a scan command to the running source module. The source re-reads source material
 // through its normal scan_historical() path and emits fresh events.
 //
 // Protocol:
 //   gateway → NATS request `sinex.control.sources.<name>.scan` (SourceScanCommand)
-//   node    → NATS reply (SourceScanAck)
-//   node    → NATS publish `sinex.control.replay.progress.<operation_id>` (SourceScanProgress)
+//   source  → NATS reply (SourceScanAck)
+//   source  → NATS publish `sinex.control.replay.progress.<operation_id>` (SourceScanProgress)
 
 /// Command dispatched to a running module to trigger a scan.
 /// Published to `sinex.control.sources.<name>.scan` via NATS request-reply.
@@ -188,7 +188,7 @@ pub struct SourceScanCommand {
     pub args: ScanArgs,
 }
 
-/// Acknowledgement from node after receiving scan command.
+/// Acknowledgement from a source after receiving a scan command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceScanAck {
     /// Correlates with the `SourceScanCommand.operation_id`.
@@ -201,7 +201,7 @@ pub struct SourceScanAck {
     pub error: Option<String>,
 }
 
-/// Progress update published by node during dispatched scan.
+/// Progress update published by a source during dispatched scan.
 /// Published to `sinex.control.replay.progress.<operation_id>`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceScanProgress {

@@ -127,7 +127,7 @@ pub struct EventBatcher {
     /// Persistent work directory used for the local recovery-spool file.
     ///
     /// This must be a directory that survives service restarts (i.e. **not** under a
-    /// `PrivateTmp` systemd namespace). It is populated from the node's `RuntimeConfig::work_dir`
+    /// `PrivateTmp` systemd namespace). It is populated from the module's `RuntimeConfig::work_dir`
     /// by the runtime, which in turn reads `SINEX_WORK_DIR` / defaults to the system cache dir.
     work_dir: PathBuf,
 }
@@ -187,7 +187,7 @@ impl EventBatcher {
         }
     }
 
-    /// Return the canonical path for the local recovery spool in the node's work directory.
+    /// Return the canonical path for the local recovery spool in the module's work directory.
     fn recovery_spool_path(&self) -> PathBuf {
         self.work_dir.join("sinex_event_recovery_spool.jsonl")
     }

@@ -353,7 +353,7 @@ where
     /// outputs before step 3, so channel/transport failures cannot create an empty scope by
     /// archiving stale outputs first.
     ///
-    /// Transducer nodes return empty — their outputs are archived with their inputs.
+    /// Transducers return empty — their outputs are archived with their inputs.
     #[cfg(feature = "db")]
     pub async fn process_invalidation(
         &mut self,
@@ -388,7 +388,7 @@ where
     ///
     /// Returns `Ok(Some(count))` on success, `Ok(None)` for a non-fatal skip
     /// (deserialize error, transient processing error), or `Err` for a fatal
-    /// failure that should halt the node's invalidation consumer. Fatal
+    /// failure that should halt the automaton's invalidation consumer. Fatal
     /// errors include `SinexError::Checkpoint` after the local circuit
     /// breaker threshold trips — see #581 for why DLQ-style "log and
     /// continue" on checkpoint errors is unsafe.

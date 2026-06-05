@@ -2,7 +2,7 @@
 //!
 //! This module provides access to compile-time version information generated
 //! by shadow-rs, including semantic versioning, git metadata, and
-//! build information for node coordination and handoff.
+//! build information for runtime coordination and handoff.
 
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,7 @@ mod build {
     pub const GIT_CLEAN: bool = false;
 }
 
-/// Complete node version information
+/// Complete runtime version information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeVersion {
     /// Semantic version (major.minor.patch)
@@ -40,18 +40,18 @@ pub struct RuntimeVersion {
 }
 
 impl RuntimeVersion {
-    /// Get the current node version information
+    /// Get the current runtime version information.
     ///
     /// # Errors
     /// Returns `SinexError::configuration` if any version information is invalid
     pub fn current() -> crate::runtime::RuntimeResult<Self> {
         Ok(Self {
-            version: node_version()?,
-            full_version: node_full_version(),
-            commit_hash: node_commit_hash(),
-            branch: node_branch(),
-            build_timestamp: node_build_timestamp(),
-            is_dirty: node_is_dirty(),
+            version: runtime_version()?,
+            full_version: runtime_full_version(),
+            commit_hash: runtime_commit_hash(),
+            branch: runtime_branch(),
+            build_timestamp: runtime_build_timestamp(),
+            is_dirty: runtime_is_dirty(),
         })
     }
 
@@ -159,7 +159,7 @@ pub struct RuntimeInstance {
 }
 
 impl RuntimeInstance {
-    /// Create a new node instance
+    /// Create a new runtime instance.
     ///
     /// # Errors
     /// Returns `SinexError::configuration` if version information is invalid
@@ -181,7 +181,7 @@ impl RuntimeInstance {
     /// Get instance uptime in seconds
     #[must_use]
     pub fn uptime_seconds(&self) -> u64 {
-        elapsed_seconds_with_warning(self.start_time, "node instance uptime")
+        elapsed_seconds_with_warning(self.start_time, "runtime instance uptime")
     }
 
     /// Check if this instance should be leader over another
@@ -226,19 +226,19 @@ fn elapsed_seconds_with_warning(start_time: SystemTime, context: &str) -> u64 {
 
 // Version accessor functions using shadow-rs compile-time constants
 
-/// Get semantic version of the node
+/// Get semantic version of the runtime.
 ///
 /// # Errors
-/// Returns `SinexError::configuration` if the node version is invalid
-pub fn node_version() -> crate::runtime::RuntimeResult<Version> {
+/// Returns `SinexError::configuration` if the runtime version is invalid.
+pub fn runtime_version() -> crate::runtime::RuntimeResult<Version> {
     Version::from_str(build::PKG_VERSION).map_err(|e| {
-        crate::runtime::SinexError::configuration(format!("Invalid node version: {e}"))
+        crate::runtime::SinexError::configuration(format!("Invalid runtime version: {e}"))
     })
 }
 
 /// Get full version string with build metadata
 #[must_use]
-pub fn node_full_version() -> String {
+pub fn runtime_full_version() -> String {
     let commit = build::SHORT_COMMIT;
     if commit.is_empty() || commit == "unknown" {
         build::PKG_VERSION.to_string()
@@ -249,7 +249,7 @@ pub fn node_full_version() -> String {
 
 /// Get git commit hash (8 characters)
 #[must_use]
-pub fn node_commit_hash() -> String {
+pub fn runtime_commit_hash() -> String {
     let commit = build::SHORT_COMMIT;
     if commit.is_empty() {
         "unknown".to_string()
@@ -260,7 +260,7 @@ pub fn node_commit_hash() -> String {
 
 /// Get git branch name
 #[must_use]
-pub fn node_branch() -> String {
+pub fn runtime_branch() -> String {
     let branch = build::BRANCH;
     if branch.is_empty() {
         "unknown".to_string()
@@ -271,14 +271,14 @@ pub fn node_branch() -> String {
 
 /// Get build timestamp (RFC3339 format)
 #[must_use]
-pub fn node_build_timestamp() -> String {
+pub fn runtime_build_timestamp() -> String {
     // shadow-rs provides BUILD_TIME_3339 in RFC3339 format
     build::BUILD_TIME_3339.to_string()
 }
 
 /// Check if working directory was dirty during build
 #[must_use]
-pub fn node_is_dirty() -> bool {
+pub fn runtime_is_dirty() -> bool {
     // shadow-rs GIT_CLEAN is a bool: true when clean, false when dirty
     !build::GIT_CLEAN
 }

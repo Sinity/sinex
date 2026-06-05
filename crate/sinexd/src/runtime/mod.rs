@@ -3,7 +3,7 @@
 //! This module provides the current authoring and runtime surface for Sinex
 //! source contracts, automata, transport, checkpointing, content storage, and
 //! source-material staging. The `runtime` path is historical and should not be
-//! read as a separate node crate or deployment boundary.
+//! read as a separate crate or deployment boundary.
 //!
 //! # Clock Skew Considerations
 //!

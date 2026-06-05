@@ -1,7 +1,7 @@
 //! Error Context Helpers and Configuration Parsing Utilities
 //!
 //! Common error handling and configuration parsing utilities to reduce code duplication
-//! across nodes. These helpers provide consistent error context and conversion patterns.
+//! across runtime modules. These helpers provide consistent error context and conversion patterns.
 
 use crate::runtime::{SinexError, stream::RuntimeContext};
 use std::collections::HashMap;
@@ -198,7 +198,7 @@ pub mod path_utils {
     /// Sanitize a path component for safe storage
     ///
     /// This uses the core sanitization logic and is a convenience wrapper
-    /// for nodes that need to sanitize file paths.
+    /// for modules that need to sanitize file paths.
     #[must_use]
     pub fn sanitize_path_component(path_str: &str) -> String {
         let path = std::path::Path::new(path_str);
@@ -259,7 +259,7 @@ pub mod path_utils {
 ///     "file not found"
 /// ));
 ///
-/// let node_result = result.map_err(|e| general_error(e, "Failed to read config"));
+/// let runtime_result = result.map_err(|e| general_error(e, "Failed to read config"));
 /// ```
 pub fn general_error<E: std::fmt::Display>(error: E, context: &str) -> crate::runtime::SinexError {
     crate::runtime::SinexError::processing(format!("{context}: {error}"))
@@ -288,18 +288,18 @@ pub fn general_error<E: std::fmt::Display>(error: E, context: &str) -> crate::ru
 /// acquisition
 ///     .begin_material(&identifier)
 ///     .await
-///     .node_err("Failed to begin material")?;
+///     .runtime_err("Failed to begin material")?;
 /// ```
 pub trait RuntimeErrorExt<T> {
     /// Convert error to `SinexError::processing` with context
-    fn node_err(self, context: &str) -> Result<T, crate::runtime::SinexError>;
+    fn runtime_err(self, context: &str) -> Result<T, crate::runtime::SinexError>;
 
     /// Convert error to `SinexError::processing` with context
     fn processing_err(self, context: &str) -> Result<T, crate::runtime::SinexError>;
 }
 
 impl<T, E: std::fmt::Display> RuntimeErrorExt<T> for Result<T, E> {
-    fn node_err(self, context: &str) -> Result<T, crate::runtime::SinexError> {
+    fn runtime_err(self, context: &str) -> Result<T, crate::runtime::SinexError> {
         self.map_err(|e| general_error(e, context))
     }
 

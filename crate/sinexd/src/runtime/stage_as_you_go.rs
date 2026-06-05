@@ -372,7 +372,7 @@ impl StageAsYouGoContext {
         self
     }
 
-    /// Create a Stage-as-You-Go context directly from node handles
+    /// Create a Stage-as-You-Go context directly from runtime handles.
     #[must_use]
     pub fn from_handles(handles: &RuntimeHandles) -> Self {
         Self::from_optional_emitter(handles.emitter().clone())

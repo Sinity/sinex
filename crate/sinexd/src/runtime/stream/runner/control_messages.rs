@@ -124,7 +124,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         ));
         let encoded = serde_json::to_vec(payload).map_err(|error| {
             SinexError::serialization(format!(
-                "Failed to serialize drain_complete payload for node '{module_name}': {error}"
+                "Failed to serialize drain_complete payload for module '{module_name}': {error}"
             ))
         })?;
         let mut headers = async_nats::HeaderMap::new();
@@ -175,7 +175,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             warn!(
                 module = %module_name,
                 requested = %command.module_name,
-                "Ignoring drain command addressed to a different node"
+                "Ignoring drain command addressed to a different module"
             );
             return;
         }

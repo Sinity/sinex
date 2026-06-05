@@ -276,7 +276,7 @@ where
                     }
                     Settlement::HaltModule { reason } => {
                         // Halt requests clean drain so systemd records the
-                        // node as cleanly exited rather than restarting it
+                        // automaton as cleanly exited rather than restarting it
                         // into a hot loop. The error still propagates so the
                         // caller can record the failure.
                         if let Some(drain) = self.shutdown_tx.as_ref() {
@@ -317,14 +317,14 @@ where
         }
     }
 
-    /// Clock-driven trailing-bucket flush for `Windowed` nodes.
+    /// Clock-driven trailing-bucket flush for `Windowed` automata.
     ///
-    /// Calls the node's `timer_flush_derived` with the current wall time.
-    /// If the node's `flush_due` predicate returns true the open accumulator
+    /// Calls the automaton's `timer_flush_derived` with the current wall time.
+    /// If the automaton's `flush_due` predicate returns true the open accumulator
     /// is emitted and the output events are published exactly like the live
     /// per-event path does. Returns the count of output events emitted.
     ///
-    /// No-op for `Transducer` and `ScopeReconciler` nodes (their
+    /// No-op for `Transducer` and `ScopeReconciler` automata (their
     /// `timer_flush_derived` default returns empty).
     pub async fn timer_flush(&mut self, now: Timestamp) -> RuntimeResult<u64> {
         // Build a synthetic context for the timer flush. There is no upstream

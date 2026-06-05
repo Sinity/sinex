@@ -61,8 +61,8 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     }
 
     pub(super) async fn drain_completion_checkpoint_description(&self) -> Option<String> {
-        let node_checkpoint = self.module.current_checkpoint().await.ok();
-        if let Some(checkpoint) = node_checkpoint.clone()
+        let module_checkpoint = self.module.current_checkpoint().await.ok();
+        if let Some(checkpoint) = module_checkpoint.clone()
             && !matches!(checkpoint, Checkpoint::None)
         {
             return Some(checkpoint.description());
@@ -75,7 +75,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             return Some(checkpoint_state.checkpoint.description());
         }
 
-        node_checkpoint.map(|checkpoint| checkpoint.description())
+        module_checkpoint.map(|checkpoint| checkpoint.description())
     }
 
     /// Returns the current lifecycle state of this runner.

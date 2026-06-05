@@ -25,8 +25,8 @@ module boundary remains load-bearing.
 
 The event engine operates in an internal trust zone:
 
-- Clients (nodes) are trusted parts of the system
-- Primary concern: performance and DoS prevention from buggy nodes
+- Clients (sources/producers) are trusted parts of the system
+- Primary concern: performance and DoS prevention from buggy producers
 - No external authentication overhead
 
 ## Performance Architecture

@@ -1,6 +1,6 @@
-//! Unified CLI structure for Sinex nodes
+//! Unified CLI structure for Sinex runtime modules.
 //!
-//! This module provides the standardized CLI interface for all node binaries
+//! This module provides the standardized CLI interface for runtime modules
 //! implementing the service/scan/explore subcommand pattern.
 
 use crate::runtime::event_transport::EventTransport;
@@ -23,7 +23,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-/// Standard CLI arguments for all nodes
+/// Standard CLI arguments for runtime modules.
 #[derive(Parser, Debug, Clone)]
 #[command(name = "sinex-runtime", about = "Sinex Stream RuntimeModule", version)]
 pub struct RuntimeCli {
@@ -168,7 +168,7 @@ impl NatsArgs {
     }
 }
 
-/// Available subcommands for nodes
+/// Available subcommands for runtime modules.
 #[derive(Subcommand, Debug, Clone)]
 pub enum RuntimeCommand {
     /// Run as a long-running service (with startup sequence)
@@ -382,14 +382,14 @@ pub fn parse_time_horizon(horizon_str: &str) -> RuntimeResult<TimeHorizon> {
     }
 }
 
-/// Generic CLI runner for nodes
+/// Generic CLI runner for runtime modules.
 ///
 /// This provides a standardized way to run any RuntimeModule with
 /// the unified CLI interface supporting service/scan/explore subcommands.
 pub struct RuntimeCliRunner<
     T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 'static,
 > {
-    node: Option<T>,
+    module: Option<T>,
     source_factory: Arc<dyn Fn() -> T + Send + Sync>,
 }
 
@@ -410,7 +410,7 @@ fn handle_export_result(path: &SanitizedPath, result: RuntimeResult<()>) -> Runt
         Err(error) => {
             print_unavailable_section("Data Export", &error);
             Err(
-                SinexError::processing("failed to export node exploration data")
+                SinexError::processing("failed to export runtime exploration data")
                     .with_context("path", path.as_str())
                     .with_source(error),
             )
@@ -439,7 +439,7 @@ fn render_cli_time(timestamp: Timestamp) -> String {
 }
 
 fn edge_mode_enabled(database_url_supplied: bool) -> bool {
-    shared_env::bool_or("SINEX_EDGE_MODE", false, "node cli edge mode") && !database_url_supplied
+    shared_env::bool_or("SINEX_EDGE_MODE", false, "runtime cli edge mode") && !database_url_supplied
 }
 
 fn default_service_name(args: &RuntimeCli) -> ServiceName {
@@ -454,15 +454,15 @@ fn default_service_name(args: &RuntimeCli) -> ServiceName {
 impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 'static>
     RuntimeCliRunner<T>
 {
-    /// Create new CLI runner with a node instance
-    pub fn new(node: T) -> Self {
-        Self::new_with_factory(node, Arc::new(T::default))
+    /// Create a new CLI runner with a runtime module instance.
+    pub fn new(module: T) -> Self {
+        Self::new_with_factory(module, Arc::new(T::default))
     }
 
     /// Create a new CLI runner with an explicit factory for fresh worker instances.
-    pub fn new_with_factory(node: T, source_factory: Arc<dyn Fn() -> T + Send + Sync>) -> Self {
+    pub fn new_with_factory(module: T, source_factory: Arc<dyn Fn() -> T + Send + Sync>) -> Self {
         Self {
-            node: Some(node),
+            module: Some(module),
             source_factory,
         }
     }
@@ -513,7 +513,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
 
         // Take ownership of the runtime module.
         let module = self
-            .node
+            .module
             .take()
             .ok_or_else(|| SinexError::unknown("RuntimeModule already consumed"))?;
 
@@ -564,7 +564,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
 
     async fn handle_service_command(
         &self,
-        node: T,
+        module: T,
         runtime_config: HashMap<String, serde_json::Value>,
         args: RuntimeCli,
         dry_run: bool,
@@ -572,7 +572,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
         info!("Starting runtime module service mode");
 
         // Create runtime module runner.
-        let mut runner = RuntimeRunner::new_with_factory(node, self.source_factory.clone());
+        let mut runner = RuntimeRunner::new_with_factory(module, self.source_factory.clone());
 
         // Set up dependencies
         let service_name = Self::resolve_service_name(&args);
@@ -611,7 +611,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
             .await?;
 
         let coordination_disabled =
-            shared_env::bool_or("SINEX_COORDINATION_DISABLED", false, "node coordination");
+            shared_env::bool_or("SINEX_COORDINATION_DISABLED", false, "runtime coordination");
         let module_kind = runner.module_kind();
 
         // Run service with optional coordination
@@ -666,7 +666,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
     #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
     async fn handle_scan_command(
         &self,
-        node: T,
+        module: T,
         runtime_config: HashMap<String, serde_json::Value>,
         from: &str,
         until: &str,
@@ -688,7 +688,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
             .map_err(|e| SinexError::unknown(format!("Failed to parse time horizon: {e}")))?;
 
         // Create runtime runner
-        let mut runner = RuntimeRunner::new(node);
+        let mut runner = RuntimeRunner::new(module);
 
         // Set up minimal dependencies for scan mode
         let service_name = args
@@ -845,7 +845,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
     )]
     fn handle_explore_command(
         &self,
-        node: T,
+        module: T,
         source_state: bool,
         ingestion_history: bool,
         limit: u64,
@@ -853,9 +853,9 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
     ) -> RuntimeResult<()> {
         info!("Running exploration mode");
 
-        // For exploration, we can work with the node directly
+        // For exploration, work with the runtime module directly.
         if source_state {
-            match node.get_source_state() {
+            match module.get_source_state() {
                 Ok(state) => {
                     println!("Source State:");
                     println!("  Description: {}", state.description);
@@ -895,7 +895,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
         }
 
         if ingestion_history {
-            match node.get_ingestion_history(limit) {
+            match module.get_ingestion_history(limit) {
                 Ok(history) => {
                     println!("Ingestion History ({} entries):", history.len());
                     for entry in &history {
@@ -925,7 +925,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
                 Some("csv") => ExportFormat::Csv,
                 _ => ExportFormat::Raw,
             };
-            handle_export_result(export_path, node.export_data(export_path, format))?;
+            handle_export_result(export_path, module.export_data(export_path, format))?;
         }
         Ok(())
     }
@@ -961,7 +961,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
     fn resolve_work_dir(args: &RuntimeCli) -> SanitizedPath {
         args.work_dir.clone().unwrap_or_else(|| {
             let env = sinex_primitives::environment();
-            let namespaced = env.work_directory("/tmp/sinex/node");
+            let namespaced = env.work_directory("/tmp/sinex/runtime");
             let namespaced_str = namespaced.to_string_lossy();
 
             // Environment-generated paths should always be valid. If validation fails,
@@ -1027,7 +1027,7 @@ mod tests {
             .expect_err("export failures should not be swallowed");
 
         let message = format!("{error:#}");
-        assert!(message.contains("failed to export node exploration data"));
+        assert!(message.contains("failed to export runtime exploration data"));
         assert!(message.contains("/tmp/export.json"));
         assert!(message.contains("disk full while exporting"));
         Ok(())

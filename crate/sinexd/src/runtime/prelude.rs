@@ -11,7 +11,7 @@
 //! // use crate::runtime::{RuntimeConfig, TimeHorizon, Checkpoint};
 //! ```
 
-// Core node traits and types
+// Core runtime traits and types.
 #[cfg(feature = "messaging")]
 pub use crate::runtime::exploration::SourceState;
 #[cfg(feature = "messaging")]

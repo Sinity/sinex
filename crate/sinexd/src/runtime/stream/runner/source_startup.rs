@@ -1,7 +1,7 @@
 //! Source startup sequence for `RuntimeRunner<T>`.
 //!
 //! Drives the snapshot -> gap-fill -> continuous transition for source
-//! nodes, including drain awareness and checkpoint persistence between
+//! modules, including drain awareness and checkpoint persistence between
 //! phases.
 
 use super::{

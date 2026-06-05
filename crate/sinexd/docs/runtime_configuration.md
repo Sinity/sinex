@@ -5,7 +5,7 @@ typed config for its modules:
 
 ```rust
 let event_engine = EventEngineConfig::from_args(..);      // event-engine CLI/env construction
-let node = RuntimeConfig::load_from_env("my-node");      // source/automaton env-first typed config
+let module = RuntimeConfig::load_from_env("my-source");  // source/automaton env-first typed config
 let api = GatewayConfig::load();                      // API env-first typed config
 ```
 

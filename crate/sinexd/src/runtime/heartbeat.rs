@@ -111,7 +111,7 @@ pub struct HeartbeatEmitter {
     persistence_warn_count: Arc<AtomicU64>,
     /// Optional database pool for persisting heartbeat status to `core.runs`.
     /// When set, each heartbeat emission also updates the `last_heartbeat_at` and `status`
-    /// columns for this node, enabling efficient active-node queries.
+    /// columns for this module, enabling efficient active-module queries.
     #[cfg(feature = "db")]
     db_pool: Option<sinex_db::DbPool>,
 }
@@ -183,7 +183,7 @@ impl HeartbeatEmitter {
     /// Configure a database pool for persisting heartbeat status.
     ///
     /// When set, each heartbeat emission will also update `last_heartbeat_at`
-    /// and `status = 'active'` in `core.runs` for this node.
+    /// and `status = 'active'` in `core.runs` for this module.
     #[cfg(feature = "db")]
     #[must_use]
     pub fn with_db_pool(mut self, pool: sinex_db::DbPool) -> Self {

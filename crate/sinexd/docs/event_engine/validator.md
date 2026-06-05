@@ -4,7 +4,7 @@
 
 - Resolves schema metadata through `sinex-schema` and caches lookups.
 - Applies per-event validation and accumulates `ValidationStats`.
-- Surfaces actionable failure messages for nodes while preserving security
+- Surfaces actionable failure messages for producers while preserving security
   boundaries.
 
 ## Strict Validation

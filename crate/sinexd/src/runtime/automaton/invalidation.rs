@@ -135,7 +135,7 @@ impl DerivedScopeInvalidation {
         self
     }
 
-    /// Whether this invalidation is relevant to a node that consumes the given event type.
+    /// Whether this invalidation is relevant to an automaton that consumes the given event type.
     #[must_use]
     pub fn matches_input(
         &self,

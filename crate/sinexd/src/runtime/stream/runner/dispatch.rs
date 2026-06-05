@@ -1,7 +1,7 @@
 //! Replay-worker dispatch helpers for `RuntimeRunner<T>`.
 //!
 //! These helpers run an isolated replay worker for a `SourceScanCommand`
-//! received over the command listener: spawn a fresh node instance with
+//! received over the command listener: spawn a fresh module instance with
 //! its own handles, drive its scan, forward emitted events, and finalize
 //! the worker on completion.
 

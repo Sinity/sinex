@@ -24,7 +24,7 @@ The service implements a strict fail-fast initialization policy:
 3. **Migration Lock**: Acquires a `PostgreSQL` advisory lock (`event_engine.migrations`) to ensure only one instance performs schema synchronization at a time.
 4. **Schema Synchronization**: Synchronizes `EventPayload` types from the codebase to the `sinex_schemas.event_payload_schemas` table.
 5. **Validator Init**: Loads active schemas into the `EventValidator` cache.
-6. **Schema Broadcasting**: Publishes schema metadata to `JetStream` and full schema JSON to NATS KV for node-side validation.
+6. **Schema Broadcasting**: Publishes schema metadata to `JetStream` and full schema JSON to NATS KV for producer-side validation.
 7. **Service Construction**: Completes the `IngestService` struct and releases the migration lock.
 
 ## Event Flow (End-to-End, 23 Steps)

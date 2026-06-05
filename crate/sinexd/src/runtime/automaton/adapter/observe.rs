@@ -284,7 +284,7 @@ where
 
     /// Emit a counter for events filtered out by type/provenance mismatch.
     /// High filter rates indicate a consumer subscribed to a broader subject than
-    /// the node's declared input type.
+    /// the automaton's declared input type.
     #[cfg(feature = "messaging")]
     pub(super) async fn observe_filtered_events(&self, filtered_count: usize) {
         if filtered_count == 0 {

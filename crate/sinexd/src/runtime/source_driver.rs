@@ -316,7 +316,7 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
             }
             Settlement::HaltModule { .. } | Settlement::DrainRuntimeUnit { .. } => {
                 // Halt/drain settlements request runtime drain (clean shutdown)
-                // rather than letting systemd restart a known-broken node into
+                // rather than letting systemd restart a known-broken source into
                 // a hot loop. Distinguishing this from generic Err propagation
                 // preserves the Settlement→action mapping the policy intended.
                 if let Some(drain) = self.shutdown_tx.as_ref() {

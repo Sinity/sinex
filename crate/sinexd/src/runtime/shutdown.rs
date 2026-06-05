@@ -51,12 +51,12 @@ pub async fn wait_for_os_shutdown_signal() -> std::io::Result<&'static str> {
     Ok("Ctrl+C")
 }
 
-/// Sanitize a node name for use as a filename component.
+/// Sanitize a module name for use as a filename component.
 ///
 /// Replaces any character that is not alphanumeric, `-`, or `_` with `_`.
-/// This prevents node names containing path separators from escaping the
+/// This prevents module names containing path separators from escaping the
 /// intended checkpoint directory.
-fn sanitize_node_name_for_filename(name: &str) -> String {
+fn sanitize_module_name_for_filename(name: &str) -> String {
     if name.is_empty() {
         return "_".to_string();
     }
@@ -71,7 +71,7 @@ fn sanitize_node_name_for_filename(name: &str) -> String {
         .collect()
 }
 
-/// Default checkpoint file path for a node.
+/// Default checkpoint file path for a runtime module.
 #[must_use]
 pub fn default_checkpoint_path(module_name: &str) -> PathBuf {
     #[cfg(feature = "messaging")]
@@ -83,7 +83,7 @@ pub fn default_checkpoint_path(module_name: &str) -> PathBuf {
     let runtime_dir = runtime_dir
         .or_else(|| dirs::cache_dir().map(|dir| dir.join("sinex")))
         .unwrap_or_else(|| PathBuf::from("/tmp/sinex"));
-    let safe_name = sanitize_node_name_for_filename(module_name);
+    let safe_name = sanitize_module_name_for_filename(module_name);
     runtime_dir.join(format!("{safe_name}.checkpoint.json"))
 }
 

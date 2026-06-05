@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use tokio::fs;
 use tracing::{debug, info, warn};
 
-/// Configuration for the filesystem node
+/// Configuration for the filesystem source.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct FilesystemSourceConfig {
     /// Maximum number of files to process in one scan
@@ -35,7 +35,7 @@ pub struct FilesystemSourceConfig {
     pub follow_symlinks: bool,
 }
 
-/// Example filesystem node implementing unified stream node interface
+/// Example filesystem source implementing the unified stream module interface.
 pub struct FilesystemSource {
     /// Base directories to monitor
     watch_paths: Vec<Utf8PathBuf>,
@@ -64,7 +64,7 @@ pub struct FilesystemState {
 }
 
 impl FilesystemSource {
-    /// Create new filesystem node
+    /// Create a new filesystem source.
     #[must_use]
     pub fn new(watch_paths: Vec<Utf8PathBuf>) -> Self {
         Self {
@@ -278,7 +278,7 @@ impl RuntimeModule for FilesystemSource {
             module = self.module_name(),
             service = %service_info.service_name(),
             watch_paths = ?self.watch_paths,
-            "Initializing filesystem node"
+            "Initializing filesystem source"
         );
 
         // Validate watch paths exist
@@ -508,12 +508,12 @@ impl ExplorationProvider for FilesystemSource {
     }
     fn get_ingestion_history(&self, _limit: u64) -> RuntimeResult<Vec<IngestionHistoryEntry>> {
         Err(SinexError::invalid_state(
-            "ingestion history is not implemented in the example filesystem node",
+            "ingestion history is not implemented in the example filesystem source",
         ))
     }
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> RuntimeResult<()> {
         Err(SinexError::invalid_state(
-            "data export is not implemented in the example filesystem node",
+            "data export is not implemented in the example filesystem source",
         ))
     }
 }
@@ -528,24 +528,24 @@ mod tests {
     #[sinex_test]
     async fn example_ingestion_history_is_explicitly_unavailable() -> xtask::sandbox::TestResult<()>
     {
-        let node = FilesystemSource::new(Vec::<Utf8PathBuf>::new());
+        let source = FilesystemSource::new(Vec::<Utf8PathBuf>::new());
 
-        let error = ExplorationProvider::get_ingestion_history(&node, 10)
+        let error = ExplorationProvider::get_ingestion_history(&source, 10)
             .expect_err("example must not report empty ingestion history as success");
 
-        assert!(error.to_string().contains("example filesystem node"));
+        assert!(error.to_string().contains("example filesystem source"));
         Ok(())
     }
 
     #[sinex_test]
     async fn example_export_is_explicitly_unavailable() -> xtask::sandbox::TestResult<()> {
-        let node = FilesystemSource::new(Vec::<Utf8PathBuf>::new());
+        let source = FilesystemSource::new(Vec::<Utf8PathBuf>::new());
         let path = SanitizedPath::from_static("/tmp/filesystem-example-export.json");
 
-        let error = ExplorationProvider::export_data(&node, &path, ExportFormat::Json)
+        let error = ExplorationProvider::export_data(&source, &path, ExportFormat::Json)
             .expect_err("example must not report export success without writing data");
 
-        assert!(error.to_string().contains("example filesystem node"));
+        assert!(error.to_string().contains("example filesystem source"));
         Ok(())
     }
 }

@@ -14,7 +14,7 @@ use super::{
 use sinex_primitives::domain::ServiceName;
 
 impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
-    /// Initialize the node with a specific transport
+    /// Initialize the module with a specific transport.
     pub async fn initialize_with_transport(
         &mut self,
         service_name: impl Into<ServiceName>,
@@ -46,7 +46,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         self.lifecycle = RunnerLifecycle::Initializing;
         let service_name: ServiceName = service_name.into();
 
-        // DATABASE_URL is optional - nodes that need it will call
+        // DATABASE_URL is optional - modules that need it will call
         // require_db_pool() which provides a clear error message.
 
         // Create bounded event channel
@@ -61,7 +61,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         let host = sinex_primitives::events::builder::get_hostname();
         let consumer_name = format!("{host}-{}", std::process::id());
         let instance_id = Self::build_instance_id(host.as_str());
-        let version = crate::runtime::version::node_version().map_or_else(
+        let version = crate::runtime::version::runtime_version().map_or_else(
             |_| env!("CARGO_PKG_VERSION").to_string(),
             |value| value.to_string(),
         );

@@ -44,7 +44,7 @@ where
 
         // Subscribe to scope invalidation signals via JetStream push consumer.
         // JetStream provides durable message delivery for invalidation signals.
-        // Each node type creates its own ephemeral push consumer, receiving all
+        // Each automaton type creates its own ephemeral push consumer, receiving all
         // signals published to the invalidation subject.
         //
         // Note: requires `messaging` feature (default). run_continuous is only called
@@ -153,7 +153,7 @@ where
                         // Process any pending invalidations before shutdown.
                         // A halt-class error from `handle_invalidation_message`
                         // (`Err`) means the next invalidation will hit the
-                        // same wall — propagate it so the node halts on
+                        // same wall — propagate it so the automaton halts on
                         // genuine fatal classes (#581-shape).
                         for payload in pending_invalidations.drain(..) {
                             match self.handle_invalidation_message(&payload).await {

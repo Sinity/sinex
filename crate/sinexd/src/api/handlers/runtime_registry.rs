@@ -22,7 +22,7 @@ pub use sinex_primitives::rpc::runtime::{
 
 type Result<T> = std::result::Result<T, SinexError>;
 
-async fn publish_node_control(
+async fn publish_runtime_control(
     nats_client: &async_nats::Client,
     subject: String,
     payload: Value,
@@ -142,7 +142,7 @@ pub async fn handle_runtime_list(
     Ok(RuntimeListResponse { modules })
 }
 
-/// Handle POST /modules/{id}/drain - pause node processing
+/// Handle POST /modules/{id}/drain - pause runtime processing
 ///
 /// # Authorization
 ///
@@ -176,7 +176,7 @@ pub async fn handle_runtime_drain(
         "timestamp": Timestamp::now(),
     });
 
-    publish_node_control(nats_client, subject, payload, "drain command").await?;
+    publish_runtime_control(nats_client, subject, payload, "drain command").await?;
 
     Ok(RuntimeDrainResponse {
         status: OperationStatus::Pending,
@@ -184,7 +184,7 @@ pub async fn handle_runtime_drain(
     })
 }
 
-/// Handle POST /modules/{id}/resume - resume node processing
+/// Handle POST /modules/{id}/resume - resume runtime processing
 ///
 /// # Authorization
 ///
@@ -216,7 +216,7 @@ pub async fn handle_runtime_resume(
         "timestamp": Timestamp::now(),
     });
 
-    publish_node_control(nats_client, subject, payload, "resume command").await?;
+    publish_runtime_control(nats_client, subject, payload, "resume command").await?;
 
     Ok(RuntimeResumeResponse {
         status: OperationStatus::Pending,
@@ -258,7 +258,7 @@ pub async fn handle_runtime_set_horizon(
         "timestamp": Timestamp::now(),
     });
 
-    publish_node_control(nats_client, subject, payload, "set-horizon command").await?;
+    publish_runtime_control(nats_client, subject, payload, "set-horizon command").await?;
 
     Ok(RuntimeSetHorizonResponse {
         status: OperationStatus::Pending,

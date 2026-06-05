@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Captures runtime dependencies supplied to nodes during initialization.
+/// Captures runtime dependencies supplied to modules during initialization.
 #[derive(Clone)]
 pub struct RuntimeContext {
     service_info: ServiceInfo,

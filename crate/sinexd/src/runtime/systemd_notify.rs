@@ -15,7 +15,7 @@ fn watchdog_interval() -> Option<Duration> {
 }
 
 /// When set, this process is being hosted inside another sinex daemon
-/// (typically `sinexd`) and individual nodes / sources MUST NOT send
+/// (typically `sinexd`) and individual in-process modules MUST NOT send
 /// `READY=1` / `STOPPING=1` — only the top-level supervisor's `sd_notify` is
 /// authoritative for systemd. A fire-once monitor binding emitting
 /// `STOPPING=1` would otherwise tell systemd that the entire host daemon
@@ -68,7 +68,7 @@ pub struct WatchdogHandle {
 ///
 /// Sets the `SINEX_SD_NOTIFY_HOSTED=1` env var so any subsequent calls to
 /// [`notify_ready`] / [`notify_stopping`] / [`spawn_watchdog`] from
-/// in-process nodes become no-ops. Only the top-level supervisor (the
+/// in-process modules become no-ops. Only the top-level supervisor (the
 /// host with main PID under systemd) should still call `sd_notify`.
 ///
 /// # Safety

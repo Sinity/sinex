@@ -48,9 +48,9 @@ pub struct DerivedOutput<T> {
     /// How `ts_orig` was determined — enables replay to reproduce the same value.
     pub temporal_policy: SyntheticTemporalPolicy,
 
-    /// Semantics version of this node's processing logic.
+    /// Semantics version of this automaton's processing logic.
     ///
-    /// Bumping this signals that all events produced by this node should be
+    /// Bumping this signals that all events produced by this automaton should be
     /// recomputed during replay, even if inputs haven't changed.
     pub semantics_version: Option<String>,
 
@@ -61,7 +61,7 @@ pub struct DerivedOutput<T> {
 
     /// Equivalence key for deduplication during replay.
     ///
-    /// Events with the same `equivalence_key` from the same node are considered
+    /// Events with the same `equivalence_key` from the same automaton are considered
     /// semantically equivalent — replay can replace rather than duplicate.
     pub equivalence_key: Option<String>,
 
@@ -186,7 +186,7 @@ impl<T> DerivedOutput<T> {
         self
     }
 
-    /// Set the per-output event type for multi-output nodes.
+    /// Set the per-output event type for multi-output automata.
     ///
     /// When set, the adapter stamps this event type on the emitted event instead
     /// of falling back to `Automaton::output_event_type()`.

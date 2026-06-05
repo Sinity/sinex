@@ -7,8 +7,8 @@ NATS JetStream security requirements for the ingestion hub.
 NATS JetStream is the central event bus (data plane).
 
 - **Production/CI**: **MUST** be encrypted (`tls://`). Plaintext `nats://` is forbidden in non-dev environments.
-- **Trusted nodes**: Entities with valid cryptographic identity (TLS Client Cert or NATS Creds) authorized to publish/subscribe.
-- **Ad-hoc devices**: Temporary devices must enroll (exchange a bootstrap token for a cert/cred) before joining the mesh. Anonymous/open nodes are not supported.
+- **Trusted producers/consumers**: Sources, automata, and external producers with valid cryptographic identity (TLS client cert or NATS creds) authorized to publish/subscribe.
+- **Ad-hoc devices**: Temporary devices must enroll (exchange a bootstrap token for a cert/cred) before joining the mesh. Anonymous/open producers are not supported.
 
 ## Enforcement
 
@@ -46,9 +46,9 @@ Configure exactly one NATS auth mode at a time.
 
 The still-relevant operational model for NATS authorization is:
 
-- **Ingestors** should publish only the source-material and raw-event subjects they need
-- **Automata / processors** should subscribe and publish only the event subjects they transform
-- **Gateway / admin surfaces** may require broader access for management APIs
+- **Sources/producers** should publish only the source-material and raw-event subjects they need
+- **Automata** should subscribe and publish only the event subjects they transform
+- **API/admin surfaces** may require broader access for management APIs
 
 The exact subject patterns are deployment-specific, but the principle should stay the same:
 grant each component family the narrowest NATS permissions that let it do its job.

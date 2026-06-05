@@ -1,4 +1,4 @@
-//! Database-backed node identity registration helpers for `RuntimeRunner<T>`.
+//! Database-backed runtime identity registration helpers for `RuntimeRunner<T>`.
 //!
 //! These methods are only compiled with the `db` feature and update the
 //! `core.manifests` / `core.runs` tables to expose the running module

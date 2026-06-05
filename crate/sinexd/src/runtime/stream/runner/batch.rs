@@ -15,14 +15,14 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// (including those routed to the DLQ).
     #[cfg(feature = "messaging")]
     pub(super) async fn process_batch_with_dlq_fallback(
-        node: &mut T,
+        module: &mut T,
         transport: &EventTransport,
         events: Vec<Event<JsonValue>>,
     ) -> RuntimeResult<u64> {
         let batch_size = events.len();
         let events_backup = events.clone();
 
-        match node.process_event_batch(events).await {
+        match module.process_event_batch(events).await {
             Ok(stats) => {
                 if batch_size > 1 {
                     debug!(
@@ -65,10 +65,10 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                     batch_size,
                     "Batch processing failed; falling back to per-event processing with DLQ routing"
                 );
-                let module_name = node.module_name().to_string();
+                let module_name = module.module_name().to_string();
                 let mut succeeded = 0u64;
                 for event in events_backup {
-                    match node.process_event_batch(vec![event.clone()]).await {
+                    match module.process_event_batch(vec![event.clone()]).await {
                         Ok(stats) => {
                             succeeded += stats.processed as u64;
                         }
