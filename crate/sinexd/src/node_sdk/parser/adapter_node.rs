@@ -1356,9 +1356,20 @@ fn intent_to_event_with_anchor(
         builder = builder.with_anchor_payload_hash(hash);
     }
 
-    let built = builder
+    let mut built = builder
         .build()
         .map_err(|e| format!("EventBuilder::build failed: {e}"))?;
+
+    // #1570 Prong C: carry the parser's occurrence (natural) key onto the event
+    // as `equivalence_key` so it lands in a queryable column. This feeds the
+    // curation duplicate-detection workbench (#1448), which groups on
+    // COALESCE(payload->>'natural_key_hash', payload->>'natural_key', equivalence_key),
+    // for every source whose OccurrenceIdentity is Natural/Uuid5From. Without
+    // this the key was computed by parsers and then dropped here, so source
+    // events never reached the workbench. equivalence_key is only consumed as a
+    // query filter — it drives no dedup/suppression, so this is purely additive.
+    built.equivalence_key =
+        sinex_primitives::parser::maybe_occurrence_key_string(intent.occurrence_key.as_ref());
 
     Ok(built)
 }
@@ -2101,6 +2112,78 @@ mod tests {
             }),
             "required input removal should be blocking: {degraded_caveats:?}"
         );
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // #1570 Prong C — occurrence_key lands on the event as equivalence_key
+    // -------------------------------------------------------------------------
+
+    /// A parser-supplied occurrence key is carried onto the event as
+    /// `equivalence_key`, so it reaches the curation duplicate workbench.
+    #[sinex_test]
+    async fn occurrence_key_lands_as_equivalence_key() -> xtask::sandbox::TestResult<()> {
+        use sinex_primitives::parser::{OccurrenceKey, occurrence_key_string};
+        let key = OccurrenceKey {
+            source_unit_id: SourceUnitId::from_static("test.unit"),
+            fields: vec![
+                ("track_uri".into(), "spotify:track:abc".into()),
+                ("played_ms".into(), "1234".into()),
+            ],
+        };
+        let intent = ParsedEventIntent::builder()
+            .source_unit_id(SourceUnitId::from_static("test.unit"))
+            .parser_id(ParserId::from_static("test-parser"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static("test.event"))
+            .event_source(EventSource::from_static("test"))
+            .payload(serde_json::json!({"k": "v"}))
+            .ts_orig(Timestamp::now())
+            .timing(sinex_primitives::parser::TimingEvidence::StagedAtFallback)
+            .anchor(MaterialAnchor::ByteRange { start: 0, len: 0 })
+            .privacy_context(ProcessingContext::Metadata)
+            .occurrence_key(key.clone())
+            .build();
+        let event = intent_to_event_with_anchor(
+            intent,
+            Id::<SourceMaterial>::from_uuid(Uuid::now_v7()),
+            0,
+            None,
+            None,
+            None,
+        )
+        .expect("intent conversion");
+        assert_eq!(event.equivalence_key, Some(occurrence_key_string(&key)));
+        Ok(())
+    }
+
+    /// Intents without an occurrence key leave `equivalence_key` unset (the
+    /// curation workbench simply has nothing to group on for that event).
+    #[sinex_test]
+    async fn absent_occurrence_key_leaves_equivalence_key_none()
+    -> xtask::sandbox::TestResult<()> {
+        let intent = ParsedEventIntent::builder()
+            .source_unit_id(SourceUnitId::from_static("test.unit"))
+            .parser_id(ParserId::from_static("test-parser"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static("test.event"))
+            .event_source(EventSource::from_static("test"))
+            .payload(serde_json::json!({"k": "v"}))
+            .ts_orig(Timestamp::now())
+            .timing(sinex_primitives::parser::TimingEvidence::StagedAtFallback)
+            .anchor(MaterialAnchor::ByteRange { start: 0, len: 0 })
+            .privacy_context(ProcessingContext::Metadata)
+            .build();
+        let event = intent_to_event_with_anchor(
+            intent,
+            Id::<SourceMaterial>::from_uuid(Uuid::now_v7()),
+            0,
+            None,
+            None,
+            None,
+        )
+        .expect("intent conversion");
+        assert_eq!(event.equivalence_key, None);
         Ok(())
     }
 }
