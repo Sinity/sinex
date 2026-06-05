@@ -333,7 +333,7 @@ xtask deps unused --ci
 xtask deps timings --top 15
 
 # Check rebuild impact of changes
-xtask deps impact sinexd
+xtask deps impact --package sinexd
 ```
 
 ### Dependency Audit

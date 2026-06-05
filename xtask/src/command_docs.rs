@@ -248,7 +248,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 path: "deps impact",
                 fallback_summary: "Analyze rebuild impact",
                 when: "a dependency change might widen the rebuild/test blast radius",
-                examples: &["xtask deps impact", "xtask deps impact sinexd"],
+                examples: &["xtask deps impact", "xtask deps impact --package sinexd"],
                 notes: &[],
             },
             GuideEntry {

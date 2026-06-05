@@ -109,6 +109,7 @@ Run the repo's primary nextest-backed test workflows
 | `--exclude` | yes | no | Exclude workspace package(s) from --all/workspace test runs |
 | `--test` | yes | no | Run tests from specific test binary target(s) (nextest --test) |
 | `--lib` | no | no | Run only library unit tests (nextest --lib) |
+| `--features` | yes | no | Cargo features to enable for the selected test packages |
 | `--dry-run` | no | no | Print what would happen |
 | `--skip-preflight` | no | no | Skip automatic infrastructure setup (preflight is ON by default) |
 | `--ephemeral-postgres` | no | no | Run DB-backed tests inside a fresh throwaway Postgres cluster |

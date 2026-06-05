@@ -15,19 +15,16 @@ with measurements; preserve the dataset first.
 Disposable development cache lives under `$SINEX_CACHE_DIR` / `CARGO_TARGET_DIR`,
 not under `$SINEX_STATE_DIR`.
 
-**Where these actually resolve matters — don't assume `.sinex/`.** The flake's
-portable default is `<checkout>/.sinex/{state,cache}`, but on `sinnix-prime` the
-sinnix devshell hook (`sinnix-direnvrc`) relocates both onto NVMe under
-`/var/cache/sinex/<user>/<checkout-hash>/`: cache at the root, state at
-`.../dev-state/state/` (so `$SINEX_STATE_DIR` resolves there, and
-`xtask-history.db` with it). That directory is COW-disabled (`chattr +C`) and is
-**not** garbage-collected — it is durable evidence despite living under a
-`cache`-named root; do not `rm -rf /var/cache/sinex/...` expecting only
-throwaway build artifacts. Resolve the real path with
-`echo $SINEX_STATE_DIR` rather than guessing. The relocation only fires for
-shells that source the hook (direnv / project devshell); a bare `nix develop`
-or non-direnv invocation falls back to the in-checkout `.sinex/state`, so prefer
-the direnv-activated shell to keep history in one place.
+**Where these actually resolve matters.** `$SINEX_STATE_DIR` is durable
+checkout-local state and should resolve to `<checkout>/.sinex/state` on
+`sinnix-prime`; `xtask-history.db` lives there. The sinnix devshell hook
+relocates build cache and runtime scratch to
+`/var/cache/sinex/<user>/<checkout-hash>/` (`SINEX_CACHE_DIR`,
+`CARGO_TARGET_DIR`, `SINEX_DEV_STATE_DIR`, Postgres socket, NATS state), but it
+must not relocate the history DB into that cache-shaped tree. Resolve the real
+path with `echo $SINEX_STATE_DIR` before doing history work; if it points under
+`/var/cache/sinex/.../dev-state/state`, reload the devshell before running
+xtask.
 
 ```bash
 # After editing code:
