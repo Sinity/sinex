@@ -1,6 +1,6 @@
 //! Document parser automaton — derived-provenance v1 document layer.
 //!
-//! Implements [`MultiOutputTransducerNode`]: one input event produces
+//! Implements [`MultiOutputTransducer`]: one input event produces
 //! `document.parsed` + N× `document.chunked` events.
 //!
 //! ## v1 corpora
@@ -23,10 +23,10 @@
 //!
 //! Ref: `crate/sinex-schema/docs/document_layer.md`.
 
-use crate::node_sdk::derived_node::{
-    AutomatonContext, DerivedOutput, InputProvenanceFilter, MultiOutputTransducerNode,
+use crate::runtime::automaton::{
+    AutomatonContext, DerivedOutput, InputProvenanceFilter, MultiOutputTransducer,
 };
-use crate::node_sdk::processing::NodeLogicError;
+use crate::runtime::processing::AutomatonLogicError;
 use sinex_primitives::events::payloads::DocumentKind;
 use sinex_primitives::{JsonValue, Uuid};
 use std::collections::HashMap;
@@ -54,7 +54,7 @@ pub struct DocumentParserState {
     pub chunk_count: u64,
 }
 
-// ── Node ───────────────────────────────────────────────────────────────
+// ── RuntimeActor ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]
 pub struct DocumentParserNode {
@@ -62,7 +62,7 @@ pub struct DocumentParserNode {
     pub vault_root: Option<String>,
 }
 
-impl MultiOutputTransducerNode for DocumentParserNode {
+impl MultiOutputTransducer for DocumentParserNode {
     type State = DocumentParserState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -87,7 +87,7 @@ impl MultiOutputTransducerNode for DocumentParserNode {
         state: &mut Self::State,
         input: JsonValue,
         context: &AutomatonContext,
-    ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError> {
         let event_type = context.event_type.as_str();
 
         match event_type {
@@ -107,7 +107,7 @@ impl DocumentParserNode {
         _state: &mut DocumentParserState,
         input: JsonValue,
         context: &AutomatonContext,
-    ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError> {
         let file_path = input["file_path"].as_str().unwrap_or("unknown").to_string();
 
         // Read file content. In production the parser runs as the sinex service
@@ -187,7 +187,7 @@ impl DocumentParserNode {
             "text_byte_len": total_bytes,
             "side_data": side_data,
         }))
-        .map_err(|e| NodeLogicError::Processing(format!("serialize document.parsed: {e}")))?;
+        .map_err(|e| AutomatonLogicError::Processing(format!("serialize document.parsed: {e}")))?;
 
         let parsed_output = DerivedOutput::transduced(parsed_payload, ts_orig, parent_event_id)
             .with_event_type("document.parsed");
@@ -218,7 +218,7 @@ impl DocumentParserNode {
                 "source_anchor_start": byte_offset,
                 "source_anchor_end": byte_offset + chunk_len,
             }))
-            .map_err(|e| NodeLogicError::Processing(format!("serialize document.chunked: {e}")))?;
+            .map_err(|e| AutomatonLogicError::Processing(format!("serialize document.chunked: {e}")))?;
 
             let chunk_output = DerivedOutput::transduced(chunk_payload, ts_orig, parent_event_id)
                 .with_event_type("document.chunked");
@@ -236,7 +236,7 @@ impl DocumentParserNode {
         _state: &mut DocumentParserState,
         input: JsonValue,
         context: &AutomatonContext,
-    ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError> {
         let parent_event_id = context.trigger_uuid();
         let parent_id_str = parent_event_id.to_string();
         let natural_key = parent_id_str.clone();
@@ -281,7 +281,7 @@ impl DocumentParserNode {
             "text_byte_len": total_bytes,
             "side_data": side_data,
         }))
-        .map_err(|e| NodeLogicError::Processing(format!("serialize document.parsed: {e}")))?;
+        .map_err(|e| AutomatonLogicError::Processing(format!("serialize document.parsed: {e}")))?;
 
         outputs.push(
             DerivedOutput::transduced(parsed_payload, ts_orig, parent_event_id)
@@ -301,7 +301,7 @@ impl DocumentParserNode {
                 "source_anchor_start": null,
                 "source_anchor_end": null,
             }))
-            .map_err(|e| NodeLogicError::Processing(format!("serialize document.chunked: {e}")))?;
+            .map_err(|e| AutomatonLogicError::Processing(format!("serialize document.chunked: {e}")))?;
 
             outputs.push(
                 DerivedOutput::transduced(chunk_payload, ts_orig, parent_event_id)
@@ -581,9 +581,9 @@ mod tests {
 }
 
 /// Adapter type alias that wires `DocumentParserNode` through the SDK's
-/// `MultiOutputTransducerNodeAdapter`.
+/// `MultiOutputTransducerAdapter`.
 pub type DocumentParserNodeAdapter =
-    crate::node_sdk::derived_node::MultiOutputTransducerNodeAdapter<DocumentParserNode>;
+    crate::runtime::automaton::MultiOutputTransducerAdapter<DocumentParserNode>;
 
 // ── Source descriptor ─────────────────────────────────────────────
 
@@ -619,7 +619,7 @@ register_source_runtime_binding! {
         "document-parser",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("document.parsed")
     .privacy_context("inherits_from_parents")
@@ -627,11 +627,11 @@ register_source_runtime_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_id("document-parser")
-    .runner_pack("process")
+    .runner_pack("sinexd")
     .checkpoint_family(SuCheckpointFamily::AppendStream)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
+    .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
     .build()
 }

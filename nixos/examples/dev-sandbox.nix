@@ -7,7 +7,7 @@
 
 # Comprehensive developer sandbox configuration for Sinex.
 #
-# This example turns on every major subsystem (nodes, maintenance, monitoring,
+# This example turns on every major subsystem (runtime, maintenance, monitoring,
 # coordination) on a single host so engineers can explore behaviour locally. It
 # also provisions helper tooling and a sample data generator.
 {
@@ -35,8 +35,8 @@
     };
 
     # Developer sandbox runtime policy: deactivate auto-restart on NixOS
-    # switch and bound restart loops so a buggy node can't spin forever.
-    runtime = {
+    # switch and bound restart loops so a buggy runtime can't spin forever.
+    runtimeSystem = {
       target = {
         attachToMultiUser = false;
         manualStartOnly = true;
@@ -64,7 +64,7 @@
       };
     };
 
-    nodes = {
+    runtime = {
       enable = true;
       defaults.logLevel = "debug";
 

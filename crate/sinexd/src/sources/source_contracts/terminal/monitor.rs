@@ -8,7 +8,7 @@
 //! Deployment shape: a `Type=oneshot` systemd unit that runs at boot under
 //! `sinex-runtime.target`.
 
-use crate::node_sdk::{NodeResult, runtime::stream::NodeRuntimeState};
+use crate::runtime::{RuntimeResult, stream::RuntimeContext};
 use futures::future::BoxFuture;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
@@ -24,7 +24,7 @@ use sinex_primitives::{
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 use crate::register_monitor_unit;
-use crate::sources::monitor_node::MonitorPhase;
+use crate::sources::monitor_driver::MonitorPhase;
 
 // ---------------------------------------------------------------------------
 // Source contract + binding
@@ -84,11 +84,11 @@ register_monitor_unit!(
 ///
 /// `configured_sources` and `enabled_sources` default to `1` — this monitor
 /// represents the terminal pack itself. A future Wave-B pass can wire the actual
-/// configured source counts from `NodeRuntimeState::raw_config`.
+/// configured source counts from `RuntimeContext::raw_config`.
 fn emit_terminal_monitor(
-    _runtime: NodeRuntimeState,
+    _runtime: RuntimeContext,
     material_id: Id<SourceMaterial>,
-) -> BoxFuture<'static, NodeResult<Vec<Event<JsonValue>>>> {
+) -> BoxFuture<'static, RuntimeResult<Vec<Event<JsonValue>>>> {
     Box::pin(async move {
         let payload = TerminalMonitoringStartedPayload {
             configured_sources: 1,
@@ -164,7 +164,7 @@ mod tests {
     /// starts using NATS resources it must be promoted to an integration test.
     #[sinex_test]
     async fn test_emit_terminal_monitor_one_event() -> TestResult<()> {
-        // Construct a dummy NodeRuntimeState. The emit fn does not call any
+        // Construct a dummy RuntimeContext. The emit fn does not call any
         // runtime methods (it only uses the material_id), so we use the
         // Default-like sentinel provided by the test SDK if available, or
         // skip. For now we verify at the payload level (above test) and
@@ -179,7 +179,7 @@ mod tests {
         // the fn ignores the runtime argument entirely. This is valid today;
         // if that changes the test should be updated.
         //
-        // Calling it requires constructing NodeRuntimeState which is not
+        // Calling it requires constructing RuntimeContext which is not
         // publicly constructible outside the SDK. We verify the payload chain
         // in test_terminal_monitor_payload_builds above and document this gap.
         let _ = material_id;

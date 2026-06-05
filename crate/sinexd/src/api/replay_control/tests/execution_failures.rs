@@ -38,7 +38,7 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
     .await?;
 
     let mut scope = sample_scope();
-    scope.node_id = "visibility-timeout-test".to_string();
+    scope.source_name = "visibility-timeout-test".to_string();
     scope.time_window = Some((
         target_ts - time::Duration::milliseconds(1),
         target_ts + time::Duration::milliseconds(1),
@@ -144,7 +144,7 @@ async fn replay_execution_fails_when_node_never_reports_completion(ctx: TestCont
     let client = ReplayControlClient::new(&env, nats_client, Duration::from_secs(30), health);
 
     let mut scope = sample_scope();
-    scope.node_id = "timeout-test".to_string();
+    scope.source_name = "timeout-test".to_string();
     scope.time_window = Some((
         target_ts - time::Duration::milliseconds(1),
         target_ts + time::Duration::milliseconds(1),
@@ -234,7 +234,7 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
             .await?;
 
     let mut scope = sample_scope();
-    scope.node_id = "checkpoint-fail-test".to_string();
+    scope.source_name = "checkpoint-fail-test".to_string();
     scope.time_window = Some((
         target_ts - time::Duration::milliseconds(1),
         target_ts + time::Duration::milliseconds(1),
@@ -339,7 +339,7 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
     .await?;
 
     let mut scope = sample_scope();
-    scope.node_id = "replacement-record-fail-test".to_string();
+    scope.source_name = "replacement-record-fail-test".to_string();
     scope.time_window = Some((
         target_ts - time::Duration::milliseconds(1),
         target_ts + time::Duration::milliseconds(1),
@@ -489,7 +489,7 @@ async fn replay_execution_restores_archived_cascade_when_dispatch_fails_before_a
     let client = ReplayControlClient::new(&env, nats_client, Duration::from_secs(30), health);
 
     let mut scope = sample_scope();
-    scope.node_id = "pre-ack-test".to_string();
+    scope.source_name = "pre-ack-test".to_string();
     scope.time_window = Some((
         target_ts - time::Duration::milliseconds(1),
         target_ts + time::Duration::milliseconds(1),
@@ -564,7 +564,7 @@ async fn replay_execution_fails_before_archive_when_scope_metadata_collection_fa
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let mut scope = sample_scope();
-    scope.node_id = "scope-metadata-test".to_string();
+    scope.source_name = "scope-metadata-test".to_string();
     scope.time_window = Some((
         target_ts - time::Duration::milliseconds(1),
         target_ts + time::Duration::milliseconds(1),
@@ -656,7 +656,7 @@ async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publi
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let mut scope = sample_scope();
-    scope.node_id = "scope-invalidation-test".to_string();
+    scope.source_name = "scope-invalidation-test".to_string();
     scope.time_window = Some((
         target_ts - time::Duration::milliseconds(1),
         target_ts + time::Duration::milliseconds(1),

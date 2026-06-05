@@ -240,7 +240,7 @@ pkgs.testers.nixosTest {
       ];
 
       services.sinex = {
-        nodes = {
+        runtime = {
           filesystem = {
             instances = 2;
             watchPaths = [ "/var/lib/sinex/watched" ];

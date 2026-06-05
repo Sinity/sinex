@@ -199,10 +199,10 @@ async fn restart(&mut self) -> Result<()> {
 
 **Version Comparison for Leadership:**
 
-Updated `NodeVersion::Ord` to include build metadata:
+Updated `RuntimeVersion::Ord` to include build metadata:
 
 ```rust
-impl Ord for NodeVersion {
+impl Ord for RuntimeVersion {
     fn cmp(&self, other: &Self) -> Ordering {
         // Primary: semver
         match self.version.cmp(&other.version) {
@@ -347,5 +347,5 @@ SINEX_NATS_URL=nats://localhost:4222
 - Hot Reload Orchestrator: `xtask/src/devtools/orchestrator.rs`
 - Distributed Rate Limiter: `crate/sinexd/src/api/distributed_rate_limit.rs`
 - Connection Tracking: `crate/sinexd/src/api/rpc_server.rs`
-- Version Comparison: `crate/sinexd/src/node_sdk/version.rs`
-- Node Coordination: `crate/sinexd/src/node_sdk/coordination.rs`
+- Version Comparison: `crate/sinexd/src/runtime/version.rs`
+- RuntimeActor Coordination: `crate/sinexd/src/runtime/coordination.rs`

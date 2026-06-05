@@ -10,7 +10,7 @@ use sinexd::api::{
     rpc_server::RpcAuthContext,
     service_container::ServiceContainer,
 };
-use sinexd::node_sdk::content_store::MaterialContentStore;
+use sinexd::runtime::content_store::MaterialContentStore;
 use sinex_primitives::error::ErrorClass;
 use sinex_primitives::rpc::{
     content::{RetrieveBlobRequest, StoreBlobRequest},

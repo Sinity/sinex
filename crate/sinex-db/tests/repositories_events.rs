@@ -8,7 +8,7 @@ use sinex_primitives::Pagination;
 use sinex_primitives::Timestamp;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{
-    DerivedNodeModel, EventSource, EventType, HostName, RecordedPath, SourceMaterialFormat,
+    AutomatonModel, EventSource, EventType, HostName, RecordedPath, SourceMaterialFormat,
     SourceMaterialTimingInfoType, SyntheticTemporalPolicy,
 };
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
@@ -1269,7 +1269,7 @@ async fn synthetic_metadata_roundtrips_through_insert(ctx: TestContext) -> TestR
     derived.scope_key = Some("analytics:daily:2026-03-14".to_string());
     derived.equivalence_key = Some("analytics:daily:2026-03-14:host-a".to_string());
     derived.created_by_operation_id = Some(operation_id);
-    derived.node_model = Some(DerivedNodeModel::Windowed);
+    derived.node_model = Some(AutomatonModel::Windowed);
 
     let inserted = ctx.pool.events().insert(derived).await?;
     let event_id = inserted.id.unwrap();
@@ -1289,7 +1289,7 @@ async fn synthetic_metadata_roundtrips_through_insert(ctx: TestContext) -> TestR
         Some("analytics:daily:2026-03-14:host-a")
     );
     assert_eq!(inserted.created_by_operation_id, Some(operation_id));
-    assert_eq!(inserted.node_model, Some(DerivedNodeModel::Windowed));
+    assert_eq!(inserted.node_model, Some(AutomatonModel::Windowed));
 
     // Verify fields survive load (get_by_id reads from DB)
     let loaded = ctx.pool.events().get_by_id(event_id).await?.unwrap();
@@ -1307,7 +1307,7 @@ async fn synthetic_metadata_roundtrips_through_insert(ctx: TestContext) -> TestR
         Some("analytics:daily:2026-03-14:host-a")
     );
     assert_eq!(loaded.created_by_operation_id, Some(operation_id));
-    assert_eq!(loaded.node_model, Some(DerivedNodeModel::Windowed));
+    assert_eq!(loaded.node_model, Some(AutomatonModel::Windowed));
 
     Ok(())
 }
@@ -1421,9 +1421,9 @@ async fn all_node_model_variants_roundtrip(ctx: TestContext) -> TestResult<()> {
     let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
 
     let models = [
-        DerivedNodeModel::Transducer,
-        DerivedNodeModel::Windowed,
-        DerivedNodeModel::ScopeReconciler,
+        AutomatonModel::Transducer,
+        AutomatonModel::Windowed,
+        AutomatonModel::ScopeReconciler,
     ];
 
     let source_payload = KittyCommandExecutedPayload::test_default("echo models");
@@ -1501,7 +1501,7 @@ async fn synthetic_metadata_survives_batch_insert(ctx: TestContext) -> TestResul
         event.scope_key = Some(format!("batch-scope:{i}"));
         event.equivalence_key = Some(format!("batch-equiv:{i}"));
         event.created_by_operation_id = Some(operation_id);
-        event.node_model = Some(DerivedNodeModel::Transducer);
+        event.node_model = Some(AutomatonModel::Transducer);
         events.push(event);
     }
 
@@ -1527,7 +1527,7 @@ async fn synthetic_metadata_survives_batch_insert(ctx: TestContext) -> TestResul
             Some(format!("batch-equiv:{i}").as_str())
         );
         assert_eq!(loaded.created_by_operation_id, Some(operation_id));
-        assert_eq!(loaded.node_model, Some(DerivedNodeModel::Transducer));
+        assert_eq!(loaded.node_model, Some(AutomatonModel::Transducer));
     }
 
     Ok(())

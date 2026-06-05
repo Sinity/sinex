@@ -33,7 +33,7 @@ let
     # the tiny VM default. NATS expects this value as a K/M/G/T-sized string.
     nats.jetstreamMaxStore = lib.mkDefault "16G";
 
-    nodes = {
+    runtime = {
       enable = lib.mkDefault true;
       coordination.enable = lib.mkDefault false;
       defaults.instances = lib.mkDefault 1;

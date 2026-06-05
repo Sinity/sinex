@@ -270,11 +270,11 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT bucket AS time, node_type, total_events_processed FROM sinex_telemetry.node_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "rawSql": "SELECT bucket AS time, module_kind, total_events_processed FROM sinex_telemetry.node_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
           "refId": "A"
         }
       ],
-      "title": "Node Throughput",
+      "title": "RuntimeActor Throughput",
       "type": "timeseries"
     },
     {

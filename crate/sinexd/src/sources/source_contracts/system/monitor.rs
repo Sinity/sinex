@@ -8,7 +8,7 @@
 //! Deployment shape: a `Type=oneshot` systemd unit that runs at boot under
 //! `sinex-runtime.target`.
 
-use crate::node_sdk::{NodeResult, runtime::stream::NodeRuntimeState};
+use crate::runtime::{RuntimeResult, stream::RuntimeContext};
 use futures::future::BoxFuture;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
@@ -24,7 +24,7 @@ use sinex_primitives::{
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 use crate::register_monitor_unit;
-use crate::sources::monitor_node::MonitorPhase;
+use crate::sources::monitor_driver::MonitorPhase;
 
 // ---------------------------------------------------------------------------
 // Source contract + binding
@@ -83,11 +83,11 @@ register_monitor_unit!(
 /// Build the [`SystemMonitoringStartedPayload`] event anchored to `material_id`.
 ///
 /// The enabled/configured flags default to `true` for all four subsystems.
-/// A future pass can wire actual config from `NodeRuntimeState::raw_config`.
+/// A future pass can wire actual config from `RuntimeContext::raw_config`.
 fn emit_system_monitor(
-    _runtime: NodeRuntimeState,
+    _runtime: RuntimeContext,
     material_id: Id<SourceMaterial>,
-) -> BoxFuture<'static, NodeResult<Vec<Event<JsonValue>>>> {
+) -> BoxFuture<'static, RuntimeResult<Vec<Event<JsonValue>>>> {
     Box::pin(async move {
         let payload = SystemMonitoringStartedPayload {
             dbus_enabled: true,

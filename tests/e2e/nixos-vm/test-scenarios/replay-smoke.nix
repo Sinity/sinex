@@ -27,7 +27,7 @@ pkgs.testers.nixosTest {
     services.sinex.core.gateway.enable = true;
 
     # Enable filesystem node to generate real events
-    services.sinex.nodes = {
+    services.sinex.runtime = {
       filesystem.enable = true;
       filesystem.watchPaths = lib.mkAfter [ "/var/lib/sinex/watched" ];
       terminal.enable = false;

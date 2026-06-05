@@ -2,7 +2,7 @@ use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy, pull::Config as 
 use futures::StreamExt;
 use sinex_db::{DbPool, repositories::DbPoolExt};
 use sinexd::api::ServiceContainer;
-use sinexd::node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
+use sinexd::runtime::{Checkpoint, SourceScanAck, SourceScanCommand, SourceScanProgress, ScanReport};
 use sinex_primitives::{DynamicPayload, Id, Uuid, temporal::Timestamp};
 use std::time::Duration;
 use tokio::time::sleep;
@@ -12,23 +12,23 @@ async fn spawn_fake_scan_node(
     pool: DbPool,
     nats: async_nats::Client,
     env: sinex_primitives::environment::SinexEnvironment,
-    node_name: &str,
+    module_name: &str,
     source: &'static str,
     event_type: &'static str,
     events_processed: u64,
 ) -> TestResult<(
-    tokio::sync::oneshot::Receiver<NodeScanCommand>,
+    tokio::sync::oneshot::Receiver<SourceScanCommand>,
     tokio::task::JoinHandle<()>,
 )> {
-    let node_name = node_name.to_string();
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+    let module_name = module_name.to_string();
+    let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
     let mut sub = nats.subscribe(subject).await?;
     let (command_tx, command_rx) = tokio::sync::oneshot::channel();
 
     let handle = tokio::spawn(async move {
         let Some(msg) = sub.next().await else { return };
 
-        let Ok(command) = serde_json::from_slice::<NodeScanCommand>(&msg.payload) else {
+        let Ok(command) = serde_json::from_slice::<SourceScanCommand>(&msg.payload) else {
             eprintln!("fake scan node: invalid scan command payload");
             return;
         };
@@ -39,9 +39,9 @@ async fn spawn_fake_scan_node(
         let _ = command_tx.send(command.clone());
 
         if let Some(reply) = msg.reply {
-            let ack = NodeScanAck {
+            let ack = SourceScanAck {
                 operation_id,
-                node_name: node_name.clone(),
+                module_name: module_name.clone(),
                 accepted: true,
                 error: None,
             };
@@ -66,7 +66,7 @@ async fn spawn_fake_scan_node(
                 source,
                 event_type,
                 serde_json::json!({
-                    "path": format!("/tmp/{node_name}-replay-{operation_id}-{i}.txt")
+                    "path": format!("/tmp/{module_name}-replay-{operation_id}-{i}.txt")
                 }),
             )
             .from_material(Id::from_uuid(material_id))
@@ -87,17 +87,17 @@ async fn spawn_fake_scan_node(
             duration: Duration::from_millis(5),
             final_checkpoint: Checkpoint::None,
             time_range: None,
-            node_stats: std::collections::HashMap::from([(
+            runtime_stats: std::collections::HashMap::from([(
                 "events_emitted".to_string(),
                 events_processed,
             )]),
-            successful_targets: vec![node_name.clone()],
+            successful_targets: vec![module_name.clone()],
             failed_targets: Vec::new(),
             warnings: Vec::new(),
         };
-        let progress = NodeScanProgress {
+        let progress = SourceScanProgress {
             operation_id,
-            node_name,
+            module_name,
             events_processed,
             events_emitted: events_processed,
             final_report: Some(report),
@@ -201,7 +201,7 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "node_id": "test-node",
+            "module_name": "test-node",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
             "material_filter": [replay_material.as_uuid().to_string()],
             "filters": { "event_types": ["file.created"] }
@@ -243,7 +243,7 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
     assert_eq!(preview_resp["preview"]["total_events"].as_i64(), Some(1));
     assert_eq!(
         preview_resp["preview"]["replay_semantics"].as_str(),
-        Some("reexecute_material_roots_via_node_scan")
+        Some("reexecute_material_roots_via_source_scan")
     );
 
     let approve_req = serde_json::json!({

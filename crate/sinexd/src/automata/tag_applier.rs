@@ -23,9 +23,9 @@
 //! Entity ID is the source event ID — tags are applied to the event
 //! that triggered them, not to a resolved entity.
 //!
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, TransducerNodeAdapter};
-use crate::node_sdk::tags;
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, TransducerAdapter};
+use crate::runtime::tags;
+use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Transducer};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
 
@@ -61,7 +61,7 @@ impl Transducer for TagApplier {
         _state: &mut Self::State,
         input: serde_json::Value,
         context: &AutomatonContext,
-    ) -> Result<Option<DerivedOutput<KnowledgeTagAppliedPayload>>, NodeLogicError> {
+    ) -> Result<Option<DerivedOutput<KnowledgeTagAppliedPayload>>, AutomatonLogicError> {
         let rules = evaluate_rules(&input, context);
         // v1: emit first matching tag only. v2: emit all matches.
         if let Some(tag_name) = rules.into_iter().next() {
@@ -138,7 +138,7 @@ fn evaluate_rules(input: &serde_json::Value, context: &AutomatonContext) -> Vec<
     tags
 }
 
-pub type TagApplierNode = TransducerNodeAdapter<TagApplier>;
+pub type TagApplierNode = TransducerAdapter<TagApplier>;
 
 // ── Source descriptor ─────────────────────────────────────────────
 
@@ -173,7 +173,7 @@ register_source_runtime_binding! {
         "tag-applier",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("knowledge.tag_applied")
     .privacy_context("inherits_from_parents")
@@ -181,11 +181,11 @@ register_source_runtime_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_id("tag-applier")
-    .runner_pack("process")
+    .runner_pack("sinexd")
     .checkpoint_family(SuCheckpointFamily::AppendStream)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
+    .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
     .build()
 }

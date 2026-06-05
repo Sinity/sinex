@@ -257,14 +257,14 @@ pub struct PoolStatsPayload {
     pub timeout_count: u64,
 }
 
-/// Node event processing statistics
+/// RuntimeActor event processing statistics
 ///
 /// Addresses Issues 24, 29: Event Processing Metrics
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.node", event_type = "processing.stats")]
+#[event_payload(source = "sinex.runtime", event_type = "processing.stats")]
 pub struct NodeProcessingStatsPayload {
-    /// Node type (fs-ingestor, terminal-ingestor, etc.)
-    pub node_type: String,
+    /// RuntimeActor type (fs-ingestor, terminal-ingestor, etc.)
+    pub module_kind: String,
     /// Events processed since last report
     pub events_processed: u64,
     /// Events dropped (channel full, errors)
@@ -288,10 +288,10 @@ pub struct NodeProcessingStatsPayload {
 /// cuts derived-node telemetry volume by ~6x without any information loss; see
 /// issue #1556.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.node", event_type = "derived.latency_snapshot")]
-pub struct DerivedNodeLatencySnapshotPayload {
+#[event_payload(source = "sinex.runtime", event_type = "derived.latency_snapshot")]
+pub struct AutomatonLatencySnapshotPayload {
     /// Derived-node name (e.g., "session-detector")
-    pub node_name: String,
+    pub module_name: String,
     /// Last lag sample (ms) — wall time between upstream `ts_orig` and dispatch
     #[serde(
         default,
@@ -518,9 +518,9 @@ impl StreamStatsPayload {
 // Every long-running sinex binary participates in self-observation:
 // counters/gauges/histograms (`sinex.metric.*`), component health
 // (`sinex.health.status`), and per-binary operational rollups
-// (`sinexd.event_engine.*`, `sinexd.api.*`, `sinex.node.*`). These payloads have
+// (`sinexd.event_engine.*`, `sinexd.api.*`, `sinex.runtime.*`). These payloads have
 // no dedicated systemd unit — they are produced from inside event_engine, gateway,
-// and the node SDK as those processes run. We register infra source
+// and the runtime as those processes run. We register infra source
 // descriptors so the (source, event_type) pairs declared by `#[event_payload]`
 // are claimed by the source inventory; bindings continue to live with the
 // owning ingestor / runner-pack descriptors.
@@ -592,14 +592,14 @@ register_source_contract! {
 
 register_source_contract! {
     SourceContract {
-        id: "sinex-node-telemetry",
+        id: "sinex-runtime-telemetry",
         namespace: "infra",
-        event_types: &[("sinex.node", "processing.stats")],
+        event_types: &[("sinex.runtime", "processing.stats")],
         privacy_tier: SuPrivacyTier::Public,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         occurrence_identity: SuOccurrenceIdentity::Natural,
-        access_policy: "embedded_in_node_sdk",
+        access_policy: "embedded_in_runtime",
     }
 }
 
@@ -682,8 +682,8 @@ register_source_runtime_binding! {
 
 register_source_runtime_binding! {
     SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:sinex-node-telemetry"),
-        "sinex-node-telemetry",
+        SubjectRef::from_static("source:sinex-runtime-telemetry"),
+        "sinex-runtime-telemetry",
         "infra",
     )
     .implementation("sinexd")
@@ -693,13 +693,13 @@ register_source_runtime_binding! {
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
-    .source_id("sinex-node-telemetry")
+    .source_id("sinex-runtime-telemetry")
     .proposed(true)
     .runner_pack("infra")
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_node_sdk")
+    .implementation_mode("rust_in_runtime")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }

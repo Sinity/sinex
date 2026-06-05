@@ -1,8 +1,8 @@
-//! Parser for filesystem [`FileDropAdapter`](crate::node_sdk::parser::FileDropAdapter) records.
+//! Parser for filesystem [`FileDropAdapter`](crate::runtime::parser::FileDropAdapter) records.
 
 use std::os::unix::fs::PermissionsExt;
 
-use crate::node_sdk::parser::{
+use crate::runtime::parser::{
     FileDropEventKind, FileDropMoveRole, FileDropRecordMetadata, MaterialParser, ParserError,
 };
 use async_trait::async_trait;

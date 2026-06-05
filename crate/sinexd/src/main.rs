@@ -18,7 +18,7 @@ use sinexd::api::config::GatewayConfig;
 use sinexd::api::rpc_server;
 use sinexd::api::service_container::ServiceContainer;
 use sinexd::event_engine::EventEngineConfig;
-use sinexd::node_sdk::service_runtime::{TracingFormat, install_tracing, spawn_shutdown_task};
+use sinexd::runtime::service_runtime::{TracingFormat, install_tracing, spawn_shutdown_task};
 use sinexd::sources::bindings::{self as source_bindings, SourceBinding};
 use sinexd::supervisor::Supervisor;
 use std::collections::HashMap;
@@ -98,9 +98,9 @@ enum Command {
         #[arg(long)]
         service_name: Option<String>,
 
-        /// JSON object passed verbatim as `--node-config`.
+        /// JSON object passed verbatim as `--runtime-config`.
         #[arg(long)]
-        node_config: Option<String>,
+        runtime_config: Option<String>,
 
         /// Extra CLI arguments inserted before the SDK subcommand
         /// (e.g. `scan --until snapshot`).
@@ -167,14 +167,14 @@ async fn main() -> color_eyre::Result<()> {
         Command::ScanSourceDriver {
             source,
             service_name,
-            node_config,
+            runtime_config,
             extra_args,
             extra_env,
         } => {
             scan_source(
                 source,
                 service_name,
-                node_config,
+                runtime_config,
                 extra_args,
                 extra_env,
             )
@@ -249,11 +249,11 @@ async fn rpc_server_serve(
 async fn scan_source(
     source: String,
     service_name: Option<String>,
-    node_config: Option<String>,
+    runtime_config: Option<String>,
     extra_args: Vec<String>,
     extra_env: Vec<(String, String)>,
 ) -> color_eyre::Result<()> {
-    let node_config_value = match node_config {
+    let runtime_config_value = match runtime_config {
         Some(s) if !s.trim().is_empty() => Some(serde_json::from_str(&s)?),
         _ => None,
     };
@@ -264,7 +264,7 @@ async fn scan_source(
         source_id: source,
         instance_idx: 1,
         service_name,
-        node_config: node_config_value,
+        runtime_config: runtime_config_value,
         extra_args,
         extra_env,
     };

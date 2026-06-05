@@ -52,7 +52,7 @@ to persistence.
 ```text
 sinexd::sources    sinexd::automata      Clients
   fs, terminal,      analytics,           CLI, browser
-  desktop, system,   derived nodes        extension
+  desktop, system,   automata        extension
   browser, exports
        │                 │                    │
        ▼                 ▼                    │
@@ -94,7 +94,7 @@ sinexd::sources    sinexd::automata      Clients
 
 - services run as separate systemd units with NixOS-managed configuration
 - observability is journald-first; service logs are part of the event universe
-- nodes and derived automata recover through checkpoints and replay
+- runtime modules and derived automata recover through checkpoints and replay
 - replay, archive, and restore are explicit control-plane operations
 - direct DB access is diagnostic; the normal control/query boundary is `sinexd::api`
 
@@ -140,7 +140,7 @@ Hardening defaults that are already part of the repo:
 - managed long-running units and helper/maintenance oneshots use systemd sandboxing
 - managed local NATS now has typed server TLS under `services.sinex.nats.tls.*`
 - managed local NATS now has typed subject-level authz for the current shared runtime identity under `services.sinex.nats.authorization.sharedClient.*`
-- shared client transport still lives under `services.sinex.nodes.nats.{servers,tls,auth}` and is exported to all managed services automatically
+- shared client transport still lives under `services.sinex.runtime.nats.{servers,tls,auth}` and is exported to all managed services automatically
 
 Conventional secret names that the module now resolves automatically through agenix:
 
@@ -202,7 +202,7 @@ journalctl -u sinexd -f
 Threat model shorthand:
 
 - trusted single-user local host
-- nodes submit over NATS; the `sinexd` API is the hardened external boundary
+- runtime modules submit over NATS; the `sinexd` API is the hardened external boundary
 - canonical persistence stays single-writer through `sinexd::event_engine`
 - host full-disk encryption and capture-time privacy controls are the intended baseline
 

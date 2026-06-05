@@ -25,7 +25,7 @@ pub async fn handle_automata_status(
         .map_err(|e| SinexError::database("Failed to list automata status").with_std_error(&e))?
         .into_iter()
         .map(|row| AutomatonStatus {
-            node_name: row.node_name,
+            module_name: row.module_name,
             version: row.version,
             description: row.description,
             manifest_status: row.manifest_status.unwrap_or_default(),

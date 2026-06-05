@@ -1,6 +1,6 @@
 //! Process lifecycle event payloads
 
-use crate::domain::NodeType;
+use crate::domain::ModuleKind;
 use crate::events::enums::ShutdownReason;
 use crate::units::{ExitCode, ProcessId};
 use schemars::JsonSchema;
@@ -15,7 +15,7 @@ use sinex_macros::EventPayload;
 #[event_payload(source = "sinex", event_type = "process.started")]
 pub struct ProcessStartedPayload {
     pub process_name: String,
-    pub process_type: NodeType,
+    pub process_type: ModuleKind,
     pub pid: ProcessId,
     pub version: String,
     pub config: serde_json::Value,
@@ -49,7 +49,7 @@ pub struct ProcessFailedPayload {
 #[event_payload(source = "sinex", event_type = "process.shutdown")]
 pub struct ProcessShutdownPayload {
     pub process_name: String,
-    pub process_type: NodeType,
+    pub process_type: ModuleKind,
     pub pid: ProcessId,
     pub uptime_seconds: u64,
     pub shutdown_reason: ShutdownReason,
@@ -92,7 +92,7 @@ use crate::{register_source_contract, register_source_runtime_binding};
 
 register_source_contract! {
     SourceContract {
-        id: "sinex-process-lifecycle",
+        id: "sinexd-lifecycle",
         namespace: "infra",
         event_types: &[
             ("sinex", "process.started"),
@@ -123,8 +123,8 @@ register_source_contract! {
 
 register_source_runtime_binding! {
     SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:sinex-process-lifecycle"),
-        "sinex-process-lifecycle",
+        SubjectRef::from_static("source:sinexd-lifecycle"),
+        "sinexd-lifecycle",
         "infra",
     )
     .implementation("sinex-primitives::process")
@@ -134,7 +134,7 @@ register_source_runtime_binding! {
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
-    .source_id("sinex-process-lifecycle")
+    .source_id("sinexd-lifecycle")
     .proposed(true)
     .runner_pack("infra")
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
@@ -151,7 +151,7 @@ register_source_runtime_binding! {
         "sinex-automaton-error",
         "infra",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("EmbeddedEmitter")
     .output_event_type("automaton.error")
     .privacy_context("none")
@@ -164,7 +164,7 @@ register_source_runtime_binding! {
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
+    .implementation_mode("in_process:sinexd")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
@@ -176,7 +176,7 @@ impl ProcessStartedPayload {
     pub fn test_default() -> Self {
         Self {
             process_name: "test-process".into(),
-            process_type: NodeType::Ingestor,
+            process_type: ModuleKind::Source,
             pid: ProcessId::from(0u32),
             version: "0.0.0".into(),
             config: serde_json::json!({}),
@@ -190,7 +190,7 @@ impl ProcessShutdownPayload {
     pub fn test_default() -> Self {
         Self {
             process_name: "test-process".into(),
-            process_type: NodeType::Ingestor,
+            process_type: ModuleKind::Source,
             pid: ProcessId::from(0u32),
             uptime_seconds: 0,
             shutdown_reason: ShutdownReason::Requested,

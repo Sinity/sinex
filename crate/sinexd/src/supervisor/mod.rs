@@ -4,14 +4,14 @@
 //! persistence + confirmation), the operator API, the enabled derived-node
 //! automata, and the configured source bindings. Each module starts
 //! as a tokio task under the supervisor. The shutdown signal is sourced from
-//! `crate::node_sdk::service_runtime::spawn_shutdown_task` which handles
+//! `crate::runtime::service_runtime::spawn_shutdown_task` which handles
 //! SIGINT/SIGTERM; tasks observe it via a shared `watch` receiver and unwind
 //! in reverse start order.
 
 use std::time::Duration;
 
-use crate::node_sdk::service_runtime;
-use crate::node_sdk::systemd_notify;
+use crate::runtime::service_runtime;
+use crate::runtime::systemd_notify;
 use sinex_primitives::error::{Result, SinexError};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;

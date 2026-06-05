@@ -13,10 +13,10 @@
 │                      Provisional → Confirmed Pipeline                         │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-PHASE 1: CAPTURE (Node)
+PHASE 1: CAPTURE (RuntimeActor)
 ────────────────────────────
   ┌──────────────────────────┐
-  │   Node detects           │
+  │   RuntimeActor detects           │
   │   filesystem change      │
   └────────────┬─────────────┘
                │
@@ -274,7 +274,7 @@ KEY-VALUE BUCKETS
 
   Bucket: sinex_checkpoints
   ┌─────────────────────────────────────────────────────────────────────┐
-  │  Key format: {node_name}.{consumer_group}.{consumer_name}       │
+  │  Key format: {module_name}.{consumer_group}.{consumer_name}       │
   │  Value: JSON checkpoint state                                        │
   │                                                                       │
   │  {                                                                    │

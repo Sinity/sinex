@@ -21,7 +21,7 @@ use super::{
     },
 };
 use crate::event_engine::{EventEngineResult, SinexError};
-use crate::node_sdk::content_store::ContentStoreKey;
+use crate::runtime::content_store::ContentStoreKey;
 use blake3::Hasher;
 use camino::Utf8PathBuf;
 use sinex_primitives::Timestamp;

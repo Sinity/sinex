@@ -107,7 +107,7 @@ serde_yml = { workspace = true }
 mime_guess = "2.0"
 sinex-macros = { path = "../sinex-macros" }
 
-# node-sdk dependencies (formerly from sinexd crate)
+# runtime dependencies (formerly from sinexd crate)
 sd-notify = { workspace = true }
 sysinfo = { workspace = true }
 which = { workspace = true }
@@ -219,12 +219,12 @@ name = "native_messaging_auth_test"
 path = "tests/api/native_messaging_auth_test.rs"
 
 [[test]]
-name = "node_registry_handlers_test"
-path = "tests/api/node_registry_handlers_test.rs"
+name = "runtime_registry_handlers_test"
+path = "tests/api/runtime_registry_handlers_test.rs"
 
 [[test]]
-name = "nodes_handlers_test"
-path = "tests/api/nodes_handlers_test.rs"
+name = "runtime_handlers_test"
+path = "tests/api/runtime_handlers_test.rs"
 
 [[test]]
 name = "ops_handlers_test"

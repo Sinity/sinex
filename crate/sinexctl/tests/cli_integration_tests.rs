@@ -58,7 +58,7 @@ mod help_tests {
             .args(["node", "--help"])
             .assert()
             .success()
-            .stdout(predicate::str::contains("Node operations"))
+            .stdout(predicate::str::contains("RuntimeActor operations"))
             .stdout(predicate::str::contains("list"))
             .stdout(predicate::str::contains("status"))
             .stdout(predicate::str::contains("drain"))

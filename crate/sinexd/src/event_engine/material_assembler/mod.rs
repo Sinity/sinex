@@ -19,8 +19,8 @@ mod state;
 #[cfg(test)]
 mod test_support;
 
-use crate::node_sdk::content_store::MaterialContentStore;
-use crate::node_sdk::{SelfObservationError, SelfObserver};
+use crate::runtime::content_store::MaterialContentStore;
+use crate::runtime::{SelfObservationError, SelfObserver};
 use async_nats::{Client as NatsClient, jetstream};
 use blake3::Hasher;
 use dashmap::DashMap;
@@ -667,7 +667,7 @@ impl MaterialAssembler {
     async fn import_into_content_store(
         &self,
         state: &FinalizationState,
-    ) -> EventEngineResult<crate::node_sdk::content_store::ContentStoreKey> {
+    ) -> EventEngineResult<crate::runtime::content_store::ContentStoreKey> {
         io::import_into_content_store(self, state).await
     }
 
@@ -807,7 +807,7 @@ impl MaterialAssembler {
                     None => Ok(()),
                 }
             }
-            () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+            () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                 info!("Material Assembler received shutdown signal");
                 Ok(())
             }

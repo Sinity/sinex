@@ -3,9 +3,9 @@
 //! The supervisor reads `SINEX_AUTOMATA_ENABLED` (comma-separated list of
 //! automaton names, or the literal `all`) and dispatches each enabled entry
 //! through [`spawn`] into the supervisor task tree. Each spawn synthesizes a
-//! `NodeCli` argv with `--service-name sinex-<name>` and the `service`
+//! `RuntimeCli` argv with `--service-name sinex-<name>` and the `service`
 //! subcommand, then drives it through the standard
-//! [`NodeCliRunner`](crate::node_sdk::node_cli::NodeCliRunner) lifecycle —
+//! [`RuntimeCliRunner`](crate::runtime::runtime_cli::RuntimeCliRunner) lifecycle —
 //! the same lifecycle the deleted `sinex-process` per-automaton binary
 //! used, just in-process.
 //!
@@ -33,7 +33,7 @@ pub struct AutomatonSpec {
     /// selector for `sinex-process` so operator-facing tooling and
     /// `SINEX_AUTOMATA_ENABLED` lists stay stable across the collapse.
     pub name: &'static str,
-    /// Spawner that constructs and drives the automaton's `NodeCliRunner`.
+    /// Spawner that constructs and drives the automaton's `RuntimeCliRunner`.
     pub run: AutomatonRunFn,
 }
 
@@ -156,18 +156,18 @@ pub fn parse_enabled(raw: Option<&str>) -> Result<Vec<&'static AutomatonSpec>> {
 /// ```text
 /// sinex-process --automaton <name> --service-name sinex-<name> service
 /// ```
-/// then dispatches through [`NodeCliRunner`] just as the deleted
+/// then dispatches through [`RuntimeCliRunner`] just as the deleted
 /// `sinex-process` trampoline did. Env-var fallbacks for NATS/TLS/database
 /// remain effective because `clap`'s `env` attribute reads the process
 /// environment at parse time.
 async fn run_one<T>(name: &'static str) -> Result<()>
 where
-    T: crate::node_sdk::runtime::stream::Node
-        + crate::node_sdk::ExplorationProvider
+    T: crate::runtime::stream::RuntimeActor
+        + crate::runtime::ExplorationProvider
         + Default
         + 'static,
 {
-    use crate::node_sdk::node_cli::{NodeCli, NodeCliRunner};
+    use crate::runtime::runtime_cli::{RuntimeCli, RuntimeCliRunner};
     use clap::Parser;
 
     let service_name = format!("sinex-{name}");
@@ -180,12 +180,12 @@ where
         std::ffi::OsString::from("service"),
     ];
 
-    let parsed = NodeCli::try_parse_from(argv).map_err(|error| {
+    let parsed = RuntimeCli::try_parse_from(argv).map_err(|error| {
         SinexError::configuration(format!(
-            "failed to construct NodeCli for automaton '{name}': {error}"
+            "failed to construct RuntimeCli for automaton '{name}': {error}"
         ))
     })?;
-    let mut runner = NodeCliRunner::new(T::default());
+    let mut runner = RuntimeCliRunner::new(T::default());
     runner.run(parsed).await.map_err(|error| {
         SinexError::service(format!("automaton '{name}' exited with error")).with_std_error(&error)
     })

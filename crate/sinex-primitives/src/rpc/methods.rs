@@ -77,12 +77,12 @@ pub const DLQ_REQUEUE: &str = "dlq.requeue";
 pub const DLQ_PURGE: &str = "dlq.purge";
 
 // Nodes
-pub const NODES_LIST: &str = "nodes.list";
-pub const NODES_LIST_ACTIVE: &str = "nodes.list_active";
-pub const NODES_HEALTH: &str = "nodes.health";
-pub const NODES_DRAIN: &str = "nodes.drain";
-pub const NODES_RESUME: &str = "nodes.resume";
-pub const NODES_SET_HORIZON: &str = "nodes.set_horizon";
+pub const RUNTIME_LIST: &str = "runtime.list";
+pub const RUNTIME_LIST_ACTIVE: &str = "runtime.list_active";
+pub const RUNTIME_HEALTH: &str = "runtime.health";
+pub const RUNTIME_DRAIN: &str = "runtime.drain";
+pub const RUNTIME_RESUME: &str = "runtime.resume";
+pub const RUNTIME_SET_HORIZON: &str = "runtime.set_horizon";
 
 // Automata
 pub const AUTOMATA_STATUS: &str = "automata.status";
@@ -146,7 +146,7 @@ pub const TELEMETRY_SYSTEM_STATE: &str = "telemetry.system_state";
 pub const TELEMETRY_GATEWAY_STATS: &str = "telemetry.gateway_stats";
 pub const TELEMETRY_STREAM_STATS: &str = "telemetry.stream_stats";
 pub const TELEMETRY_ASSEMBLY_STATS: &str = "telemetry.assembly_stats";
-pub const TELEMETRY_NODE_STATS: &str = "telemetry.node_stats";
+pub const TELEMETRY_RUNTIME_STATS: &str = "telemetry.runtime_stats";
 pub const TELEMETRY_METRIC_COUNTERS: &str = "telemetry.metric_counters";
 pub const TELEMETRY_EVENT_ENGINE_BATCH_STATS: &str = "telemetry.event_engine_batch_stats";
 pub const TELEMETRY_EVENT_ENGINE_VALIDATION: &str = "telemetry.event_engine_validation";

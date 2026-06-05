@@ -6,7 +6,7 @@ material. It is the shared protocol for acquisition jobs, parser lanes,
 child-process sidecars, private-mode transitions, and continuity diagnostics.
 
 The source runtime lives under `crate/sinexd/src/sources/` and
-`crate/sinexd/src/node_sdk/`. The database material lifecycle is carried by
+`crate/sinexd/src/runtime/`. The database material lifecycle is carried by
 `raw.source_material_registry.status` and the source-material repository.
 
 ## Goals

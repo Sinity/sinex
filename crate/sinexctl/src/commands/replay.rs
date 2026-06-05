@@ -54,7 +54,7 @@ EXAMPLES:
 pub enum ReplayCommands {
     /// Create a replay plan (planning state)
     Plan {
-        /// Node ID to replay events for
+        /// RuntimeActor ID to replay events for
         #[arg(long)]
         node: String,
 
@@ -175,7 +175,7 @@ pub enum ReplayCommands {
 
     /// Full lifecycle: plan + preview + approve + execute (convenience)
     Run {
-        /// Node ID to replay events for
+        /// RuntimeActor ID to replay events for
         #[arg(long)]
         node: String,
 
@@ -521,8 +521,8 @@ async fn execute_run(
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             eprintln!("  Cascade: {cascade_total} total ({total} direct + {derived} derived)");
-            if let Some(nodes) = cascade.get("affected_nodes").and_then(|v| v.as_array()) {
-                let names: Vec<&str> = nodes.iter().filter_map(|n| n.as_str()).collect();
+            if let Some(modules) = cascade.get("affected_nodes").and_then(|v| v.as_array()) {
+                let names: Vec<&str> = modules.iter().filter_map(|n| n.as_str()).collect();
                 if !names.is_empty() {
                     eprintln!("  Affected: {}", names.join(", "));
                 }
@@ -589,7 +589,7 @@ fn format_replay_plan_table(operation: &ReplayOperation) -> String {
     output.push_str("Replay Plan Created:\n");
     output.push_str(&format!("  Operation ID: {}\n", operation.operation_id));
     output.push_str(&format!("  State:        {:?}\n", operation.state));
-    output.push_str(&format!("  Node:         {}\n", operation.scope.node_id));
+    output.push_str(&format!("  Source:         {}\n", operation.scope.source_name));
     if let Some(ref window) = operation.scope.time_window {
         output.push_str(&format!("  Time Window:  {} to {}\n", window.0, window.1));
     }
@@ -616,7 +616,7 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
     output.push_str("Replay Preview:\n");
     output.push_str(&format!("  Operation ID: {}\n", operation.operation_id));
     output.push_str(&format!("  State:        {:?}\n", operation.state));
-    output.push_str(&format!("  Node:         {}\n", operation.scope.node_id));
+    output.push_str(&format!("  Source:         {}\n", operation.scope.source_name));
 
     if let Some(total) = preview
         .get("total_events")
@@ -703,8 +703,8 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
                 "  Cascade Total: {cascade_total} ({direct} direct + {derived} derived)\n"
             ));
 
-            if let Some(nodes) = cascade.get("affected_nodes").and_then(|v| v.as_array()) {
-                let names: Vec<&str> = nodes.iter().filter_map(|n| n.as_str()).collect();
+            if let Some(modules) = cascade.get("affected_nodes").and_then(|v| v.as_array()) {
+                let names: Vec<&str> = modules.iter().filter_map(|n| n.as_str()).collect();
                 if !names.is_empty() {
                     output.push_str(&format!("  Affected Nodes: {}\n", names.join(", ")));
                 }
@@ -805,7 +805,7 @@ fn format_replay_status_table(operation: &ReplayOperation) -> String {
     output.push_str("Replay Operation:\n");
     output.push_str(&format!("  Operation ID: {}\n", operation.operation_id));
     output.push_str(&format!("  State:        {:?}\n", operation.state));
-    output.push_str(&format!("  Node:         {}\n", operation.scope.node_id));
+    output.push_str(&format!("  Source:         {}\n", operation.scope.source_name));
     output.push_str(&format!("  Actor:        {}\n", operation.actor));
     output.push_str(&format!(
         "  Progress:     {}/{}\n",
@@ -844,7 +844,7 @@ fn format_replay_list_table(operations: &[ReplayOperation]) -> String {
             "{:<28} {:<12} {:<20} {:<10} {:<10}\n",
             op.operation_id,
             format!("{:?}", op.state),
-            op.scope.node_id,
+            op.scope.source_name,
             progress,
             created,
         ));
@@ -1112,7 +1112,7 @@ mod tests {
             operation_id: "op-1".to_string(),
             state: ReplayState::Previewed,
             scope: ReplayScope {
-                node_id: "terminal-ingestor".to_string(),
+                source_name: "terminal-ingestor".to_string(),
                 time_window: None,
                 material_filter: None,
                 filters: std::collections::HashMap::new(),

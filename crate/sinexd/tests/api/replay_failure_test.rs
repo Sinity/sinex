@@ -28,7 +28,7 @@ async fn replay_cancel_from_previewed_state(ctx: TestContext) -> TestResult<()> 
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "node_id": "test-node-1",
+            "module_name": "test-node-1",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
             "filters": {}
         }
@@ -139,7 +139,7 @@ async fn replay_cancel_from_approved_state(ctx: TestContext) -> TestResult<()> {
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "node_id": "test-node-2",
+            "module_name": "test-node-2",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
             "filters": {}
         }
@@ -260,7 +260,7 @@ async fn replay_list_filters_by_state(ctx: TestContext) -> TestResult<()> {
             "command": "plan",
             "actor": "admin:test-user",
             "scope": {
-                "node_id": format!("test-node-{}", i),
+                "module_name": format!("test-node-{}", i),
                 "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
                 "filters": {}
             }
@@ -384,7 +384,7 @@ async fn replay_list_state_filter_applies_before_limit(ctx: TestContext) -> Test
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "node_id": "test-node-cancelled",
+            "module_name": "test-node-cancelled",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
             "filters": {}
         }
@@ -421,7 +421,7 @@ async fn replay_list_state_filter_applies_before_limit(ctx: TestContext) -> Test
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "node_id": "test-node-planning",
+            "module_name": "test-node-planning",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
             "filters": {}
         }
@@ -478,7 +478,7 @@ async fn replay_create_with_empty_scope_fails_gracefully(ctx: TestContext) -> Te
         .clone();
     let control_subject = services.environment().nats_subject("sinex.control.replay");
 
-    // Send plan with empty scope (no node_id, no time_window)
+    // Send plan with empty scope (no module_name, no time_window)
     let plan_req = json!({
         "command": "plan",
         "actor": "admin:test-user",
@@ -533,7 +533,7 @@ async fn replay_execute_dry_run_rejects_while_preserving_preview(
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "node_id": "dry-run-node",
+            "module_name": "dry-run-node",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
             "filters": {}
         }
@@ -624,7 +624,7 @@ async fn replay_execute_dry_run_rejects_while_preserving_preview(
     assert_eq!(status_resp["operation"]["state"].as_str(), Some("Approved"));
     assert_eq!(
         status_resp["operation"]["preview_summary"]["replay_semantics"].as_str(),
-        Some("reexecute_material_roots_via_node_scan")
+        Some("reexecute_material_roots_via_source_scan")
     );
     assert!(
         status_resp["operation"]["preview_summary"]["total_events"]

@@ -240,16 +240,16 @@ Run command for binary lifecycle management
 
 | Command | Purpose |
 |---|---|
-| `event_engine` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
+| `event-engine` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
 | `gateway` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
-| `node` | Run a specific node by name |
+| `runtime-actor` | Run a specific node by name |
 | `core` | Run core services bundle (event engine + API) |
 | `all-ingestors` | Run all ingestors |
 | `all-automatons` | Run all automatons |
 | `list` | List available binaries |
 | `tether` | Connect to a remote environment via The Tether |
 
-### `xtask run event_engine`
+### `xtask run event-engine`
 
 Run sinexd (alias preserved post-collapse; runs the full supervisor)
 
@@ -271,7 +271,7 @@ Run sinexd (alias preserved post-collapse; runs the full supervisor)
 | `--instance-id` | yes | no | Instance ID for multi-instance coordination |
 
 
-### `xtask run node`
+### `xtask run runtime-actor`
 
 Run a specific node by name
 
@@ -279,7 +279,7 @@ Run a specific node by name
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `name` | yes | yes | Node name (e.g., fs-ingestor, analytics-automaton) |
+| `name` | yes | yes | RuntimeActor name (e.g., fs-ingestor, analytics-automaton) |
 | `--instance-id` | yes | no | Instance ID for multi-instance coordination |
 
 

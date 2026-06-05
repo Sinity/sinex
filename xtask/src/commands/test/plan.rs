@@ -365,7 +365,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn runtime_binary_requirements_include_event_engine_for_node_sdk_tests()
+    async fn runtime_binary_requirements_include_event_engine_for_runtime_tests()
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinexd".to_string()],

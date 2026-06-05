@@ -584,7 +584,7 @@ mod coverage_matrix {
         entry(
             "system.monitor",
             SmokeCoverage::MonitorHarness,
-            "monitor_node.rs monitor_fire_once_opens_material_and_emits_event",
+            "monitor_driver.rs monitor_fire_once_opens_material_and_emits_event",
         ),
         entry(
             "system.systemd",
@@ -614,7 +614,7 @@ mod coverage_matrix {
         entry(
             "terminal.monitor",
             SmokeCoverage::MonitorHarness,
-            "monitor_node.rs monitor_fire_once_opens_material_and_emits_event",
+            "monitor_driver.rs monitor_fire_once_opens_material_and_emits_event",
         ),
         entry(
             "terminal.text-history",

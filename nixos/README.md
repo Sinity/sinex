@@ -8,7 +8,7 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 - **examples/monitoring.nix** - Staging configuration with maintenance + observability stack
 - **examples/dev-sandbox.nix** - Comprehensive developer sandbox with all services enabled
 - **examples/headless.nix** - Headless/server capture (filesystem + system capture)
-- **examples/remote-node.nix** - Edge capture forwarding events to remote ingest
+- **examples/remote-runtime.nix** - Edge capture forwarding events to remote ingest
 - **examples/coordination.nix** - Hot standby deployment with coordination enabled
 - **modules/** - Implementation modules:
   - `default.nix` - Main module entry point and base options
@@ -41,11 +41,11 @@ Key architectural decisions and implementation details are documented at their i
   - Stream bootstrap defaults + environment namespacing: [`modules/nats.nix`](modules/nats.nix)
 - **Source and stream runtime patterns**: [`crate/sinexd/docs/sources/README.md`](../crate/sinexd/docs/sources/README.md)
   - Source host shape, source-material staging, and parser boundaries
-  - Inline node SDK runtime and checkpoint semantics
-- **Stream runtime implementation**: [`crate/sinexd/src/node_sdk/runtime/stream/mod.rs`](../crate/sinexd/src/node_sdk/runtime/stream/mod.rs)
+  - Inline runtime runtime and checkpoint semantics
+- **Stream runtime implementation**: [`crate/sinexd/src/runtime/stream/mod.rs`](../crate/sinexd/src/runtime/stream/mod.rs)
   - Snapshot, historical, and continuous modes
 
-### Node Implementations
+### RuntimeActor Implementations
 - **Filesystem Monitoring**: [`sinexd/src/sources/source_contracts/fs/mod.rs`](../crate/sinexd/src/sources/source_contracts/fs/mod.rs)
   - SDK `FileContentDropAdapter` registration
   - inotify-backed file-drop watch planning
@@ -136,14 +136,14 @@ The upstream module exposes real feature toggles directly:
 ```nix
 services.sinex = {
   core.enable = true;                    # unified sinexd daemon
-  nodes.enable = true;                   # hosted capture/automata bindings
+  runtime.enable = true;                   # hosted capture/automata bindings
   lifecycle.maintenance.enable = false;  # DLQ/blob maintenance timers
   observability.enable = false;          # journald/logging integration
   observability.monitoring.enable = false; # Prometheus/Grafana/exporters
 };
 
 # Typical development overrides
-services.sinex.nodes = {
+services.sinex.runtime = {
   enable = true;
   coordination.enable = false;
   filesystem = {
@@ -158,12 +158,12 @@ If you want higher-level activation profiles such as `foundation` / `capture` / 
 
 ### Satellite Secrets & TLS
 
-When deploying nodes across hosts, use the typed NATS TLS options for the shared transport path.
+When deploying runtime modules across hosts, use the typed NATS TLS options for the shared transport path.
 Keep `defaults.env` for actual application behavior flags such as `SINEX_EDGE_MODE`, not for
 core transport wiring.
 
 ```nix
-services.sinex.nodes = {
+services.sinex.runtime = {
   nats = {
     servers = [ "tls://core.example.net:4222" ];
     tls = {
@@ -181,7 +181,7 @@ services.sinex.nodes = {
 };
 ```
 
-The NixOS module exports the corresponding `SINEX_NATS_*` variables to all core services and node
+The NixOS module exports the corresponding `SINEX_NATS_*` variables to all core services and runtime
 units automatically. Use generic environment injection only for options that do not already have a
 typed module surface.
 
@@ -209,7 +209,7 @@ For real secrets, prefer agenix over `environment.etc.*.text`; the inline
 `environment.etc` examples here are just the smallest declarative shape that
 exercises the module conventions.
 
-### User-Session Node Wiring
+### User-Session RuntimeActor Wiring
 
 Terminal, browser, and desktop capture now default to the interactive target user more
 honestly. When `services.sinex.users.target` is set, the module:
@@ -233,7 +233,7 @@ Override the typed session surfaces only when the layout is non-standard or you
 need to pin a specific runtime/socket mapping:
 
 ```nix
-services.sinex.nodes = {
+services.sinex.runtime = {
   terminal = {
     historySources = [
       {
@@ -263,9 +263,9 @@ services.sinex.nodes = {
 };
 ```
 
-`nodes.terminal.access.bindReadOnlyPaths`,
-`nodes.browser.access.bindReadOnlyPaths`, and
-`nodes.desktop.access.bindReadOnlyPaths` remain available as escape hatches, but
+`runtime.terminal.access.bindReadOnlyPaths`,
+`runtime.browser.access.bindReadOnlyPaths`, and
+`runtime.desktop.access.bindReadOnlyPaths` remain available as escape hatches, but
 they are no longer the primary workstation path.
 
 ### Production Setup with Hot Standby
@@ -279,7 +279,7 @@ sudo nixos-rebuild switch
 ```
 
 This enables:
-- **Multiple instances** of each node service (hot standby pattern)
+- **Multiple instances** of each source runtime (hot standby pattern)
 - **Zero-downtime upgrades** via version-based leadership election
 - **Automatic failover** when leader instances fail
 - **Coordination monitoring** with health checks and metrics
@@ -308,7 +308,7 @@ sudo nixos-rebuild test --flake .#devSandbox
 ```
 
 Switch permanently only after merging the example into your host configuration.
-> **Note**: The remote node example expects an existing remote NATS endpoint (feeding a central
+> **Note**: The remote runtime example expects an existing remote NATS endpoint (feeding a central
 > `sinexd` deployment) and explicitly disables local PostgreSQL/NATS provisioning.
 
 Grafana, when enabled, now provisions:
@@ -321,7 +321,7 @@ views for ingest/runtime telemetry and live event-time views for recent activity
 
 ## Architecture Overview
 
-Sinex uses a node architecture:
+Sinex uses a unified runtime architecture:
 
 ```
 External Data → Source contracts → NATS JetStream → sinexd::event_engine → PostgreSQL (`core.events`)
@@ -352,7 +352,7 @@ services.sinex = {
   enable = true;
   users.target = "myuser";
   
-  nodes = {
+  runtime = {
     enable = true;
     filesystem = {
       enable = true;
@@ -394,7 +394,7 @@ services.sinex = {
   enable = true;
   users.target = "serveruser";
   
-  nodes = {
+  runtime = {
     enable = true;
     filesystem = {
       enable = true;
@@ -423,7 +423,7 @@ services.sinex = {
   users.target = "developer";
   logLevel = "debug";              # Verbose logging
   
-  nodes = {
+  runtime = {
     enable = true;
     defaults.logLevel = "debug";
     filesystem = {
@@ -459,7 +459,7 @@ services.sinex = {
   enable = true;
   users.target = "testuser";
   
-  nodes = {
+  runtime = {
     enable = true;
     filesystem.enable = false;
     terminal.enable = false;
@@ -624,7 +624,7 @@ nats --server nats://127.0.0.1:4222 consumer next <stream> <consumer>
 nats --server nats://127.0.0.1:4222 stream rm <stream> --force
 ```
 
-Stream names depend on the deployment. Consult `modules/nats.nix` or the node configuration when deciding which streams to inspect or delete.
+Stream names depend on the deployment. Consult `modules/nats.nix` or the runtime configuration when deciding which streams to inspect or delete.
 
 ### Data Management
 
@@ -731,7 +731,7 @@ for ad-hoc debugging, not as the primary configuration surface.
 Default resource limits per service:
 - **sinexd**: unified event engine/API/supervisor resource envelope
 - **source bindings hosted in sinexd**: default per-binding limits/config from
-  `services.sinex.nodes.defaults.resources` feed the generated binding manifest
+  `services.sinex.runtime.defaults.resources` feed the generated binding manifest
 
 Adjust in configuration:
 ```nix
@@ -740,7 +740,7 @@ services.sinex.core.resources = {
   cpuQuota = "200%";
 };
 
-services.sinex.nodes.defaults.resources = {
+services.sinex.runtime.defaults.resources = {
   memoryMax = "384M";
   cpuQuota = "75%";
 };

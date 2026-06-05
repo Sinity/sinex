@@ -9,7 +9,7 @@ use sinex_primitives::{
     privacy::{RuntimePrivateModeState, private_mode_state_path, save_private_mode_state},
     temporal::Timestamp,
 };
-use sinexd::node_sdk::preflight::services::SystemdServiceDetails;
+use sinexd::runtime::preflight::services::SystemdServiceDetails;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
@@ -2210,7 +2210,7 @@ async fn test_rust_analyzer_cli_stderr_summary_buckets_failures() -> ::xtask::sa
 {
     let stderr = r"
 2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_api(Idx::<CrateBuilder>(38)) -> sinex_api(Idx::<CrateBuilder>(38))
-2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinexd::node_sdk(Idx::<CrateBuilder>(176)) -> xtask(Idx::<CrateBuilder>(346)), alternative path: xtask(Idx::<CrateBuilder>(346)) -> sinexd::node_sdk(Idx::<CrateBuilder>(176))
+2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinexd::runtime(Idx::<CrateBuilder>(176)) -> xtask(Idx::<CrateBuilder>(346)), alternative path: xtask(Idx::<CrateBuilder>(346)) -> sinexd::runtime(Idx::<CrateBuilder>(176))
 2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_macros(Idx::<CrateBuilder>(172)) -> sinex_primitives(Idx::<CrateBuilder>(242)), alternative path: sinex_primitives(Idx::<CrateBuilder>(242)) -> sinex_macros(Idx::<CrateBuilder>(172))
 2026-05-22T06:29:47.951700288+02:00 ERROR pattern has unexpected type: pat: Pat { ty: str }
 2026-05-22T06:29:49.34967273+02:00 ERROR Overloaded deref on type str is not a projection

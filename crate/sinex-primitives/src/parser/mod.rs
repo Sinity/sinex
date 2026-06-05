@@ -721,7 +721,7 @@ pub trait MaterialParser: Send + Sync {
 
     /// Optional baseline adapter config supplied by the parser type itself.
     ///
-    /// The user-supplied `--node-config` JSON is merged OVER this baseline
+    /// The user-supplied `--runtime-config` JSON is merged OVER this baseline
     /// (user keys win) before deserializing into the adapter's `Config`.
     /// Lets a parser declare adapter-mandatory fields it knows the right
     /// value for (e.g. atuin's SqliteRowConfig.query = "history") without

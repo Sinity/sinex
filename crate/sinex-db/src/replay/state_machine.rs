@@ -2,7 +2,7 @@ use crate::repositories::DbPoolExt;
 use crate::repositories::replay::ReplayRepository;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::{NodeName, ReplayOutcome};
+use sinex_primitives::domain::{ModuleName, ReplayOutcome};
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::temporal;
 use sqlx::postgres::types::PgRange;
@@ -101,8 +101,8 @@ impl ReplayState {
 /// Scope defining what to replay
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReplayScope {
-    /// Node ID to replay
-    pub node_id: String,
+    /// Source runtime to replay
+    pub source_name: String,
     /// Optional time window
     pub time_window: Option<(Timestamp, Timestamp)>,
     /// Optional material filter
@@ -202,7 +202,7 @@ impl ReplayScope {
         }
     }
 
-    /// Event sources that should be considered replay roots for this node scope.
+    /// Event sources that should be considered replay roots for this source scope.
     #[must_use]
     pub fn replay_event_sources(&self) -> Vec<String> {
         let mut sources = Vec::new();
@@ -212,9 +212,9 @@ impl ReplayScope {
             }
         };
 
-        push(&self.node_id);
+        push(&self.source_name);
 
-        match self.node_id.as_str() {
+        match self.source_name.as_str() {
             "filesystem-watcher" => {
                 push("fs-watcher");
             }
@@ -298,7 +298,7 @@ pub struct ReplayOperation {
     /// When approved
     pub approved_at: Option<Timestamp>,
     /// Which node is executing
-    pub executor_node: Option<NodeName>,
+    pub executor_node: Option<ModuleName>,
     /// When execution started
     pub started_at: Option<Timestamp>,
     /// When execution finished
@@ -384,14 +384,14 @@ impl ReplayStateMachine {
         let repo = self.repo();
         let mut tx = repo.begin_context("create_operation").await?;
 
-        repo.acquire_creation_guard(&mut tx, &scope.node_id).await?;
+        repo.acquire_creation_guard(&mut tx, &scope.source_name).await?;
 
-        // Idempotency guard: reject if an active operation exists for this node.
-        if let Some(existing_id) = repo.check_active_operation(&mut tx, &scope.node_id).await? {
+        // Idempotency guard: reject if an active operation exists for this source.
+        if let Some(existing_id) = repo.check_active_operation(&mut tx, &scope.source_name).await? {
             return Err(SinexError::invalid_state(
-                "A replay operation for this node is already active",
+                "A replay operation for this source is already active",
             )
-            .with_context("node_id", &scope.node_id)
+            .with_context("source_name", &scope.source_name)
             .with_id("existing_operation_id", existing_id.to_string())
             .with_operation("create_replay_operation"));
         }
@@ -596,7 +596,7 @@ impl ReplayStateMachine {
         let cascade_impact = self.preview_cascade_impact(scope).await;
 
         let preview = serde_json::json!({
-            "node_id": scope.node_id,
+            "source_name": scope.source_name,
             "time_window": {
                 "start": window.0,
                 "end": window.1,
@@ -618,7 +618,7 @@ impl ReplayStateMachine {
                 .collect::<Vec<_>>(),
             "material_filter": material_summary,
             "cascade_impact": cascade_impact,
-            "replay_semantics": "reexecute_material_roots_via_node_scan",
+            "replay_semantics": "reexecute_material_roots_via_source_scan",
         });
 
         Ok(preview)
@@ -743,7 +743,7 @@ impl ReplayStateMachine {
         &self,
         operation_id: Uuid,
         approver: String,
-        executor_node: NodeName,
+        executor_node: ModuleName,
     ) -> Result<ReplayOperation> {
         let repo = self.repo();
         let now = temporal::now();
@@ -828,7 +828,7 @@ impl ReplayStateMachine {
     }
 
     /// Atomically transition an approved operation into execution while recording the executor.
-    pub async fn begin_execution(&self, operation_id: Uuid, executor_node: NodeName) -> Result<()> {
+    pub async fn begin_execution(&self, operation_id: Uuid, executor_node: ModuleName) -> Result<()> {
         let repo = self.repo();
         let now = temporal::now();
         let mut tx = repo.begin_context("begin_execution").await?;
@@ -1026,7 +1026,7 @@ impl ReplayStateMachine {
     pub async fn set_executor_node(
         &self,
         operation_id: Uuid,
-        executor_node: NodeName,
+        executor_node: ModuleName,
     ) -> Result<()> {
         let repo = self.repo();
         let mut tx = repo.begin_context("set_executor_node").await?;
@@ -1048,7 +1048,7 @@ impl ReplayStateMachine {
         tx.commit().await?;
 
         info!(
-            "Node {} executing replay operation {}",
+            "RuntimeActor {} executing replay operation {}",
             executor_node, operation_id
         );
         Ok(())
@@ -1189,7 +1189,7 @@ pub struct MetaJson {
     pub created_at: Timestamp,
     pub approved_by: Option<String>,
     pub approved_at: Option<Timestamp>,
-    pub executor_node: Option<NodeName>,
+    pub executor_node: Option<ModuleName>,
     pub started_at: Option<Timestamp>,
     pub finished_at: Option<Timestamp>,
     pub outcome: Option<ReplayOutcome>,

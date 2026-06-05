@@ -5,7 +5,7 @@
 
 use sinex_primitives::Uuid;
 use sinex_primitives::{DynamicPayload, Timestamp};
-use sinexd::node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
+use sinexd::runtime::{Checkpoint, CheckpointManager, CheckpointState};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -18,7 +18,7 @@ const STRESS_GROUP: &str = "stress";
 async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let kv = ctx.checkpoint_kv().await?;
-    let node_name = format!("stress_node_{}", Uuid::now_v7().to_string().to_lowercase());
+    let module_name = format!("stress_node_{}", Uuid::now_v7().to_string().to_lowercase());
 
     let consumer_count = 16usize;
     let updates_per_consumer = 40u64;
@@ -31,7 +31,7 @@ async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
     for consumer_id in 0..consumer_count {
         let manager = CheckpointManager::new(
             kv.clone(),
-            node_name.clone(),
+            module_name.clone(),
             STRESS_GROUP.to_string(),
             format!("worker-{consumer_id}"),
         );
@@ -67,7 +67,7 @@ async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
     for consumer_id in 0..consumer_count {
         let manager = CheckpointManager::new(
             kv.clone(),
-            node_name.clone(),
+            module_name.clone(),
             STRESS_GROUP.to_string(),
             format!("worker-{consumer_id}"),
         );

@@ -73,7 +73,7 @@ let
             try:
                 self.wait_for_nodes(timeout=timeout)
             except RuntimeError:
-                # Node services might be disabled for some test profiles; continue anyway
+                # RuntimeActor services might be disabled for some test profiles; continue anyway
                 pass
             
         def get_event_count(self) -> int:

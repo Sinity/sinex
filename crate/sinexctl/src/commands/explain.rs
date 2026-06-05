@@ -101,7 +101,7 @@ impl ExplainCommand {
         }
 
         if let Some(model) = &event.node_model {
-            print_field("Node Model", &format!("{model:?}"));
+            print_field("RuntimeActor Model", &format!("{model:?}"));
         }
         if let Some(scope) = &event.scope_key {
             print_field("Scope Key", scope);

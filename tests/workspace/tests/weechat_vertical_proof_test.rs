@@ -18,9 +18,9 @@ use sinex_primitives::domain::HostName;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::admission::EventIntent;
 use sinex_primitives::events::builder::{OffsetKind, Provenance};
-use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext, SourceUnitId};
+use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext, SourceId};
 use sinex_primitives::{Event, Id, Timestamp, Uuid};
-use sinexd::node_sdk::parser::{
+use sinexd::runtime::parser::{
     AppendOnlyFileAdapter, AppendOnlyFileConfig, InputShapeAdapter, MaterialParser,
     WeeChatLogParser,
 };
@@ -85,7 +85,7 @@ async fn parse_fixture(
         let record = record_result.map_err(|e| eyre!("record error: {e}"))?;
         let anchor = record.anchor.clone();
         let parser_ctx = ParserContext {
-            source_unit_id: SourceUnitId::from_static("weechat"),
+            source_id: SourceId::from_static("weechat"),
             source_material_id: material_id,
             record_anchor: anchor,
             operation_id: Uuid::new_v4(),

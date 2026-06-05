@@ -149,7 +149,7 @@ pub async fn handle_sources_stage(
     // ── Byte-backed staging via ContentStoreManager ─────────────
     let (blob_id, checksum_blake3) = if req.with_bytes && material_class.allows_byte_storage() {
         let content_store = services.content.content_store();
-        let verified_path = crate::node_sdk::content_store::VerifiedPath::parse(&canonical)
+        let verified_path = crate::runtime::content_store::VerifiedPath::parse(&canonical)
             .map_err(|error| {
                 SinexError::validation("Invalid file path for content store")
                     .with_context("file_path", &canonical)
@@ -972,7 +972,7 @@ async fn load_checkpoint_drifts(
         .nats_client()
         .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let js = async_nats::jetstream::new(nats_client.clone());
-    let bucket = crate::node_sdk::checkpoint::checkpoint_bucket_name(None);
+    let bucket = crate::runtime::checkpoint::checkpoint_bucket_name(None);
     let kv = match js.get_key_value(&bucket).await {
         Ok(kv) => kv,
         Err(error) if is_missing_checkpoint_bucket(&error) => {
@@ -1113,7 +1113,7 @@ fn extract_checkpoint_drifts(
         return Ok(Vec::new());
     };
 
-    let parsed_key = crate::node_sdk::checkpoint::parse_checkpoint_key(checkpoint_key);
+    let parsed_key = crate::runtime::checkpoint::parse_checkpoint_key(checkpoint_key);
     let (_, consumer_group, consumer_name) = parsed_key.as_ref().map_or(
         ("", String::new(), String::new()),
         |(node, group, consumer)| (node.as_str(), group.clone(), consumer.clone()),

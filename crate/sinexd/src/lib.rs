@@ -9,6 +9,6 @@
 pub mod api;
 pub mod automata;
 pub mod event_engine;
-pub mod node_sdk;
+pub mod runtime;
 pub mod sources;
 pub mod supervisor;

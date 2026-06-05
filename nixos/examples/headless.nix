@@ -1,7 +1,7 @@
 # Sinex headless server example
 #
 # Intended for machines without desktop/terminal capture requirements.
-# Enables filesystem and system nodes along with maintenance timers.
+# Enables filesystem and system sources along with maintenance timers.
 
 { config, lib, pkgs, ... }:
 
@@ -27,7 +27,7 @@
       gateway.autoGenerateTls = true;
     };
 
-    nodes = {
+    runtime = {
       enable = true;
       defaults.logLevel = "info";
 

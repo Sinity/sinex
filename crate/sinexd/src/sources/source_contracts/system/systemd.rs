@@ -3,7 +3,7 @@
 //! Uses `JournalctlStreamAdapter` (same subprocess as `system.journald`).
 //! Records without `_SYSTEMD_UNIT` are silently skipped.
 
-use crate::node_sdk::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
+use crate::runtime::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
 use crate::register_parser;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
@@ -335,7 +335,7 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node_sdk::parser::records_from_journal_lines;
+    use crate::runtime::parser::records_from_journal_lines;
     use sinex_primitives::events::SourceMaterial;
     use sinex_primitives::ids::Id;
     use sinex_primitives::parser::MaterialAnchor;

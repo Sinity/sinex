@@ -6,8 +6,8 @@ use super::{
     ExpectedReplayOutputs, OperationOutputEvent, REPLAY_OUTPUT_VISIBILITY_TIMEOUT,
     ReplayExecutionEngine, ScopeInvalidationBucket,
 };
-use crate::node_sdk::derived_node::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
-use crate::node_sdk::runtime::stream::ResolvedReplayMaterial;
+use crate::runtime::automaton::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
+use crate::runtime::stream::ResolvedReplayMaterial;
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_primitives::domain::{EventSource, EventType, SourceIdentifier};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
@@ -553,7 +553,7 @@ impl ReplayExecutionEngine {
     ) -> Result<u64> {
         if let Err(restore_error) = self.restore_cascade(pool, cascade_ids, operation_id).await {
             return Err(SinexError::service(format!(
-                "Replay dispatch failed before node acknowledgement, and restoring the archived cascade also failed: {restore_error}"
+                "Replay dispatch failed before source acknowledgement, and restoring the archived cascade also failed: {restore_error}"
             ))
             .with_source(error)
             .with_source(restore_error));
@@ -564,19 +564,19 @@ impl ReplayExecutionEngine {
             .await
         {
             return Err(SinexError::service(format!(
-                "Replay dispatch failed before node acknowledgement, restored the archived cascade, but failed to publish compensating scope invalidations: {invalidation_error}"
+                "Replay dispatch failed before source acknowledgement, restored the archived cascade, but failed to publish compensating scope invalidations: {invalidation_error}"
             ))
             .with_source(error)
             .with_source(invalidation_error));
         }
 
         Err(SinexError::service(
-            "Replay dispatch failed before node acknowledgement; restored archived cascade and published compensating scope invalidations",
+            "Replay dispatch failed before source acknowledgement; restored archived cascade and published compensating scope invalidations",
         )
         .with_source(error))
     }
 
-    /// Timeout for the node to acknowledge the scan command.
+    /// Timeout for the source to acknowledge the scan command.
     pub(crate) const SCAN_ACK_TIMEOUT: Duration = Duration::from_secs(10);
     /// Timeout for the entire scan operation to complete.
     pub(crate) const SCAN_COMPLETION_TIMEOUT: Duration = Duration::from_mins(10);

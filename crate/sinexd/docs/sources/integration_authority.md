@@ -35,7 +35,7 @@ Adapters should use existing source-material, parser-job, event-intent,
 projection, and parity surfaces before introducing a new runtime topology. NATS
 is the useful external boundary only when an independently useful producer can
 publish admitted event intents or material-staged signals without linking the
-Rust node SDK.
+Rust runtime.
 
 ## Examples
 

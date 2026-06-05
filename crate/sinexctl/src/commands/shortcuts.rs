@@ -33,7 +33,7 @@ EXAMPLES:
     sinexctl status
 
     # Pipe to jq for scripting
-    sinexctl status -f json | jq '.nodes.active'
+    sinexctl status -f json | jq '.modules.active'
 ")]
 pub struct StatusCommand;
 
@@ -225,11 +225,11 @@ async fn collect_node_and_dlq_signals(
     signals: &mut Vec<RuntimeStatusSignal>,
     warnings: &mut Vec<RuntimeStatusWarning>,
 ) {
-    match client.list_nodes(None).await {
-        Ok(nodes) => {
-            let total = nodes.len();
+    match client.list_runtime(None).await {
+        Ok(modules) => {
+            let total = modules.len();
             let now = Timestamp::now();
-            let healthy = nodes
+            let healthy = modules
                 .iter()
                 .filter(|n| {
                     n.last_heartbeat
@@ -244,21 +244,21 @@ async fn collect_node_and_dlq_signals(
                 RuntimeStatusSignalStatus::Unhealthy
             };
             signals.push(RuntimeStatusSignal {
-                name: "nodes".to_string(),
+                name: "modules".to_string(),
                 status,
-                source: "gateway nodes probe".to_string(),
+                source: "gateway modules probe".to_string(),
                 message: Some(format!("{healthy}/{total} healthy")),
             });
         }
         Err(e) => {
             warnings.push(RuntimeStatusWarning {
-                source: "nodes".to_string(),
+                source: "modules".to_string(),
                 message: format!("error: {e}"),
             });
             signals.push(RuntimeStatusSignal {
-                name: "nodes".to_string(),
+                name: "modules".to_string(),
                 status: RuntimeStatusSignalStatus::Unknown,
-                source: "gateway nodes probe".to_string(),
+                source: "gateway modules probe".to_string(),
                 message: Some(e.to_string()),
             });
         }
@@ -451,7 +451,7 @@ fn render_status_table(
             println!(
                 "  {} {}  ({}, uptime {}, last_output {})",
                 style("●").yellow(),
-                ing.node_name,
+                ing.module_name,
                 verdict.label(),
                 uptime,
                 last,

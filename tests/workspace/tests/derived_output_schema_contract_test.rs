@@ -5,11 +5,11 @@ use sinexd::automata::{
     analytics::AnalyticsAutomaton, canonicalizer::TerminalCommandCanonicalizer,
     health::HealthAggregator, session::SessionDetector,
 };
-use sinexd::node_sdk::{ScopeReconciler, Transducer, Windowed};
+use sinexd::runtime::{ScopeReconciler, Transducer, Windowed};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn production_derived_node_outputs_have_registered_payload_schemas() -> TestResult<()> {
+async fn production_automaton_outputs_have_registered_payload_schemas() -> TestResult<()> {
     let analytics = AnalyticsAutomaton::default();
     let health = HealthAggregator::default();
     let session = SessionDetector;
@@ -39,13 +39,13 @@ async fn production_derived_node_outputs_have_registered_payload_schemas() -> Te
     ];
 
     let registered_payloads = get_all_payloads().collect::<Vec<_>>();
-    for (node_name, source, event_type) in expected_outputs {
+    for (module_name, source, event_type) in expected_outputs {
         let has_schema = registered_payloads
             .iter()
             .any(|payload| payload.source == source && payload.event_type == event_type);
         assert!(
             has_schema,
-            "derived node {node_name} emits {source}/{event_type} without a registered EventPayload schema",
+            "derived node {module_name} emits {source}/{event_type} without a registered EventPayload schema",
         );
     }
 

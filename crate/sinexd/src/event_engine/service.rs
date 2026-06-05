@@ -8,10 +8,10 @@ use crate::event_engine::{
     material_ready_set::MaterialReadySet, validator::IngestEventValidator,
 };
 // External crates
-use crate::node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
-use crate::node_sdk::heartbeat::HeartbeatEmitter;
-use crate::node_sdk::systemd_notify;
-use crate::node_sdk::{SelfObserver, SelfObserverConfig};
+use crate::runtime::content_store::{ContentStoreConfig, MaterialContentStore};
+use crate::runtime::heartbeat::HeartbeatEmitter;
+use crate::runtime::systemd_notify;
+use crate::runtime::{SelfObserver, SelfObserverConfig};
 use async_nats::{Client as NatsClient, jetstream};
 use serde::Serialize;
 use sinex_db::DbPoolExt;
@@ -19,7 +19,7 @@ use sinex_db::advisory_lock::AdvisoryLock;
 use sinex_db::repositories::EventPayloadSchema;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::{NodeName, NodeType, ServiceName};
+use sinex_primitives::domain::{ModuleName, ModuleKind, ServiceName};
 use sinex_primitives::environment as sinex_environment;
 use sinex_primitives::nats::create_or_open_kv_store;
 use sinex_primitives::transport;
@@ -52,12 +52,12 @@ fn trigger_shutdown(shutdown_flag: &Arc<AtomicBool>, shutdown_notify: &Arc<tokio
 
 fn log_node_manifest_write_failure(
     operation: &'static str,
-    node_name: &NodeName,
+    module_name: &ModuleName,
     error: &SinexError,
 ) {
     warn!(
         operation,
-        node = %node_name,
+        node = %module_name,
         version = env!("CARGO_PKG_VERSION"),
         error = %error,
         "Failed to persist event_engine node manifest state"
@@ -142,7 +142,7 @@ pub struct IngestService {
     shutdown_notify: Arc<tokio::sync::Notify>,
     task_handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Heartbeat counter handle — set during `start()`, passed to `JetStreamConsumer`
-    heartbeat_counter_handle: Option<crate::node_sdk::heartbeat::HeartbeatCounterHandle>,
+    heartbeat_counter_handle: Option<crate::runtime::heartbeat::HeartbeatCounterHandle>,
 }
 
 type CriticalTaskOutcome = (
@@ -402,12 +402,12 @@ impl IngestService {
         // Register a run for event_engine and start periodic heartbeat
         if let Some(ref pool) = self.db_pool {
             let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string());
-            let node_name = NodeName::new("sinexd");
+            let module_name = ModuleName::new("sinexd");
             let manifest_id = match pool
                 .state()
                 .register_node(
-                    &node_name,
-                    NodeType::Service,
+                    &module_name,
+                    ModuleKind::Service,
                     env!("CARGO_PKG_VERSION"),
                     Some("Ingestion daemon: NATS JetStream consumer to PostgreSQL batch writer"),
                 )
@@ -441,7 +441,7 @@ impl IngestService {
                 ServiceName::new("sinexd"),
                 sinex_primitives::Seconds::from_secs(60),
             )
-            .with_node_name(NodeName::new("sinexd"))
+            .with_node_name(ModuleName::new("sinexd"))
             .with_db_pool(pool.clone());
             self.heartbeat_counter_handle = Some(emitter.get_counter_handle());
 
@@ -451,14 +451,14 @@ impl IngestService {
             let handle = tokio::spawn(async move {
                 tokio::select! {
                     () = emitter.start_periodic_heartbeat(None) => {}
-                    () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
-                        let node_name = NodeName::new("sinexd");
+                    () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                        let module_name = ModuleName::new("sinexd");
                         if let Err(error) = heartbeat_pool
                             .state()
-                            .mark_node_inactive_for_version(&node_name, env!("CARGO_PKG_VERSION"))
+                            .mark_node_inactive_for_version(&module_name, env!("CARGO_PKG_VERSION"))
                             .await
                         {
-                            log_node_manifest_write_failure("mark_node_inactive", &node_name, &error);
+                            log_node_manifest_write_failure("mark_node_inactive", &module_name, &error);
                         }
                     }
                 }
@@ -602,7 +602,7 @@ impl IngestService {
             }
 
             // Normal shutdown signal
-            () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+            () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                 info!("Received shutdown signal");
                 Ok(())
             }
@@ -897,7 +897,7 @@ impl IngestService {
                         }
                     }
                 }
-                () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                     info!("JetStream consumer shutting down");
                     Ok(())
                 }
@@ -1065,7 +1065,7 @@ impl IngestService {
                             }
                         }
                     }
-                    () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                    () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                         break;
                     }
                 }
@@ -1097,7 +1097,7 @@ impl IngestService {
                             );
                         }
                     }
-                    () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                    () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                         break;
                     }
                 }
@@ -1136,7 +1136,7 @@ impl IngestService {
                             }
                         };
 
-                        match crate::node_sdk::content_store::gc::sweep_orphans(
+                        match crate::runtime::content_store::gc::sweep_orphans(
                             &pool,
                             &content_store,
                             true,
@@ -1157,7 +1157,7 @@ impl IngestService {
                             }
                         }
                     }
-                    () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                    () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                         break;
                     }
                 }
@@ -1614,7 +1614,7 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            crate::node_sdk::wait_for_shutdown_signal_bool(
+            crate::runtime::wait_for_shutdown_signal_bool(
                 &service.shutdown_flag,
                 &service.shutdown_notify,
             ),
@@ -1640,7 +1640,7 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            crate::node_sdk::wait_for_shutdown_signal_bool(
+            crate::runtime::wait_for_shutdown_signal_bool(
                 &service.shutdown_flag,
                 &service.shutdown_notify,
             ),
@@ -1660,7 +1660,7 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            crate::node_sdk::wait_for_shutdown_signal_bool(
+            crate::runtime::wait_for_shutdown_signal_bool(
                 &service.shutdown_flag,
                 &service.shutdown_notify,
             ),
@@ -1745,7 +1745,7 @@ mod tests {
         let shutdown_flag = Arc::clone(&service.shutdown_flag);
         let shutdown_notify = Arc::clone(&service.shutdown_notify);
         let sibling = tokio::spawn(async move {
-            crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
+            crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
             sibling_flag.store(true, Ordering::SeqCst);
             Ok(())
         });
@@ -1774,7 +1774,7 @@ mod tests {
         let shutdown_flag = Arc::clone(&service.shutdown_flag);
         let shutdown_notify = Arc::clone(&service.shutdown_notify);
         let sibling = tokio::spawn(async move {
-            crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
+            crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
             sibling_flag.store(true, Ordering::SeqCst);
             Ok(())
         });
@@ -1949,9 +1949,9 @@ mod tests {
     #[sinex_test]
     async fn log_node_manifest_write_failure_accepts_processing_errors()
     -> xtask::sandbox::TestResult<()> {
-        let node_name = NodeName::new("sinexd");
+        let module_name = ModuleName::new("sinexd");
         let error = SinexError::processing("node manifest update exploded");
-        log_node_manifest_write_failure("mark_node_inactive", &node_name, &error);
+        log_node_manifest_write_failure("mark_node_inactive", &module_name, &error);
         Ok(())
     }
 }

@@ -21,15 +21,15 @@ which can apply:
 - `LimitNOFILE` — file descriptor cap (set when the resource profile requests it)
 
 These are configured through the NixOS module options at
-`services.sinex.nodes.defaults.resources` (global defaults) and per-node
-`services.sinex.nodes.<name>.resources` overrides.
+`services.sinex.runtime.defaults.resources` (global defaults) and per-runtime-module
+`services.sinex.runtime.<name>.resources` overrides.
 
 ### Runtime Resource Profiles
 
 Resource profiles are defined in the NixOS module as:
 
 ```
-services.sinex.nodes.defaults.resources = {
+services.sinex.runtime.defaults.resources = {
   memoryMax = "512M";
   cpuQuota = "200%";
   shutdownTimeoutSec = 30;
@@ -77,7 +77,7 @@ by the configured resource limits. This is a known gap — a future `xtask docto
 ### Pressure Stall Information
 
 Linux PSI metrics (`/proc/pressure/io`, `/proc/pressure/memory`) are exposed
-through the inline `sinexd::node_sdk::PressureMonitor` type. CAS write paths can
+through the inline `sinexd::runtime::PressureMonitor` type. CAS write paths can
 check pressure before large I/O operations and apply bounded backoff when the
 system is under resource contention. See
-`crate/sinexd/src/node_sdk/pressure.rs`.
+`crate/sinexd/src/runtime/pressure.rs`.

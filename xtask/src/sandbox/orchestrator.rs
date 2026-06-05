@@ -65,7 +65,7 @@ pub struct TestSourceDriverConfig {
     pub database_url: String,
     pub work_dir: Option<std::path::PathBuf>,
     pub namespace: Option<String>,
-    pub node_config: Option<String>,
+    pub runtime_config: Option<String>,
     pub service_name: Option<String>,
 }
 
@@ -81,7 +81,7 @@ impl TestSourceDriverConfig {
             ),
             work_dir: None,
             namespace: None,
-            node_config: None,
+            runtime_config: None,
             service_name: None,
         }
     }
@@ -941,8 +941,8 @@ pub async fn start_test_source(
     if let Some(service_name) = &config.service_name {
         cmd.arg("--service-name").arg(service_name);
     }
-    if let Some(node_config) = &config.node_config {
-        cmd.arg("--node-config").arg(node_config);
+    if let Some(runtime_config) = &config.runtime_config {
+        cmd.arg("--runtime-config").arg(runtime_config);
     }
     cmd.env("NOTIFY_SOCKET", &notify_socket_path);
     cmd.arg("--extra-arg").arg("service");
@@ -1019,8 +1019,8 @@ pub async fn run_test_source_scan(
     if let Some(service_name) = &config.service_name {
         cmd.arg("--service-name").arg(service_name);
     }
-    if let Some(node_config) = &config.node_config {
-        cmd.arg("--node-config").arg(node_config);
+    if let Some(runtime_config) = &config.runtime_config {
+        cmd.arg("--runtime-config").arg(runtime_config);
     }
     cmd.arg("--extra-arg")
         .arg("scan")

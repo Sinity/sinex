@@ -18,8 +18,8 @@
 //! The full ingestion path uses `DocumentNode` directly via
 //! `register_source_driver!`.
 
-use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult};
-use crate::node_sdk::tags;
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
+use crate::runtime::tags;
 use async_trait::async_trait;
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
@@ -210,8 +210,8 @@ impl MaterialParser for DocumentStagingParser {
 
 crate::register_parser!("document.staging", DocumentStagingParser);
 
-// The full node lifecycle uses DocumentNode; see `super::node`.
+// The full source runtime lifecycle uses DocumentNode; see `super::runtime`.
 // It is a `SourceDriver` implementation that manages its own checkpoint state
 // (`manages_own_checkpoints: true`) and supports snapshot + historical scans
 // but not continuous mode.
-crate::register_source_driver!("document.staging", super::node::DocumentNode);
+crate::register_source_driver!("document.staging", super::runtime::DocumentNode);

@@ -3,7 +3,7 @@ use console::style;
 use sinex_primitives::rpc::telemetry::{
     AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
     FileActivityEntry, GatewayStatsBucket, EventEngineBatchStatsBucket, EventEngineValidationSnapshot,
-    MetricCounterBucket, NodeStatsBucket, RecentActivityEntry, StreamStatsBucket,
+    MetricCounterBucket, RuntimeStatsBucket, RecentActivityEntry, StreamStatsBucket,
     SystemStateBucket, WindowFocusBucket,
 };
 use tabled::{builder::Builder, settings::Style};
@@ -114,8 +114,8 @@ pub enum TelemetryCommands {
         limit: i64,
     },
 
-    /// Node hourly operator telemetry
-    NodeStats {
+    /// RuntimeActor hourly operator telemetry
+    RuntimeStats {
         #[arg(long)]
         from: Option<String>,
         #[arg(long)]
@@ -279,16 +279,16 @@ impl TelemetryCommands {
                 .display(&format)?;
             }
 
-            Self::NodeStats { from, to, limit } => {
+            Self::RuntimeStats { from, to, limit } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let buckets = client
-                    .telemetry_node_stats(from_rfc, to_rfc, Some(*limit))
+                    .telemetry_runtime_stats(from_rfc, to_rfc, Some(*limit))
                     .await?;
                 CommandOutput::list(
                     buckets,
                     "No node-stats data found.",
-                    format_node_stats_table,
+                    format_runtime_stats_table,
                 )
                 .display(&format)?;
             }
@@ -610,7 +610,7 @@ fn format_assembly_stats_table(buckets: &[AssemblyStatsBucket]) -> String {
     table.to_string()
 }
 
-fn format_node_stats_table(buckets: &[NodeStatsBucket]) -> String {
+fn format_runtime_stats_table(buckets: &[RuntimeStatsBucket]) -> String {
     let mut builder = Builder::new();
     builder.push_record([
         "BUCKET",
@@ -625,7 +625,7 @@ fn format_node_stats_table(buckets: &[NodeStatsBucket]) -> String {
     for bucket in buckets {
         builder.push_record([
             style(bucket.bucket.as_str()).dim().to_string(),
-            bucket.node_type.as_deref().unwrap_or("—").to_string(),
+            bucket.module_kind.as_deref().unwrap_or("—").to_string(),
             format_opt_i64(bucket.total_events_processed),
             format_opt_i64(bucket.total_events_dropped),
             format_opt_f64(bucket.avg_latency_ms),

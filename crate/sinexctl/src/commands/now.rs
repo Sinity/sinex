@@ -11,7 +11,7 @@ use crate::client::GatewayClient;
 use crate::fmt::format_heartbeat_age;
 use crate::model::OutputFormat;
 
-/// Show what's happening right now — recent activity, active nodes, current status.
+/// Show what's happening right now — recent activity, active modules, current status.
 #[derive(Debug, Args)]
 #[command(after_help = "\
 EXAMPLES:
@@ -26,16 +26,16 @@ pub struct NowCommand;
 impl NowCommand {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         // Fetch everything in parallel.
-        let (health, nodes, recent, automata) = tokio::try_join!(
+        let (health, modules, recent, automata) = tokio::try_join!(
             async { client.health().await },
-            async { client.list_nodes(None).await },
+            async { client.list_runtime(None).await },
             async { client.telemetry_recent_activity(Some(10)).await },
             async { client.automata_status(60, 300).await },
         )?;
 
         let snapshot = NowSnapshot {
             health,
-            nodes: nodes.clone(),
+            modules: modules.clone(),
             recent,
             automata,
         };
@@ -63,7 +63,7 @@ impl NowCommand {
 #[derive(serde::Serialize)]
 struct NowSnapshot {
     health: SystemHealthResponse,
-    nodes: Vec<InstanceInfo>,
+    modules: Vec<InstanceInfo>,
     recent: Vec<RecentActivityEntry>,
     automata: AutomataStatusResponse,
 }
@@ -82,9 +82,9 @@ fn render_table(snapshot: &NowSnapshot) {
     // ── Health signals ──────────────────────────────────────────
 
     let now_ts = Timestamp::now();
-    let node_count = snapshot.nodes.len();
+    let node_count = snapshot.modules.len();
     let healthy_nodes = snapshot
-        .nodes
+        .modules
         .iter()
         .filter(|n| {
             n.last_heartbeat
@@ -92,12 +92,12 @@ fn render_table(snapshot: &NowSnapshot) {
         })
         .count();
 
-    let node_status_label = if healthy_nodes == node_count && node_count > 0 {
+    let runtime_status_label = if healthy_nodes == node_count && node_count > 0 {
         style("healthy").green()
     } else if healthy_nodes > 0 {
         style("degraded").yellow()
     } else if node_count == 0 {
-        style("no nodes").dim()
+        style("no modules").dim()
     } else {
         style("unhealthy").red()
     };
@@ -121,7 +121,7 @@ fn render_table(snapshot: &NowSnapshot) {
 
     println!(
         "  Nodes:    {} ({}/{} healthy)",
-        node_status_label,
+        runtime_status_label,
         style(healthy_nodes).bold(),
         style(node_count).dim()
     );
@@ -163,9 +163,9 @@ fn render_table(snapshot: &NowSnapshot) {
         }
     }
 
-    // ── Active nodes ────────────────────────────────────────────
+    // ── Active modules ────────────────────────────────────────────
 
-    if !snapshot.nodes.is_empty() {
+    if !snapshot.modules.is_empty() {
         println!();
         println!("{}", style("Active Nodes").bold());
         println!(
@@ -177,7 +177,7 @@ fn render_table(snapshot: &NowSnapshot) {
             "", "", "", "", ""
         );
 
-        for node in &snapshot.nodes {
+        for node in &snapshot.modules {
             let age = node
                 .last_heartbeat
                 .as_ref()
@@ -203,7 +203,7 @@ fn render_table(snapshot: &NowSnapshot) {
             println!(
                 "  {:<30} {:<14} {:<10}  {:<10}  {}",
                 node.instance_id.as_str(),
-                node.node_type.to_string().to_lowercase(),
+                node.module_kind.to_string().to_lowercase(),
                 status,
                 age,
                 leader
@@ -232,7 +232,7 @@ fn render_table(snapshot: &NowSnapshot) {
 
             println!(
                 "  {:<30} {:<12} {:<10}  {}",
-                automaton.node_name.as_str(),
+                automaton.module_name.as_str(),
                 live,
                 style(run_status).dim(),
                 events

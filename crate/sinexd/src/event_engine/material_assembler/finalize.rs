@@ -855,7 +855,7 @@ mod tests {
         FinalizationErrorKind, FinalizationRequest, FinalizationTransaction,
     };
     use crate::event_engine::material_assembler::{io, state};
-    use crate::node_sdk::content_store::ContentStoreKey;
+    use crate::runtime::content_store::ContentStoreKey;
     use serde_json::json;
     use sinex_db::{
         models::blob::Blob,

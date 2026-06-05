@@ -7,7 +7,7 @@
 use futures::StreamExt;
 use serde_json::json;
 use sinex_db::{DbPool, repositories::DbPoolExt};
-use sinexd::node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
+use sinexd::runtime::{Checkpoint, SourceScanAck, SourceScanCommand, SourceScanProgress, ScanReport};
 use sinex_primitives::rpc::methods;
 use sinex_primitives::{DynamicPayload, Id, temporal::Timestamp};
 use std::collections::HashMap;
@@ -23,18 +23,18 @@ async fn spawn_fake_reemitting_scan_node(
     pool: DbPool,
     nats: async_nats::Client,
     env: sinex_primitives::environment::SinexEnvironment,
-    node_name: &str,
+    module_name: &str,
     material_id: uuid::Uuid,
     events_processed: u64,
 ) -> TestResult<tokio::task::JoinHandle<()>> {
-    let node_name = node_name.to_string();
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+    let module_name = module_name.to_string();
+    let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
     let mut sub = nats.subscribe(subject).await?;
     nats.flush().await?;
 
     let handle = tokio::spawn(async move {
         let Some(msg) = sub.next().await else { return };
-        let Ok(command) = serde_json::from_slice::<NodeScanCommand>(&msg.payload) else {
+        let Ok(command) = serde_json::from_slice::<SourceScanCommand>(&msg.payload) else {
             return;
         };
         let operation_id = command.operation_id;
@@ -42,9 +42,9 @@ async fn spawn_fake_reemitting_scan_node(
             env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
 
         if let Some(reply) = msg.reply {
-            let ack = NodeScanAck {
+            let ack = SourceScanAck {
                 operation_id,
-                node_name: node_name.clone(),
+                module_name: module_name.clone(),
                 accepted: true,
                 error: None,
             };
@@ -55,9 +55,9 @@ async fn spawn_fake_reemitting_scan_node(
 
         for i in 0..events_processed {
             let Ok(event) = DynamicPayload::new(
-                node_name.as_str(),
+                module_name.as_str(),
                 "file.created",
-                json!({ "path": format!("/tmp/{node_name}-replay-{operation_id}-{i}.txt") }),
+                json!({ "path": format!("/tmp/{module_name}-replay-{operation_id}-{i}.txt") }),
             )
             .from_material(Id::from_uuid(material_id))
             .build() else {
@@ -72,9 +72,9 @@ async fn spawn_fake_reemitting_scan_node(
             }
         }
 
-        let progress = NodeScanProgress {
+        let progress = SourceScanProgress {
             operation_id,
-            node_name: node_name.clone(),
+            module_name: module_name.clone(),
             events_processed,
             events_emitted: events_processed,
             final_report: Some(ScanReport {
@@ -82,8 +82,8 @@ async fn spawn_fake_reemitting_scan_node(
                 duration: Duration::from_millis(5),
                 final_checkpoint: Checkpoint::None,
                 time_range: None,
-                node_stats: HashMap::from([("events_emitted".into(), events_processed)]),
-                successful_targets: vec![node_name.clone()],
+                runtime_stats: HashMap::from([("events_emitted".into(), events_processed)]),
+                successful_targets: vec![module_name.clone()],
                 failed_targets: Vec::new(),
                 warnings: Vec::new(),
             }),
@@ -100,7 +100,7 @@ async fn spawn_fake_reemitting_scan_node(
 /// Run a full replay lifecycle and wait for completion.
 async fn run_replay(
     gw: &LiveGateway,
-    node_id: &str,
+    module_name: &str,
     scope_start: Timestamp,
     scope_end: Timestamp,
     material_ids: &[uuid::Uuid],
@@ -110,7 +110,7 @@ async fn run_replay(
             methods::REPLAY_CREATE_OPERATION,
             json!({
                 "scope": {
-                    "node_id": node_id,
+                    "module_name": module_name,
                     "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
                     "material_filter": material_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
                 },

@@ -42,9 +42,9 @@ use sinex_primitives::rpc::{
         LIFECYCLE_TOMBSTONE_PREVIEW_METHOD, LIFECYCLE_TOMBSTONE_STATUS_METHOD,
     },
     llm::{LLM_BUDGET_REPORT_METHOD, LLM_PROMPTS_LIST_METHOD, LLM_ROUTE_EXPLAIN_METHOD},
-    nodes::{
-        NODES_DRAIN_METHOD, NODES_HEALTH_METHOD, NODES_LIST_ACTIVE_METHOD, NODES_LIST_METHOD,
-        NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD,
+    runtime::{
+        RUNTIME_DRAIN_METHOD, RUNTIME_HEALTH_METHOD, RUNTIME_LIST_ACTIVE_METHOD, RUNTIME_LIST_METHOD,
+        RUNTIME_RESUME_METHOD, RUNTIME_SET_HORIZON_METHOD,
     },
     ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
     pkm::{PKM_CREATE_ENTITIES_METHOD, PKM_CREATE_NOTE_METHOD, PKM_LINK_ENTITIES_METHOD},
@@ -89,7 +89,7 @@ use sinex_primitives::rpc::{
         TELEMETRY_CURRENT_DEVICE_STATE_METHOD, TELEMETRY_CURRENT_HEALTH_METHOD,
         TELEMETRY_FILE_ACTIVITY_METHOD, TELEMETRY_GATEWAY_STATS_METHOD,
         TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD, TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD,
-        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_NODE_STATS_METHOD,
+        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_RUNTIME_STATS_METHOD,
         TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_STREAM_STATS_METHOD,
         TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD, TELEMETRY_WINDOW_FOCUS_METHOD,
     },
@@ -611,8 +611,8 @@ fn build_registry_impl() -> RpcRegistry {
         handle_health_intake_record, handle_hyprland_workspace_switch, handle_ingestors_status,
         handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
         handle_link_entities, handle_llm_budget_report, handle_llm_prompts_list,
-        handle_llm_route_explain, handle_nodes_drain, handle_nodes_health, handle_nodes_list,
-        handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel,
+        handle_llm_route_explain, handle_runtime_drain, handle_runtime_health, handle_runtime_list,
+        handle_runtime_list_active, handle_runtime_resume, handle_runtime_set_horizon, handle_ops_cancel,
         handle_ops_get, handle_ops_list, handle_ops_start, handle_privacy_policy_backend_add,
         handle_privacy_policy_dictionary_add, handle_privacy_policy_list,
         handle_privacy_policy_rule_add, handle_privacy_policy_scope_bind,
@@ -642,7 +642,7 @@ fn build_registry_impl() -> RpcRegistry {
         handle_telemetry_current_device_state, handle_telemetry_current_health,
         handle_telemetry_file_activity, handle_telemetry_gateway_stats,
         handle_telemetry_event_engine_batch_stats, handle_telemetry_event_engine_validation,
-        handle_telemetry_metric_counters, handle_telemetry_node_stats,
+        handle_telemetry_metric_counters, handle_telemetry_runtime_stats,
         handle_telemetry_recent_activity, handle_telemetry_stream_stats,
         handle_telemetry_system_state, handle_telemetry_throughput, handle_telemetry_window_focus,
         handle_tombstone_approve, handle_tombstone_cancel, handle_tombstone_create,
@@ -730,8 +730,8 @@ fn build_registry_impl() -> RpcRegistry {
         // DLQ read methods (ReadOnly)
         .service_typed_rpc(DLQ_LIST_METHOD, boxed!(handle_dlq_list))
         .service_typed_rpc(DLQ_PEEK_METHOD, boxed!(handle_dlq_peek))
-        // Node listing (ReadOnly)
-        .nats_typed_rpc(NODES_LIST_METHOD, boxed!(handle_nodes_list, 3))
+        // RuntimeActor listing (ReadOnly)
+        .nats_typed_rpc(RUNTIME_LIST_METHOD, boxed!(handle_runtime_list, 3))
         // Replay status/list (ReadOnly)
         .replay_typed_rpc(
             REPLAY_OPERATION_STATUS_METHOD,
@@ -741,9 +741,9 @@ fn build_registry_impl() -> RpcRegistry {
             REPLAY_LIST_OPERATIONS_METHOD,
             boxed!(handle_replay_list_operations, 3),
         )
-        // Node registry status methods (ReadOnly)
-        .pool_typed_rpc(NODES_LIST_ACTIVE_METHOD, boxed!(handle_nodes_list_active))
-        .pool_typed_rpc(NODES_HEALTH_METHOD, boxed!(handle_nodes_health))
+        // RuntimeActor registry status methods (ReadOnly)
+        .pool_typed_rpc(RUNTIME_LIST_ACTIVE_METHOD, boxed!(handle_runtime_list_active))
+        .pool_typed_rpc(RUNTIME_HEALTH_METHOD, boxed!(handle_runtime_health))
         .pool_typed_rpc(AUTOMATA_STATUS_METHOD, boxed!(handle_automata_status))
         .pool_typed_rpc(INGESTORS_STATUS_METHOD, boxed!(handle_ingestors_status))
         // Source material inventory (ReadOnly)
@@ -823,8 +823,8 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_telemetry_assembly_stats),
         )
         .pool_typed_rpc(
-            TELEMETRY_NODE_STATS_METHOD,
-            boxed!(handle_telemetry_node_stats),
+            TELEMETRY_RUNTIME_STATS_METHOD,
+            boxed!(handle_telemetry_runtime_stats),
         )
         .pool_typed_rpc(
             TELEMETRY_METRIC_COUNTERS_METHOD,
@@ -928,12 +928,12 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // Source annotation (Write — modifies metadata)
         .pool_typed_rpc(SOURCES_ANNOTATE_METHOD, boxed!(handle_sources_annotate))
-        // Node operations (Write - affects system but not destructive)
-        .nats_auth_typed_rpc(NODES_DRAIN_METHOD, boxed!(handle_nodes_drain, 4))
-        .nats_auth_typed_rpc(NODES_RESUME_METHOD, boxed!(handle_nodes_resume, 4))
+        // RuntimeActor operations (Write - affects system but not destructive)
+        .nats_auth_typed_rpc(RUNTIME_DRAIN_METHOD, boxed!(handle_runtime_drain, 4))
+        .nats_auth_typed_rpc(RUNTIME_RESUME_METHOD, boxed!(handle_runtime_resume, 4))
         .nats_auth_typed_rpc(
-            NODES_SET_HORIZON_METHOD,
-            boxed!(handle_nodes_set_horizon, 4),
+            RUNTIME_SET_HORIZON_METHOD,
+            boxed!(handle_runtime_set_horizon, 4),
         )
         // Operations log write (Write)
         .pool_auth_typed_rpc(OPS_START_METHOD, boxed!(handle_ops_start, 3))

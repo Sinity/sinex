@@ -72,7 +72,7 @@ impl Manifests {
             )
             .col(ColumnDef::new(Manifests::Name).text().not_null())
             // The CHECK constraint on manifest_type is converged by the
-            // schema-apply engine from the `NodeType` enum's
+            // schema-apply engine from the `ModuleKind` enum's
             // `#[derive(DbCheck)]` spec (issue #1236). Do NOT add an inline
             // `.check(...)` here — it would survive only on first table
             // creation and prevent the apply engine from owning the rename.

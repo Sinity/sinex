@@ -1,7 +1,7 @@
 use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
 use sinexd::api::ServiceContainer;
-use sinexd::node_sdk::content_store::MaterialContentStore;
+use sinexd::runtime::content_store::MaterialContentStore;
 use sinex_primitives::SinexError;
 use tempfile::TempDir;
 use which::which;

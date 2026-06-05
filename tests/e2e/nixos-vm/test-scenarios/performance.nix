@@ -499,7 +499,7 @@ pkgs.testers.nixosTest {
         kitty.enable = true;
       };
 
-      nodes = {
+      runtime = {
         enable = true;
         coordination.enable = false;
         defaults.instances = 1;

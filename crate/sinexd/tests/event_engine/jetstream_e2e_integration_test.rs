@@ -2,8 +2,8 @@
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinexd::node_sdk::{
-    ConfirmedEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, NodeResult,
+use sinexd::runtime::{
+    ConfirmedEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, RuntimeResult,
     ProcessingModel, ProvisionalEvent, prelude::async_trait,
 };
 use sinex_primitives::events::builder::EventId;
@@ -32,7 +32,7 @@ impl TrackingConfirmedEventHandler {
 
 #[async_trait]
 impl ConfirmedEventHandler for TrackingConfirmedEventHandler {
-    async fn handle_confirmed(&self, provisional: &ProvisionalEvent) -> NodeResult<()> {
+    async fn handle_confirmed(&self, provisional: &ProvisionalEvent) -> RuntimeResult<()> {
         self.processed_event_ids
             .write()
             .await
@@ -140,7 +140,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     assert_eq!(event_from_db.event_type.as_str(), "test.event");
 
     info!("🎉 E2E JetStream test PASSED");
-    info!("   ✓ Node → JetStream (events.raw)");
+    info!("   ✓ RuntimeActor → JetStream (events.raw)");
     info!("   ✓ event_engine → Database persistence");
     info!("   ✓ event_engine → JetStream (events.confirmations)");
     info!("   ✓ Automaton → Confirmed event consumption");

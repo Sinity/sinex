@@ -2,10 +2,10 @@ use super::execution::{ExpectedReplayOutputs, ReplayExecutionEngine};
 use super::server::ReplayControlServer;
 use super::validation::run_safety_analysis;
 use super::*;
-use crate::node_sdk::derived_node::invalidation::INVALIDATION_SUBJECT;
-use crate::node_sdk::runtime::stream::ScanReport;
-use crate::node_sdk::runtime::stream::{
-    Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ResolvedReplayMaterial,
+use crate::runtime::automaton::invalidation::INVALIDATION_SUBJECT;
+use crate::runtime::stream::ScanReport;
+use crate::runtime::stream::{
+    Checkpoint, SourceScanAck, SourceScanCommand, SourceScanProgress, ResolvedReplayMaterial,
 };
 use async_nats::Client;
 use futures::StreamExt;
@@ -87,7 +87,7 @@ async fn spawn_invalidation_listener_for_test(
 
 fn sample_scope() -> ReplayScope {
     ReplayScope {
-        node_id: "fs-test".to_string(),
+        source_name: "fs-test".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -155,14 +155,14 @@ async fn corrupt_operation_preview_summary(pool: &DbPool, operation_id: Uuid) ->
 async fn spawn_fake_scan_node(
     nats: Client,
     env: SinexEnvironment,
-    node_name: &str,
+    module_name: &str,
     events_processed: u64,
 ) -> Result<(
-    tokio::sync::oneshot::Receiver<NodeScanCommand>,
+    tokio::sync::oneshot::Receiver<SourceScanCommand>,
     tokio::task::JoinHandle<()>,
 )> {
-    let node_name = node_name.to_string();
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+    let module_name = module_name.to_string();
+    let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
     let mut sub = nats
         .subscribe(subject)
         .await
@@ -171,7 +171,7 @@ async fn spawn_fake_scan_node(
 
     let handle = tokio::spawn(async move {
         if let Some(msg) = sub.next().await {
-            let command: NodeScanCommand = serde_json::from_slice(&msg.payload)
+            let command: SourceScanCommand = serde_json::from_slice(&msg.payload)
                 .expect("fake node must receive a valid scan command");
             let operation_id = command.operation_id;
             let progress_subject =
@@ -180,9 +180,9 @@ async fn spawn_fake_scan_node(
             let _ = command_tx.send(command.clone());
 
             if let Some(reply) = msg.reply {
-                let ack = NodeScanAck {
+                let ack = SourceScanAck {
                     operation_id,
-                    node_name: node_name.clone(),
+                    module_name: module_name.clone(),
                     accepted: true,
                     error: None,
                 };
@@ -196,14 +196,14 @@ async fn spawn_fake_scan_node(
                 duration: Duration::from_millis(5),
                 final_checkpoint: Checkpoint::None,
                 time_range: None,
-                node_stats: HashMap::from([("events_emitted".to_string(), events_processed)]),
-                successful_targets: vec![node_name.clone()],
+                runtime_stats: HashMap::from([("events_emitted".to_string(), events_processed)]),
+                successful_targets: vec![module_name.clone()],
                 failed_targets: Vec::new(),
                 warnings: Vec::new(),
             };
-            let progress = NodeScanProgress {
+            let progress = SourceScanProgress {
                 operation_id,
-                node_name: node_name.clone(),
+                module_name: module_name.clone(),
                 events_processed,
                 events_emitted: events_processed,
                 final_report: Some(report),
@@ -224,15 +224,15 @@ async fn spawn_fake_scan_node(
 async fn spawn_fake_scan_node_with_progress(
     nats: Client,
     env: SinexEnvironment,
-    node_name: &str,
+    module_name: &str,
     events_processed: u64,
     events_emitted: u64,
 ) -> Result<(
-    tokio::sync::oneshot::Receiver<NodeScanCommand>,
+    tokio::sync::oneshot::Receiver<SourceScanCommand>,
     tokio::task::JoinHandle<()>,
 )> {
-    let node_name = node_name.to_string();
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+    let module_name = module_name.to_string();
+    let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
     let mut sub = nats
         .subscribe(subject)
         .await
@@ -241,7 +241,7 @@ async fn spawn_fake_scan_node_with_progress(
 
     let handle = tokio::spawn(async move {
         if let Some(msg) = sub.next().await {
-            let command: NodeScanCommand = serde_json::from_slice(&msg.payload)
+            let command: SourceScanCommand = serde_json::from_slice(&msg.payload)
                 .expect("fake node must receive a valid scan command");
             let operation_id = command.operation_id;
             let progress_subject =
@@ -250,9 +250,9 @@ async fn spawn_fake_scan_node_with_progress(
             let _ = command_tx.send(command.clone());
 
             if let Some(reply) = msg.reply {
-                let ack = NodeScanAck {
+                let ack = SourceScanAck {
                     operation_id,
-                    node_name: node_name.clone(),
+                    module_name: module_name.clone(),
                     accepted: true,
                     error: None,
                 };
@@ -266,14 +266,14 @@ async fn spawn_fake_scan_node_with_progress(
                 duration: Duration::from_millis(5),
                 final_checkpoint: Checkpoint::None,
                 time_range: None,
-                node_stats: HashMap::from([("events_emitted".to_string(), events_emitted)]),
-                successful_targets: vec![node_name.clone()],
+                runtime_stats: HashMap::from([("events_emitted".to_string(), events_emitted)]),
+                successful_targets: vec![module_name.clone()],
                 failed_targets: Vec::new(),
                 warnings: Vec::new(),
             };
-            let progress = NodeScanProgress {
+            let progress = SourceScanProgress {
                 operation_id,
-                node_name: node_name.clone(),
+                module_name: module_name.clone(),
                 events_processed,
                 events_emitted,
                 final_report: Some(report),
@@ -294,13 +294,13 @@ async fn spawn_fake_scan_node_with_progress(
 async fn spawn_fake_scan_node_ack_only(
     nats: Client,
     env: SinexEnvironment,
-    node_name: &str,
+    module_name: &str,
 ) -> Result<(
-    tokio::sync::oneshot::Receiver<NodeScanCommand>,
+    tokio::sync::oneshot::Receiver<SourceScanCommand>,
     tokio::task::JoinHandle<()>,
 )> {
-    let node_name = node_name.to_string();
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+    let module_name = module_name.to_string();
+    let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
     let mut sub = nats
         .subscribe(subject)
         .await
@@ -309,14 +309,14 @@ async fn spawn_fake_scan_node_ack_only(
 
     let handle = tokio::spawn(async move {
         if let Some(msg) = sub.next().await {
-            let command: NodeScanCommand = serde_json::from_slice(&msg.payload)
+            let command: SourceScanCommand = serde_json::from_slice(&msg.payload)
                 .expect("fake node must receive a valid scan command");
             let _ = command_tx.send(command.clone());
 
             if let Some(reply) = msg.reply {
-                let ack = NodeScanAck {
+                let ack = SourceScanAck {
                     operation_id: command.operation_id,
-                    node_name: node_name.clone(),
+                    module_name: module_name.clone(),
                     accepted: true,
                     error: None,
                 };
@@ -332,11 +332,11 @@ async fn spawn_fake_scan_node_ack_only(
 
 fn spawn_replay_output_inserter(
     pool: DbPool,
-    command_rx: tokio::sync::oneshot::Receiver<NodeScanCommand>,
+    command_rx: tokio::sync::oneshot::Receiver<SourceScanCommand>,
     source: &'static str,
     event_type: &'static str,
     path: &'static str,
-) -> tokio::task::JoinHandle<Result<NodeScanCommand>> {
+) -> tokio::task::JoinHandle<Result<SourceScanCommand>> {
     tokio::spawn(async move {
         let command = command_rx
             .await
@@ -405,9 +405,9 @@ async fn telemetry_reports_state_counts(ctx: TestContext) -> Result<()> {
     let telemetry = ReplayTelemetry::with_interval(replay.clone(), Duration::from_millis(5));
     let planning_scope = sample_scope();
     let mut executing_scope = sample_scope();
-    executing_scope.node_id = "fs-test-executing".to_string();
+    executing_scope.source_name = "fs-test-executing".to_string();
     let mut failed_scope = sample_scope();
-    failed_scope.node_id = "fs-test-failed".to_string();
+    failed_scope.source_name = "fs-test-failed".to_string();
 
     let _planning = replay
         .create_operation(planning_scope, "planner".into())

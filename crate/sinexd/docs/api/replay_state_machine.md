@@ -32,7 +32,7 @@ Planning   Planning
 
 - PostgreSQL advisory locks prevent concurrent execution conflicts.
 - Checkpoints enable pause/resume functionality.
-- Node tracking identifies which executor is running operations.
+- RuntimeActor tracking identifies which executor is running operations.
 - Approval workflow ensures human oversight of destructive operations.
 
 ## Error Handling and Recovery

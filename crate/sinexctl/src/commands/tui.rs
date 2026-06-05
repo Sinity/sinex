@@ -48,7 +48,7 @@ EXAMPLES:
     sinexctl tui
 
     # Start on specific tab
-    sinexctl tui --tab nodes
+    sinexctl tui --tab modules
     sinexctl tui --tab events
 
     # Custom refresh interval
@@ -65,7 +65,7 @@ KEYBOARD SHORTCUTS:
     k/↑        Previous item
 ")]
 pub struct TuiCommand {
-    /// Starting tab (dashboard, operations, nodes, sources, events, dlq)
+    /// Starting tab (dashboard, operations, modules, sources, events, dlq)
     #[arg(long, value_enum, default_value_t = Tab::Dashboard)]
     tab: Tab,
 
@@ -95,7 +95,7 @@ struct App {
     refresh_interval: u64,
 
     // Live data
-    nodes: Vec<InstanceInfo>,
+    modules: Vec<InstanceInfo>,
     dlq_stats: Option<DlqListResponse>,
     dlq_peek: Option<DlqPeekResponse>,
     ops_operations: Vec<OpsOperation>,
@@ -127,7 +127,7 @@ impl App {
             should_quit: false,
             client,
             refresh_interval,
-            nodes: Vec::new(),
+            modules: Vec::new(),
             dlq_stats: None,
             dlq_peek: None,
             ops_operations: Vec::new(),
@@ -209,7 +209,7 @@ impl App {
         match self.current_tab {
             Tab::Dashboard => 0,
             Tab::Operations => operations_room_cards(self).len(),
-            Tab::Nodes => self.nodes.len(),
+            Tab::Nodes => self.modules.len(),
             Tab::Sources => self.source_readiness.len(),
             Tab::Events => self.recent_events.len(),
             Tab::Dlq => 0, // DLQ shows stats, not a navigable list
@@ -308,10 +308,10 @@ impl App {
     }
 
     async fn refresh_nodes_and_dlq(&mut self) {
-        match self.client.list_nodes(None).await {
-            Ok(nodes) => self.nodes = nodes,
+        match self.client.list_runtime(None).await {
+            Ok(modules) => self.modules = modules,
             Err(e) => {
-                self.error = Some(format!("Failed to fetch nodes: {e}"));
+                self.error = Some(format!("Failed to fetch modules: {e}"));
             }
         }
         match self.client.dlq_list().await {
@@ -671,14 +671,14 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     // Left: System overview
     // Consider node healthy if it has a heartbeat (we'll derive active status from heartbeat age later)
     let healthy_nodes = app
-        .nodes
+        .modules
         .iter()
         .filter(|n| {
             n.last_heartbeat
                 .is_some_and(|hb| (Timestamp::now() - hb).whole_seconds() < 60)
         })
         .count();
-    let total_nodes = app.nodes.len();
+    let total_nodes = app.modules.len();
     let dlq_total = app.dlq_stats.as_ref().map_or(0, |s| s.total_messages);
     let events_count = app.recent_events.len();
 
@@ -706,9 +706,9 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .style(Style::default().fg(Color::White));
     f.render_widget(overview, chunks[0]);
 
-    // Right: Node list
+    // Right: RuntimeActor list
     let node_items: Vec<ListItem> = app
-        .nodes
+        .modules
         .iter()
         .map(|n| {
             let has_recent_heartbeat = n
@@ -724,19 +724,19 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
             let name = n.hostname.as_deref().unwrap_or(&n.instance_id);
             ListItem::new(format!(
                 "{} {} ({}){}",
-                status_icon, name, n.node_type, leader
+                status_icon, name, n.module_kind, leader
             ))
             .style(Style::default().fg(color))
         })
         .collect();
 
-    let nodes_list = List::new(if node_items.is_empty() {
-        vec![ListItem::new("No nodes registered")]
+    let runtime_list = List::new(if node_items.is_empty() {
+        vec![ListItem::new("No modules registered")]
     } else {
         node_items
     })
     .block(Block::default().title("Nodes").borders(Borders::ALL));
-    f.render_widget(nodes_list, chunks[1]);
+    f.render_widget(runtime_list, chunks[1]);
 }
 
 fn render_operations(f: &mut Frame, area: Rect, app: &App) {
@@ -922,7 +922,7 @@ fn operations_room_cards(app: &App) -> Vec<OperationRoomCard> {
     );
     cards.extend(app.ops_operations.iter().take(6).map(ops_operation_card));
     cards.push(dlq_operation_card(app));
-    if let Some(card) = derived_node_dlq_card(app) {
+    if let Some(card) = automaton_dlq_card(app) {
         cards.push(card);
     }
     cards.push(lifecycle_operation_card(app));
@@ -992,7 +992,7 @@ fn replay_operation_card(operation: &ReplayOperation) -> OperationRoomCard {
 
 fn replay_scope_refs(operation: &ReplayOperation) -> Vec<String> {
     let scope = &operation.scope;
-    let mut refs = vec![format!("node: {}", scope.node_id)];
+    let mut refs = vec![format!("source: {}", scope.source_name)];
     if let Some((start, end)) = &scope.time_window {
         refs.push(format!("time: {start} -> {end}"));
     }
@@ -1102,13 +1102,13 @@ fn dlq_operation_card(app: &App) -> OperationRoomCard {
     }
 }
 
-fn derived_node_dlq_card(app: &App) -> Option<OperationRoomCard> {
+fn automaton_dlq_card(app: &App) -> Option<OperationRoomCard> {
     let message = app
         .dlq_peek
         .as_ref()?
         .messages
         .iter()
-        .find(|message| is_derived_node_material_dlq(message))?;
+        .find(|message| is_automaton_material_dlq(message))?;
     Some(OperationRoomCard {
         title: "derived-node telemetry DLQ material gap".to_string(),
         authority: "admin".to_string(),
@@ -1154,7 +1154,7 @@ fn derived_node_dlq_card(app: &App) -> Option<OperationRoomCard> {
     })
 }
 
-fn is_derived_node_material_dlq(message: &DlqMessagePeek) -> bool {
+fn is_automaton_material_dlq(message: &DlqMessagePeek) -> bool {
     let haystack = format!(
         "{} {} {}",
         message.subject,
@@ -1341,7 +1341,7 @@ fn summarize_json_scope(scope: &serde_json::Value) -> String {
 
 fn render_nodes(f: &mut Frame, area: Rect, app: &App) {
     let items: Vec<ListItem> = app
-        .nodes
+        .modules
         .iter()
         .enumerate()
         .map(|(i, n)| {
@@ -1367,20 +1367,20 @@ fn render_nodes(f: &mut Frame, area: Rect, app: &App) {
                 .map_or_else(|| "none".to_string(), format_heartbeat_age);
             ListItem::new(format!(
                 "{} {} | Type: {} | Heartbeat: {}{}",
-                status_icon, name, n.node_type, heartbeat_str, leader
+                status_icon, name, n.module_kind, heartbeat_str, leader
             ))
             .style(style)
         })
         .collect();
 
     let list = List::new(if items.is_empty() {
-        vec![ListItem::new("No nodes registered")]
+        vec![ListItem::new("No modules registered")]
     } else {
         items
     })
     .block(
         Block::default()
-            .title(format!("Nodes ({} total)", app.nodes.len()))
+            .title(format!("Nodes ({} total)", app.modules.len()))
             .borders(Borders::ALL),
     );
     f.render_widget(list, area);

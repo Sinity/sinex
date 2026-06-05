@@ -14,7 +14,7 @@
 
 ### 2. Provisional/Confirmed Model (Saga Pattern)
 ```
-Node Capture
+RuntimeActor Capture
     ↓ (stage material, emit provisional)
 NATS JetStream events.raw.{source}.{type}
     ↓ (Nats-Msg-Id for idempotency)

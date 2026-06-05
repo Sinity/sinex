@@ -315,7 +315,7 @@ pkgs.testers.nixosTest {
         lifecycle.preflight.enable = lib.mkForce false;
         nats.jetstreamMaxStore = "16G";
 
-        nodes = {
+        runtime = {
           enable = true;
           coordination.enable = true;
           defaults = {

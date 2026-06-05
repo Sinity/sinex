@@ -5,9 +5,9 @@ Environment variables specific to direct `sinexd` event-engine runs.
 If `sinexd` is managed through the NixOS module, prefer typed `services.sinex.*` options for
 shared transport wiring and secrets. In particular, NATS TLS on NixOS should use:
 
-- `services.sinex.nodes.nats.servers`
-- `services.sinex.nodes.nats.tls.*`
-- `services.sinex.nodes.nats.auth.*`
+- `services.sinex.runtime.nats.servers`
+- `services.sinex.runtime.nats.tls.*`
+- `services.sinex.runtime.nats.auth.*`
 
 instead of ad hoc env injection.
 

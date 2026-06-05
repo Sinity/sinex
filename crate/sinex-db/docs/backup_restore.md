@@ -91,7 +91,7 @@ in
 }
 ```
 
-Per `services.sinex.users.nodes` defaults, the `sinex` service user does
+Per `services.sinex.users.runtime` defaults, the `sinex` service user does
 not have replication; `pg_basebackup` runs as `postgres` here. Adjust if
 your deployment uses a different DB role.
 

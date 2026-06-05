@@ -195,7 +195,7 @@ async fn sinexctl_replay_plan_creates_operation(ctx: TestContext) -> color_eyre:
 
     let operation = parse_json_stdout(&output, "replay plan");
     assert_eq!(operation["state"].as_str(), Some("Planning"));
-    assert_eq!(operation["scope"]["node_id"].as_str(), Some("test-node"));
+    assert_eq!(operation["scope"]["module_name"].as_str(), Some("test-node"));
     assert!(
         operation["operation_id"].as_str().is_some(),
         "plan output should contain operation_id: {operation}"
@@ -375,11 +375,11 @@ async fn sinexctl_replay_list_returns_operations(ctx: TestContext) -> color_eyre
     let operations = parse_json_lines_stdout(&list_output, "replay list");
     let node_ids: Vec<_> = operations
         .iter()
-        .filter_map(|operation| operation["scope"]["node_id"].as_str())
+        .filter_map(|operation| operation["scope"]["module_name"].as_str())
         .collect();
     assert!(
         node_ids.contains(&"node-a") && node_ids.contains(&"node-b"),
-        "list should contain both operations, got nodes {node_ids:?}"
+        "list should contain both operations, got modules {node_ids:?}"
     );
 
     gw.handle.abort();
@@ -437,11 +437,11 @@ async fn sinexctl_replay_list_filters_by_state(ctx: TestContext) -> color_eyre::
     let planning_ops = parse_json_lines_stdout(&list_planning, "replay planning list");
     let cancelled_nodes: Vec<_> = cancelled_ops
         .iter()
-        .filter_map(|operation| operation["scope"]["node_id"].as_str())
+        .filter_map(|operation| operation["scope"]["module_name"].as_str())
         .collect();
     let planning_nodes: Vec<_> = planning_ops
         .iter()
-        .filter_map(|operation| operation["scope"]["node_id"].as_str())
+        .filter_map(|operation| operation["scope"]["module_name"].as_str())
         .collect();
 
     assert!(

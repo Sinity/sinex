@@ -42,7 +42,7 @@ Every staged-export parser is built from four pieces:
 
 ## Picking an adapter
 
-Adapters live in `crate/sinexd/src/node_sdk/parser/adapters/`. They
+Adapters live in `crate/sinexd/src/runtime/parser/adapters/`. They
 determine how source bytes are presented to the parser.
 
 | Export shape | Adapter | When to pick |
@@ -139,7 +139,7 @@ mod tests {
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::node_sdk::parser::{
+use crate::runtime::parser::{
     MaterialParser, ParserError, ParserResult, StaticFileAdapter,
 };
 use sinex_primitives::domain::{EventSource, EventType};
@@ -431,8 +431,8 @@ enforced checks.
 
 ## See also
 
-- `crate/sinexd/src/node_sdk/parser/mod.rs` — `MaterialParser` trait
-- `crate/sinexd/src/node_sdk/parser/adapters/` — adapter implementations
+- `crate/sinexd/src/runtime/parser/mod.rs` — `MaterialParser` trait
+- `crate/sinexd/src/runtime/parser/adapters/` — adapter implementations
 - `crate/sinex-primitives/src/parser/mod.rs` — `ParsedEventIntent`,
   `MaterialAnchor`, `OccurrenceKey`, `ParserManifest`
 - `crate/sinexd/src/sources/source_contracts/weechat.rs` — the canonical

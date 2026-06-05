@@ -32,7 +32,7 @@ pkgs.testers.nixosTest {
     services.sinex.nats.enable = true;
     services.sinex.nats.bootstrapStreams.enable = true;
 
-    services.sinex.nodes = {
+    services.sinex.runtime = {
       filesystem = {
         enable = true;
         watchPaths = [ "/var/lib/sinex/watched" ];

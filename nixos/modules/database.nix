@@ -22,39 +22,39 @@ let
 
   sinexEnabled = cfg.enable;
   coreEnabled = sinexEnabled && cfg.core.enable;
-  nodesEnabled = sinexEnabled && cfg.nodes.enable;
+  runtimeEnabled = sinexEnabled && cfg.runtime.enable;
 
   ingestEnabled = coreEnabled && cfg.core.event_engine.enable;
   gatewayEnabled = coreEnabled && cfg.core.gateway.enable;
 
-  defaultInstances = cfg.nodes.defaults.instances;
+  defaultInstances = cfg.runtime.defaults.instances;
   resolveInstances =
-    nodeCfg:
+    runtimeModuleCfg:
     let
-      value = nodeCfg.instances;
+      value = runtimeModuleCfg.instances;
     in
     if value != null then value else defaultInstances;
 
-  nodeServiceCount =
-    if !nodesEnabled then
+  runtimeServiceCount =
+    if !runtimeEnabled then
       0
     else
-      (if cfg.nodes.filesystem.enable then resolveInstances cfg.nodes.filesystem else 0)
-      + (if cfg.nodes.terminal.enable then resolveInstances cfg.nodes.terminal else 0)
-      + (if cfg.nodes.browser.enable then resolveInstances cfg.nodes.browser else 0)
-      + (if cfg.nodes.desktop.enable then resolveInstances cfg.nodes.desktop else 0)
-      + (if cfg.nodes.system.enable then resolveInstances cfg.nodes.system else 0);
+      (if cfg.runtime.filesystem.enable then resolveInstances cfg.runtime.filesystem else 0)
+      + (if cfg.runtime.terminal.enable then resolveInstances cfg.runtime.terminal else 0)
+      + (if cfg.runtime.browser.enable then resolveInstances cfg.runtime.browser else 0)
+      + (if cfg.runtime.desktop.enable then resolveInstances cfg.runtime.desktop else 0)
+      + (if cfg.runtime.system.enable then resolveInstances cfg.runtime.system else 0);
 
-  automataEnabled = nodesEnabled && cfg.nodes.automata.enable;
+  automataEnabled = runtimeEnabled && cfg.runtime.automata.enable;
   automataCount =
     if !automataEnabled then
       0
     else
-      automataLib.countEnabled cfg.nodes.automata;
+      automataLib.countEnabled cfg.runtime.automata;
 
   coreServiceCount = (if ingestEnabled then 1 else 0) + (if gatewayEnabled then 1 else 0);
 
-  totalServiceCount = coreServiceCount + nodeServiceCount + automataCount;
+  totalServiceCount = coreServiceCount + runtimeServiceCount + automataCount;
 
   perServiceConnections = max 1 db.connectionPool.maxConnections;
   # Add a small buffer above per-service pool totals for migrations, admin tools,
@@ -119,9 +119,9 @@ let
       };
 
       nodeUser =
-        optionalAttrs (cfg.enable && cfg.nodes.enable && cfg.users.nodes != db.user)
+        optionalAttrs (cfg.enable && cfg.runtime.enable && cfg.users.runtime != db.user)
           {
-            name = cfg.users.nodes;
+            name = cfg.users.runtime;
             ensureDBOwnership = false;
             ensureClauses.login = true;
           };

@@ -77,10 +77,10 @@ pub struct SourceBinding {
     #[serde(default)]
     pub service_name: Option<String>,
 
-    /// JSON object passed verbatim to the source via `--node-config`.
+    /// JSON object passed verbatim to the source via `--runtime-config`.
     /// Empty / null skips the flag.
     #[serde(default)]
-    pub node_config: Option<serde_json::Value>,
+    pub runtime_config: Option<serde_json::Value>,
 
     /// Extra CLI arguments. In continuous mode (empty `extra_args`) the
     /// `service` subcommand is appended automatically. When non-empty,
@@ -194,19 +194,19 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
         std::ffi::OsString::from("--service-name"),
         std::ffi::OsString::from(&service_name),
     ];
-    if let Some(config) = &binding.node_config {
+    if let Some(config) = &binding.runtime_config {
         // Skip if explicitly null or an empty object — clap rejects empty
         // values and an empty {} is operationally identical to "use defaults".
         let is_empty_object = config.as_object().is_some_and(serde_json::Map::is_empty);
         if !config.is_null() && !is_empty_object {
             let encoded = serde_json::to_string(config).map_err(|error| {
                 SinexError::configuration(format!(
-                    "failed to encode node_config for '{}'",
+                    "failed to encode runtime_config for '{}'",
                     binding.source_id
                 ))
                 .with_std_error(&error)
             })?;
-            argv.push(std::ffi::OsString::from("--node-config"));
+            argv.push(std::ffi::OsString::from("--runtime-config"));
             argv.push(std::ffi::OsString::from(encoded));
         }
     }

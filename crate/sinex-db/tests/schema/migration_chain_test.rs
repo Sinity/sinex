@@ -630,7 +630,7 @@ async fn telemetry_relations_expose_expected_contract_columns(ctx: TestContext) 
             "node_stats_1h",
             &[
                 "bucket",
-                "node_type",
+                "module_kind",
                 "total_events_processed",
                 "total_events_dropped",
                 "avg_latency_ms",

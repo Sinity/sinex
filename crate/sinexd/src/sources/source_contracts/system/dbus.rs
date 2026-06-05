@@ -4,7 +4,7 @@
 //! Notification body and D-Bus args are emitted with privacy metadata; DB
 //! admission policy owns redaction and suppression.
 
-use crate::node_sdk::parser::{DbusStreamAdapter, MaterialParser, ParserError};
+use crate::runtime::parser::{DbusStreamAdapter, MaterialParser, ParserError};
 use crate::register_parser;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{

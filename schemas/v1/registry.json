@@ -55,7 +55,7 @@
       "event_type": "ai.message",
       "version": "1.0.0",
       "path": "chatgpt/ai.message.json",
-      "content_hash": "eeeeb681442844a037755d95b2f51f9242267e9992da1d53f4f4edc78c18bef3"
+      "content_hash": "c0a3d06161ce0e1cbff1b4774d7b8fa18d348ebade107f8a97853c97d39441f3"
     },
     {
       "source": "claude",
@@ -223,7 +223,7 @@
       "event_type": "document.parsed",
       "version": "1.0.0",
       "path": "document-parser/document.parsed.json",
-      "content_hash": "857bcfbda334d110de9aaf07545c4af9a1dcbf880d8a3017eee3fd6ed16d709b"
+      "content_hash": "b98961dd916c0d0f475c4280016f4388c330d9dfb044b1fe8e921bdd8e5cc305"
     },
     {
       "source": "entity-enricher",
@@ -580,7 +580,7 @@
       "event_type": "metric.counter",
       "version": "1.0.0",
       "path": "sinex/metric.counter.json",
-      "content_hash": "66305eb6910d3f466aa7a93ab7853dc6d200dcd6147d36d1a22ee8de38e7b290"
+      "content_hash": "c24d53f632618539b0544f38e870a4acf065cc2343ba2cfdc24614d42a6ae073"
     },
     {
       "source": "sinex",
@@ -615,28 +615,28 @@
       "event_type": "process.shutdown",
       "version": "1.0.0",
       "path": "sinex/process.shutdown.json",
-      "content_hash": "879fbf5716ac3c93be2d606066796641cd02f75da3e4110c8ad5e228c9c540bc"
+      "content_hash": "33211b7594815ba018d2e4da7996f03d812ba4ec770d68003535ac26b9beed8e"
     },
     {
       "source": "sinex",
       "event_type": "process.started",
       "version": "1.0.0",
       "path": "sinex/process.started.json",
-      "content_hash": "08cfcbac816b184af91a25348cb7796c8cd7172876cfaffc4128af24bff73742"
+      "content_hash": "df32e2aa9aecded870510b4d1116b7640d5b197d3417844721fd03c92925a8fb"
     },
     {
-      "source": "sinex.node",
+      "source": "sinex.runtime",
       "event_type": "derived.latency_snapshot",
       "version": "1.0.0",
-      "path": "sinex.node/derived.latency_snapshot.json",
-      "content_hash": "ca5780b146e663bd6cead2349a73a019842bfc22d481b94d4a1a47b3eb7898ce"
+      "path": "sinex.runtime/derived.latency_snapshot.json",
+      "content_hash": "7e7fc786a718f0eb2dea424e0a0becb436d43216f5ac359849548bfcb79120b7"
     },
     {
-      "source": "sinex.node",
+      "source": "sinex.runtime",
       "event_type": "processing.stats",
       "version": "1.0.0",
-      "path": "sinex.node/processing.stats.json",
-      "content_hash": "e85825ea99b556d896bfb56949879808b7c1fd4d70a68f8ab224d4094c058479"
+      "path": "sinex.runtime/processing.stats.json",
+      "content_hash": "e6bd27948158585665b3e6257fbfc82ec72e7a12c7ff99b2a5c5f8dbb24258da"
     },
     {
       "source": "sinexctl",
@@ -664,7 +664,7 @@
       "event_type": "gateway.rpc.call",
       "version": "1.0.0",
       "path": "sinexd.api/gateway.rpc.call.json",
-      "content_hash": "a08a9010a1522cd456bdd8a42bb3a203a1e660f302e4bb018e33f9323ff044f7"
+      "content_hash": "cc5c98a560671be11b54001987efa51efcb4ed8380c5c84ee48a7d27cada7aae"
     },
     {
       "source": "sinexd.api",
@@ -706,14 +706,14 @@
       "event_type": "consumer.startup_replay_risk",
       "version": "1.0.0",
       "path": "sinexd.event_engine/consumer.startup_replay_risk.json",
-      "content_hash": "099dc39d79ae861336680b47e71eb57ecc3c007a3d24d84b34cebc5a36e43f3e"
+      "content_hash": "3ab3b9ef081511b8d763702693b6ef338be2e6f8dcdb26a9aac0ce04bde733a7"
     },
     {
       "source": "sinexd.event_engine",
       "event_type": "consumer.startup_snapshot",
       "version": "1.0.0",
       "path": "sinexd.event_engine/consumer.startup_snapshot.json",
-      "content_hash": "bcad461f5915464e1e50386e4e4923f3c14ccc472f33b8ad5181468a05966db5"
+      "content_hash": "08dfeb06defa2c801c2ec4130128bd45e799ee99e370187eb76efec7c71d7786"
     },
     {
       "source": "sinexd.event_engine",

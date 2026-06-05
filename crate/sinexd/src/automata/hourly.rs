@@ -3,10 +3,10 @@
 //! Model classification: **Windowed** -- accumulates
 //! `activity.window.summary` inputs into completed UTC-hour summaries.
 
-use crate::node_sdk::derived_node::{
-    AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedNodeAdapter,
+use crate::runtime::automaton::{
+    AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedAdapter,
 };
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
@@ -141,7 +141,7 @@ impl Windowed for HourlySummarizer {
         state: &mut Self::State,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> Result<(), NodeLogicError> {
+    ) -> Result<(), AutomatonLogicError> {
         let bucket_start = floor_to_hour(input.window_end);
         let event_id = context.trigger_uuid();
 
@@ -201,7 +201,7 @@ impl Windowed for HourlySummarizer {
         &mut self,
         state: &mut Self::State,
         _context: &AutomatonContext,
-    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         let Some(hour_start) = state.hour_start else {
             return Ok(None);
         };
@@ -258,8 +258,8 @@ impl Windowed for HourlySummarizer {
     }
 }
 
-/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type HourlySummarizerNode = WindowedNodeAdapter<HourlySummarizer>;
+/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+pub type HourlySummarizerNode = WindowedAdapter<HourlySummarizer>;
 
 // --- Source descriptor (issue #690 / #734) ---
 
@@ -294,7 +294,7 @@ register_source_runtime_binding! {
         "hourly-summarizer",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("activity.summary.hourly")
     .privacy_context("inherits_from_parents")
@@ -302,11 +302,11 @@ register_source_runtime_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_id("hourly-summarizer")
-    .runner_pack("process")
+    .runner_pack("sinexd")
     .checkpoint_family(SuCheckpointFamily::AppendStream)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
+    .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
     .build()
 }

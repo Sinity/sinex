@@ -1,7 +1,7 @@
 use clap::Parser;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::{Config, mcp};
-use sinexd::node_sdk::service_runtime;
+use sinexd::runtime::service_runtime;
 use std::path::PathBuf;
 
 /// Read-only Sinex MCP server over stdio.

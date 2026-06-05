@@ -11,7 +11,7 @@ use sinex_primitives::{
     rpc::sources::{CaveatSeverity, caveat_codes},
     temporal::Timestamp,
 };
-use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
+use sinexd::runtime::parser::{MaterialParser, SourceRecordFingerprint};
 use sinexd::sources::source_contracts::browser::history::BrowserHistoryParser;
 
 fn test_ctx() -> ParserContext {

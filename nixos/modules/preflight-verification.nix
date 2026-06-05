@@ -13,7 +13,7 @@ let
     ;
   inherit (secretResolution) resolveNamedSecretPath;
   cfg = config.services.sinex;
-  nodesCfg = cfg.nodes;
+  runtimeCfg = cfg.runtime;
   lifecycle = cfg.lifecycle;
   preflight = lifecycle.preflight;
   updates = lifecycle.updates;
@@ -40,19 +40,19 @@ let
   stateRoot = cfg.stateRoot;
   logDir = cfg.observability.logDir;
   ingestSpool = cfg.core.event_engine.spoolDir;
-  nodeSpool = "${cfg.stateRoot}/spool/nodes";
-  serviceUser = cfg.users.nodes;
+  runtimeSpool = "${cfg.stateRoot}/spool/runtime";
+  serviceUser = cfg.users.runtime;
 
   databaseUrl = renderDatabaseUrl cfg.database;
-  natsUrl = concatStringsSep "," nodesCfg.nats.servers;
+  natsUrl = concatStringsSep "," runtimeCfg.nats.servers;
   secretPaths = config.sinex.secrets.paths or { };
   resolveSecretPath = resolveNamedSecretPath secretPaths;
   effectiveDatabasePasswordFile = resolveSecretPath cfg.database.passwordFile [
     "sinex-local-db"
     "sinex-remote-db"
   ];
-  natsTlsCfg = nodesCfg.nats.tls;
-  natsAuthCfg = nodesCfg.nats.auth;
+  natsTlsCfg = runtimeCfg.nats.tls;
+  natsAuthCfg = runtimeCfg.nats.auth;
   effectiveNatsCaCertFile = resolveSecretPath natsTlsCfg.caCertFile [
     "sinex-nats-ca"
     "nats-ca"
@@ -82,7 +82,7 @@ let
   ];
   inferredNatsTls =
     natsTlsCfg.requireTls
-    || any (server: hasPrefix "tls://" server || hasPrefix "wss://" server) nodesCfg.nats.servers;
+    || any (server: hasPrefix "tls://" server || hasPrefix "wss://" server) runtimeCfg.nats.servers;
   preflightEnvironment =
     optionalAttrs cfg.database.enable { DATABASE_URL = databaseUrl; }
     // {
@@ -286,7 +286,7 @@ in
             # Require only the infrastructure that preflight actively checks.
             # Target-user bridge helpers are best-effort: if a desktop/browser
             # runtime is not visible yet, preflight should still run and the
-            # affected node can recover via its own access bootstrap.
+            # affected runtime can recover via its own access bootstrap.
             requires = schemaApplyUnits
             ++ localPostgresUnits
             ++ optionals natsEnabled [ "nats.service" ];
@@ -308,7 +308,7 @@ in
               RestrictRealtime = true;
               LockPersonality = true;
               SystemCallFilter = [ "@system-service" "~@privileged" ];
-              ReadOnlyPaths = [ stateRoot logDir ingestSpool nodeSpool ];
+              ReadOnlyPaths = [ stateRoot logDir ingestSpool runtimeSpool ];
               ExecStart = preflightExec;
             };
           };

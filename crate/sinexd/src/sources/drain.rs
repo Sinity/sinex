@@ -14,7 +14,7 @@
 //! The drain controller is instantiated per source (not process-global),
 //! giving each unit independent drain lifecycle management.
 
-use crate::node_sdk::runtime::stream::RuntimeDrainController;
+use crate::runtime::stream::RuntimeDrainController;
 use sinex_primitives::temporal::Timestamp;
 use std::fmt;
 use std::sync::Arc;

@@ -21,7 +21,7 @@ pub use payload::*;
 pub use payloads::*;
 
 use crate::domain::{
-    DerivedNodeModel, EventSource, EventType, HostName, SyntheticTemporalPolicy, TemporalSourceType,
+    AutomatonModel, EventSource, EventType, HostName, SyntheticTemporalPolicy, TemporalSourceType,
 };
 use crate::ids::Id;
 use crate::primitives::Uuid;
@@ -116,7 +116,7 @@ pub struct Event<T = JsonValue> {
 
     /// Which derived node model produced this event
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub node_model: Option<DerivedNodeModel>,
+    pub node_model: Option<AutomatonModel>,
 }
 
 /// Marker type for source material IDs

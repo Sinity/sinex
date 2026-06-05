@@ -79,7 +79,7 @@ impl XtaskCommand for LintForbiddenCommand {
         // - Dynamic queries (analytics, cascade analysis)
         // - Test infrastructure
         // Paths are post-fold (#1559): sinexd/event_engine folded into
-        // crate/sinexd/{api,event_engine}; node_sdk under crate/sinexd/src/node_sdk;
+        // crate/sinexd/{api,event_engine}; runtime under crate/sinexd/src/runtime;
         // sinex-db/schema flattened out of crate/lib. xtask/ and tests/ auto-skip
         // via is_tests_path, so they are not listed here.
         let sqlx_query_allow = [
@@ -98,9 +98,9 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/sinexd/src/api/handlers/curation.rs",
             "crate/sinexd/src/api/service_container.rs",
             // SDK preflight: dynamic session GUC setup over a small fixed option table.
-            "crate/sinexd/src/node_sdk/preflight/mod.rs",
-            "crate/sinexd/src/node_sdk/preflight/database.rs",
-            "crate/sinexd/src/node_sdk/preflight/verification.rs",
+            "crate/sinexd/src/runtime/preflight/mod.rs",
+            "crate/sinexd/src/runtime/preflight/database.rs",
+            "crate/sinexd/src/runtime/preflight/verification.rs",
             // CLI direct operations-log writes (audit trail for cascade ops).
             // Tracked for repository routing / macro promotion: #1619.
             "crate/sinexctl/src/commands/blob.rs",
@@ -113,7 +113,7 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/sinex-db/src/repositories/events/persistence.rs",
             "crate/sinex-db/src/repositories/model_effects.rs",
             "crate/sinexd/src/api/handlers/audit.rs",
-            "crate/sinexd/src/node_sdk/preflight/database.rs",
+            "crate/sinexd/src/runtime/preflight/database.rs",
             // Timescale catalog tables may not exist in compile-time check DBs.
             "crate/sinex-schema/src/strict_diff.rs",
         ];
@@ -142,8 +142,8 @@ impl XtaskCommand for LintForbiddenCommand {
         let raw_event_subject_allow = [
             "crate/sinex-primitives/src/domain.rs",
             "crate/sinex-primitives/src/environment.rs",
-            "crate/sinexd/src/node_sdk/nats_publisher.rs",
-            "crate/sinexd/src/node_sdk/event_node.rs",
+            "crate/sinexd/src/runtime/nats_publisher.rs",
+            "crate/sinexd/src/runtime/event_transport.rs",
         ];
         violations.extend(check_pattern(
             "nats_raw_event_subject_with_namespace(",
@@ -164,7 +164,7 @@ impl XtaskCommand for LintForbiddenCommand {
         let color_eyre_lib_allow = [
             // Inline #[cfg(test)] module: builds a TestResult (color_eyre) failure
             // via eyre!. is_tests_path can't see inline test modules in src/ files.
-            "crate/sinexd/src/node_sdk/parser/adapters/unix_socket_stream.rs",
+            "crate/sinexd/src/runtime/parser/adapters/unix_socket_stream.rs",
         ];
         violations.extend(check_color_eyre_in_lib(
             "color_eyre::",
@@ -175,12 +175,12 @@ impl XtaskCommand for LintForbiddenCommand {
         // println! in library code (use tracing for structured logging)
         let println_lib_allow = [
             // Intentional stdout output for CLI-facing SDK functions.
-            "crate/sinexd/src/node_sdk/node_cli.rs",
-            "crate/sinexd/src/node_sdk/version.rs",
-            "crate/sinexd/src/node_sdk/heartbeat.rs",
-            "crate/sinexd/src/node_sdk/diagnostics/regression.rs",
+            "crate/sinexd/src/runtime/runtime_cli.rs",
+            "crate/sinexd/src/runtime/version.rs",
+            "crate/sinexd/src/runtime/heartbeat.rs",
+            "crate/sinexd/src/runtime/diagnostics/regression.rs",
             // Doc comment code examples (scanner can't distinguish from real code)
-            "crate/sinexd/src/node_sdk/watcher_handle.rs",
+            "crate/sinexd/src/runtime/watcher_handle.rs",
             "crate/sinex-schema/src/strict_diff.rs",
         ];
         violations.extend(check_println_in_lib(
@@ -231,8 +231,8 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/sinexd/src/event_engine/material_assembler/state.rs",
             // SDK material/anchor surface kept on bare Uuid until the
             // SourceRecordAnchor / SourceMaterialHandle pair is promoted.
-            "crate/sinexd/src/node_sdk/acquisition_manager.rs",
-            "crate/sinexd/src/node_sdk/ingestion_helpers.rs",
+            "crate/sinexd/src/runtime/acquisition_manager.rs",
+            "crate/sinexd/src/runtime/ingestion_helpers.rs",
             // Process automata analytics row (folded into crate/sinexd/src/automata).
             "crate/sinexd/src/automata/analytics.rs",
         ];
@@ -320,18 +320,18 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
     // that prevents new raw publish sites from appearing silently.
     let allow = [
         // Canonical event, telemetry, raw-ingest DLQ, and processing-failure publisher.
-        "crate/sinexd/src/node_sdk/nats_publisher.rs",
+        "crate/sinexd/src/runtime/nats_publisher.rs",
         // Source-material lifecycle frame publisher.
-        "crate/sinexd/src/node_sdk/acquisition_manager.rs",
+        "crate/sinexd/src/runtime/acquisition_manager.rs",
         // Raw-ingest DLQ retry re-publishes into the original raw-event subject.
-        "crate/sinexd/src/node_sdk/dlq_retry.rs",
-        // Node coordination control messages.
-        "crate/sinexd/src/node_sdk/coordination.rs",
+        "crate/sinexd/src/runtime/dlq_retry.rs",
+        // RuntimeActor coordination control messages.
+        "crate/sinexd/src/runtime/coordination.rs",
         // Runtime scan/drain control messages.
-        "crate/sinexd/src/node_sdk/runtime/stream/runner/control_messages.rs",
+        "crate/sinexd/src/runtime/stream/runner/control_messages.rs",
         // Inline private-mode listener regression publishes a synthetic
         // control message; the production listener only subscribes.
-        "crate/sinexd/src/node_sdk/parser/adapter_node.rs",
+        "crate/sinexd/src/runtime/parser/adapter_source.rs",
         // Event-engine confirmation and raw-ingest DLQ publishers (folded event_engine).
         "crate/sinexd/src/event_engine/jetstream_consumer.rs",
         // Source-material assembler DLQ routing.
@@ -356,8 +356,8 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         |path| {
             is_tests_path(path)
                 || path == "crate/sinex-primitives/src/testing.rs"
-                || path == "crate/sinexd/src/node_sdk/event_node.rs"
-                || path == "crate/sinexd/src/node_sdk/self_observation.rs"
+                || path == "crate/sinexd/src/runtime/event_transport.rs"
+                || path == "crate/sinexd/src/runtime/self_observation.rs"
         },
     )
 }
@@ -402,7 +402,7 @@ const NON_PUBLIC_TIER_PATTERNS: &[&str] = &[
 /// (3) where privacy is handled.
 const PRIVACY_GATE_ALLOWLIST: &[&str] = &[
     // "blob-storage" source: blob.retrieved / blob.ingested / blob.verified /
-    // storage.statistics events are emitted from event_engine / gateway / node-sdk internals.
+    // storage.statistics events are emitted from event_engine / gateway / runtime internals.
     // Privacy is handled at the emit site in those binaries; no standalone parser exists.
     "crate/sinex-primitives/src/events/payloads/blob.rs",
 ];

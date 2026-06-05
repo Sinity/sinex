@@ -5,10 +5,10 @@
 //! without depending on external ingestor crates. Real source contracts follow the
 //! same pattern with actual ingestion logic.
 
-use crate::node_sdk::{
-    NodeResult, SourceDriver,
-    runtime::stream::{
-        Checkpoint, ContinuousStart, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
+use crate::runtime::{
+    RuntimeResult, SourceDriver,
+    stream::{
+        Checkpoint, ContinuousStart, RuntimeCapabilities, ScanArgs, ScanReport, TimeHorizon,
     },
 };
 use crate::register_source_driver;
@@ -77,8 +77,8 @@ impl SourceDriver for NoopSourceDriver {
         "noop"
     }
 
-    fn capabilities(&self) -> NodeCapabilities {
-        NodeCapabilities {
+    fn capabilities(&self) -> RuntimeCapabilities {
+        RuntimeCapabilities {
             supports_snapshot: true,
             supports_historical: false,
             supports_continuous: true,
@@ -93,9 +93,9 @@ impl SourceDriver for NoopSourceDriver {
     async fn initialize(
         &mut self,
         _config: Self::Config,
-        _runtime: &crate::node_sdk::runtime::stream::NodeRuntimeState,
+        _runtime: &crate::runtime::stream::RuntimeContext,
         _state: &mut Self::State,
-    ) -> NodeResult<()> {
+    ) -> RuntimeResult<()> {
         tracing::info!("Noop source initialized");
         Ok(())
     }
@@ -104,7 +104,7 @@ impl SourceDriver for NoopSourceDriver {
         &mut self,
         _state: &mut Self::State,
         _args: ScanArgs,
-    ) -> NodeResult<ScanReport> {
+    ) -> RuntimeResult<ScanReport> {
         Ok(empty_scan_report(
             std::time::Duration::ZERO,
             Checkpoint::None,
@@ -117,7 +117,7 @@ impl SourceDriver for NoopSourceDriver {
         _from: Checkpoint,
         _until: TimeHorizon,
         _args: ScanArgs,
-    ) -> NodeResult<ScanReport> {
+    ) -> RuntimeResult<ScanReport> {
         Ok(empty_scan_report(
             std::time::Duration::ZERO,
             Checkpoint::None,
@@ -129,7 +129,7 @@ impl SourceDriver for NoopSourceDriver {
         _state: &mut Self::State,
         start: ContinuousStart,
         mut shutdown_rx: watch::Receiver<bool>,
-    ) -> NodeResult<ScanReport> {
+    ) -> RuntimeResult<ScanReport> {
         tracing::info!("Noop source entering continuous mode");
 
         let started_at = Instant::now();
@@ -161,7 +161,7 @@ fn empty_scan_report(duration: std::time::Duration, final_checkpoint: Checkpoint
         duration,
         final_checkpoint,
         time_range: None,
-        node_stats: HashMap::new(),
+        runtime_stats: HashMap::new(),
         failed_targets: Vec::new(),
         successful_targets: Vec::new(),
         warnings: Vec::new(),
@@ -177,7 +177,7 @@ mod tests {
         assert_eq!(report.events_processed, 0);
         assert_eq!(report.final_checkpoint, expected_checkpoint);
         assert!(report.time_range.is_none());
-        assert!(report.node_stats.is_empty());
+        assert!(report.runtime_stats.is_empty());
         assert!(report.failed_targets.is_empty());
         assert!(report.successful_targets.is_empty());
         assert!(report.warnings.is_empty());

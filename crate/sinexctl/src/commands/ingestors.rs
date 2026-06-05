@@ -91,7 +91,7 @@ fn format_ingestors_status_table(response: &IngestorsStatusResponse) -> String {
             .map_or_else(|| style("-").dim().to_string(), short_uuid);
 
         builder.push_record([
-            ing.node_name.to_string(),
+            ing.module_name.to_string(),
             live,
             run,
             format_health(ing),

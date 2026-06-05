@@ -11,7 +11,7 @@ use sinexd::event_engine::validator::IngestEventValidator;
 use sinexd::event_engine::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{
     Uuid,
-    domain::{EventSource, EventType, NodeName, NodeType},
+    domain::{EventSource, EventType, ModuleName, ModuleKind},
     error::SinexError,
 };
 use std::sync::Arc;
@@ -546,8 +546,8 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
         .pool
         .state()
         .register_node(
-            &NodeName::new(format!("fk-enriched-node-{suffix}")),
-            NodeType::Ingestor,
+            &ModuleName::new(format!("fk-enriched-node-{suffix}")),
+            ModuleKind::Source,
             "1.0.0",
             Some("FK retry regression test node"),
         )

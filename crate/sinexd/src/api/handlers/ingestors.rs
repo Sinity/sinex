@@ -28,7 +28,7 @@ pub async fn handle_ingestors_status(
         .map_err(|e| SinexError::database("Failed to list ingestors status").with_std_error(&e))?
         .into_iter()
         .map(|row| IngestorStatus {
-            node_name: row.node_name,
+            module_name: row.module_name,
             version: row.version,
             description: row.description,
             manifest_status: row.manifest_status.unwrap_or_default(),

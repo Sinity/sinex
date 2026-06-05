@@ -3,9 +3,9 @@
 //! Mirrors `rpc::automata` for the source-side: every registered ingestor (and
 //! source) manifest, joined to its latest run, latest
 //! `health.status` event, and recent event-emission stats. Distinct from
-//! `rpc::nodes` (which carries coordinator-style state — drain/resume/horizon).
+//! `rpc::runtime` (which carries coordinator-style state — drain/resume/horizon).
 
-use crate::domain::{HealthStatus, NodeName};
+use crate::domain::{HealthStatus, ModuleName};
 use crate::env as shared_env;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::{Result, Timestamp, Uuid};
@@ -60,7 +60,7 @@ pub struct IngestorsStatusResponse {
 /// Operator-visible state for one registered ingestor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestorStatus {
-    pub node_name: NodeName,
+    pub module_name: ModuleName,
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -261,7 +261,7 @@ mod emit_stall_tests {
 
     fn base(now: Timestamp) -> IngestorStatus {
         IngestorStatus {
-            node_name: NodeName::new("test-unit"),
+            module_name: ModuleName::new("test-unit"),
             version: "0.0.0".into(),
             description: None,
             manifest_status: "active".into(),

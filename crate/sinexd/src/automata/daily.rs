@@ -3,10 +3,10 @@
 //! Model classification: **Windowed** -- accumulates
 //! `activity.summary.hourly` inputs into completed UTC-day summaries.
 
-use crate::node_sdk::derived_node::{
-    AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedNodeAdapter,
+use crate::runtime::automaton::{
+    AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedAdapter,
 };
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
@@ -144,7 +144,7 @@ impl Windowed for DailySummarizer {
         state: &mut Self::State,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> Result<(), NodeLogicError> {
+    ) -> Result<(), AutomatonLogicError> {
         let bucket_start = floor_to_day(input.hour_start);
         let event_id = context.trigger_uuid();
 
@@ -204,7 +204,7 @@ impl Windowed for DailySummarizer {
         &mut self,
         state: &mut Self::State,
         _context: &AutomatonContext,
-    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         let Some(day_start) = state.day_start else {
             return Ok(None);
         };
@@ -262,8 +262,8 @@ impl Windowed for DailySummarizer {
     }
 }
 
-/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type DailySummarizerNode = WindowedNodeAdapter<DailySummarizer>;
+/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+pub type DailySummarizerNode = WindowedAdapter<DailySummarizer>;
 
 // --- Source descriptor (issue #690 / #734) ---
 
@@ -298,7 +298,7 @@ register_source_runtime_binding! {
         "daily-summarizer",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("activity.summary.daily")
     .privacy_context("inherits_from_parents")
@@ -306,11 +306,11 @@ register_source_runtime_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_id("daily-summarizer")
-    .runner_pack("process")
+    .runner_pack("sinexd")
     .checkpoint_family(SuCheckpointFamily::AppendStream)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
+    .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
     .build()
 }

@@ -7,7 +7,7 @@ async fn test_not_found_error_detection() -> TestResult<()> {
     let err = eyre!("HTTP 404: Resource not found");
     assert!(is_not_found_error(&err));
 
-    let err = eyre!("Node not found");
+    let err = eyre!("RuntimeActor not found");
     assert!(is_not_found_error(&err));
 
     let err = eyre!("Connection timeout");
@@ -40,7 +40,7 @@ async fn test_enhance_auth_error() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_enhance_node_not_found() -> TestResult<()> {
-    let original = eyre!("HTTP 404: Node not found");
+    let original = eyre!("HTTP 404: RuntimeActor not found");
     let enhanced = enhance_rpc_error("coordination.instance_health", original);
     let enhanced_str = enhanced.to_string();
 

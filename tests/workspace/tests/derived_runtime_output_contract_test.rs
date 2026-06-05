@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use camino::Utf8PathBuf;
 use sinex_primitives::domain::{
-    DerivedNodeModel, HealthStatus, SyntheticTemporalPolicy, TemporalSourceType,
+    AutomatonModel, HealthStatus, SyntheticTemporalPolicy, TemporalSourceType,
 };
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
@@ -21,14 +21,16 @@ use sinexd::automata::analytics::AnalyticsAutomaton;
 use sinexd::automata::canonicalizer::TerminalCommandCanonicalizer;
 use sinexd::automata::health::HealthAggregator;
 use sinexd::automata::session::SessionDetector;
-use sinexd::node_sdk::derived_node::{ScopeReconcilerWrapper, TransducerWrapper, WindowedWrapper};
-use sinexd::node_sdk::runtime::stream::{Node, NodeInitContext};
-use sinexd::node_sdk::{DerivedNodeConfig, ShutdownConfig, derived_node::Automaton};
+use sinexd::runtime::automaton::{
+    AutomatonAdapterConfig, ScopeReconcilerWrapper, TransducerWrapper, WindowedWrapper,
+};
+use sinexd::runtime::stream::{RuntimeActor, RuntimeInitContext};
+use sinexd::runtime::{ShutdownConfig, automaton::Automaton};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::{TestRuntime, TestRuntimeBuilder};
 
 #[sinex_test(timeout = 90)]
-async fn production_derived_nodes_emit_queryable_synthesis_events(
+async fn production_automatons_emit_queryable_synthesis_events(
     ctx: TestContext,
 ) -> TestResult<()> {
     let mut env_guard = EnvGuard::with_keys(&[
@@ -93,7 +95,7 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
         &canonical_events,
         CanonicalCommandPayload::SOURCE.as_str(),
         CanonicalCommandPayload::EVENT_TYPE.as_str(),
-        DerivedNodeModel::Transducer,
+        AutomatonModel::Transducer,
         None,
         SyntheticTemporalPolicy::InheritParent,
         1,
@@ -123,7 +125,7 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
         &activity_events,
         ActivityWindowSummaryPayload::SOURCE.as_str(),
         ActivityWindowSummaryPayload::EVENT_TYPE.as_str(),
-        DerivedNodeModel::Windowed,
+        AutomatonModel::Windowed,
         None,
         SyntheticTemporalPolicy::WindowBoundary,
         1,
@@ -149,7 +151,7 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
         &session_events,
         ActivitySessionBoundaryPayload::SOURCE.as_str(),
         ActivitySessionBoundaryPayload::EVENT_TYPE.as_str(),
-        DerivedNodeModel::Windowed,
+        AutomatonModel::Windowed,
         None,
         SyntheticTemporalPolicy::WindowBoundary,
         1,
@@ -201,7 +203,7 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
         &health_reports,
         HealthAggregatedReportPayload::SOURCE.as_str(),
         HealthAggregatedReportPayload::EVENT_TYPE.as_str(),
-        DerivedNodeModel::ScopeReconciler,
+        AutomatonModel::ScopeReconciler,
         None,
         SyntheticTemporalPolicy::DeclaredEffective,
         2,
@@ -238,7 +240,7 @@ where
         ..Default::default()
     };
     let mut adapter =
-        sinexd::node_sdk::AutomatonRuntime::with_shutdown_config(node, shutdown_config);
+        sinexd::runtime::AutomatonRuntime::with_shutdown_config(node, shutdown_config);
     let mut runtime = TestRuntimeBuilder::new(ctx, service_name).build().await?;
     let init = derived_init_context(&runtime, service_name)?;
     adapter.initialize(init).await?;
@@ -264,7 +266,7 @@ where
 fn derived_init_context(
     runtime: &TestRuntime,
     service_name: &str,
-) -> TestResult<NodeInitContext<DerivedNodeConfig>> {
+) -> TestResult<RuntimeInitContext<AutomatonAdapterConfig>> {
     let work_dir =
         Utf8PathBuf::from_path_buf(runtime.runtime.work_dir().to_path_buf()).map_err(|path| {
             eyre!(
@@ -272,8 +274,8 @@ fn derived_init_context(
                 path.display()
             )
         })?;
-    Ok(NodeInitContext::new(
-        DerivedNodeConfig::default(),
+    Ok(RuntimeInitContext::new(
+        AutomatonAdapterConfig::default(),
         HashMap::new(),
         runtime.runtime.service_info().clone(),
         runtime.runtime.handles().clone(),
@@ -363,7 +365,7 @@ fn assert_synthesis_events(
     events: &[Event<JsonValue>],
     source: &str,
     event_type: &str,
-    node_model: DerivedNodeModel,
+    node_model: AutomatonModel,
     expected_ts_quality: Option<TemporalSourceType>,
     temporal_policy: SyntheticTemporalPolicy,
     max_parent_count: usize,

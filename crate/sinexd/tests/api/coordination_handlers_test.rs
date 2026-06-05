@@ -4,7 +4,7 @@ use sinexd::api::handlers::{
     handle_coordination_list_instances,
 };
 use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
-use sinex_primitives::domain::NodeType;
+use sinex_primitives::domain::ModuleKind;
 use sinex_primitives::error::ErrorClass;
 use sinex_primitives::rpc::coordination::{
     GetLeaderRequest, InstanceHealthRequest, ListInstancesRequest,
@@ -116,7 +116,7 @@ async fn coordination_list_instances_marks_current_leader(ctx: TestContext) -> T
     let leader_result = handle_coordination_get_leader(
         &kv_client,
         GetLeaderRequest {
-            node_type: NodeType::Service,
+            module_kind: ModuleKind::Service,
         },
     )
     .await?;
@@ -238,7 +238,7 @@ async fn coordination_get_leader_rejects_missing_leader_metadata(
     let error = handle_coordination_get_leader(
         &kv_client,
         GetLeaderRequest {
-            node_type: NodeType::Service,
+            module_kind: ModuleKind::Service,
         },
     )
     .await

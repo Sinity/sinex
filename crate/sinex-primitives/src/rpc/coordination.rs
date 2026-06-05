@@ -1,6 +1,6 @@
 //! Coordination types
 
-use crate::domain::{HostName, InstanceId, NodeType};
+use crate::domain::{HostName, InstanceId, ModuleKind};
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,7 @@ pub const COORDINATION_INSTANCE_HEALTH_METHOD: RpcMethod<
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceInfo {
     pub instance_id: InstanceId,
-    pub node_type: NodeType,
+    pub module_kind: ModuleKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hostname: Option<HostName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,7 +57,7 @@ pub struct InstanceInfo {
 pub struct ListInstancesRequest {
     /// Filter by node type
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_type: Option<NodeType>,
+    pub module_kind: Option<ModuleKind>,
 }
 
 /// Response: `coordination.list_instances`
@@ -73,7 +73,7 @@ pub struct ListInstancesResponse {
 /// Request: `coordination.get_leader`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetLeaderRequest {
-    pub node_type: NodeType,
+    pub module_kind: ModuleKind,
 }
 
 /// Response: `coordination.get_leader`

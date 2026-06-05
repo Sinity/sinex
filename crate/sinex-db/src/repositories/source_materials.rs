@@ -58,7 +58,7 @@ pub mod relation_types {
 }
 /// Top-level metadata keys reserved for system use.
 ///
-/// These keys are set exclusively by the DB layer or the node SDK and must not
+/// These keys are set exclusively by the DB layer or the runtime and must not
 /// be overwritten by caller-supplied payloads passed to `update_metadata`.
 /// The `update_metadata` path re-applies existing values for these keys on top
 /// of any caller merge, so the system always wins on conflicts.

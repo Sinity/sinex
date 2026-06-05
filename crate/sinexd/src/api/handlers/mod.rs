@@ -14,8 +14,8 @@ pub mod ingestors;
 pub mod instructions;
 pub mod lifecycle;
 pub mod llm;
-pub mod node_registry;
-pub mod nodes;
+pub mod runtime_presence;
+pub mod runtime_registry;
 pub mod ops;
 pub mod pkm;
 pub mod privacy;
@@ -63,8 +63,8 @@ pub use lifecycle::{
     handle_tombstone_status,
 };
 pub use llm::{handle_llm_budget_report, handle_llm_prompts_list, handle_llm_route_explain};
-pub use nodes::{
-    handle_nodes_drain, handle_nodes_list, handle_nodes_resume, handle_nodes_set_horizon,
+pub use runtime_registry::{
+    handle_runtime_drain, handle_runtime_list, handle_runtime_resume, handle_runtime_set_horizon,
 };
 pub use ops::{handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start};
 pub use semantic::{
@@ -87,7 +87,7 @@ pub use documents::{
     handle_documents_search,
 };
 pub use health::{handle_health_effect_record, handle_health_intake_record};
-pub use node_registry::{handle_nodes_health, handle_nodes_list_active};
+pub use runtime_presence::{handle_runtime_health, handle_runtime_list_active};
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use privacy::{
     handle_privacy_policy_backend_add, handle_privacy_policy_dictionary_add,
@@ -115,7 +115,7 @@ pub use telemetry::{
     handle_telemetry_current_device_state, handle_telemetry_current_health,
     handle_telemetry_file_activity, handle_telemetry_gateway_stats,
     handle_telemetry_event_engine_batch_stats, handle_telemetry_event_engine_validation,
-    handle_telemetry_metric_counters, handle_telemetry_node_stats,
+    handle_telemetry_metric_counters, handle_telemetry_runtime_stats,
     handle_telemetry_recent_activity, handle_telemetry_stream_stats, handle_telemetry_system_state,
     handle_telemetry_throughput, handle_telemetry_window_focus,
 };

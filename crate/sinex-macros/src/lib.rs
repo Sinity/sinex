@@ -179,7 +179,7 @@ pub fn derive_sinex_config(input: TokenStream) -> TokenStream {
 /// ```ignore
 /// #[derive(DbCheck)]
 /// #[db_check(table = "manifests", column = "manifest_type", version = 1)]
-/// pub enum NodeType {
+/// pub enum ModuleKind {
 ///     Ingestor,
 ///     Automaton,
 ///     Service,

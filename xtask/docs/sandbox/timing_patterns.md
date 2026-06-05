@@ -260,7 +260,7 @@ async fn test_event_ordering(ctx: TestContext) -> Result<()> {
 - **DATABASE_URL**: Optional — only needed for nodes that query events
 - **`SINEX_EDGE_MODE=1`**: Suppresses DATABASE_URL requirement + enables schema cache
 
-### Database Dependency by Node Type
+### Database Dependency by RuntimeActor Type
 
 | Type | Needs DATABASE_URL? | Example |
 |------|---------------------|---------|
@@ -281,7 +281,7 @@ async fn test_ingestor_without_database(ctx: TestContext) -> Result<()> {
 
     // Initialize ingestor - works without DATABASE_URL
     let node = MyIngestor::new(/* ... */);
-    let runner = NodeRunner::new(/* ... */).await?;
+    let runner = RuntimeRunner::new(/* ... */).await?;
 
     // Checkpoints work (always NATS KV)
     let checkpoint = runner.current_checkpoint().await?;
@@ -301,7 +301,7 @@ async fn test_automaton_queries_events(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
 
     let node = MyAutomaton::new(/* ... */);
-    let runner = NodeRunner::new(/* ... */).await?;
+    let runner = RuntimeRunner::new(/* ... */).await?;
 
     // Automaton can query events via db_pool handle
     Ok(())

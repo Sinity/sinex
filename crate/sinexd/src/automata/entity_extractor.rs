@@ -27,8 +27,8 @@
 //!
 //! Ref: `.agent/scratch/071-issue-331-entity-extractor-spec.md`.
 
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, TransducerNodeAdapter};
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, TransducerAdapter};
+use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Transducer};
 use regex::Regex;
 use sinex_primitives::domain::EntityTypeName;
 use sinex_primitives::events::payloads::EntityExtractedPayload;
@@ -49,7 +49,7 @@ static COMMAND_PATTERN: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(||
 static EMAIL_PATTERN: LazyLock<Result<Regex, regex::Error>> =
     LazyLock::new(|| Regex::new("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"));
 
-// ── Node ───────────────────────────────────────────────────────────────
+// ── RuntimeActor ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]
 pub struct EntityExtractor;
@@ -79,7 +79,7 @@ impl Transducer for EntityExtractor {
         _state: &mut Self::State,
         input: serde_json::Value,
         context: &AutomatonContext,
-    ) -> Result<Option<DerivedOutput<EntityExtractedPayload>>, NodeLogicError> {
+    ) -> Result<Option<DerivedOutput<EntityExtractedPayload>>, AutomatonLogicError> {
         // Extract text fields from the input event.
         let text = extract_text_fields(&input);
 
@@ -207,7 +207,7 @@ fn find_first_entity(text: &str) -> Option<EntityExtractedPayload> {
 
 // ── Type alias ──────────────────────────────────────────────────────────
 
-pub type EntityExtractorNode = TransducerNodeAdapter<EntityExtractor>;
+pub type EntityExtractorNode = TransducerAdapter<EntityExtractor>;
 
 // ── Source descriptor ─────────────────────────────────────────────
 
@@ -242,7 +242,7 @@ register_source_runtime_binding! {
         "entity-extractor",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("entity.extracted")
     .privacy_context("inherits_from_parents")
@@ -250,11 +250,11 @@ register_source_runtime_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_id("entity-extractor")
-    .runner_pack("process")
+    .runner_pack("sinexd")
     .checkpoint_family(SuCheckpointFamily::AppendStream)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
+    .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
     .build()
 }

@@ -102,10 +102,10 @@ fn extract_status_code(err: &Report) -> Option<StatusCode> {
 /// Enhance not found errors with suggestions
 fn enhance_not_found_error(method: &str, err: &Report) -> Report {
     let help_text = match method {
-        methods::NODES_LIST
-        | methods::NODES_DRAIN
-        | methods::NODES_RESUME
-        | methods::NODES_SET_HORIZON
+        methods::RUNTIME_LIST
+        | methods::RUNTIME_DRAIN
+        | methods::RUNTIME_RESUME
+        | methods::RUNTIME_SET_HORIZON
         | methods::COORDINATION_LIST_INSTANCES
         | methods::COORDINATION_GET_LEADER
         | methods::COORDINATION_INSTANCE_HEALTH => {

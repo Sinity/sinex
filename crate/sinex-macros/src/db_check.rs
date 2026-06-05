@@ -15,7 +15,7 @@
 //!     column = "manifest_type",
 //!     version = 1,
 //! )]
-//! pub enum NodeType {
+//! pub enum ModuleKind {
 //!     Ingestor,
 //!     Automaton,
 //!     Service,

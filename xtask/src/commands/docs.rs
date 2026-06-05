@@ -716,9 +716,19 @@ fn generated_agents_surface(workspace: &std::path::Path) -> Result<GeneratedSurf
     Ok(GeneratedSurface {
         label: "AGENTS.md",
         path: workspace.join("AGENTS.md"),
-        content: format!("{header}{resolved}"),
+        content: generated_text(format!("{header}{resolved}")),
         regenerate_command: "xtask docs agents",
     })
+}
+
+fn generated_text(mut content: String) -> String {
+    while content.ends_with("\n\n") {
+        content.pop();
+    }
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content
 }
 
 fn generated_command_guide_surface(workspace: &std::path::Path) -> GeneratedSurface {

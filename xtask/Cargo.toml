@@ -71,7 +71,7 @@ sinex-primitives = { path = "../crate/sinex-primitives", default-features = fals
     "nats",
     "testing",
 ] }
-# Database and node SDK (for test sandbox)
+# Database and runtime (for test sandbox)
 sinex-db = { path = "../crate/sinex-db" }
 
 # Source inventory links. xtask verification surfaces must see descriptors

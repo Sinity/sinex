@@ -106,7 +106,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         preview
             .get("replay_semantics")
             .and_then(serde_json::Value::as_str),
-        Some("reexecute_material_roots_via_node_scan")
+        Some("reexecute_material_roots_via_source_scan")
     );
 
     let approved = client
@@ -266,7 +266,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         .to_uuid();
     let reexecution_root_ts = root_event_id.timestamp();
     let reexecution_scope = ReplayScope {
-        node_id: "reexecution-test".to_string(),
+        source_name: "reexecution-test".to_string(),
         time_window: Some((
             reexecution_root_ts - time::Duration::seconds(1),
             reexecution_root_ts + time::Duration::seconds(1),

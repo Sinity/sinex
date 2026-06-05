@@ -95,7 +95,7 @@ impl IntegrityRepository<'_> {
     /// Analyze a single node for checkpoint consistency issues.
     pub async fn analyze_node(
         &self,
-        node_name: &str,
+        module_name: &str,
         snapshot: Option<&CheckpointSnapshot>,
         max_events: usize,
         stale_window_hours: i64,
@@ -105,7 +105,7 @@ impl IntegrityRepository<'_> {
 
         let Some(snapshot) = snapshot else {
             issues.push(CheckpointInconsistency {
-                node_name: node_name.to_string(),
+                module_name: module_name.to_string(),
                 details: "No checkpoint found for node".to_string(),
                 inconsistency_type: CheckpointInconsistencyType::MissingCheckpoint,
                 events_potentially_missed: 0,
@@ -118,7 +118,7 @@ impl IntegrityRepository<'_> {
             && snapshot.processed_count > 0
         {
             issues.push(CheckpointInconsistency {
-                node_name: node_name.to_string(),
+                module_name: module_name.to_string(),
                 details: format!(
                     "Checkpoint missing UUIDv7 reference despite processed_count={}",
                     snapshot.processed_count
@@ -134,7 +134,7 @@ impl IntegrityRepository<'_> {
             let exists = self.event_exists(last_processed_id).await?;
             if !exists {
                 issues.push(CheckpointInconsistency {
-                    node_name: node_name.to_string(),
+                    module_name: module_name.to_string(),
                     details: "Checkpoint references non-existent event".to_string(),
                     inconsistency_type: CheckpointInconsistencyType::MissingEventReference,
                     events_potentially_missed: 0,
@@ -163,7 +163,7 @@ impl IntegrityRepository<'_> {
 
         if newer_events > 0 {
             issues.push(CheckpointInconsistency {
-                node_name: node_name.to_string(),
+                module_name: module_name.to_string(),
                 details: format!("Checkpoint behind by {newer_events} events"),
                 inconsistency_type: CheckpointInconsistencyType::CheckpointBehindEvents,
                 events_potentially_missed: newer_events.min(max_events as i64).max(0) as u64,
@@ -173,7 +173,7 @@ impl IntegrityRepository<'_> {
         let hours_since_last_activity = (Timestamp::now() - snapshot.last_activity).whole_hours();
         if hours_since_last_activity >= stale_window_hours {
             issues.push(CheckpointInconsistency {
-                node_name: node_name.to_string(),
+                module_name: module_name.to_string(),
                 details: format!(
                     "Checkpoint stale (last activity {hours_since_last_activity} hours ago)"
                 ),

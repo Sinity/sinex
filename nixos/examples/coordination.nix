@@ -1,7 +1,7 @@
 
 # Sinex hot-standby coordination example
 #
-# Demonstrates running multiple node instances with leadership hand-off for
+# Demonstrates running multiple source runtime instances with leadership hand-off for
 # zero-downtime upgrades.  Use this as a starting point for production clusters.
 
 { config, lib, pkgs, ... }:
@@ -28,7 +28,7 @@
 
     nats.environment = "prod";
 
-    nodes = {
+    runtime = {
       enable = true;
       defaults.logLevel = "info";
 

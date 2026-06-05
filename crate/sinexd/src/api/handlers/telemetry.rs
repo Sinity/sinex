@@ -6,7 +6,7 @@
 use sinex_primitives::rpc::telemetry::{
     AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
     FileActivityEntry, GatewayStatsBucket, EventEngineBatchStatsBucket, EventEngineValidationSnapshot,
-    MetricCounterBucket, NodeStatsBucket, RecentActivityEntry, StreamStatsBucket,
+    MetricCounterBucket, RuntimeStatsBucket, RecentActivityEntry, StreamStatsBucket,
     SystemStateBucket, TelemetryAssemblyStatsRequest, TelemetryAssemblyStatsResponse,
     TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
     TelemetryCurrentDeviceStateRequest, TelemetryCurrentDeviceStateResponse,
@@ -14,8 +14,8 @@ use sinex_primitives::rpc::telemetry::{
     TelemetryFileActivityResponse, TelemetryGatewayStatsRequest, TelemetryGatewayStatsResponse,
     TelemetryEventEngineBatchStatsRequest, TelemetryEventEngineBatchStatsResponse,
     TelemetryEventEngineValidationRequest, TelemetryEventEngineValidationResponse,
-    TelemetryMetricCountersRequest, TelemetryMetricCountersResponse, TelemetryNodeStatsRequest,
-    TelemetryNodeStatsResponse, TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
+    TelemetryMetricCountersRequest, TelemetryMetricCountersResponse, TelemetryRuntimeStatsRequest,
+    TelemetryRuntimeStatsResponse, TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
     TelemetryStreamStatsRequest, TelemetryStreamStatsResponse, TelemetrySystemStateRequest,
     TelemetrySystemStateResponse, TelemetryThroughputRequest, TelemetryThroughputResponse,
     TelemetryWindowFocusRequest, TelemetryWindowFocusResponse, ThroughputComponentEntry,
@@ -179,9 +179,9 @@ struct AssemblyStatsRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct NodeStatsRow {
+struct RuntimeStatsRow {
     bucket: OffsetDateTime,
-    node_type: Option<String>,
+    module_kind: Option<String>,
     total_events_processed: Option<i64>,
     total_events_dropped: Option<i64>,
     avg_latency_ms: Option<f64>,
@@ -689,10 +689,10 @@ pub async fn handle_telemetry_assembly_stats(
     Ok(TelemetryAssemblyStatsResponse { buckets })
 }
 
-pub async fn handle_telemetry_node_stats(
+pub async fn handle_telemetry_runtime_stats(
     pool: &PgPool,
-    req: TelemetryNodeStatsRequest,
-) -> Result<TelemetryNodeStatsResponse> {
+    req: TelemetryRuntimeStatsRequest,
+) -> Result<TelemetryRuntimeStatsResponse> {
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
         req.time_range.to.as_deref(),
@@ -700,21 +700,21 @@ pub async fn handle_telemetry_node_stats(
     )?;
     let limit = resolve_positive_limit(req.limit)?;
 
-    let rows = sqlx::query_as::<_, NodeStatsRow>(
+    let rows = sqlx::query_as::<_, RuntimeStatsRow>(
         r"
         SELECT
             bucket,
-            node_type,
+            module_kind,
             total_events_processed::bigint AS total_events_processed,
             total_events_dropped::bigint AS total_events_dropped,
             avg_latency_ms::float8 AS avg_latency_ms,
             max_queue_depth::bigint AS max_queue_depth,
             total_errors::bigint AS total_errors,
             sample_count
-        FROM sinex_telemetry.node_stats_1h
+        FROM sinex_telemetry.runtime_stats_1h
         WHERE bucket >= $1
           AND bucket <= $2
-        ORDER BY bucket DESC, node_type ASC NULLS LAST
+        ORDER BY bucket DESC, module_kind ASC NULLS LAST
         LIMIT $3
         ",
     )
@@ -723,13 +723,13 @@ pub async fn handle_telemetry_node_stats(
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(|error| telemetry_query_error("sinex_telemetry.node_stats_1h", error))?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.runtime_stats_1h", error))?;
 
     let buckets = rows
         .into_iter()
-        .map(|row| NodeStatsBucket {
+        .map(|row| RuntimeStatsBucket {
             bucket: fmt_rfc3339(row.bucket),
-            node_type: row.node_type,
+            module_kind: row.module_kind,
             total_events_processed: row.total_events_processed,
             total_events_dropped: row.total_events_dropped,
             avg_latency_ms: row.avg_latency_ms,
@@ -739,7 +739,7 @@ pub async fn handle_telemetry_node_stats(
         })
         .collect();
 
-    Ok(TelemetryNodeStatsResponse { buckets })
+    Ok(TelemetryRuntimeStatsResponse { buckets })
 }
 
 pub async fn handle_telemetry_metric_counters(

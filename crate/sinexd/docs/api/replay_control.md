@@ -28,7 +28,7 @@ It sits atop the core `ReplayStateMachine` and provides a NATS-based RPC interfa
 4.  **Execute**: Execution node (or gateway) triggers execution. State moves to `Executing`.
     -   Acquires distributed lock (advisory lock) to prevent concurrent execution.
     -   Expands cascade from selected material-root events and archives affected live rows.
-    -   Dispatches a `NodeScanCommand` to the running ingestor over NATS request/reply.
+    -   Dispatches a `SourceScanCommand` to the running ingestor over NATS request/reply.
     -   The node re-reads source material through its historical scan ingress and emits fresh events through the normal pipeline.
     -   Updates progress checkpoints.
     -   On completion, state moves to `Completed`.

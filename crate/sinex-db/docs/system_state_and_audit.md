@@ -10,11 +10,11 @@ The operations log is the primary audit trail for all significant system activit
 - **Scope Tracking**: Each log entry contains a JSON `scope` describing the target of the operation (e.g., a specific time range or event ID).
 - **Preview Summary**: For complex operations like replays, the log stores metadata about intended changes, allowing for safe dry-runs and operator approval.
 
-## Node Manifests
+## RuntimeActor Manifests
 
 The node manifest serves as a registry for all nodes (ingestors and automata) that have participated in the cluster.
 
-- **Identification**: Each entry records the `node_name`, its `version`, and its `node_type`.
+- **Identification**: Each entry records the `module_name`, its `version`, and its `module_kind`.
 - **Manifest vs. Status**: While the manifest records that a node *exists*, its current runtime health is tracked separately via heartbeats.
 
 ## Health Monitoring

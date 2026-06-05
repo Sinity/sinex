@@ -17,7 +17,7 @@ use sinex_primitives::rpc::methods;
 use sinex_primitives::temporal::Duration as TemporalDuration;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{DynamicPayload, Id, Uuid};
-use sinexd::node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
+use sinexd::runtime::{Checkpoint, SourceScanAck, SourceScanCommand, SourceScanProgress, ScanReport};
 use std::collections::HashMap;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
@@ -30,14 +30,14 @@ async fn spawn_fake_scan_node(
     pool: DbPool,
     nats: async_nats::Client,
     env: sinex_primitives::environment::SinexEnvironment,
-    node_name: &str,
+    module_name: &str,
     events_processed: u64,
 ) -> TestResult<(
-    tokio::sync::oneshot::Receiver<NodeScanCommand>,
+    tokio::sync::oneshot::Receiver<SourceScanCommand>,
     tokio::task::JoinHandle<()>,
 )> {
-    let node_name = node_name.to_string();
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+    let module_name = module_name.to_string();
+    let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
     let mut sub = nats.subscribe(subject).await?;
     let (command_tx, command_rx) = tokio::sync::oneshot::channel();
 
@@ -46,7 +46,7 @@ async fn spawn_fake_scan_node(
             return;
         };
 
-        let Ok(command) = serde_json::from_slice::<NodeScanCommand>(&msg.payload) else {
+        let Ok(command) = serde_json::from_slice::<SourceScanCommand>(&msg.payload) else {
             eprintln!("fake scan node: invalid scan command payload");
             return;
         };
@@ -59,9 +59,9 @@ async fn spawn_fake_scan_node(
         let replay_context = command.args.replay.clone();
 
         if let Some(reply) = msg.reply {
-            let ack = NodeScanAck {
+            let ack = SourceScanAck {
                 operation_id,
-                node_name: node_name.clone(),
+                module_name: module_name.clone(),
                 accepted: true,
                 error: None,
             };
@@ -114,7 +114,7 @@ async fn spawn_fake_scan_node(
             }
             for index in 0..events_processed {
                 let mut event = match DynamicPayload::new(
-                    node_name.as_str(),
+                    module_name.as_str(),
                     event_type,
                     json!({ "path": logical_source_identifier, "replay_index": index }),
                 )
@@ -140,14 +140,14 @@ async fn spawn_fake_scan_node(
             duration: Duration::from_millis(5),
             final_checkpoint: Checkpoint::None,
             time_range: None,
-            node_stats: HashMap::from([("events_emitted".to_string(), events_processed)]),
-            successful_targets: vec![node_name.clone()],
+            runtime_stats: HashMap::from([("events_emitted".to_string(), events_processed)]),
+            successful_targets: vec![module_name.clone()],
             failed_targets: Vec::new(),
             warnings: Vec::new(),
         };
-        let progress = NodeScanProgress {
+        let progress = SourceScanProgress {
             operation_id,
-            node_name,
+            module_name,
             events_processed,
             events_emitted: events_processed,
             final_report: Some(report),
@@ -247,7 +247,7 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
         methods::REPLAY_CREATE_OPERATION,
         json!({
             "scope": {
-                "node_id": "test-node",
+                "module_name": "test-node",
                 "time_window": [
                     scope_start.format_rfc3339(),
                     scope_end.format_rfc3339()

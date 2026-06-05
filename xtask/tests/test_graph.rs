@@ -76,10 +76,10 @@ async fn test_graph_deps_json_structure() -> ::xtask::sandbox::TestResult<()> {
     if let Some(nodes) = parsed["nodes"].as_array()
         && let Some(node) = nodes.first()
     {
-        assert!(node.get("id").is_some(), "Node should have 'id' field");
+        assert!(node.get("id").is_some(), "RuntimeActor should have 'id' field");
         assert!(
             node.get("label").is_some(),
-            "Node should have 'label' field"
+            "RuntimeActor should have 'label' field"
         );
     }
     if let Some(edges) = parsed["edges"].as_array()

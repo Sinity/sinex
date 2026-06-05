@@ -959,7 +959,7 @@
           monitoring = mkExampleConfig ./nixos/examples/monitoring.nix [ ];
           devSandbox = mkExampleConfig ./nixos/examples/dev-sandbox.nix [ ];
           headless = mkExampleConfig ./nixos/examples/headless.nix [ ];
-          remoteNode = mkExampleConfig ./nixos/examples/remote-node.nix [ ];
+          remoteRuntime = mkExampleConfig ./nixos/examples/remote-runtime.nix [ ];
           coordination = mkExampleConfig ./nixos/examples/coordination.nix [ ];
         };
 

@@ -2,7 +2,7 @@ use crate::EventRecord;
 use crate::repositories::common::DbResult;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::{DerivedNodeModel, SyntheticTemporalPolicy, TemporalSourceType};
+use sinex_primitives::domain::{AutomatonModel, SyntheticTemporalPolicy, TemporalSourceType};
 use sinex_primitives::events::{EventId, SourceMaterial};
 use sinex_primitives::non_empty::NonEmptyVec;
 
@@ -141,7 +141,7 @@ impl EventRecordExt for EventRecord {
             scope_key: self.scope_key,
             equivalence_key: self.equivalence_key,
             created_by_operation_id: self.created_by_operation_id,
-            node_model: parse_optional_enum::<DerivedNodeModel>(
+            node_model: parse_optional_enum::<AutomatonModel>(
                 self.node_model,
                 "node_model",
                 self.id,

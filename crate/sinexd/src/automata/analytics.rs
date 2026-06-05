@@ -4,10 +4,10 @@
 //! into bounded windows and emits `activity.window.summary` rollups when a gap,
 //! duration bound, or parent-count budget closes the current window.
 
-use crate::node_sdk::derived_node::{
-    AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedNodeAdapter,
+use crate::runtime::automaton::{
+    AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedAdapter,
 };
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::activity::{
     ActivitySourceKind, classify_trusted_activity_signal, primary_activity_source,
@@ -192,7 +192,7 @@ impl Windowed for AnalyticsAutomaton {
         state: &mut Self::State,
         _input: Self::Input,
         context: &AutomatonContext,
-    ) -> Result<(), NodeLogicError> {
+    ) -> Result<(), AutomatonLogicError> {
         let Some(activity_source) =
             classify_trusted_activity_signal(context.source.as_str(), context.event_type.as_str())
         else {
@@ -257,7 +257,7 @@ impl Windowed for AnalyticsAutomaton {
         &mut self,
         state: &mut Self::State,
         _context: &AutomatonContext,
-    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         let Some(start_time) = state.window_start else {
             return Ok(None);
         };
@@ -311,8 +311,8 @@ impl Windowed for AnalyticsAutomaton {
     }
 }
 
-/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type AnalyticsAutomatonNode = WindowedNodeAdapter<AnalyticsAutomaton>;
+/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+pub type AnalyticsAutomatonNode = WindowedAdapter<AnalyticsAutomaton>;
 
 // --- Source descriptor (issue #690 / #734) ---
 
@@ -351,7 +351,7 @@ register_source_runtime_binding! {
         "analytics",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("activity.window.summary")
     .privacy_context("inherits_from_parents")
@@ -359,11 +359,11 @@ register_source_runtime_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_id("analytics")
-    .runner_pack("process")
+    .runner_pack("sinexd")
     .checkpoint_family(SuCheckpointFamily::AppendStream)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
+    .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
     .build()
 }

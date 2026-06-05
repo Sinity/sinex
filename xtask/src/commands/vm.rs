@@ -34,7 +34,7 @@ const SMOKE_TESTS: &[&str] = &["basic", "replay-smoke"];
 const INTEGRATION_TESTS: &[&str] = &[
     "preflight",
     "maintenance",
-    "node-matrix",
+    "runtime-matrix",
     "multi-source",
     "failure-recovery",
     "kitty-eventsource",
@@ -63,7 +63,7 @@ const EXTENDED_TIMEOUT_SECS: u64 = 3600;
 const EXTENDED_TIMEOUT_TESTS: &[&str] = &[
     "basic",
     "maintenance",
-    "node-matrix",
+    "runtime-matrix",
     "multi-source",
     "performance",
     "production-scale",
@@ -1561,7 +1561,7 @@ mod tests {
                 keep_failed: false,
                 list: false,
                 validate: true,
-                tests: vec!["node-matrix".to_string()],
+                tests: vec!["runtime-matrix".to_string()],
             },
         };
 

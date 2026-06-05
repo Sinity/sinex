@@ -846,7 +846,7 @@ pub struct ControlSubject;
 impl ControlSubject {
     /// `sinex.control.replay.progress.<operation_id>`
     ///
-    /// Published by the executing node as it progresses through a scan;
+    /// Published by the executing source runtime as it progresses through a scan;
     /// subscribed by the gateway to track operation completion.
     #[must_use]
     pub fn replay_progress(operation_id: impl fmt::Display) -> String {
@@ -862,13 +862,13 @@ impl ControlSubject {
         format!("sinex.control.sources.{source_id}.parse")
     }
 
-    /// `sinex.control.nodes.<node_id>.scan`
+    /// `sinex.control.sources.<source_name>.scan`
     ///
     /// Request-reply subject used by the gateway to dispatch a scan command
-    /// to a specific node; the node replies with a `NodeScanAck`.
+    /// to a specific source runtime; the source replies with a `SourceScanAck`.
     #[must_use]
-    pub fn node_scan(node_id: impl fmt::Display) -> String {
-        format!("sinex.control.nodes.{node_id}.scan")
+    pub fn source_scan(source_name: impl fmt::Display) -> String {
+        format!("sinex.control.sources.{source_name}.scan")
     }
 }
 
@@ -1075,8 +1075,8 @@ impl fmt::Display for HostName {
 }
 
 define_string_type!(
-    #[doc = "The name of a node (ingestor, automaton, service)"]
-    NodeName
+    #[doc = "The name of a runtime module (source, automaton, service)"]
+    ModuleName
 );
 
 define_string_type!(
@@ -1847,7 +1847,7 @@ impl std::str::FromStr for SyntheticTemporalPolicy {
 /// how the SDK prepares inputs and manages scope/window state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum DerivedNodeModel {
+pub enum AutomatonModel {
     /// Processes one triggering event at a time; deterministic fallback order is `id ASC`
     Transducer,
     /// Declares window identity and completion logic; SDK prepares completed windows
@@ -1856,7 +1856,7 @@ pub enum DerivedNodeModel {
     ScopeReconciler,
 }
 
-impl std::fmt::Display for DerivedNodeModel {
+impl std::fmt::Display for AutomatonModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Transducer => write!(f, "transducer"),
@@ -1866,7 +1866,7 @@ impl std::fmt::Display for DerivedNodeModel {
     }
 }
 
-impl std::str::FromStr for DerivedNodeModel {
+impl std::str::FromStr for AutomatonModel {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -2002,13 +2002,8 @@ impl std::str::FromStr for InvalidationAction {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Coordination and Node Types
+// Coordination and RuntimeActor Types
 // ─────────────────────────────────────────────────────────────
-
-define_string_type!(
-    #[doc = "A unique identifier for a node instance"]
-    NodeId
-);
 
 define_string_type!(
     #[doc = "A unique identifier for a distributed instance (used in leader election)"]
@@ -2034,23 +2029,23 @@ define_string_type!(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
-pub enum NodeState {
-    /// Node is actively processing events
+pub enum ModuleState {
+    /// RuntimeActor is actively processing events
     Running,
-    /// Node is gracefully stopping (finishing current work)
+    /// RuntimeActor is gracefully stopping (finishing current work)
     Draining,
-    /// Node is paused and not processing
+    /// RuntimeActor is paused and not processing
     Paused,
-    /// Node has encountered a fatal error
+    /// RuntimeActor has encountered a fatal error
     Failed,
-    /// Node has stopped after completing its run
+    /// RuntimeActor has stopped after completing its run
     Stopped,
-    /// Node state is unknown
+    /// RuntimeActor state is unknown
     #[default]
     Unknown,
 }
 
-impl std::fmt::Display for NodeState {
+impl std::fmt::Display for ModuleState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Running => write!(f, "running"),
@@ -2063,7 +2058,7 @@ impl std::fmt::Display for NodeState {
     }
 }
 
-impl std::str::FromStr for NodeState {
+impl std::str::FromStr for ModuleState {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -2409,34 +2404,34 @@ impl std::str::FromStr for HealthStatus {
     column = "manifest_type",
     version = 1
 )]
-pub enum NodeType {
-    /// Ingestor node (captures events from external sources)
-    Ingestor,
-    /// Automaton node (processes events and generates derived data)
+pub enum ModuleKind {
+    /// Source module (captures events from external systems or files)
+    Source,
+    /// Automaton module (processes events and generates derived data)
     Automaton,
-    /// Service node (provides API endpoints)
+    /// Service module (provides APIs or internal daemon services)
     Service,
 }
 
-impl std::fmt::Display for NodeType {
+impl std::fmt::Display for ModuleKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Ingestor => write!(f, "ingestor"),
+            Self::Source => write!(f, "source"),
             Self::Automaton => write!(f, "automaton"),
             Self::Service => write!(f, "service"),
         }
     }
 }
 
-impl std::str::FromStr for NodeType {
+impl std::str::FromStr for ModuleKind {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "ingestor" => Ok(Self::Ingestor),
+            "source" => Ok(Self::Source),
             "automaton" => Ok(Self::Automaton),
             "service" => Ok(Self::Service),
-            _ => Err(format!("unknown node type: {s}")),
+            _ => Err(format!("unknown runtime module kind: {s}")),
         }
     }
 }
@@ -2684,10 +2679,10 @@ impl From<String> for RecordedPath {
 mod sqlx_impls {
     use super::{
         AcquisitionJobStatus, AcquisitionMode, BlobVerificationStatus, BranchName, CommandText,
-        CommitHash, ConsumerGroup, ConsumerName, ContentKey, DataTier, DerivedNodeModel,
+        CommitHash, ConsumerGroup, ConsumerName, ContentKey, DataTier, AutomatonModel,
         EntityTypeName, EventSource, EventType, GlobPattern, HealthStatus, HostName, InstanceId,
-        InvalidationAction, IpAddress, JobId, MaterialStatus, NatsSubject, NodeId, NodeName,
-        NodeState, NodeType, OperationRunStatus, OperationStatus, ProcessingMode, RecordedPath,
+        InvalidationAction, IpAddress, JobId, MaterialStatus, NatsSubject, ModuleName,
+        ModuleState, ModuleKind, OperationRunStatus, OperationStatus, ProcessingMode, RecordedPath,
         RegexPattern, RelationType, RemoteName, SanitizedPath, SchemaName, SchemaVersion,
         ServiceName, ShellName, SourceIdentifier, SourceMaterialTimingInfoType,
         SyntheticTemporalPolicy, TemporalClock, TemporalPrecision, TemporalSourceType, TriggerKind,
@@ -2700,7 +2695,7 @@ mod sqlx_impls {
 
     // Register string types without validation
     impl_sqlx_for_validated_string_type!(HostName);
-    impl_sqlx_for_string_type!(NodeName);
+    impl_sqlx_for_string_type!(ModuleName);
     impl_sqlx_for_string_type!(SchemaVersion);
     impl_sqlx_for_string_type!(SchemaName);
     impl_sqlx_for_string_type!(CommandText);
@@ -2715,7 +2710,6 @@ mod sqlx_impls {
     impl_sqlx_for_string_type!(ConsumerName);
     impl_sqlx_for_string_type!(ServiceName);
     impl_sqlx_for_string_type!(JobId);
-    impl_sqlx_for_string_type!(NodeId);
     impl_sqlx_for_string_type!(InstanceId);
     impl_sqlx_for_string_type!(RelationType);
     impl_sqlx_for_string_type!(EntityTypeName);
@@ -2732,8 +2726,8 @@ mod sqlx_impls {
 
     // Register enum types (use Display for encoding, FromStr for decoding)
     impl_sqlx_for_enum_type!(OperationStatus);
-    impl_sqlx_for_enum_type!(NodeState);
-    impl_sqlx_for_enum_type!(NodeType);
+    impl_sqlx_for_enum_type!(ModuleState);
+    impl_sqlx_for_enum_type!(ModuleKind);
     impl_sqlx_for_enum_type!(DataTier);
     impl_sqlx_for_enum_type!(HealthStatus);
     impl_sqlx_for_enum_type!(BlobVerificationStatus);
@@ -2743,7 +2737,7 @@ mod sqlx_impls {
     impl_sqlx_for_enum_type!(TemporalPrecision);
     impl_sqlx_for_enum_type!(TemporalClock);
     impl_sqlx_for_enum_type!(SyntheticTemporalPolicy);
-    impl_sqlx_for_enum_type!(DerivedNodeModel);
+    impl_sqlx_for_enum_type!(AutomatonModel);
     impl_sqlx_for_enum_type!(ProcessingMode);
     impl_sqlx_for_enum_type!(TriggerKind);
     impl_sqlx_for_enum_type!(InvalidationAction);
@@ -2855,7 +2849,7 @@ pub struct EntityRelation;
 /// Service metadata for registration and discovery.
 ///
 /// This is the wire/registration metadata carried by the gateway and
-/// discovery layer. It is distinct from `sinexd::node_sdk::ServiceInfo`,
+/// discovery layer. It is distinct from `sinexd::runtime::ServiceInfo`,
 /// which describes the *runtime* service (process-local, carries
 /// `runner_pack`). Named `ServiceRegistrationInfo` to avoid the
 /// collision — see issue #746 (A6).

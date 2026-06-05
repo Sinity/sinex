@@ -398,7 +398,7 @@ pub fn render_commands_help(commands: &[CommandInfo]) -> String {
         }
     }
 
-    out
+    final_newline(out)
 }
 
 #[must_use]
@@ -453,7 +453,7 @@ pub fn render_command_guide(commands: &[CommandInfo]) -> String {
         out.push('\n');
     }
 
-    out
+    final_newline(out)
 }
 
 #[must_use]
@@ -500,7 +500,17 @@ pub fn render_command_reference(commands: &[CommandInfo]) -> String {
         render_command_section(&mut out, command, 2, &command.name);
     }
 
-    out
+    final_newline(out)
+}
+
+fn final_newline(mut output: String) -> String {
+    while output.ends_with("\n\n") {
+        output.pop();
+    }
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output
 }
 
 fn render_command_section(

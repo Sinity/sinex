@@ -5,8 +5,8 @@
 //! conditions are met (status transitions, periodic intervals). During replay,
 //! invalidating a component scope recomputes all health reports for that component.
 
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, ScopeReconcilerNodeAdapter};
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconcilerAdapter};
+use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, ScopeReconciler};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{HealthStatus, SyntheticTemporalPolicy};
 use sinex_primitives::events::{
@@ -237,11 +237,11 @@ impl ScopeReconciler for HealthAggregator {
         scope_key: &str,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         let now = context.require_ts_orig()?;
         let component = parse_component_name(&input)?.to_string();
         if component != scope_key {
-            return Err(NodeLogicError::InputParsing(format!(
+            return Err(AutomatonLogicError::InputParsing(format!(
                 "health status scope key '{scope_key}' does not match payload component '{component}'"
             )));
         }
@@ -394,12 +394,12 @@ impl HealthAggregator {
         events: &[HealthEvent],
         component: &str,
         report_kind: &str,
-    ) -> Result<Vec<Uuid>, NodeLogicError> {
+    ) -> Result<Vec<Uuid>, AutomatonLogicError> {
         events
             .iter()
             .map(|event| {
                 Uuid::parse_str(&event.event_id).map_err(|error| {
-                    NodeLogicError::Processing(format!(
+                    AutomatonLogicError::Processing(format!(
                         "health aggregator {report_kind} for component '{component}' contains invalid event_id '{}': {error}",
                         event.event_id
                     ))
@@ -519,20 +519,20 @@ impl HealthAggregator {
     }
 }
 
-/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type HealthAggregatorNode = ScopeReconcilerNodeAdapter<HealthAggregator>;
+/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+pub type HealthAggregatorNode = ScopeReconcilerAdapter<HealthAggregator>;
 
-fn parse_component_name(input: &JsonValue) -> Result<&str, NodeLogicError> {
+fn parse_component_name(input: &JsonValue) -> Result<&str, AutomatonLogicError> {
     let component = input.get("component").ok_or_else(|| {
-        NodeLogicError::InputParsing(
+        AutomatonLogicError::InputParsing(
             "health status payload is missing required field 'component'".to_string(),
         )
     })?;
     let component = component.as_str().ok_or_else(|| {
-        NodeLogicError::InputParsing("health status field 'component' must be a string".to_string())
+        AutomatonLogicError::InputParsing("health status field 'component' must be a string".to_string())
     })?;
     if component.trim().is_empty() {
-        return Err(NodeLogicError::InputParsing(
+        return Err(AutomatonLogicError::InputParsing(
             "health status field 'component' must not be empty".to_string(),
         ));
     }
@@ -542,17 +542,17 @@ fn parse_component_name(input: &JsonValue) -> Result<&str, NodeLogicError> {
 fn parse_health_status_field(
     input: &JsonValue,
     field: &str,
-) -> Result<HealthStatus, NodeLogicError> {
+) -> Result<HealthStatus, AutomatonLogicError> {
     let value = input.get(field).ok_or_else(|| {
-        NodeLogicError::InputParsing(format!(
+        AutomatonLogicError::InputParsing(format!(
             "health status payload is missing required field '{field}'"
         ))
     })?;
     let status = value.as_str().ok_or_else(|| {
-        NodeLogicError::InputParsing(format!("health status field '{field}' must be a string"))
+        AutomatonLogicError::InputParsing(format!("health status field '{field}' must be a string"))
     })?;
     HealthStatus::from_str(status).map_err(|_| {
-        NodeLogicError::InputParsing(format!(
+        AutomatonLogicError::InputParsing(format!(
             "health status field '{field}' has invalid value '{status}'"
         ))
     })
@@ -594,7 +594,7 @@ register_source_runtime_binding! {
         "health",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("health.aggregated_report")
     .privacy_context("inherits_from_parents")
@@ -602,11 +602,11 @@ register_source_runtime_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_id("health")
-    .runner_pack("process")
+    .runner_pack("sinexd")
     .checkpoint_family(SuCheckpointFamily::AppendStream)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
+    .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
     .build()
 }

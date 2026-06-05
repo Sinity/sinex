@@ -1,7 +1,7 @@
 //! Tests replay idempotency guard: rejects duplicate operations for the same node.
 //!
 //! Verifies the guard added in `create_operation()` that prevents concurrent
-//! replay operations targeting the same `node_id`.
+//! replay operations targeting the same `module_name`.
 
 use serde_json::json;
 use sinex_primitives::rpc::methods;
@@ -13,13 +13,13 @@ use common::LiveGateway;
 
 const RPC_TOKEN: &str = "idempotency-test-token:admin";
 
-fn scope_for_node(node_id: &str) -> serde_json::Value {
+fn scope_for_node(module_name: &str) -> serde_json::Value {
     let ts = Timestamp::now();
     let scope_start = ts - time::Duration::seconds(10);
     let scope_end = ts + time::Duration::seconds(10);
     json!({
         "scope": {
-            "node_id": node_id,
+            "module_name": module_name,
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
         },
         "actor": "test:idempotency-tester"
@@ -128,7 +128,7 @@ async fn concurrent_duplicate_plan_for_same_node_rejected(ctx: TestContext) -> T
     Ok(())
 }
 
-/// Different nodes can have concurrent operations.
+/// Different modules can have concurrent operations.
 #[sinex_test(timeout = 60)]
 async fn different_nodes_allowed_concurrent(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;

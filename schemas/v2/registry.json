@@ -13,7 +13,7 @@
       "event_type": "batch.stats",
       "version": "2.2.0",
       "path": "sinexd.event_engine/batch.stats.json",
-      "content_hash": "3d349735570ed70cd0c1c4cd34cc125d889be51adc345f165a42863d43a9fc12"
+      "content_hash": "92e05b41a933874988f87df452d510e72aaa36a19eda9e1866b5cf7a2d12fccc"
     }
   ]
 }

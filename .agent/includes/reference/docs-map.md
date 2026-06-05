@@ -23,7 +23,7 @@
 | Data lifecycle | `crate/sinex-db/docs/data_lifecycle.md` (live -> archive -> tombstone) |
 | Document layer | `crate/sinex-schema/docs/document_layer.md` |
 | PostgreSQL backup/restore | `crate/sinex-db/docs/backup_restore.md` |
-| Inline node SDK / source contracts | `crate/sinexd/docs/sources/`, `crate/sinexd/src/node_sdk/` |
+| Inline runtime / source contracts | `crate/sinexd/docs/sources/`, `crate/sinexd/src/runtime/` |
 | Source-material evidence lanes | `crate/sinexd/docs/sources/evidence_lanes.md`, `crate/sinexd/docs/sources/sqlite_evidence_lane.md` |
 | Integration authority | `crate/sinexd/docs/sources/integration_authority.md` |
 | Automata / derived-node guidance | `crate/sinexd/docs/automata/` |

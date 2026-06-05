@@ -4,7 +4,7 @@
   name = "sinex-rollback-scenarios";
   meta.maintainers = with lib.maintainers; [ sinity ];
 
-  nodes = {
+  runtime = {
     sinex = { config, pkgs, ... }:
       let
         stateDir = config.services.sinex.directories.state;

@@ -87,9 +87,9 @@ async fn test_fs_binding_uses_content_drop_adapter() -> TestResult<()> {
 #[sinex_test]
 async fn test_fs_source_config_deserializes_as_file_content_drop() -> TestResult<()> {
     use camino::Utf8PathBuf;
-    use sinexd::node_sdk::parser::{AdapterNodeConfig, FileContentDropConfig};
+    use sinexd::runtime::parser::{AdapterSourceConfig, FileContentDropConfig};
 
-    let node_config: AdapterNodeConfig = serde_json::from_value(serde_json::json!({
+    let runtime_config: AdapterSourceConfig = serde_json::from_value(serde_json::json!({
         "watch_paths": ["/realm/project/sinex", "/realm/data/captures"],
         "max_depth": 10,
         "follow_symlinks": false,
@@ -98,7 +98,7 @@ async fn test_fs_source_config_deserializes_as_file_content_drop() -> TestResult
         "ignored_directory_names": [".git", ".direnv", "target"],
     }))?;
 
-    let adapter_config: FileContentDropConfig = serde_json::from_value(node_config.adapter)?;
+    let adapter_config: FileContentDropConfig = serde_json::from_value(runtime_config.adapter)?;
 
     assert_eq!(
         adapter_config.file_drop.watch_paths,

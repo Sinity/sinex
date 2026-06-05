@@ -144,7 +144,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
-    // ── Node ─────────────────────────────────────────────────────────────────
+    // ── RuntimeActor ─────────────────────────────────────────────────────────────────
     m.insert("node list", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "node status",
@@ -624,7 +624,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("compact dashboard; json/yaml emit full snapshot"),
     );
-    m.insert("nodes", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("modules", FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── TUI ──────────────────────────────────────────────────────────────────
     m.insert(
@@ -759,7 +759,7 @@ fn family_for_path(path: &str) -> CommandFamily {
     match root {
         "gateway" | "core" => CommandFamily::Gateway,
         "query" | "trace" | "recent" | "errors" | "watch" | "context" | "explain" | "verify"
-        | "now" | "nodes" | "status" => CommandFamily::Query,
+        | "now" | "modules" | "status" => CommandFamily::Query,
         "node" | "automata" | "ingestors" | "replay" | "dlq" | "ops" | "audit" | "lifecycle"
         | "git-ops" | "privacy" | "blob" => CommandFamily::Operate,
         "sources" => CommandFamily::Sources,
@@ -913,7 +913,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "gateway ping" => &[methods::SYSTEM_PING],
         "gateway version" => &[methods::SYSTEM_VERSION],
         "core health" => &[methods::SYSTEM_HEALTH],
-        "node list" | "nodes" => &[methods::COORDINATION_LIST_INSTANCES],
+        "node list" | "modules" => &[methods::COORDINATION_LIST_INSTANCES],
         "status" => &[
             methods::SYSTEM_VERSION,
             methods::SYSTEM_HEALTH,
@@ -933,9 +933,9 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         ],
         "node status" => &[methods::COORDINATION_INSTANCE_HEALTH],
         "ingestors" => &[methods::INGESTORS_STATUS],
-        "node drain" => &[methods::NODES_DRAIN],
-        "node resume" => &[methods::NODES_RESUME],
-        "node set-horizon" => &[methods::NODES_SET_HORIZON],
+        "node drain" => &[methods::RUNTIME_DRAIN],
+        "node resume" => &[methods::RUNTIME_RESUME],
+        "node set-horizon" => &[methods::RUNTIME_SET_HORIZON],
         "automata" => &[methods::AUTOMATA_STATUS],
         "replay plan" | "replay run" => &[methods::REPLAY_CREATE_OPERATION],
         "replay preview" => &[methods::REPLAY_PREVIEW_OPERATION],
@@ -1048,7 +1048,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "telemetry file-activity" => &[methods::TELEMETRY_FILE_ACTIVITY],
         "telemetry recent-activity" => &[methods::TELEMETRY_RECENT_ACTIVITY],
         "telemetry system-state" => &[methods::TELEMETRY_SYSTEM_STATE],
-        "telemetry node-stats" => &[methods::TELEMETRY_NODE_STATS],
+        "telemetry node-stats" => &[methods::TELEMETRY_RUNTIME_STATS],
         "telemetry stream-stats" => &[methods::TELEMETRY_STREAM_STATS],
         "telemetry gateway-stats" => &[methods::TELEMETRY_GATEWAY_STATS],
         "telemetry assembly-stats" => &[methods::TELEMETRY_ASSEMBLY_STATS],

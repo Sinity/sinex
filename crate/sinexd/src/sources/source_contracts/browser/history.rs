@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::node_sdk::parser::{
+use crate::runtime::parser::{
     AppendOnlyFileAdapter, ChainedAdapter, MaterialParser, ParserError, ParserResult,
 };
 use sinex_primitives::proof::{
@@ -591,7 +591,7 @@ fn build_intent(
 
 /// Chained adapter: primary = `SQLite` history DB rows, secondary = dump file lines.
 pub type BrowserHistoryAdapter =
-    ChainedAdapter<crate::node_sdk::parser::SqliteRowAdapter, AppendOnlyFileAdapter>;
+    ChainedAdapter<crate::runtime::parser::SqliteRowAdapter, AppendOnlyFileAdapter>;
 
 crate::register_adapter_ingestor!(
     source_id: "browser.history",

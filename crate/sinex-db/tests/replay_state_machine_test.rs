@@ -46,7 +46,7 @@ async fn replay_preview_nulls_cascade_impact_when_metadata_queries_fail(
     let machine = ReplayStateMachine::new(ctx.pool().clone());
     let preview = machine
         .generate_preview_summary(&ReplayScope {
-            node_id: root.source.to_string(),
+            source_name: root.source.to_string(),
             time_window: Some((
                 Timestamp::now() - time::Duration::minutes(5),
                 Timestamp::now() + time::Duration::minutes(5),
@@ -103,7 +103,7 @@ async fn replay_preview_maps_watcher_node_ids_to_emitted_event_sources(
     let machine = ReplayStateMachine::new(ctx.pool().clone());
     let preview = machine
         .generate_preview_summary(&ReplayScope {
-            node_id: "filesystem-watcher".to_string(),
+            source_name: "filesystem-watcher".to_string(),
             time_window: Some((
                 root_id.timestamp() - time::Duration::minutes(1),
                 root_id.timestamp() + time::Duration::minutes(1),

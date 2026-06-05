@@ -5,8 +5,8 @@
 //! Hyprland workspace-switch instructions and `wm.hyprland/workspace.switched`
 //! observations.
 
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, ScopeReconcilerNodeAdapter};
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconcilerAdapter};
+use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, ScopeReconciler};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;
@@ -81,9 +81,9 @@ impl ScopeReconciler for InstructionExpectationReconciler {
         scope_key: &str,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         if scope_key != HYPRLAND_WORKSPACE_SCOPE {
-            return Err(NodeLogicError::InputParsing(format!(
+            return Err(AutomatonLogicError::InputParsing(format!(
                 "instruction expectation scope key '{scope_key}' is not supported"
             )));
         }
@@ -115,10 +115,10 @@ fn record_pending_instruction(
     state: &mut InstructionExpectationState,
     input: JsonValue,
     context: &AutomatonContext,
-) -> Result<Vec<DerivedOutput<InstructionExpectationStatusPayload>>, NodeLogicError> {
+) -> Result<Vec<DerivedOutput<InstructionExpectationStatusPayload>>, AutomatonLogicError> {
     let instruction: DesktopWorkspaceSwitchInstructionPayload = serde_json::from_value(input)
         .map_err(|error| {
-            NodeLogicError::InputParsing(format!(
+            AutomatonLogicError::InputParsing(format!(
                 "failed to parse Hyprland workspace instruction: {error}"
             ))
         })?;
@@ -139,7 +139,7 @@ fn reconcile_workspace_observation(
     state: &mut InstructionExpectationState,
     input: JsonValue,
     context: &AutomatonContext,
-) -> Result<Vec<DerivedOutput<InstructionExpectationStatusPayload>>, NodeLogicError> {
+) -> Result<Vec<DerivedOutput<InstructionExpectationStatusPayload>>, AutomatonLogicError> {
     if state.pending_hyprland_workspace.is_empty() {
         return Ok(Vec::new());
     }
@@ -147,7 +147,7 @@ fn reconcile_workspace_observation(
     let observed_at = context.require_ts_orig()?;
     let observation: HyprlandWorkspaceSwitchedPayload =
         serde_json::from_value(input).map_err(|error| {
-            NodeLogicError::InputParsing(format!(
+            AutomatonLogicError::InputParsing(format!(
                 "failed to parse Hyprland workspace observation: {error}"
             ))
         })?;
@@ -211,7 +211,7 @@ fn evaluate_pending_workspace_instruction(
 }
 
 pub type InstructionExpectationReconcilerNode =
-    ScopeReconcilerNodeAdapter<InstructionExpectationReconciler>;
+    ScopeReconcilerAdapter<InstructionExpectationReconciler>;
 
 register_source_contract! {
     SourceContract {
@@ -236,7 +236,7 @@ register_source_runtime_binding! {
         "instruction-expectation-reconciler",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("expectation.status")
     .privacy_context("metadata")
@@ -244,11 +244,11 @@ register_source_runtime_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_id("instruction-expectation-reconciler")
-    .runner_pack("process")
+    .runner_pack("sinexd")
     .checkpoint_family(SuCheckpointFamily::AppendStream)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
+    .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
     .build()
 }

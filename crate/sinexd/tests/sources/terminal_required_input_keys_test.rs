@@ -1,6 +1,6 @@
 //! Required input-key declarations for imperative terminal parsers.
 
-use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
+use sinexd::runtime::parser::{MaterialParser, SourceRecordFingerprint};
 use sinex_primitives::{
     parser::SourceId,
     rpc::sources::{CaveatSeverity, caveat_codes},

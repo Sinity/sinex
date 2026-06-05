@@ -149,7 +149,7 @@ are derived.
 4. When a parser needs shared mechanics that are missing, add the input-shape
    adapter to the shared substrate rather than copying watcher/checkpoint logic.
 5. Let #1054 settle whether the first implementation lands inside
-   `sinexd::sources`, a dedicated lightweight capture process, or the node SDK
+   `sinexd::sources`, a dedicated lightweight capture process, or the runtime
    runtime.
 
 ## Immediate Issue Impact

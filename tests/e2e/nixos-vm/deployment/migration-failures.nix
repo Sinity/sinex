@@ -4,7 +4,7 @@
   name = "sinex-migration-failures";
   meta.maintainers = with lib.maintainers; [ sinity ];
 
-  nodes = {
+  runtime = {
     sinex = { config, pkgs, ... }: {
       imports = [ ../common/production-load.nix ];
       

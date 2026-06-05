@@ -174,14 +174,14 @@ mod binary_path {
     const WEECHAT_OUT_OF_SCOPE_MESSAGE: &str = "desktop scope should not suppress terminal";
     const BASH_SUPPRESSED_COMMAND: &str = "echo private mode should suppress bash history";
 
-    fn weechat_node_config(log_path: &std::path::Path) -> serde_json::Value {
+    fn weechat_runtime_config(log_path: &std::path::Path) -> serde_json::Value {
         serde_json::json!({
             "path": log_path,
             "skip_empty": true,
         })
     }
 
-    fn append_only_node_config(path: &std::path::Path) -> serde_json::Value {
+    fn append_only_runtime_config(path: &std::path::Path) -> serde_json::Value {
         serde_json::json!({
             "path": path,
             "skip_empty": true,
@@ -276,7 +276,7 @@ mod binary_path {
         ctx: &Sandbox,
         tempdir: &tempfile::TempDir,
         case: &str,
-        node_config: serde_json::Value,
+        runtime_config: serde_json::Value,
     ) -> TestResult<String> {
         let worker_dir = tempdir.path().join(format!("worker-{case}"));
         tokio::fs::create_dir_all(&worker_dir).await?;
@@ -286,7 +286,7 @@ mod binary_path {
         config.database_url = ctx.database_url().to_string();
         config.namespace = Some(ctx.pipeline_namespace().prefix().to_string());
         config.work_dir = Some(worker_dir);
-        config.node_config = Some(node_config.to_string());
+        config.runtime_config = Some(runtime_config.to_string());
 
         let output = run_test_source_scan(config, &[], Some(ctx)).await?;
         Ok(output.stdout)
@@ -296,7 +296,7 @@ mod binary_path {
         ctx: &Sandbox,
         tempdir: &tempfile::TempDir,
         case: &str,
-        node_config: serde_json::Value,
+        runtime_config: serde_json::Value,
     ) -> TestResult<String> {
         let worker_dir = tempdir.path().join(format!("worker-{case}"));
         tokio::fs::create_dir_all(&worker_dir).await?;
@@ -306,7 +306,7 @@ mod binary_path {
         config.database_url = ctx.database_url().to_string();
         config.namespace = Some(ctx.pipeline_namespace().prefix().to_string());
         config.work_dir = Some(worker_dir);
-        config.node_config = Some(node_config.to_string());
+        config.runtime_config = Some(runtime_config.to_string());
 
         let output = run_test_source_scan(config, &[], Some(ctx)).await?;
         Ok(output.stdout)
@@ -335,7 +335,7 @@ mod binary_path {
                 Timestamp::UNIX_EPOCH,
             ),
         )?;
-        let mut private_config = weechat_node_config(&private_log_path);
+        let mut private_config = weechat_runtime_config(&private_log_path);
         private_config["private_mode_state_dir"] =
             serde_json::Value::String(private_state_dir.display().to_string());
 
@@ -349,7 +349,7 @@ mod binary_path {
             .ok_or_else(|| color_eyre::eyre::eyre!("private-mode state path must have parent"))?;
         tokio::fs::create_dir_all(private_mode_parent).await?;
         tokio::fs::write(&private_mode_path, b"{not-json").await?;
-        let mut malformed_config = weechat_node_config(&malformed_log_path);
+        let mut malformed_config = weechat_runtime_config(&malformed_log_path);
         malformed_config["private_mode_state_dir"] =
             serde_json::Value::String(malformed_state_dir.display().to_string());
 
@@ -364,7 +364,7 @@ mod binary_path {
                 Timestamp::UNIX_EPOCH,
             ),
         )?;
-        let mut bash_config = append_only_node_config(&history_path);
+        let mut bash_config = append_only_runtime_config(&history_path);
         bash_config["private_mode_state_dir"] =
             serde_json::Value::String(bash_state_dir.display().to_string());
 
@@ -379,7 +379,7 @@ mod binary_path {
                 Timestamp::UNIX_EPOCH,
             ),
         )?;
-        let mut out_of_scope_config = weechat_node_config(&out_of_scope_log_path);
+        let mut out_of_scope_config = weechat_runtime_config(&out_of_scope_log_path);
         out_of_scope_config["private_mode_state_dir"] =
             serde_json::Value::String(out_of_scope_state_dir.display().to_string());
 
@@ -389,7 +389,7 @@ mod binary_path {
                     &ctx,
                     &tempdir,
                     "baseline",
-                    weechat_node_config(&baseline_log_path),
+                    weechat_runtime_config(&baseline_log_path),
                 ),
                 run_weechat_scan(&ctx, &tempdir, "weechat-private", private_config),
                 run_weechat_scan(&ctx, &tempdir, "weechat-malformed", malformed_config),

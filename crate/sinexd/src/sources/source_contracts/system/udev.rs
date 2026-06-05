@@ -1,6 +1,6 @@
 //! `system.udev` — stream udev device events via `FileDropAdapter` over `/sys`.
 
-use crate::node_sdk::parser::{
+use crate::runtime::parser::{
     FileDropAdapter, FileDropEventKind, FileDropRecordMetadata, MaterialParser, ParserError,
 };
 use crate::register_parser;

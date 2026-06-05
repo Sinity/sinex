@@ -27,9 +27,9 @@ NATS JetStream is the central event bus (data plane).
 
 On NixOS, transport wiring should prefer typed module options over manual env assembly:
 
-- `services.sinex.nodes.nats.servers`
-- `services.sinex.nodes.nats.tls.*`
-- `services.sinex.nodes.nats.auth.*`
+- `services.sinex.runtime.nats.servers`
+- `services.sinex.runtime.nats.tls.*`
+- `services.sinex.runtime.nats.auth.*`
 
 ## Authentication Modes
 
@@ -56,5 +56,5 @@ grant each component family the narrowest NATS permissions that let it do its jo
 ## See Also
 
 - System-wide security model: `README.md#security`
-- Node transport patterns: `crate/sinexd/docs/sources/` and
+- RuntimeActor transport patterns: `crate/sinexd/docs/sources/` and
   `crate/sinex-primitives/docs/transport.md`

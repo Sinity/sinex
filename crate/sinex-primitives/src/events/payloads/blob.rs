@@ -85,7 +85,7 @@ register_source_contract! {
 }
 
 // Infra source: descriptor-only by design — events emitted from inside
-// other binaries (event_engine, gateway, node SDK). The binding records the
+// other binaries (event_engine, gateway, runtime). The binding records the
 // embedded shape; `proposed: true` flags it as not a host-level adapter.
 register_source_runtime_binding! {
     SourceRuntimeBinding::builder(

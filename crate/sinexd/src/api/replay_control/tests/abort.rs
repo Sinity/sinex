@@ -564,7 +564,7 @@ async fn replay_execution_returns_cancelled_operation_when_cancelled_midflight(
     );
 
     let mut scope = sample_scope();
-    scope.node_id = "cancel-test".to_string();
+    scope.source_name = "cancel-test".to_string();
     scope.time_window = Some((
         target_ts - time::Duration::milliseconds(1),
         target_ts + time::Duration::milliseconds(1),

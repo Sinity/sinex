@@ -246,7 +246,7 @@ in
             description = "Interactive user whose environment is captured (optional).";
           };
 
-          nodes = mkOption {
+          runtime = mkOption {
             type = str;
             default = "sinex";
             description = "System account used to run Sinex services.";
@@ -946,13 +946,13 @@ in
       description = "Core service configuration.";
     };
 
-    nodes = mkOption {
+    runtime = mkOption {
       type = submodule {
         options = {
           enable = mkOption {
             type = bool;
             default = true;
-            description = "Enable node services.";
+            description = "Enable runtime services.";
           };
 
           nats = mkOption {
@@ -962,7 +962,7 @@ in
                   type = strList;
                   default = [ "nats://127.0.0.1:4222" ];
                   description = ''
-                    List of NATS server URLs shared by core services and nodes.
+                    List of NATS server URLs shared by core services and runtime modules.
                     Rendered as <literal>SINEX_NATS_URL</literal> for managed services.
                   '';
                 };
@@ -1021,7 +1021,7 @@ in
                     };
                   };
                   default = { };
-                  description = "Typed TLS configuration for the shared NATS client connection; exported automatically to core services and nodes.";
+                  description = "Typed TLS configuration for the shared NATS client connection; exported automatically to core services and runtime modules.";
                 };
                 auth = mkOption {
                   type = submodule {
@@ -1066,13 +1066,13 @@ in
                   default = { };
                   description = ''
                     Typed shared NATS authentication configuration exported automatically to
-                    core services and nodes. Configure at most one auth mode.
+                    core services and runtime modules. Configure at most one auth mode.
                   '';
                 };
               };
             };
             default = { };
-            description = "Shared NATS client configuration used by core services and nodes.";
+            description = "Shared NATS client configuration used by core services and runtime modules.";
           };
 
           defaults = mkOption {
@@ -1081,18 +1081,18 @@ in
                 instances = mkOption {
                   type = positive;
                   default = 1;
-                  description = "Default number of instances per node.";
+                  description = "Default number of instances per runtime.";
                 };
                 logLevel = mkOption {
                   type = str;
                   default = cfg.logLevel;
                   defaultText = literalExpression "config.services.sinex.logLevel";
-                  description = "Default log level for nodes.";
+                  description = "Default log level for runtime modules.";
                 };
                 batch = mkOption {
                   type = batchModule { defaultSize = 100; defaultTimeout = 2; };
                   default = { };
-                  description = "Default batching configuration for nodes.";
+                  description = "Default batching configuration for runtime modules.";
                 };
                 resources = mkOption {
                   type = resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; };
@@ -1102,23 +1102,23 @@ in
                 env = mkOption {
                   type = envModule;
                   default = { };
-                  description = "Environment variables applied to every node.";
+                  description = "Environment variables applied to every runtime module.";
                 };
               };
             };
             default = { };
-            description = "Node defaults.";
+            description = "RuntimeActor defaults.";
           };
 
           filesystem = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable filesystem node. Watches large directory trees; needs more memory than other nodes."; };
+                enable = mkOption { type = bool; default = true; description = "Enable filesystem source. Watches large directory trees; needs more memory than other runtime modules."; };
                 watchPaths = mkOption {
                   type = strList;
                   default = [ ];
                   description = ''
-                    Absolute paths for the filesystem node to watch.
+                    Absolute paths for the filesystem source to watch.
                     When empty and <option>services.sinex.users.target</option> is set,
                     defaults to the target user's home directory.
                   '';
@@ -1127,8 +1127,8 @@ in
                   type = positive;
                   default = 524288;
                   description = ''
-                    Filesystem watch-budget threshold passed to the node config.
-                    When the recursive tree exceeds this value, the node now tries a
+                    Filesystem watch-budget threshold passed to the runtime config.
+                    When the recursive tree exceeds this value, the runtime now tries a
                     filtered native watch plan before failing honestly instead of
                     switching to recursive poll mode.
                   '';
@@ -1196,20 +1196,20 @@ in
                 resources = mkOption {
                   type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; });
                   default = { };
-                  description = "Filesystem node resource limits. Defaults to an 8G soft MemoryHigh watermark; hard caps remain opt-in.";
+                  description = "Filesystem source runtime resource limits. Defaults to an 8G soft MemoryHigh watermark; hard caps remain opt-in.";
                 };
                 env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
                 extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
               };
             };
             default = { };
-            description = "Filesystem node.";
+            description = "Filesystem source runtime.";
           };
 
           terminal = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable terminal node."; };
+                enable = mkOption { type = bool; default = true; description = "Enable terminal source runtime."; };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
                 batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
                 resources = mkOption { type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
@@ -1217,8 +1217,8 @@ in
                   type = listOf terminalHistorySourceModule;
                   default = [ ];
                   description = ''
-                    Structured history sources passed to the terminal node through
-                    <literal>--node-config</literal>. When empty, the node falls back to its
+                    Structured history sources passed to the terminal source runtime through
+                    <literal>--runtime-config</literal>. When empty, the runtime falls back to its
                     built-in defaults (the service user's home directory), which is usually not
                     what workstation deployments want.
                   '';
@@ -1237,20 +1237,20 @@ in
                     };
                   };
                   default = { };
-                  description = "Terminal node host-access configuration.";
+                  description = "Terminal source runtime host-access configuration.";
                 };
                 env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
                 extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
               };
             };
             default = { };
-            description = "Terminal node.";
+            description = "Terminal source runtime.";
           };
 
           browser = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable browser history node."; };
+                enable = mkOption { type = bool; default = true; description = "Enable browser history source runtime."; };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
                 batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
                 resources = mkOption {
@@ -1263,15 +1263,15 @@ in
                   default = [ ];
                   description = ''
                     Absolute paths to browser export roots (`json`, `jsonl`, `ndjson`, `csv`)
-                    scanned by the browser history node.
+                    scanned by the browser history source runtime.
                   '';
                 };
                 sqliteSources = mkOption {
                   type = listOf browserSqliteSourceModule;
                   default = [ ];
                   description = ''
-                    Typed browser SQLite sources passed to the browser history node through
-                    <literal>--node-config</literal>.
+                    Typed browser SQLite sources passed to the browser history source runtime through
+                    <literal>--runtime-config</literal>.
                   '';
                 };
                 pollIntervalSec = mkOption {
@@ -1293,20 +1293,20 @@ in
                     };
                   };
                   default = { };
-                  description = "Browser node host-access configuration.";
+                  description = "Browser source runtime host-access configuration.";
                 };
                 env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
                 extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
               };
             };
             default = { };
-            description = "Browser history node.";
+            description = "Browser history source runtime.";
           };
 
           desktop = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable desktop node."; };
+                enable = mkOption { type = bool; default = true; description = "Enable desktop source runtime."; };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
                 batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
                 resources = mkOption { type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
@@ -1317,7 +1317,7 @@ in
                         type = nullOr str;
                         default = null;
                         description = ''
-                          Runtime directory presented to the desktop node. When set, the module
+                          Runtime directory presented to the desktop source runtime. When set, the module
                           exports both <literal>SINEX_HYPRLAND_RUNTIME_DIR</literal> and
                           <literal>XDG_RUNTIME_DIR</literal>.
                         '';
@@ -1345,7 +1345,7 @@ in
                     };
                   };
                   default = { };
-                  description = "Desktop node session/runtime wiring.";
+                  description = "Desktop source runtime session wiring.";
                 };
                 access = mkOption {
                   type = submodule {
@@ -1361,7 +1361,7 @@ in
                     };
                   };
                   default = { };
-                  description = "Desktop node host-access configuration.";
+                  description = "Desktop source runtime host-access configuration.";
                 };
                 history = mkOption {
                   type = submodule {
@@ -1397,13 +1397,13 @@ in
               };
             };
             default = { };
-            description = "Desktop node.";
+            description = "Desktop source runtime.";
           };
 
           system = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable system node."; };
+                enable = mkOption { type = bool; default = true; description = "Enable system source runtime."; };
                 instances = mkOption { type = nullOr positive; default = 1; description = "Instance override (default 1)."; };
                 batch = mkOption {
                   type = nullOr (batchModule { defaultSize = 200; defaultTimeout = 10; });
@@ -1416,7 +1416,7 @@ in
               };
             };
             default = { };
-            description = "System node.";
+            description = "System source runtime.";
           };
 
           document = mkOption {
@@ -1426,7 +1426,7 @@ in
                   type = bool;
                   default = true;
                   description = ''
-                    Enable managed document snapshot ingestion. This node runs as a
+                    Enable managed document snapshot ingestion. This source runtime runs as a
                     scheduled scan service rather than a long-running daemon.
                   '';
                 };
@@ -1685,7 +1685,7 @@ in
                       # sinex-relation-extractor at 4.5G RSS leaking ~70MB/min
                       # past the (memoryHigh-only) 4G threshold. Root cause
                       # was the heartbeat collision in #1284; the absence of
-                      # a hard cap turned a per-node leak into a host risk.
+                      # a hard cap turned a per-runtime-module leak into a host risk.
                       resources = { memoryHigh = "2G"; memoryMax = "3G"; };
                     };
                     standard = {
@@ -1708,7 +1708,7 @@ in
           coordination = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = false; description = "Enable node coordination."; };
+                enable = mkOption { type = bool; default = false; description = "Enable runtime coordination."; };
                 heartbeatSec = mkOption { type = positive; default = 5; description = "Heartbeat interval in seconds."; };
                 leadershipTimeoutSec = mkOption { type = positive; default = 30; description = "Leadership timeout in seconds."; };
                 handoffTimeoutSec = mkOption { type = positive; default = 10; description = "Handoff timeout in seconds."; };
@@ -1721,7 +1721,7 @@ in
         };
       };
       default = { };
-      description = "Node ecosystem configuration.";
+      description = "RuntimeActor ecosystem configuration.";
     };
 
     observability = mkOption {
@@ -1928,7 +1928,7 @@ in
       description = "Lifecycle management configuration.";
     };
 
-    runtime = mkOption {
+    runtimeSystem = mkOption {
       type = submodule {
         options = {
           target = mkOption {
@@ -2090,7 +2090,7 @@ in
               Default suits hosted deployments. Workstations bound the
               policy:
 
-                services.sinex.runtime.restartPolicy = {
+                services.sinex.runtimeSystem.restartPolicy = {
                   intervalSec = 600;
                   burst = 3;
                 };
@@ -2207,11 +2207,11 @@ in
       stateRoot = cfg.stateRoot;
       runtimeDir = "${stateRoot}/run";
       spoolBase = "${stateRoot}/spool";
-      nodesSpool = "${spoolBase}/nodes";
+      runtimeSpool = "${spoolBase}/runtime modules";
       ingestSpool = cfg.core.event_engine.spoolDir;
       logDir = cfg.observability.logDir;
       blobDir = cfg.storage.blob.repositoryPath;
-      sinexUser = cfg.users.nodes;
+      sinexUser = cfg.users.runtime;
       targetUser = cfg.users.target;
       targetHome =
         if targetUser == null then null
@@ -2223,7 +2223,7 @@ in
         if targetUser == null then null
         else lib.attrByPath [ "users" "users" targetUser "uid" ] null config;
       effectiveDocumentRoots =
-        if cfg.nodes.document.allowedRoots != [ ] then cfg.nodes.document.allowedRoots
+        if cfg.runtime.document.allowedRoots != [ ] then cfg.runtime.document.allowedRoots
         else if targetHome == null then [ ]
         else [ "${targetHome}/Documents" ];
       dbUser = cfg.database.user;
@@ -2239,8 +2239,8 @@ in
         "sinex-local-db"
         "sinex-remote-db"
       ];
-      natsTlsCfg = cfg.nodes.nats.tls;
-      natsAuthCfg = cfg.nodes.nats.auth;
+      natsTlsCfg = cfg.runtime.nats.tls;
+      natsAuthCfg = cfg.runtime.nats.auth;
       effectiveNatsCaCertFile = resolveSecretPath natsTlsCfg.caCertFile [
         "sinex-nats-ca"
         "nats-ca"
@@ -2289,14 +2289,14 @@ in
         (lib.optionals (cfg.enable && cfg.core.enable) [ "sinexd.service" ])
         ++ lib.optionals cfg.enable (map (name: "${name}.service") (config.sinex._generatedUnits or [ ]))
       );
-      resolveNodeInstances = nodeInstances:
+      resolveRuntimeInstances = nodeInstances:
         if nodeInstances == null then
-          if cfg.enable then cfg.nodes.defaults.instances else 1
+          if cfg.enable then cfg.runtime.defaults.instances else 1
         else
           nodeInstances;
       mkDeploymentSurface = enabled: instances: {
         inherit enabled;
-        instances = if enabled then resolveNodeInstances instances else null;
+        instances = if enabled then resolveRuntimeInstances instances else null;
       };
       deploymentReadinessDescriptor = {
         version = 1;
@@ -2324,11 +2324,11 @@ in
           require_client_tls = cfg.core.gateway.requireClientTLS;
         };
         nats = {
-          servers = cfg.nodes.nats.servers;
+          servers = cfg.runtime.nats.servers;
         };
-        filesystem = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.filesystem.enable) cfg.nodes.filesystem.instances;
+        filesystem = mkDeploymentSurface (cfg.runtime.enable && cfg.runtime.filesystem.enable) cfg.runtime.filesystem.instances;
         terminal =
-          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.terminal.enable) cfg.nodes.terminal.instances)
+          (mkDeploymentSurface (cfg.runtime.enable && cfg.runtime.terminal.enable) cfg.runtime.terminal.instances)
           // {
             kitty_enabled = cfg.shell.kitty.enable;
             history_sources = map
@@ -2342,66 +2342,66 @@ in
                 runner_binary = "sinexd";
                 service = "sinexd.service";
               })
-              cfg.nodes.terminal.historySources;
+              cfg.runtime.terminal.historySources;
           };
         browser =
-          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.browser.enable) cfg.nodes.browser.instances)
+          (mkDeploymentSurface (cfg.runtime.enable && cfg.runtime.browser.enable) cfg.runtime.browser.instances)
           // {
-            dump_sources = cfg.nodes.browser.dumpSources;
+            dump_sources = cfg.runtime.browser.dumpSources;
             sqlite_sources = map
               (source: {
                 path = source.path;
                 browser = source.browser;
                 format = source.format;
               })
-              cfg.nodes.browser.sqliteSources;
-            polling_interval_secs = cfg.nodes.browser.pollIntervalSec;
+              cfg.runtime.browser.sqliteSources;
+            polling_interval_secs = cfg.runtime.browser.pollIntervalSec;
           };
         desktop =
-          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.desktop.enable) cfg.nodes.desktop.instances)
+          (mkDeploymentSurface (cfg.runtime.enable && cfg.runtime.desktop.enable) cfg.runtime.desktop.instances)
           // {
-            clipboard_enabled = cfg.nodes.desktop.clipboard.enable;
-            activitywatch_db_path = cfg.nodes.desktop.history.activitywatchDbPath;
-            runtime_dir = cfg.nodes.desktop.session.runtimeDir;
-            wayland_display = cfg.nodes.desktop.session.waylandDisplay;
-            hyprland_instance_signature = cfg.nodes.desktop.session.hyprlandInstanceSignature;
-            hyprland_event_socket = cfg.nodes.desktop.session.hyprlandEventSocket;
-            hyprland_command_socket = cfg.nodes.desktop.session.hyprlandCommandSocket;
+            clipboard_enabled = cfg.runtime.desktop.clipboard.enable;
+            activitywatch_db_path = cfg.runtime.desktop.history.activitywatchDbPath;
+            runtime_dir = cfg.runtime.desktop.session.runtimeDir;
+            wayland_display = cfg.runtime.desktop.session.waylandDisplay;
+            hyprland_instance_signature = cfg.runtime.desktop.session.hyprlandInstanceSignature;
+            hyprland_event_socket = cfg.runtime.desktop.session.hyprlandEventSocket;
+            hyprland_command_socket = cfg.runtime.desktop.session.hyprlandCommandSocket;
           };
-        system = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.system.enable) cfg.nodes.system.instances;
+        system = mkDeploymentSurface (cfg.runtime.enable && cfg.runtime.system.enable) cfg.runtime.system.instances;
         document =
-          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.document.enable) null)
+          (mkDeploymentSurface (cfg.runtime.enable && cfg.runtime.document.enable) null)
           // {
             allowed_roots = effectiveDocumentRoots;
             scan_service_unit =
-              if cfg.nodes.enable && cfg.nodes.document.enable then
+              if cfg.runtime.enable && cfg.runtime.document.enable then
                 "sinex-document-scan.service"
               else
                 null;
             timer_unit =
-              if cfg.nodes.enable && cfg.nodes.document.enable && cfg.nodes.document.schedule != null then
+              if cfg.runtime.enable && cfg.runtime.document.enable && cfg.runtime.document.schedule != null then
                 "sinex-document-scan.timer"
               else
                 null;
-            schedule = cfg.nodes.document.schedule;
-            run_on_boot = cfg.nodes.document.runOnBoot;
+            schedule = cfg.runtime.document.schedule;
+            run_on_boot = cfg.runtime.document.runOnBoot;
           };
         automata =
-          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.automata.enable) null)
+          (mkDeploymentSurface (cfg.runtime.enable && cfg.runtime.automata.enable) null)
           // listToAttrs (
             map
               (spec:
                 nameValuePair spec.surfaceName (
-                  cfg.nodes.enable
-                  && cfg.nodes.automata.enable
-                  && cfg.nodes.automata.${spec.optionName}.enable
+                  cfg.runtime.enable
+                  && cfg.runtime.automata.enable
+                  && cfg.runtime.automata.${spec.optionName}.enable
                 )
               )
               automataLib.specs
           );
         expectations = {
           schema_apply = cfg.database.enable && cfg.database.autoSetup;
-          nats_streams = cfg.enable && (cfg.core.enable || cfg.nodes.enable);
+          nats_streams = cfg.enable && (cfg.core.enable || cfg.runtime.enable);
           gateway_ready = cfg.enable && cfg.core.enable && cfg.core.gateway.enable;
         };
         secrets = {
@@ -2451,7 +2451,7 @@ in
           insecure = false;
         };
         nats = {
-          servers = cfg.nodes.nats.servers;
+          servers = cfg.runtime.nats.servers;
           environment = cfg.nats.environment;
           token_file = effectiveNatsTokenFile;
           creds_file = effectiveNatsCredsFile;
@@ -2484,7 +2484,7 @@ in
           { path = stateRoot; mode = "0755"; user = "root"; group = "root"; }
           { path = runtimeDir; mode = "0755"; }
           { path = spoolBase; mode = "0755"; }
-          { path = nodesSpool; mode = "0755"; }
+          { path = runtimeSpool; mode = "0755"; }
           { path = ingestSpool; mode = "0755"; }
           # event_engine writes its working directory under ${stateRoot}/event_engine/work
           # (see SINEX_EVENT_ENGINE_WORK_DIR). Pre-create so event_engine does not need
@@ -2508,7 +2508,7 @@ in
       # Auxiliary sinex-owned units that should be gated alongside the
       # long-running runtime services. Long-running services
       # (sinexd, hosted source bindings, automata) already wire their own wantedBy
-      # from cfg.runtime.target.attachToMultiUser and publish their service
+      # from cfg.runtimeSystem.target.attachToMultiUser and publish their service
       # names via config.sinex._generatedUnits. The auxiliary list here
       # covers the one-shots, the standalone sinex-document-scan and its
       # timer, NATS, and the bootstrap helpers that the long-running services
@@ -2542,7 +2542,7 @@ in
         ++ lib.optionals (cfg.enable && cfg.lifecycle.preflight.enable) [
           "sinex-preflight"
         ]
-        ++ lib.optionals (cfg.enable && cfg.nodes.enable && cfg.nodes.document.enable) [
+        ++ lib.optionals (cfg.enable && cfg.runtime.enable && cfg.runtime.document.enable) [
           "sinex-document-scan"
         ];
       # Auxiliary units = bootstrap + standalone oneshots + the long-running
@@ -2558,16 +2558,16 @@ in
       runtimeAuxiliaryTimerNames =
         lib.optionals (
           cfg.enable
-          && cfg.nodes.enable
-          && cfg.nodes.document.enable
-          && cfg.nodes.document.schedule != null
+          && cfg.runtime.enable
+          && cfg.runtime.document.enable
+          && cfg.runtime.document.schedule != null
         ) [ "sinex-document-scan" ];
       runtimeDatabaseUnits =
-        lib.optionals cfg.runtime.target.includeDatabase [
+        lib.optionals cfg.runtimeSystem.target.includeDatabase [
           "postgresql.service"
         ]
         ++ lib.optionals (
-          cfg.runtime.target.includeDatabase && cfg.database.enable && cfg.database.autoSetup
+          cfg.runtimeSystem.target.includeDatabase && cfg.database.enable && cfg.database.autoSetup
         ) [ "postgresql-setup.service" ];
     in
     mkMerge [
@@ -2610,7 +2610,7 @@ in
           }
           {
             assertion = (effectiveNatsClientCertFile == null) == (effectiveNatsClientKeyFile == null);
-            message = "NATS mutual TLS requires both services.sinex.nodes.nats.tls.clientCertFile/clientKeyFile or matching agenix secrets named sinex-nats-client-cert and sinex-nats-client-key.";
+            message = "NATS mutual TLS requires both services.sinex.runtime.nats.tls.clientCertFile/clientKeyFile or matching agenix secrets named sinex-nats-client-cert and sinex-nats-client-key.";
           }
           {
             assertion =
@@ -2620,30 +2620,30 @@ in
                   effectiveNatsCredsFile
                   effectiveNatsNkeySeedFile
                 ]) <= 1;
-            message = "Configure at most one NATS auth mode under services.sinex.nodes.nats.auth: tokenFile, credsFile, or nkeySeedFile.";
+            message = "Configure at most one NATS auth mode under services.sinex.runtime.nats.auth: tokenFile, credsFile, or nkeySeedFile.";
           }
           {
             assertion =
               (!(cfg.nats.enable || cfg.nats.autoSetup))
               || (!cfg.nats.tls.verifyClients && !cfg.nats.tls.verifyAndMap)
               || (effectiveNatsClientCertFile != null && effectiveNatsClientKeyFile != null);
-            message = "Managed NATS client-certificate verification requires services.sinex.nodes.nats.tls.clientCertFile/clientKeyFile or matching agenix secrets named sinex-nats-client-cert and sinex-nats-client-key.";
+            message = "Managed NATS client-certificate verification requires services.sinex.runtime.nats.tls.clientCertFile/clientKeyFile or matching agenix secrets named sinex-nats-client-cert and sinex-nats-client-key.";
           }
           {
             assertion =
-              (!cfg.nodes.enable || !cfg.nodes.document.enable)
+              (!cfg.runtime.enable || !cfg.runtime.document.enable)
               || effectiveDocumentRoots != [ ];
             message = ''
               Document ingestion is enabled but no allowed roots resolved. Set
-              services.sinex.nodes.document.allowedRoots explicitly or configure
+              services.sinex.runtime.document.allowedRoots explicitly or configure
               services.sinex.users.target so the module can derive $HOME/Documents.
             '';
           }
           {
             assertion =
-              (!cfg.nodes.enable || !cfg.nodes.document.enable)
-              || cfg.nodes.document.runOnBoot
-              || cfg.nodes.document.schedule != null;
+              (!cfg.runtime.enable || !cfg.runtime.document.enable)
+              || cfg.runtime.document.runOnBoot
+              || cfg.runtime.document.schedule != null;
             message = ''
               Document ingestion is enabled but neither runOnBoot nor schedule is set.
               Enable at least one so the managed document scan surface actually runs.
@@ -2657,15 +2657,15 @@ in
 
         systemd.targets.sinex-runtime = {
           description = "Sinex runtime services aggregate target";
-          wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
+          wantedBy = lib.optional cfg.runtimeSystem.target.attachToMultiUser "multi-user.target";
           # Pull every sinex-owned auxiliary unit (and optionally postgresql)
           # into the runtime target's dependency graph. When
           # attachToMultiUser=false, this is the only thing that brings them
           # online; when true, it makes the target a coherent stop boundary.
           wants = runtimeAuxiliaryUnits ++ runtimeDatabaseUnits;
-          after = cfg.runtime.target.extraAfter;
+          after = cfg.runtimeSystem.target.extraAfter;
           unitConfig = lib.optionalAttrs
-            (cfg.runtime.target.manualStartOnly && !cfg.runtime.target.attachToMultiUser)
+            (cfg.runtimeSystem.target.manualStartOnly && !cfg.runtimeSystem.target.attachToMultiUser)
             { X-OnlyManualStart = true; };
         };
       })
@@ -2674,34 +2674,34 @@ in
       # timers, and (if includeDatabase) postgresql/postgresql-setup off
       # multi-user.target. The runtime target's wants graph above keeps them
       # reachable; this just prevents them from starting at boot independently.
-      (mkIf (cfg.enable && !cfg.runtime.target.attachToMultiUser) {
+      (mkIf (cfg.enable && !cfg.runtimeSystem.target.attachToMultiUser) {
         systemd.services = lib.genAttrs runtimeAuxiliaryUnitNames (_: {
           wantedBy = lib.mkForce [ ];
           unitConfig.PartOf = [ "sinex-runtime.target" ];
-          restartIfChanged = cfg.runtime.restartOnSwitch;
-        }) // lib.optionalAttrs cfg.runtime.target.includeDatabase {
+          restartIfChanged = cfg.runtimeSystem.restartOnSwitch;
+        }) // lib.optionalAttrs cfg.runtimeSystem.target.includeDatabase {
           postgresql = {
             wantedBy = lib.mkForce [ ];
             unitConfig = {
               PartOf = lib.mkAfter [ "sinex-runtime.target" ];
             };
-            restartIfChanged = cfg.runtime.restartOnSwitch;
+            restartIfChanged = cfg.runtimeSystem.restartOnSwitch;
           };
           postgresql-setup = {
             wantedBy = lib.mkForce [ ];
             unitConfig = {
               PartOf = [ "sinex-runtime.target" ];
             };
-            restartIfChanged = cfg.runtime.restartOnSwitch;
+            restartIfChanged = cfg.runtimeSystem.restartOnSwitch;
           };
         };
         systemd.timers = lib.genAttrs runtimeAuxiliaryTimerNames (_: {
-          wantedBy = lib.mkForce (lib.optionals cfg.runtime.target.attachToMultiUser [ "timers.target" ]);
+          wantedBy = lib.mkForce (lib.optionals cfg.runtimeSystem.target.attachToMultiUser [ "timers.target" ]);
           unitConfig.PartOf = [ "sinex-runtime.target" ];
         });
         # postgresql.target leaks into multi-user even with the runtime
         # service's wantedBy stripped; suppress it alongside.
-        systemd.targets = lib.optionalAttrs cfg.runtime.target.includeDatabase {
+        systemd.targets = lib.optionalAttrs cfg.runtimeSystem.target.includeDatabase {
           postgresql.wantedBy = lib.mkForce [ ];
         };
       })
@@ -2710,13 +2710,13 @@ in
       # The timer is always defined when configured so its shape is
       # introspectable (tests, status probes); wantedBy is gated separately
       # so deployers can keep the timer defined but inert.
-      (mkIf (cfg.enable && cfg.runtime.deferredStart.enable) {
+      (mkIf (cfg.enable && cfg.runtimeSystem.deferredStart.enable) {
         systemd.timers.sinex-runtime = {
           description = "Delay Sinex runtime startup until after boot";
-          wantedBy = lib.optionals cfg.runtime.deferredStart.autoStart [ "timers.target" ];
+          wantedBy = lib.optionals cfg.runtimeSystem.deferredStart.autoStart [ "timers.target" ];
           timerConfig = {
-            OnActiveSec = cfg.runtime.deferredStart.delay;
-            AccuracySec = cfg.runtime.deferredStart.accuracy;
+            OnActiveSec = cfg.runtimeSystem.deferredStart.delay;
+            AccuracySec = cfg.runtimeSystem.deferredStart.accuracy;
             Unit = "sinex-runtime.target";
           };
         };
@@ -2747,7 +2747,7 @@ in
         };
       })
 
-      (mkIf ((cfg.enable || cfg.storage.blob.enable || cfg.lifecycle.maintenance.enable) && cfg.users.nodes != dbUser) {
+      (mkIf ((cfg.enable || cfg.storage.blob.enable || cfg.lifecycle.maintenance.enable) && cfg.users.runtime != dbUser) {
         users.groups.${sinexUser} = { };
         users.users.${sinexUser} = {
           isSystemUser = true;
@@ -2799,17 +2799,17 @@ in
       # When a target user is configured with no explicit watchPaths, default to
       # watching that user's home directory. Keeping these defaults live in
       # prepared mode makes the deployment descriptor honest before first enable.
-      # NB: guard only on cfg.users.target — reading cfg.nodes.* while writing to
-      # services.sinex.nodes.* creates an evaluation cycle.
+      # NB: guard only on cfg.users.target — reading cfg.runtime.* while writing to
+      # services.sinex.runtime.* creates an evaluation cycle.
       # mkDefault ensures explicit watchPaths override this fallback.
       (mkIf (cfg.users.target != null) {
-        services.sinex.nodes.filesystem.watchPaths = mkDefault [
+        services.sinex.runtime.filesystem.watchPaths = mkDefault [
           targetHome
         ];
       })
 
       (mkIf (targetHome != null) {
-        services.sinex.nodes.terminal.historySources = mkDefault [
+        services.sinex.runtime.terminal.historySources = mkDefault [
           {
             path = "${targetHome}/.bash_history";
             shell = "bash";
@@ -2830,8 +2830,8 @@ in
       })
 
       (mkIf (targetHome != null) {
-        services.sinex.nodes.browser.dumpSources = mkDefault [ ];
-        services.sinex.nodes.browser.sqliteSources = mkDefault [
+        services.sinex.runtime.browser.dumpSources = mkDefault [ ];
+        services.sinex.runtime.browser.sqliteSources = mkDefault [
           {
             path = "${targetHome}/.local/share/qutebrowser/history.sqlite";
             browser = "qutebrowser";
@@ -2851,25 +2851,25 @@ in
       })
 
       (mkIf (targetUser != null) {
-        services.sinex.nodes.filesystem.instances = mkDefault 1;
-        services.sinex.nodes.terminal.instances = mkDefault 1;
-        services.sinex.nodes.browser.instances = mkDefault 1;
-        services.sinex.nodes.desktop.instances = mkDefault 1;
-        services.sinex.nodes.system.instances = mkDefault 1;
+        services.sinex.runtime.filesystem.instances = mkDefault 1;
+        services.sinex.runtime.terminal.instances = mkDefault 1;
+        services.sinex.runtime.browser.instances = mkDefault 1;
+        services.sinex.runtime.desktop.instances = mkDefault 1;
+        services.sinex.runtime.system.instances = mkDefault 1;
       })
 
       (mkIf (targetUid != null) {
-        services.sinex.nodes.desktop.session.runtimeDir =
+        services.sinex.runtime.desktop.session.runtimeDir =
           mkDefault "/run/user/${toString targetUid}";
       })
 
       (mkIf (targetHome != null) {
-        services.sinex.nodes.desktop.history.activitywatchDbPath =
+        services.sinex.runtime.desktop.history.activitywatchDbPath =
           mkDefault "${targetHome}/.local/share/activitywatch/aw-server-rust/sqlite.db";
       })
 
       (mkIf (cfg.nats.enable || cfg.nats.autoSetup) {
-        services.sinex.nodes.nats.servers = mkDefault [
+        services.sinex.runtime.nats.servers = mkDefault [
           "${if cfg.nats.tls.enable then "tls" else "nats"}://${cfg.nats.host}:${toString cfg.nats.port}"
         ];
       })

@@ -6,7 +6,7 @@
 //! ## Coverage Areas
 //! - Advisory lock acquisition and recovery
 //! - Concurrent coordination under stress
-//! - Node instance registration and heartbeat tracking
+//! - RuntimeActor instance registration and heartbeat tracking
 
 use sinex_primitives::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
 use sinex_primitives::environment::environment;
@@ -137,7 +137,7 @@ async fn test_advisory_lock_timeout(ctx: TestContext) -> Result<()> {
 }
 
 // =============================================================================
-// Node Instance Coordination Tests
+// RuntimeActor Instance Coordination Tests
 // =============================================================================
 
 /// Test that node instances can be registered and tracked using NATS KV.

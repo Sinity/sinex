@@ -9,8 +9,8 @@ use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
     ConfigCommands, ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand,
     DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
-    IngestorsCommand, InstructionsCommand, LifecycleCommands, LlmCommand, NodeCommands,
-    NodesCommand, NowCommand, OpsCommands, PrivacyCommand, QueryCommand, RecentCommand,
+    IngestorsCommand, InstructionsCommand, LifecycleCommands, LlmCommand, RuntimeCommands,
+    RuntimePresenceCommand, NowCommand, OpsCommands, PrivacyCommand, QueryCommand, RecentCommand,
     ReplayCommands, ReportCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
     TasksCommand, TelemetryCommands, ThroughputCommand, TimelineCommand, TraceCommand, TuiCommand,
     VerifyCommand, WatchCommand,
@@ -22,7 +22,7 @@ use sinexctl::{
     CommandCatalogEntry, Config, command_catalog, default_rpc_url, render_format_matrix_terminal,
     validate_format,
 };
-use sinexd::node_sdk::service_runtime;
+use sinexd::runtime::service_runtime;
 use std::path::PathBuf;
 
 /// Sinex control CLI
@@ -112,10 +112,10 @@ enum Commands {
         cmd: CoreCommands,
     },
 
-    /// Node operations
-    Node {
+    /// RuntimeActor operations
+    RuntimeActor {
         #[command(subcommand)]
-        cmd: NodeCommands,
+        cmd: RuntimeCommands,
     },
 
     /// Derived-node and automata status
@@ -248,8 +248,8 @@ enum Commands {
     /// Show what's happening right now — dashboard view
     Now(NowCommand),
 
-    /// List running nodes with status and health
-    Nodes(NodesCommand),
+    /// List running modules with status and health
+    Nodes(RuntimePresenceCommand),
 
     /// Per-source / per-component event throughput (#1172 AC-8)
     Throughput(ThroughputCommand),
@@ -365,7 +365,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Gateway { cmd } => cmd.execute(&client, format).await?,
                 Commands::Blob { .. } => unreachable!("Blob command handled above"),
                 Commands::Core { cmd } => cmd.execute(&client, format).await?,
-                Commands::Node { cmd } => cmd.execute(&client, format).await?,
+                Commands::RuntimeActor { cmd } => cmd.execute(&client, format).await?,
                 Commands::Automata(cmd) => cmd.execute(&client, format).await?,
                 Commands::Ingestors(cmd) => cmd.execute(&client, format).await?,
                 Commands::Replay { cmd } => cmd.execute(&client, format).await?,
@@ -490,7 +490,7 @@ fn command_path(cmd: &Commands) -> String {
     use sinexctl::commands::lifecycle::TombstoneCommands;
     use sinexctl::commands::{
         ConfigCommands, DlqCommands, GatewayCommands, GitOpsCommands, LifecycleCommands,
-        NodeCommands, OpsCommands, ReplayCommands, ReportCommands, TelemetryCommands,
+        RuntimeCommands, OpsCommands, ReplayCommands, ReportCommands, TelemetryCommands,
     };
     match cmd {
         Commands::Gateway { cmd } => match cmd {
@@ -504,12 +504,12 @@ fn command_path(cmd: &Commands) -> String {
             BlobCommands::VerifyIntegrity(_) => "blob verify-integrity".to_string(),
         },
         Commands::Core { .. } => "core health".to_string(),
-        Commands::Node { cmd } => match cmd {
-            NodeCommands::List { .. } => "node list".to_string(),
-            NodeCommands::Status { .. } => "node status".to_string(),
-            NodeCommands::Drain { .. } => "node drain".to_string(),
-            NodeCommands::Resume { .. } => "node resume".to_string(),
-            NodeCommands::SetHorizon { .. } => "node set-horizon".to_string(),
+        Commands::RuntimeActor { cmd } => match cmd {
+            RuntimeCommands::List { .. } => "node list".to_string(),
+            RuntimeCommands::Status { .. } => "node status".to_string(),
+            RuntimeCommands::Drain { .. } => "node drain".to_string(),
+            RuntimeCommands::Resume { .. } => "node resume".to_string(),
+            RuntimeCommands::SetHorizon { .. } => "node set-horizon".to_string(),
         },
         Commands::Automata(_) => "automata".to_string(),
         Commands::Ingestors(_) => "ingestors".to_string(),
@@ -691,7 +691,7 @@ fn command_path(cmd: &Commands) -> String {
             TelemetryCommands::GatewayStats { .. } => "telemetry gateway-stats".to_string(),
             TelemetryCommands::StreamStats { .. } => "telemetry stream-stats".to_string(),
             TelemetryCommands::AssemblyStats { .. } => "telemetry assembly-stats".to_string(),
-            TelemetryCommands::NodeStats { .. } => "telemetry node-stats".to_string(),
+            TelemetryCommands::RuntimeStats { .. } => "telemetry node-stats".to_string(),
             TelemetryCommands::MetricCounters { .. } => "telemetry metric-counters".to_string(),
             TelemetryCommands::EventEngineBatchStats { .. } => {
                 "telemetry event-engine-batch-stats".to_string()
@@ -711,7 +711,7 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Explain(_) => "explain".to_string(),
         Commands::Verify(cmd) => cmd.command_path().to_string(),
         Commands::Now(_) => "now".to_string(),
-        Commands::Nodes(_) => "nodes".to_string(),
+        Commands::Nodes(_) => "modules".to_string(),
         Commands::Throughput(_) => "throughput".to_string(),
         Commands::Annotate(_) => "annotate".to_string(),
         Commands::Completions(_) => "completions".to_string(),

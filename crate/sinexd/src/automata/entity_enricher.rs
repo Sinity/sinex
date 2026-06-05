@@ -9,8 +9,8 @@
 //! Category refinement maps `entity_type` to a coarse `EntityCategory`:
 //! `tool` → Tool, `url`/`website` → Website, `file` → Document, etc.
 
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, ScopeReconcilerNodeAdapter};
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconcilerAdapter};
+use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, ScopeReconciler};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, SyntheticTemporalPolicy};
@@ -114,7 +114,7 @@ impl ScopeReconciler for EntityEnricher {
         scope_key: &str,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         let now = context.require_ts_orig()?;
         let entity_key = scope_key.to_string();
 
@@ -194,8 +194,8 @@ impl ScopeReconciler for EntityEnricher {
     }
 }
 
-/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type EntityEnricherNode = ScopeReconcilerNodeAdapter<EntityEnricher>;
+/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+pub type EntityEnricherNode = ScopeReconcilerAdapter<EntityEnricher>;
 
 // ── Helper functions ────────────────────────────────────────────────────────
 
@@ -252,7 +252,7 @@ register_source_runtime_binding! {
         "entity-enricher",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("entity.enriched")
     .privacy_context("inherits_from_parents")
@@ -260,11 +260,11 @@ register_source_runtime_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_id("entity-enricher")
-    .runner_pack("process")
+    .runner_pack("sinexd")
     .checkpoint_family(SuCheckpointFamily::AppendStream)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
+    .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
     .build()
 }

@@ -920,7 +920,7 @@ async fn db_check_constraints_landed_after_apply(ctx: TestContext) -> TestResult
     sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // The `core.manifests.manifest_type_check_v1` constraint should now
-    // exist and reflect every `NodeType` Display rendering.
+    // exist and reflect every `ModuleKind` Display rendering.
     let def: Option<String> = sqlx::query_scalar(
         r"
         SELECT pg_get_constraintdef(c.oid)
@@ -978,7 +978,7 @@ async fn strict_diff_clean_after_apply_for_db_check(ctx: TestContext) -> TestRes
     let dbcheck_drifts: Vec<_> = drifts
         .iter()
         .filter(|d| {
-            d.location.contains("::NodeType")
+            d.location.contains("::ModuleKind")
                 || d.location.contains("::OperationStatus")
                 || d.location.contains("::DataTier")
                 || d.location.contains("::HealthStatus")

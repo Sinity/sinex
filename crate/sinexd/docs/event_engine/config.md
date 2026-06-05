@@ -23,11 +23,11 @@ EventEngine environment overrides are prefixed with `SINEX_EVENT_ENGINE_`.
 
 On NixOS, prefer the typed transport surface:
 
-- `services.sinex.nodes.nats.servers`
-- `services.sinex.nodes.nats.tls.requireTls`
-- `services.sinex.nodes.nats.tls.caCertFile`
-- `services.sinex.nodes.nats.tls.clientCertFile`
-- `services.sinex.nodes.nats.tls.clientKeyFile`
+- `services.sinex.runtime.nats.servers`
+- `services.sinex.runtime.nats.tls.requireTls`
+- `services.sinex.runtime.nats.tls.caCertFile`
+- `services.sinex.runtime.nats.tls.clientCertFile`
+- `services.sinex.runtime.nats.tls.clientKeyFile`
 
 The module exports the matching `SINEX_NATS_*` variables for event_engine and node services.
 

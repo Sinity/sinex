@@ -29,13 +29,13 @@ Reference: `crate/sinex-primitives/src/environment.rs`
 
 This keeps the fixed `events.raw.<source>.<event_type>` hierarchy while preserving a one-to-one mapping from logical identifiers to NATS subject tokens.
 
-Reference: `crate/sinexd/src/node_sdk/nats_publisher.rs`
+Reference: `crate/sinexd/src/runtime/nats_publisher.rs`
 
 ## Core Subjects
 
 | Subject Pattern | Purpose | Publisher |
 |-----------------|---------|-----------|
-| `events.raw.<source>.<event_type>` | Raw events from ingestor nodes | Node SDK via `NatsPublisher` |
+| `events.raw.<source>.<event_type>` | Raw events from ingestor nodes | Runtime via `NatsPublisher` |
 | `events.confirmations.<event_id>` | Persistence acknowledgments | event engine |
 | `events.confirmation_retries.<event_id>` | Confirmation retry processing | event engine |
 | `events.processing_failures.<component>` | Processing failure envelopes | event engine |
@@ -65,7 +65,7 @@ Reference: `crate/sinexd/src/event_engine/jetstream_consumer.rs`
 | Ingest consumer | `events.raw.>` | Batch ingestion to PostgreSQL |
 | DLQ retry | `events.dlq.>` | Retry failed messages |
 
-Reference: `crate/sinexd/src/node_sdk/dlq_retry.rs`
+Reference: `crate/sinexd/src/runtime/dlq_retry.rs`
 
 ## Subject Examples
 
@@ -85,7 +85,7 @@ dev.system.schemas.active                               # Schema broadcast
 ## Implementation References
 
 - Environment namespacing: `sinex-primitives/src/environment.rs`
-- Event publishing: `crate/sinexd/src/node_sdk/nats_publisher.rs`
+- Event publishing: `crate/sinexd/src/runtime/nats_publisher.rs`
 - Stream topology: `crate/sinexd/src/event_engine/jetstream_consumer.rs`
 - Schema broadcast: `crate/sinexd/src/event_engine/service.rs`
-- DLQ handling: `crate/sinexd/src/node_sdk/dlq_retry.rs`
+- DLQ handling: `crate/sinexd/src/runtime/dlq_retry.rs`

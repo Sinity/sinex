@@ -52,7 +52,7 @@ async fn replay_execution_surfaces_operation_state_corruption_after_failure(
     );
 
     let mut scope = sample_scope();
-    scope.node_id = "corrupt-failure-test".to_string();
+    scope.source_name = "corrupt-failure-test".to_string();
 
     let planned = control_client
         .plan("test:replay-user".into(), scope)
@@ -151,7 +151,7 @@ async fn replay_execution_surfaces_cancellation_bookkeeping_corruption(
     );
 
     let mut scope = sample_scope();
-    scope.node_id = "corrupt-cancel-test".to_string();
+    scope.source_name = "corrupt-cancel-test".to_string();
     scope.time_window = Some((
         target_ts - time::Duration::milliseconds(1),
         target_ts + time::Duration::milliseconds(1),

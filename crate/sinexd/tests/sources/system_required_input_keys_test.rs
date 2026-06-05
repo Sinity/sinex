@@ -1,7 +1,7 @@
 //! Required input-key declarations for system JSON-line parsers.
 
 use serde_json::json;
-use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
+use sinexd::runtime::parser::{MaterialParser, SourceRecordFingerprint};
 use sinex_primitives::{
     parser::SourceId,
     rpc::sources::{CaveatSeverity, caveat_codes},

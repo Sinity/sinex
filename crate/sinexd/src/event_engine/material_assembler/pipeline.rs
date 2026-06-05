@@ -7,10 +7,10 @@ use super::redelivery_decision::{RedeliveryDecision, RedeliveryErrorKind};
 use super::state::MaterialBeginMessage;
 use super::{MaterialAssembler, MaterialEndMessage, Uuid};
 
-use crate::node_sdk::{
+use crate::runtime::{
     SOURCE_MATERIAL_BEGIN_SUBJECT, SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_FRAMES_SUBJECT,
     SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX, SOURCE_MATERIAL_STREAM,
-    runtime::stream::{PullConsumerSpec, ensure_pull_consumer},
+    stream::{PullConsumerSpec, ensure_pull_consumer},
 };
 use async_nats::jetstream;
 use futures::StreamExt;

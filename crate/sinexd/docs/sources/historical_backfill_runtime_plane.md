@@ -84,9 +84,9 @@ The useful local proof shape is:
 
 ```bash
 xtask build -p sinexd
-xtask test -p sinexd -E 'test(scan_historical_persists_terminal_history_through_node_runtime)'
-xtask test -p sinexd -E 'test(scan_historical_persists_activitywatch_through_node_runtime)'
-xtask test -p sinexd -E 'test(scan_historical_persists_browser_history_through_node_runtime)'
+xtask test -p sinexd -E 'test(scan_historical_persists_terminal_history_through_runtime)'
+xtask test -p sinexd -E 'test(scan_historical_persists_activitywatch_through_runtime)'
+xtask test -p sinexd -E 'test(scan_historical_persists_browser_history_through_runtime)'
 ```
 
 The first command is required when tests spawn `sinexd`; the sandbox

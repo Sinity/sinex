@@ -84,7 +84,7 @@ pkgs.testers.nixosTest {
       })
     ];
 
-    services.sinex.nodes = {
+    services.sinex.runtime = {
       filesystem.enable = lib.mkForce false;
       terminal.enable = lib.mkForce false;
       browser.enable = lib.mkForce false;

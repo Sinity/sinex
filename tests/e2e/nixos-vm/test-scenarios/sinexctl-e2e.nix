@@ -27,7 +27,7 @@ pkgs.testers.nixosTest {
     services.sinex.core.gateway.enable = true;
 
     # Enable filesystem node to generate events
-    services.sinex.nodes = {
+    services.sinex.runtime = {
       filesystem.enable = true;
       filesystem.watchPaths = lib.mkAfter [ "/var/lib/sinex/watched" ];
       terminal.enable = false;
@@ -132,7 +132,7 @@ pkgs.testers.nixosTest {
         assert "timeout" in config_json, "Config should have timeout"
         print(f"Config loaded successfully with {len(config_json)} fields")
 
-    # Test 3: Node listing with JSON output
+    # Test 3: RuntimeActor listing with JSON output
     with subtest("sinexctl node list with JSON"):
         # List nodes - may be empty initially
         nodes_output = sinexctl("node list -f json", check=False)
@@ -143,7 +143,7 @@ pkgs.testers.nixosTest {
             nodes = flatten_json_items(parse_json_output(output), ("nodes", "instances"))
             for node in nodes:
                 if isinstance(node, dict):
-                    name = node.get("name") or node.get("node_name") \
+                    name = node.get("name") or node.get("module_name") \
                         or node.get("service_name") or node.get("instance_id") or "unknown"
                     print(f"Found node: {name}")
                 else:

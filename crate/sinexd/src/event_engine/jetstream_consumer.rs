@@ -18,9 +18,9 @@
 //! The `BATCH_ATOMICITY_SCOPE` context field is attached to all related error diagnostics
 //! so operators can correlate partial-commit scenarios in logs.
 
-use crate::node_sdk::SelfObserver;
-use crate::node_sdk::heartbeat::HeartbeatCounterHandle;
-use crate::node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
+use crate::runtime::SelfObserver;
+use crate::runtime::heartbeat::HeartbeatCounterHandle;
+use crate::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use async_nats::jetstream::stream::DiscardPolicy;
 use async_nats::{Client as NatsClient, jetstream};
 use futures::future::{BoxFuture, join_all};
@@ -419,7 +419,7 @@ impl JetStreamConsumer {
     fn log_observer_error(
         stats: &ConsumerStats,
         metric: &'static str,
-        error: &crate::node_sdk::SelfObservationError,
+        error: &crate::runtime::SelfObservationError,
     ) {
         stats
             .telemetry_publish_failures
@@ -2358,7 +2358,7 @@ impl JetStreamConsumer {
         event_id: Uuid,
         error: impl std::fmt::Display,
     ) -> SinexError {
-        crate::node_sdk::error_helpers::nats_settlement_error(
+        crate::runtime::error_helpers::nats_settlement_error(
             operation,
             "",
             Some(event_id.to_string().as_str()),

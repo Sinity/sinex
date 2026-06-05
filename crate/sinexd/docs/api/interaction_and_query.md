@@ -48,7 +48,7 @@
 
 ### 2.3 Method Surface (current)
 
-- Read/query: `system.health`, `search.search_events`, `analytics.*`, `audit.get`, `ops.list/get`, `coordination.*`, `nodes.list`, `dlq.list/peek`, replay status/list.
+- Read/query: `system.health`, `search.search_events`, `analytics.*`, `audit.get`, `ops.list/get`, `coordination.*`, `runtime.list`, `dlq.list/peek`, replay status/list.
 * Write/mutate: `pkm.*`, `content.store_blob`, `nodes.{drain,resume,set_horizon}`, `ops.start`, replay create/preview.
 * Admin-only: replay approve/execute/cancel, `dlq.requeue/purge`, lifecycle archive/restore/tombstone, `ops.cancel`, gitops source management, shadow create/delete.
 

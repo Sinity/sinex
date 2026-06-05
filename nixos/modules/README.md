@@ -13,12 +13,12 @@ Host wiring, systemd ordering, hardening, and secret inventory are documented in
 | Namespace | Purpose |
 |-----------|---------|
 | `services.sinex.stateRoot` | Root that all derived paths cascade from (logs, spool, blobs, DLQ). |
-| `services.sinex.users` | `target` (captured workstation user) and `nodes` (service account). |
+| `services.sinex.users` | `target` (captured workstation user) and `runtime modules` (service account). |
 | `services.sinex.database` | PostgreSQL provisioning, connection pool sizing, and migrations. |
 | `services.sinex.nats` | NATS/JetStream provisioning and stream bootstrap. |
 | `services.sinex.storage` | Dead-letter queue handling and content-store backed blob storage. |
 | `services.sinex.core` | `sinexd` daemon configuration (event engine, API, sources, automata, supervisor). |
-| `services.sinex.nodes` | Filesystem/terminal/browser/desktop/system collectors plus automata. |
+| `services.sinex.runtime` | Filesystem/terminal/browser/desktop/system collectors plus automata. |
 | `services.sinex.observability` | Prometheus/Grafana/exporters and structured log retention. |
 | `services.sinex.lifecycle` | Pre-flight verification and coordinated update orchestration. |
 | `services.sinex.shell` | Developer ergonomics (asciinema capture, Kitty auto-config). |
@@ -44,8 +44,8 @@ values derived from `stateRoot` and the global `logLevel`.
     database.autoSetup = true;
     nats.autoSetup = true; # defaulted on when services.sinex.enable = true
 
-    nodes.filesystem.watchPaths = [ "/home/alice" "/workspace" ];
-    nodes.automata.canonicalizer.profile = "heavy";
+    runtime.filesystem.watchPaths = [ "/home/alice" "/workspace" ];
+    runtime.automata.canonicalizer.profile = "heavy";
 
     observability.monitoring = {
       enable = true;
@@ -91,8 +91,8 @@ disabled (e.g. staging migrations).
 ### Storage
 - Raw-ingest DLQ retention is a JetStream concern; configure it through
   `nats.bootstrapStreams.retention`.
-- Per-node recovery spool files live under the node work directories beneath
-  `${stateRoot}/spool/nodes`; there is no separate centralized local DLQ path.
+- Per-runtime recovery spool files live under the runtime work directories beneath
+  `${stateRoot}/spool/runtime`; there is no separate centralized local DLQ path.
 - Blob repository lives at `storage.blob.repositoryPath` (default:
   `${stateRoot}/blob-repository`). `autoInit = true` creates the content-store
   root on boot.
@@ -111,17 +111,17 @@ disabled (e.g. staging migrations).
   handoff into `event_engine`, not a long-lived archive; once the material assembler
   acknowledges them they should leave JetStream.
 
-### Core & nodes
+### Core & runtime modules
 - `core.sinexd` exposes daemon-wide resources, log levels, batch/limits knobs,
   extra CLI args, TCP listen address for the API module, and optional
   client-cert enforcement. Module-scoped knobs live under
   `core.sinexd.event_engine`, `core.sinexd.api`, `core.sinexd.sources`, and
   `core.sinexd.automata`.
-- node defaults (`nodes.defaults`) cover instances, batching, and
-  resource limits. Individual nodes can override by setting their field to
+- runtime defaults (`runtime.defaults`) cover instances, batching, and
+  resource limits. Individual runtime modules can override by setting their field to
   `null` (inherit) or a concrete value. See
   [`resource-scoping.md`](resource-scoping.md).
-- `nodes.document` is intentionally not a long-running daemon. It renders a
+- `runtime.document` is intentionally not a long-running source task. It renders a
   managed oneshot service (`sinex-document-scan.service`) plus an optional
   timer (`sinex-document-scan.timer`), and the module requires that at least
   one of `runOnBoot` or `schedule` is enabled so the surface actually runs.
@@ -136,9 +136,9 @@ disabled (e.g. staging migrations).
 - When the module is enabled, workstation-facing collectors (`filesystem`,
   `terminal`, `browser`, `desktop`, `system`) default to singleton startup
   (`instances = 1`) so the first live host enable does not double-run capture
-  nodes before coordination is intentionally introduced.
-- `nodes.terminal.historySources`, `nodes.browser.{dumpSources,sqliteSources}`,
-  and `nodes.desktop.session.*` remain the typed override surfaces when the
+  runtime modules before coordination is intentionally introduced.
+- `runtime.terminal.historySources`, `runtime.browser.{dumpSources,sqliteSources}`,
+  and `runtime.desktop.session.*` remain the typed override surfaces when the
   target user layout is non-standard or a deployment needs explicit socket/runtime
   wiring.
 - Desktop target-user access is a two-step bridge. First, the root
@@ -151,7 +151,7 @@ disabled (e.g. staging migrations).
   the resolved `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`,
   `SINEX_HYPRLAND_RUNTIME_DIR`, `SINEX_HYPRLAND_INSTANCE_SIGNATURE`, and explicit
   socket overrides when configured.
-- Prefer the typed `nodes.desktop.session.{runtimeDir,waylandDisplay,
+- Prefer the typed `runtime.desktop.session.{runtimeDir,waylandDisplay,
   hyprlandInstanceSignature,hyprlandEventSocket,hyprlandCommandSocket}` options
   over ad hoc per-unit environment variables. `desktop.window-manager` resolves
   the Hyprland event socket from `SINEX_HYPRLAND_EVENT_SOCKET` first, then from
@@ -164,7 +164,7 @@ disabled (e.g. staging migrations).
   Sinex services default to low CPU/IO scheduler weight (`CPUWeight=10`,
   `IOWeight=10`), idle IO scheduling, and `Nice=10` in addition to their
   per-service `MemoryHigh`, `MemoryMax`, and `CPUQuota` settings.
-- Automata use named profiles defined under `nodes.automata.profiles`; set
+- Automata use named profiles defined under `runtime.automata.profiles`; set
   `profile = "light"|"standard"|"heavy"` to select batch and resource limits.
 - The module emits deterministic unit names (`sinexd`, `sinex-filesystem-1`,
   `sinex-health-automaton`, etc.) and publishes them via
@@ -178,9 +178,9 @@ disabled (e.g. staging migrations).
 - non-loopback gateway binds require mTLS and a configured `tlsClientCAFile`
 - managed local NATS server TLS lives under `services.sinex.nats.tls.{enable,certFile,keyFile,caCertFile,verifyClients,verifyAndMap}`
 - managed local NATS subject-level authz for the current shared runtime identity lives under `services.sinex.nats.authorization.sharedClient.*`
-- shared NATS client transport lives under `services.sinex.nodes.nats.{servers,tls,auth}`
-- NATS mTLS uses `services.sinex.nodes.nats.tls.{caCertFile,clientCertFile,clientKeyFile}`
-- choose exactly one NATS auth mode under `services.sinex.nodes.nats.auth.{tokenFile,credsFile,nkeySeedFile}`
+- shared NATS client transport lives under `services.sinex.runtime.nats.{servers,tls,auth}`
+- NATS mTLS uses `services.sinex.runtime.nats.tls.{caCertFile,clientCertFile,clientKeyFile}`
+- choose exactly one NATS auth mode under `services.sinex.runtime.nats.auth.{tokenFile,credsFile,nkeySeedFile}`
 - JetStream bootstrap now reuses that same shared client auth/TLS material, so
   secured local NATS deployments do not need a separate bootstrap-only secret path.
 
@@ -205,7 +205,7 @@ disabled (e.g. staging migrations).
 - the module is the canonical config surface; emitted env vars are an implementation detail of the generated units
 - API module TLS options render `SINEX_API_TLS_CERT`, `SINEX_API_TLS_KEY`, `SINEX_API_TLS_CLIENT_CA`, and `SINEX_API_REQUIRE_CLIENT_TLS`
 - shared NATS options render `SINEX_NATS_URL`, `SINEX_NATS_MONITORING_PORT`, `SINEX_NATS_REQUIRE_TLS`, `SINEX_NATS_CA_CERT`, `SINEX_NATS_CLIENT_CERT`, `SINEX_NATS_CLIENT_KEY`, and one of `SINEX_NATS_{TOKEN,CREDS,NKEY_SEED}_FILE`
-- `services.sinex.nodes.defaults.env` is reserved for genuinely env-only behavior flags, not primary transport or secret wiring
+- `services.sinex.runtime.defaults.env` is reserved for genuinely env-only behavior flags, not primary transport or secret wiring
 
 ### Observability
 - Structured log retention is configured via `observability.logging.retention`.
@@ -228,7 +228,7 @@ disabled (e.g. staging migrations).
 
 ### Runtime gating and deferred start
 
-By default, `services.sinex.runtime.target.attachToMultiUser = true` makes
+By default, `services.sinex.runtimeSystem.target.attachToMultiUser = true` makes
 every Sinex unit start at boot via `multi-user.target`. The aggregate
 `sinex-runtime.target` exists as a stop boundary: `systemctl stop
 sinex-runtime.target` brings the whole runtime down without per-unit
@@ -239,9 +239,9 @@ then start capture), set:
 
 ```nix
 services.sinex = {
-  runtime.target.attachToMultiUser = false;
-  runtime.target.includeDatabase = true;       # pull postgresql into the gate
-  runtime.target.extraAfter = [ "network-online.target" ];
+  runtimeSystem.target.attachToMultiUser = false;
+  runtimeSystem.target.includeDatabase = true;       # pull postgresql into the gate
+  runtimeSystem.target.extraAfter = [ "network-online.target" ];
   runtime.deferredStart = {
     enable = true;
     delay = "5min";
@@ -258,12 +258,12 @@ The module then:
   `nats.service`), plus generated automaton/support units;
 - when `includeDatabase = true`, also strips it from `postgresql.service`,
   `postgresql-setup.service`, and `postgresql.target`;
-- populates `sinex-runtime.target.wants` with the union, so pulling the target
+- populates `sinex-runtimeSystem.target.wants` with the union, so pulling the target
   brings the full runtime online;
 - emits `sinex-runtime.timer` with `OnActiveSec = delay` when
   `deferredStart.enable = true`.
 
-The `sinex-runtime.target.extraAfter` list is appended to `After=` for hosts
+The `sinex-runtimeSystem.target.extraAfter` list is appended to `After=` for hosts
 that need ordering against units the module itself cannot reference (e.g.
 `network-online.target`).
 
@@ -331,6 +331,6 @@ sops-nix), use `services.sinex.database.setupWaitForPaths` to gate
   defaults in the module automatically propagates to the test fixtures.
 
 ## Operational Notes
-- Filesystem nodes keep `/home` read-only instead of hidden entirely so the
+- Filesystem runtime modules keep `/home` read-only instead of hidden entirely so the
   default `watchPaths = [ "/home/<target>" ]` setup actually works under systemd
   hardening.

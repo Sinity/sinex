@@ -53,14 +53,14 @@ call in the source.
 
 | File | Method | Class |
 |---|---|---|
-| `crate/sinexd/src/node_sdk/nats_publisher.rs` | `NatsPublisher::publish` | `Critical` |
-| `crate/sinexd/src/node_sdk/nats_publisher.rs` | `NatsPublisher::publish_telemetry` | `Telemetry` |
-| `crate/sinexd/src/node_sdk/nats_publisher.rs` | `NatsPublisher::publish_to_raw_ingest_dlq` | `Critical` (DLQ routing of raw events) |
-| `crate/sinexd/src/node_sdk/nats_publisher.rs` | `NatsPublisher::publish_processing_failure` | `Derived` (failure envelope) |
-| `crate/sinexd/src/node_sdk/acquisition_manager.rs` | material begin/slice/end publishers | `SourceMaterial` |
-| `crate/sinexd/src/node_sdk/dlq_retry.rs` | raw-ingest DLQ retry re-publish | `Critical` |
-| `crate/sinexd/src/node_sdk/coordination.rs` | `send_handoff_ready` / `send_handoff_request` / `publish_failure_signal` | `Control` |
-| `crate/sinexd/src/node_sdk/runtime/stream/mod.rs` | scan ack / scan progress / node status | `Control` |
+| `crate/sinexd/src/runtime/nats_publisher.rs` | `NatsPublisher::publish` | `Critical` |
+| `crate/sinexd/src/runtime/nats_publisher.rs` | `NatsPublisher::publish_telemetry` | `Telemetry` |
+| `crate/sinexd/src/runtime/nats_publisher.rs` | `NatsPublisher::publish_to_raw_ingest_dlq` | `Critical` (DLQ routing of raw events) |
+| `crate/sinexd/src/runtime/nats_publisher.rs` | `NatsPublisher::publish_processing_failure` | `Derived` (failure envelope) |
+| `crate/sinexd/src/runtime/acquisition_manager.rs` | material begin/slice/end publishers | `SourceMaterial` |
+| `crate/sinexd/src/runtime/dlq_retry.rs` | raw-ingest DLQ retry re-publish | `Critical` |
+| `crate/sinexd/src/runtime/coordination.rs` | `send_handoff_ready` / `send_handoff_request` / `publish_failure_signal` | `Control` |
+| `crate/sinexd/src/runtime/stream/mod.rs` | scan ack / scan progress / node status | `Control` |
 | `crate/sinexd/src/event_engine/jetstream_consumer.rs` | `publish_confirmation` | `Confirmation` |
 | `crate/sinexd/src/event_engine/jetstream_consumer.rs` | DLQ re-publish (`publish_dlq_entry`) | `Critical` |
 | `crate/sinexd/src/event_engine/material_assembler/finalize.rs` | material DLQ routing | `SourceMaterial` |
@@ -106,8 +106,8 @@ confusion; the boundaries below are authoritative.
 - **What goes here**: events that a node batcher could not publish to NATS at
   all — NATS was down, the semaphore was closed, or the connection was lost
   before the ACK arrived.
-- **Who writes**: event batching in the inline node SDK under
-  `crate/sinexd/src/node_sdk/`.
+- **Who writes**: event batching in the inline runtime under
+  `crate/sinexd/src/runtime/`.
 - **Who reads**: the same node on next startup; it replays the spool into the
   normal publish path before beginning new captures.
 - **Subject**: none — file-local until NATS is available.
@@ -120,7 +120,7 @@ confusion; the boundaries below are authoritative.
 |---|---|
 | Event engine could not persist a raw event | Raw-ingest DLQ |
 | Automaton could not process a derived event | Processing-failure stream |
-| Node could not reach NATS to publish | Local recovery spool |
+| RuntimeActor could not reach NATS to publish | Local recovery spool |
 | Confirmation could not be published | Retry queue → durability-gap warn |
 
 ---
@@ -145,7 +145,7 @@ The protocol per class:
 2. In-flight event processing completes.
 3. Derived events are published and ACKed.
 4. Checkpoint is saved (NATS KV + optional local backup).
-5. Node exits cleanly.
+5. RuntimeActor exits cleanly.
 
 On crash (no SIGTERM): JetStream NAK timeout causes redelivery; automaton
 deduplicates via equivalence key or scope reconciliation.

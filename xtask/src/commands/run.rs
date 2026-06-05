@@ -451,8 +451,8 @@ pub enum RunSubcommand {
         instance_id: Option<String>,
     },
     /// Run a specific node by name
-    Node {
-        /// Node name (e.g., fs-ingestor, analytics-automaton)
+    RuntimeActor {
+        /// RuntimeActor name (e.g., fs-ingestor, analytics-automaton)
         name: String,
         /// Instance ID for multi-instance coordination
         #[arg(long)]
@@ -581,7 +581,7 @@ impl XtaskCommand for RunCommand {
             RunSubcommand::Gateway { instance_id } => {
                 self.run_binary("gateway", instance_id.clone(), ctx).await
             }
-            RunSubcommand::Node { name, instance_id } => {
+            RunSubcommand::RuntimeActor { name, instance_id } => {
                 self.run_binary(name, instance_id.clone(), ctx).await
             }
             RunSubcommand::Core { instance_id } => {
@@ -623,7 +623,7 @@ impl RunCommand {
             self.subcommand,
             RunSubcommand::EventEngine { .. }
                 | RunSubcommand::Gateway { .. }
-                | RunSubcommand::Node { .. }
+                | RunSubcommand::RuntimeActor { .. }
         )
     }
 
@@ -1536,7 +1536,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_build_cargo_run_args_target_sinexd() -> ::xtask::sandbox::TestResult<()> {
-        let command = base_command(RunSubcommand::Node {
+        let command = base_command(RunSubcommand::RuntimeActor {
             name: "terminal-ingestor".to_string(),
             instance_id: None,
         });
@@ -1592,7 +1592,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_automaton_bundle_includes_non_suffix_derived_nodes()
+    async fn test_automaton_bundle_includes_non_suffix_automatons()
     -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(
             AUTOMATON_TARGETS,
@@ -1640,7 +1640,7 @@ mod tests {
     #[sinex_test]
     async fn test_logs_reject_background_mode() -> ::xtask::sandbox::TestResult<()> {
         let ctx = test_context(true);
-        let mut command = base_command(RunSubcommand::Node {
+        let mut command = base_command(RunSubcommand::RuntimeActor {
             name: "fs-ingestor".to_string(),
             instance_id: None,
         });

@@ -52,7 +52,7 @@ sinex-primitives         Foundation: types, validation, errors, domain enums, ID
 
 sinexd                  Unified daemon
     |
-    +-- sinexd::node_sdk     Inline runtime support: lifecycle, checkpoints, replay
+    +-- sinexd::runtime     Inline runtime support: lifecycle, checkpoints, replay
     +-- sinexd::sources      Source contracts and adapters
     +-- sinexd::automata     All automata
     +-- sinexd::event_engine Persistence pipeline
@@ -73,7 +73,7 @@ Subjects:
   sinex.events.dlq.>                    Dead-letter queue
   sinex.derived.invalidation            Scope invalidation (replay)
   sinex.telemetry                       Self-observation events
-  sinex.control.nodes.{id}.scan         Replay scan commands
+  sinex.control.sources.{id}.scan         Replay scan commands
   sinex.control.replay.progress.{op}    Replay progress updates
 ```
 
@@ -128,7 +128,7 @@ impl Windowed for SessionDetector {
 
     // Accumulate events into the window state.
     async fn accumulate(&mut self, state: &mut Self::State, input: Self::Input,
-        ctx: &AutomatonContext) -> Result<(), NodeLogicError>
+        ctx: &AutomatonContext) -> Result<(), AutomatonLogicError>
     {
         let ts = ctx.event_timestamp();
         state.events.push(input);
@@ -146,7 +146,7 @@ impl Windowed for SessionDetector {
 
     // Emit session boundary event from accumulated state.
     async fn emit(&mut self, state: &mut Self::State)
-        -> Result<Option<DerivedOutput>, NodeLogicError>
+        -> Result<Option<DerivedOutput>, AutomatonLogicError>
     {
         Ok(Some(DerivedOutput::windowed(json!({
             "start_time": state.start_ts,

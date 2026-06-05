@@ -104,7 +104,7 @@ mod tests {
         use sinex_primitives::ids::Id;
         use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceRecord, SourceId};
         use sinex_primitives::temporal::Timestamp;
-        use sinexd::node_sdk::parser::MaterialParser;
+        use sinexd::runtime::parser::MaterialParser;
         use sinexd::sources::source_contracts::desktop::activitywatch::ActivityWatchParser;
 
         let material_id = Id::<SourceMaterial>::from_uuid(sinex_primitives::Uuid::now_v7());
@@ -192,7 +192,7 @@ mod tests {
         use sinex_primitives::ids::Id;
         use sinex_primitives::parser::{ParserContext, SourceId};
         use sinex_primitives::temporal::Timestamp;
-        use sinexd::node_sdk::parser::{
+        use sinexd::runtime::parser::{
             InputShapeAdapter, MaterialParser, UnixSocketStreamAdapter, UnixSocketStreamConfig,
         };
         use sinexd::sources::source_contracts::desktop::window_manager::HyprlandParser;

@@ -18,7 +18,7 @@ let
   available = builtins.pathExists secretDir;
   files = if available then builtins.readDir secretDir else {};
   ageFiles = filterAttrs (name: kind: kind == "regular" && hasSuffix ".age" name) files;
-  serviceUser = cfg.users.nodes;
+  serviceUser = cfg.users.runtime;
   targetUser = cfg.users.target;
   targetUserHome =
     if targetUser == null

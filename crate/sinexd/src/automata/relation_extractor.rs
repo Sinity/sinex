@@ -16,8 +16,8 @@
 //! all entities share one sliding window. If richer scoping is desired later
 //! (e.g., per-source co-occurrence), the scope key can be partitioned.
 
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, ScopeReconcilerNodeAdapter};
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconcilerAdapter};
+use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, ScopeReconciler};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{RelationType, SyntheticTemporalPolicy};
@@ -122,7 +122,7 @@ impl ScopeReconciler for RelationExtractor {
         scope_key: &str,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         debug_assert_eq!(
             scope_key, CO_OCCURRENCE_SCOPE,
             "relation extractor only supports fixed scope 'co-occurrence-window'"
@@ -213,8 +213,8 @@ fn drain_and_emit_pairs(
     outputs
 }
 
-/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type RelationExtractorNode = ScopeReconcilerNodeAdapter<RelationExtractor>;
+/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+pub type RelationExtractorNode = ScopeReconcilerAdapter<RelationExtractor>;
 
 // ── Source descriptor (issue #690 / #734) ──────────────────────────────
 
@@ -249,7 +249,7 @@ register_source_runtime_binding! {
         "relation-extractor",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("entity.related")
     .privacy_context("inherits_from_parents")
@@ -257,11 +257,11 @@ register_source_runtime_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_id("relation-extractor")
-    .runner_pack("process")
+    .runner_pack("sinexd")
     .checkpoint_family(SuCheckpointFamily::AppendStream)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
+    .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
     .build()
 }

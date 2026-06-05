@@ -3,7 +3,7 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinexd::api::handlers::automata::handle_automata_status;
-use sinex_primitives::domain::{NodeName, NodeType};
+use sinex_primitives::domain::{ModuleName, ModuleKind};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::automata::AutomataStatusRequest;
 use xtask::sandbox::prelude::*;
@@ -23,14 +23,14 @@ async fn insert_material_event(
 
 async fn insert_metric_gauge(
     ctx: &TestContext,
-    node_name: &str,
+    module_name: &str,
     source_run_id: sinex_primitives::Uuid,
     name: &str,
     value: f64,
     labels: serde_json::Value,
 ) -> TestResult<()> {
     let mut labels = labels.as_object().cloned().unwrap_or_default();
-    labels.insert("node".to_string(), json!(node_name));
+    labels.insert("node".to_string(), json!(module_name));
     labels.insert("node_model".to_string(), json!("transducer"));
     labels.insert(
         "source_run_id".to_string(),
@@ -45,7 +45,7 @@ async fn insert_metric_gauge(
             "name": name,
             "value": value,
             "labels": labels,
-            "component": node_name,
+            "component": module_name,
         }),
     )
     .await?;
@@ -57,12 +57,12 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
     ctx: TestContext,
 ) -> TestResult<()> {
     let pool = ctx.pool();
-    let node_name = NodeName::new("canonicalizer-test");
+    let module_name = ModuleName::new("canonicalizer-test");
     let manifest = pool
         .state()
         .register_node(
-            &node_name,
-            NodeType::Automaton,
+            &module_name,
+            ModuleKind::Automaton,
             "1.0.0-test",
             Some("canonicalizes test commands"),
         )
@@ -140,7 +140,7 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
     assert_eq!(automata.len(), 1);
     let status = &automata[0];
 
-    assert_eq!(status.node_name, NodeName::new("canonicalizer-test"));
+    assert_eq!(status.module_name, ModuleName::new("canonicalizer-test"));
     assert_eq!(status.version, "1.0.0-test");
     assert!(status.live);
     assert_eq!(status.source_run_id, Some(run.id.to_uuid()));
@@ -161,12 +161,12 @@ async fn automata_status_handles_live_run_without_metric_events(
     ctx: TestContext,
 ) -> TestResult<()> {
     let pool = ctx.pool();
-    let node_name = NodeName::new("session-detector-test");
+    let module_name = ModuleName::new("session-detector-test");
     let manifest = pool
         .state()
         .register_node(
-            &node_name,
-            NodeType::Automaton,
+            &module_name,
+            ModuleKind::Automaton,
             "1.0.0-test",
             Some("detects activity sessions"),
         )
@@ -195,7 +195,7 @@ async fn automata_status_handles_live_run_without_metric_events(
     assert_eq!(automata.len(), 1);
     let status = &automata[0];
 
-    assert_eq!(status.node_name, NodeName::new("session-detector-test"));
+    assert_eq!(status.module_name, ModuleName::new("session-detector-test"));
     assert!(status.live);
     assert_eq!(status.source_run_id, Some(run.id.to_uuid()));
     assert!(status.events_processed_current_run.is_none());

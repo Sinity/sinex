@@ -56,7 +56,7 @@ pub enum RpcDomain {
     Instructions,
     Lifecycle,
     Llm,
-    Nodes,
+    Runtime,
     Ops,
     Pkm,
     Privacy,
@@ -163,7 +163,7 @@ pub mod instructions;
 pub mod lifecycle;
 pub mod llm;
 pub mod methods;
-pub mod nodes;
+pub mod runtime;
 pub mod ops;
 pub mod pkm;
 pub mod privacy;
@@ -222,12 +222,12 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         llm::LLM_BUDGET_REPORT_METHOD.info(),
         llm::LLM_PROMPTS_LIST_METHOD.info(),
         llm::LLM_ROUTE_EXPLAIN_METHOD.info(),
-        nodes::NODES_DRAIN_METHOD.info(),
-        nodes::NODES_HEALTH_METHOD.info(),
-        nodes::NODES_LIST_ACTIVE_METHOD.info(),
-        nodes::NODES_LIST_METHOD.info(),
-        nodes::NODES_RESUME_METHOD.info(),
-        nodes::NODES_SET_HORIZON_METHOD.info(),
+        runtime::RUNTIME_DRAIN_METHOD.info(),
+        runtime::RUNTIME_HEALTH_METHOD.info(),
+        runtime::RUNTIME_LIST_ACTIVE_METHOD.info(),
+        runtime::RUNTIME_LIST_METHOD.info(),
+        runtime::RUNTIME_RESUME_METHOD.info(),
+        runtime::RUNTIME_SET_HORIZON_METHOD.info(),
         ops::OPS_CANCEL_METHOD.info(),
         ops::OPS_GET_METHOD.info(),
         ops::OPS_LIST_METHOD.info(),
@@ -302,7 +302,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         telemetry::TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD.info(),
         telemetry::TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD.info(),
         telemetry::TELEMETRY_METRIC_COUNTERS_METHOD.info(),
-        telemetry::TELEMETRY_NODE_STATS_METHOD.info(),
+        telemetry::TELEMETRY_RUNTIME_STATS_METHOD.info(),
         telemetry::TELEMETRY_RECENT_ACTIVITY_METHOD.info(),
         telemetry::TELEMETRY_STREAM_STATS_METHOD.info(),
         telemetry::TELEMETRY_SYSTEM_STATE_METHOD.info(),
@@ -327,11 +327,11 @@ pub mod prelude {
     pub use super::lifecycle::*;
     pub use super::llm::*;
     pub use super::methods;
-    pub use super::nodes::*;
     pub use super::ops::*;
     pub use super::pkm::*;
     pub use super::privacy::*;
     pub use super::replay::*;
+    pub use super::runtime::*;
     pub use super::semantic::*;
     pub use super::shadow::*;
     pub use super::sources::*;

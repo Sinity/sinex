@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct CheckpointInconsistency {
-    pub node_name: String,
+    pub module_name: String,
     pub details: String,
     pub inconsistency_type: CheckpointInconsistencyType,
     pub events_potentially_missed: u64,
@@ -30,7 +30,7 @@ pub enum CheckpointKind {
 
 #[derive(Debug, Clone)]
 pub struct CheckpointSnapshot {
-    pub node_name: String,
+    pub module_name: String,
     pub consumer_group: String,
     pub consumer_name: String,
     pub checkpoint_kind: CheckpointKind,
@@ -70,11 +70,11 @@ pub mod checkpoint_verification {
     pub async fn verify_automaton_checkpoint_consistency(
         pool: &PgPool,
         snapshots: &[CheckpointSnapshot],
-        node_name: &str,
+        module_name: &str,
     ) -> SinexResult<Vec<String>> {
-        let snapshot = latest_snapshot_for_node(snapshots, node_name);
+        let snapshot = latest_snapshot_for_node(snapshots, module_name);
         let issues = IntegrityRepository::new(pool)
-            .analyze_node(node_name, snapshot, 1_000, 24, 24)
+            .analyze_node(module_name, snapshot, 1_000, 24, 24)
             .await?;
         Ok(issues.into_iter().map(|issue| issue.details).collect())
     }
@@ -82,10 +82,10 @@ pub mod checkpoint_verification {
 
 fn latest_snapshot_for_node<'a>(
     snapshots: &'a [CheckpointSnapshot],
-    node_name: &str,
+    module_name: &str,
 ) -> Option<&'a CheckpointSnapshot> {
     snapshots
         .iter()
-        .filter(|snapshot| snapshot.node_name == node_name)
+        .filter(|snapshot| snapshot.module_name == module_name)
         .max_by_key(|snapshot| snapshot.last_activity)
 }

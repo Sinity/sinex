@@ -113,7 +113,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// Request-reply coordination: leadership handoff, heartbeat ready-signals,
 /// scan commands, replay control responses.
 ///
-/// - **Subject pattern**: `{env}.sinex.control.nodes.{id}.*`,
+/// - **Subject pattern**: `{env}.sinex.control.sources.{id}.*`,
 ///   `{env}.sinex.control.replay.progress.{op}`, direct request-reply
 ///   subjects.
 /// - **`QoS`**: Core NATS (not `JetStream`); at-most-once. Request-reply with

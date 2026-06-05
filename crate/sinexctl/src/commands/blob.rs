@@ -6,7 +6,7 @@ use sinex_db::create_pool;
 use sinex_primitives::Id;
 use sinex_primitives::Uuid;
 use sinex_primitives::events::{Event, SourceMaterial};
-use sinexd::node_sdk::content_store::{
+use sinexd::runtime::content_store::{
     CasFsckReport, ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
     cas_fsck::check_cas,
     gc::{BlobGcReport, sweep_orphans_detailed},

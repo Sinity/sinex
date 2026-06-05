@@ -76,12 +76,12 @@ pub fn registered_source_factory_ids() -> Vec<SourceId> {
 /// `run_ingestor::<I>(args)` and submits it to `inventory`.
 #[macro_export]
 macro_rules! register_source_driver {
-    ($id:expr, $node_type:ty) => {
+    ($id:expr, $module_kind:ty) => {
         $crate::__submit_registry_entry!(
             $crate::sources::source_factory::SourceFactoryEntry,
             $id,
             |args| {
-                Box::pin($crate::sources::source_factory::run_ingestor::<$node_type>(
+                Box::pin($crate::sources::source_factory::run_ingestor::<$module_kind>(
                     args,
                 ))
             },
@@ -108,8 +108,8 @@ macro_rules! __submit_registry_entry {
     };
 }
 
-// `register_monitor_unit!` is defined in monitor_node.rs and exported here
-// for documentation grouping. The macro itself lives in crate::sources::monitor_node
+// `register_monitor_unit!` is defined in monitor_driver.rs and exported here
+// for documentation grouping. The macro itself lives in crate::sources::monitor_driver
 // because it needs pub access to that module's types.
 // Re-export is not possible for macros with #[macro_export] — they live at
 // the crate root automatically. Users call `crate::register_monitor_unit!`.
@@ -178,25 +178,25 @@ pub async fn run_adapter_ingestor<A, P>(
     args: Vec<std::ffi::OsString>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    A: crate::node_sdk::parser::InputShapeAdapter
+    A: crate::runtime::parser::InputShapeAdapter
         + Default
         + Send
         + Sync
         + 'static
-        + crate::node_sdk::parser::InputShapeAdapterExt,
+        + crate::runtime::parser::InputShapeAdapterExt,
     P: sinex_primitives::parser::MaterialParser + Default + Send + Sync + 'static,
     A::Config: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
     A::Cursor: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
 {
-    use crate::node_sdk::SourceDriverRuntime;
-    use crate::node_sdk::node_cli::{NodeCli, NodeCliRunner};
-    use crate::node_sdk::parser::AdapterBackedIngestor;
+    use crate::runtime::SourceDriverRuntime;
+    use crate::runtime::runtime_cli::{RuntimeCli, RuntimeCliRunner};
+    use crate::runtime::parser::AdapterBackedIngestor;
     use clap::Parser;
 
-    let parsed = NodeCli::parse_from(args);
+    let parsed = RuntimeCli::parse_from(args);
     let node = AdapterBackedIngestor::<A, P>::new(source_id);
     let adapter = SourceDriverRuntime::new(node);
-    let mut runner = NodeCliRunner::new(adapter);
+    let mut runner = RuntimeCliRunner::new(adapter);
     runner.run(parsed).await.map_err(std::convert::Into::into)
 }
 
@@ -211,14 +211,14 @@ pub async fn run_ingestor<I>(
     args: Vec<std::ffi::OsString>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    I: crate::node_sdk::SourceDriver + Default + 'static,
+    I: crate::runtime::SourceDriver + Default + 'static,
 {
-    use crate::node_sdk::SourceDriverRuntime;
-    use crate::node_sdk::node_cli::{NodeCli, NodeCliRunner};
+    use crate::runtime::SourceDriverRuntime;
+    use crate::runtime::runtime_cli::{RuntimeCli, RuntimeCliRunner};
     use clap::Parser;
 
-    let parsed = NodeCli::parse_from(args);
+    let parsed = RuntimeCli::parse_from(args);
     let node = SourceDriverRuntime::new(I::default());
-    let mut runner = NodeCliRunner::new(node);
+    let mut runner = RuntimeCliRunner::new(node);
     runner.run(parsed).await.map_err(std::convert::Into::into)
 }

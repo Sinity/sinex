@@ -13,7 +13,7 @@ use crate::api::{
 use sinex_primitives::env as shared_env;
 
 // External crates
-use crate::node_sdk::systemd_notify;
+use crate::runtime::systemd_notify;
 use axum::{
     BoxError, Json, Router,
     error_handling::HandleErrorLayer,

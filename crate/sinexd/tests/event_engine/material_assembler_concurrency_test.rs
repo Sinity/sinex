@@ -5,7 +5,7 @@ use blake3::Hasher;
 use futures::future::join_all;
 use serde_json::json;
 use sinexd::event_engine::{EventEngineResult, MaterialAssembler, MaterialReadySet};
-use sinexd::node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
+use sinexd::runtime::content_store::{ContentStoreConfig, MaterialContentStore};
 use sinex_primitives::{Uuid, temporal};
 use sqlx::Row;
 use std::sync::Arc;

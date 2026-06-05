@@ -27,7 +27,7 @@ pub mod fs;
 pub mod hooks;
 pub mod nats;
 #[cfg(any(feature = "runtime-introspection", test))]
-pub mod node_runtime;
+pub mod runtime;
 pub mod orchestrator;
 pub mod postgres;
 pub mod preflight;
@@ -62,7 +62,7 @@ pub use fs::{EnvGuard, TestTempEnv, prepare_test_temp_env};
 pub use hooks::TestHooks;
 pub use nats::EventOverrides;
 #[cfg(any(feature = "runtime-introspection", test))]
-pub use node_runtime::{TestRuntime, TestRuntimeBuilder};
+pub use runtime::{TestRuntime, TestRuntimeBuilder};
 pub use orchestrator::{
     CapturedOutput, TestGatewayConfig, TestGatewayHandle, TestEventEngineConfig, TestEventEngineHandle,
     TestSourceDriverConfig, TestSourceDriverHandle, run_test_source_scan,

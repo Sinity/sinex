@@ -9,7 +9,7 @@ pub mod parser;
 
 pub use parser::FilesystemParser;
 
-use crate::node_sdk::parser::FileContentDropAdapter;
+use crate::runtime::parser::FileContentDropAdapter;
 use crate::register_adapter_ingestor;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,

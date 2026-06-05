@@ -170,7 +170,7 @@ let publisher = TestNodePublisher::with_namespace(
 publisher.publish_event("file.created", json!({"path": "/tmp/demo"})).await?;
 ```
 
-TestNodePublisher wraps the node SDK with test defaults. It publishes slices, payloads, and
+TestNodePublisher wraps the runtime with test defaults. It publishes slices, payloads, and
 confirmations just like a production node.
 
 ## NATS Client Access
@@ -259,7 +259,7 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
 | Subject pattern | `namespace.subject("subject.>")` |
 | Publish event | `ctx.publish_event(...)` |
 | Full pipeline + event_engine | `ctx.pipeline_scope().await?` |
-| Node-style publisher | `TestNodePublisher::with_namespace(...)` |
+| RuntimeActor-style publisher | `TestNodePublisher::with_namespace(...)` |
 | Wait for persistence | `scope.wait_for_event_count(n)` |
 
 ## When to Use What

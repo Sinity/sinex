@@ -114,7 +114,7 @@ fn format_automata_status_table(response: &AutomataStatusResponse) -> String {
             .map_or_else(|| style("-").dim().to_string(), short_uuid);
 
         builder.push_record([
-            automaton.node_name.to_string(),
+            automaton.module_name.to_string(),
             live,
             run,
             format_optional_count(automaton.events_processed_current_run),

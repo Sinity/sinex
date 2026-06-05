@@ -15,11 +15,11 @@ let
   inherit (secretResolution) resolveNamedSecretPath;
   cfg = config.services.sinex;
   coreCfg = cfg.core;
-  nodesCfg = cfg.nodes;
+  runtimeCfg = cfg.runtime;
 
   sinexEnabled = cfg.enable;
   coreEnabled = sinexEnabled && coreCfg.enable;
-  nodesEnabled = sinexEnabled && nodesCfg.enable;
+  runtimeEnabled = sinexEnabled && runtimeCfg.enable;
   natsEnabled = cfg.nats.enable || cfg.nats.autoSetup;
   schemaApplyEnabled = cfg.database.enable && cfg.database.autoSetup;
   localPostgresEnabled = cfg.database.enable && (cfg.database.autoSetup || config.services.postgresql.enable);
@@ -73,11 +73,11 @@ let
 
   sinexPackage = cfg.package;
   adminPackage = cfg.adminPackage;
-  serviceUser = cfg.users.nodes;
+  serviceUser = cfg.users.runtime;
 
   databaseUrl = renderDatabaseUrl cfg.database;
 
-  natsUrl = concatStringsSep "," nodesCfg.nats.servers;
+  natsUrl = concatStringsSep "," runtimeCfg.nats.servers;
   secretPaths = config.sinex.secrets.paths or { };
   resolveSecretPath = resolveNamedSecretPath secretPaths;
   apiAdminTokenFile =
@@ -88,8 +88,8 @@ let
     "sinex-local-db"
     "sinex-remote-db"
   ];
-  natsTlsCfg = nodesCfg.nats.tls;
-  natsAuthCfg = nodesCfg.nats.auth;
+  natsTlsCfg = runtimeCfg.nats.tls;
+  natsAuthCfg = runtimeCfg.nats.auth;
   effectiveNatsCaCertFile = resolveSecretPath natsTlsCfg.caCertFile [
     "sinex-nats-ca"
     "nats-ca"
@@ -119,7 +119,7 @@ let
   ];
   inferredNatsTls =
     natsTlsCfg.requireTls
-    || any (server: hasPrefix "tls://" server || hasPrefix "wss://" server) nodesCfg.nats.servers;
+    || any (server: hasPrefix "tls://" server || hasPrefix "wss://" server) runtimeCfg.nats.servers;
   collectReadablePaths = paths: filter (path: path != null) paths;
   databaseSecretAssertPaths = collectReadablePaths [
     (if cfg.database.enable then effectiveDatabasePasswordFile else null)
@@ -256,7 +256,7 @@ let
     "SINEX_RUNTIME_DIR=${runtimeDir}"
     "SINEX_LOG_DIR=${logDir}"
     "SINEX_NATS_URL=${natsUrl}"
-    "SINEX_NATS_MONITORING_PORT=${toString nodesCfg.nats.monitoringPort}"
+    "SINEX_NATS_MONITORING_PORT=${toString runtimeCfg.nats.monitoringPort}"
     # Both event_engine and gateway access the same content-store root; set here
     # so all core services share a consistent path without per-service repetition.
     "SINEX_CONTENT_STORE_PATH=${blobDir}"
@@ -268,21 +268,21 @@ let
     ++ optional (effectiveNatsTokenFile != null) "SINEX_NATS_TOKEN_FILE=${toString effectiveNatsTokenFile}"
     ++ optional (effectiveNatsCredsFile != null) "SINEX_NATS_CREDS_FILE=${toString effectiveNatsCredsFile}"
     ++ optional (effectiveNatsNkeySeedFile != null) "SINEX_NATS_NKEY_SEED_FILE=${toString effectiveNatsNkeySeedFile}"
-    ++ toEnvList nodesCfg.defaults.env;
+    ++ toEnvList runtimeCfg.defaults.env;
 
   coordinationEnv =
-    if nodesCfg.coordination.enable then [
+    if runtimeCfg.coordination.enable then [
       "SINEX_COORDINATION_ENABLED=1"
-      "SINEX_COORDINATION_HEARTBEAT=${toString nodesCfg.coordination.heartbeatSec}"
-      "SINEX_COORDINATION_TIMEOUT=${toString nodesCfg.coordination.leadershipTimeoutSec}"
-      "SINEX_COORDINATION_HANDOFF=${toString nodesCfg.coordination.handoffTimeoutSec}"
+      "SINEX_COORDINATION_HEARTBEAT=${toString runtimeCfg.coordination.heartbeatSec}"
+      "SINEX_COORDINATION_TIMEOUT=${toString runtimeCfg.coordination.leadershipTimeoutSec}"
+      "SINEX_COORDINATION_HANDOFF=${toString runtimeCfg.coordination.handoffTimeoutSec}"
     ] else [ ];
 
   resolveResources = nodeResources:
-    if nodeResources == null then nodesCfg.defaults.resources else nodeResources;
+    if nodeResources == null then runtimeCfg.defaults.resources else nodeResources;
 
   resolveInstances = nodeInstances:
-    if nodeInstances == null then nodesCfg.defaults.instances else nodeInstances;
+    if nodeInstances == null then runtimeCfg.defaults.instances else nodeInstances;
 
   renderResources = resources: {
     MemoryHigh = resources.memoryHigh;
@@ -313,9 +313,9 @@ let
   restartRateLimits = {
     # Long-running capture services must recover after transient infra outages
     # without requiring a manual `systemctl reset-failed`. Defaults disable the
-    # limit; workstations bound it via services.sinex.runtime.restartPolicy.
-    StartLimitIntervalSec = cfg.runtime.restartPolicy.intervalSec;
-    StartLimitBurst = cfg.runtime.restartPolicy.burst;
+    # limit; workstations bound it via services.sinex.runtimeSystem.restartPolicy.
+    StartLimitIntervalSec = cfg.runtimeSystem.restartPolicy.intervalSec;
+    StartLimitBurst = cfg.runtimeSystem.restartPolicy.burst;
   };
 
   mkServiceEnv = additionalEnv: baseEnv ++ coordinationEnv ++ additionalEnv;
@@ -327,7 +327,7 @@ let
     if targetUser == null then null
     else lib.attrByPath [ "users" "users" targetUser "uid" ] null config;
   effectiveDocumentRoots =
-    if nodesCfg.document.allowedRoots != [ ] then nodesCfg.document.allowedRoots
+    if runtimeCfg.document.allowedRoots != [ ] then runtimeCfg.document.allowedRoots
     else if targetHome == null then [ ]
     else [ "${targetHome}/Documents" ];
   terminalSourceIdForShell = shell:
@@ -345,8 +345,8 @@ let
       Type = "notify";
       User = serviceUser;
       Group = serviceUser;
-      Restart = cfg.runtime.restartPolicy.mode;
-      RestartSec = cfg.runtime.restartPolicy.backoffSec;
+      Restart = cfg.runtimeSystem.restartPolicy.mode;
+      RestartSec = cfg.runtimeSystem.restartPolicy.backoffSec;
       # 60s watchdog; the spawn_watchdog impl runs the pinger on a
       # dedicated std::thread (not a tokio task), so heavy COPY batches
       # on the async runtime can't starve the ping.
@@ -421,7 +421,7 @@ let
       };
     };
 
-  mkCoreServices = { automataEnabledList, sourceBindingsManifestFile, nodesOverlay }:
+  mkCoreServices = { automataEnabledList, sourceBindingsManifestFile, runtimeOverlay }:
     let
       batch = coreCfg.event_engine.batch;
       sinexdArgs = concatStringsSep " " ([
@@ -538,11 +538,11 @@ let
     {
       "sinexd" = {
         description = "Sinex daemon (event engine + API + automata + hosted source bindings)";
-        wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
-        restartIfChanged = cfg.runtime.restartOnSwitch;
-        after = gatewayAfter ++ (nodesOverlay.afterUnits or [ ]);
+        wantedBy = lib.optional cfg.runtimeSystem.target.attachToMultiUser "multi-user.target";
+        restartIfChanged = cfg.runtimeSystem.restartOnSwitch;
+        after = gatewayAfter ++ (runtimeOverlay.afterUnits or [ ]);
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
-        wants = coreWants ++ (nodesOverlay.wantsUnits or [ ]);
+        wants = coreWants ++ (runtimeOverlay.wantsUnits or [ ]);
         unitConfig =
           restartRateLimits
           // { PartOf = [ "sinex-runtime.target" ]; }
@@ -607,7 +607,7 @@ let
               ++ optional (cfg.core.gateway.tlsClientCAFile != null) "SINEX_API_TLS_CLIENT_CA=${gatewayTlsClientCaRuntimeFile}"
               ++ optional (coreCfg.gateway.requireClientTLS) "SINEX_API_REQUIRE_CLIENT_TLS=1"
               ++ optional (coreCfg.gateway.corsOrigins != null) "SINEX_API_CORS_ORIGINS=${coreCfg.gateway.corsOrigins}"
-              ++ (nodesOverlay.environment or [ ])
+              ++ (runtimeOverlay.environment or [ ])
             )
           )
           (
@@ -620,27 +620,27 @@ let
                 passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
               };
             }
-            // optionalAttrs (gatewayRuntimeInputStageScript != null || (nodesOverlay.execStartPre or [ ]) != [ ]) {
+            // optionalAttrs (gatewayRuntimeInputStageScript != null || (runtimeOverlay.execStartPre or [ ]) != [ ]) {
               ExecStartPre = lib.mkBefore (
                 lib.optional (gatewayRuntimeInputStageScript != null) "+${gatewayRuntimeInputStageScript}"
-                ++ (nodesOverlay.execStartPre or [ ])
+                ++ (runtimeOverlay.execStartPre or [ ])
               );
             }
-            // optionalAttrs ((nodesOverlay.readWritePaths or [ ]) != [ ]) {
-              ReadWritePaths = lib.mkForce (unique (readWritePaths ++ nodesOverlay.readWritePaths));
+            // optionalAttrs ((runtimeOverlay.readWritePaths or [ ]) != [ ]) {
+              ReadWritePaths = lib.mkForce (unique (readWritePaths ++ runtimeOverlay.readWritePaths));
             }
-            // optionalAttrs ((nodesOverlay.protectHome or null) != null) {
-              ProtectHome = lib.mkForce nodesOverlay.protectHome;
+            // optionalAttrs ((runtimeOverlay.protectHome or null) != null) {
+              ProtectHome = lib.mkForce runtimeOverlay.protectHome;
             }
-            // optionalAttrs ((nodesOverlay.environmentFile or [ ]) != [ ]) {
-              EnvironmentFile = nodesOverlay.environmentFile;
+            // optionalAttrs ((runtimeOverlay.environmentFile or [ ]) != [ ]) {
+              EnvironmentFile = runtimeOverlay.environmentFile;
             }
-            // optionalAttrs ((nodesOverlay.supplementaryGroups or [ ]) != [ ]) {
-              SupplementaryGroups = unique nodesOverlay.supplementaryGroups;
+            // optionalAttrs ((runtimeOverlay.supplementaryGroups or [ ]) != [ ]) {
+              SupplementaryGroups = unique runtimeOverlay.supplementaryGroups;
             }
           );
         path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ]
-          ++ (nodesOverlay.path or [ ]);
+          ++ (runtimeOverlay.path or [ ]);
       };
     }
     // optionalAttrs tlsAutoGenEnabled {
@@ -671,10 +671,10 @@ let
   # binding manifest below.
   mkFilesystemBindings =
     let
-      sat = nodesCfg.filesystem;
+      sat = runtimeCfg.filesystem;
       instances = resolveInstances sat.instances;
       resources = resolveResources sat.resources;
-      nodeConfig = {
+      runtimeConfig = {
         watch_paths = sat.watchPaths;
         max_depth = 10;
         follow_symlinks = false;
@@ -690,10 +690,10 @@ let
           enable = sat.enable;
           description = "Filesystem watcher (hosted source binding)";
           adapterType = null;
-          adapterConfig = nodeConfig;
+          adapterConfig = runtimeConfig;
           inherit instances resources;
           extraArgs = sat.extraArgs;
-          extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+          extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
           serviceConfigOverrides = { };
         };
       };
@@ -706,7 +706,7 @@ let
   # Returns source bindings plus the ACL setup one-shot service.
   mkTerminalGlue =
     let
-      sat = nodesCfg.terminal;
+      sat = runtimeCfg.terminal;
       instances = resolveInstances sat.instances;
       resources = resolveResources sat.resources;
       effectiveHistorySources =
@@ -879,7 +879,7 @@ let
                 adapterConfig = mkSourceDriverAdapterConfig group;
                 inherit instances resources serviceConfigOverrides;
                 extraArgs = sat.extraArgs;
-                extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+                extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
               })
               sourceUnitGroups
           );
@@ -891,7 +891,7 @@ let
           adapterConfig = { };
           instances = 1;
           inherit resources;
-          extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+          extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
           serviceConfigOverrides = { };
           extraArgs = [ ];
         };
@@ -901,7 +901,7 @@ let
       # units can traverse target-user paths.
       supportUnits = mkAccessSetupUnit {
         name = "sinex-terminal-target-access";
-        description = "Prepare target-user access for the Sinex terminal node";
+        description = "Prepare target-user access for the Sinex terminal source runtime";
         script = accessSetupScript;
         writePaths = accessWritePaths;
         beforeUnits = [ "sinex-preflight.service" "sinexd.service" ];
@@ -923,7 +923,7 @@ let
   # Returns source bindings, support units, and desktop bridge paths.
   mkDesktopGlue =
     let
-      sat = nodesCfg.desktop;
+      sat = runtimeCfg.desktop;
       resources = resolveResources sat.resources;
       clipboardEnv = if sat.clipboard.enable then { SINEX_CLIPBOARD = "1"; } else { SINEX_CLIPBOARD = "0"; };
       bridgeEnvFile = "${runtimeDir}/desktop-target.env";
@@ -1147,11 +1147,11 @@ let
       desktopExtraEnv =
         clipboardEnv
         // sessionEnv
-        // { RUST_LOG = nodesCfg.defaults.logLevel; }
+        // { RUST_LOG = runtimeCfg.defaults.logLevel; }
         // sat.env;
       supportUnits = mkAccessSetupUnit {
         name = "sinex-desktop-target-access";
-        description = "Prepare target-user access for the Sinex desktop node";
+        description = "Prepare target-user access for the Sinex desktop source runtime";
         script = accessSetupScript;
         writePaths = accessWritePaths;
         afterUnits = runtimeRootUnits;
@@ -1258,7 +1258,7 @@ let
   # Browser source binding contribution.
   mkBrowserGlue =
     let
-      sat = nodesCfg.browser;
+      sat = runtimeCfg.browser;
       instances = resolveInstances sat.instances;
       resources = resolveResources sat.resources;
       # Post-Wave-B fold (#1081): browser.history uses
@@ -1352,7 +1352,7 @@ let
       browserServiceConfigOverrides = { };
       supportUnits = mkAccessSetupUnit {
         name = "sinex-browser-target-access";
-        description = "Prepare target-user access for the Sinex browser node";
+        description = "Prepare target-user access for the Sinex browser source runtime";
         script = accessSetupScript;
         writePaths = accessWritePaths;
         beforeUnits = [ "sinex-preflight.service" "sinexd.service" ];
@@ -1384,7 +1384,7 @@ let
           };
           inherit instances resources;
           extraArgs = sat.extraArgs;
-          extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+          extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
           serviceConfigOverrides = browserServiceConfigOverrides;
         };
       };
@@ -1402,11 +1402,11 @@ let
   # System source binding contribution.
   mkSystemGlue =
     let
-      sat = nodesCfg.system;
+      sat = runtimeCfg.system;
       resources = resolveResources sat.resources;
       # Post-Wave-B fold (#1081): system source contracts share this config blob.
       # Each parser only reads what its source-specific code touches.
-      nodeConfig = {
+      runtimeConfig = {
         dbus_enabled = true;
         journal_enabled = true;
         udev_enabled = true;
@@ -1465,11 +1465,11 @@ let
         enable = sat.enable;
         inherit description;
         adapterType = null;
-        adapterConfig = nodeConfig;
+        adapterConfig = runtimeConfig;
         instances = 1;
         inherit resources;
         extraArgs = sat.extraArgs;
-        extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+        extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
         serviceConfigOverrides = { };
       };
     in
@@ -1488,7 +1488,7 @@ let
           adapterConfig = { };
           instances = 1;
           inherit resources;
-          extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+          extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
           serviceConfigOverrides = { };
           extraArgs = [ ];
         };
@@ -1500,10 +1500,10 @@ let
 
   mkDocumentUnits =
     let
-      sat = nodesCfg.document;
+      sat = runtimeCfg.document;
       resources = resolveResources sat.resources;
       documentRoots = unique (map toString effectiveDocumentRoots);
-      nodeConfig = builtins.toJSON {
+      runtimeConfig = builtins.toJSON {
         supported_mime_types = sat.supportedMimeTypes;
         max_document_size = sat.maxDocumentSize;
         allowed_roots = documentRoots;
@@ -1521,8 +1521,8 @@ let
           "document.staging"
           "--service-name"
           "sinex-document-scan"
-          "--node-config"
-          (escapeShellArg nodeConfig)
+          "--runtime-config"
+          (escapeShellArg runtimeConfig)
           "--extra-arg"
           "scan"
           "--extra-arg"
@@ -1532,7 +1532,7 @@ let
         ]
         ++ concatMap (arg: [ "--extra-arg" arg ]) sat.extraArgs
       );
-      env = mkServiceEnv ([ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env);
+      env = mkServiceEnv ([ "RUST_LOG=${runtimeCfg.defaults.logLevel}" ] ++ toEnvList sat.env);
       requiredUnits =
         schemaApplyUnits
         ++ postgresServiceUnits
@@ -1647,9 +1647,9 @@ let
   # SINEX_AUTOMATA_ENABLED. The catalog still drives which names are
   # eligible; selection comes from each automaton's enable flag.
   automataEnabledNames =
-    if !(nodesEnabled && nodesCfg.automata.enable) then [ ] else
+    if !(runtimeEnabled && runtimeCfg.automata.enable) then [ ] else
     map (spec: spec.automaton)
-      (filter (spec: nodesCfg.automata.${spec.optionName}.enable) automataLib.specs);
+      (filter (spec: runtimeCfg.automata.${spec.optionName}.enable) automataLib.specs);
 
   # ── Support-glue assembly ────────────────────────────────────────────────
   # Post-collapse: per-source service emission is gone. Each domain glue
@@ -1660,19 +1660,19 @@ let
   # SupplementaryGroups / unit path packages — merged into sinexd.service).
   emptyGlue = { bindings = { }; supportUnits = { }; overlay = { }; };
   terminalGlue =
-    if nodesEnabled && nodesCfg.terminal.enable then mkTerminalGlue
+    if runtimeEnabled && runtimeCfg.terminal.enable then mkTerminalGlue
     else emptyGlue;
   desktopGlue =
-    if nodesEnabled && nodesCfg.desktop.enable then mkDesktopGlue
+    if runtimeEnabled && runtimeCfg.desktop.enable then mkDesktopGlue
     else emptyGlue // { paths = { }; };
   browserGlue =
-    if nodesEnabled && nodesCfg.browser.enable then mkBrowserGlue
+    if runtimeEnabled && runtimeCfg.browser.enable then mkBrowserGlue
     else emptyGlue;
   systemGlue =
-    if nodesEnabled && nodesCfg.system.enable then mkSystemGlue
+    if runtimeEnabled && runtimeCfg.system.enable then mkSystemGlue
     else { bindings = { }; overlay = { }; };
   filesystemGlue =
-    if nodesEnabled && nodesCfg.filesystem.enable then mkFilesystemBindings
+    if runtimeEnabled && runtimeCfg.filesystem.enable then mkFilesystemBindings
     else { bindings = { }; overlay = { }; };
 
   # All domain-specific source bindings merged together.
@@ -1684,7 +1684,7 @@ let
     // systemGlue.bindings;
 
   # Support units (ACL/env bridges) that generate their own systemd services.
-  nodesSupportUnits =
+  runtimeSupportUnits =
     terminalGlue.supportUnits
     // browserGlue.supportUnits
     // desktopGlue.supportUnits;
@@ -1703,7 +1703,7 @@ let
     systemGlue.overlay
   ];
   collectList = field: concatMap (o: o.${field} or [ ]) glueOverlays;
-  nodesOverlay = {
+  runtimeOverlay = {
     protectHome =
       if any (o: (o.protectHome or null) == "read-only") glueOverlays then "read-only"
       else null;
@@ -1721,7 +1721,7 @@ let
   # Source-binding manifest consumed by sinexd via SINEX_SOURCE_BINDINGS_PATH.
   # Schema mirrors `sinexd::sources::bindings::SourceBindingsManifest`.
   activeManifestBindings =
-    if !nodesEnabled then [ ]
+    if !runtimeEnabled then [ ]
     else
       concatMap
         (id:
@@ -1730,7 +1730,7 @@ let
             enable = binding.enable or false;
             gated = binding.gated or false;
             instances = binding.instances or 1;
-            nodeConfig = binding.adapterConfig or { };
+            runtimeConfig = binding.adapterConfig or { };
             extraArgs = binding.extraArgs or [ ];
             instanceList = range 1 instances;
           in
@@ -1740,7 +1740,7 @@ let
                 source_id = id;
                 instance_idx = idx;
                 service_name = "sinex-source-${id}-${toString idx}";
-                node_config = nodeConfig;
+                runtime_config = runtimeConfig;
                 extra_args = extraArgs;
               })
               instanceList
@@ -1755,11 +1755,11 @@ let
     );
 
   documentScanService =
-    if !(nodesEnabled && nodesCfg.document.enable) then { units = { }; supportUnits = { }; } else mkDocumentUnits;
+    if !(runtimeEnabled && runtimeCfg.document.enable) then { units = { }; supportUnits = { }; } else mkDocumentUnits;
 
   coreServices = mkCoreServices {
     automataEnabledList = automataEnabledNames;
-    inherit sourceBindingsManifestFile nodesOverlay;
+    inherit sourceBindingsManifestFile runtimeOverlay;
   };
 
   # Preflight only needs to guard the collapsed sinexd unit. Source
@@ -1770,7 +1770,7 @@ in
   # Internal option declared here to break the evaluation cycle.
   # sources.nix reads config.services.sinex (via cfg) and must
   # communicate generated unit names to preflight-verification.nix.
-  # Writing back to services.sinex.nodes.* from a module that reads
+  # Writing back to services.sinex.runtime.* from a module that reads
   # config.services.sinex causes infinite recursion because the module
   # system must merge all definitions of the submodule to evaluate any
   # sub-option.  A separate top-level path avoids the cycle.
@@ -1786,19 +1786,19 @@ in
       systemd.services = mkMerge [
         coreServices
         # ACL/env bridge support units (not source host services).
-        nodesSupportUnits
+        runtimeSupportUnits
         documentScanService.units
         documentScanService.supportUnits
       ];
       systemd.paths = desktopGlue.paths or { };
       systemd.timers = mkMerge [
-        (optionalAttrs (nodesEnabled && nodesCfg.document.enable && nodesCfg.document.schedule != null) {
+        (optionalAttrs (runtimeEnabled && runtimeCfg.document.enable && runtimeCfg.document.schedule != null) {
           "sinex-document-scan" = {
             description = "Schedule Sinex document snapshot scans";
             wantedBy = [ "timers.target" ];
             timerConfig = {
-              OnCalendar = nodesCfg.document.schedule;
-              Persistent = nodesCfg.document.persistentTimer;
+              OnCalendar = runtimeCfg.document.schedule;
+              Persistent = runtimeCfg.document.persistentTimer;
             };
           };
         })

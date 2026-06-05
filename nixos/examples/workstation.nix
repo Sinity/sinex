@@ -1,7 +1,7 @@
 
 # Minimal Sinex configuration example
 #
-# Defines a single-node deployment with the node architecture and
+# Defines a single-runtime deployment with the runtime architecture and
 # filesystem/terminal/browser capture enabled. Update the REQUIRED fields for your host.
 
 { config, lib, pkgs, ... }:
@@ -36,9 +36,9 @@
     };
 
     # Workstation runtime policy: keep the runtime out of automatic activation
-    # restarts and bound the restart loop so a misbehaving capture node can't
+    # restarts and bound the restart loop so a misbehaving capture runtime can't
     # spin forever under interactive load.
-    runtime = {
+    runtimeSystem = {
       target = {
         attachToMultiUser = false;
         manualStartOnly = true;
@@ -59,7 +59,7 @@
       gateway.autoGenerateTls = true;
     };
 
-    nodes = {
+    runtime = {
       enable = true;
       coordination.enable = false;
       defaults.logLevel = "info";

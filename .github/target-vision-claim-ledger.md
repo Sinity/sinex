@@ -108,7 +108,7 @@ catch-all (e). Vision files were not modified — they are input evidence.
 | TV-014 | Bus-First / source-unit host architecture is target but legacy domain ingestors remain. | implementation_ready | `report/architecture.md` (System Shape); `report/work-ahead.md` (Cluster 1-2) | #1054 (open spine) + #1081, #1097, #1098, #1057, #1067, #1100, #1064 all closed | Active migration tracked in #1126 execution plan; per-source-unit production smoke matrix already lands via #1367. | Treat #1054 as the live execution authority. |
 | TV-015 | Per-row SQLite staging is the only staging shape; lacks epistemic snapshot/WAL lane. | issue_backed | `report/architecture.md` (Source Material as a Role §); `reference/historical-architecture.md` | #1285 (closed — design decided); #1207 (open — evidence lanes / snapshot + WAL backing) | Complete #1207 evidence-lane implementation. | Design dispute is closed; remaining work is the snapshot/WAL companion lane. |
 | TV-016 | Anchor-uniqueness fix needed at DB level. | superseded | `report/architecture.md` (Invariant Enforcement Status) | TimescaleDB hypertable limitation documented; application-level `ON CONFLICT (id) DO NOTHING` is current design | None — accepted limitation. | Vision text reads as live gap; architecture has formally accepted it. |
-| TV-017 | DLQ stream name mismatch between gateway/node-sdk and event_engine. | verified | `report/architecture.md` (NATS Topology) | Fixed 2026-04-16 across 5 files. | None. | Already annotated in vision but worth ledgering. |
+| TV-017 | DLQ stream name mismatch between gateway/runtime and event_engine. | verified | `report/architecture.md` (NATS Topology) | Fixed 2026-04-16 across 5 files. | None. | Already annotated in vision but worth ledgering. |
 | TV-018 | "Honesty sweep" — `Timestamp::now()` fabrication still present. | verified | `report/architecture.md` (Three Clocks §; Invariant Enforcement Status) | Resolved 2026-03-27 in event_engine ts_orig DLQ routing. | None. | Vision text annotates but readers occasionally reintroduce the assumption. |
 | TV-019 | qutebrowser WAL/recovery: needs write ACL, sinex only has read. | superseded | `reference/communication-social.md` discussion; data-landscape implication | #1325 (closed) — adapter handles qutebrowser DB read path. | None. | Closed via adapter changes; "completely uncaptured" remains true at the live-capture level but the WAL-write blocker no longer applies. |
 | TV-020 | Native-messaging browser ingress not yet built. | issue_backed | `report/data-landscape.md` (Browser History §); vision.md | #847 open (live webhistory capture via WebExtension native messaging); #808 closed (server-side ingress). | Ship the extension and admission path under #847. | Vision treats this as design-only; #847 is the live implementation issue. |
@@ -247,7 +247,7 @@ Nine more fictions/stale claims corrected in target-vision prose (each verified 
 | TV-072 | "8 existing ingestors/automatons" baseline count | superseded | Post-Wave-B: 13 automata specs + 20+ source-unit modules in `crate/sinexd/src/sources/source_units/`. |
 | TV-073 | Hourly/daily summarizers live "in sinex-process" | superseded | Dissolved into `sinexd::automata` (`crate/sinexd/src/automata/{hourly,daily}.rs`). |
 | TV-074 | `sinex-fs-ingestor` watches the vault directory | superseded | Binary dissolved; `fs` source unit hosted in sinexd (`crate/sinexd/src/sources/source_units/fs/mod.rs`). |
-| TV-075 | Event-taxonomy files name `**Node:** sinex-*-ingestor` per domain | superseded | All per-domain binaries dissolved by Wave-B; README supersession callout added rather than 13 individual edits (proportionate). |
+| TV-075 | Event-taxonomy files name `**RuntimeActor:** sinex-*-ingestor` per domain | superseded | All per-domain binaries dissolved by Wave-B; README supersession callout added rather than 13 individual edits (proportionate). |
 
 ### Batch 4 (2026-05-30) — topology drain (`report/architecture.md`, `reference/design-rationale.md`, `reference/desktop-integration.md`)
 
@@ -257,7 +257,7 @@ Wave-B (#1054/#1223/#1225) dissolved the old split admission/API/process binarie
 |----------|-------|--------|----------|
 | TV-076 | The admission/event-writer role is a distinct binary | superseded | `crate/sinexd/Cargo.toml` (`name = "sinexd"`); event engine is `sinexd::event_engine`. Wave-B #1054/#1223/#1225. |
 | TV-077 | Merging the old admission and API binaries was a rejected design alternative | superseded | Wave-B reversed it: `sinexd` hosts both behind internal module boundaries; `nixos/modules/default.nix` `runner_binary = "sinexd"`. |
-| TV-078 | `DerivedNodeAdapter<N>` / `IngestorNodeAdapter<T>` are the adapter type names | superseded | `AutomatonRuntime<N>` (`sinexd/src/node_sdk/derived_node/adapter/mod.rs:84`); `SourceUnitRuntime<I>` (`sinexd/src/node_sdk/ingestor_node.rs:144`). |
+| TV-078 | `AutomatonAdapter<N>` / `IngestorNodeAdapter<T>` are the adapter type names | superseded | `AutomatonRuntime<N>` (`sinexd/src/runtime/automaton/adapter/mod.rs:84`); `SourceUnitRuntime<I>` (`sinexd/src/runtime/source_driver.rs:144`). |
 | TV-079 | `sinex-desktop-ingestor` is a deployed binary | superseded | Desktop capture is source units hosted in sinexd; no such crate in `crate/`. |
 
 ### Batch 5 (2026-05-30) — binary-name drain (event-taxonomy, cli-tui, intelligence-designs)
@@ -296,16 +296,16 @@ Lower-risk remainder: stale automata counts, dissolved crate paths, and the TOML
 
 ### Batch 7 (2026-05-31) — `event-taxonomy/` A–M + `sdk-assessment.md` final pass
 
-Closes the dissolution: `reference/` is now ~100% drained. Prose corrected in target-vision commit `6ec6d05`. All 13 taxonomy files carry `status_note` frontmatter; surviving `**Node:** sinex-*-ingestor` table labels are covered by the `event-taxonomy/README.md` blanket Wave-B SUPERSEDED notice (historical labels, not live claims). Planned source types (`sinex-audio-transcriber` H3, `sinex-web-archiver` D5) are aspirational `[PLANNED]` names, not dissolved crates.
+Closes the dissolution: `reference/` is now ~100% drained. Prose corrected in target-vision commit `6ec6d05`. All 13 taxonomy files carry `status_note` frontmatter; surviving `**RuntimeActor:** sinex-*-ingestor` table labels are covered by the `event-taxonomy/README.md` blanket Wave-B SUPERSEDED notice (historical labels, not live claims). Planned source types (`sinex-audio-transcriber` H3, `sinex-web-archiver` D5) are aspirational `[PLANNED]` names, not dissolved crates.
 
 | Claim ID | Claim | Status | Evidence |
 |----------|-------|--------|----------|
-| TV-100 | `event-taxonomy/C-terminal-shell.md` `**Node:** command canonicalizer (sinex-process)` | superseded | sinex-process dissolved (Wave-B); canonicalizer at `crate/sinexd/src/automata/canonicalizer.rs`. Fixed in `6ec6d05`. |
+| TV-100 | `event-taxonomy/C-terminal-shell.md` `**RuntimeActor:** command canonicalizer (sinex-process)` | superseded | sinex-process dissolved (Wave-B); canonicalizer at `crate/sinexd/src/automata/canonicalizer.rs`. Fixed in `6ec6d05`. |
 | TV-101 | `C-terminal-shell.md` prose "Command canonicalizer (sinex-process) produces `command.canonical`" | superseded | Same; prose updated to the sinexd automaton. Fixed in `6ec6d05`. |
-| TV-102 | `A-system-hardware.md` `**Node:** sinex-fs-ingestor` / `sinex-system-ingestor` | superseded | Per-domain binaries dissolved; source units at `crate/sinexd/src/sources/source_units/`. status_note added (`6ec6d05`). |
-| TV-103 | `B-desktop-interaction.md` `**Node:** sinex-desktop-ingestor` / `sinex-system-ingestor` | superseded | Source units at `…/source_units/desktop/` + `system/`. status_note added (`6ec6d05`). |
-| TV-104 | `D-web-browser.md` `**Node:** sinex-browser-ingestor` | superseded | Browser source unit at `…/source_units/browser/`. status_note added (`6ec6d05`). |
-| TV-105 | `H-media.md` `**Node:** sinex-desktop-ingestor` (H2 MPRIS2) | superseded | Desktop source unit in sinexd. status_note added (`6ec6d05`). |
+| TV-102 | `A-system-hardware.md` `**RuntimeActor:** sinex-fs-ingestor` / `sinex-system-ingestor` | superseded | Per-domain binaries dissolved; source units at `crate/sinexd/src/sources/source_units/`. status_note added (`6ec6d05`). |
+| TV-103 | `B-desktop-interaction.md` `**RuntimeActor:** sinex-desktop-ingestor` / `sinex-system-ingestor` | superseded | Source units at `…/source_units/desktop/` + `system/`. status_note added (`6ec6d05`). |
+| TV-104 | `D-web-browser.md` `**RuntimeActor:** sinex-browser-ingestor` | superseded | Browser source unit at `…/source_units/browser/`. status_note added (`6ec6d05`). |
+| TV-105 | `H-media.md` `**RuntimeActor:** sinex-desktop-ingestor` (H2 MPRIS2) | superseded | Desktop source unit in sinexd. status_note added (`6ec6d05`). |
 | TV-106 | `sdk-assessment.md` entity/relation automata registration | verified | `entityResolver`/`relationExtractor`/`entityEnricher` in `nixos/modules/lib/automata.nix:22-24`; implementations substantive (222/274/277 LoC); activation tracked by open #1087 + #1346. |
 | TV-107 | `knowledge-graph.md` "#1346 closed" (batch-6 follow-up) | rejected | No false claim found — the file already treats #1346 as active work (lines 150, 343). #1346 is OPEN. Follow-up resolved. |
 

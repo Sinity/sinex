@@ -134,7 +134,7 @@ mod tests {
             column: "manifest_type",
             version: 1,
             allowed_values: &["ingestor"],
-            enum_name: "NodeType",
+            enum_name: "ModuleKind",
         };
         assert_eq!(spec.constraint_name(), "manifest_type_check_v1");
         assert_eq!(spec.constraint_name_prefix(), "manifest_type_check_v");

@@ -49,7 +49,7 @@ pkgs.testers.nixosTest {
     services.sinex.lifecycle.preflight.enable = lib.mkForce true;
 
     # Minimal node surface: only what's needed to prove the fs path.
-    services.sinex.nodes = {
+    services.sinex.runtime = {
       filesystem = {
         enable = true;
         watchPaths = lib.mkAfter [ "/var/lib/sinex/watched" ];

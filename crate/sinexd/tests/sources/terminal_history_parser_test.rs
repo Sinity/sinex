@@ -11,7 +11,7 @@ use sinex_primitives::{
     privacy::ProcessingContext,
     temporal::Timestamp,
 };
-use sinexd::node_sdk::parser::MaterialParser;
+use sinexd::runtime::parser::MaterialParser;
 use sinexd::sources::source_contracts::terminal::{
     atuin_history::AtuinHistoryParser, bash_history::BashHistoryParser,
     fish_history::FishHistoryParser, text_history::TextHistoryParser,

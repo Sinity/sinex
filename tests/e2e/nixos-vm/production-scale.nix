@@ -20,7 +20,7 @@ pkgs.testers.nixosTest {
       lifecycle.maintenance.enable = lib.mkForce true;
       observability.monitoring.enable = lib.mkDefault false;
 
-      nodes = {
+      runtime = {
         filesystem = {
           enable = lib.mkForce true;
           instances = lib.mkForce 2;

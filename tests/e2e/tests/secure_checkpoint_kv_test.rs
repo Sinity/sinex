@@ -1,7 +1,7 @@
 use async_nats::jetstream::kv;
 use sinex_primitives::nats::NatsConnectionConfig;
-use sinexd::node_sdk::checkpoint::{CheckpointManager, CheckpointState};
-use sinexd::node_sdk::runtime::stream::Checkpoint;
+use sinexd::runtime::checkpoint::{CheckpointManager, CheckpointState};
+use sinexd::runtime::stream::Checkpoint;
 use std::path::PathBuf;
 use xtask::sandbox::EphemeralNats;
 use xtask::sandbox::prelude::*;

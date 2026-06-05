@@ -26,7 +26,7 @@
     inherit pkgs pg_jsonschema sinex sinexCli;
   };
 
-  "node-matrix" = import ./test-scenarios/node-matrix.nix {
+  "runtime-matrix" = import ./test-scenarios/runtime-matrix.nix {
     inherit pkgs pg_jsonschema sinex sinexCli;
   };
 

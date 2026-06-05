@@ -25,7 +25,7 @@ use sinex_primitives::proof::{
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
-use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult, UnixSocketStreamAdapter};
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult, UnixSocketStreamAdapter};
 
 use crate::register_adapter_ingestor;
 

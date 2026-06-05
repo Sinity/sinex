@@ -18,7 +18,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
-use crate::node_sdk::parser::{DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult};
+use crate::runtime::parser::{DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,

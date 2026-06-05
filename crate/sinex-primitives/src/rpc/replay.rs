@@ -3,7 +3,7 @@
 //! These types mirror `sinex_db::replay::state_machine` for RPC serialization.
 //! The gateway uses sinex-db types internally; these are wire-compatible equivalents.
 
-use crate::domain::{NodeName, ReplayOutcome};
+use crate::domain::{ModuleName, ReplayOutcome};
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -135,13 +135,13 @@ impl ReplayState {
 ///
 /// The four staged-source fields (`source_id`, `source_material_id`,
 /// `parser_id`, `parser_version`) are optional and backward-compatible:
-/// existing `node_id`-only scopes continue to work as before. A scope that
+/// A scope that
 /// specifies any staged-source field implies the replay planner should queue
-/// parser jobs for the matching materials rather than scanning a live ingestor.
+/// parser jobs for the matching materials rather than scanning a live source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayScope {
-    /// Node ID to replay
-    pub node_id: String,
+    /// Source runtime to replay
+    pub source_name: String,
     /// Optional time window as (start, end) ISO8601 timestamps
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_window: Option<(String, String)>,
@@ -224,7 +224,7 @@ pub struct ReplayOperation {
     pub approved_at: Option<String>,
     /// Which node is executing
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor_node: Option<NodeName>,
+    pub executor_node: Option<ModuleName>,
     /// When execution started
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,

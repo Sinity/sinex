@@ -37,7 +37,7 @@ use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 
-use crate::node_sdk::parser::{DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult};
+use crate::runtime::parser::{DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult};
 use sinex_primitives::{
     domain::{EventSource, EventType},
     parser::{

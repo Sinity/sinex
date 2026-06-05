@@ -177,7 +177,7 @@ fn into_replay_operation(operation: DbReplayOperation) -> Result<ReplayOperation
 
 fn db_replay_scope(scope: RpcReplayScope) -> Result<DbReplayScope> {
     Ok(DbReplayScope {
-        node_id: scope.node_id,
+        source_name: scope.source_name,
         time_window: scope
             .time_window
             .map(|(start, end)| {

@@ -13,8 +13,8 @@
 //! resolution exists) gives exactly the 1:1 semantics with full state
 //! persistence without widening to a `ScopeReconciler`.
 
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, WindowedNodeAdapter};
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, WindowedAdapter};
+use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, SyntheticTemporalPolicy};
@@ -71,7 +71,7 @@ impl Windowed for EntityResolver {
         state: &mut Self::State,
         input: Self::Input,
         _context: &AutomatonContext,
-    ) -> Result<(), NodeLogicError> {
+    ) -> Result<(), AutomatonLogicError> {
         // ── Type-aware canonicalization ──────────────────────────────────
         let canonical_name = canonicalize_name(&input.entity_type, &input.raw_name);
 
@@ -106,7 +106,7 @@ impl Windowed for EntityResolver {
         &mut self,
         state: &mut Self::State,
         _context: &AutomatonContext,
-    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         let Some(payload) = state.pending.take() else {
             return Ok(None);
         };
@@ -123,8 +123,8 @@ impl Windowed for EntityResolver {
     }
 }
 
-/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type EntityResolverNode = WindowedNodeAdapter<EntityResolver>;
+/// RuntimeActor type alias registered via `AutomatonSpec` in `automata::registry`.
+pub type EntityResolverNode = WindowedAdapter<EntityResolver>;
 
 // ── Canonicalization logic ──────────────────────────────────────────────────
 
@@ -197,7 +197,7 @@ register_source_runtime_binding! {
         "entity-resolver",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("entity.resolved")
     .privacy_context("inherits_from_parents")
@@ -205,11 +205,11 @@ register_source_runtime_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_id("entity-resolver")
-    .runner_pack("process")
+    .runner_pack("sinexd")
     .checkpoint_family(SuCheckpointFamily::AppendStream)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
+    .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
     .build()
 }

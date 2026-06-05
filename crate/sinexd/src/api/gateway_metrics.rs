@@ -19,7 +19,7 @@
 //! - `requests.rate_limited` - Subset of rejected that were rate limited
 //! - `latency` - Request processing latency histogram
 
-use crate::node_sdk::{SelfObservationError, SelfObserver, SelfObserverConfig};
+use crate::runtime::{SelfObservationError, SelfObserver, SelfObserverConfig};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
