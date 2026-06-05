@@ -26,6 +26,7 @@ mod dbus_stream;
 mod directory_walk;
 mod file_drop;
 mod journalctl_stream;
+pub mod record_source;
 mod sqlite_row;
 #[cfg(feature = "messaging")]
 mod sqlite_snapshot;
@@ -66,6 +67,20 @@ pub use journalctl_stream::{
     BROADCAST_CAPACITY as JOURNALCTL_BROADCAST_CAPACITY, JournalctlCursor, JournalctlStreamAdapter,
     JournalctlStreamConfig, JournalctlSubscriber, SharedJournalctlStream,
     records_from_journal_lines,
+};
+pub use record_source::{
+    ApiClient, ApiFetchCheckpoint, ApiFetchError, ApiFetchPage, ApiFetchRecordSource,
+    AppendOnlyTextRecord, AppendOnlyUtf8FileSource, BufferedRecordMaterializer, BufferedRecordSink,
+    BufferedRecordSourceHarness, IncrementalDumpCheckpoint, IncrementalDumpError,
+    IncrementalDumpRecordSource, IpcStreamCheckpoint, IpcStreamError, IpcStreamRecord,
+    IpcStreamRecordSource, JournalCursorCheckpoint, MockRecordSource, MockRecordSourceError,
+    OneTimeDumpCheckpoint, OneTimeDumpError, OneTimeDumpRecord, OneTimeDumpRecordSource,
+    PollingRecordSource, RecordMaterialSink, RecordMaterializer, RecordProcessContext,
+    RecordProcessReport, RecordProcessingOutcome, RecordReadBatch, RecordReadHorizon,
+    RecordReadItem, RecordSource, RecordSourceDescriptor, RecordSourceHarness, RecordSourceKind,
+    RecordSourceObservation, RecordSources, RecordWarningDisposition, RetryPolicy,
+    SqliteRecordSource, SqliteRowCheckpoint, SqliteSnapshotLinker, TimestampRecordCheckpoint,
+    process_record_batch_lenient, stable_json_line,
 };
 pub use unix_socket_stream::{
     UnixSocketStreamAdapter, UnixSocketStreamConfig, UnixSocketStreamCursor,

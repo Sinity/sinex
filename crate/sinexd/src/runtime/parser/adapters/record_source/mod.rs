@@ -1,6 +1,6 @@
-//! Record-source acquisition primitives.
+//! Record-source adapter primitives.
 //!
-//! Nodes own source-specific parsing and event semantics. This module owns the
+//! Sources own source-specific parsing and event semantics. This module owns the
 //! repeatable acquisition shape around those parsers: typed checkpoints, read
 //! batches, stable record bytes, append-stream materialization, and standard
 //! retry/skip cursor advancement.

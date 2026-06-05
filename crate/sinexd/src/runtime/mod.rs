@@ -52,7 +52,6 @@ pub mod preflight;
 pub mod prelude;
 pub mod pressure;
 pub mod processing;
-pub mod record_source;
 pub mod runtime_cli;
 pub mod schema_validator;
 pub mod self_observation;
@@ -123,8 +122,8 @@ pub use material::{
 pub use nats_publisher::NatsPublisher;
 pub use pressure::PressureMonitor;
 pub use processing::AutomatonLogicError;
-pub use record_source::SqliteSnapshotLinker;
-pub use record_source::{
+pub use parser::SqliteSnapshotLinker;
+pub use parser::{
     ApiClient, ApiFetchCheckpoint, ApiFetchError, ApiFetchPage, ApiFetchRecordSource,
     AppendOnlyTextRecord, AppendOnlyUtf8FileSource, BufferedRecordMaterializer, BufferedRecordSink,
     BufferedRecordSourceHarness, IncrementalDumpCheckpoint, IncrementalDumpError,

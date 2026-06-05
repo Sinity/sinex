@@ -23,7 +23,7 @@ Do not replace row-stream materials with database-file provenance. Events
 emitted from Atuin, Fish SQLite, ActivityWatch, qutebrowser, and Chromium
 history should continue to cite byte ranges inside SDK-managed JSONL stream
 materials. Those bytes are the acquisition payload: the exact rows sinex read,
-serialized in stable observation order, privacy-processed by the owning node,
+serialized in stable observation order, privacy-processed by the owning source,
 and validated through the normal NATS -> event engine -> DB pipeline.
 
 The row-stream material is not per poll and not per row. It is a growing
@@ -54,17 +54,17 @@ The SDK exposes a framework-like SQLite source shape with two lanes:
 - `snapshot_evidence`: an optional immutable SQLite snapshot captured at
   configured boundaries and stored as an ordinary source material.
 
-The node author should declare source identity, query, checkpoint, material
+The source author should declare source identity, query, checkpoint, material
 encoding, privacy context, and snapshot policy once. The natural path should be
 to construct a SQLite source through SDK descriptors or annotations rather
 than manually combining a row reader, materializer, checkpoint state, and
-evidence policy in node-local code.
+evidence policy in source-local code.
 
 The event provenance invariant remains unchanged:
 
 - A row-derived event has `source_material_id = <row-stream material>`.
 - The cited byte range identifies the stable serialized row material used by
-  the node when creating the event.
+  the source when creating the event.
 - Snapshot materials are not crammed into `core.events.source_material_id`,
   because that would destroy the exact row anchor and violate the XOR
   provenance model's "one immediate substrate" semantics.
@@ -90,7 +90,7 @@ The current implementation already has the right acquisition shape:
   registering the live external database file as the event material.
 
 That shape is correct because the event is an interpretation of the row bytes the
-node actually consumed. It also keeps hot capture incremental and bounded: sinex
+source actually consumed. It also keeps hot capture incremental and bounded: sinex
 does not copy an entire ActivityWatch or browser database for every new row.
 
 It also avoids registry bloat. The historical per-poll/per-row material pattern
@@ -140,7 +140,7 @@ boundary based:
 - on clean shutdown when the previous snapshot is stale.
 
 The source should surface this as a policy, not as ad-hoc timers inside
-each node.
+each source.
 
 ## Rotation Semantics
 
@@ -173,7 +173,7 @@ Expected storage profile:
 Snapshots go through the normal source-material storage path. Small snapshots
 benefit from local CAS by BLAKE3; larger snapshots route to the large-object
 backend according to the existing content-store policy. Retention should be
-metadata-driven and source-specific instead of hard-coded into source nodes.
+metadata-driven and source-specific instead of hard-coded into source runtimes.
 
 Recommended initial retention:
 

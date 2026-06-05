@@ -30,7 +30,7 @@
 //!
 //! # Config shape
 //!
-//! The node JSON config is deserialized into [`AdapterSourceConfig<A::Config>`]:
+//! The source JSON config is deserialized into [`AdapterSourceConfig<A::Config>`]:
 //!
 //! ```json
 //! {
@@ -164,7 +164,7 @@ pub struct AdapterSourceConfig {
 
     /// Poll interval for adapter-backed continuous mode.
     ///
-    /// Adapters without native streaming are drained, then the node sleeps for
+    /// Adapters without native streaming are drained, then the source sleeps for
     /// this interval before polling again. Defaults to 30 seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuous_poll_interval_secs: Option<u64>,
@@ -382,7 +382,7 @@ where
 
     /// `BindingConfig` derived from `binding_flags` in the runtime config.
     /// Refreshed before each acquisition so live private-mode toggles do not
-    /// require node restart.
+    /// require source restart.
     binding_config: BindingConfig,
 
     /// Runtime handles captured during `initialize`.
@@ -1055,7 +1055,7 @@ where
     ) -> RuntimeResult<ScanReport> {
         let start = Instant::now();
         // Historical: re-open from persisted cursor (may be behind `from` if
-        // the node was offline). The adapter's cursor is the authoritative
+        // the source was offline). The adapter's cursor is the authoritative
         // resume position.
         let cursor = state.cursor.clone();
         let emitted = self.drain_adapter(cursor, state).await?;
@@ -1177,7 +1177,7 @@ where
     async fn shutdown(&mut self, _state: &Self::State) -> RuntimeResult<()> {
         self.stop_private_mode_control_listener();
         if let Some(acquirer) = self.stream_acquirer.as_mut() {
-            acquirer.finalize("adapter-node-shutdown").await?;
+            acquirer.finalize("adapter-source-shutdown").await?;
         }
         Ok(())
     }

@@ -36,7 +36,7 @@ use crate::runtime::parser::{
 /// 2. **Config field:** set `path` in [`SqliteRowConfig`] — the config
 ///    value takes priority over the constructor value. Required when the
 ///    adapter is wired via `register_source!`, where the adapter
-///    is constructed via `Default` and the path arrives from the node's JSON
+///    is constructed via `Default` and the path arrives from the source's JSON
 ///    config at `initialize` time.
 #[derive(Debug, Clone, Default)]
 pub struct SqliteRowAdapter {

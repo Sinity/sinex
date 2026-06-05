@@ -474,7 +474,7 @@ mod tests {
     async fn capture_with_dedup_disabled_always_emits(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let work_dir = tempfile::tempdir()?;
-        let manager = make_acquisition_manager(work_dir.path(), ctx.nats_client(), "snap-nodedup");
+        let manager = make_acquisition_manager(work_dir.path(), ctx.nats_client(), "snap-no-dedup");
 
         let db = make_sqlite_db_with_payload("xyz");
         let spec = SnapshotLaneSpec {
