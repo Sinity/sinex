@@ -459,7 +459,8 @@ impl<'ctx> PipelineScope<'ctx> {
 
         // Read the file-based event_engine debug log (written by the orchestrator subprocess).
         // The log file is named after the TEST process PID, not the child process PID.
-        let debug_log = crate::sandbox::orchestrator::event_engine_debug_log_path_for_test_process();
+        let debug_log =
+            crate::sandbox::orchestrator::event_engine_debug_log_path_for_test_process();
         match crate::sandbox::orchestrator::read_event_engine_debug_log(&debug_log) {
             Ok(Some(content)) => {
                 let lines: Vec<&str> = content.lines().collect();

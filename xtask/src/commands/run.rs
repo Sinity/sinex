@@ -576,7 +576,8 @@ impl XtaskCommand for RunCommand {
         match &self.subcommand {
             RunSubcommand::List => Ok(execute_list(ctx)),
             RunSubcommand::EventEngine { instance_id } => {
-                self.run_binary("event_engine", instance_id.clone(), ctx).await
+                self.run_binary("event_engine", instance_id.clone(), ctx)
+                    .await
             }
             RunSubcommand::Gateway { instance_id } => {
                 self.run_binary("gateway", instance_id.clone(), ctx).await
@@ -642,7 +643,9 @@ impl RunCommand {
 
     fn validate_flag_compatibility(&self, ctx: &CommandContext) -> Result<()> {
         if self.watch && !self.runs_single_binary() {
-            bail!("--watch only supports single local binaries (`event_engine`, `gateway`, or `node`)");
+            bail!(
+                "--watch only supports single local binaries (`event_engine`, `gateway`, or `node`)"
+            );
         }
 
         if self.watch && ctx.is_background() {

@@ -12,7 +12,7 @@ use crate::model::OutputFormat;
 /// Show ingestor runtime status (run, health, recent emissions).
 ///
 /// Sibling to `sinexctl automata`. Reads `health.status` events emitted by the
-/// SDK's `HealthReporter` on each status transition, joined with the per-run
+/// runtime's `HealthReporter` on each status transition, joined with the per-run
 /// last-heartbeat timestamp from `core.runs`.
 #[derive(Debug, Args)]
 #[command(after_help = "\

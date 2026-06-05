@@ -6,8 +6,8 @@
 //! `drain_completion_checkpoint_description`) that only touch `&self` fields.
 
 use super::{
-    Checkpoint, RuntimeModule, SourceFactory, RuntimeRunner, RuntimeContext, ModuleKind, ProcessingModel,
-    RunnerLifecycle,
+    Checkpoint, ModuleKind, ProcessingModel, RunnerLifecycle, RuntimeContext, RuntimeModule,
+    RuntimeRunner, SourceFactory,
 };
 use std::collections::HashMap;
 

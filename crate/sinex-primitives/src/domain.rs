@@ -1686,7 +1686,7 @@ impl FromStr for SourceMaterialFormat {
 /// How the capture timestamp was determined for a material slice.
 ///
 /// Stored as `source_type` in `raw.temporal_ledger`. Shared between schema
-/// CHECK constraints, DB repositories, and SDK-side `LedgerReader`.
+/// CHECK constraints, DB repositories, and runtime-side `LedgerReader`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TemporalSourceType {
@@ -1844,13 +1844,13 @@ impl std::str::FromStr for SyntheticTemporalPolicy {
 /// Classification of a automaton's computation model.
 ///
 /// Each automaton must declare which model it uses, which determines
-/// how the SDK prepares inputs and manages scope/window state.
+/// how the runtime prepares inputs and manages scope/window state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AutomatonModel {
     /// Processes one triggering event at a time; deterministic fallback order is `id ASC`
     Transducer,
-    /// Declares window identity and completion logic; SDK prepares completed windows
+    /// Declares window identity and completion logic; runtime prepares completed windows
     Windowed,
     /// Declares `trigger→scope_key` mapping; loads persisted working set for deterministic recomputation
     ScopeReconciler,
@@ -1881,7 +1881,7 @@ impl std::str::FromStr for AutomatonModel {
 
 /// The mode in which a node is currently processing events.
 ///
-/// Provided via trigger context so node logic can distinguish live arrival
+/// Provided via trigger context so module logic can distinguish live arrival
 /// from historical scan, replay recomputation, etc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -2069,7 +2069,7 @@ impl std::str::FromStr for ModuleState {
             "failed" => Ok(Self::Failed),
             "stopped" => Ok(Self::Stopped),
             "unknown" => Ok(Self::Unknown),
-            _ => Err(format!("unknown node state: {s}")),
+            _ => Err(format!("unknown module state: {s}")),
         }
     }
 }
@@ -2678,11 +2678,11 @@ impl From<String> for RecordedPath {
 #[cfg(feature = "sqlx")]
 mod sqlx_impls {
     use super::{
-        AcquisitionJobStatus, AcquisitionMode, BlobVerificationStatus, BranchName, CommandText,
-        CommitHash, ConsumerGroup, ConsumerName, ContentKey, DataTier, AutomatonModel,
-        EntityTypeName, EventSource, EventType, GlobPattern, HealthStatus, HostName, InstanceId,
-        InvalidationAction, IpAddress, JobId, MaterialStatus, NatsSubject, ModuleName,
-        ModuleState, ModuleKind, OperationRunStatus, OperationStatus, ProcessingMode, RecordedPath,
+        AcquisitionJobStatus, AcquisitionMode, AutomatonModel, BlobVerificationStatus, BranchName,
+        CommandText, CommitHash, ConsumerGroup, ConsumerName, ContentKey, DataTier, EntityTypeName,
+        EventSource, EventType, GlobPattern, HealthStatus, HostName, InstanceId,
+        InvalidationAction, IpAddress, JobId, MaterialStatus, ModuleKind, ModuleName, ModuleState,
+        NatsSubject, OperationRunStatus, OperationStatus, ProcessingMode, RecordedPath,
         RegexPattern, RelationType, RemoteName, SanitizedPath, SchemaName, SchemaVersion,
         ServiceName, ShellName, SourceIdentifier, SourceMaterialTimingInfoType,
         SyntheticTemporalPolicy, TemporalClock, TemporalPrecision, TemporalSourceType, TriggerKind,
@@ -2855,7 +2855,7 @@ pub struct EntityRelation;
 /// collision — see issue #746 (A6).
 ///
 /// The `runner_pack` field was added per #744 (A6) to converge the
-/// vocabulary: both the SDK runtime `ServiceInfo` and this registration
+/// vocabulary: both the runtime runtime `ServiceInfo` and this registration
 /// shape now carry the runner-pack identifier.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ServiceRegistrationInfo {

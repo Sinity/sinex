@@ -7,7 +7,7 @@
 use crate::runtime::automaton::{
     AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedAdapter,
 };
-use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Windowed};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::activity::{
     ActivitySourceKind, classify_trusted_activity_signal, primary_activity_source,
@@ -312,15 +312,15 @@ impl Windowed for AnalyticsAutomaton {
 }
 
 /// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type AnalyticsAutomatonNode = WindowedAdapter<AnalyticsAutomaton>;
+pub type AnalyticsAutomatonRuntime = WindowedAdapter<AnalyticsAutomaton>;
 
 // --- Source descriptor (issue #690 / #734) ---
 
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
-    SourceContract, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

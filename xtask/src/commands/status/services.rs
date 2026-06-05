@@ -146,10 +146,9 @@ pub(super) fn event_engine_service_status_from_runtime_metrics(
             ),
             EventEngineStatus::Unknown => (
                 ServiceRunStatus::Unknown,
-                metrics
-                    .query_error
-                    .clone()
-                    .or_else(|| Some("checkout-local event_engine status is unavailable".to_string())),
+                metrics.query_error.clone().or_else(|| {
+                    Some("checkout-local event_engine status is unavailable".to_string())
+                }),
             ),
         },
         None => (

@@ -1,7 +1,7 @@
 //! Utilities for staging files during processing.
 
 use crate::runtime::acquisition_manager::{AcquisitionManager, SourceMaterialHandle};
-use crate::runtime::stream::{EventEmitter, RuntimeHandles, RuntimeContext};
+use crate::runtime::stream::{EventEmitter, RuntimeContext, RuntimeHandles};
 use crate::runtime::{RuntimeResult, SinexError};
 
 use serde_json::{Map as JsonMap, json};

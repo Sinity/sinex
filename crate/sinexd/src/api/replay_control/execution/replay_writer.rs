@@ -7,8 +7,8 @@ use super::{
     stale_preview_missing_root_ids_error,
 };
 use crate::runtime::stream::{
-    Checkpoint, MaterialReplayContext, SourceScanAck, SourceScanCommand, SourceScanProgress,
-    ReplayScopeFilters as SourceReplayScopeFilters, ScanArgs, TimeHorizon,
+    Checkpoint, MaterialReplayContext, ReplayScopeFilters as SourceReplayScopeFilters, ScanArgs,
+    SourceScanAck, SourceScanCommand, SourceScanProgress, TimeHorizon,
 };
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::ControlSubject;

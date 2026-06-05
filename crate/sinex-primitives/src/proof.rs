@@ -521,7 +521,7 @@ inventory::submit! {
 
 /// How the source's checkpoint state is shaped.
 ///
-/// Determines what the SDK's checkpoint adapter must support and what
+/// Determines what the runtime checkpoint adapter must support and what
 /// idempotency/replay strategy the source uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

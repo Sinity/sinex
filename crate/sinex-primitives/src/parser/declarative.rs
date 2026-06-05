@@ -63,8 +63,8 @@
 use crate::Timestamp;
 use crate::domain::{EventSource, EventType};
 use crate::parser::{
-    BindingConfig, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, SourceRecord,
-    SourceId, TimingConfidence, TimingEvidence,
+    BindingConfig, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, SourceId,
+    SourceRecord, TimingConfidence, TimingEvidence,
 };
 use crate::privacy::{ProcessingContext, SensitivityHint};
 use serde::{Deserialize, Serialize};

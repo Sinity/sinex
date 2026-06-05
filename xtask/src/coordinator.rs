@@ -2403,10 +2403,7 @@ version = "0.0.0"
 edition = "2024"
 "#,
         )?;
-        std::fs::write(
-            dir.path().join("crate/sinex-db/src/lib.rs"),
-            "fn db() {}\n",
-        )?;
+        std::fs::write(dir.path().join("crate/sinex-db/src/lib.rs"), "fn db() {}\n")?;
         std::fs::create_dir_all(dir.path().join("crate/sinex-primitives/src"))?;
         std::fs::write(
             dir.path().join("crate/sinex-primitives/Cargo.toml"),
@@ -2462,10 +2459,7 @@ edition = "2024"
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
 
         std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
-        std::fs::write(
-            dir.path().join("crate/sinex-db/src/lib.rs"),
-            "fn db() {}\n",
-        )?;
+        std::fs::write(dir.path().join("crate/sinex-db/src/lib.rs"), "fn db() {}\n")?;
         run_git(&["add", "crate/sinex-db/src/lib.rs"], dir.path())?;
         run_git(&["commit", "-qm", "first"], dir.path())?;
         let args = vec!["-p".into(), "sinex-db".into()];
@@ -2533,10 +2527,7 @@ edition = "2024"
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
         std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
-        std::fs::write(
-            dir.path().join("crate/sinex-db/src/lib.rs"),
-            "fn db() {}\n",
-        )?;
+        std::fs::write(dir.path().join("crate/sinex-db/src/lib.rs"), "fn db() {}\n")?;
         run_git(&["add", "crate/sinex-db/src/lib.rs"], dir.path())?;
         run_git(&["commit", "-qm", "init"], dir.path())?;
         let args = vec!["-p".into(), "sinex-db".into()];
@@ -2567,10 +2558,7 @@ edition = "2024"
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
         std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
-        std::fs::write(
-            dir.path().join("crate/sinex-db/src/lib.rs"),
-            "fn db() {}\n",
-        )?;
+        std::fs::write(dir.path().join("crate/sinex-db/src/lib.rs"), "fn db() {}\n")?;
         run_git(&["add", "crate/sinex-db/src/lib.rs"], dir.path())?;
         run_git(&["commit", "-qm", "init"], dir.path())?;
         let args = vec!["-p".into(), "sinex-db".into()];
@@ -2595,10 +2583,7 @@ edition = "2024"
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
         std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
-        std::fs::write(
-            dir.path().join("crate/sinex-db/src/lib.rs"),
-            "fn db() {}\n",
-        )?;
+        std::fs::write(dir.path().join("crate/sinex-db/src/lib.rs"), "fn db() {}\n")?;
         std::fs::write(dir.path().join("Cargo.lock"), "# v1\n")?;
         run_git(
             &["add", "crate/sinex-db/src/lib.rs", "Cargo.lock"],
@@ -3809,12 +3794,7 @@ sinex-primitives = { path = "../sinex-primitives" }
 
     #[sinex_test]
     async fn test_extract_explicit_packages_multiple() -> TestResult<()> {
-        let args = vec![
-            "-p".into(),
-            "sinex-db".into(),
-            "-p".into(),
-            "sinexd".into(),
-        ];
+        let args = vec!["-p".into(), "sinex-db".into(), "-p".into(), "sinexd".into()];
         let pkgs = extract_explicit_packages("check", &args);
         assert_eq!(pkgs.len(), 2);
         assert!(pkgs.contains(&"sinex-db".to_string()));

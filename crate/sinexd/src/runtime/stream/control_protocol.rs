@@ -51,7 +51,7 @@ pub(super) fn ensure_control_payload_fits(
     }
 
     let mut error = SinexError::messaging(error_message.to_string())
-        .with_context("node", module_name.to_string())
+        .with_context("module", module_name.to_string())
         .with_context("subject", subject.to_string())
         .with_context("payload_bytes", payload_len.to_string())
         .with_context("max_payload_bytes", MAX_CONTROL_MESSAGE_BYTES.to_string());

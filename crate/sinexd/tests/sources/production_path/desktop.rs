@@ -102,7 +102,7 @@ mod tests {
     async fn desktop_activitywatch_titles_are_not_parser_redacted() -> TestResult<()> {
         use sinex_primitives::events::SourceMaterial;
         use sinex_primitives::ids::Id;
-        use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceRecord, SourceId};
+        use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceId, SourceRecord};
         use sinex_primitives::temporal::Timestamp;
         use sinexd::runtime::parser::MaterialParser;
         use sinexd::sources::source_contracts::desktop::activitywatch::ActivityWatchParser;

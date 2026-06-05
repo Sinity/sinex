@@ -61,8 +61,8 @@ pub struct StorageStatisticsPayload {
 use crate::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
-    SourceBuildImpact, SourceContract, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceBuildImpact,
+    SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use crate::{register_source_contract, register_source_runtime_binding};
 

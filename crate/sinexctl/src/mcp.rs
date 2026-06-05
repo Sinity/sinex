@@ -26,11 +26,11 @@ use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmPromptsListRequest, LlmRouteExplainRequest,
 };
 use sinex_primitives::rpc::methods;
+use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
+use sinex_primitives::rpc::replay::ReplayState;
 use sinex_primitives::rpc::runtime::{
     RuntimeHealthResponse, RuntimeListActiveResponse, RuntimeListResponse,
 };
-use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
-use sinex_primitives::rpc::replay::ReplayState;
 use sinex_primitives::rpc::semantic::{
     SemanticEpochListRequest, SemanticLaneDiffsListRequest, SemanticLaneListRequest,
     SemanticLaneOutputsListRequest,
@@ -603,21 +603,21 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
         McpCatalogEntry {
             name: "sinex.source_health",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only aggregate runtime node health.",
+            description: "Read-only aggregate runtime module health.",
             backing_rpc_methods: &[methods::RUNTIME_HEALTH],
             read_only: true,
         },
         McpCatalogEntry {
             name: "sinex.sources_active",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only active runtime node presence.",
+            description: "Read-only active runtime module presence.",
             backing_rpc_methods: &[methods::RUNTIME_LIST_ACTIVE],
             read_only: true,
         },
         McpCatalogEntry {
             name: "sinex.sources_registry",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only persisted node state registry.",
+            description: "Read-only persisted runtime module state registry.",
             backing_rpc_methods: &[methods::RUNTIME_LIST],
             read_only: true,
         },
@@ -1799,11 +1799,7 @@ async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<V
 async fn source_drift(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: SourceDriftArgs = serde_json::from_value(arguments)?;
     let request = SourcesDriftListRequest {
-        source_id: args
-            .source_id
-            .as_deref()
-            .map(SourceId::new)
-            .transpose()?,
+        source_id: args.source_id.as_deref().map(SourceId::new).transpose()?,
         limit: args.limit,
     };
     let result = serde_json::to_value(client.sources_drift_list(request).await?)?;
@@ -2067,7 +2063,8 @@ async fn runtime_health(client: &GatewayClient, arguments: Value) -> Result<Valu
 
 async fn runtime_active(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: StaleAfterArgs = serde_json::from_value(arguments)?;
-    let response: RuntimeListActiveResponse = client.runtime_list_active(args.stale_after_secs).await?;
+    let response: RuntimeListActiveResponse =
+        client.runtime_list_active(args.stale_after_secs).await?;
     Ok(envelope(
         "sinex.sources_active",
         &json!(args),
@@ -2087,7 +2084,8 @@ async fn runtime_registry(client: &GatewayClient, arguments: Value) -> Result<Va
 
 async fn event_engine_validation(client: &GatewayClient, arguments: Value) -> Result<Value> {
     reject_non_empty_args("sinex.event_engine_validation", &arguments)?;
-    let snapshot: Option<EventEngineValidationSnapshot> = client.telemetry_event_engine_validation().await?;
+    let snapshot: Option<EventEngineValidationSnapshot> =
+        client.telemetry_event_engine_validation().await?;
     Ok(envelope(
         "sinex.event_engine_validation",
         &json!({}),

@@ -86,7 +86,9 @@ fn build_test_event_bytes(
 
 /// Test that event_engine completes in-flight processing before shutdown.
 #[sinex_test(timeout = 60)]
-async fn test_event_engine_graceful_shutdown_completes_inflight(ctx: TestContext) -> TestResult<()> {
+async fn test_event_engine_graceful_shutdown_completes_inflight(
+    ctx: TestContext,
+) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
@@ -341,7 +343,9 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     // Wait for service to stop
     let join_result = timeout(Duration::from_secs(Timeouts::SHORT), handle)
         .await
-        .map_err(|_| color_eyre::eyre::eyre!("event_engine runner shutdown timed out under load"))?;
+        .map_err(|_| {
+            color_eyre::eyre::eyre!("event_engine runner shutdown timed out under load")
+        })?;
     join_result??;
 
     let total_published = published_count.load(Ordering::SeqCst);

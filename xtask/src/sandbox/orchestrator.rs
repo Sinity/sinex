@@ -133,7 +133,10 @@ impl TestEventEngineHandle {
             Ok(Some(content)) => {
                 let end = content.floor_char_boundary(3000);
                 let truncated = &content[..end];
-                eprintln!("📋 event_engine log ({} bytes):\n{truncated}", content.len());
+                eprintln!(
+                    "📋 event_engine log ({} bytes):\n{truncated}",
+                    content.len()
+                );
             }
             Err(error) => eprintln!("📋 event_engine log unavailable: {error:#}"),
         }
@@ -156,10 +159,7 @@ impl TestSourceDriverHandle {
             Ok(content) => {
                 let end = content.floor_char_boundary(3000);
                 let truncated = &content[..end];
-                eprintln!(
-                    "📋 source host log ({} bytes):\n{truncated}",
-                    content.len()
-                );
+                eprintln!("📋 source host log ({} bytes):\n{truncated}", content.len());
             }
             Err(error) => eprintln!("📋 source host log unavailable: {error:#}"),
         }
@@ -232,7 +232,10 @@ fn format_event_engine_debug_context(debug_log: &std::path::Path) -> String {
                 )
             }
         }
-        Ok(None) => format!("event_engine debug log at {} was empty", debug_log.display()),
+        Ok(None) => format!(
+            "event_engine debug log at {} was empty",
+            debug_log.display()
+        ),
         Err(log_error) => format!(
             "event_engine debug log at {} unavailable: {log_error:#}",
             debug_log.display()

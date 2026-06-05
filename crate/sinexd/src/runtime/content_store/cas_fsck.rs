@@ -221,7 +221,10 @@ async fn load_sinexblake3_hashes(pool: &PgPool) -> RuntimeResult<Vec<(String, St
 }
 
 /// Verify that a CAS file's BLAKE3 hash matches its filename.
-async fn verify_cas_file_content(path: &camino::Utf8Path, expected_hash: &str) -> RuntimeResult<bool> {
+async fn verify_cas_file_content(
+    path: &camino::Utf8Path,
+    expected_hash: &str,
+) -> RuntimeResult<bool> {
     let content = tokio::fs::read(path).await.map_err(SinexError::io)?;
     let computed = blake3::hash(&content).to_hex();
     Ok(computed.as_str() == expected_hash)

@@ -150,9 +150,7 @@ async fn wait_for_material_staged_floor(ctx: &TestContext, material_id: Uuid) ->
                 .fetch_optional(&pool)
                 .await?;
 
-                Ok::<bool, sqlx::Error>(
-                    row.is_some_and(|row| row.start_time.is_some()),
-                )
+                Ok::<bool, sqlx::Error>(row.is_some_and(|row| row.start_time.is_some()))
             }
         },
         Timeouts::STANDARD,

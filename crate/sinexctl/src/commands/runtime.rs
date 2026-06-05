@@ -4,7 +4,7 @@ use sinex_primitives::rpc::coordination::InstanceHealthResponse;
 use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::{CommandOutput, format_table_runtime, with_spinner_result};
-use crate::model::{RuntimeModuleRole, OutputFormat};
+use crate::model::{OutputFormat, RuntimeModuleRole};
 
 /// Runtime module operations
 #[derive(Debug, Subcommand)]

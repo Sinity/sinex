@@ -104,7 +104,7 @@ impl FileWatcher {
                 Err(e) => {
                     error!(
                         target: "sinex_metrics",
-                        metric = "node.file_watcher_errors_total",
+                        metric = "runtime.file_watcher_errors_total",
                         error = %e,
                         "File watcher error"
                     );

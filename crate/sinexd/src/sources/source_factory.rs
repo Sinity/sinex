@@ -152,7 +152,7 @@ macro_rules! __submit_registry_entry {
     };
 }
 
-/// Run an adapter-backed source through the standard SDK lifecycle.
+/// Run an adapter-backed source through the standard runtime lifecycle.
 ///
 /// Parallel to `run_source_driver` but constructs `AdapterBackedSource<A, P>`
 /// with the source id baked in. Called by `register_source!`
@@ -173,8 +173,8 @@ where
     A::Cursor: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
 {
     use crate::runtime::SourceDriverRuntime;
-    use crate::runtime::runtime_cli::{RuntimeCli, RuntimeCliRunner};
     use crate::runtime::parser::AdapterBackedSource;
+    use crate::runtime::runtime_cli::{RuntimeCli, RuntimeCliRunner};
     use clap::Parser;
 
     let parsed = RuntimeCli::parse_from(args);
@@ -184,10 +184,10 @@ where
     runner.run(parsed).await.map_err(std::convert::Into::into)
 }
 
-/// Run a source driver through the standard SDK lifecycle.
+/// Run a source driver through the standard runtime lifecycle.
 ///
 /// Shared implementation used by all `register_source!`-produced
-/// factories. Handles CLI parsing, SDK wiring, and shutdown.
+/// factories. Handles CLI parsing, runtime wiring, and shutdown.
 ///
 /// This function is `pub` so the macro can name it; callers should use the
 /// macro rather than this function directly.

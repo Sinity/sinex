@@ -107,7 +107,7 @@ async fn run_service_drain_persists_ingestor_checkpoint_and_updates_status(
     let checkpoint_manager = runtime.checkpoint_manager();
     let module_run_id = runtime
         .module_run_id()
-        .ok_or_else(|| color_eyre::eyre::eyre!("node run id missing after db-backed init"))?;
+        .ok_or_else(|| color_eyre::eyre::eyre!("module run id missing after db-backed init"))?;
     let drain_complete_subject = sinex_primitives::environment().nats_subject(&format!(
         "sinex.control.sources.{control_identity}.drain_complete"
     ));
@@ -137,7 +137,7 @@ async fn run_service_drain_persists_ingestor_checkpoint_and_updates_status(
         }
     })
     .await
-    .map_err(|_| color_eyre::eyre::eyre!("node run status never reached draining"))??;
+    .map_err(|_| color_eyre::eyre::eyre!("module run status never reached draining"))??;
 
     release_exit.notify_one();
 
@@ -204,9 +204,10 @@ async fn finish_replay_forwarder_surfaces_forwarder_error() -> TestResult<()> {
         ))
     });
 
-    let outcome = RuntimeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
-        .await
-        .expect_err("forwarder failures must fail the dispatched scan honestly");
+    let outcome =
+        RuntimeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
+            .await
+            .expect_err("forwarder failures must fail the dispatched scan honestly");
 
     assert_eq!(outcome.events_emitted, 7);
     assert!(
@@ -226,9 +227,10 @@ async fn finish_replay_forwarder_surfaces_join_error() -> TestResult<()> {
         panic!("forwarder panic");
     });
 
-    let outcome = RuntimeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
-        .await
-        .expect_err("forwarder panics must fail the dispatched scan honestly");
+    let outcome =
+        RuntimeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
+            .await
+            .expect_err("forwarder panics must fail the dispatched scan honestly");
 
     assert_eq!(outcome.events_emitted, 3);
     assert!(
@@ -391,7 +393,8 @@ async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db() ->
     };
 
     let Err(error) =
-        RuntimeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(&[provisional], &None).await
+        RuntimeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(&[provisional], &None)
+            .await
     else {
         return Err(color_eyre::eyre::eyre!(
             "invalid provisional payloads must fail honestly when no db pool is available"

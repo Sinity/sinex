@@ -1,20 +1,20 @@
 //! `system.journald` — stream all journald entries via `JournalctlStreamAdapter`.
 
-use crate::runtime::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
 use crate::register_source;
+use crate::runtime::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::JournalSyncType;
 use sinex_primitives::events::payloads::system::{
     JournalEntryWrittenPayload, JournalSyncCompletedPayload,
 };
 use sinex_primitives::parser::{
-    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
-    SourceId, TimingConfidence, TimingEvidence,
+    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceId,
+    SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceRuntimeBinding, SourceBuildImpact, SourceContract, SubjectRef,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::units::{Microseconds, ProcessId, SyslogPriority, UnixGid, UnixUid};

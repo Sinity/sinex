@@ -17,7 +17,7 @@
 //! (e.g., per-source co-occurrence), the scope key can be partitioned.
 
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconcilerAdapter};
-use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, ScopeReconciler};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, ScopeReconciler};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{RelationType, SyntheticTemporalPolicy};
@@ -214,15 +214,15 @@ fn drain_and_emit_pairs(
 }
 
 /// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type RelationExtractorNode = ScopeReconcilerAdapter<RelationExtractor>;
+pub type RelationExtractorRuntime = ScopeReconcilerAdapter<RelationExtractor>;
 
 // ── Source descriptor (issue #690 / #734) ──────────────────────────────
 
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
-    SourceContract, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

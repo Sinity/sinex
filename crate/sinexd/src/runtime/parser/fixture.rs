@@ -847,10 +847,7 @@ impl FixtureSpec {
             failures.push(FixtureFailure {
                 intent_index: None,
                 expected: format!("manifest source_id={}", contract.source_id),
-                found: format!(
-                    "manifest source_id={}",
-                    manifest.source_id.as_str()
-                ),
+                found: format!("manifest source_id={}", manifest.source_id.as_str()),
             });
         }
 

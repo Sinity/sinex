@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::state::Operation;
-use sinex_primitives::domain::{ModuleName, ModuleState, ModuleKind, OperationStatus};
+use sinex_primitives::domain::{ModuleKind, ModuleName, ModuleState, OperationStatus};
 use sinex_primitives::rpc::lifecycle::{
     TombstoneOperation, TombstoneOperationPhase, TombstoneOperationState,
 };
@@ -423,10 +423,20 @@ async fn node_manifest_heartbeat_updates_only_requested_version(
     let repo = ctx.pool.state();
     let module_name = ModuleName::new("versioned-heartbeat-node");
 
-    repo.register_module(&module_name, ModuleKind::Service, "1.0.0", Some("older build"))
-        .await?;
-    repo.register_module(&module_name, ModuleKind::Service, "2.0.0", Some("newer build"))
-        .await?;
+    repo.register_module(
+        &module_name,
+        ModuleKind::Service,
+        "1.0.0",
+        Some("older build"),
+    )
+    .await?;
+    repo.register_module(
+        &module_name,
+        ModuleKind::Service,
+        "2.0.0",
+        Some("newer build"),
+    )
+    .await?;
 
     assert!(
         repo.mark_module_inactive_for_version(&module_name, "1.0.0")
@@ -455,7 +465,9 @@ async fn node_manifest_heartbeat_updates_only_requested_version(
         "heartbeat should only be persisted for the requested version"
     );
 
-    let live_modules = repo.list_live_runtime_presence(Duration::from_mins(2)).await?;
+    let live_modules = repo
+        .list_live_runtime_presence(Duration::from_mins(2))
+        .await?;
     assert_eq!(live_modules.len(), 1);
     assert_eq!(live_modules[0].module_name, module_name);
     assert_eq!(live_modules[0].version, "2.0.0");
@@ -476,10 +488,20 @@ async fn node_manifest_inactive_marks_only_requested_version(ctx: TestContext) -
     let repo = ctx.pool.state();
     let module_name = ModuleName::new("versioned-inactive-node");
 
-    repo.register_module(&module_name, ModuleKind::Service, "1.0.0", Some("older build"))
-        .await?;
-    repo.register_module(&module_name, ModuleKind::Service, "2.0.0", Some("newer build"))
-        .await?;
+    repo.register_module(
+        &module_name,
+        ModuleKind::Service,
+        "1.0.0",
+        Some("older build"),
+    )
+    .await?;
+    repo.register_module(
+        &module_name,
+        ModuleKind::Service,
+        "2.0.0",
+        Some("newer build"),
+    )
+    .await?;
     assert!(
         repo.update_module_heartbeat_for_version(&module_name, "1.0.0")
             .await?
@@ -511,7 +533,9 @@ async fn node_manifest_inactive_marks_only_requested_version(ctx: TestContext) -
         "marking one version inactive must not clear the other version heartbeat"
     );
 
-    let live_modules = repo.list_live_runtime_presence(Duration::from_mins(2)).await?;
+    let live_modules = repo
+        .list_live_runtime_presence(Duration::from_mins(2))
+        .await?;
     assert_eq!(live_modules.len(), 1);
     assert_eq!(live_modules[0].version, "2.0.0");
     assert_eq!(live_modules[0].heartbeat_source, "manifest");

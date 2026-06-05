@@ -2,7 +2,7 @@
 //!
 //! Monitor source contracts are fire-once or periodic emitters that have no adapter
 //! input — no file to tail, no socket to read. They emit a small fixed set of
-//! events at defined points in the node lifecycle: once at boot, once per
+//! events at defined points in the runtime module lifecycle: once at boot, once per
 //! interval, or once on clean shutdown.
 //!
 //! # Design
@@ -58,12 +58,12 @@ use sinex_primitives::{
 // MonitorPhase — when the closure fires
 // =============================================================================
 
-/// Determines when a monitor unit's closure fires relative to the node lifecycle.
+/// Determines when a monitor unit's closure fires relative to the runtime module lifecycle.
 #[derive(Debug, Clone)]
 pub enum MonitorPhase {
     /// Fire once immediately at source boot (inside `run_continuous`).
     ///
-    /// The runner fires the closure, emits events, then returns. The node exits
+    /// The runner fires the closure, emits events, then returns. The module exits
     /// cleanly. Use this for startup-annotation events.
     ServiceStart,
 
@@ -153,11 +153,7 @@ async fn fire_monitor_once(
         runtime.emit_event(event).await?;
     }
 
-    info!(
-        source_id,
-        events = count,
-        "monitor unit fired successfully",
-    );
+    info!(source_id, events = count, "monitor unit fired successfully",);
     Ok(())
 }
 
@@ -217,10 +213,7 @@ async fn drive_monitor_phase(
                     break;
                 }
             }
-            info!(
-                source_id,
-                "drain received — firing ServiceShutdown monitor"
-            );
+            info!(source_id, "drain received — firing ServiceShutdown monitor");
             if let Err(e) = fire_monitor_once(source_id, emit_fn, runtime).await {
                 warn!(
                     source_id,
@@ -236,19 +229,19 @@ async fn drive_monitor_phase(
 }
 
 // =============================================================================
-// MonitorDriverNode — SourceDriver bridge
+// MonitorDriver — SourceDriver bridge
 // =============================================================================
 
-/// An `SourceDriver` that bridges the SDK lifecycle into `drive_monitor_phase`.
+/// An `SourceDriver` that bridges the runtime lifecycle into `drive_monitor_phase`.
 ///
 /// `initialize()` captures the `RuntimeContext` into `runtime_snapshot`.
 /// `run_continuous()` then drives `drive_monitor_phase` directly, giving the
-/// monitor closure full SDK access (NATS, `AcquisitionManager`, etc.).
+/// monitor closure full runtime access (NATS, `AcquisitionManager`, etc.).
 ///
 /// This bridges the gap that `SourceDriver::run_continuous` does not receive
 /// `RuntimeContext` directly.
 #[derive(Default)]
-pub struct MonitorDriverNode {
+pub struct MonitorDriver {
     source_id: &'static str,
     /// Taken on first call to `run_continuous`. `Option` because the value is
     /// moved out; a second call would find it `None` and return an error.
@@ -259,7 +252,7 @@ pub struct MonitorDriverNode {
     runtime_snapshot: Option<RuntimeContext>,
 }
 
-impl MonitorDriverNode {
+impl MonitorDriver {
     #[must_use]
     pub fn new(source_id: &'static str, phase: MonitorPhase, emit_fn: MonitorEmitFn) -> Self {
         Self {
@@ -271,7 +264,7 @@ impl MonitorDriverNode {
     }
 }
 
-impl SourceDriver for MonitorDriverNode {
+impl SourceDriver for MonitorDriver {
     type Config = serde_json::Value;
     type State = MonitorState;
 
@@ -300,10 +293,7 @@ impl SourceDriver for MonitorDriverNode {
     ) -> RuntimeResult<()> {
         // Snapshot the runtime so run_continuous() can access it.
         self.runtime_snapshot = Some(runtime.clone());
-        info!(
-            source_id = self.source_id,
-            "monitor unit initialized"
-        );
+        info!(source_id = self.source_id, "monitor unit initialized");
         Ok(())
     }
 
@@ -352,16 +342,18 @@ impl SourceDriver for MonitorDriverNode {
         let started_at = Instant::now();
 
         let runtime = self.runtime_snapshot.take().ok_or_else(|| {
-            SinexError::invalid_state("MonitorDriverNode: runtime not captured during initialize()")
+            SinexError::invalid_state("MonitorDriver: runtime not captured during initialize()")
         })?;
 
-        let phase = self.phase.take().ok_or_else(|| {
-            SinexError::invalid_state("MonitorDriverNode: phase already consumed")
-        })?;
+        let phase = self
+            .phase
+            .take()
+            .ok_or_else(|| SinexError::invalid_state("MonitorDriver: phase already consumed"))?;
 
-        let emit_fn = self.emit_fn.take().ok_or_else(|| {
-            SinexError::invalid_state("MonitorDriverNode: emit_fn already consumed")
-        })?;
+        let emit_fn = self
+            .emit_fn
+            .take()
+            .ok_or_else(|| SinexError::invalid_state("MonitorDriver: emit_fn already consumed"))?;
 
         drive_monitor_phase(self.source_id, &phase, emit_fn, &runtime, shutdown_rx).await?;
 
@@ -384,7 +376,7 @@ impl SourceDriver for MonitorDriverNode {
 
 /// Entry point called by [`register_source!`]-generated factory functions.
 ///
-/// Wires up the standard SDK CLI + runner via `SourceDriverRuntime`, which
+/// Wires up the standard runtime CLI + runner via `SourceDriverRuntime`, which
 /// calls `initialize()` (capturing runtime) then `run_continuous()` (driving
 /// `drive_monitor_phase`).
 ///
@@ -399,7 +391,7 @@ pub async fn run_monitor_unit_delegated(
     use clap::Parser;
 
     let parsed = RuntimeCli::parse_from(args);
-    let node = MonitorDriverNode::new(source_id, phase, emit_fn);
+    let node = MonitorDriver::new(source_id, phase, emit_fn);
     let adapter = SourceDriverRuntime::new(node);
     let mut runner = RuntimeCliRunner::new(adapter);
     runner.run(parsed).await.map_err(std::convert::Into::into)
@@ -440,7 +432,7 @@ mod tests {
         Ok(())
     }
 
-    /// Verify MonitorDriverNode errors cleanly if `run_continuous` is called
+    /// Verify MonitorDriver errors cleanly if `run_continuous` is called
     /// without a prior `initialize()`.
     #[sinex_test]
     async fn test_monitor_driver_node_missing_runtime_errors() -> TestResult<()> {
@@ -451,8 +443,7 @@ mod tests {
             Box::pin(async { Ok(vec![]) })
         }
 
-        let mut node =
-            MonitorDriverNode::new("test.monitor", MonitorPhase::ServiceStart, noop_emit);
+        let mut node = MonitorDriver::new("test.monitor", MonitorPhase::ServiceStart, noop_emit);
 
         // run_continuous without prior initialize() should return Err.
         let (_tx, rx) = watch::channel(false);
@@ -470,7 +461,7 @@ mod tests {
         Ok(())
     }
 
-    /// Verify that a MonitorDriverNode with a noop emit function reflects the
+    /// Verify that a MonitorDriver with a noop emit function reflects the
     /// correct capabilities: continuous only, no snapshot/historical.
     #[sinex_test]
     async fn test_monitor_driver_node_capabilities() -> TestResult<()> {
@@ -481,7 +472,7 @@ mod tests {
             Box::pin(async { Ok(vec![]) })
         }
 
-        let node = MonitorDriverNode::new("test.monitor", MonitorPhase::ServiceStart, noop_emit);
+        let node = MonitorDriver::new("test.monitor", MonitorPhase::ServiceStart, noop_emit);
         let caps = node.capabilities();
 
         assert!(!caps.supports_snapshot, "monitors have no snapshot mode");

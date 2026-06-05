@@ -172,7 +172,10 @@ impl RuntimeContext {
         HeartbeatEmitter::from_runtime(self, interval_seconds)
     }
 
-    pub fn coordination(&self, instance_id: impl Into<String>) -> RuntimeResult<RuntimeCoordination> {
+    pub fn coordination(
+        &self,
+        instance_id: impl Into<String>,
+    ) -> RuntimeResult<RuntimeCoordination> {
         RuntimeCoordination::from_runtime(self, instance_id.into())
     }
 

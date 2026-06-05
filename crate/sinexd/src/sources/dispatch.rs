@@ -13,7 +13,7 @@ use sinex_primitives::Uuid;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
-    MaterialAnchor, ParsedEventIntent, ParserContext, ParserManifest, SourceRecord, SourceId,
+    MaterialAnchor, ParsedEventIntent, ParserContext, ParserManifest, SourceId, SourceRecord,
 };
 use sinex_primitives::temporal::Timestamp;
 

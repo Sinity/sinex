@@ -19,13 +19,13 @@ use crate::runtime::parser::{
 };
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceRuntimeBinding, SourceBuildImpact, SourceContract, SubjectRef,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{
     domain::{EventSource, EventType},
     parser::{
         InputShapeKind, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
-        SourceRecord, SourceId, TimingConfidence, TimingEvidence,
+        SourceId, SourceRecord, TimingConfidence, TimingEvidence,
     },
     privacy::ProcessingContext,
     temporal::Timestamp,

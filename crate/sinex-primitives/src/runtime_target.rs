@@ -398,9 +398,7 @@ mod tests {
                 servers: vec!["tls://127.0.0.1:4222".to_string()],
             },
             secrets: DeploymentSecrets {
-                api_admin_token_file: Some(PathBuf::from(
-                    "/run/agenix/sinex-api-admin-token",
-                )),
+                api_admin_token_file: Some(PathBuf::from("/run/agenix/sinex-api-admin-token")),
                 gateway_tls_trust_anchor_file: Some(PathBuf::from(
                     "/var/lib/sinex/run/gateway-ca.pem",
                 )),

@@ -11,7 +11,9 @@ use crate::{Id, JsonValue};
 use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::domain::{HealthStatus, ModuleName, ModuleState, ModuleKind, OperationStatus};
+use sinex_primitives::domain::{
+    HealthStatus, ModuleKind, ModuleName, ModuleState, OperationStatus,
+};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::lifecycle::{TombstoneOperation, TombstoneOperationState};
 use sinex_primitives::{Seconds, Timestamp};
@@ -877,7 +879,10 @@ impl StateRepository<'_> {
     }
 
     /// Get modules by type
-    pub async fn get_modules_by_type(&self, module_kind: ModuleKind) -> DbResult<Vec<ModuleManifest>> {
+    pub async fn get_modules_by_type(
+        &self,
+        module_kind: ModuleKind,
+    ) -> DbResult<Vec<ModuleManifest>> {
         sqlx::query_as!(
             ModuleManifest,
             r#"
@@ -1103,7 +1108,10 @@ impl StateRepository<'_> {
     /// might have left in a non-terminal-but-non-'running' state. Terminal
     /// rows are still excluded so a crashed run does not silently
     /// resurrect via heartbeats.
-    pub async fn update_module_run_heartbeat(&self, module_run_id: Id<ModuleRun>) -> DbResult<bool> {
+    pub async fn update_module_run_heartbeat(
+        &self,
+        module_run_id: Id<ModuleRun>,
+    ) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
             UPDATE core.runs

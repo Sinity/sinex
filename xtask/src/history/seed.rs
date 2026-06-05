@@ -17,13 +17,7 @@ use rusqlite::params;
 
 use crate::history::HistoryDb;
 
-const PACKAGES: &[&str] = &[
-    "sinex-primitives",
-    "sinex-db",
-    "sinexd",
-    "sinexd",
-    "sinexd",
-];
+const PACKAGES: &[&str] = &["sinex-primitives", "sinex-db", "sinexd", "sinexd", "sinexd"];
 
 const COMMANDS: &[(&str, u32)] = &[
     ("check", 40),

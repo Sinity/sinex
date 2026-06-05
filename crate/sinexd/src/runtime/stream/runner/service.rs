@@ -6,8 +6,8 @@
 //! and automaton processing.
 
 use super::{
-    Checkpoint, RuntimeModule, RuntimeDrainComplete, RuntimeResult, RuntimeRunner, ModuleState, ModuleKind,
-    RunnerLifecycle, ScanArgs, ScanReport, SinexError, TimeHorizon, Timestamp, info,
+    Checkpoint, ModuleKind, ModuleState, RunnerLifecycle, RuntimeDrainComplete, RuntimeModule,
+    RuntimeResult, RuntimeRunner, ScanArgs, ScanReport, SinexError, TimeHorizon, Timestamp, info,
     systemd_notify, warn,
 };
 use sinex_primitives::env as shared_env;
@@ -71,7 +71,8 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             RunnerLifecycle::Initialized => {}
             RunnerLifecycle::Running => {
                 return Err(SinexError::lifecycle(
-                    "RuntimeModule is already running (concurrent run_service call detected)".to_string(),
+                    "RuntimeModule is already running (concurrent run_service call detected)"
+                        .to_string(),
                 ));
             }
             other => {
@@ -121,7 +122,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         let watchdog_handle = systemd_notify::spawn_watchdog("sinex-runtime");
         let drain_controller = runtime.handles().runtime_drain();
 
-        // Start command listener for node-dispatch replay (scan commands via NATS).
+        // Start command listener for source-dispatch replay (scan commands via NATS).
         // This allows the gateway to dispatch historical scans to running nodes.
         #[cfg(feature = "messaging")]
         self.start_command_listener();

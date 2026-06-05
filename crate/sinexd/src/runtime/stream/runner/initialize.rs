@@ -6,10 +6,10 @@
 
 use super::{
     Arc, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, Event, EventBatcherConfig, EventEmitter,
-    EventTransport, HashMap, JsonValue, RuntimeModule, RuntimeHandles, RuntimeInitContext, RuntimeResult, RuntimeRunner,
-    ModuleState, ModuleKind, PgPool, ProcessingModel, RunnerLifecycle, ServiceInfo, SinexError,
-    Utf8PathBuf, create_checkpoint_kv, info, maybe_start_schema_listener, mpsc,
-    spawn_event_batcher, watch,
+    EventTransport, HashMap, JsonValue, ModuleKind, ModuleState, PgPool, ProcessingModel,
+    RunnerLifecycle, RuntimeHandles, RuntimeInitContext, RuntimeModule, RuntimeResult,
+    RuntimeRunner, ServiceInfo, SinexError, Utf8PathBuf, create_checkpoint_kv, info,
+    maybe_start_schema_listener, mpsc, spawn_event_batcher, watch,
 };
 use sinex_primitives::domain::ServiceName;
 
@@ -142,7 +142,8 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         let transport_type = "NATS";
 
         // Determine if automaton to enable LeaderStandby
-        let confirmation_buffer_opt = if matches!(self.module.module_kind(), ModuleKind::Automaton) {
+        let confirmation_buffer_opt = if matches!(self.module.module_kind(), ModuleKind::Automaton)
+        {
             self.processing_model = ProcessingModel::LeaderStandby;
             Some(Arc::new(crate::runtime::ConfirmationBuffer::new(
                 std::time::Duration::from_mins(1),

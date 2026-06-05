@@ -2,6 +2,12 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
+use sinex_primitives::error::ErrorClass;
+use sinex_primitives::rpc::{
+    content::{RetrieveBlobRequest, StoreBlobRequest},
+    methods,
+};
+use sinex_primitives::temporal;
 use sinexd::api::{
     auth::Role,
     config::GatewayConfig,
@@ -11,12 +17,6 @@ use sinexd::api::{
     service_container::ServiceContainer,
 };
 use sinexd::runtime::content_store::MaterialContentStore;
-use sinex_primitives::error::ErrorClass;
-use sinex_primitives::rpc::{
-    content::{RetrieveBlobRequest, StoreBlobRequest},
-    methods,
-};
-use sinex_primitives::temporal;
 use tempfile::TempDir;
 use which::which;
 use xtask::sandbox::{TestContext, TestResult, sinex_test};

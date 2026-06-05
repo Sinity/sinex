@@ -123,7 +123,7 @@ impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
             // Return a shutdown-specific error so callers can distinguish
             // normal shutdown from unexpected processing failures.
             SinexError::lifecycle(
-                "Confirmed event channel closed (node is shutting down)".to_string(),
+                "Confirmed event channel closed (runtime module is shutting down)".to_string(),
             )
         })
     }
@@ -156,7 +156,7 @@ pub(super) async fn maybe_start_schema_listener(
     transport: &EventTransport,
 ) -> RuntimeResult<(
     Option<Arc<SchemaBroadcastCache>>,
-    Option<Arc<crate::runtime::schema_validator::NodeSchemaValidator>>,
+    Option<Arc<crate::runtime::schema_validator::RuntimeSchemaValidator>>,
     Option<watch::Sender<bool>>,
     Option<tokio::task::JoinHandle<()>>,
 )> {
@@ -184,7 +184,7 @@ pub(super) async fn maybe_start_schema_listener(
     // Create schema cache and validator
     let cache = Arc::new(SchemaBroadcastCache::default());
     let cache_clone = cache.clone();
-    let validator = Arc::new(crate::runtime::schema_validator::NodeSchemaValidator::new());
+    let validator = Arc::new(crate::runtime::schema_validator::RuntimeSchemaValidator::new());
     let validator_clone = validator.clone();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let (listener_ready_tx, listener_ready_rx) = oneshot::channel();

@@ -113,7 +113,11 @@ where
                 )
                 .await
             {
-                log_self_observation_failure(self.automaton.name(), "derived.outputs_emitted", &error);
+                log_self_observation_failure(
+                    self.automaton.name(),
+                    "derived.outputs_emitted",
+                    &error,
+                );
             }
 
             if let Err(error) = obs

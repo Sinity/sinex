@@ -7,9 +7,9 @@
 
 use super::{
     Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, EventTransport, JetStreamEventConsumer,
-    JetStreamEventConsumerConfig, LeaderState, RuntimeModule, RuntimeResult, RuntimeRunner, ProcessingModel,
-    ProvisionalEvent, RunnerConfirmedEventHandler, ScanArgs, SinexError, TimeHorizon, Uuid, debug,
-    info, mpsc, systemd_notify, warn,
+    JetStreamEventConsumerConfig, LeaderState, ProcessingModel, ProvisionalEvent,
+    RunnerConfirmedEventHandler, RuntimeModule, RuntimeResult, RuntimeRunner, ScanArgs, SinexError,
+    TimeHorizon, Uuid, debug, info, mpsc, systemd_notify, warn,
 };
 
 impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
@@ -183,7 +183,10 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     }
 
     #[cfg(feature = "messaging")]
-    pub(super) async fn run_automaton_event_bridge(&mut self, from: Checkpoint) -> RuntimeResult<()> {
+    pub(super) async fn run_automaton_event_bridge(
+        &mut self,
+        from: Checkpoint,
+    ) -> RuntimeResult<()> {
         let handles = self
             .handles
             .as_ref()

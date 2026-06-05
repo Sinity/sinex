@@ -265,7 +265,7 @@ impl JetStreamEventConsumer {
                 let stop_requested = !*self.running.read().await;
                 error!(
                     target: "sinex_metrics",
-                    metric = "node.consumer_task_exits_total",
+                    metric = "runtime.consumer_task_exits_total",
                     task = "provisional_events",
                     "Provisional events task stopped: {result:?}"
                 );
@@ -278,7 +278,7 @@ impl JetStreamEventConsumer {
                 let stop_requested = !*self.running.read().await;
                 error!(
                     target: "sinex_metrics",
-                    metric = "node.consumer_task_exits_total",
+                    metric = "runtime.consumer_task_exits_total",
                     task = "confirmation",
                     "Confirmation task stopped: {result:?}"
                 );
@@ -291,7 +291,7 @@ impl JetStreamEventConsumer {
                 let stop_requested = !*self.running.read().await;
                 error!(
                     target: "sinex_metrics",
-                    metric = "node.consumer_task_exits_total",
+                    metric = "runtime.consumer_task_exits_total",
                     task = "timeout_check",
                     "Timeout check task stopped: {result:?}"
                 );
@@ -357,7 +357,7 @@ impl JetStreamEventConsumer {
             Err(e) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "node.provisional_event_parse_failures_total",
+                    metric = "runtime.provisional_event_parse_failures_total",
                     error = %e,
                     "Failed to parse provisional event"
                 );
@@ -467,7 +467,7 @@ impl JetStreamEventConsumer {
             Err(e) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "node.confirmation_parse_failures_total",
+                    metric = "runtime.confirmation_parse_failures_total",
                     error = %e,
                     "Failed to parse confirmation"
                 );
@@ -597,7 +597,7 @@ impl JetStreamEventConsumer {
                 Err(e) => {
                     error!(
                         target: "sinex_metrics",
-                        metric = "node.confirmation_handler_failures_total",
+                        metric = "runtime.confirmation_handler_failures_total",
                         error = %e,
                         "Confirmed handler failed on unbuffered kind watermark"
                     );
@@ -695,7 +695,7 @@ impl JetStreamEventConsumer {
                 Err(e) => {
                     error!(
                         target: "sinex_metrics",
-                        metric = "node.confirmation_handler_failures_total",
+                        metric = "runtime.confirmation_handler_failures_total",
                         error = %e,
                         "Confirmed handler failed"
                     );
@@ -745,7 +745,7 @@ impl JetStreamEventConsumer {
                     Err(e) => {
                         error!(
                             target: "sinex_metrics",
-                            metric = "node.confirmation_handler_failures_total",
+                            metric = "runtime.confirmation_handler_failures_total",
                             error = %e,
                             "Confirmed handler failed"
                         );
@@ -827,7 +827,7 @@ impl JetStreamEventConsumer {
                     {
                         error!(
                             target: "sinex_metrics",
-                            metric = "node.provisional_rollback_failures_total",
+                            metric = "runtime.provisional_rollback_failures_total",
                             %event_id,
                             error = %e,
                             "Failed to rollback provisional event"

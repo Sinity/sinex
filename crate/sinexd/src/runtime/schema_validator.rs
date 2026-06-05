@@ -46,7 +46,7 @@ use crate::runtime::stream::SchemaBroadcastEntry;
 /// - Cache-miss: fetches active schema metadata from DB, compiles schema from KV, caches it
 /// - Missing/invalid schema is an error (fail-closed)
 #[derive(Clone)]
-pub struct NodeSchemaValidator {
+pub struct RuntimeSchemaValidator {
     /// Compiled schemas by `schema_id`
     schemas: Arc<RwLock<AHashMap<Uuid, Arc<Validator>>>>,
     /// Lookup: (source, `event_type`) → `schema_id`
@@ -57,7 +57,7 @@ pub struct NodeSchemaValidator {
     kv_store: Option<Store>,
 }
 
-impl NodeSchemaValidator {
+impl RuntimeSchemaValidator {
     /// Create a new edge-mode validator (cache-only)
     #[must_use]
     pub fn new() -> Self {
@@ -132,7 +132,7 @@ impl NodeSchemaValidator {
         info!(
             compiled,
             total = self.schema_count(),
-            "Updated node schema cache"
+            "Updated runtime schema cache"
         );
 
         Ok(compiled)
@@ -321,14 +321,14 @@ async fn fetch_and_compile_from_kv(kv: &Store, schema_id_str: &str) -> Option<Ar
     }
 }
 
-impl Default for NodeSchemaValidator {
+impl Default for RuntimeSchemaValidator {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[cfg(test)]
-impl NodeSchemaValidator {
+impl RuntimeSchemaValidator {
     pub(crate) fn register_test_schema(
         &self,
         schema_id: Uuid,

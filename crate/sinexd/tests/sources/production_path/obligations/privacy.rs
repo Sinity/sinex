@@ -36,14 +36,9 @@ pub async fn run(
     expected_event_types: &[&str],
 ) -> Result<(), String> {
     // Part 1: clean fixture must dispatch cleanly (delegates to initial_ingestion logic).
-    super::initial_ingestion::run(
-        source_id,
-        adapter_kind,
-        fixture_data,
-        expected_event_types,
-    )
-    .await
-    .map_err(|e| format!("privacy/clean-path: {e}"))?;
+    super::initial_ingestion::run(source_id, adapter_kind, fixture_data, expected_event_types)
+        .await
+        .map_err(|e| format!("privacy/clean-path: {e}"))?;
 
     run_metadata_only(source_id).await
 }
@@ -56,12 +51,8 @@ pub async fn run(
 pub async fn run_metadata_only(source_id: &str) -> Result<(), String> {
     let source_id = SourceId::new(source_id.to_owned())
         .map_err(|error| format!("privacy metadata: invalid source id: {error}"))?;
-    let descriptor = proof::find_source_contract(&source_id).ok_or_else(|| {
-        format!(
-            "privacy metadata: unknown source '{}'",
-            source_id.as_str()
-        )
-    })?;
+    let descriptor = proof::find_source_contract(&source_id)
+        .ok_or_else(|| format!("privacy metadata: unknown source '{}'", source_id.as_str()))?;
     if descriptor.privacy_tier == PrivacyTier::Public {
         return Ok(());
     }

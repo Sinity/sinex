@@ -74,15 +74,6 @@ use sinex_primitives::rpc::{
         LlmBudgetReportRequest, LlmBudgetReportResponse, LlmPromptsListRequest,
         LlmRouteExplainRequest, LlmRouteExplainResponse,
     },
-    runtime::{
-        RUNTIME_DRAIN_METHOD, RUNTIME_HEALTH_METHOD, RUNTIME_LIST_ACTIVE_METHOD, RUNTIME_LIST_METHOD,
-        RUNTIME_RESUME_METHOD, RUNTIME_SET_HORIZON_METHOD,
-    },
-    runtime::{
-        RuntimeDrainRequest, RuntimeResumeRequest, RuntimeSetHorizonRequest, RuntimeHealthRequest,
-        RuntimeHealthResponse, RuntimeListActiveRequest, RuntimeListActiveResponse, RuntimeListRequest,
-        RuntimeListResponse,
-    },
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     privacy::{
         PRIVACY_POLICY_BACKEND_ADD_METHOD, PRIVACY_POLICY_DICTIONARY_ADD_METHOD,
@@ -106,6 +97,15 @@ use sinex_primitives::rpc::{
         ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayPreviewRequest,
         ReplayPreviewResponse, ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse,
         ReplaySubmitRequest, ReplaySubmitResponse,
+    },
+    runtime::{
+        RUNTIME_DRAIN_METHOD, RUNTIME_HEALTH_METHOD, RUNTIME_LIST_ACTIVE_METHOD,
+        RUNTIME_LIST_METHOD, RUNTIME_RESUME_METHOD, RUNTIME_SET_HORIZON_METHOD,
+    },
+    runtime::{
+        RuntimeDrainRequest, RuntimeHealthRequest, RuntimeHealthResponse, RuntimeListActiveRequest,
+        RuntimeListActiveResponse, RuntimeListRequest, RuntimeListResponse, RuntimeResumeRequest,
+        RuntimeSetHorizonRequest,
     },
     semantic::{
         SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
@@ -154,29 +154,29 @@ use sinex_primitives::rpc::{
     },
     telemetry::{
         AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
-        FileActivityEntry, GatewayStatsBucket, EventEngineBatchStatsBucket, EventEngineValidationSnapshot,
-        MetricCounterBucket, SourceStatsBucket, RecentActivityEntry, StreamStatsBucket,
-        SystemStateBucket, TELEMETRY_ASSEMBLY_STATS_METHOD, TELEMETRY_COMMAND_FREQUENCY_METHOD,
-        TELEMETRY_CURRENT_DEVICE_STATE_METHOD, TELEMETRY_CURRENT_HEALTH_METHOD,
-        TELEMETRY_FILE_ACTIVITY_METHOD, TELEMETRY_GATEWAY_STATS_METHOD,
-        TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD, TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD,
-        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_SOURCE_STATS_METHOD,
-        TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_STREAM_STATS_METHOD,
-        TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD, TELEMETRY_WINDOW_FOCUS_METHOD,
-        TelemetryAssemblyStatsRequest, TelemetryAssemblyStatsResponse,
-        TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
-        TelemetryCurrentDeviceStateRequest, TelemetryCurrentDeviceStateResponse,
-        TelemetryCurrentHealthRequest, TelemetryCurrentHealthResponse,
-        TelemetryFileActivityRequest, TelemetryFileActivityResponse, TelemetryGatewayStatsRequest,
-        TelemetryGatewayStatsResponse, TelemetryEventEngineBatchStatsRequest,
+        EventEngineBatchStatsBucket, EventEngineValidationSnapshot, FileActivityEntry,
+        GatewayStatsBucket, MetricCounterBucket, RecentActivityEntry, SourceStatsBucket,
+        StreamStatsBucket, SystemStateBucket, TELEMETRY_ASSEMBLY_STATS_METHOD,
+        TELEMETRY_COMMAND_FREQUENCY_METHOD, TELEMETRY_CURRENT_DEVICE_STATE_METHOD,
+        TELEMETRY_CURRENT_HEALTH_METHOD, TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD,
+        TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD, TELEMETRY_FILE_ACTIVITY_METHOD,
+        TELEMETRY_GATEWAY_STATS_METHOD, TELEMETRY_METRIC_COUNTERS_METHOD,
+        TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_SOURCE_STATS_METHOD,
+        TELEMETRY_STREAM_STATS_METHOD, TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD,
+        TELEMETRY_WINDOW_FOCUS_METHOD, TelemetryAssemblyStatsRequest,
+        TelemetryAssemblyStatsResponse, TelemetryCommandFrequencyRequest,
+        TelemetryCommandFrequencyResponse, TelemetryCurrentDeviceStateRequest,
+        TelemetryCurrentDeviceStateResponse, TelemetryCurrentHealthRequest,
+        TelemetryCurrentHealthResponse, TelemetryEventEngineBatchStatsRequest,
         TelemetryEventEngineBatchStatsResponse, TelemetryEventEngineValidationRequest,
-        TelemetryEventEngineValidationResponse, TelemetryMetricCountersRequest,
-        TelemetryMetricCountersResponse, TelemetrySourceStatsRequest, TelemetrySourceStatsResponse,
+        TelemetryEventEngineValidationResponse, TelemetryFileActivityRequest,
+        TelemetryFileActivityResponse, TelemetryGatewayStatsRequest, TelemetryGatewayStatsResponse,
+        TelemetryMetricCountersRequest, TelemetryMetricCountersResponse,
         TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
-        TelemetryStreamStatsRequest, TelemetryStreamStatsResponse, TelemetrySystemStateRequest,
-        TelemetrySystemStateResponse, TelemetryThroughputRequest, TelemetryThroughputResponse,
-        TelemetryTimeRange, TelemetryWindowFocusRequest, TelemetryWindowFocusResponse,
-        WindowFocusBucket,
+        TelemetrySourceStatsRequest, TelemetrySourceStatsResponse, TelemetryStreamStatsRequest,
+        TelemetryStreamStatsResponse, TelemetrySystemStateRequest, TelemetrySystemStateResponse,
+        TelemetryThroughputRequest, TelemetryThroughputResponse, TelemetryTimeRange,
+        TelemetryWindowFocusRequest, TelemetryWindowFocusResponse, WindowFocusBucket,
     },
 };
 use sinex_primitives::sources::continuity::{
@@ -700,13 +700,13 @@ impl GatewayClient {
         self.call_typed(RUNTIME_LIST_ACTIVE_METHOD, &req).await
     }
 
-    /// List persisted node states from coordination KV state.
+    /// List persisted runtime module states from coordination KV state.
     pub async fn runtime_list(&self) -> Result<RuntimeListResponse> {
         self.call_typed(RUNTIME_LIST_METHOD, &RuntimeListRequest {})
             .await
     }
 
-    /// Get aggregate node health from runtime registry state.
+    /// Get aggregate runtime module health from runtime registry state.
     pub async fn runtime_health(&self, stale_after_secs: u64) -> Result<RuntimeHealthResponse> {
         let req = RuntimeHealthRequest { stale_after_secs };
         self.call_typed(RUNTIME_HEALTH_METHOD, &req).await
@@ -1884,7 +1884,9 @@ impl GatewayClient {
     }
 
     /// Query the latest event_engine validation snapshot.
-    pub async fn telemetry_event_engine_validation(&self) -> Result<Option<EventEngineValidationSnapshot>> {
+    pub async fn telemetry_event_engine_validation(
+        &self,
+    ) -> Result<Option<EventEngineValidationSnapshot>> {
         let req = TelemetryEventEngineValidationRequest::default();
         let response: TelemetryEventEngineValidationResponse = self
             .call_typed(TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD, &req)

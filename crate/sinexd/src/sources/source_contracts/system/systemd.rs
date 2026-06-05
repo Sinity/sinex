@@ -3,8 +3,8 @@
 //! Uses `JournalctlStreamAdapter` (same subprocess as `system.journald`).
 //! Records without `_SYSTEMD_UNIT` are silently skipped.
 
-use crate::runtime::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
 use crate::register_source;
+use crate::runtime::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
 use sinex_primitives::events::payloads::system::{
@@ -12,13 +12,13 @@ use sinex_primitives::events::payloads::system::{
     SystemdUnitStartedPayload, SystemdUnitStoppedPayload,
 };
 use sinex_primitives::parser::{
-    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
-    SourceId, TimingConfidence, TimingEvidence,
+    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceId,
+    SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceRuntimeBinding, SourceBuildImpact, SourceContract, SubjectRef,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};

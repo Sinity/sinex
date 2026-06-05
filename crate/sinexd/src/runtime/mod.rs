@@ -43,29 +43,29 @@ pub mod health_reporter;
 pub mod heartbeat;
 pub mod hyprland;
 pub mod ingestion_helpers;
-pub mod source_driver;
 pub mod input_shapes;
 pub mod jetstream_consumer;
 pub mod material;
 pub mod nats_publisher;
-pub mod runtime_cli;
 pub mod parser;
 pub mod preflight;
 pub mod prelude;
+pub mod pressure;
 pub mod processing;
 pub mod record_source;
-pub mod tags;
-pub mod stream;
-pub mod pressure;
+pub mod runtime_cli;
 pub mod schema_validator;
 pub mod self_observation;
 pub mod service_runtime;
 pub mod shutdown;
+pub mod source_driver;
 pub mod source_material;
 pub mod sqlite_source;
 pub mod stage_as_you_go;
+pub mod stream;
 pub mod supervised_watcher;
 pub mod systemd_notify;
+pub mod tags;
 pub mod version;
 pub mod watcher_handle;
 
@@ -74,6 +74,13 @@ pub use acquisition_manager::{
     SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_FRAMES_SUBJECT,
     SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX, SOURCE_MATERIAL_STREAM, SourceMaterialHandle,
     SourceRecordAnchor, source_material_slice_subject,
+};
+pub use automaton::{
+    AutomatonAdapterConfig, AutomatonContext, AutomatonRuntime, DerivedAggregationMeta,
+    DerivedOutput, DerivedScopeInvalidation, INVALIDATION_SUBJECT, InputProvenanceFilter,
+    MultiOutputTransducer, MultiOutputTransducerAdapter, MultiOutputTransducerWrapper,
+    ScopeReconciler, ScopeReconcilerAdapter, ScopeReconcilerWrapper, Transducer, TransducerAdapter,
+    TransducerWrapper, Windowed, WindowedAdapter, WindowedWrapper,
 };
 pub use automaton_base::{ActivityEntry, IngestionHistoryEntry};
 pub use batch_importer::{
@@ -85,20 +92,13 @@ pub use checkpoint::{
     cleanup_stale_checkpoints, spawn_checkpoint_cleanup_task,
 };
 pub use config::{
-    AutomatonConfig, EventSourceConfig, MaterialMetadataPolicy, RuntimeConfig, PathClassRule,
+    AutomatonConfig, EventSourceConfig, MaterialMetadataPolicy, PathClassRule, RuntimeConfig,
 };
 pub use confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
     ProvisionalEvent, ProvisionalEventHandler,
 };
 pub use coordination::{HandoffRequest, InstanceMode, RuntimeCoordination};
-pub use automaton::{
-    AutomatonAdapterConfig, AutomatonContext, AutomatonRuntime, DerivedAggregationMeta,
-    DerivedOutput, DerivedScopeInvalidation, INVALIDATION_SUBJECT, InputProvenanceFilter,
-    MultiOutputTransducer, MultiOutputTransducerAdapter, MultiOutputTransducerWrapper,
-    ScopeReconciler, ScopeReconcilerAdapter, ScopeReconcilerWrapper, Transducer,
-    TransducerAdapter, TransducerWrapper, Windowed, WindowedAdapter, WindowedWrapper,
-};
 pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqRetryResult, DlqStats};
 pub use event_transport::{EventBatcher, EventBatcherConfig, EventTransport, spawn_event_batcher};
 pub use exploration::{ExplorationProvider, ExportFormat, SourceState};
@@ -112,7 +112,6 @@ pub use hyprland::{
     HyprlandCommandSocketProbe, HyprlandCommandSocketResponse, dispatch_hyprland_workspace_command,
     probe_hyprland_command_socket, resolve_hyprland_command_socket_path,
 };
-pub use source_driver::{IngestorState, SourceDriver, SourceDriverRuntime};
 pub use input_shapes::{
     SqliteSnapshotCheckpointState, SqliteSourceCheckpointState, discover_importable_files_at_root,
 };
@@ -122,7 +121,6 @@ pub use material::{
     TransientErrorPredicate,
 };
 pub use nats_publisher::NatsPublisher;
-pub use runtime_cli::{RuntimeCli, RuntimeCliRunner, RuntimeCommand, parse_checkpoint, parse_time_horizon};
 pub use pressure::PressureMonitor;
 pub use processing::AutomatonLogicError;
 pub use record_source::SqliteSnapshotLinker;
@@ -140,11 +138,8 @@ pub use record_source::{
     SqliteRecordSource, SqliteRowCheckpoint, TimestampRecordCheckpoint,
     process_record_batch_lenient, stable_json_line,
 };
-pub use stream::{
-    Checkpoint, ContinuousStart, EventSender, EventStream, MaterialReplayContext, RuntimeModule,
-    RuntimeCapabilities, RuntimeRunner, SourceScanAck, SourceScanCommand, SourceScanProgress, ModuleKind,
-    ReplayScopeFilters, ResolvedReplayMaterial, RunnerLifecycle, ScanArgs, ScanEstimate,
-    ScanReport, TimeHorizon,
+pub use runtime_cli::{
+    RuntimeCli, RuntimeCliRunner, RuntimeCommand, parse_checkpoint, parse_time_horizon,
 };
 pub use self_observation::{
     SelfObservationError, SelfObservationTask, SelfObserver, SelfObserverConfig,
@@ -153,6 +148,7 @@ pub use shutdown::wait_for_os_shutdown_signal;
 pub use shutdown::wait_for_shutdown_signal;
 pub use shutdown::wait_for_shutdown_signal_bool;
 pub use shutdown::{ShutdownConfig, default_checkpoint_path};
+pub use source_driver::{IngestorState, SourceDriver, SourceDriverRuntime};
 pub use source_material::{
     stage_material, stage_material_from_file, stage_material_from_file_bounded,
 };
@@ -161,6 +157,12 @@ pub use sqlite_source::{
     SqliteSnapshotMetadata, SqliteSnapshotPolicy, SqliteSnapshotState, SqliteSnapshotTrigger,
     SqliteTableCheckError, capture_sqlite_snapshot, ensure_sqlite_with_tables,
     max_row_id_for_query, read_rows_after, read_rows_with_params,
+};
+pub use stream::{
+    Checkpoint, ContinuousStart, EventSender, EventStream, MaterialReplayContext, ModuleKind,
+    ReplayScopeFilters, ResolvedReplayMaterial, RunnerLifecycle, RuntimeCapabilities,
+    RuntimeModule, RuntimeRunner, ScanArgs, ScanEstimate, ScanReport, SourceScanAck,
+    SourceScanCommand, SourceScanProgress, TimeHorizon,
 };
 pub use supervised_watcher::{
     SupervisedWatcherConfig, spawn_supervised_watcher, spawn_watcher_with_panic_catch,

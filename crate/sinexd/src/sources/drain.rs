@@ -1,6 +1,6 @@
 //! Per-unit drain controller with material tracking and crash recovery.
 //!
-//! The [`SourceDrainController`] wraps the SDK's [`RuntimeDrainController`]
+//! The [`SourceDrainController`] wraps the runtime's [`RuntimeDrainController`]
 //! and adds:
 //!
 //! - **Active-work gating**: track in-flight work units; drain waits for them
@@ -103,7 +103,7 @@ impl GapEvidence {
 /// Each source in the source host gets its own controller,
 /// providing independent drain lifecycle management.
 pub struct SourceDrainController {
-    /// The SDK-level drain signal (broadcast to all subscribers).
+    /// The runtime-level drain signal (broadcast to all subscribers).
     inner: Arc<RuntimeDrainController>,
     /// Whether drain has been requested (set once, never cleared).
     draining: AtomicBool,
@@ -131,7 +131,7 @@ impl SourceDrainController {
 
     // ── Accessors ──────────────────────────────────────────────────────
 
-    /// Access the underlying SDK drain controller for signaling subscribers.
+    /// Access the underlying runtime drain controller for signaling subscribers.
     #[must_use]
     pub fn inner(&self) -> &Arc<RuntimeDrainController> {
         &self.inner
@@ -244,7 +244,7 @@ impl SourceDrainController {
     }
 
     /// Transition to `FlushingIntents`. The actual flush is performed by
-    /// the SDK event batcher during shutdown — this phase signals intent.
+    /// the runtime event batcher during shutdown — this phase signals intent.
     pub async fn flush_intents(&self, _unit_id: &str) {
         let mut phase = self.phase.lock().await;
         *phase = DrainPhase::FlushingIntents;

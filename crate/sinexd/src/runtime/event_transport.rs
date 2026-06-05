@@ -309,7 +309,7 @@ impl EventBatcher {
                             .fetch_add(1, Ordering::Relaxed);
                         error!(
                             target: "sinex_metrics",
-                            metric = "node.recovery_spool_discards_total",
+                            metric = "runtime.recovery_spool_discards_total",
                             path = ?recovery_spool_path,
                             error = %error,
                             "Discarding malformed recovery-spool entry (remaining-lines cap of {MAX_REMAINING_LINES} reached); event is permanently lost"
@@ -362,7 +362,7 @@ impl EventBatcher {
                         .fetch_add(1, Ordering::Relaxed);
                     error!(
                         target: "sinex_metrics",
-                        metric = "node.recovery_spool_discards_total",
+                        metric = "runtime.recovery_spool_discards_total",
                         path = ?recovery_spool_path,
                         event_id = ?event_id,
                         error = %error,
@@ -390,7 +390,7 @@ impl EventBatcher {
                 // sustained NATS outage. The spool is now clean but the loss is durable.
                 error!(
                     target: "sinex_metrics",
-                    metric = "node.recovery_spool_discards_total",
+                    metric = "runtime.recovery_spool_discards_total",
                     path = ?recovery_spool_path,
                     recovered,
                     malformed,
@@ -414,7 +414,7 @@ impl EventBatcher {
         if discarded > 0 {
             error!(
                 target: "sinex_metrics",
-                metric = "node.recovery_spool_discards_total",
+                metric = "runtime.recovery_spool_discards_total",
                 path = ?recovery_spool_path,
                 recovered,
                 malformed,
@@ -478,7 +478,7 @@ impl EventBatcher {
 
         error!(
             target: "sinex_metrics",
-            metric = "node.batch_send_failures_total",
+            metric = "runtime.batch_send_failures_total",
             batch_size,
             failed = batch.len(),
             "Failed to send batch; routing failures to local recovery spool"
@@ -494,7 +494,7 @@ impl EventBatcher {
                 .fetch_add(batch.len() as u64, Ordering::Relaxed);
             error!(
                 target: "sinex_metrics",
-                metric = "node.recovery_spool_write_failures_total",
+                metric = "runtime.recovery_spool_write_failures_total",
                 recovery_spool_events = batch.len(),
                 error = %e,
                 "Failed to store events in local recovery spool"
@@ -638,7 +638,7 @@ impl EventBatcher {
             Err(e) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "node.event_publish_failures_total",
+                    metric = "runtime.event_publish_failures_total",
                     event_count = event_count,
                     error = %e,
                     "Failed to publish event intent envelope"

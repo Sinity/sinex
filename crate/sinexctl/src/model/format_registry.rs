@@ -145,13 +145,19 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
 
     // ── RuntimeModule ─────────────────────────────────────────────────────────────────
-    m.insert("runtime list", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "runtime list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
     m.insert(
         "runtime status",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert("ingestors", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("runtime drain", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "runtime drain",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
     m.insert(
         "runtime resume",
         FormatCapability::single_shot(TABLE_JSON_YAML),

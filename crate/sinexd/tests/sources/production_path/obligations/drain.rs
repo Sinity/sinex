@@ -66,9 +66,7 @@ pub async fn run(
         controller.mark_drained(source_id).await;
     })
     .await
-    .map_err(|_| {
-        format!("drain for '{source_id}': timed out advancing drain phases after 5s")
-    })?;
+    .map_err(|_| format!("drain for '{source_id}': timed out advancing drain phases after 5s"))?;
 
     let final_phase = controller.current_phase().await;
     if final_phase != DrainPhase::Drained {

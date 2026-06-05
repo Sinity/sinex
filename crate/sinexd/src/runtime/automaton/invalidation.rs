@@ -2,8 +2,8 @@
 //!
 //! When a persisted fact changes (insert, archive, replace), the gateway
 //! publishes a `DerivedScopeInvalidation` to notify automatons. Scope-based
-//! and windowed nodes use this to trigger recomputation of affected scopes.
-//! Transducer nodes ignore it (their outputs are archived along with their inputs).
+//! and windowed automatons use this to trigger recomputation of affected scopes.
+//! Transducers ignore it (their outputs are archived along with their inputs).
 
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
@@ -13,21 +13,21 @@ use super::traits::InputProvenanceFilter;
 
 /// A typed invalidation signal for automatons.
 ///
-/// Carries enough data for a automaton to decide:
+/// Carries enough data for an automaton to decide:
 /// - Which scopes need recomputation
 /// - What changed (action) and why (`operation_id`)
 /// - Which event identity was affected
 ///
 /// # Delivery
 ///
-/// Published to `sinex.derived.invalidation` via NATS. Derived node adapters
-/// subscribe and dispatch to the appropriate trait method based on node model.
+/// Published to `sinex.derived.invalidation` via NATS. Automaton adapters
+/// subscribe and dispatch to the appropriate trait method based on automaton model.
 ///
 /// # Invariants
 ///
 /// - `affected_event_ids` is never empty
 /// - `event_source` and `event_type` identify the affected event's type (for filtering)
-/// - `scope_keys` may be empty if the gateway doesn't know the scope (node must derive it)
+/// - `scope_keys` may be empty if the gateway doesn't know the scope (automaton must derive it)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DerivedScopeInvalidation {
     /// IDs of events that were inserted/archived/replaced.
@@ -39,22 +39,22 @@ pub struct DerivedScopeInvalidation {
     /// The replay operation that caused this invalidation, if any.
     pub operation_id: Option<Uuid>,
 
-    /// Source of the affected events (for node filtering).
+    /// Source of the affected events (for automaton filtering).
     pub event_source: EventSource,
 
-    /// Type of the affected events (for node filtering).
+    /// Type of the affected events (for automaton filtering).
     pub event_type: EventType,
 
     /// Whether the affected events carried lineage (`source_event_ids IS NOT NULL`).
     ///
-    /// When omitted, nodes must treat provenance as unknown and may choose to
+    /// When omitted, automatons must treat provenance as unknown and may choose to
     /// recompute conservatively.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_lineage: Option<bool>,
 
     /// Pre-computed scope keys that are affected (if known from the archived events).
     ///
-    /// May be empty — in which case the node must derive scope keys from the
+    /// May be empty — in which case the automaton must derive scope keys from the
     /// working set itself.
     pub affected_scope_keys: Vec<String>,
 }

@@ -1,7 +1,7 @@
 use color_eyre::eyre::bail;
 use serde_json::json;
-use sinexd::api::ServiceContainer;
 use sinex_primitives::temporal::Timestamp;
+use sinexd::api::ServiceContainer;
 use xtask::sandbox::{EnvGuard, sinex_test};
 
 #[sinex_test]

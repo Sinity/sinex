@@ -1,6 +1,6 @@
 //! Source modules — combine mechanisms + parsers per source.
 //!
-//! Each submodule defines one source by binding the SDK adapter to a
+//! Each submodule defines one source by binding the runtime adapter to a
 //! source-specific parser and registering it with the dispatch + source factory
 //! registries via `inventory::submit!`.
 

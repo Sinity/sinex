@@ -14,47 +14,54 @@ pub const RUNTIME_LIST_METHOD: RpcMethod<RuntimeListRequest, RuntimeListResponse
     RpcMutability::ReadOnly,
 );
 
-pub const RUNTIME_LIST_ACTIVE_METHOD: RpcMethod<RuntimeListActiveRequest, RuntimeListActiveResponse> =
-    RpcMethod::new(
-        methods::RUNTIME_LIST_ACTIVE,
-        RpcRole::ReadOnly,
-        RpcDomain::Runtime,
-        RpcStability::Experimental,
-        RpcMutability::ReadOnly,
-    );
-
-pub const RUNTIME_HEALTH_METHOD: RpcMethod<RuntimeHealthRequest, RuntimeHealthResponse> = RpcMethod::new(
-    methods::RUNTIME_HEALTH,
+pub const RUNTIME_LIST_ACTIVE_METHOD: RpcMethod<
+    RuntimeListActiveRequest,
+    RuntimeListActiveResponse,
+> = RpcMethod::new(
+    methods::RUNTIME_LIST_ACTIVE,
     RpcRole::ReadOnly,
     RpcDomain::Runtime,
     RpcStability::Experimental,
     RpcMutability::ReadOnly,
 );
 
-pub const RUNTIME_DRAIN_METHOD: RpcMethod<RuntimeDrainRequest, RuntimeDrainResponse> = RpcMethod::new(
-    methods::RUNTIME_DRAIN,
-    RpcRole::Write,
-    RpcDomain::Runtime,
-    RpcStability::Experimental,
-    RpcMutability::Mutating,
-);
-
-pub const RUNTIME_RESUME_METHOD: RpcMethod<RuntimeResumeRequest, RuntimeResumeResponse> = RpcMethod::new(
-    methods::RUNTIME_RESUME,
-    RpcRole::Write,
-    RpcDomain::Runtime,
-    RpcStability::Experimental,
-    RpcMutability::Mutating,
-);
-
-pub const RUNTIME_SET_HORIZON_METHOD: RpcMethod<RuntimeSetHorizonRequest, RuntimeSetHorizonResponse> =
+pub const RUNTIME_HEALTH_METHOD: RpcMethod<RuntimeHealthRequest, RuntimeHealthResponse> =
     RpcMethod::new(
-        methods::RUNTIME_SET_HORIZON,
+        methods::RUNTIME_HEALTH,
+        RpcRole::ReadOnly,
+        RpcDomain::Runtime,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
+
+pub const RUNTIME_DRAIN_METHOD: RpcMethod<RuntimeDrainRequest, RuntimeDrainResponse> =
+    RpcMethod::new(
+        methods::RUNTIME_DRAIN,
         RpcRole::Write,
         RpcDomain::Runtime,
         RpcStability::Experimental,
         RpcMutability::Mutating,
     );
+
+pub const RUNTIME_RESUME_METHOD: RpcMethod<RuntimeResumeRequest, RuntimeResumeResponse> =
+    RpcMethod::new(
+        methods::RUNTIME_RESUME,
+        RpcRole::Write,
+        RpcDomain::Runtime,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const RUNTIME_SET_HORIZON_METHOD: RpcMethod<
+    RuntimeSetHorizonRequest,
+    RuntimeSetHorizonResponse,
+> = RpcMethod::new(
+    methods::RUNTIME_SET_HORIZON,
+    RpcRole::Write,
+    RpcDomain::Runtime,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
 
 /// RuntimeModule status information
 #[derive(Debug, Clone, Serialize, Deserialize)]

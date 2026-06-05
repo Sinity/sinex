@@ -1,5 +1,5 @@
-use sinexd::api::{ServiceContainer, config::GatewayConfig, rpc_server};
 use sinex_primitives::error::SinexError;
+use sinexd::api::{ServiceContainer, config::GatewayConfig, rpc_server};
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};

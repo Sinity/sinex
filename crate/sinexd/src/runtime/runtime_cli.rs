@@ -5,7 +5,7 @@
 
 use crate::runtime::event_transport::EventTransport;
 pub use crate::runtime::exploration::{ExplorationProvider, ExportFormat, SourceState};
-use crate::runtime::stream::{Checkpoint, RuntimeRunner, ModuleKind, TimeHorizon};
+use crate::runtime::stream::{Checkpoint, ModuleKind, RuntimeRunner, TimeHorizon};
 use crate::runtime::{RuntimeResult, SinexError};
 use clap::{Parser, Subcommand};
 use sinex_primitives::SanitizedPath;
@@ -323,7 +323,7 @@ fn resolve_primary_database_url(args: &RuntimeCli) -> RuntimeResult<String> {
         })?
     };
     sinex_db::resolve_effective_database_url(&base_url).map_err(|error| {
-        SinexError::configuration("Failed to validate node DATABASE_URL").with_std_error(&error)
+        SinexError::configuration("Failed to validate runtime DATABASE_URL").with_std_error(&error)
     })
 }
 
@@ -446,11 +446,7 @@ fn default_service_name(args: &RuntimeCli) -> ServiceName {
     let name = args
         .service_name
         .clone()
-        .or_else(|| {
-            args.source
-                .as_ref()
-                .map(|unit| format!("sinex-{unit}"))
-        })
+        .or_else(|| args.source.as_ref().map(|unit| format!("sinex-{unit}")))
         .unwrap_or_else(|| "sinex-runtime".to_string());
     ServiceName::new(name)
 }
@@ -508,22 +504,22 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
                 .or_insert_with(|| serde_json::json!(group));
         }
 
+        Self::insert_identity_arg(&mut runtime_config, "source_id", args.source.as_deref())?;
         Self::insert_identity_arg(
             &mut runtime_config,
-            "source_id",
-            args.source.as_deref(),
+            "runner_pack",
+            args.runner_pack.as_deref(),
         )?;
-        Self::insert_identity_arg(&mut runtime_config, "runner_pack", args.runner_pack.as_deref())?;
 
-        // Take ownership of the node
-        let node = self
+        // Take ownership of the runtime module.
+        let module = self
             .node
             .take()
             .ok_or_else(|| SinexError::unknown("RuntimeModule already consumed"))?;
 
         match args.command {
             RuntimeCommand::Service { dry_run, .. } => {
-                self.handle_service_command(node, runtime_config, args, dry_run)
+                self.handle_service_command(module, runtime_config, args, dry_run)
                     .await
             }
             RuntimeCommand::Scan {
@@ -537,7 +533,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
                 estimate,
             } => {
                 self.handle_scan_command(
-                    node,
+                    module,
                     runtime_config,
                     from,
                     until,
@@ -557,7 +553,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
                 limit,
                 ref export_to,
             } => self.handle_explore_command(
-                node,
+                module,
                 source_state,
                 ingestion_history,
                 limit,
@@ -642,7 +638,8 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
             // Create coordination with generated instance ID
             let instance_id = Uuid::new_v4().to_string();
 
-            let mut coordination = RuntimeCoordination::from_runtime(&runtime_snapshot, instance_id)?;
+            let mut coordination =
+                RuntimeCoordination::from_runtime(&runtime_snapshot, instance_id)?;
 
             // Wrap runner in Arc<Mutex<>> for sharing
             let runner = Arc::new(Mutex::new(runner));
@@ -655,7 +652,9 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
                         // Only leader processes events
                         let mut runner = runner.lock().await;
                         runner.run_service().await.map_err(|e| {
-                            sinex_primitives::SinexError::service(format!("RuntimeModule error: {e}"))
+                            sinex_primitives::SinexError::service(format!(
+                                "RuntimeModule error: {e}"
+                            ))
                         })
                     }
                 })
@@ -688,7 +687,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
         let time_horizon = parse_time_horizon(until)
             .map_err(|e| SinexError::unknown(format!("Failed to parse time horizon: {e}")))?;
 
-        // Create node runner
+        // Create runtime runner
         let mut runner = RuntimeRunner::new(node);
 
         // Set up minimal dependencies for scan mode
@@ -732,49 +731,48 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
             replay: None,
         };
 
-        let workflow_result: RuntimeResult<Option<crate::runtime::stream::ScanReport>> =
-            async {
-                if estimate {
-                    let estimate_result = runner
-                        .estimate_scan_scope(&checkpoint, &time_horizon, &scan_args)
-                        .await?;
-                    println!("Scan Estimation:");
-                    println!("  Estimated events: {}", estimate_result.estimated_events);
-                    println!(
-                        "  Estimated duration: {:?}",
-                        estimate_result.estimated_duration
-                    );
-                    println!(
-                        "  Estimated data size: {} bytes",
-                        estimate_result.estimated_data_size
-                    );
-                    println!("  Estimated targets: {}", estimate_result.estimated_targets);
-                    println!("  Confidence: {:.1}%", estimate_result.confidence * 100.0);
-                    if !estimate_result.warnings.is_empty() {
-                        println!("  Warnings:");
-                        for warning in &estimate_result.warnings {
-                            println!("    - {warning}");
-                        }
-                    }
-                    println!();
-
-                    if interactive {
-                        print!("Proceed with scan? [y/N] ");
-                        use std::io::{self, Write};
-                        io::stdout().flush()?;
-                        let mut input = String::new();
-                        io::stdin().read_line(&mut input)?;
-                        if !input.trim().to_lowercase().starts_with('y') {
-                            println!("Scan cancelled");
-                            return Ok(None);
-                        }
+        let workflow_result: RuntimeResult<Option<crate::runtime::stream::ScanReport>> = async {
+            if estimate {
+                let estimate_result = runner
+                    .estimate_scan_scope(&checkpoint, &time_horizon, &scan_args)
+                    .await?;
+                println!("Scan Estimation:");
+                println!("  Estimated events: {}", estimate_result.estimated_events);
+                println!(
+                    "  Estimated duration: {:?}",
+                    estimate_result.estimated_duration
+                );
+                println!(
+                    "  Estimated data size: {} bytes",
+                    estimate_result.estimated_data_size
+                );
+                println!("  Estimated targets: {}", estimate_result.estimated_targets);
+                println!("  Confidence: {:.1}%", estimate_result.confidence * 100.0);
+                if !estimate_result.warnings.is_empty() {
+                    println!("  Warnings:");
+                    for warning in &estimate_result.warnings {
+                        println!("    - {warning}");
                     }
                 }
+                println!();
 
-                let report = runner.run_scan(checkpoint, time_horizon, scan_args).await?;
-                Ok(Some(report))
+                if interactive {
+                    print!("Proceed with scan? [y/N] ");
+                    use std::io::{self, Write};
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    if !input.trim().to_lowercase().starts_with('y') {
+                        println!("Scan cancelled");
+                        return Ok(None);
+                    }
+                }
             }
-            .await;
+
+            let report = runner.run_scan(checkpoint, time_horizon, scan_args).await?;
+            Ok(Some(report))
+        }
+        .await;
 
         let shutdown_result = runner.shutdown().await;
         let maybe_report = match (workflow_result, shutdown_result) {
@@ -1151,7 +1149,7 @@ mod tests {
             .expect_err("invalid database URLs must not silently bypass namespacing");
 
         let rendered = format!("{error:#}");
-        assert!(rendered.contains("Failed to validate node DATABASE_URL"));
+        assert!(rendered.contains("Failed to validate runtime DATABASE_URL"));
         Ok(())
     }
 
@@ -1167,36 +1165,4 @@ mod tests {
         unsafe { std::env::remove_var("SINEX_EDGE_MODE") };
         Ok(())
     }
-}
-
-/// Helper macro for creating node CLI main functions with unified architecture
-#[macro_export]
-macro_rules! node_entrypoint {
-    ($module_kind:ty) => {
-        #[tokio::main]
-        async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-            use clap::Parser;
-            use $crate::runtime::runtime_cli::{RuntimeCli, RuntimeCliRunner};
-
-            let args = RuntimeCli::parse();
-            let node = <$module_kind as Default>::default();
-            let mut runner = RuntimeCliRunner::new(node);
-
-            runner.run(args).await.map_err(|e| e.into())
-        }
-    };
-
-    ($module_kind:ty, $node_expr:expr) => {
-        #[tokio::main]
-        async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-            use clap::Parser;
-            use $crate::runtime::runtime_cli::{RuntimeCli, RuntimeCliRunner};
-
-            let args = RuntimeCli::parse();
-            let node = $node_expr;
-            let mut runner = RuntimeCliRunner::new(node);
-
-            runner.run(args).await.map_err(|e| e.into())
-        }
-    };
 }

@@ -639,7 +639,11 @@ impl ContentStoreManager {
     /// Called after content-store write to detect silent corruption during write.
     /// Re-reads the content from the storage backend and compares the hash
     /// against the one computed from the original input.
-    async fn verify_post_write(&self, content_key: &str, expected_blake3: &str) -> RuntimeResult<()> {
+    async fn verify_post_write(
+        &self,
+        content_key: &str,
+        expected_blake3: &str,
+    ) -> RuntimeResult<()> {
         let path = self.find_symlink_path(content_key).await?;
         let stored_content = tokio::fs::read(&path).await.map_err(|e| {
             SinexError::blob_storage(format!(

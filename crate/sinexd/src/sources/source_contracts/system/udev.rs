@@ -1,9 +1,9 @@
 //! `system.udev` — stream udev device events via `FileDropAdapter` over `/sys`.
 
+use crate::register_source;
 use crate::runtime::parser::{
     FileDropAdapter, FileDropEventKind, FileDropRecordMetadata, MaterialParser, ParserError,
 };
-use crate::register_source;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{DeviceType, UdevAction};
 use sinex_primitives::events::payloads::system::{
@@ -11,13 +11,13 @@ use sinex_primitives::events::payloads::system::{
     UdevDeviceDriverChangedPayload, UdevDeviceOtherPayload,
 };
 use sinex_primitives::parser::{
-    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
-    SourceId, TimingEvidence,
+    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceId,
+    SourceRecord, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceRuntimeBinding, SourceBuildImpact, SourceContract, SubjectRef,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};

@@ -445,9 +445,8 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
     }
 
     let id = id.ok_or_else(|| Error::new_spanned(attrs.first(), "source_record: missing 'id'"))?;
-    let source_id = source_id.ok_or_else(|| {
-        Error::new_spanned(attrs.first(), "source_record: missing 'source_id'")
-    })?;
+    let source_id = source_id
+        .ok_or_else(|| Error::new_spanned(attrs.first(), "source_record: missing 'source_id'"))?;
     let input_shape = input_shape
         .ok_or_else(|| Error::new_spanned(attrs.first(), "source_record: missing 'input_shape'"))?;
     let event_type = event_type

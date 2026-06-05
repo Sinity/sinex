@@ -17,9 +17,9 @@ use tracing::{info, warn};
 pub type EventSender = mpsc::Sender<Event<JsonValue>>;
 pub type EventStream = mpsc::Receiver<Event<JsonValue>>;
 
-/// Shared one-way drain controller for a running node service.
+/// Shared one-way drain controller for a running runtime module service.
 ///
-/// The command listener raises the drain signal, long-running node loops
+/// The command listener raises the drain signal, long-running module loops
 /// subscribe to it, and the runner can register abort handles for runtime-owned
 /// background tasks that must stop accepting new work immediately.
 #[derive(Clone)]
@@ -65,7 +65,7 @@ impl RuntimeDrainController {
     pub fn request_drain_and_warn(&self, module_name: &str) -> bool {
         if !self.request_drain() && !self.is_requested() {
             warn!(
-                node = module_name,
+                module = module_name,
                 "Runtime drain signal could not be delivered before graceful shutdown"
             );
             return false;
@@ -255,7 +255,7 @@ pub struct EventEmitter {
     default_module_run_id: Option<Uuid>,
     default_created_by_operation_id: Option<Uuid>,
     #[cfg(feature = "messaging")]
-    validator: Option<Arc<crate::runtime::schema_validator::NodeSchemaValidator>>,
+    validator: Option<Arc<crate::runtime::schema_validator::RuntimeSchemaValidator>>,
     /// Optional emit tracker installed by `HealthReporter::enable_emit_stall_detection`.
     /// Bumped on every successful `emit()` so the reporter can detect emit-rate stalls.
     /// Slot is `Arc<parking_lot::RwLock<...>>` because `EventEmitter` is constructed by
@@ -284,7 +284,7 @@ impl EventEmitter {
     pub fn with_validator(
         sender: EventSender,
         dry_run: bool,
-        validator: Arc<crate::runtime::schema_validator::NodeSchemaValidator>,
+        validator: Arc<crate::runtime::schema_validator::RuntimeSchemaValidator>,
     ) -> Self {
         Self {
             sender: Arc::new(sender),
@@ -410,7 +410,7 @@ mod tests {
     async fn emit_stamps_payload_schema_id_from_validator() -> TestResult<()> {
         let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
         let validator =
-            std::sync::Arc::new(crate::runtime::schema_validator::NodeSchemaValidator::new());
+            std::sync::Arc::new(crate::runtime::schema_validator::RuntimeSchemaValidator::new());
         let schema_id = Uuid::now_v7();
         validator.register_test_schema(
             schema_id,
@@ -468,7 +468,7 @@ mod tests {
     async fn emit_preserves_existing_payload_schema_id() -> TestResult<()> {
         let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
         let validator =
-            std::sync::Arc::new(crate::runtime::schema_validator::NodeSchemaValidator::new());
+            std::sync::Arc::new(crate::runtime::schema_validator::RuntimeSchemaValidator::new());
         let cached_schema_id = Uuid::now_v7();
         validator.register_test_schema(
             cached_schema_id,
@@ -703,9 +703,7 @@ impl RuntimeHandles {
         self.confirmation_buffer.as_ref().map(Arc::clone)
     }
 
-    pub fn schema_cache(
-        &self,
-    ) -> Option<Arc<crate::runtime::stream::SchemaBroadcastCache>> {
+    pub fn schema_cache(&self) -> Option<Arc<crate::runtime::stream::SchemaBroadcastCache>> {
         self.schema_cache.as_ref().map(Arc::clone)
     }
 

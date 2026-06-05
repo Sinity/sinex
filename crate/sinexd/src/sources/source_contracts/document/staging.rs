@@ -15,7 +15,7 @@
 //! + `register_source!` is required.
 //!
 //! The `DocumentStagingParser` handles the dispatch-path (replay, testing).
-//! The full ingestion path uses `DocumentNode` directly via
+//! The full ingestion path uses `DocumentSourceDriver` directly via
 //! `register_source!`.
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
@@ -30,13 +30,13 @@ use sinex_primitives::{
         payloads::{KnowledgeTagAppliedPayload, document::DocumentIngestedPayload},
     },
     parser::{
-        InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
-        SourceId, TimingEvidence,
+        InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceId,
+        SourceRecord, TimingEvidence,
     },
     privacy::{ProcessingContext, SensitivityHint},
     proof::{
         CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-        SourceRuntimeBinding, SourceBuildImpact, SourceContract, SubjectRef,
+        SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
     },
     temporal::Timestamp,
 };
@@ -95,14 +95,14 @@ register_source_runtime_binding! {
 // derived children.
 // ---------------------------------------------------------------------------
 
-/// No per-parse config needed; binding config lives on the `DocumentNode`.
+/// No per-parse config needed; binding config lives on the `DocumentSourceDriver`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DocumentStagingParserConfig {}
 
 /// Imperative parser for the `document.staging` source.
 ///
 /// Used in the dispatch path (replay, testing). The full ingestion path uses
-/// `DocumentNode` registered via `register_source!`.
+/// `DocumentSourceDriver` registered via `register_source!`.
 #[derive(Debug, Default)]
 pub struct DocumentStagingParser;
 
@@ -210,8 +210,8 @@ impl MaterialParser for DocumentStagingParser {
 
 crate::register_source!(source_id: "document.staging", parser: DocumentStagingParser);
 
-// The full source runtime lifecycle uses DocumentNode; see `super::runtime`.
+// The full source runtime lifecycle uses DocumentSourceDriver; see `super::runtime`.
 // It is a `SourceDriver` implementation that manages its own checkpoint state
 // (`manages_own_checkpoints: true`) and supports snapshot + historical scans
 // but not continuous mode.
-crate::register_source!(source_id: "document.staging", driver: super::runtime::DocumentNode);
+crate::register_source!(source_id: "document.staging", driver: super::runtime::DocumentSourceDriver);

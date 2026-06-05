@@ -326,7 +326,7 @@ impl DlqRetryHandler {
             Err(e) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "node.dlq_retry_failures_total",
+                    metric = "runtime.dlq_retry_failures_total",
                     error = %e,
                     "Failed to retry message"
                 );
@@ -503,7 +503,10 @@ fn dlq_stored_retry_count(headers: &async_nats::HeaderMap) -> RuntimeResult<u32>
     })
 }
 
-fn combine_retry_counts(header_retry: u32, delivery_retry: Result<i64, String>) -> RuntimeResult<u32> {
+fn combine_retry_counts(
+    header_retry: u32,
+    delivery_retry: Result<i64, String>,
+) -> RuntimeResult<u32> {
     match delivery_retry {
         Ok(delivered) => {
             let delivery_retry = u32::try_from(delivered).map_err(|error| {

@@ -15,10 +15,11 @@ use sinex_primitives::error::{Result, SinexError};
 use tracing::info;
 
 use crate::automata::{
-    AnalyticsAutomatonNode, DailySummarizerNode, DocumentParserNodeAdapter, EmbeddingProducerNode,
-    EntityEnricherNode, EntityExtractorNode, EntityResolverNode, HealthAggregatorNode,
-    HourlySummarizerNode, InstructionExpectationReconcilerNode, RelationExtractorNode,
-    SessionDetectorNode, TagApplierNode, TerminalCommandCanonicalizerNode,
+    AnalyticsAutomatonRuntime, DailySummarizerRuntime, DocumentParserRuntime,
+    EmbeddingProducerRuntime, EntityEnricherRuntime, EntityExtractorRuntime, EntityResolverRuntime,
+    HealthAggregatorRuntime, HourlySummarizerRuntime, InstructionExpectationReconcilerRuntime,
+    RelationExtractorRuntime, SessionDetectorRuntime, TagApplierRuntime,
+    TerminalCommandCanonicalizerRuntime,
 };
 
 /// Type-erased automaton runner. Returns `Ok(())` when the automaton exits
@@ -37,60 +38,64 @@ pub struct AutomatonSpec {
 pub const AUTOMATA: &[AutomatonSpec] = &[
     AutomatonSpec {
         name: "canonicalizer",
-        run: || Box::pin(run_one::<TerminalCommandCanonicalizerNode>("canonicalizer")),
+        run: || {
+            Box::pin(run_one::<TerminalCommandCanonicalizerRuntime>(
+                "canonicalizer",
+            ))
+        },
     },
     AutomatonSpec {
         name: "analytics",
-        run: || Box::pin(run_one::<AnalyticsAutomatonNode>("analytics")),
+        run: || Box::pin(run_one::<AnalyticsAutomatonRuntime>("analytics")),
     },
     AutomatonSpec {
         name: "health",
-        run: || Box::pin(run_one::<HealthAggregatorNode>("health")),
+        run: || Box::pin(run_one::<HealthAggregatorRuntime>("health")),
     },
     AutomatonSpec {
         name: "session",
-        run: || Box::pin(run_one::<SessionDetectorNode>("session")),
+        run: || Box::pin(run_one::<SessionDetectorRuntime>("session")),
     },
     AutomatonSpec {
         name: "hourly",
-        run: || Box::pin(run_one::<HourlySummarizerNode>("hourly")),
+        run: || Box::pin(run_one::<HourlySummarizerRuntime>("hourly")),
     },
     AutomatonSpec {
         name: "daily",
-        run: || Box::pin(run_one::<DailySummarizerNode>("daily")),
+        run: || Box::pin(run_one::<DailySummarizerRuntime>("daily")),
     },
     AutomatonSpec {
         name: "entity-extractor",
-        run: || Box::pin(run_one::<EntityExtractorNode>("entity-extractor")),
+        run: || Box::pin(run_one::<EntityExtractorRuntime>("entity-extractor")),
     },
     AutomatonSpec {
         name: "entity-resolver",
-        run: || Box::pin(run_one::<EntityResolverNode>("entity-resolver")),
+        run: || Box::pin(run_one::<EntityResolverRuntime>("entity-resolver")),
     },
     AutomatonSpec {
         name: "relation-extractor",
-        run: || Box::pin(run_one::<RelationExtractorNode>("relation-extractor")),
+        run: || Box::pin(run_one::<RelationExtractorRuntime>("relation-extractor")),
     },
     AutomatonSpec {
         name: "entity-enricher",
-        run: || Box::pin(run_one::<EntityEnricherNode>("entity-enricher")),
+        run: || Box::pin(run_one::<EntityEnricherRuntime>("entity-enricher")),
     },
     AutomatonSpec {
         name: "tag-applier",
-        run: || Box::pin(run_one::<TagApplierNode>("tag-applier")),
+        run: || Box::pin(run_one::<TagApplierRuntime>("tag-applier")),
     },
     AutomatonSpec {
         name: "embedding-producer",
-        run: || Box::pin(run_one::<EmbeddingProducerNode>("embedding-producer")),
+        run: || Box::pin(run_one::<EmbeddingProducerRuntime>("embedding-producer")),
     },
     AutomatonSpec {
         name: "document-parser",
-        run: || Box::pin(run_one::<DocumentParserNodeAdapter>("document-parser")),
+        run: || Box::pin(run_one::<DocumentParserRuntime>("document-parser")),
     },
     AutomatonSpec {
         name: "instruction-reconciler",
         run: || {
-            Box::pin(run_one::<InstructionExpectationReconcilerNode>(
+            Box::pin(run_one::<InstructionExpectationReconcilerRuntime>(
                 "instruction-reconciler",
             ))
         },

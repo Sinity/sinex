@@ -47,7 +47,7 @@
 //!
 //! # Design constraints
 //!
-//! - `A::Cursor` must be serialisable so the SDK checkpoint machinery can
+//! - `A::Cursor` must be serialisable so the runtime checkpoint machinery can
 //!   persist and restore it.
 //! - `P` must be `Default + MaterialParser`. Both hold for every
 //!   `#[derive(SourceRecord)]` struct and for imperative parsers that `impl
@@ -103,12 +103,12 @@ use crate::runtime::RuntimeResult;
 use crate::runtime::acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy,
 };
-use crate::runtime::source_driver::SourceDriver;
 use crate::runtime::parser::adapters::SqliteSnapshotLane;
 use crate::runtime::parser::{
     BindingConfig, DriftEvent, InputShapeAdapter, InputShapeAdapterExt, MaterialParser,
     SourceRecord, SourceRecordFingerprint,
 };
+use crate::runtime::source_driver::SourceDriver;
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, RuntimeCapabilities, RuntimeContext, ScanArgs, ScanReport,
     TimeHorizon,
@@ -267,12 +267,12 @@ impl AdapterSourceConfig {
 }
 
 // =============================================================================
-// Adapter-node state (checkpoint-persisted)
+// Adapter module state (checkpoint-persisted)
 // =============================================================================
 
 /// Checkpoint state for [`AdapterBackedSource`].
 ///
-/// Contains the adapter cursor (opaque to the SDK) and event counters.
+/// Contains the adapter cursor (opaque to the runtime) and event counters.
 /// Serialized as the `IngestorState<S>::user_state` payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound = "C: Clone + Serialize + DeserializeOwned")]
@@ -687,13 +687,10 @@ where
             .event_emitter()
             .clone();
 
-        let source_id = sinex_primitives::parser::SourceId::new(self.source_id)
-            .map_err(|e| {
-                crate::runtime::SinexError::validation(
-                    "invalid source_id in AdapterBackedSource",
-                )
+        let source_id = sinex_primitives::parser::SourceId::new(self.source_id).map_err(|e| {
+            crate::runtime::SinexError::validation("invalid source_id in AdapterBackedSource")
                 .with_std_error(&e)
-            })?;
+        })?;
 
         self.observe_input_fingerprint(config, state, &source_id);
 
@@ -989,10 +986,7 @@ where
         // wants one by returning `Some(spec)` from `snapshot_lane`; we spawn
         // an independent tokio task that captures the substrate on its own
         // timer.  Per-record drain (above) is untouched.
-        if let Some(spec) = self
-            .adapter
-            .snapshot_lane(self.source_id, &adapter_config)
-        {
+        if let Some(spec) = self.adapter.snapshot_lane(self.source_id, &adapter_config) {
             #[allow(clippy::expect_used)]
             let manager = Arc::clone(
                 self.acquisition_manager
@@ -1374,7 +1368,7 @@ fn intent_to_event_with_anchor(
     Ok(built)
 }
 
-/// Produce a `Checkpoint` from the current node state.
+/// Produce a `Checkpoint` from the current module state.
 ///
 /// Uses `External` with the serialized cursor, falling back to `None` if no
 /// cursor has been advanced yet.
@@ -1835,12 +1829,11 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn adapter_backed_source_refreshes_private_mode_binding()
-    -> xtask::sandbox::TestResult<()> {
+    async fn adapter_backed_source_refreshes_private_mode_binding() -> xtask::sandbox::TestResult<()>
+    {
         let dir = tempfile::tempdir()?;
         save_private_mode_state(dir.path(), &RuntimePrivateModeState::disabled())?;
-        let mut source =
-            AdapterBackedSource::<TestAdapter, TestParser>::new("desktop.clipboard");
+        let mut source = AdapterBackedSource::<TestAdapter, TestParser>::new("desktop.clipboard");
         source.runtime_config = Some(AdapterSourceConfig {
             private_mode_state_dir: Some(dir.path().to_path_buf()),
             ..Default::default()
@@ -1867,9 +1860,8 @@ mod tests {
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let (runtime, mut event_receiver) = make_adapter_runtime(&ctx).await?;
-        let mut source = AdapterBackedSource::<OversizedRecordAdapter, EmittingParser>::new(
-            "desktop.clipboard",
-        );
+        let mut source =
+            AdapterBackedSource::<OversizedRecordAdapter, EmittingParser>::new("desktop.clipboard");
         let mut state = AdapterModuleState::default();
 
         source
@@ -2158,8 +2150,7 @@ mod tests {
     /// Intents without an occurrence key leave `equivalence_key` unset (the
     /// curation workbench simply has nothing to group on for that event).
     #[sinex_test]
-    async fn absent_occurrence_key_leaves_equivalence_key_none()
-    -> xtask::sandbox::TestResult<()> {
+    async fn absent_occurrence_key_leaves_equivalence_key_none() -> xtask::sandbox::TestResult<()> {
         let intent = ParsedEventIntent::builder()
             .source_id(SourceId::from_static("test.unit"))
             .parser_id(ParserId::from_static("test-parser"))

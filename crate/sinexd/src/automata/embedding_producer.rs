@@ -1,7 +1,7 @@
 //! Embedding producer — Transducer for document chunk embeddings (#1076).
 
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, TransducerAdapter};
-use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Transducer};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Transducer};
 use serde_json::Value as JsonValue;
 use sinex_primitives::llm::{ModelEffectRequest, hash_model_input};
 
@@ -72,4 +72,4 @@ impl Transducer for EmbeddingProducer {
     }
 }
 
-pub type EmbeddingProducerNode = TransducerAdapter<EmbeddingProducer>;
+pub type EmbeddingProducerRuntime = TransducerAdapter<EmbeddingProducer>;

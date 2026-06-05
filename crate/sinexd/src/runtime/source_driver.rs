@@ -1,6 +1,6 @@
 //! `SourceDriver` trait for reducing boilerplate in ingestor nodes.
 //!
-//! This module provides a high-level abstraction (similar to `AutomatonNode`) but tailored
+//! This module provides a high-level abstraction (similar to the automaton runtime) but tailored
 //! for Ingestors, which typically produce events from external sources rather than
 //! transforming input events.
 //!
@@ -12,11 +12,11 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::runtime::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
-use crate::runtime::stream::{
-    Checkpoint, ContinuousStart, RuntimeModule, RuntimeCapabilities, RuntimeInitContext, RuntimeContext,
-    ModuleKind, RuntimeDrainController, ScanArgs, ScanReport, TimeHorizon,
-};
 use crate::runtime::shutdown::ShutdownConfig;
+use crate::runtime::stream::{
+    Checkpoint, ContinuousStart, ModuleKind, RuntimeCapabilities, RuntimeContext,
+    RuntimeDrainController, RuntimeInitContext, RuntimeModule, ScanArgs, ScanReport, TimeHorizon,
+};
 use crate::runtime::{
     RuntimeResult, SinexError,
     exploration::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState},
@@ -183,17 +183,14 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
     }
 
     /// Access the health reporter for recording successes/errors.
-    pub fn health_reporter(
-        &self,
-    ) -> Option<&Arc<crate::runtime::health_reporter::HealthReporter>> {
+    pub fn health_reporter(&self) -> Option<&Arc<crate::runtime::health_reporter::HealthReporter>> {
         self.health_reporter.as_ref()
     }
 
     fn checkpoint_file_identity(&self) -> &str {
-        self.runtime.as_ref().map_or_else(
-            || self.ingestor.name(),
-            RuntimeContext::checkpoint_identity,
-        )
+        self.runtime
+            .as_ref()
+            .map_or_else(|| self.ingestor.name(), RuntimeContext::checkpoint_identity)
     }
 }
 
@@ -211,7 +208,7 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
     ) {
         if let Err(error) = CheckpointState::delete_file(path).await {
             warn!(
-                node = module_name,
+                module = module_name,
                 path = %path.display(),
                 error = %error,
                 reason,
@@ -232,7 +229,7 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
             Ok(()) => Ok(()),
             Err(delete_error) => {
                 warn!(
-                    node = self.ingestor.name(),
+                    module = self.ingestor.name(),
                     path = %path.display(),
                     error = %delete_error,
                     "Failed to delete restored hot reload checkpoint file after syncing to NATS KV; rewriting it with the latest durable state"
@@ -241,7 +238,7 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
                     SinexError::io(
                         "Failed to synchronize restored hot reload file after checkpoint save",
                     )
-                    .with_context("node", self.ingestor.name())
+                    .with_context("module", self.ingestor.name())
                     .with_context("path", path.display().to_string())
                     .with_context("delete_error", delete_error.to_string())
                     .with_std_error(&error)
@@ -292,7 +289,7 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
         match settlement {
             Settlement::Commit => {
                 warn!(
-                    node = %self.ingestor.name(),
+                    module = %self.ingestor.name(),
                     phase,
                     error = %error,
                     "Ingestor scan error settled as benign; returning empty report"
@@ -310,14 +307,14 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
             }
             Settlement::Retry { .. } => {
                 warn!(
-                    node = %self.ingestor.name(),
+                    module = %self.ingestor.name(),
                     phase,
                     error = %error,
                     "Ingestor scan error settled as retryable; propagating for caller retry"
                 );
                 Err(error)
             }
-            Settlement::HaltNode { .. } | Settlement::DrainRuntimeUnit { .. } => {
+            Settlement::HaltModule { .. } | Settlement::DrainRuntimeUnit { .. } => {
                 // Halt/drain settlements request runtime drain (clean shutdown)
                 // rather than letting systemd restart a known-broken node into
                 // a hot loop. Distinguishing this from generic Err propagation
@@ -326,7 +323,7 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
                     let _ = drain.request_drain_and_warn(self.ingestor.name());
                 }
                 warn!(
-                    node = %self.ingestor.name(),
+                    module = %self.ingestor.name(),
                     phase,
                     error = %error,
                     settlement = ?settlement,
@@ -344,7 +341,7 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
                 // caller's retry/abort logic runs; the DLQ wiring lives on
                 // event_engine's per-event path, not on ingestor scan errors.
                 warn!(
-                    node = %self.ingestor.name(),
+                    module = %self.ingestor.name(),
                     phase,
                     error = %error,
                     settlement = ?settlement,
@@ -369,7 +366,7 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
                         SinexError::checkpoint(
                             "Hot reload ingestor checkpoint file is missing state data",
                         )
-                        .with_context("node", self.ingestor.name())
+                        .with_context("module", self.ingestor.name())
                         .with_context("path", checkpoint_path.display().to_string())
                     })?;
                     self.state = decode_checkpoint_data(
@@ -389,7 +386,7 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
                 Ok(None) => {}
                 Err(error) if self.checkpoint_manager.is_some() => {
                     warn!(
-                        node = self.ingestor.name(),
+                        module = self.ingestor.name(),
                         path = %checkpoint_path.display(),
                         error = %error,
                         "Failed to restore hot reload checkpoint file; falling back to NATS KV"
@@ -424,7 +421,7 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
                     return Err(SinexError::checkpoint(
                         "Ingestor checkpoint KV entry is missing state data",
                     )
-                    .with_context("node", self.ingestor.name()));
+                    .with_context("module", self.ingestor.name()));
                 }
             }
         }
@@ -489,7 +486,7 @@ impl<I: SourceDriver> RuntimeModule for SourceDriverRuntime<I> {
             let health_enabled = shared_env::bool_or(
                 "SINEX_HEALTH_MONITORING_ENABLED",
                 true,
-                "ingestor node health monitoring",
+                "ingestor runtime module health monitoring",
             );
 
             if health_enabled {
@@ -505,7 +502,7 @@ impl<I: SourceDriver> RuntimeModule for SourceDriverRuntime<I> {
                 let observer = Arc::new(SelfObserver::new(nats_client, config));
                 let thresholds = HealthThresholds::from_env().unwrap_or_else(|error| {
                     warn!(
-                        node = %self.ingestor.name(),
+                        module = %self.ingestor.name(),
                         error = %error,
                         "Invalid health monitoring threshold override; using defaults"
                     );
@@ -550,7 +547,7 @@ impl<I: SourceDriver> RuntimeModule for SourceDriverRuntime<I> {
                 self.health_reporter = Some(reporter);
                 self.self_observer = Some(observer);
 
-                info!(node = %self.ingestor.name(), "Health monitoring auto-enabled (with emit-stall detection)");
+                info!(module = %self.ingestor.name(), "Health monitoring auto-enabled (with emit-stall detection)");
             }
         }
 
@@ -628,8 +625,8 @@ impl<I: SourceDriver> RuntimeModule for SourceDriverRuntime<I> {
                             if let Err(e) = reporter.check_and_emit().await {
                                 warn!(
                                     target: "sinex_metrics",
-                                    metric = "node.health_emit_failures_total",
-                                    node = %module_name,
+                                    metric = "runtime.health_emit_failures_total",
+                                    module = %module_name,
                                     error = %e,
                                     "Failed to emit ingestor health status"
                                 );
@@ -672,8 +669,8 @@ impl<I: SourceDriver> RuntimeModule for SourceDriverRuntime<I> {
             if let Err(e) = reporter.check_and_emit().await {
                 warn!(
                     target: "sinex_metrics",
-                    metric = "node.health_emit_failures_total",
-                    node = %self.ingestor.name(),
+                    metric = "runtime.health_emit_failures_total",
+                    module = %self.ingestor.name(),
                     error = %e,
                     "Failed to emit ingestor health status"
                 );
@@ -688,7 +685,7 @@ impl<I: SourceDriver> RuntimeModule for SourceDriverRuntime<I> {
             && !tx.request_drain_and_warn(self.ingestor.name())
         {
             warn!(
-                node = self.ingestor.name(),
+                module = self.ingestor.name(),
                 "Skipping graceful continuous-loop shutdown confirmation because the receiver is gone"
             );
         }
@@ -735,10 +732,10 @@ mod tests {
     // Inline because these cover a private shutdown-signaling helper.
     use super::{IngestorState, SourceDriverRuntime};
     use crate::runtime::checkpoint::{CheckpointManager, CheckpointState};
+    use crate::runtime::shutdown::ShutdownConfig;
     use crate::runtime::stream::{
         Checkpoint, ContinuousStart, RuntimeCapabilities, ScanArgs, ScanReport, TimeHorizon,
     };
-    use crate::runtime::shutdown::ShutdownConfig;
     use crate::runtime::{RuntimeResult, SourceDriver};
     use futures::TryStreamExt;
     use serde::{Deserialize, Serialize};
@@ -843,9 +840,7 @@ mod tests {
 
     #[sinex_test]
     async fn request_runtime_drain_is_idempotent() -> TestResult<()> {
-        crate::runtime::stream::test_support::assert_request_drain_is_idempotent(
-            "test-ingestor",
-        );
+        crate::runtime::stream::test_support::assert_request_drain_is_idempotent("test-ingestor");
         Ok(())
     }
 

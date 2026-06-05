@@ -42,7 +42,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// - **`QoS`**: `JetStream` with `Nats-Msg-Id` idempotency header; `AckAll` after
 ///   ack from server.
 /// - **Retry budget**: semaphore-bounded (100 permits); on NATS error, caller
-///   retries up to the node's configured retry limit.
+///   retries up to the runtime module's configured retry limit.
 /// - **Failure routing**: permanent NATS failure → local recovery spool
 ///   (`sinex_event_recovery_spool.jsonl`); at-most once per-run the spool
 ///   is replayed on next startup.
@@ -59,7 +59,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// - **`QoS`**: `JetStream` with `Nats-Msg-Id` idempotency header.
 /// - **Retry budget**: semaphore-bounded (100 permits); exhausted retries →
 ///   processing-failure stream.
-/// - **Failure routing**: `events.processing_failures.{node}.{event_id}` —
+/// - **Failure routing**: `events.processing_failures.{module}.{event_id}` —
 ///   **not** the raw-ingest DLQ. Derived failures are re-runnable; raw-ingest
 ///   DLQ is operator-reviewed.
 /// - **Drain on SIGTERM**: wait for in-flight ACKs; checkpoint saved before
@@ -73,7 +73,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// - **Subject pattern**: `{env}.source_material.frames.*`
 /// - **`QoS`**: `JetStream`, ordered stream, slice idempotency headers.
 /// - **Retry budget**: caller operation propagates publish failure and retries
-///   according to the node's material acquisition policy.
+///   according to the module's material acquisition policy.
 /// - **Failure routing**: no raw-event DLQ; material acquisition fails before
 ///   dependent events can be truthfully published.
 /// - **Drain on SIGTERM**: wait for ACKs before considering anchors durable.

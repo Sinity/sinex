@@ -17,7 +17,9 @@ use sinex_primitives::rpc::methods;
 use sinex_primitives::temporal::Duration as TemporalDuration;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{DynamicPayload, Id, Uuid};
-use sinexd::runtime::{Checkpoint, SourceScanAck, SourceScanCommand, SourceScanProgress, ScanReport};
+use sinexd::runtime::{
+    Checkpoint, ScanReport, SourceScanAck, SourceScanCommand, SourceScanProgress,
+};
 use std::collections::HashMap;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;

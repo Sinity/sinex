@@ -14,7 +14,7 @@
 //! persistence without widening to a `ScopeReconciler`.
 
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, WindowedAdapter};
-use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Windowed};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, SyntheticTemporalPolicy};
@@ -24,7 +24,7 @@ use std::collections::HashMap;
 
 /// Persistent resolver state: the deduplication map of `canonical_key` → `entity_id`.
 ///
-/// Checkpointed by the SDK so restarts do not re-compute the same `UUIDv5`
+/// Checkpointed by the runtime so restarts do not re-compute the same `UUIDv5`
 /// identities from scratch.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResolverState {
@@ -124,7 +124,7 @@ impl Windowed for EntityResolver {
 }
 
 /// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type EntityResolverNode = WindowedAdapter<EntityResolver>;
+pub type EntityResolverRuntime = WindowedAdapter<EntityResolver>;
 
 // ── Canonicalization logic ──────────────────────────────────────────────────
 
@@ -169,8 +169,8 @@ fn normalize_url_host(raw: &str) -> String {
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
-    SourceContract, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

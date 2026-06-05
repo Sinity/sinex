@@ -5,17 +5,15 @@
 //! without depending on external source crates. Real source contracts follow the
 //! same pattern with actual ingestion logic.
 
+use crate::register_source;
 use crate::runtime::{
     RuntimeResult, SourceDriver,
-    stream::{
-        Checkpoint, ContinuousStart, RuntimeCapabilities, ScanArgs, ScanReport, TimeHorizon,
-    },
+    stream::{Checkpoint, ContinuousStart, RuntimeCapabilities, ScanArgs, ScanReport, TimeHorizon},
 };
-use crate::register_source;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceRuntimeBinding, SourceBuildImpact, SourceContract, SubjectRef,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 use std::collections::HashMap;

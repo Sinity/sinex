@@ -25,7 +25,7 @@
 //!
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, TransducerAdapter};
 use crate::runtime::tags;
-use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Transducer};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Transducer};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
 
@@ -138,15 +138,15 @@ fn evaluate_rules(input: &serde_json::Value, context: &AutomatonContext) -> Vec<
     tags
 }
 
-pub type TagApplierNode = TransducerAdapter<TagApplier>;
+pub type TagApplierRuntime = TransducerAdapter<TagApplier>;
 
 // ── Source descriptor ─────────────────────────────────────────────
 
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
-    SourceContract, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

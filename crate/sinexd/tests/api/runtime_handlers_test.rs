@@ -2,14 +2,14 @@ mod common;
 
 use common::{NatsHarness, admin_auth};
 use futures::StreamExt;
-use sinexd::api::handlers::{
-    handle_runtime_drain, handle_runtime_list, handle_runtime_resume, handle_runtime_set_horizon,
-};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::nats::create_or_open_kv_store;
 use sinex_primitives::rpc::runtime::{
-    RuntimeDrainRequest, RuntimeResumeRequest, RuntimeSetHorizonRequest, RuntimeListRequest,
+    RuntimeDrainRequest, RuntimeListRequest, RuntimeResumeRequest, RuntimeSetHorizonRequest,
+};
+use sinexd::api::handlers::{
+    handle_runtime_drain, handle_runtime_list, handle_runtime_resume, handle_runtime_set_horizon,
 };
 use xtask::sandbox::prelude::*;
 
@@ -57,7 +57,8 @@ async fn nodes_drain_publishes_command(ctx: TestContext) -> TestResult<()> {
         reason: Some("maintenance".to_string()),
     };
 
-    let result = handle_runtime_drain(&harness.client, &harness.env, request, &admin_auth()).await?;
+    let result =
+        handle_runtime_drain(&harness.client, &harness.env, request, &admin_auth()).await?;
     assert_eq!(result.status, OperationStatus::Pending);
     assert_eq!(result.module_name.as_str(), "test-node-123");
     let payload = expect_single_control_message(&mut sub, &subject).await?;
@@ -81,7 +82,8 @@ async fn nodes_resume_publishes_command(ctx: TestContext) -> TestResult<()> {
         module_name: "test-node-456".into(),
     };
 
-    let result = handle_runtime_resume(&harness.client, &harness.env, request, &admin_auth()).await?;
+    let result =
+        handle_runtime_resume(&harness.client, &harness.env, request, &admin_auth()).await?;
     assert_eq!(result.status, OperationStatus::Pending);
     assert_eq!(result.module_name.as_str(), "test-node-456");
     let payload = expect_single_control_message(&mut sub, &subject).await?;
@@ -143,7 +145,11 @@ async fn runtime_list_surfaces_invalid_state_json(ctx: TestContext) -> TestResul
     let error = handle_runtime_list(&harness.client, &harness.env, RuntimeListRequest {})
         .await
         .expect_err("invalid node state should surface");
-    assert!(error.to_string().contains("RuntimeModule state is not valid JSON"));
+    assert!(
+        error
+            .to_string()
+            .contains("RuntimeModule state is not valid JSON")
+    );
     assert!(error.to_string().contains("broken-node"));
     Ok(())
 }

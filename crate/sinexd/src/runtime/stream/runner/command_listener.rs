@@ -5,13 +5,14 @@
 //! with the `messaging` feature.
 
 use super::{
-    Arc, AtomicBool, ControlCommandKind, EventTransport, LISTENER_RETRY_DELAY, RuntimeModule, RuntimeRunner,
-    SourceScanAck, SourceScanCommand, SourceScanProgress, ModuleKind, Ordering, StreamExt, Uuid,
-    control_command_kind, debug, error, info, run_resubscribing_listener, warn, watch,
+    Arc, AtomicBool, ControlCommandKind, EventTransport, LISTENER_RETRY_DELAY, ModuleKind,
+    Ordering, RuntimeModule, RuntimeRunner, SourceScanAck, SourceScanCommand, SourceScanProgress,
+    StreamExt, Uuid, control_command_kind, debug, error, info, run_resubscribing_listener, warn,
+    watch,
 };
 
 impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
-    /// Start the NATS command listener for node-dispatch replay.
+    /// Start the NATS command listener for source-dispatch replay.
     ///
     /// Subscribes to `sinex.control.sources.<module_name>.scan` using NATS request-reply.
     /// When a `SourceScanCommand` arrives, the listener:
@@ -101,7 +102,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                 }
                                 changed = shutdown_rx.changed() => {
                                     if changed.is_err() || *shutdown_rx.borrow() {
-                                        debug!(node = %loop_node_name, "Command listener subscription received shutdown");
+                                        debug!(module = %loop_node_name, "Command listener subscription received shutdown");
                                         return false;
                                     }
                                     continue;
@@ -121,7 +122,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                 }
                                 Some(ControlCommandKind::Resume) => {
                                     warn!(
-                                        node = %loop_node_name,
+                                        module = %loop_node_name,
                                         "Resume command received, but runtime drain is currently a one-way shutdown signal"
                                     );
                                 }
@@ -131,8 +132,8 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         Err(err) => {
                                             warn!(
                                                 target: "sinex_metrics",
-                                                metric = "node.scan_command_deser_failures_total",
-                                                node = %loop_node_name,
+                                                metric = "runtime.scan_command_deser_failures_total",
+                                                module = %loop_node_name,
                                                 error = %err,
                                                 "Failed to deserialize SourceScanCommand"
                                             );
@@ -147,7 +148,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                                     Self::publish_scan_ack(&loop_client, Some(reply), &nack).await
                                                 {
                                                     warn!(
-                                                        node = %loop_node_name,
+                                                        module = %loop_node_name,
                                                         error = %error,
                                                         "Failed to publish malformed-command rejection"
                                                     );
@@ -161,7 +162,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                     let Some(reply) = msg.reply.clone() else {
                                         warn!(
                                             operation_id = %operation_id,
-                                            node = %loop_node_name,
+                                            module = %loop_node_name,
                                             "Ignoring scan command without reply subject"
                                         );
                                         continue;
@@ -179,7 +180,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         {
                                             warn!(
                                                 operation_id = %operation_id,
-                                                node = %loop_node_name,
+                                                module = %loop_node_name,
                                                 error = %error,
                                                 "Failed to publish scan rejection"
                                             );
@@ -201,7 +202,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         {
                                             warn!(
                                                 operation_id = %operation_id,
-                                                node = %loop_node_name,
+                                                module = %loop_node_name,
                                                 error = %error,
                                                 "Failed to publish scan rejection"
                                             );
@@ -223,7 +224,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         {
                                             warn!(
                                                 operation_id = %operation_id,
-                                                node = %loop_node_name,
+                                                module = %loop_node_name,
                                                 error = %error,
                                                 "Failed to publish scan rejection"
                                             );
@@ -246,7 +247,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         {
                                             warn!(
                                                 operation_id = %operation_id,
-                                                node = %loop_node_name,
+                                                module = %loop_node_name,
                                                 error = %error,
                                                 "Failed to publish scan rejection"
                                             );
@@ -266,7 +267,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         {
                                             warn!(
                                                 operation_id = %operation_id,
-                                                node = %loop_node_name,
+                                                module = %loop_node_name,
                                                 error = %error,
                                                 "Failed to publish scan rejection"
                                             );
@@ -286,7 +287,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         {
                                             warn!(
                                                 operation_id = %operation_id,
-                                                node = %loop_node_name,
+                                                module = %loop_node_name,
                                                 error = %error,
                                                 "Failed to publish scan rejection"
                                             );
@@ -305,9 +306,9 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                     {
                                         error!(
                                             target: "sinex_metrics",
-                                            metric = "node.scan_ack_failures_total",
+                                            metric = "runtime.scan_ack_failures_total",
                                             operation_id = %operation_id,
-                                            node = %loop_node_name,
+                                            module = %loop_node_name,
                                             error = %error,
                                             "Failed to publish scan acceptance; aborting dispatched scan"
                                         );
@@ -317,7 +318,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
 
                                     info!(
                                         operation_id = %operation_id,
-                                        node = %loop_node_name,
+                                        module = %loop_node_name,
                                         "Accepted scan command, spawning historical scan task"
                                     );
 
@@ -361,9 +362,9 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         {
                                             error!(
                                                 target: "sinex_metrics",
-                                                metric = "node.scan_progress_failures_total",
+                                                metric = "runtime.scan_progress_failures_total",
                                                 operation_id = %operation_id,
-                                                node = %scan_node_name,
+                                                module = %scan_node_name,
                                                 error = %error,
                                                 "Failed to publish initial scan progress; aborting dispatched scan"
                                             );
@@ -399,9 +400,9 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                             Err(outcome) => {
                                                 warn!(
                                                     target: "sinex_metrics",
-                                                    metric = "node.dispatched_scan_failures_total",
+                                                    metric = "runtime.dispatched_scan_failures_total",
                                                     operation_id = %operation_id,
-                                                    node = %scan_node_name,
+                                                    module = %scan_node_name,
                                                     error = %outcome.error,
                                                     events_emitted = outcome.events_emitted,
                                                     "Dispatched scan failed"
@@ -423,9 +424,9 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         {
                                             error!(
                                                 target: "sinex_metrics",
-                                                metric = "node.scan_progress_failures_total",
+                                                metric = "runtime.scan_progress_failures_total",
                                                 operation_id = %operation_id,
-                                                node = %scan_node_name,
+                                                module = %scan_node_name,
                                                 error = %error,
                                                 "Failed to publish final scan progress"
                                             );
@@ -434,7 +435,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                 }
                                 None => {
                                     warn!(
-                                        node = %loop_node_name,
+                                        module = %loop_node_name,
                                         subject = %msg.subject,
                                         "Ignoring unsupported node control subject"
                                     );

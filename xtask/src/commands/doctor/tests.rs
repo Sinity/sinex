@@ -1788,9 +1788,9 @@ async fn test_evaluate_document_scan_units_accepts_loaded_service_and_active_tim
 }
 
 #[sinex_test]
-async fn test_check_node_entrypoints_skips_empty_prepared_descriptor_units()
+async fn test_check_runtime_entrypoints_skips_empty_prepared_descriptor_units()
 -> ::xtask::sandbox::TestResult<()> {
-    let item = check_node_entrypoints(Some(&DeploymentReadinessDescriptor {
+    let item = check_runtime_entrypoints(Some(&DeploymentReadinessDescriptor {
         mode: DeploymentReadinessMode::Prepared,
         managed_units: Vec::new(),
         ..Default::default()
@@ -1802,8 +1802,8 @@ async fn test_check_node_entrypoints_skips_empty_prepared_descriptor_units()
 }
 
 #[sinex_test]
-async fn test_check_node_entrypoints_requires_watchdog_contract() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_check_runtime_entrypoints_requires_watchdog_contract()
+-> ::xtask::sandbox::TestResult<()> {
     let temp = tempfile::tempdir()?;
     let bin_dir = temp.path().join("bin");
     fs::create_dir_all(&bin_dir)?;
@@ -1824,7 +1824,7 @@ exit 1
     let mut env = EnvGuard::new();
     env.set("PATH", bin_dir.display().to_string());
 
-    let item = check_node_entrypoints(Some(&DeploymentReadinessDescriptor {
+    let item = check_runtime_entrypoints(Some(&DeploymentReadinessDescriptor {
         mode: DeploymentReadinessMode::Prepared,
         managed_units: vec!["sinexd.service".to_string()],
         ..Default::default()
@@ -1928,7 +1928,10 @@ async fn test_rust_analyzer_workspace_contract_lists_xtask_dev_deps()
     let dir = tempfile::tempdir()?;
     fs::create_dir_all(dir.path().join("crate/lib/uses-xtask"))?;
     fs::create_dir_all(dir.path().join("crate/lib/no-xtask"))?;
-    fs::create_dir_all(dir.path().join(".claude/worktrees/stale/crate/core/old-runtime"))?;
+    fs::create_dir_all(
+        dir.path()
+            .join(".claude/worktrees/stale/crate/core/old-runtime"),
+    )?;
     fs::create_dir_all(dir.path().join("target/ignored"))?;
     fs::write(
         dir.path().join("crate/lib/uses-xtask/Cargo.toml"),
@@ -2253,10 +2256,7 @@ async fn test_rust_analyzer_cli_stderr_summary_buckets_failures() -> ::xtask::sa
             "sinexd->xtask",
         ]
     );
-    assert_eq!(
-        summary.self_cycle_edges,
-        vec!["sinex_api->sinex_api"]
-    );
+    assert_eq!(summary.self_cycle_edges, vec!["sinex_api->sinex_api"]);
     assert_eq!(summary.xtask_cycle_edges, vec!["sinexd->xtask"]);
     assert_eq!(
         summary.workspace_cycle_edges,

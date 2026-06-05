@@ -6,7 +6,7 @@
 use crate::runtime::automaton::{
     AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedAdapter,
 };
-use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Windowed};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
@@ -131,7 +131,7 @@ impl Windowed for SessionDetector {
         // 4.5 GB bug). Silent truncation is forbidden; warn on force-close.
         if !gap_closed && state.window_count >= MAX_SESSION_WINDOW_COUNT {
             warn!(
-                node = "session-detector",
+                module = "session-detector",
                 window_count = state.window_count,
                 max = MAX_SESSION_WINDOW_COUNT,
                 session_start = ?state.session_start,
@@ -202,15 +202,15 @@ impl Windowed for SessionDetector {
 }
 
 /// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type SessionDetectorNode = WindowedAdapter<SessionDetector>;
+pub type SessionDetectorRuntime = WindowedAdapter<SessionDetector>;
 
 // --- Source descriptor (issue #690 / #734) ---
 
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
-    SourceContract, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

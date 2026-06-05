@@ -1,4 +1,4 @@
-//! Derived-node automata.
+//! Automata hosted inside `sinexd`.
 //!
 //! Implementations are registered at program load via
 //! `register_source_contract!` in each submodule. The
@@ -21,17 +21,17 @@ pub mod relation_extractor;
 pub mod session;
 pub mod tag_applier;
 
-pub use analytics::AnalyticsAutomatonNode;
-pub use canonicalizer::TerminalCommandCanonicalizerNode;
-pub use daily::DailySummarizerNode;
-pub use document_parser::{DocumentParserNode, DocumentParserNodeAdapter};
-pub use embedding_producer::EmbeddingProducerNode;
-pub use entity_enricher::EntityEnricherNode;
-pub use entity_extractor::EntityExtractorNode;
-pub use entity_resolver::EntityResolverNode;
-pub use health::HealthAggregatorNode;
-pub use hourly::HourlySummarizerNode;
-pub use instruction_reconciler::InstructionExpectationReconcilerNode;
-pub use relation_extractor::RelationExtractorNode;
-pub use session::SessionDetectorNode;
-pub use tag_applier::TagApplierNode;
+pub use analytics::AnalyticsAutomatonRuntime;
+pub use canonicalizer::TerminalCommandCanonicalizerRuntime;
+pub use daily::DailySummarizerRuntime;
+pub use document_parser::{DocumentParserAutomaton, DocumentParserRuntime};
+pub use embedding_producer::EmbeddingProducerRuntime;
+pub use entity_enricher::EntityEnricherRuntime;
+pub use entity_extractor::EntityExtractorRuntime;
+pub use entity_resolver::EntityResolverRuntime;
+pub use health::HealthAggregatorRuntime;
+pub use hourly::HourlySummarizerRuntime;
+pub use instruction_reconciler::InstructionExpectationReconcilerRuntime;
+pub use relation_extractor::RelationExtractorRuntime;
+pub use session::SessionDetectorRuntime;
+pub use tag_applier::TagApplierRuntime;

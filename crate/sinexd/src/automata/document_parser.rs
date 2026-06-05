@@ -57,12 +57,12 @@ pub struct DocumentParserState {
 // ── RuntimeModule ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]
-pub struct DocumentParserNode {
+pub struct DocumentParserAutomaton {
     /// Optional Dendron vault root for path-based operations.
     pub vault_root: Option<String>,
 }
 
-impl MultiOutputTransducer for DocumentParserNode {
+impl MultiOutputTransducer for DocumentParserAutomaton {
     type State = DocumentParserState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -100,7 +100,7 @@ impl MultiOutputTransducer for DocumentParserNode {
 
 // ── Processing ──────────────────────────────────────────────────────────
 
-impl DocumentParserNode {
+impl DocumentParserAutomaton {
     /// Process a `document.ingested` event into parsed + chunked output.
     fn process_dendron(
         &self,
@@ -218,7 +218,9 @@ impl DocumentParserNode {
                 "source_anchor_start": byte_offset,
                 "source_anchor_end": byte_offset + chunk_len,
             }))
-            .map_err(|e| AutomatonLogicError::Processing(format!("serialize document.chunked: {e}")))?;
+            .map_err(|e| {
+                AutomatonLogicError::Processing(format!("serialize document.chunked: {e}"))
+            })?;
 
             let chunk_output = DerivedOutput::transduced(chunk_payload, ts_orig, parent_event_id)
                 .with_event_type("document.chunked");
@@ -301,7 +303,9 @@ impl DocumentParserNode {
                 "source_anchor_start": null,
                 "source_anchor_end": null,
             }))
-            .map_err(|e| AutomatonLogicError::Processing(format!("serialize document.chunked: {e}")))?;
+            .map_err(|e| {
+                AutomatonLogicError::Processing(format!("serialize document.chunked: {e}"))
+            })?;
 
             outputs.push(
                 DerivedOutput::transduced(chunk_payload, ts_orig, parent_event_id)
@@ -541,7 +545,7 @@ mod tests {
 
     #[sinex_test]
     async fn terminal_chunks_are_not_parser_redacted() -> TestResult<()> {
-        let node = DocumentParserNode::default();
+        let node = DocumentParserAutomaton::default();
         let mut state = DocumentParserState::default();
         let event_id = Id::new();
         let context = AutomatonContext {
@@ -580,18 +584,18 @@ mod tests {
     }
 }
 
-/// Adapter type alias that wires `DocumentParserNode` through the SDK's
+/// Adapter type alias that wires `DocumentParserAutomaton` through the runtime's
 /// `MultiOutputTransducerAdapter`.
-pub type DocumentParserNodeAdapter =
-    crate::runtime::automaton::MultiOutputTransducerAdapter<DocumentParserNode>;
+pub type DocumentParserRuntime =
+    crate::runtime::automaton::MultiOutputTransducerAdapter<DocumentParserAutomaton>;
 
 // ── Source descriptor ─────────────────────────────────────────────
 
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
-    SourceContract, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

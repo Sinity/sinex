@@ -4,11 +4,9 @@
 //! now happen directly in the owning services/runtimes.
 
 use sinex_db::DbPoolExt;
-use sinexd::api::handlers::runtime_presence::{
-    handle_runtime_health, handle_runtime_list_active,
-};
-use sinex_primitives::domain::{ModuleName, ModuleKind};
+use sinex_primitives::domain::{ModuleKind, ModuleName};
 use sinex_primitives::rpc::runtime::{RuntimeHealthRequest, RuntimeListActiveRequest};
+use sinexd::api::handlers::runtime_presence::{handle_runtime_health, handle_runtime_list_active};
 use xtask::sandbox::prelude::*;
 
 async fn register_test_node(
@@ -31,7 +29,8 @@ fn find_node_in_list<'a>(
 ) -> Option<&'a serde_json::Value> {
     list_json["modules"].as_array().and_then(|modules| {
         modules.iter().find(|node| {
-            node["module_name"].as_str() == Some(name) && node["instance_id"].as_str() == instance_id
+            node["module_name"].as_str() == Some(name)
+                && node["instance_id"].as_str() == instance_id
         })
     })
 }
@@ -41,7 +40,13 @@ async fn list_active_uses_manifest_fallback_without_run(ctx: TestContext) -> Tes
     let pool = ctx.pool();
     let module_name = ModuleName::new("manifest-only-node");
 
-    register_test_node(pool, "manifest-only-node", ModuleKind::Service, "1.0.0-test").await?;
+    register_test_node(
+        pool,
+        "manifest-only-node",
+        ModuleKind::Service,
+        "1.0.0-test",
+    )
+    .await?;
     assert!(
         pool.state()
             .update_module_heartbeat_for_version(&module_name, "1.0.0-test")

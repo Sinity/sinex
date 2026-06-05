@@ -99,9 +99,7 @@ mod tests {
     use crate::runtime::EventTransport;
     use crate::runtime::checkpoint::CheckpointManager;
     use crate::runtime::nats_publisher::NatsPublisher;
-    use crate::runtime::stream::{
-        EventEmitter, RuntimeHandles, RuntimeContext, ServiceInfo,
-    };
+    use crate::runtime::stream::{EventEmitter, RuntimeContext, RuntimeHandles, ServiceInfo};
     use camino::Utf8PathBuf;
     use sinex_db::models::Event;
     use sinex_primitives::JsonValue;
@@ -986,7 +984,10 @@ fn instance_started_at(instance: &RuntimeInstance) -> i64 {
     unix_timestamp_secs_with_warning(instance.start_time, "coordination instance start time") as i64
 }
 
-fn instance_metadata_at(instance: &RuntimeInstance, last_heartbeat: Option<i64>) -> InstanceMetadata {
+fn instance_metadata_at(
+    instance: &RuntimeInstance,
+    last_heartbeat: Option<i64>,
+) -> InstanceMetadata {
     let started_at = instance_started_at(instance);
     InstanceMetadata {
         instance_id: instance.instance_id.clone(),
@@ -1001,7 +1002,7 @@ fn version_identity(version: &RuntimeVersion) -> &str {
     version.full_version.as_str()
 }
 
-/// Leadership coordination for a node service
+/// Leadership coordination for a runtime module service
 pub struct RuntimeCoordination {
     instance: RuntimeInstance,
     kv_client: CoordinationKvClient,
@@ -1179,7 +1180,7 @@ impl RuntimeCoordination {
                 Err(e) => {
                     error!(
                         target: "sinex_metrics",
-                        metric = "node.leadership_check_failures_total",
+                        metric = "runtime.leadership_check_failures_total",
                         error = %e,
                         "Failed to check leadership"
                     );
@@ -1248,7 +1249,7 @@ impl RuntimeCoordination {
                     Err(e) => {
                         error!(
                             target: "sinex_metrics",
-                            metric = "node.leader_loop_failures_total",
+                            metric = "runtime.leader_loop_failures_total",
                             error = %e,
                             "Error running as leader"
                         );
@@ -1331,7 +1332,7 @@ impl RuntimeCoordination {
                     let _ = handoff_drops_clone.add(1);
                     error!(
                         target: "sinex_metrics",
-                        metric = "node.coordination_failures_total",
+                        metric = "runtime.coordination_failures_total",
                         service = %service_name_health,
                         error = %e,
                         "Handoff monitor failed to subscribe - coordination may be impaired"
@@ -1361,7 +1362,7 @@ impl RuntimeCoordination {
                        Ok(false) => {
                            error!(
                                target: "sinex_metrics",
-                               metric = "node.leadership_lost_total",
+                               metric = "runtime.leadership_lost_total",
                                "Lost leadership to another instance"
                            );
                            return Ok(LeaderLoopOutcome::LeadershipLost);
@@ -1369,7 +1370,7 @@ impl RuntimeCoordination {
                        Err(e) => {
                            error!(
                                target: "sinex_metrics",
-                               metric = "node.leadership_maintenance_failures_total",
+                               metric = "runtime.leadership_maintenance_failures_total",
                                error = %e,
                                "Failed to maintain leadership"
                            );
@@ -1395,7 +1396,7 @@ impl RuntimeCoordination {
                        Err(e) => {
                            error!(
                                target: "sinex_metrics",
-                               metric = "node.leader_loop_failures_total",
+                               metric = "runtime.leader_loop_failures_total",
                                error = %e,
                                "Critical failure in event processing"
                            );
@@ -1422,7 +1423,7 @@ impl RuntimeCoordination {
                            Ok(Err(e)) => {
                                error!(
                                    target: "sinex_metrics",
-                                   metric = "node.leader_loop_failures_total",
+                                   metric = "runtime.leader_loop_failures_total",
                                    error = %e,
                                    "Critical failure while draining leader for handoff"
                                );
@@ -1833,7 +1834,7 @@ impl RuntimeCoordination {
 
         error!(
             target: "sinex_metrics",
-            metric = "node.critical_failure_signals_total",
+            metric = "runtime.critical_failure_signals_total",
             "Signaled critical failure to standbys: {error}"
         );
 

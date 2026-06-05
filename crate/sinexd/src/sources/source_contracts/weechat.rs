@@ -20,12 +20,12 @@
 //! Both registrations are performed at link time via `inventory::submit!`.
 //! No match arms.
 
-use crate::runtime::parser::{AppendOnlyFileAdapter, WeeChatLogParser};
 use crate::register_source;
+use crate::runtime::parser::{AppendOnlyFileAdapter, WeeChatLogParser};
 use sinex_macros::SourceRecord;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceRuntimeBinding, SourceBuildImpact, SourceContract, SubjectRef,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

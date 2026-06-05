@@ -24,15 +24,13 @@ use sinexd::automata::session::SessionDetector;
 use sinexd::runtime::automaton::{
     AutomatonAdapterConfig, ScopeReconcilerWrapper, TransducerWrapper, WindowedWrapper,
 };
-use sinexd::runtime::stream::{RuntimeModule, RuntimeInitContext};
+use sinexd::runtime::stream::{RuntimeInitContext, RuntimeModule};
 use sinexd::runtime::{ShutdownConfig, automaton::Automaton};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::{TestRuntime, TestRuntimeBuilder};
 
 #[sinex_test(timeout = 90)]
-async fn production_automatons_emit_queryable_synthesis_events(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn production_automatons_emit_queryable_synthesis_events(ctx: TestContext) -> TestResult<()> {
     let mut env_guard = EnvGuard::with_keys(&[
         "SINEX_HEALTH_MONITORING_ENABLED",
         "SINEX_ACTIVITY_WINDOW_GAP_SECS",

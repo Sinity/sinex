@@ -5,8 +5,8 @@
 
 use super::{AutomatonRuntime, restore_resume_position};
 
-use crate::runtime::checkpoint::CheckpointState;
 use crate::runtime::automaton::traits::Automaton;
+use crate::runtime::checkpoint::CheckpointState;
 use crate::runtime::processing::PersistedState;
 use crate::runtime::stream::Checkpoint;
 use crate::runtime::{RuntimeResult, SinexError};

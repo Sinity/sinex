@@ -44,7 +44,7 @@ pub enum ExportFormat {
     Raw,
 }
 
-/// Trait for node-specific exploration capabilities
+/// Trait for module-specific exploration capabilities
 pub trait ExplorationProvider {
     /// Get current source state
     fn get_source_state(&self) -> RuntimeResult<SourceState>;

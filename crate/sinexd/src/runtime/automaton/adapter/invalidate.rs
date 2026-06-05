@@ -548,7 +548,7 @@ where
                                 {
                                     return Err(SinexError::checkpoint(format!(
                                         "Checkpoint save failed during invalidation \
-                                         processing ({} consecutive); halting node \
+                                         processing ({} consecutive); halting module \
                                          to prevent silent progress loss: {e}",
                                         self.consecutive_checkpoint_failures
                                     )));

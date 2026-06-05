@@ -1,4 +1,4 @@
-//! Source runner — assembles per-unit runtime handles before the SDK
+//! Source runner — assembles per-unit runtime handles before the runtime
 //! [`RuntimeRunner`](crate::runtime::stream::RuntimeRunner) takes over.
 //!
 //! Each source gets:
@@ -7,7 +7,7 @@
 //!   [`ServiceInfo::checkpoint_identity`](crate::runtime::stream::ServiceInfo))
 //! - Per-unit health reporting (auto-enabled by [`SourceDriverRuntime`])
 //!
-//! The runner itself is thin — most lifecycle work is handled by the SDK's
+//! The runner itself is thin — most lifecycle work is handled by the runtime's
 //! [`RuntimeRunner`] and [`SourceDriverRuntime`]. The source host adds drain
 //! protocol and recovery context on top.
 
@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 /// Per-unit runtime context assembled during source startup.
 ///
-/// Holds the enhanced drain controller for the unit. The SDK's `RuntimeRunner`
+/// Holds the enhanced drain controller for the unit. The runtime's `RuntimeRunner`
 /// already provides checkpoint, health, NATS, and DB handles through
 /// [`RuntimeHandles`](crate::runtime::stream::RuntimeHandles).
 #[derive(Debug)]

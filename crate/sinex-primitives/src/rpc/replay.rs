@@ -393,7 +393,7 @@ pub struct ReplayListRequest {
     /// Filter by state
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<ReplayState>,
-    /// Filter by node ID
+    /// Filter by source module ID
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node: Option<String>,
     /// Maximum results (default: unbounded)

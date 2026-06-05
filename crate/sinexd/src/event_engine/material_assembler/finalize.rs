@@ -805,7 +805,7 @@ impl MaterialAssembler {
                 transition = ?transition,
                 "Assembly state machine accepted end for new material state"
             );
-            // Preserve compatibility with redelivery, restored WAL state, and non-SDK publishers:
+            // Preserve compatibility with redelivery, restored WAL state, and non-runtime publishers:
             // record the end even if local state is not present yet.
             warn!(
                 material_id = %material_id,

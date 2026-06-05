@@ -7,8 +7,8 @@ use super::AutomatonRuntime;
 #[cfg(feature = "messaging")]
 use super::log_self_observation_failure;
 
-use crate::runtime::checkpoint::CheckpointState;
 use crate::runtime::automaton::traits::Automaton;
+use crate::runtime::checkpoint::CheckpointState;
 use crate::runtime::stream::{Checkpoint, RuntimeContext};
 
 use std::collections::HashMap;
@@ -22,7 +22,10 @@ where
     pub(super) fn derived_metric_labels(&self) -> HashMap<String, String> {
         let mut labels = HashMap::new();
         labels.insert("automaton".to_string(), self.automaton.name().to_string());
-        labels.insert("automaton_model".to_string(), self.automaton.automaton_model().to_string());
+        labels.insert(
+            "automaton_model".to_string(),
+            self.automaton.automaton_model().to_string(),
+        );
         if let Some(module_run_id) = self
             .runtime
             .as_ref()
@@ -82,7 +85,11 @@ where
             )
             .await
         {
-            log_self_observation_failure(self.automaton.name(), "derived.events_processed.run", &error);
+            log_self_observation_failure(
+                self.automaton.name(),
+                "derived.events_processed.run",
+                &error,
+            );
         }
 
         if let Some(reporter) = self.health_reporter.as_ref() {
@@ -91,7 +98,11 @@ where
                 .emit_gauge("derived.error_rate_5m", error_rate, Some(labels))
                 .await
             {
-                log_self_observation_failure(self.automaton.name(), "derived.error_rate_5m", &error);
+                log_self_observation_failure(
+                    self.automaton.name(),
+                    "derived.error_rate_5m",
+                    &error,
+                );
             }
         }
     }
@@ -235,7 +246,11 @@ where
             )
             .await
         {
-            log_self_observation_failure(self.automaton.name(), "derived.checkpoint.revision", &error);
+            log_self_observation_failure(
+                self.automaton.name(),
+                "derived.checkpoint.revision",
+                &error,
+            );
         }
     }
 
@@ -256,7 +271,11 @@ where
             )
             .await
         {
-            log_self_observation_failure(self.automaton.name(), "derived.invalidations.pending", &error);
+            log_self_observation_failure(
+                self.automaton.name(),
+                "derived.invalidations.pending",
+                &error,
+            );
         }
     }
 
@@ -288,7 +307,11 @@ where
             )
             .await
         {
-            log_self_observation_failure(self.automaton.name(), "derived.events_filtered_total", &error);
+            log_self_observation_failure(
+                self.automaton.name(),
+                "derived.events_filtered_total",
+                &error,
+            );
         }
     }
 

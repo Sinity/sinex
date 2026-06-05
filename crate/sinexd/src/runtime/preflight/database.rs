@@ -34,8 +34,8 @@ async fn table_exists(pool: &PgPool, schema: &str, table: &str) -> RuntimeResult
 }
 
 /// Verify database connectivity and basic operations
-pub async fn verify_database_connectivity() -> RuntimeResult<(VerificationStatus, Value, Vec<String>)>
-{
+pub async fn verify_database_connectivity()
+-> RuntimeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let mut details = HashMap::new();
 
@@ -79,8 +79,8 @@ pub async fn verify_database_connectivity() -> RuntimeResult<(VerificationStatus
 }
 
 /// Verify `PostgreSQL` extensions are available and usable without mutating state.
-pub async fn verify_postgresql_extensions() -> RuntimeResult<(VerificationStatus, Value, Vec<String>)>
-{
+pub async fn verify_postgresql_extensions()
+-> RuntimeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let mut details = HashMap::new();
     let mut has_failures = false;
@@ -116,7 +116,7 @@ pub async fn verify_postgresql_extensions() -> RuntimeResult<(VerificationStatus
             Err(e) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "node.preflight_failures_total",
+                    metric = "runtime.preflight_failures_total",
                     extension = extension_name,
                     error = %e,
                     "Failed to verify extension"
@@ -622,7 +622,7 @@ async fn verify_schema_integrity(
 
     if !missing_tables.is_empty() {
         return Err(SinexError::processing(format!(
-            "Missing {} critical table(s): {}. Run schema apply (`xtask infra schema-apply`) before starting the node.",
+            "Missing {} critical table(s): {}. Run schema apply (`xtask infra schema-apply`) before starting the module.",
             missing_tables.len(),
             missing_tables.join(", ")
         )));

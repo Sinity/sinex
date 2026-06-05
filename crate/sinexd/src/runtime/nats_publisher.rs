@@ -248,7 +248,7 @@ impl NatsPublisher {
             "source": event.source.as_str(),
             "event_type": event.event_type.as_str(),
             "error": error,
-            "node": module_name,
+            "module": module_name,
             "original_event": original_event,
             "failed_at": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now()),
         });
@@ -282,7 +282,7 @@ impl NatsPublisher {
 
         tracing::warn!(
             event_id = %event_id,
-            node = %module_name,
+            module = %module_name,
             error = %error,
             sequence = ack.sequence,
             "Event sent to raw-ingest DLQ"
@@ -545,7 +545,7 @@ impl NatsPublisher {
             "source": event.source.as_str(),
             "event_type": event.event_type.as_str(),
             "error": error,
-            "node": module_name,
+            "module": module_name,
             "original_event": original_event,
             "failed_at": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now()),
         });
@@ -587,7 +587,7 @@ impl NatsPublisher {
         if count.is_multiple_of(100) {
             tracing::warn!(
                 event_id = %event_id,
-                node = %module_name,
+                module = %module_name,
                 error = %error,
                 sequence = ack.sequence,
                 skipped = count,

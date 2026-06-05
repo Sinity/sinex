@@ -41,12 +41,7 @@ fn classify_slow_test(test: &HistoricalSlowTest) -> SlowTestClassification {
     let name = test.test_name.to_ascii_lowercase();
     let package = test.package.as_str();
 
-    if package == "xtask"
-        && contains_any(
-            &name,
-            &["command_catalog", "docs", "format_registry"],
-        )
-    {
+    if package == "xtask" && contains_any(&name, &["command_catalog", "docs", "format_registry"]) {
         return SlowTestClassification {
             kind: "setup_overhead_candidate",
             recommendation: "inspect unused sandbox/setup and broad metadata fixture work",
@@ -83,7 +78,8 @@ fn classify_slow_test(test: &HistoricalSlowTest) -> SlowTestClassification {
             "dlq",
             "nats",
         ],
-    ) || matches!(package, "sinexd") {
+    ) || matches!(package, "sinexd")
+    {
         return SlowTestClassification {
             kind: "runtime_path_candidate",
             recommendation: "check runtime startup/prep and gate reuse before weakening coverage",

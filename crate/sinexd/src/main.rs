@@ -102,10 +102,10 @@ enum Command {
         #[arg(long)]
         runtime_config: Option<String>,
 
-        /// Extra CLI arguments inserted before the SDK subcommand
+        /// Extra CLI arguments inserted before the runtime subcommand
         /// (e.g. `scan --until snapshot`).
         ///
-        /// `allow_hyphen_values` is required because forwarded SDK flags are
+        /// `allow_hyphen_values` is required because forwarded runtime flags are
         /// themselves hyphen-prefixed (`--until`, `--targets`); without it clap
         /// rejects `--extra-arg --until` as an unknown top-level flag.
         #[arg(
@@ -170,16 +170,7 @@ async fn main() -> color_eyre::Result<()> {
             runtime_config,
             extra_args,
             extra_env,
-        } => {
-            scan_source(
-                source,
-                service_name,
-                runtime_config,
-                extra_args,
-                extra_env,
-            )
-            .await
-        }
+        } => scan_source(source, service_name, runtime_config, extra_args, extra_env).await,
     }
 }
 

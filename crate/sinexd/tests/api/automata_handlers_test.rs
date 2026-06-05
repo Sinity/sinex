@@ -2,10 +2,10 @@
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinexd::api::handlers::automata::handle_automata_status;
-use sinex_primitives::domain::{ModuleName, ModuleKind};
+use sinex_primitives::domain::{ModuleKind, ModuleName};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::automata::AutomataStatusRequest;
+use sinexd::api::handlers::automata::handle_automata_status;
 use xtask::sandbox::prelude::*;
 
 async fn insert_material_event(

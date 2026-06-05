@@ -53,7 +53,7 @@ impl AutomatonLogicError {
     pub fn to_sinex_error(&self) -> SinexError {
         match self {
             Self::Processing(msg) => SinexError::processing(msg.clone()),
-            Self::Serialization(error) => SinexError::serialization("node serialization error")
+            Self::Serialization(error) => SinexError::serialization("module serialization error")
                 .with_std_error(error as &(dyn std::error::Error + 'static)),
             Self::InputParsing(msg) => SinexError::validation(msg.clone()),
             Self::OutputSerialization(msg) => SinexError::serialization(msg.clone()),

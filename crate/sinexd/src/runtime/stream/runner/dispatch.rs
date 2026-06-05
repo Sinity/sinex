@@ -7,9 +7,9 @@
 
 use super::{
     Arc, AtomicU64, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, DispatchedScanOutcome, Event,
-    FailedDispatchedScanOutcome, HashMap, JsonValue, RuntimeModule, SourceFactory, RuntimeHandles,
-    RuntimeInitContext, RuntimeResult, RuntimeRunner, SourceScanCommand, Ordering, ServiceInfo, SinexError,
-    Utf8PathBuf, Uuid, create_checkpoint_kv, mpsc,
+    FailedDispatchedScanOutcome, HashMap, JsonValue, Ordering, RuntimeHandles, RuntimeInitContext,
+    RuntimeModule, RuntimeResult, RuntimeRunner, ServiceInfo, SinexError, SourceFactory,
+    SourceScanCommand, Utf8PathBuf, Uuid, create_checkpoint_kv, mpsc,
 };
 
 impl<T: RuntimeModule + 'static> RuntimeRunner<T> {

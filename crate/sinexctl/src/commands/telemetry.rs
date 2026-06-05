@@ -2,9 +2,9 @@ use clap::Subcommand;
 use console::style;
 use sinex_primitives::rpc::telemetry::{
     AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
-    FileActivityEntry, GatewayStatsBucket, EventEngineBatchStatsBucket, EventEngineValidationSnapshot,
-    MetricCounterBucket, SourceStatsBucket, RecentActivityEntry, StreamStatsBucket,
-    SystemStateBucket, WindowFocusBucket,
+    EventEngineBatchStatsBucket, EventEngineValidationSnapshot, FileActivityEntry,
+    GatewayStatsBucket, MetricCounterBucket, RecentActivityEntry, SourceStatsBucket,
+    StreamStatsBucket, SystemStateBucket, WindowFocusBucket,
 };
 use tabled::{builder::Builder, settings::Style};
 
@@ -321,16 +321,18 @@ impl TelemetryCommands {
                 .display(&format)?;
             }
 
-            Self::EventEngineValidation => match client.telemetry_event_engine_validation().await? {
-                Some(snapshot) => {
-                    CommandOutput::single(snapshot, format_event_engine_validation_table)
-                        .display(&format)?;
+            Self::EventEngineValidation => {
+                match client.telemetry_event_engine_validation().await? {
+                    Some(snapshot) => {
+                        CommandOutput::single(snapshot, format_event_engine_validation_table)
+                            .display(&format)?;
+                    }
+                    None => CommandOutput::<EventEngineValidationSnapshot>::empty(
+                        "No event-engine-validation data found.",
+                    )
+                    .display(&format)?,
                 }
-                None => CommandOutput::<EventEngineValidationSnapshot>::empty(
-                    "No event-engine-validation data found.",
-                )
-                .display(&format)?,
-            },
+            }
         }
         Ok(())
     }

@@ -5,8 +5,8 @@
 //! helper that persists progress through the bridge.
 
 use super::{
-    Checkpoint, CheckpointManager, Event, EventTransport, JsonValue, RuntimeModule, RuntimeResult, RuntimeRunner,
-    SinexError, Uuid, debug, error, info, warn,
+    Checkpoint, CheckpointManager, Event, EventTransport, JsonValue, RuntimeModule, RuntimeResult,
+    RuntimeRunner, SinexError, Uuid, debug, error, info, warn,
 };
 
 impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
@@ -34,7 +34,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                 Ok(stats.processed as u64)
             }
             Err(batch_err) => {
-                // Fatal errors (NodeFatal, TransportDegraded) apply to the
+                // Fatal errors (RuntimeFatal, TransportDegraded) apply to the
                 // entire module, not to any one event. Per-event DLQ fallback
                 // would route every event in the batch — and every subsequent
                 // batch — to DLQ while the module keeps consuming, generating
@@ -46,7 +46,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                 // Use the new error_class() classification instead of
                 // hardcoding individual variants. Checkpoint, Lifecycle,
                 // Configuration, PermissionDenied, and live-context
-                // ChannelSend are all NodeFatal.
+                // ChannelSend are all RuntimeFatal.
                 let error_class = batch_err.error_class();
                 if error_class.is_fatal() {
                     error!(
@@ -55,7 +55,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                         error = %batch_err,
                         ?error_class,
                         batch_size,
-                        "Fatal error in batch processing; halting node (per-event DLQ fallback would loop on every event)"
+                        "Fatal error in batch processing; halting module (per-event DLQ fallback would loop on every event)"
                     );
                     return Err(batch_err);
                 }
@@ -80,7 +80,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                     target: "sinex_metrics",
                                     metric = "derive.batch_fatal_errors_total",
                                     error = %event_err,
-                                    "Checkpoint error during per-event fallback; halting node"
+                                    "Checkpoint error during per-event fallback; halting module"
                                 );
                                 return Err(event_err);
                             }
@@ -104,7 +104,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                 return Err(SinexError::processing(
                                     "failed to route failed automaton event to processing-failure stream",
                                 )
-                                .with_context("node", module_name.clone())
+                                .with_context("module", module_name.clone())
                                 .with_context(
                                     "event_id",
                                     event_id.as_ref().map_or_else(

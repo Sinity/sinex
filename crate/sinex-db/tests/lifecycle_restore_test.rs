@@ -85,7 +85,10 @@ async fn cascade_restore_preserves_synthetic_metadata_columns(ctx: TestContext) 
         Some("equiv:lifecycle-restore")
     );
     assert_eq!(restored.created_by_operation_id, Some(replay_operation_id));
-    assert_eq!(restored.automaton_model, Some(AutomatonModel::ScopeReconciler));
+    assert_eq!(
+        restored.automaton_model,
+        Some(AutomatonModel::ScopeReconciler)
+    );
 
     Ok(())
 }

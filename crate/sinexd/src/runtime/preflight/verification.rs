@@ -28,8 +28,8 @@ const EVENTS_ACCESS_PROBE_SQL: &str = "SELECT id, source, event_type FROM core.e
 const PREFLIGHT_NATS_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Verify end-to-end integration of the entire Sinex system
-pub async fn verify_end_to_end_integration() -> RuntimeResult<(VerificationStatus, Value, Vec<String>)>
-{
+pub async fn verify_end_to_end_integration()
+-> RuntimeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let mut details = HashMap::new();
     let mut has_warnings = false;
@@ -301,7 +301,10 @@ async fn test_transactions(pool: &PgPool, _messages: &mut [String]) -> RuntimeRe
 }
 
 /// Test concurrent query operations
-async fn test_concurrent_queries(pool: &PgPool, messages: &mut Vec<String>) -> RuntimeResult<Value> {
+async fn test_concurrent_queries(
+    pool: &PgPool,
+    messages: &mut Vec<String>,
+) -> RuntimeResult<Value> {
     use tokio::task::JoinSet;
 
     let concurrent_count = PREFLIGHT_DB_MAX_CONNECTIONS;
@@ -534,7 +537,8 @@ async fn get_test_pool() -> RuntimeResult<PgPool> {
 }
 
 /// Verify performance baseline using read-only queries
-pub async fn verify_performance_baseline() -> RuntimeResult<(VerificationStatus, Value, Vec<String>)> {
+pub async fn verify_performance_baseline() -> RuntimeResult<(VerificationStatus, Value, Vec<String>)>
+{
     let mut messages = Vec::new();
     if !runtime_database_expected()? {
         messages.push(

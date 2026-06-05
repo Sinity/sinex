@@ -88,10 +88,10 @@ impl From<ConfigError> for sinex_primitives::error::SinexError {
                 sinex_primitives::error::SinexError::configuration("runtime config IO error")
                     .with_source(source)
             }
-            ConfigError::Validation(ref msg) => {
-                sinex_primitives::error::SinexError::configuration("runtime config validation failed")
-                    .with_context("detail", msg)
-            }
+            ConfigError::Validation(ref msg) => sinex_primitives::error::SinexError::configuration(
+                "runtime config validation failed",
+            )
+            .with_context("detail", msg),
             ConfigError::MissingField(ref field) => {
                 sinex_primitives::error::SinexError::configuration(
                     "missing required runtime config field",

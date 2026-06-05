@@ -691,13 +691,21 @@ impl AcquisitionManager {
     /// Finalize material and publish end event
     ///
     /// Ported from `TemporalLedger::finalize_material`
-    pub async fn finalize(&self, mut handle: SourceMaterialHandle, reason: &str) -> RuntimeResult<()> {
+    pub async fn finalize(
+        &self,
+        mut handle: SourceMaterialHandle,
+        reason: &str,
+    ) -> RuntimeResult<()> {
         self.finalize_with_metadata(&mut handle, reason, json!({}))
             .await
     }
 
     /// Cancel a material capture and finalize with cancellation metadata.
-    pub async fn cancel(&self, handle: &mut SourceMaterialHandle, reason: &str) -> RuntimeResult<()> {
+    pub async fn cancel(
+        &self,
+        handle: &mut SourceMaterialHandle,
+        reason: &str,
+    ) -> RuntimeResult<()> {
         self.finalize_with_metadata(
             handle,
             reason,
@@ -936,7 +944,7 @@ impl AppendStreamAcquirer {
     ///
     /// Use this when callers need to expose the first material id before the
     /// first append, while still delegating subsequent size/age rotation to the
-    /// SDK stream-acquisition path.
+    /// runtime stream-acquisition path.
     #[must_use]
     pub fn from_active_handle(
         manager: Arc<AcquisitionManager>,
@@ -1265,7 +1273,7 @@ async fn buffered_append_writer_task(
 /// Background writer for rotating append-only source-material streams.
 ///
 /// Use this when many logical observations belong to one source stream. Callers
-/// get per-record byte anchors, while the SDK owns stream rotation, batching,
+/// get per-record byte anchors, while the runtime owns stream rotation, batching,
 /// and finalization without requiring a mutex across NATS I/O.
 #[derive(Clone)]
 pub struct BufferedAppendStreamWriter {

@@ -11,7 +11,7 @@
 //! rather than widening `command.canonical` itself into a reconciled object.
 
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, TransducerAdapter};
-use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Transducer};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Transducer};
 use sinex_primitives::JsonValue;
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;
@@ -257,15 +257,15 @@ fn canonicalize_history(
 }
 
 /// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type TerminalCommandCanonicalizerNode = TransducerAdapter<TerminalCommandCanonicalizer>;
+pub type TerminalCommandCanonicalizerRuntime = TransducerAdapter<TerminalCommandCanonicalizer>;
 
 // --- Source descriptor (issue #690 / #734) ---
 
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
-    SourceContract, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

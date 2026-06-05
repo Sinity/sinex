@@ -383,7 +383,7 @@ impl HeartbeatEmitter {
             "file": "heartbeat.rs",
             "line": 1,
             "fields": {
-                "event_type": "node.heartbeat",
+                "event_type": "runtime.heartbeat",
                 "service_name": metrics.service_name,
                 "status": metrics.status,
                 "events_processed": metrics.events_processed,

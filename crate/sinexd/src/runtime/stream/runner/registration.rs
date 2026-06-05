@@ -1,7 +1,7 @@
 //! Database-backed node identity registration helpers for `RuntimeRunner<T>`.
 //!
 //! These methods are only compiled with the `db` feature and update the
-//! `core.manifests` / `core.runs` tables to expose the running node
+//! `core.manifests` / `core.runs` tables to expose the running module
 //! identity to operators and downstream automation.
 
 #[cfg(feature = "db")]
@@ -91,7 +91,8 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         let Some(module_run_id) = service_info.module_run_id() else {
             return;
         };
-        let module_run_id = Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(module_run_id);
+        let module_run_id =
+            Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(module_run_id);
         if let Err(error) = pool
             .state()
             .update_module_run_status(module_run_id, status)
@@ -103,7 +104,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                 module_run_id = %module_run_id,
                 target_status = %status,
                 error = %error,
-                "Failed to persist node run terminal status"
+                "Failed to persist module run terminal status"
             );
         }
     }

@@ -1,7 +1,7 @@
 //! The unified `RuntimeModule` trait implemented by source drivers and automata.
 
 use super::{
-    Checkpoint, RuntimeCapabilities, RuntimeInitContext, ModuleKind, ProcessingStats, ScanArgs,
+    Checkpoint, ModuleKind, ProcessingStats, RuntimeCapabilities, RuntimeInitContext, ScanArgs,
     ScanEstimate, ScanReport, TimeHorizon,
 };
 use crate::runtime::{RuntimeResult, SinexError};

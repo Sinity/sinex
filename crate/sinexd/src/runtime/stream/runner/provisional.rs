@@ -7,8 +7,8 @@
 
 use super::{
     CheckpointManager, DbPoolExt, Deserialize, Event, EventId, EventSource, EventType, HostName,
-    Id, JsonValue, RuntimeModule, RuntimeResult, RuntimeRunner, NonEmptyVec, OffsetKind, PgPool, Provenance,
-    ProvisionalEvent, ResolvedBatch, SinexError, SourceMaterial, Uuid,
+    Id, JsonValue, NonEmptyVec, OffsetKind, PgPool, Provenance, ProvisionalEvent, ResolvedBatch,
+    RuntimeModule, RuntimeResult, RuntimeRunner, SinexError, SourceMaterial, Uuid,
 };
 
 impl<T: RuntimeModule + 'static> RuntimeRunner<T> {

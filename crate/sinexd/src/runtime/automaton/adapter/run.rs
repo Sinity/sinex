@@ -53,10 +53,7 @@ where
         // `recv_invalidation()` which has matching cfg'd signatures.
         #[cfg(feature = "messaging")]
         let mut invalidation_sub: Option<async_nats::jetstream::consumer::push::Messages> = {
-            let nats_client = self
-                .runtime
-                .as_ref()
-                .and_then(RuntimeContext::nats_client);
+            let nats_client = self.runtime.as_ref().and_then(RuntimeContext::nats_client);
 
             if let Some(client) = nats_client {
                 let env = sinex_primitives::environment::environment();
@@ -448,7 +445,7 @@ where
                                 }
                                 return Err(e.into());
                             }
-                            Settlement::HaltNode { reason } => {
+                            Settlement::HaltModule { reason } => {
                                 // Halt requests clean drain (see source_driver
                                 // / process.rs for the same shape) so systemd
                                 // records the unit as cleanly exited.
@@ -457,11 +454,11 @@ where
                                 }
                                 error!(
                                     target: "sinex_metrics",
-                                    metric = "derive.node_halts_total",
+                                    metric = "derive.runtime_halts_total",
                                     automaton = %self.automaton.name(),
                                     error = %e,
                                     reason = ?reason,
-                                    "Halting node during historical replay; runtime drain requested"
+                                    "Halting module during historical replay; runtime drain requested"
                                 );
                                 if let Err(cp_err) = self.save_state().await {
                                     error!(

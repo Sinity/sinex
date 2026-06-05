@@ -210,8 +210,9 @@ async fn shutdown_join_result_rejects_panicked_tasks() -> TestResult<()> {
         panic!("runtime panic");
     });
 
-    let error = RuntimeRunner::<RuntimeTestNode>::shutdown_join_result("runtime-task", handle.await)
-        .expect_err("panicked runtime tasks must fail shutdown honestly");
+    let error =
+        RuntimeRunner::<RuntimeTestNode>::shutdown_join_result("runtime-task", handle.await)
+            .expect_err("panicked runtime tasks must fail shutdown honestly");
     let message = format!("{error:#}");
     assert!(message.contains("Task failed during shutdown"));
     assert!(message.contains("runtime-task"));
@@ -379,7 +380,8 @@ async fn shutdown_task_waits_for_watch_signalled_exit() -> TestResult<()> {
     });
 
     let mut task = Some(task);
-    RuntimeRunner::<RuntimeTestNode>::shutdown_task(&mut task, Some(shutdown_tx), "listener").await?;
+    RuntimeRunner::<RuntimeTestNode>::shutdown_task(&mut task, Some(shutdown_tx), "listener")
+        .await?;
 
     assert!(finished.load(Ordering::SeqCst));
     assert!(task.is_none());

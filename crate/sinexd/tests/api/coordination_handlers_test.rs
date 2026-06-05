@@ -1,8 +1,4 @@
 use async_nats::jetstream;
-use sinexd::api::handlers::{
-    handle_coordination_get_leader, handle_coordination_instance_health,
-    handle_coordination_list_instances,
-};
 use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
 use sinex_primitives::domain::ModuleKind;
 use sinex_primitives::error::ErrorClass;
@@ -10,6 +6,10 @@ use sinex_primitives::rpc::coordination::{
     GetLeaderRequest, InstanceHealthRequest, ListInstancesRequest,
 };
 use sinex_primitives::temporal;
+use sinexd::api::handlers::{
+    handle_coordination_get_leader, handle_coordination_instance_health,
+    handle_coordination_list_instances,
+};
 use xtask::sandbox::prelude::*;
 
 fn build_coordination_client(ctx: &TestContext, service_name: &str) -> CoordinationKvClient {

@@ -169,7 +169,7 @@ impl ConfirmationBuffer {
             if rejected.is_multiple_of(100) {
                 tracing::error!(
                     target: "sinex_metrics",
-                    metric = "node.confirmation_buffer_rejections_total",
+                    metric = "runtime.confirmation_buffer_rejections_total",
                     max_capacity = self.max_capacity,
                     rejected_total = rejected + 1,
                     event_id = %event.event_id,

@@ -421,9 +421,7 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
         inspect.missing_component_paths
     );
     assert!(
-        inspect
-            .state_source_count
-            .is_some_and(|count| count > 0),
+        inspect.state_source_count.is_some_and(|count| count > 0),
         "state extras should carry compiled source inventory"
     );
     assert_eq!(inspect.state_private_mode_state_present, Some(false));
@@ -1149,9 +1147,7 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
         "dry-run must return at least one component record"
     );
     assert!(
-        result
-            .source_ids
-            .contains(&"desktop.clipboard".to_string()),
+        result.source_ids.contains(&"desktop.clipboard".to_string()),
         "snapshot should report compiled source descriptor ids"
     );
 

@@ -12,7 +12,7 @@
 //! ```
 
 // Core service
-pub use crate::event_engine::{IngestService, EventEngineConfig};
+pub use crate::event_engine::{EventEngineConfig, IngestService};
 
 // Validation
 pub use crate::event_engine::{IngestEventValidator, ValidationResult};

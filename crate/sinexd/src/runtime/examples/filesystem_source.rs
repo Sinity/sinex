@@ -7,8 +7,8 @@ use crate::runtime::{
     RuntimeResult, SinexError,
     acquisition_manager::{AcquisitionManager, RotationPolicy, SourceMaterialHandle},
     stream::{
-        Checkpoint, RuntimeModule, RuntimeCapabilities, RuntimeInitContext, RuntimeContext, ModuleKind, ScanArgs,
-        ScanEstimate, ScanReport, TimeHorizon,
+        Checkpoint, ModuleKind, RuntimeCapabilities, RuntimeContext, RuntimeInitContext,
+        RuntimeModule, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
     },
 };
 use camino::{Utf8Path, Utf8PathBuf};
@@ -275,7 +275,7 @@ impl RuntimeModule for FilesystemSource {
     async fn initialize(&mut self, init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
         let (_config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
         info!(
-            node = self.module_name(),
+            module = self.module_name(),
             service = %service_info.service_name(),
             watch_paths = ?self.watch_paths,
             "Initializing filesystem node"
@@ -498,7 +498,7 @@ impl ExplorationProvider for FilesystemSource {
         Ok(SourceState {
             is_connected: true,
             healthy: true,
-            description: "Filesystem node running".to_string(),
+            description: "Filesystem source running".to_string(),
             last_updated: None,
             lag_seconds: None,
             recent_activity: Vec::new(),

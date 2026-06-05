@@ -6,7 +6,8 @@
 //! runners.
 
 use super::{
-    RuntimeModule, RuntimeResult, RuntimeRunner, RunnerLifecycle, TASK_SHUTDOWN_GRACE_PERIOD, debug, info, watch,
+    RunnerLifecycle, RuntimeModule, RuntimeResult, RuntimeRunner, TASK_SHUTDOWN_GRACE_PERIOD,
+    debug, info, watch,
 };
 
 impl<T: RuntimeModule + 'static> RuntimeRunner<T> {

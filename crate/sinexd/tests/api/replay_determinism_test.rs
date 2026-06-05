@@ -7,9 +7,11 @@
 use futures::StreamExt;
 use serde_json::json;
 use sinex_db::{DbPool, repositories::DbPoolExt};
-use sinexd::runtime::{Checkpoint, SourceScanAck, SourceScanCommand, SourceScanProgress, ScanReport};
 use sinex_primitives::rpc::methods;
 use sinex_primitives::{DynamicPayload, Id, temporal::Timestamp};
+use sinexd::runtime::{
+    Checkpoint, ScanReport, SourceScanAck, SourceScanCommand, SourceScanProgress,
+};
 use std::collections::HashMap;
 use std::time::Duration;
 use xtask::sandbox::{EnvGuard, prelude::*};

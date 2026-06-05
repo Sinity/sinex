@@ -5,7 +5,7 @@
 use sinex_db::DbPoolExt;
 use sinex_primitives::SinexError;
 use sinex_primitives::rpc::runtime::{
-    RuntimeHeartbeatSource, RuntimeHealthRequest, RuntimeHealthResponse, RuntimeInfo,
+    RuntimeHealthRequest, RuntimeHealthResponse, RuntimeHeartbeatSource, RuntimeInfo,
     RuntimeListActiveRequest, RuntimeListActiveResponse,
 };
 use sqlx::PgPool;

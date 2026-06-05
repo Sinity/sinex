@@ -243,9 +243,7 @@ mod tests {
         for relative in [
             Path::new(".git/config"),
             Path::new(".sinex/run/.s.PGSQL.5432"),
-            Path::new(
-                "crate/sinex-macros/.sinex/trybuild-target/tests/trybuild/foo/Cargo.toml",
-            ),
+            Path::new("crate/sinex-macros/.sinex/trybuild-target/tests/trybuild/foo/Cargo.toml"),
             Path::new("crate/sinex-primitives/target/debug/deps/libfoo.rmeta"),
             Path::new(".direnv/flake-input"),
             Path::new(".devenv/state"),

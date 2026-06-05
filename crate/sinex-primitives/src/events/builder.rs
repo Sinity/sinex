@@ -64,7 +64,7 @@ impl<T> EventBuilder<T, NoProvenance> {
         self
     }
 
-    /// Set the node run ID (references `core.runs`)
+    /// Set the runtime module run ID (references `core.runs`)
     pub fn module_run_id(mut self, run_id: Uuid) -> Self {
         self.module_run_id = Some(run_id);
         self

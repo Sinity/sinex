@@ -13,9 +13,10 @@ use super::listener::{
     run_resubscribing_listener,
 };
 use super::{
-    Checkpoint, EventEmitter, RuntimeModule, RuntimeCapabilities, RuntimeHandles, RuntimeInitContext,
-    RuntimeContext, SourceScanAck, SourceScanCommand, SourceScanProgress, ModuleKind, RunnerLifecycle,
-    RuntimeDrainController, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
+    Checkpoint, EventEmitter, ModuleKind, RunnerLifecycle, RuntimeCapabilities, RuntimeContext,
+    RuntimeDrainController, RuntimeHandles, RuntimeInitContext, RuntimeModule, ScanArgs,
+    ScanEstimate, ScanReport, ServiceInfo, SourceScanAck, SourceScanCommand, SourceScanProgress,
+    TimeHorizon,
 };
 use crate::runtime::{
     RuntimeResult, SinexError,

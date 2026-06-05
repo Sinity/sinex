@@ -6,7 +6,7 @@
 use crate::runtime::automaton::{
     AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedAdapter,
 };
-use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Windowed};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
@@ -190,7 +190,7 @@ impl Windowed for DailySummarizer {
         let due = now >= end;
         if due {
             debug!(
-                node = "daily-summarizer",
+                module = "daily-summarizer",
                 day_start = %day_start,
                 day_end = %end,
                 now = %now,
@@ -263,15 +263,15 @@ impl Windowed for DailySummarizer {
 }
 
 /// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type DailySummarizerNode = WindowedAdapter<DailySummarizer>;
+pub type DailySummarizerRuntime = WindowedAdapter<DailySummarizer>;
 
 // --- Source descriptor (issue #690 / #734) ---
 
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
-    SourceContract, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

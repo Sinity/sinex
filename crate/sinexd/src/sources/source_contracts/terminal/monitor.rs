@@ -12,7 +12,7 @@ use crate::runtime::{RuntimeResult, stream::RuntimeContext};
 use futures::future::BoxFuture;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceRuntimeBinding, SourceBuildImpact, SourceContract, SubjectRef,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{
     JsonValue, SinexError,
@@ -50,7 +50,7 @@ register_source_runtime_binding! {
         "terminal",
     )
     .implementation("sinexd")
-    .adapter("MonitorDriverNode")
+    .adapter("MonitorDriver")
     .output_event_type("shell.terminal_monitoring_started")
     .privacy_context("Metadata")
     .material_policy("synthetic_oneshot")
@@ -166,7 +166,7 @@ mod tests {
     async fn test_emit_terminal_monitor_one_event() -> TestResult<()> {
         // Construct a dummy RuntimeContext. The emit fn does not call any
         // runtime methods (it only uses the material_id), so we use the
-        // Default-like sentinel provided by the test SDK if available, or
+        // Default-like sentinel provided by the test runtime if available, or
         // skip. For now we verify at the payload level (above test) and
         // document that the full emit path requires a NATS context.
         //
@@ -180,7 +180,7 @@ mod tests {
         // if that changes the test should be updated.
         //
         // Calling it requires constructing RuntimeContext which is not
-        // publicly constructible outside the SDK. We verify the payload chain
+        // publicly constructible outside the runtime. We verify the payload chain
         // in test_terminal_monitor_payload_builds above and document this gap.
         let _ = material_id;
         Ok(())

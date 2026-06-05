@@ -18,8 +18,8 @@ mod output;
 pub mod traits;
 
 pub use adapter::{
-    AutomatonRuntime, MultiOutputTransducerAdapter, ScopeReconcilerAdapter,
-    TransducerAdapter, WindowedAdapter,
+    AutomatonRuntime, MultiOutputTransducerAdapter, ScopeReconcilerAdapter, TransducerAdapter,
+    WindowedAdapter,
 };
 pub use context::AutomatonContext;
 pub use invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};

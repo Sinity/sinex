@@ -1,9 +1,11 @@
 use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy, pull::Config as ConsumerConfig};
 use futures::StreamExt;
 use sinex_db::{DbPool, repositories::DbPoolExt};
-use sinexd::api::ServiceContainer;
-use sinexd::runtime::{Checkpoint, SourceScanAck, SourceScanCommand, SourceScanProgress, ScanReport};
 use sinex_primitives::{DynamicPayload, Id, Uuid, temporal::Timestamp};
+use sinexd::api::ServiceContainer;
+use sinexd::runtime::{
+    Checkpoint, ScanReport, SourceScanAck, SourceScanCommand, SourceScanProgress,
+};
 use std::time::Duration;
 use tokio::time::sleep;
 use xtask::sandbox::prelude::*;

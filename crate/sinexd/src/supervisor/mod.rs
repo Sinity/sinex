@@ -80,7 +80,7 @@ impl Supervisor {
 
         // Separate in-process escalation channel for event-engine / API
         // task failures. The OS shutdown channel is Receiver-only and shared
-        // across all SDK consumers; rather than extending that API (which
+        // across all runtime consumers; rather than extending that API (which
         // would propagate through every callsite), we keep a local `watch`
         // whose Sender lives here and whose Receiver is selected alongside
         // the OS receiver in the wait loop. When event-engine or API exits,

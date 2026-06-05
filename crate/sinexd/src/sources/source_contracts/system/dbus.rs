@@ -4,8 +4,8 @@
 //! Notification body and D-Bus args are emitted with privacy metadata; DB
 //! admission policy owns redaction and suppression.
 
-use crate::runtime::parser::{DbusStreamAdapter, MaterialParser, ParserError};
 use crate::register_source;
+use crate::runtime::parser::{DbusStreamAdapter, MaterialParser, ParserError};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{
     BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,
@@ -17,13 +17,13 @@ use sinex_primitives::events::payloads::system::{
     DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload,
 };
 use sinex_primitives::parser::{
-    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
-    SourceId, TimingEvidence,
+    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceId,
+    SourceRecord, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceRuntimeBinding, SourceBuildImpact, SourceContract, SubjectRef,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};

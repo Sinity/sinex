@@ -782,7 +782,11 @@ fn buffered_slice_file_len_bytes(path: &Path, len: u64) -> EventEngineResult<i64
     })
 }
 
-fn checked_buffered_slice_total(total: i64, slice_bytes: i64, path: &Path) -> EventEngineResult<i64> {
+fn checked_buffered_slice_total(
+    total: i64,
+    slice_bytes: i64,
+    path: &Path,
+) -> EventEngineResult<i64> {
     total.checked_add(slice_bytes).ok_or_else(|| {
         SinexError::processing("buffered slice byte total overflowed")
             .with_context("path", path.display().to_string())
@@ -951,7 +955,7 @@ async fn cleanup_state_path(path: &Path) {
 /// # Edge Cases
 ///
 /// - **Early slice arrival**: Slices may arrive before local begin state after WAL restore,
-///   redelivery, or non-SDK publishers. A placeholder state is created to buffer slices until
+///   redelivery, or non-runtime publishers. A placeholder state is created to buffer slices until
 ///   begin arrives.
 /// - **Race condition on placeholder creation**: Multiple slices arriving concurrently for
 ///   a new material may attempt to create placeholders. `insert_state_handle` handles this
@@ -1398,7 +1402,7 @@ async fn persist_buffered_slice(
     Ok(buffer_path)
 }
 
-/// Import the assembled material into the SDK content store.
+/// Import the assembled material into the runtime content store.
 pub(super) async fn import_into_content_store(
     assembler: &MaterialAssembler,
     state: &FinalizationState,

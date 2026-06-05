@@ -6,7 +6,7 @@ use sinex_primitives::temporal::Timestamp;
 
 use crate::client::GatewayClient;
 use crate::fmt::format_heartbeat_age;
-use crate::model::{RuntimeModuleRole, OutputFormat};
+use crate::model::{OutputFormat, RuntimeModuleRole};
 
 /// List running modules with status, health, and uptime.
 #[derive(Debug, Args)]
@@ -77,7 +77,7 @@ impl RuntimePresenceCommand {
                 println!("{}", crate::fmt::format_yaml(&payload)?);
             }
             OutputFormat::Table => {
-                render_nodes_table(&enriched);
+                render_modules_table(&enriched);
             }
         }
 
@@ -99,7 +99,7 @@ struct EnrichedRuntimeInfo {
 // Terminal table rendering
 // ─────────────────────────────────────────────────────────────
 
-fn render_nodes_table(modules: &[EnrichedRuntimeInfo]) {
+fn render_modules_table(modules: &[EnrichedRuntimeInfo]) {
     if modules.is_empty() {
         println!("{}", style("No modules found.").dim());
         return;

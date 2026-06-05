@@ -19,7 +19,7 @@ use sinex_db::advisory_lock::AdvisoryLock;
 use sinex_db::repositories::EventPayloadSchema;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::{ModuleName, ModuleKind, ServiceName};
+use sinex_primitives::domain::{ModuleKind, ModuleName, ServiceName};
 use sinex_primitives::environment as sinex_environment;
 use sinex_primitives::nats::create_or_open_kv_store;
 use sinex_primitives::transport;

@@ -514,7 +514,7 @@ pub enum ParserError {
 
     Io(std::io::Error),
 
-    /// `SinexError` raised by code the parser calls (validators, inner SDK
+    /// `SinexError` raised by code the parser calls (validators, runtime
     /// helpers). Converted via `?` so parsers don't have to
     /// `.map_err(|e| ParserError::Parse(e.to_string()))` everywhere.
     Sinex(crate::SinexError),

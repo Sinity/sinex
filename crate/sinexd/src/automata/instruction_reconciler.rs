@@ -6,7 +6,7 @@
 //! observations.
 
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconcilerAdapter};
-use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, ScopeReconciler};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, ScopeReconciler};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;
@@ -18,8 +18,8 @@ use sinex_primitives::events::payloads::{
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
-    SourceContract, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{
     JsonValue, Timestamp, Uuid, register_source_contract, register_source_runtime_binding,
@@ -210,7 +210,7 @@ fn evaluate_pending_workspace_instruction(
     )
 }
 
-pub type InstructionExpectationReconcilerNode =
+pub type InstructionExpectationReconcilerRuntime =
     ScopeReconcilerAdapter<InstructionExpectationReconciler>;
 
 register_source_contract! {

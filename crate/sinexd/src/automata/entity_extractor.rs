@@ -28,7 +28,7 @@
 //! Ref: `.agent/scratch/071-issue-331-entity-extractor-spec.md`.
 
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, TransducerAdapter};
-use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Transducer};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Transducer};
 use regex::Regex;
 use sinex_primitives::domain::EntityTypeName;
 use sinex_primitives::events::payloads::EntityExtractedPayload;
@@ -207,15 +207,15 @@ fn find_first_entity(text: &str) -> Option<EntityExtractedPayload> {
 
 // ── Type alias ──────────────────────────────────────────────────────────
 
-pub type EntityExtractorNode = TransducerAdapter<EntityExtractor>;
+pub type EntityExtractorRuntime = TransducerAdapter<EntityExtractor>;
 
 // ── Source descriptor ─────────────────────────────────────────────
 
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
-    SourceContract, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

@@ -212,26 +212,14 @@ async fn _run_obligation(
             .await
         }
         "replay" => {
-            obligations::replay::run(
-                source_id,
-                adapter_kind,
-                fixture_data,
-                expected_event_types,
-            )
-            .await
+            obligations::replay::run(source_id, adapter_kind, fixture_data, expected_event_types)
+                .await
         }
         "drain" => obligations::drain::run(source_id, adapter_kind, fixture_data).await,
-        "isolation" => {
-            obligations::isolation::run(source_id, adapter_kind, fixture_data).await
-        }
+        "isolation" => obligations::isolation::run(source_id, adapter_kind, fixture_data).await,
         "privacy" => {
-            obligations::privacy::run(
-                source_id,
-                adapter_kind,
-                fixture_data,
-                expected_event_types,
-            )
-            .await
+            obligations::privacy::run(source_id, adapter_kind, fixture_data, expected_event_types)
+                .await
         }
         unknown => Err(format!(
             "unknown obligation '{unknown}'; valid: initial_ingestion, replay, drain, isolation, privacy"
@@ -248,19 +236,14 @@ async fn _run_record_fixture_obligation(
 ) -> Result<(), String> {
     match obligation {
         "initial_ingestion" => {
-            run_record_fixture_initial_ingestion(source_id, fixture, expected_event_types)
-                .await
+            run_record_fixture_initial_ingestion(source_id, fixture, expected_event_types).await
         }
         "replay" => run_record_fixture_replay(source_id, fixture, expected_event_types).await,
-        "drain" => {
-            obligations::drain::run(source_id, adapter_kind, fixture.fixture_data).await
-        }
+        "drain" => obligations::drain::run(source_id, adapter_kind, fixture.fixture_data).await,
         "isolation" => {
             obligations::isolation::run(source_id, adapter_kind, fixture.fixture_data).await
         }
-        "privacy" => {
-            run_record_fixture_privacy(source_id, fixture, expected_event_types).await
-        }
+        "privacy" => run_record_fixture_privacy(source_id, fixture, expected_event_types).await,
         unknown => Err(format!(
             "unknown obligation '{unknown}'; valid: initial_ingestion, replay, drain, isolation, privacy"
         )),
@@ -391,18 +374,14 @@ async fn dispatch_record_fixture_with_anchor(
     use camino::Utf8PathBuf;
     use sinex_primitives::events::SourceMaterial;
     use sinex_primitives::ids::Id;
-    use sinex_primitives::parser::{ParserContext, SourceRecord, SourceId};
+    use sinex_primitives::parser::{ParserContext, SourceId, SourceRecord};
     use sinex_primitives::temporal::Timestamp;
     use sinexd::sources::dispatch::find_parser_factory;
 
-    let source_id = SourceId::new(source_id)
-        .map_err(|e| format!("invalid source id '{source_id}': {e}"))?;
-    let factory = find_parser_factory(&source_id).ok_or_else(|| {
-        format!(
-            "source '{}' has no parser registered",
-            source_id.as_str()
-        )
-    })?;
+    let source_id =
+        SourceId::new(source_id).map_err(|e| format!("invalid source id '{source_id}': {e}"))?;
+    let factory = find_parser_factory(&source_id)
+        .ok_or_else(|| format!("source '{}' has no parser registered", source_id.as_str()))?;
     let mut parser = factory();
     let material_id = Id::<SourceMaterial>::from_uuid(material_id);
 
@@ -450,8 +429,8 @@ mod coverage_matrix {
     use crate::obligations::drain;
     use sinex_primitives::parser::SourceId;
     use sinexd::sources::dispatch::find_parser_factory;
-    use sinexd::sources::source_factory::registered_source_factory_ids;
     use sinexd::sources::registry::SourceContractRegistry;
+    use sinexd::sources::source_factory::registered_source_factory_ids;
     use xtask::sandbox::prelude::*;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -702,9 +681,9 @@ mod coverage_matrix {
             }
 
             let id = SourceId::new(entry.source_id)?;
-            let descriptor = registry.find(&id).unwrap_or_else(|| {
-                panic!("{} descriptor must be registered", entry.source_id)
-            });
+            let descriptor = registry
+                .find(&id)
+                .unwrap_or_else(|| panic!("{} descriptor must be registered", entry.source_id));
             assert_eq!(descriptor.id, entry.source_id);
 
             if matches!(

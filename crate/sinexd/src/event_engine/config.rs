@@ -2,7 +2,9 @@
 
 //! Configuration helpers for the ingestion daemon.
 
-use crate::event_engine::{EventEngineResult, SinexError, material_assembler::DurabilityThresholds};
+use crate::event_engine::{
+    EventEngineResult, SinexError, material_assembler::DurabilityThresholds,
+};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_db::{PoolConfig, PoolSessionPolicy, create_pool_with_config_and_session_policy};
@@ -831,7 +833,9 @@ fn default_database_url_fallback() -> String {
 
 /// Default work directory for event_engine with environment namespacing
 fn default_work_dir() -> Utf8PathBuf {
-    if let Some(validated) = env_validated_path("SINEX_EVENT_ENGINE_WORK_DIR", "event_engine work dir") {
+    if let Some(validated) =
+        env_validated_path("SINEX_EVENT_ENGINE_WORK_DIR", "event_engine work dir")
+    {
         return validated;
     }
 
@@ -1386,7 +1390,8 @@ mod tests {
         env.set("XDG_CACHE_HOME", "/tmp/sinexd-config-cache");
 
         let expected = Utf8PathBuf::from_path_buf(
-            environment().work_directory(default_path_base_dir().join("sinex").join("event_engine")),
+            environment()
+                .work_directory(default_path_base_dir().join("sinex").join("event_engine")),
         )
         .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/event_engine"));
 
@@ -1397,10 +1402,7 @@ mod tests {
     #[sinex_serial_test]
     async fn derived_default_paths_ignore_invalid_overrides() -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
-        env.set(
-            "SINEX_EVENT_ENGINE_WORK_DIR",
-            "/tmp/sinexd-config-root",
-        );
+        env.set("SINEX_EVENT_ENGINE_WORK_DIR", "/tmp/sinexd-config-root");
         env.set("SINEX_CONTENT_STORE_PATH", "../../bad-content-store");
         env.set("SINEX_ASSEMBLER_STATE_DIR", "../../bad-state-dir");
         env.set("SINEX_EVENT_ENGINE_GITOPS_WORK_DIR", "../../bad-gitops");

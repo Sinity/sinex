@@ -1,6 +1,6 @@
 //! Filesystem source (`fs`).
 //!
-//! Uses the SDK's content-materializing file-drop adapter plus the filesystem
+//! Uses the runtime's content-materializing file-drop adapter plus the filesystem
 //! parser, so watcher policy, source-material staging, and parser dispatch
 //! share the same adapter-backed source surface as the rest of the source
 //! unit host.
@@ -9,11 +9,11 @@ pub mod parser;
 
 pub use parser::FilesystemParser;
 
-use crate::runtime::parser::FileContentDropAdapter;
 use crate::register_source;
+use crate::runtime::parser::FileContentDropAdapter;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceRuntimeBinding, SourceContract, SubjectRef,
+    SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

@@ -367,7 +367,8 @@ impl SubscriptionBus {
         mut shutdown: tokio::sync::watch::Receiver<bool>,
         ready: Option<Arc<tokio::sync::Notify>>,
     ) {
-        let subject = env.nats_subject_with_namespace(namespace.as_deref(), "events.confirmations.>");
+        let subject =
+            env.nats_subject_with_namespace(namespace.as_deref(), "events.confirmations.>");
         let mut id_buffer: Vec<Id<Event<JsonValue>>> = Vec::with_capacity(BATCH_MAX_IDS);
         let mut batch_timer = tokio::time::interval(BATCH_WINDOW);
         batch_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

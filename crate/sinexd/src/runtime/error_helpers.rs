@@ -283,14 +283,14 @@ pub fn general_error<E: std::fmt::Display>(error: E, context: &str) -> crate::ru
 ///
 /// **After:**
 /// ```rust
-/// use crate::runtime::error_helpers::NodeErrorExt;
+/// use crate::runtime::error_helpers::RuntimeErrorExt;
 ///
 /// acquisition
 ///     .begin_material(&identifier)
 ///     .await
 ///     .node_err("Failed to begin material")?;
 /// ```
-pub trait NodeErrorExt<T> {
+pub trait RuntimeErrorExt<T> {
     /// Convert error to `SinexError::processing` with context
     fn node_err(self, context: &str) -> Result<T, crate::runtime::SinexError>;
 
@@ -298,7 +298,7 @@ pub trait NodeErrorExt<T> {
     fn processing_err(self, context: &str) -> Result<T, crate::runtime::SinexError>;
 }
 
-impl<T, E: std::fmt::Display> NodeErrorExt<T> for Result<T, E> {
+impl<T, E: std::fmt::Display> RuntimeErrorExt<T> for Result<T, E> {
     fn node_err(self, context: &str) -> Result<T, crate::runtime::SinexError> {
         self.map_err(|e| general_error(e, context))
     }

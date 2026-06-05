@@ -122,7 +122,7 @@ where
                 let error_msg = err.to_string();
                 error!(
                     target: "sinex_metrics",
-                    metric = "node.watcher_failures_total",
+                    metric = "runtime.watcher_failures_total",
                     watcher = watcher_name,
                     error = %err,
                     "Watcher task failed"
@@ -135,7 +135,7 @@ where
                 let panic_msg = format_panic_payload(panic_payload.as_ref());
                 error!(
                     target: "sinex_metrics",
-                    metric = "node.watcher_panics_total",
+                    metric = "runtime.watcher_panics_total",
                     watcher = watcher_name,
                     panic = %panic_msg,
                     "Watcher task panicked"
@@ -209,7 +209,7 @@ where
                     let error_msg = err.to_string();
                     error!(
                         target: "sinex_metrics",
-                        metric = "node.watcher_failures_total",
+                        metric = "runtime.watcher_failures_total",
                         watcher = watcher_name,
                         error = %err,
                         "Watcher task failed"
@@ -224,7 +224,7 @@ where
                     let panic_msg = format_panic_payload(panic_payload.as_ref());
                     error!(
                         target: "sinex_metrics",
-                        metric = "node.watcher_panics_total",
+                        metric = "runtime.watcher_panics_total",
                         watcher = watcher_name,
                         panic = %panic_msg,
                         "Watcher task panicked"
@@ -244,7 +244,7 @@ where
             if config.max_restarts > 0 && restarts >= config.max_restarts {
                 error!(
                     target: "sinex_metrics",
-                    metric = "node.watcher_max_restarts_total",
+                    metric = "runtime.watcher_max_restarts_total",
                     watcher = watcher_name,
                     restarts = restarts,
                     max_restarts = config.max_restarts,

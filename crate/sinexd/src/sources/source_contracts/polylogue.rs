@@ -4,7 +4,7 @@
 //!
 //! The Polylogue daemon is an **external producer**: it publishes
 //! [`EventIntent`] envelopes directly to NATS `JetStream` without
-//! depending on the sinex Rust SDK. event_engine picks them up on the standard
+//! depending on the sinex Rust runtime. event_engine picks them up on the standard
 //! `{env}.sinex.events.raw.>` stream just like any other source.
 //!
 //! This module provides:
@@ -53,7 +53,7 @@
 
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceRuntimeBinding, SourceBuildImpact, SourceContract, SubjectRef,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

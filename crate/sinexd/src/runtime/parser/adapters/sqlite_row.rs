@@ -121,7 +121,7 @@ pub struct SqliteRowConfig {
     /// long-running writer (qutebrowser, chromium, atuin) must open
     /// read-only to avoid `attempt to write a readonly database` errors
     /// when the writer holds an exclusive lock. Cursor state lives in the
-    /// SDK's checkpoint store, not in the DB, so read-only is safe by
+    /// runtime's checkpoint store, not in the DB, so read-only is safe by
     /// default.
     #[serde(default = "default_read_only")]
     pub read_only: bool,
@@ -147,7 +147,7 @@ pub struct SqliteRowConfig {
     /// Per-open row batch limit. The adapter appends `LIMIT <batch_size>`
     /// to the inner cursor query so a single `open()` call returns at
     /// most this many rows even when the underlying table is huge. The
-    /// SDK's continuous-poll loop re-opens the adapter each cycle, so
+    /// runtime's continuous-poll loop re-opens the adapter each cycle, so
     /// the next batch resumes from the last persisted rowid.
     ///
     /// Bounds peak memory: a desktop.activitywatch DB with millions of
@@ -381,11 +381,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
 
 #[cfg(feature = "messaging")]
 impl InputShapeAdapterExt for SqliteRowAdapter {
-    fn snapshot_lane(
-        &self,
-        source_id: &str,
-        config: &Self::Config,
-    ) -> Option<SnapshotLaneSpec> {
+    fn snapshot_lane(&self, source_id: &str, config: &Self::Config) -> Option<SnapshotLaneSpec> {
         // Resolve the effective path the same way `open()` does — config wins
         // over constructor — and feed it to the snapshot-lane builder.  The
         // lane is omitted whenever snapshot config is disabled or the path is

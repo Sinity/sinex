@@ -9,9 +9,9 @@ use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
     ConfigCommands, ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand,
     DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
-    IngestorsCommand, InstructionsCommand, LifecycleCommands, LlmCommand, RuntimeCommands,
-    RuntimePresenceCommand, NowCommand, OpsCommands, PrivacyCommand, QueryCommand, RecentCommand,
-    ReplayCommands, ReportCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
+    IngestorsCommand, InstructionsCommand, LifecycleCommands, LlmCommand, NowCommand, OpsCommands,
+    PrivacyCommand, QueryCommand, RecentCommand, ReplayCommands, ReportCommands, RuntimeCommands,
+    RuntimePresenceCommand, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
     TasksCommand, TelemetryCommands, ThroughputCommand, TimelineCommand, TraceCommand, TuiCommand,
     VerifyCommand, WatchCommand,
 };
@@ -118,7 +118,7 @@ enum Commands {
         cmd: RuntimeCommands,
     },
 
-    /// Derived-node and automata status
+    /// Automata status
     Automata(AutomataCommand),
 
     /// Ingestor runtime status (run, health, recent emissions)
@@ -249,7 +249,7 @@ enum Commands {
     Now(NowCommand),
 
     /// List running modules with status and health
-    Nodes(RuntimePresenceCommand),
+    Modules(RuntimePresenceCommand),
 
     /// Per-source / per-component event throughput (#1172 AC-8)
     Throughput(ThroughputCommand),
@@ -403,7 +403,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Explain(cmd) => cmd.execute(&client, format).await?,
                 Commands::Verify(cmd) => cmd.execute(&client, format).await?,
                 Commands::Now(cmd) => cmd.execute(&client, format).await?,
-                Commands::Nodes(cmd) => cmd.execute(&client, format).await?,
+                Commands::Modules(cmd) => cmd.execute(&client, format).await?,
                 Commands::Throughput(cmd) => cmd.execute(&client, format).await?,
                 Commands::Annotate(cmd) => cmd.execute(&client, format).await?,
                 Commands::Completions(_) => unreachable!("Completions command handled above"),
@@ -490,7 +490,7 @@ fn command_path(cmd: &Commands) -> String {
     use sinexctl::commands::lifecycle::TombstoneCommands;
     use sinexctl::commands::{
         ConfigCommands, DlqCommands, GatewayCommands, GitOpsCommands, LifecycleCommands,
-        RuntimeCommands, OpsCommands, ReplayCommands, ReportCommands, TelemetryCommands,
+        OpsCommands, ReplayCommands, ReportCommands, RuntimeCommands, TelemetryCommands,
     };
     match cmd {
         Commands::Gateway { cmd } => match cmd {
@@ -696,7 +696,9 @@ fn command_path(cmd: &Commands) -> String {
             TelemetryCommands::EventEngineBatchStats { .. } => {
                 "telemetry event-engine-batch-stats".to_string()
             }
-            TelemetryCommands::EventEngineValidation => "telemetry event-engine-validation".to_string(),
+            TelemetryCommands::EventEngineValidation => {
+                "telemetry event-engine-validation".to_string()
+            }
         },
         Commands::Report { cmd } => match cmd {
             ReportCommands::Today => "report today".to_string(),
@@ -711,7 +713,7 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Explain(_) => "explain".to_string(),
         Commands::Verify(cmd) => cmd.command_path().to_string(),
         Commands::Now(_) => "now".to_string(),
-        Commands::Nodes(_) => "modules".to_string(),
+        Commands::Modules(_) => "modules".to_string(),
         Commands::Throughput(_) => "throughput".to_string(),
         Commands::Annotate(_) => "annotate".to_string(),
         Commands::Completions(_) => "completions".to_string(),

@@ -76,7 +76,10 @@ async fn test_graph_deps_json_structure() -> ::xtask::sandbox::TestResult<()> {
     if let Some(nodes) = parsed["nodes"].as_array()
         && let Some(node) = nodes.first()
     {
-        assert!(node.get("id").is_some(), "RuntimeModule should have 'id' field");
+        assert!(
+            node.get("id").is_some(),
+            "RuntimeModule should have 'id' field"
+        );
         assert!(
             node.get("label").is_some(),
             "RuntimeModule should have 'label' field"

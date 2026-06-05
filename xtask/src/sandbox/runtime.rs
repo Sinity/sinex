@@ -12,7 +12,7 @@ use sinexd::runtime::{
     checkpoint::CheckpointManager,
     heartbeat::HeartbeatEmitter,
     nats_publisher::NatsPublisher,
-    stream::{EventEmitter, RuntimeHandles, RuntimeContext, ServiceInfo},
+    stream::{EventEmitter, RuntimeContext, RuntimeHandles, ServiceInfo},
 };
 use tokio::sync::mpsc;
 

@@ -6,7 +6,7 @@
 //! invalidating a component scope recomputes all health reports for that component.
 
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconcilerAdapter};
-use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, ScopeReconciler};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, ScopeReconciler};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{HealthStatus, SyntheticTemporalPolicy};
 use sinex_primitives::events::{
@@ -520,7 +520,7 @@ impl HealthAggregator {
 }
 
 /// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type HealthAggregatorNode = ScopeReconcilerAdapter<HealthAggregator>;
+pub type HealthAggregatorRuntime = ScopeReconcilerAdapter<HealthAggregator>;
 
 fn parse_component_name(input: &JsonValue) -> Result<&str, AutomatonLogicError> {
     let component = input.get("component").ok_or_else(|| {
@@ -529,7 +529,9 @@ fn parse_component_name(input: &JsonValue) -> Result<&str, AutomatonLogicError> 
         )
     })?;
     let component = component.as_str().ok_or_else(|| {
-        AutomatonLogicError::InputParsing("health status field 'component' must be a string".to_string())
+        AutomatonLogicError::InputParsing(
+            "health status field 'component' must be a string".to_string(),
+        )
     })?;
     if component.trim().is_empty() {
         return Err(AutomatonLogicError::InputParsing(
@@ -563,8 +565,8 @@ fn parse_health_status_field(
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
-    SourceContract, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

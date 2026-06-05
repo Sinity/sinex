@@ -6,7 +6,7 @@
 use crate::runtime::automaton::{
     AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedAdapter,
 };
-use crate::runtime::{InputProvenanceFilter, AutomatonLogicError, Windowed};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
@@ -187,7 +187,7 @@ impl Windowed for HourlySummarizer {
         let due = now >= end;
         if due {
             debug!(
-                node = "hourly-summarizer",
+                module = "hourly-summarizer",
                 hour_start = %hour_start,
                 hour_end = %end,
                 now = %now,
@@ -259,15 +259,15 @@ impl Windowed for HourlySummarizer {
 }
 
 /// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type HourlySummarizerNode = WindowedAdapter<HourlySummarizer>;
+pub type HourlySummarizerRuntime = WindowedAdapter<HourlySummarizer>;
 
 // --- Source descriptor (issue #690 / #734) ---
 
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceRuntimeBinding,
-    SourceContract, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

@@ -5,8 +5,8 @@
 //! phases.
 
 use super::{
-    Checkpoint, RuntimeModule, RuntimeResult, RuntimeRunner, ScanArgs, SinexError, TimeHorizon, debug, info,
-    systemd_notify, warn,
+    Checkpoint, RuntimeModule, RuntimeResult, RuntimeRunner, ScanArgs, SinexError, TimeHorizon,
+    debug, info, systemd_notify, warn,
 };
 
 impl<T: RuntimeModule + 'static> RuntimeRunner<T> {

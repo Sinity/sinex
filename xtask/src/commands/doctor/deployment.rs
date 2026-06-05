@@ -402,12 +402,12 @@ fn current_process_uid() -> Result<u32> {
         .wrap_err_with(|| format!("failed to parse `id -u` output as a UID: {uid}"))
 }
 
-pub(super) async fn check_node_entrypoints(
+pub(super) async fn check_runtime_entrypoints(
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
     let Some(descriptor) = descriptor else {
         return DeploymentReadinessItem::fail(
-            "node-entrypoints",
+            "runtime-entrypoints",
             "Deployment readiness requires a descriptor-declared managed unit set",
         );
     };
@@ -416,11 +416,11 @@ pub(super) async fn check_node_entrypoints(
     if units.is_empty() {
         return match descriptor.mode {
             DeploymentReadinessMode::Prepared => DeploymentReadinessItem::skip(
-                "node-entrypoints",
+                "runtime-entrypoints",
                 "Prepared deployment descriptor does not declare any managed units yet",
             ),
             _ => DeploymentReadinessItem::fail(
-                "node-entrypoints",
+                "runtime-entrypoints",
                 "Deployment descriptor does not declare managed units",
             ),
         };
@@ -434,7 +434,7 @@ pub(super) async fn check_node_entrypoints(
             Ok(service_data) => service_data,
             Err(error) => {
                 return DeploymentReadinessItem::fail(
-                    "node-entrypoints",
+                    "runtime-entrypoints",
                     format!("Could not query systemd for {unit}: {error}"),
                 );
             }
@@ -453,7 +453,7 @@ pub(super) async fn check_node_entrypoints(
 
     if !unavailable.is_empty() {
         return DeploymentReadinessItem::fail(
-            "node-entrypoints",
+            "runtime-entrypoints",
             format!(
                 "Managed Sinex units are missing or not loaded: {}",
                 unavailable.join(", ")
@@ -463,7 +463,7 @@ pub(super) async fn check_node_entrypoints(
 
     if !notify_contract_violations.is_empty() {
         return DeploymentReadinessItem::fail(
-            "node-entrypoints",
+            "runtime-entrypoints",
             format!(
                 "Managed units violate the notify service contract: {}",
                 notify_contract_violations.join(", ")
@@ -472,7 +472,7 @@ pub(super) async fn check_node_entrypoints(
     }
 
     DeploymentReadinessItem::pass(
-        "node-entrypoints",
+        "runtime-entrypoints",
         format!(
             "Managed Sinex units are present in systemd with notify/watchdog contract intact: {}",
             units.join(", ")
@@ -1353,7 +1353,7 @@ pub(super) async fn execute_deployment_readiness(
 
     let mut items = vec![
         descriptor_item,
-        check_node_entrypoints(descriptor.as_ref()).await,
+        check_runtime_entrypoints(descriptor.as_ref()).await,
     ];
 
     match resolve_target_identity(descriptor.as_ref()) {

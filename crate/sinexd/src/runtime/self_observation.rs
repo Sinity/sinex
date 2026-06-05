@@ -37,11 +37,11 @@ use async_nats::Client as NatsClient;
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::env as shared_env;
 use sinex_primitives::events::payloads::{
-    ApiRequestStatsPayload, AssemblyStatsPayload, ConsumerStartupSnapshotPayload,
-    AutomatonLatencySnapshotPayload, EventEngineBatchStatsPayload, GatewayRpcCallPayload,
+    ApiRequestStatsPayload, AssemblyStatsPayload, AutomatonLatencySnapshotPayload,
+    ConsumerStartupSnapshotPayload, EventEngineBatchStatsPayload, GatewayRpcCallPayload,
     HealthStatusPayload, MetricCounterPayload, MetricGaugePayload, MetricHistogramPayload,
-    SourceProcessingStatsPayload, PoolStatsPayload, RateLimitExceededPayload, ReplayStatsPayload,
-    RpcStatus, StreamStatsPayload,
+    PoolStatsPayload, RateLimitExceededPayload, ReplayStatsPayload, RpcStatus,
+    SourceProcessingStatsPayload, StreamStatsPayload,
 };
 use sinex_primitives::events::{Event, Provenance, SourceMaterial};
 use sinex_primitives::{Id, JsonValue, SinexError, Timestamp};
@@ -683,7 +683,7 @@ impl SelfObserver {
         .await
     }
 
-    /// Emit node processing statistics.
+    /// Emit runtime module processing statistics.
     pub async fn emit_source_processing_stats(
         &self,
         module_kind: &str,

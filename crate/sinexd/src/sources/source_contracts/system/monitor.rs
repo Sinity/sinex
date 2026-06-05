@@ -12,7 +12,7 @@ use crate::runtime::{RuntimeResult, stream::RuntimeContext};
 use futures::future::BoxFuture;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceRuntimeBinding, SourceBuildImpact, SourceContract, SubjectRef,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{
     JsonValue, SinexError,
@@ -50,7 +50,7 @@ register_source_runtime_binding! {
         "system",
     )
     .implementation("sinexd")
-    .adapter("MonitorDriverNode")
+    .adapter("MonitorDriver")
     .output_event_type("monitoring.started")
     .privacy_context("Metadata")
     .material_policy("synthetic_oneshot")

@@ -3,18 +3,18 @@
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use sinex_db::DbPoolExt;
-use sinexd::api::handlers::{
-    handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
-    handle_telemetry_current_device_state, handle_telemetry_current_health,
-    handle_telemetry_file_activity, handle_telemetry_gateway_stats,
-    handle_telemetry_event_engine_batch_stats, handle_telemetry_event_engine_validation,
-    handle_telemetry_metric_counters, handle_telemetry_source_stats,
-    handle_telemetry_recent_activity, handle_telemetry_stream_stats, handle_telemetry_system_state,
-    handle_telemetry_window_focus,
-};
 use sinex_primitives::error::ErrorClass;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::telemetry::*;
+use sinexd::api::handlers::{
+    handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
+    handle_telemetry_current_device_state, handle_telemetry_current_health,
+    handle_telemetry_event_engine_batch_stats, handle_telemetry_event_engine_validation,
+    handle_telemetry_file_activity, handle_telemetry_gateway_stats,
+    handle_telemetry_metric_counters, handle_telemetry_recent_activity,
+    handle_telemetry_source_stats, handle_telemetry_stream_stats, handle_telemetry_system_state,
+    handle_telemetry_window_focus,
+};
 use time::format_description::well_known::Rfc3339;
 use xtask::sandbox::prelude::*;
 
@@ -603,8 +603,14 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     assert_eq!(metric_counters.buckets[0].total_value, Some(120));
 
     assert_eq!(event_engine_batch_stats.buckets.len(), 1);
-    assert_eq!(event_engine_batch_stats.buckets[0].avg_batch_size, Some(16.0));
-    assert_eq!(event_engine_batch_stats.buckets[0].max_latency_ms, Some(48.0));
+    assert_eq!(
+        event_engine_batch_stats.buckets[0].avg_batch_size,
+        Some(16.0)
+    );
+    assert_eq!(
+        event_engine_batch_stats.buckets[0].max_latency_ms,
+        Some(48.0)
+    );
     assert_eq!(event_engine_batch_stats.buckets[0].total_failed, Some(1));
     assert_eq!(event_engine_batch_stats.buckets[0].batch_count, 1);
 
@@ -660,7 +666,9 @@ async fn telemetry_handlers_reject_invalid_timestamps(ctx: TestContext) -> TestR
 }
 
 #[sinex_test]
-async fn telemetry_event_engine_validation_returns_latest_snapshot(ctx: TestContext) -> TestResult<()> {
+async fn telemetry_event_engine_validation_returns_latest_snapshot(
+    ctx: TestContext,
+) -> TestResult<()> {
     let now = time::OffsetDateTime::parse("2026-03-28T03:45:00Z", &Rfc3339)?;
     insert_event(
         &ctx,
@@ -686,8 +694,11 @@ async fn telemetry_event_engine_validation_returns_latest_snapshot(ctx: TestCont
     .await?;
 
     let response: TelemetryEventEngineValidationResponse =
-        handle_telemetry_event_engine_validation(ctx.pool(), TelemetryEventEngineValidationRequest {})
-            .await?;
+        handle_telemetry_event_engine_validation(
+            ctx.pool(),
+            TelemetryEventEngineValidationRequest {},
+        )
+        .await?;
     let snapshot = response
         .snapshot
         .expect("expected latest validation snapshot");

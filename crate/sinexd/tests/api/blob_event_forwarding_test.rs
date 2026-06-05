@@ -1,8 +1,8 @@
 use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
+use sinex_primitives::SinexError;
 use sinexd::api::ServiceContainer;
 use sinexd::runtime::content_store::MaterialContentStore;
-use sinex_primitives::SinexError;
 use tempfile::TempDir;
 use which::which;
 use xtask::sandbox::timing::WaitHelpers;

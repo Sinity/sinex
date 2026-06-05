@@ -15,11 +15,11 @@ use super::traits::{Automaton, AutomatonAdapterConfig};
 
 use crate::runtime::checkpoint::CheckpointManager;
 use crate::runtime::processing::PersistedState;
-use crate::runtime::stream::{
-    Checkpoint, EventEmitter, RuntimeCapabilities, RuntimeInitContext, RuntimeContext, ModuleKind,
-    ProcessingStats, RuntimeDrainController, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
-};
 use crate::runtime::shutdown::ShutdownConfig;
+use crate::runtime::stream::{
+    Checkpoint, EventEmitter, ModuleKind, ProcessingStats, RuntimeCapabilities, RuntimeContext,
+    RuntimeDrainController, RuntimeInitContext, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
+};
 use crate::runtime::{RuntimeResult, SinexError};
 use sinex_primitives::env as shared_env;
 
@@ -632,7 +632,10 @@ where
                     "runtime_initialized".to_string(),
                     serde_json::json!(runtime_initialized),
                 ),
-                ("automaton_model".to_string(), serde_json::json!(automaton_model)),
+                (
+                    "automaton_model".to_string(),
+                    serde_json::json!(automaton_model),
+                ),
                 (
                     "total_processed".to_string(),
                     serde_json::json!(total_processed),

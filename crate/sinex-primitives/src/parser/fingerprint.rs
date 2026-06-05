@@ -1368,8 +1368,7 @@ mod tests {
             )]
         );
         assert!(
-            SourceRecordFingerprint::diff(SourceId::from_static("test.unit"), &fp1, &fp1)
-                .is_none()
+            SourceRecordFingerprint::diff(SourceId::from_static("test.unit"), &fp1, &fp1).is_none()
         );
         Ok(())
     }

@@ -15,8 +15,9 @@ use std::error::Error as _;
 
 // Re-export shared types for use by other modules
 pub use sinex_primitives::rpc::runtime::{
-    RuntimeDrainRequest, RuntimeDrainResponse, RuntimeResumeRequest, RuntimeResumeResponse,
-    RuntimeSetHorizonRequest, RuntimeSetHorizonResponse, RuntimeStatus, RuntimeListRequest, RuntimeListResponse,
+    RuntimeDrainRequest, RuntimeDrainResponse, RuntimeListRequest, RuntimeListResponse,
+    RuntimeResumeRequest, RuntimeResumeResponse, RuntimeSetHorizonRequest,
+    RuntimeSetHorizonResponse, RuntimeStatus,
 };
 
 type Result<T> = std::result::Result<T, SinexError>;
@@ -77,7 +78,7 @@ pub async fn handle_runtime_list(
     env: &SinexEnvironment,
     _request: RuntimeListRequest,
 ) -> Result<RuntimeListResponse> {
-    // Query node status from KV store
+    // Query runtime module status from KV store.
     let js = async_nats::jetstream::new(nats_client.clone());
 
     let kv_bucket_name = env.nats_kv_bucket_name("sinex_runtime_state");
@@ -87,23 +88,25 @@ pub async fn handle_runtime_list(
     let kv = match js.get_key_value(&kv_bucket_name).await {
         Ok(kv) => kv,
         Err(error) if is_missing_runtime_state_bucket(&error) => {
-            return Ok(RuntimeListResponse { modules: Vec::new() });
+            return Ok(RuntimeListResponse {
+                modules: Vec::new(),
+            });
         }
         Err(error) => {
-            return Err(SinexError::kv("Failed to open node state bucket")
+            return Err(SinexError::kv("Failed to open runtime module state bucket")
                 .with_context("bucket", kv_bucket_name)
                 .with_source(error));
         }
     };
 
-    // Get all keys in the bucket (each key is a node ID)
+    // Get all keys in the bucket (each key is a module ID).
     let mut modules = Vec::new();
 
     // Watch for all entries (one-time scan)
     let mut entries = kv
         .keys()
         .await
-        .map_err(|e| SinexError::kv("Failed to list node keys").with_source(e))?;
+        .map_err(|e| SinexError::kv("Failed to list module keys").with_source(e))?;
 
     use futures::StreamExt;
     while let Some(key) = entries.next().await {
@@ -114,7 +117,7 @@ pub async fn handle_runtime_list(
             .get(&key)
             .await
             .map_err(|e| {
-                SinexError::kv("Failed to fetch node state")
+                SinexError::kv("Failed to fetch runtime module state")
                     .with_context("runtime_state_key", key.clone())
                     .with_source(e)
             })?

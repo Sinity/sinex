@@ -7,7 +7,7 @@ use camino::Utf8PathBuf;
 use sinex_primitives::{
     Uuid,
     ids::Id,
-    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceId},
+    parser::{MaterialAnchor, ParserContext, SourceId, SourceRecord},
     privacy::ProcessingContext,
     temporal::Timestamp,
 };

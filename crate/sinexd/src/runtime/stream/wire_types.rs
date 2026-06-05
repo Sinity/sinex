@@ -142,7 +142,7 @@ impl Default for ScanArgs {
 
 /// Start context for a continuous ingestion loop.
 ///
-/// The SDK startup runner performs snapshot and bounded gap-fill before it
+/// The runtime startup runner performs snapshot and bounded gap-fill before it
 /// constructs this value. The embedded checkpoint is a live-tail resume cursor,
 /// not permission for a node to widen continuous startup into a historical scan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,7 +164,7 @@ impl ContinuousStart {
 
 // ── RuntimeModule-Dispatch Replay Wire Types ──────────────────────────────────────────
 //
-// These types implement the node-dispatch replay protocol. Instead of the
+// These types implement the source-dispatch replay protocol. Instead of the
 // gateway republishing stored event rows to NATS (reinjection), it dispatches
 // a scan command to the running ingestor node. The node re-reads source material
 // through its normal scan_historical() path and emits fresh events.
@@ -174,7 +174,7 @@ impl ContinuousStart {
 //   node    → NATS reply (SourceScanAck)
 //   node    → NATS publish `sinex.control.replay.progress.<operation_id>` (SourceScanProgress)
 
-/// Command dispatched to a running node to trigger a scan.
+/// Command dispatched to a running module to trigger a scan.
 /// Published to `sinex.control.sources.<name>.scan` via NATS request-reply.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceScanCommand {
@@ -250,7 +250,7 @@ pub struct ScanReport {
     pub warnings: Vec<String>,
 }
 
-/// Re-export from sinex-primitives so SDK consumers see the canonical three-variant enum
+/// Re-export from sinex-primitives so runtime consumers see the canonical three-variant enum
 /// (`Ingestor | Automaton | Service`). The former two-variant local copy dropped `Service`
 /// silently during RPC round-trips — see issue #746 (A5).
 pub use sinex_primitives::domain::ModuleKind;
@@ -283,7 +283,7 @@ pub struct RuntimeCapabilities {
     ///
     /// When true, the generic automaton bridge must not create or advance a
     /// second checkpoint entry for the same runtime, because that would race
-    /// with the node-owned state snapshot and can clobber its payload.
+    /// with the module-owned state snapshot and can clobber its payload.
     pub manages_own_checkpoints: bool,
 }
 

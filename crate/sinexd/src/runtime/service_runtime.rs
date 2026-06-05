@@ -1,7 +1,7 @@
 //! Shared bootstrap utilities for service-level binaries (gateway, event_engine).
 //!
 //! These helpers cover the common startup concerns that aren't specific to
-//! the node lifecycle managed by `RuntimeCliRunner`. Unlike `SourceDriver` or
+//! the runtime module lifecycle managed by `RuntimeCliRunner`. Unlike `SourceDriver` or
 //! `AutomatonRuntime`, this module is intentionally *not* lifecycle-aware —
 //! it provides pure setup functions that each binary calls once at the start
 //! of `main`.
@@ -126,7 +126,7 @@ pub fn spawn_shutdown_task(service_name: &'static str) -> watch::Receiver<bool> 
             Err(error) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "node.shutdown_signal_failures_total",
+                    metric = "runtime.shutdown_signal_failures_total",
                     service = service_name,
                     error = %error,
                     "Failed to listen for shutdown signal"

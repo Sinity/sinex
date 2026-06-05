@@ -1,6 +1,6 @@
-//! Derived node trait family.
+//! Automaton trait family.
 //!
-//! Three explicit processing models replace the monolithic `AutomatonNode`:
+//! Three explicit processing models replace the earlier monolithic automaton runtime:
 //! - [`Transducer`] — 1:1 event transform
 //! - [`Windowed`] — accumulate + emit on window completion
 //! - [`ScopeReconciler`] — scope-keyed reconciliation
@@ -34,7 +34,7 @@ pub struct AutomatonAdapterConfig {
     pub batch_size: usize,
     /// Optional consumer group for NATS.
     pub consumer_group: Option<String>,
-    /// Extra configuration for node-specific use.
+    /// Extra configuration for module-specific use.
     pub extra: HashMap<String, String>,
 }
 
@@ -75,7 +75,7 @@ fn serialize_outputs<T: Serialize>(
     outputs.into_iter().map(serialize_output).collect()
 }
 
-/// Which provenance class a automaton consumes from its input stream.
+/// Which provenance class an automaton consumes from its input stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputProvenanceFilter {
     /// Accept both material and synthesized events.
@@ -171,7 +171,7 @@ pub trait Transducer: Send + Sync + 'static {
 
 /// A windowed aggregator: accumulates events, emits on window completion.
 ///
-/// The SDK calls `accumulate()` for each event, checks `window_complete()`,
+/// The runtime calls `accumulate()` for each event, checks `window_complete()`,
 /// and calls `emit()` when the window is ready. A periodic timer calls
 /// `flush_due()` so trailing (latest) buckets are emitted without waiting
 /// for the next bucket's first event.
@@ -228,7 +228,7 @@ pub trait Windowed: Send + Sync + 'static {
 
     /// Clock-driven window-close predicate for the trailing-bucket flush.
     ///
-    /// The SDK's periodic timer calls this method with the current wall time.
+    /// The runtime's periodic timer calls this method with the current wall time.
     /// Return `true` when the open accumulator has data AND the window boundary
     /// (hour end, day end, etc.) has elapsed, so the trailing bucket can be
     /// emitted without waiting for the next bucket's first event.
@@ -256,7 +256,7 @@ pub trait Windowed: Send + Sync + 'static {
     /// Recompute a window from its full event set after invalidation.
     ///
     /// Called when a scope invalidation signal indicates the window's inputs changed.
-    /// The SDK loads the current working set and passes it here. The implementation
+    /// The runtime loads the current working set and passes it here. The implementation
     /// should accumulate all events and emit the result.
     ///
     /// Default: accumulate all events, then emit if window is complete.
@@ -342,16 +342,18 @@ pub trait ScopeReconciler: Send + Sync + 'static {
         scope_key: &str,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError>> + Send;
+    ) -> impl std::future::Future<
+        Output = Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError>,
+    > + Send;
 
     /// Recompute a scope from its full working set after invalidation.
     ///
     /// Called when a `DerivedScopeInvalidation` signal indicates this scope's
-    /// inputs changed (archive, backfill, replacement). The SDK queries the
+    /// inputs changed (archive, backfill, replacement). The runtime queries the
     /// current persisted events for this scope and passes them here.
     ///
     /// The implementation should produce zero or more outputs that replace the
-    /// previous scope outputs. The SDK handles archiving old outputs via
+    /// previous scope outputs. The runtime handles archiving old outputs via
     /// `scope_key` + `equivalence_key`.
     ///
     /// Default: reconcile each event in the working set, collecting outputs.
@@ -361,8 +363,9 @@ pub trait ScopeReconciler: Send + Sync + 'static {
         scope_key: &str,
         working_set: Vec<Self::Input>,
         context: &AutomatonContext,
-    ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError>> + Send
-    {
+    ) -> impl std::future::Future<
+        Output = Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError>,
+    > + Send {
         async move {
             let mut recomputed_state = Self::State::default();
             let mut outputs = Vec::new();
@@ -436,7 +439,9 @@ pub trait MultiOutputTransducer: Send + Sync + 'static {
         state: &mut Self::State,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError>> + Send;
+    ) -> impl std::future::Future<
+        Output = Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError>,
+    > + Send;
     fn on_initialize(
         &mut self,
         _state: &Self::State,
@@ -474,7 +479,9 @@ pub trait Automaton: Send + Sync + 'static {
         state: &mut Self::State,
         event: sinex_primitives::events::Event<JsonValue>,
         context: &AutomatonContext,
-    ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError>> + Send;
+    ) -> impl std::future::Future<
+        Output = Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError>,
+    > + Send;
 
     /// Process a scope invalidation signal.
     ///
@@ -490,7 +497,9 @@ pub trait Automaton: Send + Sync + 'static {
         scope_key: &str,
         working_set: Vec<sinex_primitives::events::Event<JsonValue>>,
         context: &AutomatonContext,
-    ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError>> + Send;
+    ) -> impl std::future::Future<
+        Output = Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError>,
+    > + Send;
 
     fn on_initialize_derived(
         &mut self,
@@ -513,8 +522,9 @@ pub trait Automaton: Send + Sync + 'static {
         _state: &mut Self::State,
         _now: Timestamp,
         _context: &AutomatonContext,
-    ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError>> + Send
-    {
+    ) -> impl std::future::Future<
+        Output = Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError>,
+    > + Send {
         async { Ok(Vec::new()) }
     }
 }
@@ -558,8 +568,9 @@ impl<N: Transducer> Automaton for TransducerWrapper<N> {
         event: sinex_primitives::events::Event<JsonValue>,
         context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError> {
-        let input: N::Input = serde_json::from_value(event.payload)
-            .map_err(|e| AutomatonLogicError::InputParsing(format!("Failed to parse input: {e}")))?;
+        let input: N::Input = serde_json::from_value(event.payload).map_err(|e| {
+            AutomatonLogicError::InputParsing(format!("Failed to parse input: {e}"))
+        })?;
 
         self.0
             .process(state, input, context)
@@ -578,11 +589,17 @@ impl<N: Transducer> Automaton for TransducerWrapper<N> {
     ) -> Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError> {
         Ok(Vec::new())
     }
-    async fn on_initialize_derived(&mut self, state: &Self::State) -> Result<(), AutomatonLogicError> {
+    async fn on_initialize_derived(
+        &mut self,
+        state: &Self::State,
+    ) -> Result<(), AutomatonLogicError> {
         self.0.on_initialize(state).await
     }
 
-    async fn on_shutdown_derived(&mut self, state: &Self::State) -> Result<(), AutomatonLogicError> {
+    async fn on_shutdown_derived(
+        &mut self,
+        state: &Self::State,
+    ) -> Result<(), AutomatonLogicError> {
         self.0.on_shutdown(state).await
     }
 }
@@ -624,8 +641,9 @@ impl<N: Windowed> Automaton for WindowedWrapper<N> {
         event: sinex_primitives::events::Event<JsonValue>,
         context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError> {
-        let input: N::Input = serde_json::from_value(event.payload)
-            .map_err(|e| AutomatonLogicError::InputParsing(format!("Failed to parse input: {e}")))?;
+        let input: N::Input = serde_json::from_value(event.payload).map_err(|e| {
+            AutomatonLogicError::InputParsing(format!("Failed to parse input: {e}"))
+        })?;
 
         // Accumulate into window
         self.0.accumulate(state, input, context).await?;
@@ -662,7 +680,9 @@ impl<N: Windowed> Automaton for WindowedWrapper<N> {
         match self.0.recompute_window(state, inputs, context).await? {
             Some(output) => {
                 let json_payload = serde_json::to_value(&output.payload).map_err(|e| {
-                    AutomatonLogicError::OutputSerialization(format!("Failed to serialize output: {e}"))
+                    AutomatonLogicError::OutputSerialization(format!(
+                        "Failed to serialize output: {e}"
+                    ))
                 })?;
                 Ok(vec![DerivedOutput {
                     payload: json_payload,
@@ -679,11 +699,17 @@ impl<N: Windowed> Automaton for WindowedWrapper<N> {
             None => Ok(Vec::new()),
         }
     }
-    async fn on_initialize_derived(&mut self, state: &Self::State) -> Result<(), AutomatonLogicError> {
+    async fn on_initialize_derived(
+        &mut self,
+        state: &Self::State,
+    ) -> Result<(), AutomatonLogicError> {
         self.0.on_initialize(state).await
     }
 
-    async fn on_shutdown_derived(&mut self, state: &Self::State) -> Result<(), AutomatonLogicError> {
+    async fn on_shutdown_derived(
+        &mut self,
+        state: &Self::State,
+    ) -> Result<(), AutomatonLogicError> {
         self.0.on_shutdown(state).await
     }
 
@@ -750,8 +776,9 @@ where
         event: sinex_primitives::events::Event<JsonValue>,
         context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError> {
-        let input: N::Input = serde_json::from_value(event.payload)
-            .map_err(|e| AutomatonLogicError::InputParsing(format!("Failed to parse input: {e}")))?;
+        let input: N::Input = serde_json::from_value(event.payload).map_err(|e| {
+            AutomatonLogicError::InputParsing(format!("Failed to parse input: {e}"))
+        })?;
 
         let scope_keys = self.0.scope_keys(&input, context);
 
@@ -794,7 +821,9 @@ where
             .into_iter()
             .map(|output| {
                 let json_payload = serde_json::to_value(&output.payload).map_err(|e| {
-                    AutomatonLogicError::OutputSerialization(format!("Failed to serialize output: {e}"))
+                    AutomatonLogicError::OutputSerialization(format!(
+                        "Failed to serialize output: {e}"
+                    ))
                 })?;
                 Ok(DerivedOutput {
                     payload: json_payload,
@@ -810,11 +839,17 @@ where
             })
             .collect()
     }
-    async fn on_initialize_derived(&mut self, state: &Self::State) -> Result<(), AutomatonLogicError> {
+    async fn on_initialize_derived(
+        &mut self,
+        state: &Self::State,
+    ) -> Result<(), AutomatonLogicError> {
         self.0.on_initialize(state).await
     }
 
-    async fn on_shutdown_derived(&mut self, state: &Self::State) -> Result<(), AutomatonLogicError> {
+    async fn on_shutdown_derived(
+        &mut self,
+        state: &Self::State,
+    ) -> Result<(), AutomatonLogicError> {
         self.0.on_shutdown(state).await
     }
 }
@@ -860,8 +895,9 @@ impl<N: MultiOutputTransducer> Automaton for MultiOutputTransducerWrapper<N> {
         event: sinex_primitives::events::Event<JsonValue>,
         context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError> {
-        let input: N::Input = serde_json::from_value(event.payload)
-            .map_err(|e| AutomatonLogicError::InputParsing(format!("Failed to parse input: {e}")))?;
+        let input: N::Input = serde_json::from_value(event.payload).map_err(|e| {
+            AutomatonLogicError::InputParsing(format!("Failed to parse input: {e}"))
+        })?;
 
         let outputs = self.0.process(state, input, context).await?;
         serialize_outputs(outputs)
@@ -876,11 +912,17 @@ impl<N: MultiOutputTransducer> Automaton for MultiOutputTransducerWrapper<N> {
     ) -> Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError> {
         Ok(Vec::new())
     }
-    async fn on_initialize_derived(&mut self, state: &Self::State) -> Result<(), AutomatonLogicError> {
+    async fn on_initialize_derived(
+        &mut self,
+        state: &Self::State,
+    ) -> Result<(), AutomatonLogicError> {
         self.0.on_initialize(state).await
     }
 
-    async fn on_shutdown_derived(&mut self, state: &Self::State) -> Result<(), AutomatonLogicError> {
+    async fn on_shutdown_derived(
+        &mut self,
+        state: &Self::State,
+    ) -> Result<(), AutomatonLogicError> {
         self.0.on_shutdown(state).await
     }
 }

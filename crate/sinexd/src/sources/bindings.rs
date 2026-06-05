@@ -18,8 +18,8 @@ use std::task::{Context, Poll};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{info, warn};
 
-use crate::sources::source_factory;
 use crate::sources::registry::SourceContractRegistry;
+use crate::sources::source_factory;
 
 /// Process-global mutex guarding bindings that mutate environment variables.
 ///
@@ -50,7 +50,7 @@ use crate::sources::registry::SourceContractRegistry;
 /// `baseline_adapter_config` invoked before the runtime yields). A fully
 /// sound fix threads per-binding env through the factory as data and removes
 /// `std::env::var` from adapters; that is tracked as a follow-up because it
-/// requires extending `MaterialParser::baseline_adapter_config` on the SDK
+/// requires extending `MaterialParser::baseline_adapter_config` on the runtime
 /// trait, which ripples through every source.
 static BINDING_ENV_LOCK: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mutex::new(())));
 
@@ -162,7 +162,7 @@ pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
     Ok(())
 }
 
-/// Drive one binding through the standard SDK lifecycle.
+/// Drive one binding through the standard runtime lifecycle.
 ///
 /// Look up the source factory for the source id, then call it with a
 /// synthesized argv equivalent to the old per-unit `ExecStart`.

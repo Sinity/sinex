@@ -1658,9 +1658,7 @@ pub fn format_snapshot_inspect_result(result: &SnapshotInspectResult) -> String 
     out.push_str(&format!("  Entries: {}\n", result.archive_entries));
     out.push_str(&format!("  Source contracts: {}\n", result.source_count));
     if let Some(state_source_count) = result.state_source_count {
-        out.push_str(&format!(
-            "  State source contracts: {state_source_count}\n"
-        ));
+        out.push_str(&format!("  State source contracts: {state_source_count}\n"));
     }
     if let Some(private_mode_state_present) = result.state_private_mode_state_present {
         out.push_str(&format!(

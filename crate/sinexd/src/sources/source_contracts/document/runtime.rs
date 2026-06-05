@@ -12,12 +12,13 @@ use crate::runtime::{
     EventTransport, RuntimeResult, SinexError,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     source_driver::SourceDriver,
+    stage_as_you_go::StageAsYouGoContext,
+    stage_material_from_file,
     stream::{
         Checkpoint, ContinuousStart, RuntimeCapabilities, RuntimeContext, ScanArgs, ScanReport,
         TimeHorizon,
     },
-    stage_as_you_go::StageAsYouGoContext,
-    stage_material_from_file, tags,
+    tags,
 };
 use camino::{Utf8Path, Utf8PathBuf};
 use mime_guess::MimeGuess;
@@ -167,7 +168,7 @@ enum DocumentInspection {
 }
 
 /// Simplified document node that ingests local files.
-pub struct DocumentNode {
+pub struct DocumentSourceDriver {
     runtime: Option<RuntimeContext>,
     config: DocumentIngestorConfig,
     stage_context: Option<StageAsYouGoContext>,
@@ -180,7 +181,7 @@ struct DocumentExplorationState {
     last_scan: Option<ScanReport>,
 }
 
-impl DocumentNode {
+impl DocumentSourceDriver {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -756,7 +757,7 @@ impl DocumentNode {
     }
 }
 
-impl SourceDriver for DocumentNode {
+impl SourceDriver for DocumentSourceDriver {
     type Config = DocumentIngestorConfig;
     type State = DocumentCheckpoint;
 
@@ -852,7 +853,7 @@ impl SourceDriver for DocumentNode {
     }
 }
 
-impl ExplorationProvider for DocumentNode {
+impl ExplorationProvider for DocumentSourceDriver {
     fn get_source_state(&self) -> RuntimeResult<SourceState> {
         let initialized =
             self.runtime.is_some() && self.stage_context.is_some() && self.acquisition.is_some();
@@ -949,7 +950,7 @@ impl ExplorationProvider for DocumentNode {
     }
 }
 
-impl Clone for DocumentNode {
+impl Clone for DocumentSourceDriver {
     fn clone(&self) -> Self {
         Self {
             runtime: self.runtime.clone(),
@@ -961,7 +962,7 @@ impl Clone for DocumentNode {
     }
 }
 
-impl Default for DocumentNode {
+impl Default for DocumentSourceDriver {
     fn default() -> Self {
         Self::new()
     }
@@ -969,7 +970,7 @@ impl Default for DocumentNode {
 
 #[cfg(test)]
 mod tests {
-    use super::DocumentNode;
+    use super::DocumentSourceDriver;
     use crate::runtime::ExplorationProvider;
     use crate::runtime::stream::Checkpoint;
     use serde_json::json;
@@ -982,7 +983,7 @@ mod tests {
             Timestamp::from_unix_timestamp(1_700_000_000).expect("timestamp should be valid");
         let finished_at =
             Timestamp::from_unix_timestamp(1_700_000_123).expect("timestamp should be valid");
-        let report = DocumentNode::completed_report(
+        let report = DocumentSourceDriver::completed_report(
             started_at,
             finished_at,
             std::time::Duration::from_secs(2),
@@ -1003,7 +1004,7 @@ mod tests {
     #[sinex_test]
     async fn document_source_state_is_unhealthy_before_initialize()
     -> ::xtask::sandbox::TestResult<()> {
-        let node = DocumentNode::new();
+        let node = DocumentSourceDriver::new();
         let state = node.get_source_state()?;
 
         assert!(!state.is_connected);
@@ -1016,7 +1017,7 @@ mod tests {
 
     #[sinex_test]
     async fn document_source_state_surfaces_invalid_config() -> ::xtask::sandbox::TestResult<()> {
-        let node = DocumentNode::new();
+        let node = DocumentSourceDriver::new();
         let state = node.get_source_state()?;
 
         assert_eq!(
@@ -1032,7 +1033,7 @@ mod tests {
     #[sinex_test]
     async fn document_node_reports_empty_ingestion_history_before_scan()
     -> ::xtask::sandbox::TestResult<()> {
-        let node = DocumentNode::new();
+        let node = DocumentSourceDriver::new();
         let history = node.get_ingestion_history(10)?;
 
         assert!(history.is_empty());
@@ -1042,12 +1043,12 @@ mod tests {
     #[sinex_test]
     async fn document_node_reports_last_scan_as_activity_and_history()
     -> ::xtask::sandbox::TestResult<()> {
-        let node = DocumentNode::new();
+        let node = DocumentSourceDriver::new();
         let started_at =
             Timestamp::from_unix_timestamp(1_700_000_000).expect("timestamp should be valid");
         let finished_at =
             Timestamp::from_unix_timestamp(1_700_000_123).expect("timestamp should be valid");
-        let report = DocumentNode::completed_report(
+        let report = DocumentSourceDriver::completed_report(
             started_at,
             finished_at,
             std::time::Duration::from_secs(2),

@@ -274,7 +274,7 @@ where
                         );
                         Err(e.into())
                     }
-                    Settlement::HaltNode { reason } => {
+                    Settlement::HaltModule { reason } => {
                         // Halt requests clean drain so systemd records the
                         // node as cleanly exited rather than restarting it
                         // into a hot loop. The error still propagates so the
@@ -284,18 +284,18 @@ where
                         }
                         error!(
                             target: "sinex_metrics",
-                            metric = "derive.node_halts_total",
+                            metric = "derive.runtime_halts_total",
                             automaton = %self.automaton.name(),
                             error = %e,
                             reason = ?reason,
-                            "Halting node; runtime drain requested"
+                            "Halting module; runtime drain requested"
                         );
                         Err(SinexError::processing(format!(
                             "RuntimeModule halted: {reason:?} — {e}"
                         )))
                     }
                     Settlement::DrainRuntimeUnit { reason } => {
-                        // Same shape as HaltNode — request drain, then return
+                        // Same shape as HaltModule — request drain, then return
                         // the error so the in-flight batch unwinds.
                         if let Some(drain) = self.shutdown_tx.as_ref() {
                             let _ = drain.request_drain_and_warn(self.automaton.name());

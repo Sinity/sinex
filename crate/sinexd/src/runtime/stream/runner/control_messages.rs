@@ -7,7 +7,10 @@
 #[cfg(feature = "messaging")]
 use super::super::control_protocol::RuntimeDrainComplete;
 use super::super::control_protocol::{encode_control_message, ensure_control_payload_fits};
-use super::{RuntimeModule, RuntimeRunner, SourceScanAck, SourceScanProgress, RuntimeDrainController, ServiceInfo};
+use super::{
+    RuntimeDrainController, RuntimeModule, RuntimeRunner, ServiceInfo, SourceScanAck,
+    SourceScanProgress,
+};
 use crate::runtime::{RuntimeResult, SinexError};
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
@@ -35,7 +38,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             Err(error) => {
                 warn!(
                     operation_id = %ack.operation_id,
-                    node = %ack.module_name,
+                    module = %ack.module_name,
                     error = %error,
                     "Failed to encode scan acknowledgement"
                 );
@@ -59,7 +62,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             .map_err(|error| {
                 SinexError::messaging("Failed to publish scan acknowledgement")
                     .with_context("operation_id", ack.operation_id.to_string())
-                    .with_context("node", ack.module_name.clone())
+                    .with_context("module", ack.module_name.clone())
                     .with_context("subject", reply.to_string())
                     .with_std_error(&error)
             })
@@ -80,7 +83,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             Err(error) => {
                 warn!(
                     operation_id = %progress.operation_id,
-                    node = %progress.module_name,
+                    module = %progress.module_name,
                     error = %error,
                     "Failed to encode scan progress update"
                 );
@@ -104,7 +107,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             .map_err(|error| {
                 SinexError::messaging("Failed to publish scan progress update")
                     .with_context("operation_id", progress.operation_id.to_string())
-                    .with_context("node", progress.module_name.clone())
+                    .with_context("module", progress.module_name.clone())
                     .with_context("subject", subject)
                     .with_std_error(&error)
             })
@@ -116,8 +119,9 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         module_name: &str,
         payload: &RuntimeDrainComplete,
     ) -> RuntimeResult<()> {
-        let subject = sinex_primitives::environment::environment()
-            .nats_subject(&format!("sinex.control.sources.{module_name}.drain_complete"));
+        let subject = sinex_primitives::environment::environment().nats_subject(&format!(
+            "sinex.control.sources.{module_name}.drain_complete"
+        ));
         let encoded = serde_json::to_vec(payload).map_err(|error| {
             SinexError::serialization(format!(
                 "Failed to serialize drain_complete payload for node '{module_name}': {error}"
@@ -138,7 +142,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             .await
             .map_err(|error| {
                 SinexError::messaging("Failed to publish drain_complete signal")
-                    .with_context("node", module_name.to_string())
+                    .with_context("module", module_name.to_string())
                     .with_context("subject", subject)
                     .with_std_error(&error)
             })
@@ -152,19 +156,20 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         #[cfg(feature = "db")] pool: Option<PgPool>,
         service_info: &ServiceInfo,
     ) {
-        let command =
-            match serde_json::from_slice::<sinex_primitives::rpc::runtime::RuntimeDrainRequest>(payload)
-            {
-                Ok(command) => command,
-                Err(error) => {
-                    warn!(
-                        module = %module_name,
-                        error = %error,
-                        "Ignoring malformed drain command"
-                    );
-                    return;
-                }
-            };
+        let command = match serde_json::from_slice::<
+            sinex_primitives::rpc::runtime::RuntimeDrainRequest,
+        >(payload)
+        {
+            Ok(command) => command,
+            Err(error) => {
+                warn!(
+                    module = %module_name,
+                    error = %error,
+                    "Ignoring malformed drain command"
+                );
+                return;
+            }
+        };
 
         if command.module_name.as_ref() != module_name {
             warn!(

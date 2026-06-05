@@ -5,22 +5,22 @@ mod processing_replay;
 use super::log_self_observation_failure;
 use super::{AutomatonRuntime, stale_output_ids_or_fail_scope};
 use crate::runtime::automaton::{
-    AutomatonContext, AutomatonAdapterConfig, DerivedOutput, InputProvenanceFilter,
+    AutomatonAdapterConfig, AutomatonContext, DerivedOutput, InputProvenanceFilter,
     ScopeReconcilerWrapper, TransducerWrapper,
 };
 use crate::runtime::exploration::{ExplorationProvider, ExportFormat};
 #[cfg(feature = "messaging")]
 use crate::runtime::health_reporter::{HealthReporter, HealthThresholds};
-use crate::runtime::stream::{
-    Checkpoint, EventEmitter, RuntimeModule, RuntimeHandles, RuntimeContext, ScanArgs, ServiceInfo,
-};
 #[cfg(feature = "messaging")]
 use crate::runtime::self_observation::{SelfObservationError, SelfObserver, SelfObserverConfig};
 use crate::runtime::shutdown::ShutdownConfig;
+use crate::runtime::stream::{
+    Checkpoint, EventEmitter, RuntimeContext, RuntimeHandles, RuntimeModule, ScanArgs, ServiceInfo,
+};
+use crate::runtime::{AutomatonLogicError, ScopeReconciler, Transducer};
 use crate::runtime::{
     CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError,
 };
-use crate::runtime::{AutomatonLogicError, ScopeReconciler, Transducer};
 use camino::Utf8PathBuf;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
@@ -139,7 +139,9 @@ impl Transducer for RetryAutomaton {
         _context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         self.seen.fetch_add(1, Ordering::SeqCst);
-        Err(AutomatonLogicError::Processing("retry requested".to_string()))
+        Err(AutomatonLogicError::Processing(
+            "retry requested".to_string(),
+        ))
     }
 }
 
@@ -365,7 +367,9 @@ impl Transducer for DlqRetryAutomaton {
         _input: Self::Input,
         _context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
-        Err(AutomatonLogicError::InputParsing("route me to dlq".to_string()))
+        Err(AutomatonLogicError::InputParsing(
+            "route me to dlq".to_string(),
+        ))
     }
 }
 
@@ -494,7 +498,7 @@ async fn make_runtime_state_with_validator(
         format!("test-consumer-{}", Uuid::now_v7().simple()),
     ));
     let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(32);
-    let validator = Arc::new(crate::runtime::schema_validator::NodeSchemaValidator::new());
+    let validator = Arc::new(crate::runtime::schema_validator::RuntimeSchemaValidator::new());
     let schema_id = Uuid::now_v7();
     validator.register_test_schema(
         schema_id,
@@ -545,17 +549,13 @@ async fn make_runtime_state_with_validator(
 
 #[sinex_test]
 async fn request_runtime_drain_delivers_to_receiver() -> TestResult<()> {
-    crate::runtime::stream::test_support::assert_request_drain_delivers_to_receiver(
-        "test-derived",
-    )
-    .await
+    crate::runtime::stream::test_support::assert_request_drain_delivers_to_receiver("test-derived")
+        .await
 }
 
 #[sinex_test]
 async fn request_runtime_drain_is_idempotent() -> TestResult<()> {
-    crate::runtime::stream::test_support::assert_request_drain_is_idempotent(
-        "test-derived",
-    );
+    crate::runtime::stream::test_support::assert_request_drain_is_idempotent("test-derived");
     Ok(())
 }
 

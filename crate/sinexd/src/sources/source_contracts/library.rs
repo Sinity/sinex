@@ -42,12 +42,12 @@ use sinex_primitives::{
     domain::{EventSource, EventType},
     parser::{
         InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
-        ParserManifest, SourceRecord, SourceId, TimingEvidence,
+        ParserManifest, SourceId, SourceRecord, TimingEvidence,
     },
     privacy::ProcessingContext,
     proof::{
         CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-        SourceRuntimeBinding, SourceBuildImpact, SourceContract, SubjectRef,
+        SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
     },
     temporal::Timestamp,
 };
@@ -382,7 +382,7 @@ mod tests {
     use super::*;
 
     use sinex_primitives::ids::Id;
-    use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceRecord, SourceId};
+    use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceId, SourceRecord};
     use sinex_primitives::temporal::Timestamp;
     use std::io::Write;
     use tempfile::TempDir;

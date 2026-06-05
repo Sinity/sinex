@@ -5,7 +5,7 @@ use super::*;
 use crate::runtime::automaton::invalidation::INVALIDATION_SUBJECT;
 use crate::runtime::stream::ScanReport;
 use crate::runtime::stream::{
-    Checkpoint, SourceScanAck, SourceScanCommand, SourceScanProgress, ResolvedReplayMaterial,
+    Checkpoint, ResolvedReplayMaterial, SourceScanAck, SourceScanCommand, SourceScanProgress,
 };
 use async_nats::Client;
 use futures::StreamExt;

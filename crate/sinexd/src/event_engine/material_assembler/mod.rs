@@ -1,7 +1,7 @@
 //! Material Assembler for consuming material slices from NATS `JetStream`.
 //!
 //! The assembler is responsible for rebuilding source material streams from
-//! begin/slice/end messages, persisting the assembled material into the SDK content store,
+//! begin/slice/end messages, persisting the assembled material into the runtime content store,
 //! registering blobs in Postgres, updating the source material registry and
 //! temporal ledger, and routing failures to the DLQ. State is persisted on disk
 //! so that in-flight assemblies can survive process restarts.
@@ -569,7 +569,10 @@ impl MaterialAssembler {
     }
 
     /// Build a placeholder assembler state for materials whose slices arrive before the begin message.
-    async fn create_placeholder_state(&self, material_id: Uuid) -> EventEngineResult<AssemblerState> {
+    async fn create_placeholder_state(
+        &self,
+        material_id: Uuid,
+    ) -> EventEngineResult<AssemblerState> {
         // Check disk space before creating new assembly
         if !self.disk_monitor.check_available() {
             self.stats.inc_disk_backpressure();
@@ -663,7 +666,7 @@ impl MaterialAssembler {
         io::cleanup_state(self, material_id).await;
     }
 
-    /// Import the assembled material into the SDK content store.
+    /// Import the assembled material into the runtime content store.
     async fn import_into_content_store(
         &self,
         state: &FinalizationState,

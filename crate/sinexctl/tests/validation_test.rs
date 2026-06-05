@@ -1158,10 +1158,7 @@ async fn mcp_current_device_state_call_uses_gateway_fixture() -> TestResult<()> 
 
     assert_eq!(response["tool"], "sinex.current_device_state");
     assert_eq!(response["query"]["limit"], 4);
-    assert_eq!(
-        response["items"]["entries"][0]["unit_name"],
-        "sinexd"
-    );
+    assert_eq!(response["items"]["entries"][0]["unit_name"], "sinexd");
     assert_eq!(response["items"]["entries"][0]["state"], "active");
     assert_eq!(response["redaction"]["raw_samples"], false);
     Ok(())

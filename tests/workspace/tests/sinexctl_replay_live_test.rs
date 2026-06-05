@@ -195,7 +195,10 @@ async fn sinexctl_replay_plan_creates_operation(ctx: TestContext) -> color_eyre:
 
     let operation = parse_json_stdout(&output, "replay plan");
     assert_eq!(operation["state"].as_str(), Some("Planning"));
-    assert_eq!(operation["scope"]["module_name"].as_str(), Some("test-node"));
+    assert_eq!(
+        operation["scope"]["module_name"].as_str(),
+        Some("test-node")
+    );
     assert!(
         operation["operation_id"].as_str().is_some(),
         "plan output should contain operation_id: {operation}"

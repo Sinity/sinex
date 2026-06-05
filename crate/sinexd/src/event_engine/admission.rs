@@ -5,8 +5,8 @@
 //! ACK/NAK/DLQ and confirmation publishing, while finite staged parsers can call
 //! this service directly before they have a transport shape of their own.
 
-use crate::event_engine::{EventEngineResult, SinexError};
 use crate::event_engine::validator::{IngestEventValidator, ValidationResult};
+use crate::event_engine::{EventEngineResult, SinexError};
 use sinex_db::DbPool;
 use sinex_db::repositories::{DbPoolExt, StreamBatchRow};
 use sinex_primitives::constants::limits::MAX_EVENT_PAYLOAD_BYTES;

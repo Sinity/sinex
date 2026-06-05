@@ -9,8 +9,8 @@ use crate::sandbox::context::Sandbox;
 use crate::sandbox::coordination::PipelineNamespace;
 use crate::sandbox::nats::acquire_pipeline_permit;
 use crate::sandbox::orchestrator::{
-    TestGatewayConfig, TestGatewayHandle, TestEventEngineConfig, TestEventEngineHandle, start_test_gateway,
-    start_test_event_engine_with_config,
+    TestEventEngineConfig, TestEventEngineHandle, TestGatewayConfig, TestGatewayHandle,
+    start_test_event_engine_with_config, start_test_gateway,
 };
 use crate::sandbox::prelude::*;
 use sinex_primitives::events::{OffsetKind, Publishable, SourceMaterial};
@@ -110,7 +110,8 @@ impl<'ctx> TestCoreStack<'ctx> {
             database_pool_size: 10,
             reject_initial_replay: false,
         };
-        let event_engine = start_test_event_engine_with_config(event_engine_config, Some(ctx)).await?;
+        let event_engine =
+            start_test_event_engine_with_config(event_engine_config, Some(ctx)).await?;
 
         // ── Step 3: Start gateway ──────────────────────────────────────
         let gateway_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();

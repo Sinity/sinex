@@ -18,8 +18,8 @@ pub use crate::runtime::exploration::SourceState;
 pub use crate::runtime::stream::{ContinuousStart, RuntimeContext};
 #[cfg(feature = "messaging")]
 pub use crate::runtime::{
-    ActivityEntry, IngestionHistoryEntry, RuntimeCapabilities, ModuleKind, RunnerLifecycle, ScanArgs,
-    ScanEstimate, ScanReport,
+    ActivityEntry, IngestionHistoryEntry, ModuleKind, RunnerLifecycle, RuntimeCapabilities,
+    ScanArgs, ScanEstimate, ScanReport,
 };
 #[cfg(feature = "messaging")]
 pub use crate::runtime::{Checkpoint, CheckpointManager, CheckpointState};

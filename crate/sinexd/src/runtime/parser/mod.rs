@@ -27,7 +27,7 @@ mod fixture;
 mod weechat;
 
 #[cfg(feature = "messaging")]
-pub use adapter_source::{AdapterBackedSource, AdapterSourceConfig, AdapterModuleState};
+pub use adapter_source::{AdapterBackedSource, AdapterModuleState, AdapterSourceConfig};
 
 pub use adapters::{
     // Adapter JSON Schema export (#1238).

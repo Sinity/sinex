@@ -1021,11 +1021,7 @@ pub struct DriftCommand {
 
 impl DriftCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let source_id = self
-            .source_id
-            .as_deref()
-            .map(SourceId::new)
-            .transpose()?;
+        let source_id = self.source_id.as_deref().map(SourceId::new).transpose()?;
         let req = SourcesDriftListRequest {
             source_id,
             limit: Some(self.limit),

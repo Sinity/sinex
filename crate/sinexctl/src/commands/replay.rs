@@ -164,7 +164,7 @@ pub enum ReplayCommands {
         #[arg(long, value_enum)]
         state: Option<ReplayStateFilter>,
 
-        /// Filter by node ID
+        /// Filter by source module ID
         #[arg(long)]
         node: Option<String>,
 
@@ -589,7 +589,10 @@ fn format_replay_plan_table(operation: &ReplayOperation) -> String {
     output.push_str("Replay Plan Created:\n");
     output.push_str(&format!("  Operation ID: {}\n", operation.operation_id));
     output.push_str(&format!("  State:        {:?}\n", operation.state));
-    output.push_str(&format!("  Source:         {}\n", operation.scope.source_name));
+    output.push_str(&format!(
+        "  Source:         {}\n",
+        operation.scope.source_name
+    ));
     if let Some(ref window) = operation.scope.time_window {
         output.push_str(&format!("  Time Window:  {} to {}\n", window.0, window.1));
     }
@@ -616,7 +619,10 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
     output.push_str("Replay Preview:\n");
     output.push_str(&format!("  Operation ID: {}\n", operation.operation_id));
     output.push_str(&format!("  State:        {:?}\n", operation.state));
-    output.push_str(&format!("  Source:         {}\n", operation.scope.source_name));
+    output.push_str(&format!(
+        "  Source:         {}\n",
+        operation.scope.source_name
+    ));
 
     if let Some(total) = preview
         .get("total_events")
@@ -805,7 +811,10 @@ fn format_replay_status_table(operation: &ReplayOperation) -> String {
     output.push_str("Replay Operation:\n");
     output.push_str(&format!("  Operation ID: {}\n", operation.operation_id));
     output.push_str(&format!("  State:        {:?}\n", operation.state));
-    output.push_str(&format!("  Source:         {}\n", operation.scope.source_name));
+    output.push_str(&format!(
+        "  Source:         {}\n",
+        operation.scope.source_name
+    ));
     output.push_str(&format!("  Actor:        {}\n", operation.actor));
     output.push_str(&format!(
         "  Progress:     {}/{}\n",
@@ -856,7 +865,7 @@ fn format_replay_list_table(operations: &[ReplayOperation]) -> String {
 /// referenced by the replay scope.
 ///
 /// Returns an empty vec when:
-///   - the scope has no material filter (replay covers a node-wide window),
+///   - the scope has no material filter (replay covers a module-wide window),
 ///   - the filter resolves to a single material (the aggregate scorecard
 ///     already represents the same content; per-row breakdown is noise),
 ///   - or `sources.show` cannot resolve a UUID — that material's row is

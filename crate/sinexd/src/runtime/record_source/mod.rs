@@ -826,7 +826,10 @@ pub trait RecordMaterialSink: Clone + Send + Sync + 'static {
 
     fn flush<'a>(&'a self, reason: &'a str) -> impl Future<Output = RuntimeResult<()>> + Send + 'a;
 
-    fn finalize<'a>(&'a self, reason: &'a str) -> impl Future<Output = RuntimeResult<()>> + Send + 'a;
+    fn finalize<'a>(
+        &'a self,
+        reason: &'a str,
+    ) -> impl Future<Output = RuntimeResult<()>> + Send + 'a;
 }
 
 #[derive(Clone)]
@@ -901,10 +904,10 @@ pub struct RecordMaterializer<Sink> {
     anchor_collector: Option<Arc<Mutex<Vec<SourceRecordAnchor>>>>,
 }
 
-/// Default materializer for node-owned record streams.
+/// Default materializer for module-owned record streams.
 pub type BufferedRecordMaterializer = RecordMaterializer<BufferedRecordSink>;
 
-/// Default harness for checkpointed record sources backed by SDK buffering.
+/// Default harness for checkpointed record sources backed by runtime buffering.
 pub type BufferedRecordSourceHarness<Source> = RecordSourceHarness<Source, BufferedRecordSink>;
 
 impl<Sink> RecordMaterializer<Sink>

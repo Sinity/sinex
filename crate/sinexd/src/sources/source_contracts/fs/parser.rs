@@ -16,8 +16,8 @@ use sinex_primitives::{
         },
     },
     parser::{
-        InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
-        SourceId, TimingEvidence,
+        InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceId,
+        SourceRecord, TimingEvidence,
     },
     privacy::ProcessingContext,
     temporal::Timestamp,

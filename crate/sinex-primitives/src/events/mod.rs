@@ -72,7 +72,7 @@ pub struct Event<T = JsonValue> {
     #[serde(default = "get_hostname_default")]
     pub host: HostName,
 
-    /// UUID of the node run (session) that created this event.
+    /// UUID of the runtime module run that created this event.
     /// References `core.runs.id`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub module_run_id: Option<Uuid>,
@@ -98,7 +98,7 @@ pub struct Event<T = JsonValue> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temporal_policy: Option<SyntheticTemporalPolicy>,
 
-    /// Version of the node logic that produced this event (for deterministic replay)
+    /// Version of the module logic that produced this event (for deterministic replay)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub semantics_version: Option<String>,
 
@@ -147,7 +147,7 @@ impl<T> Event<T> {
         self
     }
 
-    /// Set the node run ID (references `core.runs`)
+    /// Set the runtime module run ID (references `core.runs`)
     pub fn with_module_run_id(mut self, run_id: Uuid) -> Self {
         self.module_run_id = Some(run_id);
         self

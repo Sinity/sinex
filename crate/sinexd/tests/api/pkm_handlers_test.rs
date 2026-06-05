@@ -2,17 +2,17 @@ use base64::Engine;
 use sinex_db::DbPoolExt;
 use sinex_db::pkm::PkmService;
 use sinex_db::repositories::knowledge_graph::CreateEntity;
-use sinexd::api::{
-    auth::Role,
-    handlers::{handle_create_entities, handle_create_note, handle_link_entities},
-    rpc_server::RpcAuthContext,
-};
 use sinex_primitives::domain::{EntityTypeName, RelationType};
 use sinex_primitives::error::ErrorClass;
 use sinex_primitives::rpc::pkm::{
     CreateEntitiesRequest, CreateNoteRequest, EntityDefinition, LinkEntitiesRequest,
 };
 use sinex_primitives::{Uuid, events::DynamicPayload, temporal};
+use sinexd::api::{
+    auth::Role,
+    handlers::{handle_create_entities, handle_create_note, handle_link_entities},
+    rpc_server::RpcAuthContext,
+};
 use xtask::sandbox::prelude::*;
 
 fn write_auth() -> RpcAuthContext {

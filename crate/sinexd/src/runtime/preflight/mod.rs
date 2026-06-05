@@ -24,7 +24,10 @@ pub(crate) const PREFLIGHT_IDLE_IN_TRANSACTION_TIMEOUT: &str = "5s";
 pub(crate) const PREFLIGHT_MAX_PARALLEL_WORKERS_PER_GATHER: &str = "0";
 
 /// Run an external command with a timeout to prevent indefinite hangs during preflight.
-pub(crate) async fn run_command_with_timeout(program: &str, args: &[&str]) -> RuntimeResult<Output> {
+pub(crate) async fn run_command_with_timeout(
+    program: &str,
+    args: &[&str],
+) -> RuntimeResult<Output> {
     let fut = tokio::process::Command::new(program).args(args).output();
 
     match tokio::time::timeout(timeouts::PREFLIGHT_COMMAND_TIMEOUT, fut).await {
@@ -112,7 +115,8 @@ pub enum VerificationStatus {
     Fail,
 }
 
-pub(crate) fn deployment_descriptor_result() -> RuntimeResult<Option<DeploymentReadinessDescriptor>> {
+pub(crate) fn deployment_descriptor_result() -> RuntimeResult<Option<DeploymentReadinessDescriptor>>
+{
     DeploymentReadinessDescriptor::load()
 }
 

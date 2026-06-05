@@ -55,8 +55,8 @@ use output::{HistorySnapshot, JobsSnapshot};
 use services::runtime_query_error_message;
 #[cfg(test)]
 use services::{
-    active_job_for_service, gateway_service_status_from_readiness,
-    event_engine_service_status_from_runtime_metrics, recover_runtime_metrics_thread,
+    active_job_for_service, event_engine_service_status_from_runtime_metrics,
+    gateway_service_status_from_readiness, recover_runtime_metrics_thread,
 };
 #[cfg(test)]
 use services::{

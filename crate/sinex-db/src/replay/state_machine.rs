@@ -384,10 +384,14 @@ impl ReplayStateMachine {
         let repo = self.repo();
         let mut tx = repo.begin_context("create_operation").await?;
 
-        repo.acquire_creation_guard(&mut tx, &scope.source_name).await?;
+        repo.acquire_creation_guard(&mut tx, &scope.source_name)
+            .await?;
 
         // Idempotency guard: reject if an active operation exists for this source.
-        if let Some(existing_id) = repo.check_active_operation(&mut tx, &scope.source_name).await? {
+        if let Some(existing_id) = repo
+            .check_active_operation(&mut tx, &scope.source_name)
+            .await?
+        {
             return Err(SinexError::invalid_state(
                 "A replay operation for this source is already active",
             )
@@ -828,7 +832,11 @@ impl ReplayStateMachine {
     }
 
     /// Atomically transition an approved operation into execution while recording the executor.
-    pub async fn begin_execution(&self, operation_id: Uuid, executor_node: ModuleName) -> Result<()> {
+    pub async fn begin_execution(
+        &self,
+        operation_id: Uuid,
+        executor_node: ModuleName,
+    ) -> Result<()> {
         let repo = self.repo();
         let now = temporal::now();
         let mut tx = repo.begin_context("begin_execution").await?;

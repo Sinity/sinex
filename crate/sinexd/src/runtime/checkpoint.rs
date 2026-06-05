@@ -399,7 +399,7 @@ impl CheckpointManager {
         let key = self.kv_key();
         if let Some(state) = self.load_checkpoint_for_key(&key).await? {
             debug!(
-                node = %self.module_name,
+                module = %self.module_name,
                 consumer_group = %self.consumer_group,
                 consumer_name = %self.consumer_name,
                 "Loaded checkpoint from KV"
@@ -419,7 +419,7 @@ impl CheckpointManager {
 
                 if age_hours > max_age_hours as i64 {
                     warn!(
-                        node = %self.module_name,
+                        module = %self.module_name,
                         checkpoint_age_hours = age_hours,
                         max_age_hours = max_age_hours,
                         "checkpoint is stale — node may replay already-processed events"
@@ -432,14 +432,14 @@ impl CheckpointManager {
 
         if self.warn_on_missing_checkpoint {
             warn!(
-                node = %self.module_name,
+                module = %self.module_name,
                 consumer_group = %self.consumer_group,
                 consumer_name = %self.consumer_name,
                 "No existing checkpoint found; automaton will replay all historical events"
             );
         } else {
             info!(
-                node = %self.module_name,
+                module = %self.module_name,
                 consumer_group = %self.consumer_group,
                 consumer_name = %self.consumer_name,
                 "No existing checkpoint found, starting fresh"
@@ -462,7 +462,7 @@ impl CheckpointManager {
         if entry.value.is_empty() {
             return Err(SinexError::checkpoint("Checkpoint KV entry is empty")
                 .with_context("key", key.to_string())
-                .with_context("node", self.module_name.clone())
+                .with_context("module", self.module_name.clone())
                 .with_context("consumer_group", self.consumer_group.clone())
                 .with_context("consumer_name", self.consumer_name.clone()));
         }
@@ -475,7 +475,7 @@ impl CheckpointManager {
     fn decode_checkpoint_state(&self, key: &str, value: &[u8]) -> RuntimeResult<CheckpointState> {
         serde_json::from_slice::<CheckpointState>(value).map_err(|error| {
             SinexError::serialization("Failed to decode checkpoint from KV")
-                .with_context("node", self.module_name.clone())
+                .with_context("module", self.module_name.clone())
                 .with_context("consumer_group", self.consumer_group.clone())
                 .with_context("consumer_name", self.consumer_name.clone())
                 .with_context("key", key.to_string())
@@ -521,8 +521,8 @@ impl CheckpointManager {
                     if existing_entry.is_none() {
                         warn!(
                             target: "sinex_metrics",
-                            metric = "node.checkpoint_kv_recovery_total",
-                            node = %self.module_name,
+                            metric = "runtime.checkpoint_kv_recovery_total",
+                            module = %self.module_name,
                             consumer_group = %self.consumer_group,
                             consumer_name = %self.consumer_name,
                             stale_revision = state.revision,
@@ -562,8 +562,8 @@ impl CheckpointManager {
                         if checkpoint_states_match(&existing_state, state) {
                             warn!(
                                 target: "sinex_metrics",
-                                metric = "node.checkpoint_idempotent_save_total",
-                                node = %self.module_name,
+                                metric = "runtime.checkpoint_idempotent_save_total",
+                                module = %self.module_name,
                                 consumer_group = %self.consumer_group,
                                 consumer_name = %self.consumer_name,
                                 revision = existing_entry.revision,
@@ -587,7 +587,7 @@ impl CheckpointManager {
         };
 
         debug!(
-            node = %self.module_name,
+            module = %self.module_name,
             consumer_group = %self.consumer_group,
             consumer_name = %self.consumer_name,
             processed_count = processed_count,
@@ -652,7 +652,7 @@ impl CheckpointManager {
             .map_err(|e| SinexError::checkpoint("Failed to purge checkpoint").with_source(e))?;
 
         info!(
-            node = %self.module_name,
+            module = %self.module_name,
             consumer_group = %self.consumer_group,
             consumer_name = %self.consumer_name,
             "Checkpoint reset"
@@ -692,7 +692,7 @@ pub(crate) fn decode_checkpoint_data<T: DeserializeOwned>(
 ) -> RuntimeResult<T> {
     serde_json::from_value::<T>(data).map_err(|error| {
         SinexError::serialization(format!("Failed to decode {state_label}"))
-            .with_context("node", module_name.to_string())
+            .with_context("module", module_name.to_string())
             .with_std_error(&error)
     })
 }

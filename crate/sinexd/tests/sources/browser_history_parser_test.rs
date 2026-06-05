@@ -7,7 +7,7 @@ use camino::Utf8PathBuf;
 use sinex_primitives::{
     Uuid,
     ids::Id,
-    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceId},
+    parser::{MaterialAnchor, ParserContext, SourceId, SourceRecord},
     rpc::sources::{CaveatSeverity, caveat_codes},
     temporal::Timestamp,
 };
@@ -117,12 +117,9 @@ async fn qutebrowser_required_schema_removal_blocks_readiness() {
 
     let before = SourceRecordFingerprint::from_sqlite_connection(&before).unwrap();
     let after = SourceRecordFingerprint::from_sqlite_connection(&after).unwrap();
-    let mut drift = SourceRecordFingerprint::diff(
-        SourceId::from_static("browser.history"),
-        &before,
-        &after,
-    )
-    .expect("removing atime should produce SQLite schema drift");
+    let mut drift =
+        SourceRecordFingerprint::diff(SourceId::from_static("browser.history"), &before, &after)
+            .expect("removing atime should produce SQLite schema drift");
     drift.required_input_keys = BrowserHistoryParser.required_input_keys();
 
     let caveats = drift.readiness_caveats();

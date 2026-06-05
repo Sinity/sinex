@@ -174,7 +174,8 @@ impl ServiceStatus {
 }
 
 /// Verify service dependencies and readiness
-pub async fn verify_service_dependencies() -> RuntimeResult<(VerificationStatus, Value, Vec<String>)> {
+pub async fn verify_service_dependencies() -> RuntimeResult<(VerificationStatus, Value, Vec<String>)>
+{
     let mut messages = Vec::new();
     let mut details = HashMap::new();
     let mut has_warnings = false;

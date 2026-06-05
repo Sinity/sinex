@@ -392,7 +392,10 @@ mod tests {
             query_error: None,
         };
 
-        assert_eq!(metrics.summary_fragment(), "event_engine:ok lag:7 batch:125ms");
+        assert_eq!(
+            metrics.summary_fragment(),
+            "event_engine:ok lag:7 batch:125ms"
+        );
         Ok(())
     }
 
@@ -540,7 +543,10 @@ mod tests {
             interpret_event_engine_status(Some("inactive"), Some(1)),
             EventEngineStatus::Down
         );
-        assert_eq!(interpret_event_engine_status(None, Some(1)), EventEngineStatus::Down);
+        assert_eq!(
+            interpret_event_engine_status(None, Some(1)),
+            EventEngineStatus::Down
+        );
         Ok(())
     }
 }

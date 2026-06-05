@@ -79,8 +79,8 @@ enum Tab {
     Dashboard,
     #[value(alias = "ops")]
     Operations,
-    #[value(alias = "node")]
-    Nodes,
+    #[value(alias = "module")]
+    Modules,
     #[value(alias = "source")]
     Sources,
     #[value(alias = "event")]
@@ -156,8 +156,8 @@ impl App {
     fn next_tab(&mut self) {
         let next = match self.current_tab {
             Tab::Dashboard => Tab::Operations,
-            Tab::Operations => Tab::Nodes,
-            Tab::Nodes => Tab::Sources,
+            Tab::Operations => Tab::Modules,
+            Tab::Modules => Tab::Sources,
             Tab::Sources => Tab::Events,
             Tab::Events => Tab::Dlq,
             Tab::Dlq => Tab::Dashboard,
@@ -169,8 +169,8 @@ impl App {
         let previous = match self.current_tab {
             Tab::Dashboard => Tab::Dlq,
             Tab::Operations => Tab::Dashboard,
-            Tab::Nodes => Tab::Operations,
-            Tab::Sources => Tab::Nodes,
+            Tab::Modules => Tab::Operations,
+            Tab::Sources => Tab::Modules,
             Tab::Events => Tab::Sources,
             Tab::Dlq => Tab::Events,
         };
@@ -209,7 +209,7 @@ impl App {
         match self.current_tab {
             Tab::Dashboard => 0,
             Tab::Operations => operations_room_cards(self).len(),
-            Tab::Nodes => self.modules.len(),
+            Tab::Modules => self.modules.len(),
             Tab::Sources => self.source_readiness.len(),
             Tab::Events => self.recent_events.len(),
             Tab::Dlq => 0, // DLQ shows stats, not a navigable list
@@ -508,7 +508,7 @@ where
                 }
                 KeyCode::Char('1') => app.switch_tab(Tab::Dashboard),
                 KeyCode::Char('2') => app.switch_tab(Tab::Operations),
-                KeyCode::Char('3') => app.switch_tab(Tab::Nodes),
+                KeyCode::Char('3') => app.switch_tab(Tab::Modules),
                 KeyCode::Char('4') => app.switch_tab(Tab::Sources),
                 KeyCode::Char('5') => app.switch_tab(Tab::Events),
                 KeyCode::Char('6') => app.switch_tab(Tab::Dlq),
@@ -578,7 +578,7 @@ fn ui(f: &mut Frame, app: &App) {
     match app.current_tab {
         Tab::Dashboard => render_dashboard(f, chunks[1], app),
         Tab::Operations => render_operations(f, chunks[1], app),
-        Tab::Nodes => render_nodes(f, chunks[1], app),
+        Tab::Modules => render_modules(f, chunks[1], app),
         Tab::Sources => render_sources(f, chunks[1], app),
         Tab::Events => render_events(f, chunks[1], app),
         Tab::Dlq => render_dlq(f, chunks[1], app),
@@ -596,7 +596,7 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
     let tabs = [
         ("1:Dashboard", Tab::Dashboard),
         ("2:Ops", Tab::Operations),
-        ("3:Nodes", Tab::Nodes),
+        ("3:Modules", Tab::Modules),
         ("4:Sources", Tab::Sources),
         ("5:Events", Tab::Events),
         ("6:DLQ", Tab::Dlq),
@@ -669,8 +669,8 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .split(area);
 
     // Left: System overview
-    // Consider node healthy if it has a heartbeat (we'll derive active status from heartbeat age later)
-    let healthy_nodes = app
+    // Consider a module healthy if it has a recent heartbeat.
+    let healthy_modules = app
         .modules
         .iter()
         .filter(|n| {
@@ -678,14 +678,16 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
                 .is_some_and(|hb| (Timestamp::now() - hb).whole_seconds() < 60)
         })
         .count();
-    let total_nodes = app.modules.len();
+    let total_modules = app.modules.len();
     let dlq_total = app.dlq_stats.as_ref().map_or(0, |s| s.total_messages);
     let events_count = app.recent_events.len();
 
     let overview_items = vec![
         ListItem::new(format!("Gateway Version: {}", app.gateway_version)),
         ListItem::new(""),
-        ListItem::new(format!("Healthy Nodes: {healthy_nodes}/{total_nodes}")),
+        ListItem::new(format!(
+            "Healthy Modules: {healthy_modules}/{total_modules}"
+        )),
         ListItem::new(format!("Recent Events (1h): {events_count}")),
         ListItem::new(format!(
             "DLQ Messages: {}",
@@ -735,7 +737,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     } else {
         node_items
     })
-    .block(Block::default().title("Nodes").borders(Borders::ALL));
+    .block(Block::default().title("Modules").borders(Borders::ALL));
     f.render_widget(runtime_list, chunks[1]);
 }
 
@@ -1339,7 +1341,7 @@ fn summarize_json_scope(scope: &serde_json::Value) -> String {
     }
 }
 
-fn render_nodes(f: &mut Frame, area: Rect, app: &App) {
+fn render_modules(f: &mut Frame, area: Rect, app: &App) {
     let items: Vec<ListItem> = app
         .modules
         .iter()
@@ -1380,7 +1382,7 @@ fn render_nodes(f: &mut Frame, area: Rect, app: &App) {
     })
     .block(
         Block::default()
-            .title(format!("Nodes ({} total)", app.modules.len()))
+            .title(format!("Modules ({} total)", app.modules.len()))
             .borders(Borders::ALL),
     );
     f.render_widget(list, area);
