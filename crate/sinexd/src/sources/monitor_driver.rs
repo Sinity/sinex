@@ -17,8 +17,9 @@
 //!    the closure can build events with correct material provenance.
 //! 3. Appends the serialized events as the material content, finalizes the material.
 //! 4. Emits each event through `runtime.emit_event()`.
-//! 5. For `PerInterval`, loops with `tokio::time::sleep` until drain is signalled.
-//! 6. For `ServiceShutdown`, waits for the drain signal, then fires once.
+//! 5. For `ServiceStart`, fires once and then idles until drain is signalled.
+//! 6. For `PerInterval`, loops with `tokio::time::sleep` until drain is signalled.
+//! 7. For `ServiceShutdown`, waits for the drain signal, then fires once.
 //!
 //! # Provenance
 //!
@@ -63,8 +64,8 @@ use sinex_primitives::{
 pub enum MonitorPhase {
     /// Fire once immediately at source boot (inside `run_continuous`).
     ///
-    /// The runner fires the closure, emits events, then returns. The module exits
-    /// cleanly. Use this for startup-annotation events.
+    /// The runner fires the closure, emits events, then waits until drain. Use
+    /// this for startup-annotation events hosted inside the long-running daemon.
     ServiceStart,
 
     /// Fire once per `period` for the process lifetime.
@@ -175,6 +176,8 @@ async fn drive_monitor_phase(
                 "MonitorPhase::ServiceStart — firing once at boot"
             );
             fire_monitor_once(source_id, emit_fn, runtime).await?;
+            wait_for_monitor_drain(source_id, &mut shutdown_rx).await;
+            info!(source_id, "drain received — stopping ServiceStart monitor");
         }
 
         MonitorPhase::PerInterval { period } => {
@@ -205,14 +208,7 @@ async fn drive_monitor_phase(
                 source_id,
                 "MonitorPhase::ServiceShutdown — waiting for drain signal",
             );
-            loop {
-                if shutdown_rx.changed().await.is_err() {
-                    break; // Sender dropped — treat as clean exit.
-                }
-                if *shutdown_rx.borrow() {
-                    break;
-                }
-            }
+            wait_for_monitor_drain(source_id, &mut shutdown_rx).await;
             info!(source_id, "drain received — firing ServiceShutdown monitor");
             if let Err(e) = fire_monitor_once(source_id, emit_fn, runtime).await {
                 warn!(
@@ -226,6 +222,17 @@ async fn drive_monitor_phase(
     }
 
     Ok(())
+}
+
+async fn wait_for_monitor_drain(_source_id: &'static str, shutdown_rx: &mut watch::Receiver<bool>) {
+    loop {
+        if shutdown_rx.changed().await.is_err() {
+            break;
+        }
+        if *shutdown_rx.borrow() {
+            break;
+        }
+    }
 }
 
 // =============================================================================
@@ -526,6 +533,31 @@ mod tests {
             "monitor events must use material provenance"
         );
         assert_eq!(event.payload["ok"], true);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn service_start_monitor_drain_wait_stays_resident_until_signal() -> TestResult<()> {
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let mut shutdown_rx = shutdown_rx;
+
+        let mut handle =
+            tokio::spawn(
+                async move { wait_for_monitor_drain("test.monitor", &mut shutdown_rx).await },
+            );
+
+        tokio::select! {
+            result = &mut handle => {
+                result?;
+                panic!("ServiceStart monitor returned before drain");
+            }
+            () = tokio::time::sleep(Duration::from_millis(50)) => {}
+        }
+
+        shutdown_tx
+            .send(true)
+            .map_err(|_| SinexError::processing("failed to signal monitor drain"))?;
+        tokio::time::timeout(Duration::from_secs(1), handle).await??;
         Ok(())
     }
 

@@ -121,6 +121,7 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
     crate::converge::converge_tables(pool, &convergible_tables).await?;
     converge_operations_log_constraints(pool).await?;
     converge_source_material_registry_constraints(pool).await?;
+    normalize_manifest_type_values(pool).await?;
     converge_db_check_constraints(pool).await?;
     create_indexes(pool).await?;
     create_triggers_and_functions(pool).await?;
@@ -357,6 +358,27 @@ async fn ensure_schemas(pool: &PgPool) -> Result<(), ApplyError> {
         execute_sql(pool, &sql).await?;
     }
     execute_sql(pool, "CREATE SCHEMA IF NOT EXISTS sinex_telemetry").await?;
+    Ok(())
+}
+
+async fn normalize_manifest_type_values(pool: &PgPool) -> Result<(), ApplyError> {
+    if !relation_exists(pool, "core.manifests").await? {
+        return Ok(());
+    }
+    if !column_exists(pool, "core", "manifests", "manifest_type").await? {
+        return Ok(());
+    }
+
+    execute_sql(
+        pool,
+        r"
+        UPDATE core.manifests
+        SET manifest_type = 'source'
+        WHERE manifest_type = 'ingestor'
+        ",
+    )
+    .await?;
+
     Ok(())
 }
 
