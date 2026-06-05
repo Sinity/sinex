@@ -1519,28 +1519,6 @@ async fn mcp_lifecycle_status_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn mcp_gitops_sources_call_uses_gateway_fixture() -> TestResult<()> {
-    let server = mount_mcp_gateway_fixture().await;
-    let client = fixture_gateway_client(&server)?;
-
-    let response = call_tool(
-        &client,
-        "sinex.gitops_sources",
-        json!({ "include_disabled": true }),
-    )
-    .await?;
-
-    assert_eq!(response["tool"], "sinex.gitops_sources");
-    assert_eq!(response["query"]["include_disabled"], true);
-    assert_eq!(
-        response["items"]["result"]["sources"][0]["repository_url"],
-        "https://example.invalid/sinex-schemas.git"
-    );
-    assert_eq!(response["redaction"]["raw_samples"], false);
-    Ok(())
-}
-
-#[sinex_test]
 async fn mcp_audit_trail_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -2568,20 +2546,6 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         }
                     ],
                     "total_events": 42
-                }),
-                "gitops.list_sources" => json!({
-                    "sources": [
-                        {
-                            "id": "018f4b6b-6a4d-7c80-8000-000000000012",
-                            "repository_url": "https://example.invalid/sinex-schemas.git",
-                            "branch": "main",
-                            "path_pattern": "schemas/**/*.json",
-                            "sync_enabled": true,
-                            "last_sync_at": "2026-05-19T12:00:00Z",
-                            "last_sync_commit": "abcdef123456",
-                            "sync_frequency_minutes": 60
-                        }
-                    ]
                 }),
                 "audit.get" => json!({
                     "audit_trail": {

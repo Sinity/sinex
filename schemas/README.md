@@ -5,7 +5,6 @@ set used by the running system.
 
 The JSON files under `schemas/` are the checked-in schema bundle used for:
 
-- repo-local GitOps tests and examples,
 - downstream consumers that need raw JSON Schema files,
 - reviewable source control history for published schema contracts.
 
@@ -52,29 +51,6 @@ See:
 
 - `crate/sinexd/docs/event_engine/architecture.md`
 - `crate/sinex-primitives/docs/schema_registry.md`
-
-## GitOps Path
-
-The checked-in JSON bundle matters for the GitOps import surface:
-
-1. Register a repository containing JSON schema files with `sinexctl gitops`.
-2. `sinexd` polls or syncs that repository.
-3. Matching JSON files are discovered and upserted into
-   `sinex_schemas.event_payload_schemas`.
-
-Discovery is metadata-first. The `schemas/<source>/<event_type>/...` layout is a
-convenient export shape and a fallback convention, not the only valid layout.
-
-Useful commands:
-
-```bash
-sinexctl gitops list
-sinexctl gitops create <repo-url> --branch main --pattern "schemas/**/*.json"
-sinexctl gitops sync <source-id>
-
-# xtask wrapper around the same operator surface
-xtask gitops list
-```
 
 Schema-contract drift checks against another branch are wired through CI helpers:
 

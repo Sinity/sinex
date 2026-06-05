@@ -39,14 +39,6 @@ use sinex_primitives::rpc::{
         EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD, EventsAnnotateRequest,
         EventsAnnotateResponse,
     },
-    gitops::{
-        DEFAULT_GITOPS_BRANCH, DEFAULT_GITOPS_PATH_PATTERN, DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES,
-        GITOPS_CREATE_SOURCE_METHOD, GITOPS_DELETE_SOURCE_METHOD, GITOPS_LIST_SOURCES_METHOD,
-        GITOPS_TRIGGER_SYNC_METHOD, GitOpsCreateSourceRequest, GitOpsCreateSourceResponse,
-        GitOpsDeleteSourceRequest, GitOpsDeleteSourceResponse, GitOpsListSourcesRequest,
-        GitOpsListSourcesResponse, GitOpsSourceInfo, GitOpsTriggerSyncRequest,
-        GitOpsTriggerSyncResponse,
-    },
     health::{
         HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD, HealthEffectRecordRequest,
         HealthEffectRecordResponse, HealthIntakeRecordRequest, HealthIntakeRecordResponse,
@@ -524,14 +516,6 @@ impl GatewayClient {
         false
     }
 
-    /// List configured gitops sources
-    pub async fn gitops_list(&self, include_disabled: bool) -> Result<Vec<GitOpsSourceInfo>> {
-        let req = GitOpsListSourcesRequest { include_disabled };
-        let response: GitOpsListSourcesResponse =
-            self.call_typed(GITOPS_LIST_SOURCES_METHOD, &req).await?;
-        Ok(response.sources)
-    }
-
     /// List coordination instances.
     pub async fn coordination_list_instances(
         &self,
@@ -583,46 +567,6 @@ impl GatewayClient {
     pub async fn system_version(&self) -> Result<String> {
         self.call_typed(SYSTEM_VERSION_METHOD, &SystemVersionRequest {})
             .await
-    }
-
-    /// Create a new gitops source
-    pub async fn gitops_create(
-        &self,
-        repository_url: String,
-        branch: Option<String>,
-        path_pattern: Option<String>,
-        sync_frequency_minutes: Option<i32>,
-    ) -> Result<GitOpsCreateSourceResponse> {
-        let req = GitOpsCreateSourceRequest {
-            repository_url,
-            branch: branch.unwrap_or_else(|| DEFAULT_GITOPS_BRANCH.to_string()),
-            path_pattern: path_pattern.unwrap_or_else(|| DEFAULT_GITOPS_PATH_PATTERN.to_string()),
-            sync_frequency_minutes: sync_frequency_minutes
-                .unwrap_or(DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES),
-        };
-        self.call_typed(GITOPS_CREATE_SOURCE_METHOD, &req).await
-    }
-
-    /// Delete a gitops source
-    pub async fn gitops_delete(&self, id: String) -> Result<bool> {
-        let req = GitOpsDeleteSourceRequest {
-            id: id
-                .parse()
-                .map_err(|e| color_eyre::eyre::eyre!("Invalid UUID: {}", e))?,
-        };
-        let response: GitOpsDeleteSourceResponse =
-            self.call_typed(GITOPS_DELETE_SOURCE_METHOD, &req).await?;
-        Ok(response.deleted)
-    }
-
-    /// Trigger manual sync for a gitops source
-    pub async fn gitops_sync(&self, id: String) -> Result<GitOpsTriggerSyncResponse> {
-        let req = GitOpsTriggerSyncRequest {
-            id: id
-                .parse()
-                .map_err(|e| color_eyre::eyre::eyre!("Invalid UUID: {}", e))?,
-        };
-        self.call_typed(GITOPS_TRIGGER_SYNC_METHOD, &req).await
     }
 
     // ==================== Gateway Commands ====================

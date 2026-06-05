@@ -26,7 +26,6 @@ them, writes them to PostgreSQL, and relays confirmations to streaming sinks.
 - `environment.md` – event-engine-specific environment variables
 - `transport_security.md` – NATS TLS and authentication requirements
 - `schema_sync.md` – Schema synchronization details
-- `schema_gitops.md` – Repo-driven schema sync and source management
 
 ## Reference
 

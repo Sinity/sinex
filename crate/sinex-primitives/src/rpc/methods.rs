@@ -129,12 +129,6 @@ pub const LIFECYCLE_STATUS: &str = "lifecycle.status";
 pub const LIFECYCLE_ARCHIVE: &str = "lifecycle.archive";
 pub const LIFECYCLE_RESTORE: &str = "lifecycle.restore";
 
-// GitOps
-pub const GITOPS_LIST_SOURCES: &str = "gitops.list_sources";
-pub const GITOPS_CREATE_SOURCE: &str = "gitops.create_source";
-pub const GITOPS_DELETE_SOURCE: &str = "gitops.delete_source";
-pub const GITOPS_TRIGGER_SYNC: &str = "gitops.trigger_sync";
-
 // Telemetry
 pub const TELEMETRY_CURRENT_HEALTH: &str = "telemetry.current_health";
 pub const TELEMETRY_CURRENT_DEVICE_STATE: &str = "telemetry.current_device_state";

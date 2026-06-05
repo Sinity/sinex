@@ -8,7 +8,7 @@ use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
     ConfigCommands, ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand,
-    DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
+    DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands,
     InstructionsCommand, LifecycleCommands, LlmCommand, NowCommand, OpsCommands, PrivacyCommand,
     QueryCommand, RecentCommand, ReplayCommands, ReportCommands, RuntimeCommands,
     RuntimePresenceCommand, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
@@ -202,12 +202,6 @@ enum Commands {
         cmd: LifecycleCommands,
     },
 
-    /// `GitOps` schema source management
-    GitOps {
-        #[command(subcommand)]
-        cmd: GitOpsCommands,
-    },
-
     /// Telemetry data from event-time activity views and operator read models
     Telemetry {
         #[command(subcommand)]
@@ -385,7 +379,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Llm(cmd) => cmd.execute(&client, format).await?,
                 Commands::Documents(cmd) => cmd.execute(&client, format).await?,
                 Commands::Lifecycle { cmd } => cmd.execute(&client, format).await?,
-                Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
                 Commands::Telemetry { cmd } => cmd.execute(&client, format).await?,
                 Commands::Report { cmd } => cmd.execute(&client, format).await?,
                 Commands::Status(cmd) => {
@@ -485,8 +478,8 @@ fn operator_surface_catalog() -> OperatorSurfaceCatalog {
 fn command_path(cmd: &Commands) -> String {
     use sinexctl::commands::lifecycle::TombstoneCommands;
     use sinexctl::commands::{
-        ConfigCommands, DlqCommands, GatewayCommands, GitOpsCommands, LifecycleCommands,
-        OpsCommands, ReplayCommands, ReportCommands, RuntimeCommands, TelemetryCommands,
+        ConfigCommands, DlqCommands, GatewayCommands, LifecycleCommands, OpsCommands,
+        ReplayCommands, ReportCommands, RuntimeCommands, TelemetryCommands,
     };
     match cmd {
         Commands::Gateway { cmd } => match cmd {
@@ -667,12 +660,6 @@ fn command_path(cmd: &Commands) -> String {
                 TombstoneCommands::List(_) => "lifecycle tombstone list".to_string(),
                 TombstoneCommands::Status(_) => "lifecycle tombstone status".to_string(),
             },
-        },
-        Commands::GitOps { cmd } => match cmd {
-            GitOpsCommands::List { .. } => "git-ops list".to_string(),
-            GitOpsCommands::Create { .. } => "git-ops create".to_string(),
-            GitOpsCommands::Delete { .. } => "git-ops delete".to_string(),
-            GitOpsCommands::Sync { .. } => "git-ops sync".to_string(),
         },
         Commands::Telemetry { cmd } => match cmd {
             TelemetryCommands::CurrentHealth { .. } => "telemetry current-health".to_string(),

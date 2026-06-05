@@ -18,7 +18,7 @@ engine that applies it. It uses `sea-query` to define the schema in a type-safe,
 | `core` | Primary event store and domain tables: `core.events`, `core.event_tombstones`, `core.operations_log`, `core.node_manifests`, `core.entities`, `core.entity_relations`, `core.blobs`, tagging/annotation/embedding tables. |
 | `raw` | Provenance staging and source registries: `raw.source_material_registry`, `raw.temporal_ledger`. |
 | `audit` | Archive tier table: `audit.archived_events`. |
-| `sinex_schemas` | Payload schema and contract management: `event_payload_schemas`, `validation_cache`, `gitops_schema_sources`, `dlq_events`. |
+| `sinex_schemas` | Payload schema and contract management: `event_payload_schemas`, `validation_cache`, `dlq_events`. |
 | `metrics` | Reserved schema namespace (created for compatibility with grants/registry; currently no canonical table definitions in `src/schema/`). |
 | `sinex_telemetry` | Hourly operator views, activity/status views, and one materialized current-device view created by `src/apply.rs` SQL blocks. |
 

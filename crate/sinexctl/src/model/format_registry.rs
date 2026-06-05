@@ -501,24 +501,6 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
-    // ── GitOps ───────────────────────────────────────────────────────────────
-    m.insert(
-        "git-ops list",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
-    m.insert(
-        "git-ops create",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
-    m.insert(
-        "git-ops delete",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
-    m.insert(
-        "git-ops sync",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
-
     // ── Telemetry ────────────────────────────────────────────────────────────
     m.insert(
         "telemetry window-focus",
@@ -769,8 +751,9 @@ fn family_for_path(path: &str) -> CommandFamily {
         "gateway" | "core" => CommandFamily::Gateway,
         "query" | "trace" | "recent" | "errors" | "watch" | "context" | "explain" | "verify"
         | "now" | "modules" | "status" => CommandFamily::Query,
-        "automata" | "replay" | "dlq" | "ops" | "audit" | "lifecycle" | "git-ops" | "privacy"
-        | "blob" => CommandFamily::Operate,
+        "automata" | "replay" | "dlq" | "ops" | "audit" | "lifecycle" | "privacy" | "blob" => {
+            CommandFamily::Operate
+        }
         "sources" => CommandFamily::Sources,
         "declare" | "instructions" | "tasks" | "curation" | "semantics" | "llm" | "documents"
         | "annotate" => CommandFamily::Domain,
@@ -806,9 +789,6 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "declare task",
         "dlq purge",
         "dlq requeue",
-        "git-ops create",
-        "git-ops delete",
-        "git-ops sync",
         "instructions hyprland-workspace",
         "lifecycle archive",
         "lifecycle restore",
@@ -852,7 +832,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "tasks update",
     ];
 
-    if mutating.binary_search(&path).is_ok() {
+    if mutating.contains(&path) {
         CommandEffect::Mutating
     } else {
         CommandEffect::ReadOnly
@@ -879,9 +859,6 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "declare health intake"
         | "declare task"
         | "dlq requeue"
-        | "git-ops create"
-        | "git-ops delete"
-        | "git-ops sync"
         | "instructions hyprland-workspace"
         | "lifecycle tombstone cancel"
         | "lifecycle tombstone create"
@@ -1048,10 +1025,6 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "lifecycle tombstone cancel" => &[methods::LIFECYCLE_TOMBSTONE_CANCEL],
         "lifecycle tombstone list" => &[methods::LIFECYCLE_TOMBSTONE_LIST],
         "lifecycle tombstone status" => &[methods::LIFECYCLE_TOMBSTONE_STATUS],
-        "git-ops list" => &[methods::GITOPS_LIST_SOURCES],
-        "git-ops create" => &[methods::GITOPS_CREATE_SOURCE],
-        "git-ops delete" => &[methods::GITOPS_DELETE_SOURCE],
-        "git-ops sync" => &[methods::GITOPS_TRIGGER_SYNC],
         "telemetry window-focus" => &[methods::TELEMETRY_WINDOW_FOCUS],
         "telemetry command-frequency" => &[methods::TELEMETRY_COMMAND_FREQUENCY],
         "telemetry file-activity" => &[methods::TELEMETRY_FILE_ACTIVITY],
@@ -1352,8 +1325,6 @@ mod tests {
         );
         assert_eq!(effect_for("replay plan"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("replay preview"), Some(CommandEffect::Mutating));
-        assert_eq!(effect_for("git-ops create"), Some(CommandEffect::Mutating));
-        assert_eq!(effect_for("git-ops sync"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("state inspect"), Some(CommandEffect::ReadOnly));
         assert_eq!(effect_for("state restore"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("state snapshot"), Some(CommandEffect::Mutating));

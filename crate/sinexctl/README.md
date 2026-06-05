@@ -38,7 +38,6 @@ sinexctl dlq list --token "$SINEX_API_TOKEN"
 - `dlq`: list/peek/requeue/purge
 - `ops`, `audit`: operation lifecycle and audit trail
 - `lifecycle`: archive/restore/tombstone workflows
-- `gitops`: schema source management
 - `status`, `recent`, `errors`, `watch`, `tui`: operator shortcuts
 - `demo`: deterministic dev data seeding
 - `config`, `completions`: local CLI management

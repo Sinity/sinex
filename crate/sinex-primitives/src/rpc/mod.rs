@@ -50,7 +50,6 @@ pub enum RpcDomain {
     Dlq,
     Documents,
     Events,
-    GitOps,
     Health,
     Instructions,
     Lifecycle,
@@ -155,7 +154,6 @@ pub mod curation;
 pub mod dlq;
 pub mod documents;
 pub mod events;
-pub mod gitops;
 pub mod health;
 pub mod instructions;
 pub mod lifecycle;
@@ -201,10 +199,6 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         events::EVENTS_ANNOTATE_METHOD.info(),
         events::EVENTS_LINEAGE_METHOD.info(),
         events::EVENTS_QUERY_METHOD.info(),
-        gitops::GITOPS_CREATE_SOURCE_METHOD.info(),
-        gitops::GITOPS_DELETE_SOURCE_METHOD.info(),
-        gitops::GITOPS_LIST_SOURCES_METHOD.info(),
-        gitops::GITOPS_TRIGGER_SYNC_METHOD.info(),
         health::HEALTH_EFFECT_RECORD_METHOD.info(),
         health::HEALTH_INTAKE_RECORD_METHOD.info(),
         source_status::SOURCES_STATUS_METHOD.info(),
@@ -320,7 +314,6 @@ pub mod prelude {
     pub use super::dlq::*;
     pub use super::documents::*;
     pub use super::events::*;
-    pub use super::gitops::*;
     pub use super::health::*;
     pub use super::lifecycle::*;
     pub use super::llm::*;

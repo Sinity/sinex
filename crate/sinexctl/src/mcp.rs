@@ -382,12 +382,6 @@ struct AuditTrailArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct GitOpsSourcesArgs {
-    #[serde(default)]
-    include_disabled: bool,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
 struct CoordinationInstancesArgs {
     #[serde(default)]
     module_kind: Option<String>,
@@ -444,6 +438,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             name: "sinex.search_events",
             kind: McpSurfaceKind::Tool,
             description: "Read-only search over persisted Sinex events.",
+            backing_rpc_methods: &[methods::EVENTS_QUERY],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.context_pack",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only event query projection for AI context packs.",
             backing_rpc_methods: &[methods::EVENTS_QUERY],
             read_only: true,
         },
@@ -822,13 +823,6 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only data lifecycle tier status.",
             backing_rpc_methods: &[methods::LIFECYCLE_STATUS],
-            read_only: true,
-        },
-        McpCatalogEntry {
-            name: "sinex.gitops_sources",
-            kind: McpSurfaceKind::Tool,
-            description: "Read-only GitOps schema source listing.",
-            backing_rpc_methods: &[methods::GITOPS_LIST_SOURCES],
             read_only: true,
         },
         McpCatalogEntry {
@@ -1336,16 +1330,6 @@ pub fn tools() -> Vec<McpTool> {
         ),
         mcp_tool("sinex.lifecycle_status", empty_object_schema()),
         mcp_tool(
-            "sinex.gitops_sources",
-            json!({
-                "type": "object",
-                "properties": {
-                    "include_disabled": { "type": "boolean", "default": false }
-                },
-                "additionalProperties": false
-            }),
-        ),
-        mcp_tool(
             "sinex.audit_trail",
             json!({
                 "type": "object",
@@ -1683,7 +1667,6 @@ async fn call_tool_ops_infra(
         "sinex.ops_list" => ops_list(client, arguments).await?,
         "sinex.ops_get" => ops_get(client, arguments).await?,
         "sinex.lifecycle_status" => lifecycle_status(client, arguments).await?,
-        "sinex.gitops_sources" => gitops_sources(client, arguments).await?,
         "sinex.audit_trail" => audit_trail(client, arguments).await?,
         "sinex.coordination_instances" => coordination_instances(client, arguments).await?,
         "sinex.coordination_leader" => coordination_leader(client, arguments).await?,
@@ -2388,16 +2371,6 @@ async fn lifecycle_status(client: &GatewayClient, arguments: Value) -> Result<Va
         "sinex.lifecycle_status",
         &json!({}),
         &json!({ "result": response }),
-    ))
-}
-
-async fn gitops_sources(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: GitOpsSourcesArgs = serde_json::from_value(arguments)?;
-    let response = client.gitops_list(args.include_disabled).await?;
-    Ok(envelope(
-        "sinex.gitops_sources",
-        &json!(args),
-        &json!({ "result": { "sources": response } }),
     ))
 }
 

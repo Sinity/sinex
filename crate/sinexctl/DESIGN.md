@@ -30,7 +30,7 @@ CLI flags still win so one-off overrides remain possible.
 
 - API/system: `gateway`, `core`
 - Query/inspection: `query`, `verify` (bounded runtime evidence checks plus optional active document deployment smoke and descriptor-aware collector-surface evidence, distinguishing recent `ts_orig` samples from merely historical persisted rows, with local deployment-descriptor awareness for managed oneshot surfaces), `automata`, `status`, `recent`, `errors`, `watch`, `tui`
-- Operations: `ops`, `audit`, `replay`, `dlq`, `lifecycle`, `gitops`
+- Operations: `ops`, `audit`, `replay`, `dlq`, `lifecycle`
 - Local tooling: `config`, `completions`
 
 ## Transport and Auth

@@ -50,7 +50,7 @@
 
 - Read/query: `system.health`, `search.search_events`, `analytics.*`, `audit.get`, `ops.list/get`, `coordination.*`, `runtime.list`, `dlq.list/peek`, replay status/list.
 * Write/mutate: `pkm.*`, `content.store_blob`, `runtime.{drain,resume,set_horizon}`, `ops.start`, replay create/preview.
-* Admin-only: replay approve/execute/cancel, `dlq.requeue/purge`, lifecycle archive/restore/tombstone, `ops.cancel`, gitops source management, shadow create/delete.
+* Admin-only: replay approve/execute/cancel, `dlq.requeue/purge`, lifecycle archive/restore/tombstone, `ops.cancel`, shadow create/delete.
 
 Adding a method requires registering it in `rpc_registry.rs`, wiring a handler in the API or db-owned module surface, and optionally exposing it in `sinexctl`.
 
