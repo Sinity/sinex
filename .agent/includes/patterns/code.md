@@ -123,6 +123,14 @@ ingestor boundary persists into derived events.
 | Cargo commands | `xtask` (always) | Bare `cargo` (bypasses history, preflight, JSON) |
 | Snapshot updates | `xtask test --update-snapshots` | `INSTA_UPDATE=always cargo nextest ..` |
 
+### Test Sandbox Boundary
+
+`xtask::sandbox` is the intentional shared test substrate. Do not split
+lightweight test macros or support crates away from the heavy sandbox surface
+as a performance shortcut unless the user explicitly asks for that design.
+Performance work should improve target inference, cache policy, pruning, and
+test selection around the sandbox rather than dissolving the shared harness.
+
 ### Anti-Patterns That Are Enforced
 
 These will cause errors, hangs, or hook rejections:
