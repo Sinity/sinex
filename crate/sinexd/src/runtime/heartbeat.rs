@@ -2,7 +2,7 @@
 //!
 //! This module implements the Journald Heartbeat Idea from the design discussion:
 //! Runtime modules emit structured JSON logs to stdout, which systemd captures in journald,
-//! which gets picked up by the journald ingestor as regular events, and processed
+//! which gets picked up by the journald source as regular events, and processed
 //! by the health aggregator automaton.
 
 use crate::runtime::error_helpers::elapsed_seconds_with_warning;

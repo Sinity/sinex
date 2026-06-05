@@ -37,7 +37,7 @@ struct StartupSequenceTestNode {
 }
 
 #[cfg(feature = "messaging")]
-struct DrainTestIngestor {
+struct DrainTestSource {
     started: Arc<Notify>,
     drain_observed: Arc<Notify>,
     release_exit: Arc<Notify>,
@@ -45,7 +45,7 @@ struct DrainTestIngestor {
 }
 
 #[cfg(feature = "messaging")]
-impl Default for DrainTestIngestor {
+impl Default for DrainTestSource {
     fn default() -> Self {
         Self {
             started: Arc::new(Notify::new()),
@@ -81,12 +81,12 @@ impl StartupSequenceTestNode {
 }
 
 #[cfg(feature = "messaging")]
-impl SourceDriver for DrainTestIngestor {
+impl SourceDriver for DrainTestSource {
     type Config = ();
     type State = ();
 
     fn name(&self) -> &'static str {
-        "drain-test-ingestor"
+        "drain-test-source"
     }
 
     fn capabilities(&self) -> RuntimeCapabilities {
@@ -154,7 +154,7 @@ impl SourceDriver for DrainTestIngestor {
         self.started.notify_one();
         shutdown_rx.changed().await.map_err(|error| {
             SinexError::lifecycle(format!(
-                "drain-test-ingestor shutdown channel dropped before drain: {error}"
+                "drain-test-source shutdown channel dropped before drain: {error}"
             ))
         })?;
         self.drain_observed.notify_one();

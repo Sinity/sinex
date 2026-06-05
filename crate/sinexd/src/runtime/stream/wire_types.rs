@@ -98,7 +98,7 @@ pub struct ReplayScopeFilters {
 /// Scan operation arguments
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanArgs {
-    /// Paths to scan (for ingestors) or filters (for automata)
+    /// Paths to scan (for sources) or filters (for automata)
     pub targets: Vec<String>,
 
     /// Dry run mode - analyze but don't emit events
@@ -166,7 +166,7 @@ impl ContinuousStart {
 //
 // These types implement the source-dispatch replay protocol. Instead of the
 // gateway republishing stored event rows to NATS (reinjection), it dispatches
-// a scan command to the running ingestor node. The node re-reads source material
+// a scan command to the running source node. The node re-reads source material
 // through its normal scan_historical() path and emits fresh events.
 //
 // Protocol:
@@ -197,7 +197,7 @@ pub struct SourceScanAck {
     pub module_name: String,
     /// Whether the command was accepted.
     pub accepted: bool,
-    /// Error message if rejected (e.g., scan already in progress, not an ingestor).
+    /// Error message if rejected (e.g., scan already in progress, not an source).
     pub error: Option<String>,
 }
 
@@ -251,7 +251,7 @@ pub struct ScanReport {
 }
 
 /// Re-export from sinex-primitives so runtime consumers see the canonical three-variant enum
-/// (`Ingestor | Automaton | Service`). The former two-variant local copy dropped `Service`
+/// (`Source | Automaton | Service`). The former two-variant local copy dropped `Service`
 /// silently during RPC round-trips — see issue #746 (A5).
 pub use sinex_primitives::domain::ModuleKind;
 

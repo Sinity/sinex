@@ -24,7 +24,7 @@ use sqlx::FromRow;
 /// This table is the manifest for all captured external data artifacts. It is
 /// managed by capture pipelines using the "Stage-as-you-go" pattern. An entry is
 /// created with `status = 'sensing'` before the data is
-/// fully captured, providing a stable `id` that ingestors can immediately use
+/// fully captured, providing a stable `id` that sources can immediately use
 /// for event provenance. The record is then updated to a terminal status
 /// (`completed`, `cancelled`, `recovered_partial`, or `failed`) upon finalization.
 #[derive(Iden, Copy, Clone)]

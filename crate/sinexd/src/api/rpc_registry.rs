@@ -33,7 +33,7 @@ use sinex_primitives::rpc::{
         EVENTS_ANNOTATE_METHOD, EVENTS_CARDS_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD,
     },
     health::{HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD},
-    ingestors::INGESTORS_STATUS_METHOD,
+    source_status::SOURCES_STATUS_METHOD,
     instructions::INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
     lifecycle::{
         LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
@@ -608,7 +608,7 @@ fn build_registry_impl() -> RpcRegistry {
         handle_documents_get, handle_documents_get_chunks, handle_documents_get_chunks_redacted,
         handle_documents_search, handle_events_annotate, handle_events_cards,
         handle_events_lineage, handle_events_query, handle_health_effect_record,
-        handle_health_intake_record, handle_hyprland_workspace_switch, handle_ingestors_status,
+        handle_health_intake_record, handle_hyprland_workspace_switch, handle_sources_status,
         handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
         handle_link_entities, handle_llm_budget_report, handle_llm_prompts_list,
         handle_llm_route_explain, handle_ops_cancel, handle_ops_get, handle_ops_list,
@@ -749,7 +749,7 @@ fn build_registry_impl() -> RpcRegistry {
         )
         .pool_typed_rpc(RUNTIME_HEALTH_METHOD, boxed!(handle_runtime_health))
         .pool_typed_rpc(AUTOMATA_STATUS_METHOD, boxed!(handle_automata_status))
-        .pool_typed_rpc(INGESTORS_STATUS_METHOD, boxed!(handle_ingestors_status))
+        .pool_typed_rpc(SOURCES_STATUS_METHOD, boxed!(handle_sources_status))
         // Source material inventory (ReadOnly)
         .pool_typed_rpc(SOURCES_LIST_METHOD, boxed!(handle_sources_list))
         .pool_typed_rpc(SOURCES_SHOW_METHOD, boxed!(handle_sources_show))

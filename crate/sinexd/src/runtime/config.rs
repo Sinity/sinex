@@ -139,7 +139,7 @@ pub struct RuntimeConfig {
     /// Format: `postgresql://username:password@hostname:port/database`
     ///
     /// This field is optional - not all automata require database access.
-    /// Ingestors typically don't need this as they communicate via gRPC.
+    /// Sources typically don't need this as they communicate via gRPC.
     #[validate(url(message = "Invalid database URL"))]
     pub database_url: Option<String>,
 
@@ -361,7 +361,7 @@ impl EventSourceConfig {
         }
     }
 
-    /// Load configuration for an event source ingestor from environment and defaults.
+    /// Load configuration for an event source source from environment and defaults.
     pub fn load_from_env(service_name: &str) -> Result<Self, ConfigError> {
         let defaults = Self::defaults(service_name);
         let env_prefix = RuntimeConfig::env_prefix(service_name);

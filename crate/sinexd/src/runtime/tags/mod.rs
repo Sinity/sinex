@@ -6,7 +6,7 @@
 
 /// Known system tag prefixes.
 pub mod system {
-    /// Applied when a file is registered by the document ingestor.
+    /// Applied when a file is registered by the document source.
     pub const MIME_PREFIX: &str = "sys.mime";
     /// Applied when a screenshot is captured.
     pub const SOURCE_SCREENSHOT: &str = "sys.source.screenshot";

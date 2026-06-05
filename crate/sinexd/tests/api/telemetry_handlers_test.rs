@@ -118,7 +118,7 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
     .await?;
     insert_event(
         &ctx,
-        "system-ingestor",
+        "system.monitor",
         "system.resources",
         json!({
             "cpu_percent": 17.5,
@@ -130,7 +130,7 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
     .await?;
     insert_event(
         &ctx,
-        "system-ingestor",
+        "system.systemd",
         "systemd.units_summary",
         json!({
             "active_units": 42,
@@ -277,7 +277,7 @@ async fn telemetry_handlers_bucket_by_interpretation_time_not_event_time(
     .await?;
     insert_event(
         &ctx,
-        "system-ingestor",
+        "system.monitor",
         "system.resources",
         json!({
             "cpu_percent": 11.0,
@@ -289,7 +289,7 @@ async fn telemetry_handlers_bucket_by_interpretation_time_not_event_time(
     .await?;
     insert_event(
         &ctx,
-        "system-ingestor",
+        "system.systemd",
         "systemd.units_summary",
         json!({
             "active_units": 7,
@@ -475,7 +475,7 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
         "sinexd.source",
         "processing.stats",
         json!({
-            "module_kind": "terminal-ingestor",
+            "module_kind": "terminal-source",
             "events_processed": 40,
             "events_dropped": 2,
             "avg_latency_ms": 5.5,
@@ -586,7 +586,7 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     assert_eq!(source_stats.buckets.len(), 1);
     assert_eq!(
         source_stats.buckets[0].module_kind.as_deref(),
-        Some("terminal-ingestor")
+        Some("terminal-source")
     );
     assert_eq!(source_stats.buckets[0].total_events_processed, Some(40));
     assert_eq!(source_stats.buckets[0].max_queue_depth, Some(4));

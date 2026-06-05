@@ -35,7 +35,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 ///
 /// ### [`Class::Critical`] — provenance-bearing event payloads
 ///
-/// Raw event batches from ingestors. These are the ground-truth records.
+/// Raw event batches from sources. These are the ground-truth records.
 /// Loss means lost provenance history.
 ///
 /// - **Subject pattern**: `{env}.sinex.events.raw.{source}.{event_type}`
@@ -139,7 +139,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// - **Drain on SIGTERM**: best-effort flush; no wait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Class {
-    /// Provenance-bearing raw event payloads from ingestors.
+    /// Provenance-bearing raw event payloads from sources.
     /// Loss = lost provenance history. Failure routes to local recovery spool.
     Critical,
 

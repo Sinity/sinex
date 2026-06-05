@@ -182,7 +182,7 @@ async fn sinexctl_replay_plan_creates_operation(ctx: TestContext) -> color_eyre:
 
     let output = sinexctl_replay(
         &url,
-        &["plan", "--node", "test-node", "--since", "1h", "-f", "json"],
+        &["plan", "--source", "test-source", "--since", "1h", "-f", "json"],
     )
     .await;
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -196,8 +196,8 @@ async fn sinexctl_replay_plan_creates_operation(ctx: TestContext) -> color_eyre:
     let operation = parse_json_stdout(&output, "replay plan");
     assert_eq!(operation["state"].as_str(), Some("Planning"));
     assert_eq!(
-        operation["scope"]["module_name"].as_str(),
-        Some("test-node")
+        operation["scope"]["source_name"].as_str(),
+        Some("test-source")
     );
     assert!(
         operation["operation_id"].as_str().is_some(),
@@ -217,7 +217,7 @@ async fn sinexctl_replay_preview_after_plan(ctx: TestContext) -> color_eyre::Res
     // Plan
     let plan_output = sinexctl_replay(
         &url,
-        &["plan", "--node", "test-node", "--since", "1h", "-f", "json"],
+        &["plan", "--source", "test-source", "--since", "1h", "-f", "json"],
     )
     .await;
     assert!(plan_output.status.success(), "plan should succeed");
@@ -254,7 +254,7 @@ async fn sinexctl_replay_approve_after_preview(ctx: TestContext) -> color_eyre::
 
     let plan_output = sinexctl_replay(
         &url,
-        &["plan", "--node", "test-node", "--since", "1h", "-f", "json"],
+        &["plan", "--source", "test-source", "--since", "1h", "-f", "json"],
     )
     .await;
     assert!(plan_output.status.success());
@@ -284,7 +284,7 @@ async fn sinexctl_replay_cancel_with_reason(ctx: TestContext) -> color_eyre::Res
 
     let plan_output = sinexctl_replay(
         &url,
-        &["plan", "--node", "test-node", "--since", "1h", "-f", "json"],
+        &["plan", "--source", "test-source", "--since", "1h", "-f", "json"],
     )
     .await;
     assert!(plan_output.status.success());
@@ -327,7 +327,7 @@ async fn sinexctl_replay_status_shows_state(ctx: TestContext) -> color_eyre::Res
 
     let plan_output = sinexctl_replay(
         &url,
-        &["plan", "--node", "test-node", "--since", "1h", "-f", "json"],
+        &["plan", "--source", "test-source", "--since", "1h", "-f", "json"],
     )
     .await;
     assert!(plan_output.status.success());
@@ -357,13 +357,13 @@ async fn sinexctl_replay_list_returns_operations(ctx: TestContext) -> color_eyre
     // Create two plans
     let plan1 = sinexctl_replay(
         &url,
-        &["plan", "--node", "node-a", "--since", "1h", "-f", "json"],
+        &["plan", "--source", "source-a", "--since", "1h", "-f", "json"],
     )
     .await;
     assert!(plan1.status.success());
     let plan2 = sinexctl_replay(
         &url,
-        &["plan", "--node", "node-b", "--since", "1h", "-f", "json"],
+        &["plan", "--source", "source-b", "--since", "1h", "-f", "json"],
     )
     .await;
     assert!(plan2.status.success());
@@ -376,13 +376,13 @@ async fn sinexctl_replay_list_returns_operations(ctx: TestContext) -> color_eyre
     );
 
     let operations = parse_json_lines_stdout(&list_output, "replay list");
-    let node_ids: Vec<_> = operations
+    let source_ids: Vec<_> = operations
         .iter()
-        .filter_map(|operation| operation["scope"]["module_name"].as_str())
+        .filter_map(|operation| operation["scope"]["source_name"].as_str())
         .collect();
     assert!(
-        node_ids.contains(&"node-a") && node_ids.contains(&"node-b"),
-        "list should contain both operations, got modules {node_ids:?}"
+        source_ids.contains(&"source-a") && source_ids.contains(&"source-b"),
+        "list should contain both operations, got sources {source_ids:?}"
     );
 
     gw.handle.abort();
@@ -398,7 +398,7 @@ async fn sinexctl_replay_list_filters_by_state(ctx: TestContext) -> color_eyre::
     // Create a plan, preview, then cancel it
     let plan_output = sinexctl_replay(
         &url,
-        &["plan", "--node", "test-node", "--since", "1h", "-f", "json"],
+        &["plan", "--source", "test-source", "--since", "1h", "-f", "json"],
     )
     .await;
     assert!(plan_output.status.success());
@@ -416,8 +416,8 @@ async fn sinexctl_replay_list_filters_by_state(ctx: TestContext) -> color_eyre::
         &url,
         &[
             "plan",
-            "--node",
-            "test-node-2",
+            "--source",
+            "test-source-2",
             "--since",
             "1h",
             "-f",
@@ -438,13 +438,13 @@ async fn sinexctl_replay_list_filters_by_state(ctx: TestContext) -> color_eyre::
 
     let cancelled_ops = parse_json_lines_stdout(&list_cancelled, "replay cancelled list");
     let planning_ops = parse_json_lines_stdout(&list_planning, "replay planning list");
-    let cancelled_nodes: Vec<_> = cancelled_ops
+    let cancelled_sources: Vec<_> = cancelled_ops
         .iter()
-        .filter_map(|operation| operation["scope"]["module_name"].as_str())
+        .filter_map(|operation| operation["scope"]["source_name"].as_str())
         .collect();
-    let planning_nodes: Vec<_> = planning_ops
+    let planning_sources: Vec<_> = planning_ops
         .iter()
-        .filter_map(|operation| operation["scope"]["module_name"].as_str())
+        .filter_map(|operation| operation["scope"]["source_name"].as_str())
         .collect();
 
     assert!(
@@ -460,12 +460,12 @@ async fn sinexctl_replay_list_filters_by_state(ctx: TestContext) -> color_eyre::
         "planning filter should only return planning operations: {planning_ops:?}"
     );
     assert!(
-        !cancelled_nodes.contains(&"test-node-2"),
-        "cancelled filter should not include planning operations: {cancelled_nodes:?}"
+        !cancelled_sources.contains(&"test-source-2"),
+        "cancelled filter should not include planning operations: {cancelled_sources:?}"
     );
     assert!(
-        planning_nodes.contains(&"test-node-2"),
-        "planning filter should include the planning operation: {planning_nodes:?}"
+        planning_sources.contains(&"test-source-2"),
+        "planning filter should include the planning operation: {planning_sources:?}"
     );
 
     gw.handle.abort();

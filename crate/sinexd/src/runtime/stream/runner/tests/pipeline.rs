@@ -1,5 +1,5 @@
 //! Pipeline-side `RuntimeRunner<T>` tests: control-plane encoding, scan ack,
-//! drain orchestration, replay forwarder, provisional resolution, ingestor
+//! drain orchestration, replay forwarder, provisional resolution, source
 //! startup, and DLQ fallback paths.
 
 use super::*;
@@ -72,7 +72,7 @@ async fn publish_scan_ack_reports_nats_failures(ctx: TestContext) -> TestResult<
 
 #[cfg(feature = "messaging")]
 #[sinex_test]
-async fn run_service_drain_persists_ingestor_checkpoint_and_updates_status(
+async fn run_service_drain_persists_source_checkpoint_and_updates_status(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
@@ -81,16 +81,16 @@ async fn run_service_drain_persists_ingestor_checkpoint_and_updates_status(
     let transport = EventTransport::Nats(Arc::new(NatsPublisher::new(client.clone())));
     let work_dir = tempdir()?;
 
-    let ingestor = DrainTestIngestor::default();
-    let started = ingestor.started.clone();
-    let drain_observed = ingestor.drain_observed.clone();
-    let release_exit = ingestor.release_exit.clone();
-    let expected_checkpoint = ingestor.final_checkpoint.clone();
+    let source = DrainTestSource::default();
+    let started = source.started.clone();
+    let drain_observed = source.drain_observed.clone();
+    let release_exit = source.release_exit.clone();
+    let expected_checkpoint = source.final_checkpoint.clone();
 
-    let mut runner = RuntimeRunner::new(SourceDriverRuntime::new(ingestor));
+    let mut runner = RuntimeRunner::new(SourceDriverRuntime::new(source));
     runner
         .initialize_with_transport(
-            "runtime-drain-ingestor-service".to_string(),
+            "runtime-drain-source-service".to_string(),
             HashMap::new(),
             Some(ctx.pool().clone()),
             transport,
@@ -116,7 +116,7 @@ async fn run_service_drain_persists_ingestor_checkpoint_and_updates_status(
     let run_handle = tokio::spawn(async move { runner.run_service().await });
     tokio::time::timeout(Duration::from_secs(3), started.notified())
         .await
-        .map_err(|_| color_eyre::eyre::eyre!("ingestor continuous loop did not start"))?;
+        .map_err(|_| color_eyre::eyre::eyre!("source continuous loop did not start"))?;
 
     request_drain_until_applied(
         &client,
@@ -127,7 +127,7 @@ async fn run_service_drain_persists_ingestor_checkpoint_and_updates_status(
     .await?;
     tokio::time::timeout(Duration::from_secs(3), drain_observed.notified())
         .await
-        .map_err(|_| color_eyre::eyre::eyre!("ingestor did not observe runtime drain"))?;
+        .map_err(|_| color_eyre::eyre::eyre!("source did not observe runtime drain"))?;
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {
             if node_run_status(ctx.pool(), module_run_id).await? == "draining" {
@@ -154,7 +154,7 @@ async fn run_service_drain_persists_ingestor_checkpoint_and_updates_status(
 
     let run_result = tokio::time::timeout(Duration::from_secs(3), run_handle)
         .await
-        .map_err(|_| color_eyre::eyre::eyre!("drained ingestor service did not exit"))?;
+        .map_err(|_| color_eyre::eyre::eyre!("drained source service did not exit"))?;
     run_result??;
 
     let saved = checkpoint_manager.load_checkpoint().await?;
@@ -296,7 +296,7 @@ async fn build_event_from_provisional_rejects_invalid_module_run_id() -> TestRes
 }
 
 #[sinex_test]
-async fn ingestor_startup_skips_gap_fill_when_only_snapshot_created_checkpoint(
+async fn source_startup_skips_gap_fill_when_only_snapshot_created_checkpoint(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -318,7 +318,7 @@ async fn ingestor_startup_skips_gap_fill_when_only_snapshot_created_checkpoint(
         )
         .await?;
 
-    runner.run_ingestor_startup_sequence().await?;
+    runner.run_source_startup_sequence().await?;
 
     let recorded = scans.lock().await.clone();
     assert_eq!(
@@ -332,7 +332,7 @@ async fn ingestor_startup_skips_gap_fill_when_only_snapshot_created_checkpoint(
 }
 
 #[sinex_test]
-async fn ingestor_startup_gap_fill_uses_preexisting_checkpoint(ctx: TestContext) -> TestResult<()> {
+async fn source_startup_gap_fill_uses_preexisting_checkpoint(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let preexisting_checkpoint =
         Checkpoint::timestamp(Timestamp::now() - time::Duration::minutes(15), None);
@@ -354,7 +354,7 @@ async fn ingestor_startup_gap_fill_uses_preexisting_checkpoint(ctx: TestContext)
         )
         .await?;
 
-    runner.run_ingestor_startup_sequence().await?;
+    runner.run_source_startup_sequence().await?;
 
     let recorded = scans.lock().await.clone();
     assert_eq!(

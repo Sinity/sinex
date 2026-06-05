@@ -2,7 +2,7 @@
 //!
 //! These are the two top-level entry points: a one-shot scan operation
 //! (snapshot/historical/continuous) and the long-running service-mode loop
-//! that runs the lifecycle from initialization through ingestor startup
+//! that runs the lifecycle from initialization through source startup
 //! and automaton processing.
 
 use super::{
@@ -129,8 +129,8 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
 
         let service_result = match module_kind {
             ModuleKind::Source => {
-                // Ingestor startup sequence: Snapshot -> Gap-fill -> Continuous
-                self.run_ingestor_startup_sequence().await
+                // Source startup sequence: Snapshot -> Gap-fill -> Continuous
+                self.run_source_startup_sequence().await
             }
             ModuleKind::Automaton | ModuleKind::Service => {
                 #[cfg(feature = "messaging")]

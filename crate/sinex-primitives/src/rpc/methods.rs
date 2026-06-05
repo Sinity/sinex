@@ -87,8 +87,8 @@ pub const RUNTIME_SET_HORIZON: &str = "runtime.set_horizon";
 // Automata
 pub const AUTOMATA_STATUS: &str = "automata.status";
 
-// Ingestors
-pub const INGESTORS_STATUS: &str = "ingestors.status";
+// SourceStatus
+pub const SOURCES_STATUS: &str = "sources.status";
 
 // Instructions
 pub const INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH: &str = "instructions.hyprland.workspace_switch";

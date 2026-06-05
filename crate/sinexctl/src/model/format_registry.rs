@@ -153,7 +153,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "runtime status",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
-    m.insert("ingestors", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "sources status",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
     m.insert(
         "runtime drain",
         FormatCapability::single_shot(TABLE_JSON_YAML),
@@ -766,7 +769,7 @@ fn family_for_path(path: &str) -> CommandFamily {
         "gateway" | "core" => CommandFamily::Gateway,
         "query" | "trace" | "recent" | "errors" | "watch" | "context" | "explain" | "verify"
         | "now" | "modules" | "status" => CommandFamily::Query,
-        "node" | "automata" | "ingestors" | "replay" | "dlq" | "ops" | "audit" | "lifecycle"
+        "node" | "automata" | "replay" | "dlq" | "ops" | "audit" | "lifecycle"
         | "git-ops" | "privacy" | "blob" => CommandFamily::Operate,
         "sources" => CommandFamily::Sources,
         "declare" | "instructions" | "tasks" | "curation" | "semantics" | "llm" | "documents"
@@ -938,7 +941,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::EVENTS_QUERY,
         ],
         "runtime status" => &[methods::COORDINATION_INSTANCE_HEALTH],
-        "ingestors" => &[methods::INGESTORS_STATUS],
+        "sources status" => &[methods::SOURCES_STATUS],
         "runtime drain" => &[methods::RUNTIME_DRAIN],
         "runtime resume" => &[methods::RUNTIME_RESUME],
         "runtime set-horizon" => &[methods::RUNTIME_SET_HORIZON],

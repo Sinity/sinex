@@ -1,7 +1,7 @@
-//! Unified checkpoint management for both ingestors and automata.
+//! Unified checkpoint management for both sources and automata.
 //!
 //! This module implements the unified checkpoint system that supports both
-//! external positions (for ingestors) and internal event IDs (for automata).
+//! external positions (for sources) and internal event IDs (for automata).
 //!
 //! # Architecture
 //!
@@ -12,7 +12,7 @@
 //!
 //! # Checkpoint Types
 //!
-//! - `External`: For ingestors tracking external system state (file positions, timestamps)
+//! - `External`: For sources tracking external system state (file positions, timestamps)
 //! - `Internal`: For automata tracking processed event `UUIDv7` IDs
 //! - `Stream`: For message stream IDs (NATS `JetStream`)
 //! - `Timestamp`: For time-based processing resumption
@@ -46,7 +46,7 @@ use sinex_primitives::temporal::Timestamp;
 use std::convert::TryInto;
 use tracing::{debug, info, warn};
 
-/// Unified checkpoint state for both ingestors and automata.
+/// Unified checkpoint state for both sources and automata.
 ///
 /// This structure wraps the unified `Checkpoint` enum with additional metadata
 /// for persistence and monitoring.
@@ -289,10 +289,10 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
     Some((node.to_string(), group.to_string(), consumer.to_string()))
 }
 
-/// Manager for unified checkpoint persistence (both ingestors and automata).
+/// Manager for unified checkpoint persistence (both sources and automata).
 ///
 /// This manager handles checkpoint storage and retrieval in the
-/// NATS KV bucket. It supports both ingestors and automata
+/// NATS KV bucket. It supports both sources and automata
 ///
 /// # Usage Pattern
 /// ```rust

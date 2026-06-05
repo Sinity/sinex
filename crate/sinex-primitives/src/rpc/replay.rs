@@ -169,7 +169,7 @@ pub struct ReplayScope {
 impl ReplayScope {
     /// Returns `true` when the scope references the staged-source architecture
     /// (source contracts, materials, or parsers). Replay planning uses this to
-    /// decide between live-ingestor scanning and parser-queue replay.
+    /// decide between live-source scanning and parser-queue replay.
     #[must_use]
     pub fn is_staged_source_scope(&self) -> bool {
         self.source_id.is_some()

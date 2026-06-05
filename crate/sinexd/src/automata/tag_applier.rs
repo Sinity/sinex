@@ -9,8 +9,8 @@
 //! | File extension | `file.path` payload field ends with `.nix` | `sys.inferred.file-type.nix` |
 //! | File extension | `file.path` payload field ends with `.md` | `sys.inferred.file-type.markdown` |
 //! | MIME type | `document.ingested` with `mime_type = text/markdown` | `sys.mime.text-markdown` |
-//! | Event source | event source = `terminal-ingestor` | `sys.source.terminal` |
-//! | Event source | event source = `browser-ingestor` | `sys.source.browser` |
+//! | Event source | event source = `terminal-source` | `sys.source.terminal` |
+//! | Event source | event source = `browser-source` | `sys.source.browser` |
 //!
 //! ## Input
 //!
@@ -92,12 +92,16 @@ fn evaluate_rules(input: &serde_json::Value, context: &AutomatonContext) -> Vec<
     // Source-based rules
     let source = context.source.as_str();
     match source {
-        "terminal-ingestor" => tags.push(tags::system::SOURCE_TERMINAL.into()),
-        "browser-ingestor" | "browser.history" => {
+        "terminal" | "terminal.zsh-history" | "terminal-source" => {
+            tags.push(tags::system::SOURCE_TERMINAL.into());
+        }
+        "browser.history" | "browser-source" => {
             tags.push(tags::system::SOURCE_BROWSER.into());
         }
-        "desktop-ingestor" => tags.push(tags::system::SOURCE_DESKTOP.into()),
-        "fs-ingestor" | "fs-watcher" => tags.push(tags::system::SOURCE_FILE.into()),
+        "desktop" | "desktop.activitywatch" | "desktop-source" => {
+            tags.push(tags::system::SOURCE_DESKTOP.into());
+        }
+        "fs" | "fs-watcher" | "fs-source" => tags.push(tags::system::SOURCE_FILE.into()),
         _ => {}
     }
 

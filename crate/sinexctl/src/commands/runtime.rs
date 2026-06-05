@@ -13,8 +13,8 @@ EXAMPLES:
     # List all registered modules
     sinexctl runtime list
 
-    # List only ingestor modules
-    sinexctl runtime list --role ingestor
+    # List only source modules
+    sinexctl runtime list --role source
 
     # Check status of a specific runtime module
     sinexctl runtime status terminal-source

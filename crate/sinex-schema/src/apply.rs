@@ -2125,7 +2125,7 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.source_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
     time_bucket('1 hour', id) AS bucket,
-    payload->>'node_type' AS node_type,
+    payload->>'module_kind' AS module_kind,
     SUM((payload->>'events_processed')::bigint) AS total_events_processed,
     SUM((payload->>'events_dropped')::bigint) AS total_events_dropped,
     AVG((payload->>'avg_latency_ms')::float) AS avg_latency_ms,
@@ -2135,7 +2135,7 @@ SELECT
 FROM core.events
 WHERE source = 'sinexd.source'
   AND event_type = 'processing.stats'
-GROUP BY time_bucket('1 hour', id), payload->>'node_type'
+GROUP BY time_bucket('1 hour', id), payload->>'module_kind'
 WITH NO DATA;
 
 SELECT add_continuous_aggregate_policy('sinex_telemetry.source_stats_1h',
@@ -2294,8 +2294,8 @@ SELECT
     MAX((payload->>'active_units')::bigint) AS current_active_units,
     COUNT(*) AS sample_count
 FROM core.events
-WHERE source = 'system-ingestor'
-  AND event_type IN ('system.resources', 'systemd.units_summary')
+WHERE (source = 'system.monitor' AND event_type = 'system.resources')
+   OR (source = 'system.systemd' AND event_type = 'systemd.units_summary')
 GROUP BY time_bucket('5 minutes', id)
 WITH NO DATA;
 
@@ -2419,13 +2419,13 @@ WHERE e.source_event_ids IS NOT NULL;
 
 /// Scope health dashboard for automatons.
 ///
-/// Provides a per-node, per-scope summary of derived events: how many exist,
+/// Provides a per-automaton, per-scope summary of derived events: how many exist,
 /// when last updated, and what processing metadata (`semantics_version`, `temporal_policy`)
 /// they carry. Operators query this to find stale scopes or version mismatches.
 const DERIVED_SCOPE_SUMMARY_SQL: &str = r"
 CREATE OR REPLACE VIEW core.derived_scope_summary AS
 SELECT
-    source AS node,
+    source AS automaton,
     scope_key,
     event_type,
     COUNT(*) AS event_count,

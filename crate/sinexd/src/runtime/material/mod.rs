@@ -1,7 +1,7 @@
 //! Material acquisition and transformation substrate.
 //!
 //! This module provides reusable abstractions for common material handling patterns
-//! across ingestors and automatons. The three key components are:
+//! across sources and automatons. The three key components are:
 //!
 //! - **[retry]**: Generic retry wrapper for transient I/O errors with exponential backoff
 //! - **[observation]**: Buffered batching for metadata-only events (no payload bytes)

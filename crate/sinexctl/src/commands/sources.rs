@@ -29,6 +29,8 @@ use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
 
+use super::source_status::SourceStatusCommand;
+
 /// Source material inventory, lifecycle, and diagnostics
 #[derive(Debug, Args)]
 #[command(after_help = "\
@@ -78,6 +80,7 @@ impl SourcesCommand {
             SourcesSubcommand::Drift(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::ExplainGap(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Cockpit(cmd) => cmd.execute(client, format).await,
+            SourcesSubcommand::Status(cmd) => cmd.execute(client, format).await,
         }
     }
 }
@@ -107,6 +110,8 @@ pub enum SourcesSubcommand {
     ExplainGap(ExplainGapCommand),
     /// Source readiness summary table with status per source
     Cockpit(CockpitCommand),
+    /// Source runtime status: run, health, and recent emissions
+    Status(SourceStatusCommand),
 }
 
 // ── Cockpit ────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
-//! Operator-facing ingestor status RPC types.
+//! Operator-facing source status RPC types.
 //!
-//! Mirrors `rpc::automata` for the source-side: every registered ingestor (and
-//! source) manifest, joined to its latest run, latest
+//! Mirrors `rpc::automata` for the source-side: every registered source
+//! manifest, joined to its latest run, latest
 //! `health.status` event, and recent event-emission stats. Distinct from
 //! `rpc::runtime` (which carries coordinator-style state — drain/resume/horizon).
 
@@ -19,19 +19,19 @@ fn default_recent_window_secs() -> u64 {
     300
 }
 
-pub const INGESTORS_STATUS_METHOD: RpcMethod<IngestorsStatusRequest, IngestorsStatusResponse> =
+pub const SOURCES_STATUS_METHOD: RpcMethod<SourcesStatusRequest, SourcesStatusResponse> =
     RpcMethod::new(
-        methods::INGESTORS_STATUS,
+        methods::SOURCES_STATUS,
         RpcRole::ReadOnly,
-        RpcDomain::Ingestors,
+        RpcDomain::Sources,
         RpcStability::Experimental,
         RpcMutability::ReadOnly,
     );
 
-/// Request: `ingestors.status`
+/// Request: `sources.status`
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IngestorsStatusRequest {
-    /// Heartbeats older than this make the ingestor non-live.
+pub struct SourcesStatusRequest {
+    /// Heartbeats older than this make the source non-live.
     #[serde(default = "default_stale_after_secs")]
     pub stale_after_secs: u64,
     /// Window used for recent-event-count context.
@@ -39,7 +39,7 @@ pub struct IngestorsStatusRequest {
     pub recent_window_secs: u64,
 }
 
-impl Default for IngestorsStatusRequest {
+impl Default for SourcesStatusRequest {
     fn default() -> Self {
         Self {
             stale_after_secs: default_stale_after_secs(),
@@ -48,18 +48,18 @@ impl Default for IngestorsStatusRequest {
     }
 }
 
-/// Response: `ingestors.status`
+/// Response: `sources.status`
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IngestorsStatusResponse {
+pub struct SourcesStatusResponse {
     pub generated_at: Timestamp,
     pub stale_after_secs: u64,
     pub recent_window_secs: u64,
-    pub ingestors: Vec<IngestorStatus>,
+    pub sources: Vec<SourceStatus>,
 }
 
-/// Operator-visible state for one registered ingestor.
+/// Operator-visible state for one registered source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IngestorStatus {
+pub struct SourceStatus {
     pub module_name: ModuleName,
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -81,7 +81,7 @@ pub struct IngestorStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_heartbeat_at: Option<Timestamp>,
     /// Current health from the latest `health.status` event for this component.
-    /// `None` if the ingestor has never emitted a transition.
+    /// `None` if the source has never emitted a transition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_health: Option<HealthStatus>,
     /// When the current health was last emitted.
@@ -90,7 +90,7 @@ pub struct IngestorStatus {
     /// Reason text from the most recent health transition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health_reason: Option<String>,
-    /// Count of events emitted by this ingestor inside the recent window.
+    /// Count of events emitted by this source inside the recent window.
     pub recent_output_count: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_output_at: Option<Timestamp>,
@@ -104,7 +104,7 @@ pub struct IngestorStatus {
 // work. The forensic on 2026-05-15 caught fs-watcher silent for 2 min,
 // dbus silent for 45 min, and activitywatch silent forever — all
 // heartbeating as healthy. This classifier surfaces that failure mode
-// (issue #992) from the existing `IngestorStatus` fields without
+// (issue #992) from the existing `SourceStatus` fields without
 // requiring any new pipeline plumbing.
 
 /// Default uptime gate: do not classify as stalled inside the first 10 min
@@ -211,7 +211,7 @@ impl EmitStallVerdict {
     }
 }
 
-impl IngestorStatus {
+impl SourceStatus {
     /// Classify this source's emit-rate health against the supplied
     /// thresholds and reference instant (`now`).
     ///
@@ -259,8 +259,8 @@ mod emit_stall_tests {
     use time::Duration;
     use xtask::sandbox::prelude::*;
 
-    fn base(now: Timestamp) -> IngestorStatus {
-        IngestorStatus {
+    fn base(now: Timestamp) -> SourceStatus {
+        SourceStatus {
             module_name: ModuleName::new("test-unit"),
             version: "0.0.0".into(),
             description: None,

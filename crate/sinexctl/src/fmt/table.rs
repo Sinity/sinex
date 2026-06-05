@@ -258,7 +258,7 @@ mod tests {
             is_leader: true,
         };
         let result = format_table_runtime(&[node]);
-        assert!(result.contains("ingestor"));
+        assert!(result.contains("source"));
         assert!(result.contains("01HXYZ12..."));
         assert!(result.contains("testhost"));
         assert!(result.contains("★"));

@@ -90,7 +90,7 @@
 //! ## Known external producer identifiers
 //!
 //! These are the `source_id` / `source` values for producers that are not
-//! Rust ingestors inside the sinex workspace:
+//! Rust sources inside the sinex workspace:
 //!
 //! | Identifier | Project | Description |
 //! |------------|---------|-------------|

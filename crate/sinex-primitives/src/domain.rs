@@ -2870,11 +2870,11 @@ pub struct ServiceRegistrationInfo {
     pub metadata: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// Types of services in the Sinex ecosystem
+/// Types of services in the Sinex ecosystem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceKind {
-    Ingestor,
+    Source,
     Automaton,
     Gateway,
     Collector,
@@ -2883,7 +2883,7 @@ pub enum ServiceKind {
 impl std::fmt::Display for ServiceKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Ingestor => write!(f, "ingestor"),
+            Self::Source => write!(f, "source"),
             Self::Automaton => write!(f, "automaton"),
             Self::Gateway => write!(f, "gateway"),
             Self::Collector => write!(f, "collector"),

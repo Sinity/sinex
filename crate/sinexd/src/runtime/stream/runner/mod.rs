@@ -104,7 +104,7 @@ mod command_listener;
 mod construct;
 mod control_messages;
 mod dispatch;
-mod ingestor_startup;
+mod source_startup;
 mod initialize;
 mod provisional;
 mod registration;

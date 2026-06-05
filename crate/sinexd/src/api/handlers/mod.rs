@@ -10,7 +10,7 @@ pub mod curation;
 pub mod dlq;
 pub mod documents;
 pub mod health;
-pub mod ingestors;
+pub mod source_status;
 pub mod instructions;
 pub mod lifecycle;
 pub mod llm;
@@ -48,7 +48,7 @@ pub use replay::{
 pub use audit::handle_audit_get;
 pub use automata::handle_automata_status;
 pub use dlq::{handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue};
-pub use ingestors::handle_ingestors_status;
+pub use source_status::handle_sources_status;
 pub use instructions::handle_hyprland_workspace_switch;
 pub use lifecycle::{
     handle_lifecycle_archive,

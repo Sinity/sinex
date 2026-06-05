@@ -51,7 +51,7 @@ use sinex_primitives::rpc::{
         HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD, HealthEffectRecordRequest,
         HealthEffectRecordResponse, HealthIntakeRecordRequest, HealthIntakeRecordResponse,
     },
-    ingestors::{INGESTORS_STATUS_METHOD, IngestorsStatusRequest, IngestorsStatusResponse},
+    source_status::{SOURCES_STATUS_METHOD, SourcesStatusRequest, SourcesStatusResponse},
     instructions::{
         HyprlandWorkspaceSwitchRequest, HyprlandWorkspaceSwitchResponse,
         INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
@@ -662,17 +662,17 @@ impl GatewayClient {
         self.call_typed(AUTOMATA_STATUS_METHOD, &req).await
     }
 
-    /// List ingestor status (manifest, run, latest health.status, recent emissions).
-    pub async fn ingestors_status(
+    /// List source status (manifest, run, latest health.status, recent emissions).
+    pub async fn sources_status(
         &self,
         stale_after_secs: u64,
         recent_window_secs: u64,
-    ) -> Result<IngestorsStatusResponse> {
-        let req = IngestorsStatusRequest {
+    ) -> Result<SourcesStatusResponse> {
+        let req = SourcesStatusRequest {
             stale_after_secs,
             recent_window_secs,
         };
-        self.call_typed(INGESTORS_STATUS_METHOD, &req).await
+        self.call_typed(SOURCES_STATUS_METHOD, &req).await
     }
 
     /// List all modules, optionally filtered by role.

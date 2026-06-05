@@ -1,6 +1,6 @@
-//! Ingestor startup sequence for `RuntimeRunner<T>`.
+//! Source startup sequence for `RuntimeRunner<T>`.
 //!
-//! Drives the snapshot -> gap-fill -> continuous transition for ingestor
+//! Drives the snapshot -> gap-fill -> continuous transition for source
 //! nodes, including drain awareness and checkpoint persistence between
 //! phases.
 
@@ -10,8 +10,8 @@ use super::{
 };
 
 impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
-    /// Run ingestor startup sequence (Snapshot -> Gap-fill -> Continuous)
-    pub(super) async fn run_ingestor_startup_sequence(&mut self) -> RuntimeResult<()> {
+    /// Run source startup sequence (Snapshot -> Gap-fill -> Continuous)
+    pub(super) async fn run_source_startup_sequence(&mut self) -> RuntimeResult<()> {
         let preexisting_checkpoint = self.module.current_checkpoint().await?;
         let drain_controller = self
             .runtime_state()
@@ -20,7 +20,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             .runtime_drain();
 
         // Tell systemd we're ready BEFORE the heavy startup phases run.
-        // Adapter-backed ingestors do heavy work in snapshot/gap-fill
+        // Adapter-backed sources do heavy work in snapshot/gap-fill
         // (e.g. desktop.activitywatch loads its full event table into
         // memory; system.journald imports 24h of journal cursors); some
         // hosts have TimeoutStartSec=90s and systemd kills the service
@@ -83,7 +83,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             info!("Phase 3: Starting continuous processing");
             let current_checkpoint = self.module.current_checkpoint().await?;
             // notify_ready was called at the top of this function — adapter-
-            // backed ingestors can spend minutes in snapshot/gap-fill, so we
+            // backed sources can spend minutes in snapshot/gap-fill, so we
             // must signal readiness before those phases or systemd kills us.
 
             // This should run indefinitely until shutdown

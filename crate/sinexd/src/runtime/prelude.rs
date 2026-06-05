@@ -34,7 +34,7 @@ pub use crate::runtime::{RuntimeInstance, RuntimeVersion};
 
 // Lifecycle management
 #[cfg(feature = "messaging")]
-pub use crate::runtime::{IngestorState, SourceDriver, SourceDriverRuntime};
+pub use crate::runtime::{SourceDriverState, SourceDriver, SourceDriverRuntime};
 
 // Event handling
 #[cfg(feature = "messaging")]

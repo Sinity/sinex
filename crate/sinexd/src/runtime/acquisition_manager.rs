@@ -1113,7 +1113,7 @@ impl AppendStreamAcquirer {
 
     /// Return the material ID of the currently active in-flight material, if any.
     ///
-    /// Used in tests and by [`AdapterBackedIngestor`] to verify that multiple drain
+    /// Used in tests and by [`AdapterBackedSource`] to verify that multiple drain
     /// cycles share the same material across drain calls.
     #[must_use]
     pub fn current_material_id(&self) -> Option<Uuid> {

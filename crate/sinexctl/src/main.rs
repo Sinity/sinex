@@ -9,7 +9,7 @@ use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
     ConfigCommands, ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand,
     DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
-    IngestorsCommand, InstructionsCommand, LifecycleCommands, LlmCommand, NowCommand, OpsCommands,
+    InstructionsCommand, LifecycleCommands, LlmCommand, NowCommand, OpsCommands,
     PrivacyCommand, QueryCommand, RecentCommand, ReplayCommands, ReportCommands, RuntimeCommands,
     RuntimePresenceCommand, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
     TasksCommand, TelemetryCommands, ThroughputCommand, TimelineCommand, TraceCommand, TuiCommand,
@@ -120,9 +120,6 @@ enum Commands {
 
     /// Automata status
     Automata(AutomataCommand),
-
-    /// Ingestor runtime status (run, health, recent emissions)
-    Ingestors(IngestorsCommand),
 
     /// Replay operations
     Replay {
@@ -367,7 +364,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Core { cmd } => cmd.execute(&client, format).await?,
                 Commands::Runtime { cmd } => cmd.execute(&client, format).await?,
                 Commands::Automata(cmd) => cmd.execute(&client, format).await?,
-                Commands::Ingestors(cmd) => cmd.execute(&client, format).await?,
                 Commands::Replay { cmd } => cmd.execute(&client, format).await?,
                 Commands::Dlq { cmd } => cmd.execute(&client, format).await?,
                 Commands::Query(cmd) => cmd.execute(&client, format).await?,
@@ -512,7 +508,6 @@ fn command_path(cmd: &Commands) -> String {
             RuntimeCommands::SetHorizon { .. } => "runtime set-horizon".to_string(),
         },
         Commands::Automata(_) => "automata".to_string(),
-        Commands::Ingestors(_) => "ingestors".to_string(),
         Commands::Replay { cmd } => match cmd {
             ReplayCommands::Plan { .. } => "replay plan".to_string(),
             ReplayCommands::Preview { .. } => "replay preview".to_string(),
@@ -572,6 +567,7 @@ fn command_path(cmd: &Commands) -> String {
                 SourcesSubcommand::Drift(_) => "sources drift".to_string(),
                 SourcesSubcommand::ExplainGap(_) => "sources explain-gap".to_string(),
                 SourcesSubcommand::Cockpit(_) => "sources cockpit".to_string(),
+                SourcesSubcommand::Status(_) => "sources status".to_string(),
             }
         }
         Commands::State { cmd } => match cmd {
@@ -848,17 +844,6 @@ mod tests {
         assert!(
             matches!(cli.command, Some(Commands::Automata(_))),
             "automata command must remain exposed as a top-level operator surface"
-        );
-        Ok(())
-    }
-
-    #[sinex_serial_test]
-    async fn ingestors_command_is_registered() -> TestResult<()> {
-        let (_matches, cli) = parse_cli(&["sinexctl", "ingestors"])?;
-
-        assert!(
-            matches!(cli.command, Some(Commands::Ingestors(_))),
-            "ingestors command must remain exposed as a top-level operator surface"
         );
         Ok(())
     }

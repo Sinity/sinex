@@ -148,7 +148,7 @@ pub use shutdown::wait_for_os_shutdown_signal;
 pub use shutdown::wait_for_shutdown_signal;
 pub use shutdown::wait_for_shutdown_signal_bool;
 pub use shutdown::{ShutdownConfig, default_checkpoint_path};
-pub use source_driver::{IngestorState, SourceDriver, SourceDriverRuntime};
+pub use source_driver::{SourceDriverState, SourceDriver, SourceDriverRuntime};
 pub use source_material::{
     stage_material, stage_material_from_file, stage_material_from_file_bounded,
 };

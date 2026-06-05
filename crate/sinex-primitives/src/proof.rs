@@ -535,7 +535,7 @@ pub enum CheckpointFamily {
     },
     /// Journal/log API consumed by sequential cursor (e.g. systemd journal).
     Journal,
-    /// Source has no native cursor; ingestor polls and diffs.
+    /// Source has no native cursor; runtime polls and diffs.
     Polling,
     /// Internal in-memory state observed at intervals.
     LiveObservation,
@@ -618,7 +618,7 @@ impl SourceBuildImpact {
     };
 }
 
-/// The typed declaration every ingestor fills in.
+/// The typed declaration every source fills in.
 ///
 /// This is strictly a *semantic* descriptor: identity, emitted event-type
 /// pairs, privacy tier, time horizons, retention, occurrence identity, and

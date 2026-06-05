@@ -1,9 +1,9 @@
-//! Operator-facing ingestor status handler.
+//! Operator-facing source status handler.
 
 use sinex_db::DbPoolExt;
 use sinex_primitives::SinexError;
-use sinex_primitives::rpc::ingestors::{
-    IngestorStatus, IngestorsStatusRequest, IngestorsStatusResponse,
+use sinex_primitives::rpc::source_status::{
+    SourceStatus, SourcesStatusRequest, SourcesStatusResponse,
 };
 use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
@@ -11,23 +11,23 @@ use std::time::Duration;
 
 type Result<T> = std::result::Result<T, SinexError>;
 
-/// List registered ingestors with run, health, and recent-emission stats.
+/// List registered sources with run, health, and recent-emission stats.
 ///
 /// Mirrors `handle_automata_status` (`automata.status`) for the source-side
-/// surface; filtered to `manifest_type = 'ingestor'`.
-pub async fn handle_ingestors_status(
+/// surface; filtered to `manifest_type = 'source'`.
+pub async fn handle_sources_status(
     pool: &PgPool,
-    request: IngestorsStatusRequest,
-) -> Result<IngestorsStatusResponse> {
+    request: SourcesStatusRequest,
+) -> Result<SourcesStatusResponse> {
     let stale_after = Duration::from_secs(request.stale_after_secs);
     let recent_window = Duration::from_secs(request.recent_window_secs);
-    let ingestors = pool
+    let sources = pool
         .state()
-        .list_ingestors_status(stale_after, recent_window)
+        .list_sources_status(stale_after, recent_window)
         .await
-        .map_err(|e| SinexError::database("Failed to list ingestors status").with_std_error(&e))?
+        .map_err(|e| SinexError::database("Failed to list sources status").with_std_error(&e))?
         .into_iter()
-        .map(|row| IngestorStatus {
+        .map(|row| SourceStatus {
             module_name: row.module_name,
             version: row.version,
             description: row.description,
@@ -48,11 +48,11 @@ pub async fn handle_ingestors_status(
         })
         .collect();
 
-    let response = IngestorsStatusResponse {
+    let response = SourcesStatusResponse {
         generated_at: Timestamp::now(),
         stale_after_secs: request.stale_after_secs,
         recent_window_secs: request.recent_window_secs,
-        ingestors,
+        sources,
     };
 
     Ok(response)

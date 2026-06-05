@@ -1,6 +1,6 @@
-//! Ingestion helper utilities for ingestor source processing.
+//! Ingestion helper utilities for source processing.
 //!
-//! This module provides helpers for ingestors to process `MaterialSliceStream`:
+//! This module provides helpers for sources to process `MaterialSliceStream`:
 //! - `SliceAssembler` for record reassembly
 //! - `LedgerReader` and `derive_ts_orig` for timestamp computation
 //! - `SnapshotDiff` for snapshot sources (diff to inserts/updates/deletes)

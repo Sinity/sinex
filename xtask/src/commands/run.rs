@@ -103,7 +103,7 @@ fn local_run_failure_suggestion(dev_journal_path: Option<&Path>) -> String {
 /// `sinexd system.journald source` consumes `journalctl --output=json` (one JSON object per
 /// line, each with `_SYSTEMD_UNIT`, `MESSAGE`, `_PID`, `_BOOT_ID`,
 /// `__REALTIME_TIMESTAMP`, `SYSLOG_IDENTIFIER`). This struct writes equivalent entries
-/// so the ingestor's journald-monitoring loop works end-to-end in dev environments
+/// so the source's journald-monitoring loop works end-to-end in dev environments
 /// without systemd.
 ///
 /// Clones share the same underlying sender — safe to distribute across stream tasks.

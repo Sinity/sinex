@@ -240,7 +240,7 @@ impl ReplayExecutionEngine {
     ///
     /// Instead of republishing stored event rows to NATS (reinjection), this:
     /// 1. Archives the affected cascade (existing events + derivatives)
-    /// 2. Sends a `SourceScanCommand` to the running ingestor via NATS request-reply
+    /// 2. Sends a `SourceScanCommand` to the running source via NATS request-reply
     /// 3. Waits for the source to acknowledge and complete the scan
     /// 4. The source re-reads source material and emits fresh events through normal flow
     /// 5. Downstream automatons process the new events naturally via `JetStream`
@@ -553,7 +553,7 @@ impl ReplayExecutionEngine {
             restore_archived_cascade: bool,
         }
 
-        let target_node_name = ack.module_name.clone();
+        let target_source_name = ack.module_name.clone();
         let completion = match tokio::time::timeout(self.scan_completion_timeout, async {
             loop {
                 tokio::select! {
@@ -561,7 +561,7 @@ impl ReplayExecutionEngine {
                         let Some(msg) = maybe_msg else {
                             return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
                                 error: SinexError::nats(format!(
-                                    "Replay progress stream closed before node '{target_node_name}' reported completion"
+                                    "Replay progress stream closed before source '{target_source_name}' reported completion"
                                 )),
                                 emitted_count: events_emitted,
                                 restore_archived_cascade: events_emitted == 0,
@@ -672,8 +672,8 @@ impl ReplayExecutionEngine {
             Ok(result) => result,
             Err(_timeout) => Err(ReplayScanFailure {
                 error: SinexError::timeout(format!(
-                    "Replay scan timed out waiting for node '{}' to report completion after {:?}",
-                    target_node_name,
+                    "Replay scan timed out waiting for source '{}' to report completion after {:?}",
+                    target_source_name,
                     self.scan_completion_timeout
                 )),
                 emitted_count: events_emitted,

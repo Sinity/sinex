@@ -17,11 +17,11 @@ LIFECYCLE:
     plan → preview → approve → execute
 
 EXAMPLES:
-    # Create a replay plan for a node
-    sinexctl replay plan --node terminal-ingestor
+    # Create a replay plan for a source
+    sinexctl replay plan --source terminal.zsh-history
 
     # Create with scope filters
-    sinexctl replay plan --node fs-ingestor --since 1h --material <UUID>
+    sinexctl replay plan --source fs --since 1h --material <UUID>
 
     # Preview what will be replayed. When the scope crosses material
     # boundaries (more than one source_material_id), the preview adds a
@@ -39,7 +39,7 @@ EXAMPLES:
     sinexctl replay submit <OPERATION_ID>
 
     # Full convenience: plan+preview+approve+execute
-    sinexctl replay run --node terminal-ingestor --since 24h
+    sinexctl replay run --source terminal.zsh-history --since 24h
 
     # Watch progress
     sinexctl replay watch <OPERATION_ID>
@@ -54,9 +54,9 @@ EXAMPLES:
 pub enum ReplayCommands {
     /// Create a replay plan (planning state)
     Plan {
-        /// RuntimeModule ID to replay events for
+        /// Source ID to replay events for
         #[arg(long)]
-        node: String,
+        source: String,
 
         /// Start time (RFC3339 or relative like "1h", "24h", "7d")
         #[arg(long)]
@@ -164,9 +164,9 @@ pub enum ReplayCommands {
         #[arg(long, value_enum)]
         state: Option<ReplayStateFilter>,
 
-        /// Filter by source module ID
+        /// Filter by source ID
         #[arg(long)]
-        node: Option<String>,
+        source: Option<String>,
 
         /// Maximum number of results
         #[arg(long, default_value = "50")]
@@ -175,9 +175,9 @@ pub enum ReplayCommands {
 
     /// Full lifecycle: plan + preview + approve + execute (convenience)
     Run {
-        /// RuntimeModule ID to replay events for
+        /// Source ID to replay events for
         #[arg(long)]
-        node: String,
+        source: String,
 
         /// Start time (RFC3339 or relative like "1h", "24h", "7d")
         #[arg(long)]
@@ -251,7 +251,7 @@ impl ReplayCommands {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
             Self::Plan {
-                node,
+                source,
                 since,
                 until,
                 materials,
@@ -259,7 +259,7 @@ impl ReplayCommands {
             } => {
                 let operation = client
                     .replay_plan(
-                        node,
+                        source,
                         since.as_deref(),
                         until.as_deref(),
                         materials,
@@ -383,9 +383,13 @@ impl ReplayCommands {
                 execute_watch(client, operation_id, *interval, &format).await?;
             }
 
-            Self::List { state, node, limit } => {
+            Self::List {
+                state,
+                source,
+                limit,
+            } => {
                 let operations = client
-                    .replay_list_filtered(state.map(Into::into), node.as_deref(), Some(*limit))
+                    .replay_list_filtered(state.map(Into::into), source.as_deref(), Some(*limit))
                     .await?;
                 CommandOutput::list(
                     operations,
@@ -396,7 +400,7 @@ impl ReplayCommands {
             }
 
             Self::Run {
-                node,
+                source,
                 since,
                 until,
                 materials,
@@ -409,7 +413,7 @@ impl ReplayCommands {
             } => {
                 execute_run(
                     client,
-                    node,
+                    source,
                     since.as_deref(),
                     until.as_deref(),
                     materials,
@@ -486,7 +490,7 @@ async fn execute_watch(
 
 async fn execute_run(
     client: &GatewayClient,
-    node: &str,
+    source: &str,
     since: Option<&str>,
     until: Option<&str>,
     materials: &[String],
@@ -495,9 +499,9 @@ async fn execute_run(
     gate_overrides: ReplayGateOverrides,
     format: &OutputFormat,
 ) -> Result<()> {
-    eprintln!("Creating replay plan for node '{node}'...");
+    eprintln!("Creating replay plan for source '{source}'...");
     let operation = client
-        .replay_plan(node, since, until, materials, event_types)
+        .replay_plan(source, since, until, materials, event_types)
         .await?;
     let op_id = operation.operation_id.clone();
     eprintln!("  Operation: {op_id}");
@@ -1121,7 +1125,7 @@ mod tests {
             operation_id: "op-1".to_string(),
             state: ReplayState::Previewed,
             scope: ReplayScope {
-                source_name: "terminal-ingestor".to_string(),
+                source_name: "terminal.zsh-history".to_string(),
                 time_window: None,
                 material_filter: None,
                 filters: std::collections::HashMap::new(),

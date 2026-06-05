@@ -1,7 +1,7 @@
 //! Watcher lifecycle abstraction for managing long-running watcher tasks.
 //!
 //! This module provides a standardized pattern for managing watcher tasks across
-//! different ingestor nodes. It handles state transitions, health tracking, and
+//! different source modules. It handles state transitions, health tracking, and
 //! cleanup of resources associated with background monitoring tasks.
 //!
 //! # Architecture

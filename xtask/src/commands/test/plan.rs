@@ -17,6 +17,7 @@ const SINEXD_RUNTIME_TEST_PACKAGES: &[&str] = &[
     "sinexd",
     "sinex-workspace-tests",
 ];
+const SINEXCTL_RUNTIME_TEST_PACKAGES: &[&str] = &["sinex-workspace-tests"];
 const DATABASE_TEST_PACKAGES: &[&str] = &[
     "sinex-db",
     "sinex-e2e-tests",
@@ -104,6 +105,12 @@ pub(super) fn runtime_binary_requirements_for_plan(
         requirements.push(RuntimeBinaryRequirement {
             package: "sinexd",
             binary: "sinexd",
+        });
+    }
+    if workload_scope_includes_any(&execution_plan.workload_scope, SINEXCTL_RUNTIME_TEST_PACKAGES) {
+        requirements.push(RuntimeBinaryRequirement {
+            package: "sinexctl",
+            binary: "sinexctl",
         });
     }
     requirements
@@ -356,11 +363,13 @@ mod tests {
             workload_scope: WorkloadScope::Workspace,
         };
 
-        // A single `sinexd` runtime binary hosts both engine and gateway.
+        // Workspace tests spawn both the unified daemon and sinexctl CLI.
         let requirements = runtime_binary_requirements_for_plan(&plan);
-        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements.len(), 2);
         assert_eq!(requirements[0].package, "sinexd");
         assert_eq!(requirements[0].binary, "sinexd");
+        assert_eq!(requirements[1].package, "sinexctl");
+        assert_eq!(requirements[1].binary, "sinexctl");
         Ok(())
     }
 
@@ -415,8 +424,8 @@ mod tests {
     #[sinex_test]
     async fn runtime_binary_requirements_include_sinexd_for_workspace_tests()
     -> ::xtask::sandbox::TestResult<()> {
-        // sinex-workspace-tests includes the gateway-driving TestCoreStack
-        // fixture, which spawns the `sinexd rpc-server` subprocess.
+        // sinex-workspace-tests includes gateway-driving fixtures that spawn
+        // `sinexd rpc-server` and CLI fixtures that spawn `sinexctl`.
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinex-workspace-tests".to_string()],
             excluded_packages: Vec::new(),
@@ -424,8 +433,9 @@ mod tests {
         };
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
-        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements.len(), 2);
         assert_eq!(requirements[0].package, "sinexd");
+        assert_eq!(requirements[1].package, "sinexctl");
         Ok(())
     }
 

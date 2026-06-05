@@ -181,8 +181,7 @@ impl ContextCommand {
 /// The mapping table is keyed by the `event_source` namespace values used
 /// inside `core.events` (e.g. `shell.atuin`, `wm.hyprland`, `fs-watcher`)
 /// — these strings are emitted by source contracts hosted inside `sinexd`.
-/// Legacy `sinex-{domain}-ingestor` package names and the intermediate
-/// `sinexd` binary are no longer runtime identities.
+/// Old package names and the `sinexd` binary are not runtime identities.
 fn display_source(source: &str) -> String {
     let friendly = match source {
         "shell.atuin" | "shell.asciinema" | "shell.kitty" | "shell.scrollback" => "terminal",
@@ -208,7 +207,6 @@ fn display_source(source: &str) -> String {
     let mut s = source;
     s = s.strip_prefix("sinex-").unwrap_or(s);
     s = s.strip_prefix("sinex.").unwrap_or(s);
-    s = s.strip_suffix("-ingestor").unwrap_or(s);
     s = s.strip_suffix("-automaton").unwrap_or(s);
     s.to_string()
 }

@@ -18,7 +18,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
         operator: "event_engine@localhost".to_string(),
         scope: Some(json!({
             "node": "event_engine",
-            "mode": "ingestor",
+            "mode": "source",
             "source": "fs-watcher"
         })),
         result_status: OperationStatus::Success,
@@ -37,7 +37,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
         logged.scope,
         Some(json!({
             "node": "event_engine",
-            "mode": "ingestor",
+            "mode": "source",
             "source": "fs-watcher"
         }))
     );
@@ -565,7 +565,7 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
     let run = repo
         .start_module_run(
             manifest.id,
-            "sinex-terminal-ingestor",
+            "sinex-terminal-source",
             "host-123-run",
             "test-host",
             Some("b3-abc123"),
@@ -574,7 +574,7 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
         .await?;
 
     assert_eq!(run.manifest_id, Some(manifest.id));
-    assert_eq!(run.service_name, "sinex-terminal-ingestor");
+    assert_eq!(run.service_name, "sinex-terminal-source");
     assert_eq!(run.instance_id, "host-123-run");
     assert_eq!(run.host, "test-host");
     assert_eq!(run.status, "running");
@@ -702,7 +702,7 @@ async fn node_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) -> T
     let run = repo
         .start_module_run(
             manifest.id,
-            "sinex-terminal-ingestor",
+            "sinex-terminal-source",
             "host-123-run",
             "test-host",
             None,

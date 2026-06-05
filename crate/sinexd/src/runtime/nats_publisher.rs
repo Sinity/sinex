@@ -297,7 +297,7 @@ impl NatsPublisher {
     /// an [`EventIntent`] to declare "I've done my admission checks" and
     /// the envelope is serialized as a single NATS message.
     ///
-    /// Both `Class::Critical` (ingestor source-bearing events) and
+    /// Both `Class::Critical` (source-bearing events) and
     /// `Class::Derived` (automaton derived outputs) ride the same raw-events
     /// lane on the wire.
     ///

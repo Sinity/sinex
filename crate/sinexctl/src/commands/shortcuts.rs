@@ -11,7 +11,7 @@ use sinex_primitives::privacy::{load_private_mode_state, resolve_private_mode_st
 use sinex_primitives::query::{
     EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange,
 };
-use sinex_primitives::rpc::ingestors::EmitStallThresholds;
+use sinex_primitives::rpc::source_status::EmitStallThresholds;
 use sinex_primitives::rpc::sources::{
     SourceReadiness, SourceReadinessStatus, SourcesReadinessListRequest,
 };
@@ -316,8 +316,8 @@ async fn collect_source_and_stall_signals(
     signals: &mut Vec<RuntimeStatusSignal>,
     warnings: &mut Vec<RuntimeStatusWarning>,
 ) -> Vec<(
-    sinex_primitives::rpc::ingestors::IngestorStatus,
-    sinex_primitives::rpc::ingestors::EmitStallVerdict,
+    sinex_primitives::rpc::source_status::SourceStatus,
+    sinex_primitives::rpc::source_status::EmitStallVerdict,
 )> {
     match client
         .sources_readiness_list(SourcesReadinessListRequest::default())
@@ -350,10 +350,10 @@ async fn collect_source_and_stall_signals(
     // alive and past the uptime gate but have not emitted in `quiet_secs`.
     let thresholds = EmitStallThresholds::from_env_or_default();
     let window_secs = thresholds.quiet_secs.max(60);
-    let stalled_units = match client.ingestors_status(window_secs, window_secs).await {
+    let stalled_units = match client.sources_status(window_secs, window_secs).await {
         Ok(resp) => {
             let now = resp.generated_at;
-            resp.ingestors
+            resp.sources
                 .into_iter()
                 .filter_map(|ing| {
                     let verdict = ing.classify_emit_stall(thresholds, now);
@@ -363,7 +363,7 @@ async fn collect_source_and_stall_signals(
         }
         Err(e) => {
             warnings.push(RuntimeStatusWarning {
-                source: "ingestors.status".to_string(),
+                source: "sources.status".to_string(),
                 message: format!("emit-rate stall check unavailable: {e}"),
             });
             Vec::new()
@@ -374,7 +374,7 @@ async fn collect_source_and_stall_signals(
         signals.push(RuntimeStatusSignal {
             name: "emit-rate".to_string(),
             status: RuntimeStatusSignalStatus::Degraded,
-            source: "ingestors.status emit-stall classifier".to_string(),
+            source: "sources.status emit-stall classifier".to_string(),
             message: Some(format!(
                 "{} stalled source(s) (quiet ≥ {}s, uptime ≥ {}s)",
                 stalled_units.len(),
@@ -390,8 +390,8 @@ async fn collect_source_and_stall_signals(
 fn render_status_table(
     snapshot: &sinex_primitives::RuntimeStatusSnapshot,
     stalled_units: &[(
-        sinex_primitives::rpc::ingestors::IngestorStatus,
-        sinex_primitives::rpc::ingestors::EmitStallVerdict,
+        sinex_primitives::rpc::source_status::SourceStatus,
+        sinex_primitives::rpc::source_status::EmitStallVerdict,
     )],
 ) {
     println!("{}", style("System Status").bold().cyan());
@@ -1051,7 +1051,7 @@ EXAMPLES:
     # Watch all events
     sinexctl watch
 
-    # Watch events from terminal ingestor
+    # Watch events from terminal source
     sinexctl watch --source shell.atuin
 
     # Watch process execution events

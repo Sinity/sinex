@@ -1,6 +1,6 @@
 //! Streaming material context abstraction for events arriving over time.
 //!
-//! This module provides a base abstraction for ingestors that produce events
+//! This module provides a base abstraction for sources that produce events
 //! from long-lived streams (e.g., journalctl, subprocess output, file drops).
 //! It coordinates material lifecycle (begin → append → finalize) without
 //! holding locks across I/O operations.
@@ -148,7 +148,7 @@ impl Drop for StreamHandle {
 
 /// Base context for streaming material acquisition.
 ///
-/// Designed to be embedded in ingestor-specific watcher implementations.
+/// Designed to be embedded in source-specific watcher implementations.
 /// Handles stream lifecycle coordination without holding locks across I/O.
 pub struct StreamMaterialContext {
     /// Mutex held only during `begin_stream`, not across append or finalize

@@ -115,7 +115,7 @@ pub struct EventIntent {
     /// Envelope version — currently "1".
     pub envelope_version: String,
 
-    /// Source identifier (e.g., "fs-watcher", "terminal-ingestor").
+    /// Source identifier (e.g., "fs-watcher", "terminal-source").
     /// Must match a registered `SourceContract::source_id`.
     pub source_id: String,
 

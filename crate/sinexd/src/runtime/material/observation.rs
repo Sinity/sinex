@@ -1,6 +1,6 @@
 //! Buffered batching for metadata-only events (observation materialization).
 //!
-//! This module abstracts the buffering pattern seen in `sinex-system-ingestor`:
+//! This module abstracts the buffering pattern seen in `sinex-system-source`:
 //! accumulate small JSON-serializable records, flush when thresholds are reached,
 //! and serialize to JSON Lines format suitable for material staging.
 //!

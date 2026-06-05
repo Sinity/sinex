@@ -273,7 +273,7 @@ impl AdapterSourceConfig {
 /// Checkpoint state for [`AdapterBackedSource`].
 ///
 /// Contains the adapter cursor (opaque to the runtime) and event counters.
-/// Serialized as the `IngestorState<S>::user_state` payload.
+/// Serialized as the `SourceDriverState<S>::user_state` payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound = "C: Clone + Serialize + DeserializeOwned")]
 pub struct AdapterModuleState<C>

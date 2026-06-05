@@ -133,7 +133,7 @@ mod tests {
             table: "manifests",
             column: "manifest_type",
             version: 1,
-            allowed_values: &["ingestor"],
+            allowed_values: &["source"],
             enum_name: "ModuleKind",
         };
         assert_eq!(spec.constraint_name(), "manifest_type_check_v1");

@@ -250,7 +250,7 @@ impl Events {
             // more than 1 second. UUIDv7 timestamp extraction has millisecond
             // precision, so ts_coided can lag ts_orig by up to 999 microseconds
             // when the UUID encodes ts_orig directly. The 1-second tolerance also
-            // covers clock skew between ingestor hosts. (#751 F34)
+            // covers clock skew between source-runtime hosts. (#751 F34)
             .check(Expr::cust(
                 "ts_orig <= ts_coided + INTERVAL '1 second'",
             ))

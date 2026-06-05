@@ -21,7 +21,7 @@ use sinex_primitives::rpc::curation::CurationListProposalsRequest;
 use sinex_primitives::rpc::documents::{
     DocumentsGetChunksRequest, DocumentsGetRequest, DocumentsSearchRequest,
 };
-use sinex_primitives::rpc::ingestors::IngestorsStatusResponse;
+use sinex_primitives::rpc::source_status::SourcesStatusResponse;
 use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmPromptsListRequest, LlmRouteExplainRequest,
 };
@@ -594,10 +594,10 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.ingestors_status",
+            name: "sinex.sources_status",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only source-ingestor liveness, health, and emission status.",
-            backing_rpc_methods: &[methods::INGESTORS_STATUS],
+            description: "Read-only source liveness, health, and emission status.",
+            backing_rpc_methods: &[methods::SOURCES_STATUS],
             read_only: true,
         },
         McpCatalogEntry {
@@ -1186,7 +1186,7 @@ pub fn tools() -> Vec<McpTool> {
         mcp_tool("sinex.semantic_lane_outputs", lane_records_schema()),
         mcp_tool("sinex.semantic_lane_diffs", lane_records_schema()),
         mcp_tool("sinex.automata_status", status_window_schema()),
-        mcp_tool("sinex.ingestors_status", status_window_schema()),
+        mcp_tool("sinex.sources_status", status_window_schema()),
         mcp_tool("sinex.source_health", stale_after_schema()),
         mcp_tool("sinex.sources_active", stale_after_schema()),
         mcp_tool("sinex.sources_registry", empty_object_schema()),
@@ -1363,7 +1363,7 @@ pub fn tools() -> Vec<McpTool> {
                 "properties": {
                     "module_kind": {
                         "type": "string",
-                        "enum": ["ingestor", "automaton", "service"]
+                        "enum": ["source", "automaton", "service"]
                     }
                 },
                 "additionalProperties": false
@@ -1377,7 +1377,7 @@ pub fn tools() -> Vec<McpTool> {
                 "properties": {
                     "module_kind": {
                         "type": "string",
-                        "enum": ["ingestor", "automaton", "service"]
+                        "enum": ["source", "automaton", "service"]
                     }
                 },
                 "additionalProperties": false
@@ -1641,7 +1641,7 @@ async fn call_tool_nodes_analytics(
 ) -> Result<Option<Value>> {
     let result = match name {
         "sinex.automata_status" => automata_status(client, arguments).await?,
-        "sinex.ingestors_status" => ingestors_status(client, arguments).await?,
+        "sinex.sources_status" => sources_status(client, arguments).await?,
         "sinex.source_health" => runtime_health(client, arguments).await?,
         "sinex.sources_active" => runtime_active(client, arguments).await?,
         "sinex.sources_registry" => runtime_registry(client, arguments).await?,
@@ -2039,13 +2039,13 @@ async fn automata_status(client: &GatewayClient, arguments: Value) -> Result<Val
     ))
 }
 
-async fn ingestors_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
+async fn sources_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: StatusWindowArgs = serde_json::from_value(arguments)?;
-    let response: IngestorsStatusResponse = client
-        .ingestors_status(args.stale_after_secs, args.recent_window_secs)
+    let response: SourcesStatusResponse = client
+        .sources_status(args.stale_after_secs, args.recent_window_secs)
         .await?;
     Ok(envelope(
-        "sinex.ingestors_status",
+        "sinex.sources_status",
         &json!(args),
         &json!({ "result": response }),
     ))

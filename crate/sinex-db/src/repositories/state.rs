@@ -1511,22 +1511,22 @@ impl StateRepository<'_> {
         .map_err(|e| db_error(e, "list automata status"))
     }
 
-    /// List registered ingestor manifests with run + health + recent-output stats.
+    /// List registered source manifests with run + health + recent-output stats.
     ///
     /// Sibling to [`list_automata_status`](Self::list_automata_status), filtered on
-    /// `manifest_type = 'ingestor'`. Ingestors emit on-change `health.status` events
+    /// `manifest_type = 'source'`. Sources emit on-change `health.status` events
     /// (not continuous `metric.gauge` like derived modules), so per-module telemetry is
     /// narrower: latest `current_status` + reason + recent output count by source-run-id.
-    pub async fn list_ingestors_status(
+    pub async fn list_sources_status(
         &self,
         stale_after: Duration,
         recent_window: Duration,
-    ) -> DbResult<Vec<IngestorsStatusRow>> {
+    ) -> DbResult<Vec<SourcesStatusRow>> {
         let stale_secs = stale_after.as_secs() as f64;
         let recent_secs = recent_window.as_secs() as f64;
 
         sqlx::query_as!(
-            IngestorsStatusRow,
+            SourcesStatusRow,
             r#"
             SELECT
                 nm.name::text as "module_name!: ModuleName",
@@ -1595,7 +1595,7 @@ impl StateRepository<'_> {
                   AND e.module_run_id = nr.id
                   AND e.source_material_id IS NOT NULL
             ) outputs ON true
-            WHERE nm.manifest_type = 'ingestor'
+            WHERE nm.manifest_type = 'source'
             ORDER BY nm.name, nm.version
             "#,
             stale_secs,
@@ -1603,7 +1603,7 @@ impl StateRepository<'_> {
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "list ingestors status"))
+        .map_err(|e| db_error(e, "list sources status"))
     }
 
     // ========== System Verification Methods ==========
@@ -1858,9 +1858,9 @@ pub struct AutomataStatusRow {
     pub last_replay_at: Option<Timestamp>,
 }
 
-/// Operator-facing ingestor status row.
+/// Operator-facing source status row.
 #[derive(Debug, sqlx::FromRow)]
-pub struct IngestorsStatusRow {
+pub struct SourcesStatusRow {
     pub module_name: ModuleName,
     pub version: String,
     pub description: Option<String>,

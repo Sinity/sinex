@@ -20,7 +20,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// 2. If accepted, spawns an isolated replay worker for the same node type/config
     /// 3. Publishes `SourceScanProgress` updates to `sinex.control.replay.progress.<operation_id>`
     ///
-    /// Only ingestor nodes accept scan commands; automata reject them (they receive
+    /// Only source modules accept scan commands; automata reject them (they receive
     /// re-derived events naturally via `JetStream`).
     #[cfg(feature = "messaging")]
     pub(super) fn start_command_listener(&mut self) {
@@ -194,7 +194,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                             module_name: loop_node_name.clone(),
                                             accepted: false,
                                             error: Some(format!(
-                                                "RuntimeModule '{loop_node_name}' is a {module_kind:?}, not an Ingestor. Automata receive replay events via JetStream."
+                                                "RuntimeModule '{loop_node_name}' is a {module_kind:?}, not a source. Automata receive replay events via JetStream."
                                             )),
                                         };
                                         if let Err(error) =
