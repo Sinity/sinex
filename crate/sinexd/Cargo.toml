@@ -32,6 +32,10 @@ path = "tests/sources/terminal_history_parser_test.rs"
 name = "production_path"
 path = "tests/sources/production_path.rs"
 
+[[test]]
+name = "registry_dispatch_test"
+path = "tests/sources/registry_dispatch_test.rs"
+
 [features]
 default = ["db", "messaging", "preflight"]
 tokio-console = ["dep:console-subscriber"]

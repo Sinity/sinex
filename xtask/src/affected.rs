@@ -171,20 +171,17 @@ pub fn infer_packages_for_test_filter(filter: &str) -> Result<Vec<String>> {
     infer_packages_for_test_filter_in(&repo_root, filter)
 }
 
-/// Infer nextest integration-test binary targets from a simple test-name filter.
-///
-/// This is intentionally conservative. It only returns targets for tests found
-/// in integration-test files (`*/tests/*.rs`). If any matched test lives in an
-/// inline/unit-test module, the returned set omits it and the caller should run
-/// without adding `--test` unless all intended matches are covered.
-pub fn infer_test_binaries_for_test_filter(filter: &str) -> Result<Vec<String>> {
+/// Infer `(package, test_binary)` pairs from a simple test-name filter.
+pub(crate) fn infer_test_binary_packages_for_test_filter(
+    filter: &str,
+) -> Result<Vec<(String, String)>> {
     let repo_root = crate::config::workspace_root();
-    infer_test_binaries_for_test_filter_in(&repo_root, filter)
+    infer_test_binary_packages_for_test_filter_in(&repo_root, filter)
 }
 
 /// Infer whether a simple test-name filter targets only library unit tests.
 ///
-/// This complements [`infer_test_binaries_for_test_filter`]. Inline tests in
+/// This complements [`infer_test_binary_packages_for_test_filter`]. Inline tests in
 /// `src/` do not have a nextest `--test` target, but nextest can narrow them
 /// with `--lib`; doing so avoids enumerating every integration-test binary in a
 /// package for a single library unit test.
@@ -226,12 +223,27 @@ fn infer_packages_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<V
     Ok(packages)
 }
 
+#[cfg(test)]
 fn infer_test_binaries_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<Vec<String>> {
+    let binary_packages = infer_test_binary_packages_for_test_filter_in(repo_root, filter)?;
+    let mut binaries: Vec<String> = binary_packages
+        .into_iter()
+        .map(|(_package, binary)| binary)
+        .collect();
+    binaries.sort();
+    binaries.dedup();
+    Ok(binaries)
+}
+
+fn infer_test_binary_packages_for_test_filter_in(
+    repo_root: &Path,
+    filter: &str,
+) -> Result<Vec<(String, String)>> {
     let Some(test_names) = extract_simple_test_name_terms(filter) else {
         return Ok(Vec::new());
     };
 
-    let mut binaries = HashSet::new();
+    let mut binary_packages = HashSet::new();
     let mut covered_test_names = HashSet::new();
     for relative_path in candidate_rust_paths(repo_root)? {
         let full_path = repo_root.join(&relative_path);
@@ -251,8 +263,10 @@ fn infer_test_binaries_for_test_filter_in(repo_root: &Path, filter: &str) -> Res
             };
 
             if let Some(binary) = binary {
-                covered_test_names.extend(matched_test_names.into_iter().cloned());
-                binaries.insert(binary);
+                if let Some(package) = package_for_path(&relative_path) {
+                    covered_test_names.extend(matched_test_names.into_iter().cloned());
+                    binary_packages.insert((package, binary));
+                }
             }
         }
     }
@@ -264,9 +278,9 @@ fn infer_test_binaries_for_test_filter_in(repo_root: &Path, filter: &str) -> Res
         return Ok(Vec::new());
     }
 
-    let mut binaries: Vec<String> = binaries.into_iter().collect();
-    binaries.sort();
-    Ok(binaries)
+    let mut binary_packages: Vec<(String, String)> = binary_packages.into_iter().collect();
+    binary_packages.sort();
+    Ok(binary_packages)
 }
 
 fn infer_lib_target_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<bool> {
@@ -464,8 +478,8 @@ fn test_binary_for_path(path: &str) -> Option<String> {
         return Some(stem.to_string());
     }
 
-    // Crate-local integration tests: crate/<category>/<crate>/tests/foo.rs.
-    if parts.len() == 5 && parts[0] == "crate" && parts[3] == "tests" {
+    // Crate-local integration tests: crate/<crate>/tests/foo.rs.
+    if parts.len() == 4 && parts[0] == "crate" && parts[2] == "tests" {
         return Some(stem.to_string());
     }
 
@@ -481,6 +495,10 @@ fn test_binary_for_nested_integration_module(
     repo_root: &Path,
     path: &str,
 ) -> Result<Option<String>> {
+    if let Some(binary) = test_binary_from_crate_manifest(repo_root, path)? {
+        return Ok(Some(binary));
+    }
+
     let parts: Vec<&str> = path.split('/').collect();
     let Some(file_name) = parts.last() else {
         return Ok(None);
@@ -504,6 +522,42 @@ fn test_binary_for_nested_integration_module(
     }
 
     Ok(Some(binary))
+}
+
+fn test_binary_from_crate_manifest(repo_root: &Path, path: &str) -> Result<Option<String>> {
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() < 4 || parts.first().copied() != Some("crate") {
+        return Ok(None);
+    }
+
+    let crate_root = format!("{}/{}", parts[0], parts[1]);
+    let relative_test_path = parts[2..].join("/");
+    let manifest_path = repo_root.join(&crate_root).join("Cargo.toml");
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+
+    let manifest = fs::read_to_string(&manifest_path)
+        .wrap_err_with(|| format!("failed to read {}", manifest_path.display()))?;
+    let manifest: toml::Value = toml::from_str(&manifest)
+        .wrap_err_with(|| format!("failed to parse {}", manifest_path.display()))?;
+    let Some(tests) = manifest.get("test").and_then(toml::Value::as_array) else {
+        return Ok(None);
+    };
+
+    for test in tests {
+        let Some(configured_path) = test.get("path").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        if configured_path != relative_test_path {
+            continue;
+        }
+        if let Some(name) = test.get("name").and_then(toml::Value::as_str) {
+            return Ok(Some(name.to_string()));
+        }
+    }
+
+    Ok(None)
 }
 
 fn nested_integration_aggregator(
@@ -547,17 +601,17 @@ fn nested_integration_root(parts: &[&str]) -> Option<(String, String, String)> {
         ));
     }
 
-    // Crate-local integration tests: crate/<category>/<crate>/tests/foo/bar.rs
+    // Crate-local integration tests: crate/<crate>/tests/foo/bar.rs
     // belongs to nextest target `foo` when tests/foo.rs includes it.
-    if parts.len() > 5
+    if parts.len() > 4
         && parts.first().copied() == Some("crate")
-        && parts.get(3).copied() == Some("tests")
+        && parts.get(2).copied() == Some("tests")
     {
-        let root = *parts.get(4)?;
+        let root = *parts.get(3)?;
         return Some((
-            format!("{}/{}/{}/tests/{root}.rs", parts[0], parts[1], parts[2]),
+            format!("{}/{}/tests/{root}.rs", parts[0], parts[1]),
             root.to_string(),
-            parts[4..].join("/"),
+            parts[3..].join("/"),
         ));
     }
 
@@ -982,6 +1036,34 @@ mod tests {
             inferred,
             vec!["large_payload_test".to_string(), "smoke".to_string()]
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infer_test_binaries_maps_flat_crate_integration_tests() -> TestResult<()> {
+        let repo = tempfile::tempdir()?;
+        let registry = repo
+            .path()
+            .join("crate/sinexd/tests/sources/registry_dispatch_test.rs");
+        fs::create_dir_all(registry.parent().expect("registry parent"))?;
+        fs::write(
+            repo.path().join("crate/sinexd/Cargo.toml"),
+            r#"
+[[test]]
+name = "registry_dispatch_test"
+path = "tests/sources/registry_dispatch_test.rs"
+"#,
+        )?;
+        fs::write(
+            &registry,
+            "#[sinex_test]\nasync fn weechat_descriptor_registered() {}\n",
+        )?;
+
+        let inferred = infer_test_binaries_for_test_filter_in(
+            repo.path(),
+            "test(weechat_descriptor_registered)",
+        )?;
+        assert_eq!(inferred, vec!["registry_dispatch_test".to_string()]);
         Ok(())
     }
 

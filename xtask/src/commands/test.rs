@@ -737,15 +737,31 @@ impl TestCommand {
         if !self.test_binaries.is_empty() {
             return Ok(normalize_packages(&self.test_binaries));
         }
-        if !self.packages.is_empty() {
-            return Ok(Vec::new());
-        }
 
         let Some(filter) = filter else {
             return Ok(Vec::new());
         };
 
-        affected::infer_test_binaries_for_test_filter(filter)
+        let inferred_binary_packages =
+            affected::infer_test_binary_packages_for_test_filter(filter)?;
+        if !self.packages.is_empty() {
+            let selected_packages = normalize_packages(&self.packages);
+            if inferred_binary_packages.is_empty()
+                || inferred_binary_packages
+                    .iter()
+                    .any(|(package, _binary)| !selected_packages.contains(package))
+            {
+                return Ok(Vec::new());
+            }
+        }
+
+        let mut binaries: Vec<String> = inferred_binary_packages
+            .into_iter()
+            .map(|(_package, binary)| binary)
+            .collect();
+        binaries.sort();
+        binaries.dedup();
+        Ok(binaries)
     }
 
     fn effective_lib_target(&self, filter: Option<&str>, test_binaries: &[String]) -> Result<bool> {
@@ -2447,11 +2463,30 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_explicit_package_scope_disables_test_binary_inference()
+    async fn test_explicit_package_scope_preserves_matching_test_binary_inference()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            packages: vec!["sinexd".to_string()],
+            filter: Some("test(weechat_descriptor_registered)".to_string()),
+            ..Default::default()
+        };
+
+        let binaries = command.effective_test_binaries(command.filter.as_deref())?;
+
+        assert_eq!(
+            binaries,
+            vec!["registry_dispatch_test".to_string()],
+            "explicit matching package scope should still infer the exact integration-test binary"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_explicit_package_scope_rejects_cross_package_test_binary_inference()
     -> ::xtask::sandbox::TestResult<()> {
         let command = TestCommand {
             packages: vec!["xtask".to_string()],
-            filter: Some("test(run)".to_string()),
+            filter: Some("test(mcp_catalog_exactly_covers_live_tools)".to_string()),
             ..Default::default()
         };
 

@@ -25,6 +25,11 @@ const DATABASE_TEST_PACKAGES: &[&str] = &[
     "sinex-schema",
     "sinex-workspace-tests",
 ];
+const SINEXD_RUNTIME_INDEPENDENT_TEST_BINARIES: &[&str] = &[
+    "browser_history_parser_test",
+    "registry_dispatch_test",
+    "terminal_history_parser_test",
+];
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub(super) struct RuntimeBinaryRequirement {
@@ -122,14 +127,18 @@ pub(super) fn runtime_binary_requirements_for_plan(
 pub(super) fn runtime_binary_requirements_for_target(
     execution_plan: &NextestExecutionPlan,
     lib_target: bool,
-    _test_binaries: &[String],
+    test_binaries: &[String],
     _filter: Option<&str>,
 ) -> Vec<RuntimeBinaryRequirement> {
     if lib_target {
         return Vec::new();
     }
 
-    runtime_binary_requirements_for_plan(execution_plan)
+    let mut requirements = runtime_binary_requirements_for_plan(execution_plan);
+    if sinexd_runtime_independent_target(execution_plan, test_binaries) {
+        requirements.retain(|requirement| requirement.package != "sinexd");
+    }
+    requirements
 }
 
 pub(super) fn test_database_required_for_plan(execution_plan: &NextestExecutionPlan) -> bool {
@@ -142,6 +151,27 @@ fn workload_scope_includes_any(scope: &WorkloadScope, packages: &[&str]) -> bool
         WorkloadScope::Packages(selected) | WorkloadScope::Affected(selected) => selected
             .iter()
             .any(|package| packages.iter().any(|candidate| package == candidate)),
+    }
+}
+
+fn sinexd_runtime_independent_target(
+    execution_plan: &NextestExecutionPlan,
+    test_binaries: &[String],
+) -> bool {
+    if test_binaries.is_empty() {
+        return false;
+    }
+    match &execution_plan.workload_scope {
+        WorkloadScope::Packages(selected) | WorkloadScope::Affected(selected)
+            if selected.len() == 1 && selected[0] == "sinexd" =>
+        {
+            test_binaries.iter().all(|binary| {
+                SINEXD_RUNTIME_INDEPENDENT_TEST_BINARIES
+                    .iter()
+                    .any(|candidate| candidate == binary)
+            })
+        }
+        _ => false,
     }
 }
 
@@ -466,6 +496,37 @@ mod tests {
 
         assert!(runtime_binary_requirements_for_target(&plan, true, &[], None).is_empty());
         assert!(!runtime_binary_requirements_for_target(&plan, false, &[], None).is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_requirements_skip_runtime_independent_sinexd_test_targets()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinexd".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec!["sinexd".to_string()]),
+        };
+
+        assert!(
+            runtime_binary_requirements_for_target(
+                &plan,
+                false,
+                &["registry_dispatch_test".to_string()],
+                Some("test(weechat_descriptor_registered)"),
+            )
+            .is_empty()
+        );
+        assert!(
+            runtime_binary_requirements_for_target(
+                &plan,
+                false,
+                &["replay_rpc_live_test".to_string()],
+                Some("test(replay_rpc_live_submits_operation)"),
+            )
+            .iter()
+            .any(|requirement| requirement.package == "sinexd")
+        );
         Ok(())
     }
 
