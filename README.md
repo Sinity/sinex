@@ -40,10 +40,9 @@ WHERE c.command LIKE 'cargo test%'
 
 ## Architecture
 
-The capture layer is being reframed from "one ingestor crate per source domain"
-to a staged-source parser substrate: source material is registered, an
-input-shape adapter enumerates records or bytes, and a parser emits
-material-provenance events. See
+The capture layer uses a staged-source parser substrate: source material is
+registered, an input-shape adapter enumerates records or bytes, and a parser
+emits material-provenance events. See
 [`crate/sinexd/docs/sources/staged_source_parser_substrate.md`](crate/sinexd/docs/sources/staged_source_parser_substrate.md).
 The diagram below shows the deployed runtime shape; #1054 owns the remaining
 decision about whether staged local parsers always cross NATS or can run closer

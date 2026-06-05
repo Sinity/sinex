@@ -539,7 +539,7 @@ impl ReplayExecutionEngine {
 
         info!(
             operation_id = %operation_id,
-            node = %ack.module_name,
+            source = %ack.module_name,
             "RuntimeModule accepted scan command, waiting for completion"
         );
 

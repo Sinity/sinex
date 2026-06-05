@@ -164,7 +164,7 @@ async fn operations_default_to_planning() -> Result<()> {
         created_at: sinex_primitives::temporal::now(),
         approved_by: None,
         approved_at: None,
-        executor_node: None,
+        executor_module: None,
         started_at: None,
         finished_at: None,
         outcome: None,
@@ -207,7 +207,7 @@ async fn create_operation_persists_loadable_metadata_atomically(ctx: TestContext
     assert_eq!(loaded.checkpoint.processed_events, 0);
     assert!(loaded.preview_summary.is_none());
     assert!(loaded.approved_by.is_none());
-    assert!(loaded.executor_node.is_none());
+    assert!(loaded.executor_module.is_none());
 
     let persisted = sqlx::query!(
         r#"
@@ -308,7 +308,7 @@ async fn submit_previewed_operation_sets_execution_metadata_atomically(
         .submit_previewed_for_execution(
             operation.operation_id,
             "admin:submitter".to_string(),
-            sinex_primitives::domain::ModuleName::new("gateway-node"),
+            sinex_primitives::domain::ModuleName::new("gateway-module"),
         )
         .await?;
 
@@ -316,14 +316,14 @@ async fn submit_previewed_operation_sets_execution_metadata_atomically(
     assert_eq!(submitted.approved_by.as_deref(), Some("admin:submitter"));
     assert!(submitted.approved_at.is_some());
     assert!(submitted.started_at.is_some());
-    assert_eq!(submitted.executor_node.as_deref(), Some("gateway-node"));
+    assert_eq!(submitted.executor_module.as_deref(), Some("gateway-module"));
     assert_eq!(submitted.outcome, None);
     assert_eq!(submitted.error_details, None);
 
     let loaded = replay.load_operation(operation.operation_id).await?;
     assert_eq!(loaded.state, ReplayState::Executing);
     assert_eq!(loaded.approved_by.as_deref(), Some("admin:submitter"));
-    assert_eq!(loaded.executor_node.as_deref(), Some("gateway-node"));
+    assert_eq!(loaded.executor_module.as_deref(), Some("gateway-module"));
     assert_eq!(loaded.approved_at, submitted.approved_at);
     assert_eq!(loaded.started_at, submitted.started_at);
 
@@ -364,14 +364,14 @@ async fn begin_execution_sets_execution_metadata_atomically(ctx: TestContext) ->
     replay
         .begin_execution(
             operation.operation_id,
-            sinex_primitives::domain::ModuleName::new("gateway-node"),
+            sinex_primitives::domain::ModuleName::new("gateway-module"),
         )
         .await?;
 
     let loaded = replay.load_operation(operation.operation_id).await?;
     assert_eq!(loaded.state, ReplayState::Executing);
     assert!(loaded.started_at.is_some());
-    assert_eq!(loaded.executor_node.as_deref(), Some("gateway-node"));
+    assert_eq!(loaded.executor_module.as_deref(), Some("gateway-module"));
     assert_eq!(loaded.outcome, None);
     assert_eq!(loaded.error_details, None);
 
@@ -423,7 +423,7 @@ async fn mark_failed_persists_pre_execution_and_execution_failures(ctx: TestCont
         failed_before_execution.error_details.as_deref(),
         Some("pre-execution error")
     );
-    assert!(failed_before_execution.executor_node.is_none());
+    assert!(failed_before_execution.executor_module.is_none());
 
     let second_operation = replay
         .create_operation(
@@ -601,7 +601,7 @@ async fn execution_lock_is_released_when_guard_drops(ctx: TestContext) -> Result
     assert!(first_guard.is_some());
     let locked = replay.load_operation(operation.operation_id).await?;
     assert!(
-        locked.executor_node.is_none(),
+        locked.executor_module.is_none(),
         "taking the advisory lock must not fabricate executor metadata"
     );
 
@@ -632,7 +632,7 @@ async fn execution_lock_is_released_when_guard_drops(ctx: TestContext) -> Result
 }
 
 #[sinex_test]
-async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Result<()> {
+async fn recover_stale_executing_clears_executor_module(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
         source_name: "test-node".to_string(),
@@ -667,7 +667,7 @@ async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Resul
     }
 
     let stale_started_at = sinex_primitives::temporal::now() - time::Duration::hours(2);
-    let executor_node = serde_json::to_value("node-a")?;
+    let executor_module = serde_json::to_value("executor-a")?;
     sqlx::query!(
         r#"
         UPDATE core.operations_log
@@ -678,7 +678,7 @@ async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Resul
                     to_jsonb($2::timestamptz),
                     true
                 ),
-                '{executor_node}',
+                '{executor_module}',
                 $3::jsonb,
                 true
             )
@@ -686,7 +686,7 @@ async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Resul
         "#,
         operation.operation_id,
         *stale_started_at,
-        executor_node
+        executor_module
     )
     .execute(&ctx.pool)
     .await?;
@@ -699,7 +699,7 @@ async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Resul
     let failed = replay.load_operation(operation.operation_id).await?;
     assert_eq!(failed.state, ReplayState::Failed);
     assert_eq!(failed.outcome, Some(ReplayOutcome::Failed));
-    assert!(failed.executor_node.is_none());
+    assert!(failed.executor_module.is_none());
     assert!(
         failed
             .error_details
@@ -711,7 +711,7 @@ async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Resul
 }
 
 #[sinex_test]
-async fn recover_stale_committing_clears_executor_node(ctx: TestContext) -> Result<()> {
+async fn recover_stale_committing_clears_executor_module(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
         source_name: "test-node".to_string(),
@@ -737,9 +737,9 @@ async fn recover_stale_committing_clears_executor_node(ctx: TestContext) -> Resu
         .transition(operation.operation_id, ReplayState::Executing)
         .await?;
     replay
-        .set_executor_node(
+        .set_executor_module(
             operation.operation_id,
-            sinex_primitives::domain::ModuleName::new("node-a"),
+            sinex_primitives::domain::ModuleName::new("executor-a"),
         )
         .await?;
     replay
@@ -772,7 +772,7 @@ async fn recover_stale_committing_clears_executor_node(ctx: TestContext) -> Resu
     let failed = replay.load_operation(operation.operation_id).await?;
     assert_eq!(failed.state, ReplayState::Failed);
     assert_eq!(failed.outcome, Some(ReplayOutcome::Failed));
-    assert!(failed.executor_node.is_none());
+    assert!(failed.executor_module.is_none());
     assert!(
         failed
             .error_details

@@ -24,7 +24,7 @@ Allowed v1 behavior:
 - search events and source materials;
 - trace provenance and material evidence links;
 - return source readiness and continuity caveats;
-- expose runtime privacy, health, node, ingestor, automata, replay,
+- expose runtime privacy, health, source, automata, replay,
   task, document, semantic-lane, and event-engine telemetry read models;
 - fetch document metadata and ranked document search metadata with raw
   text and side data redacted.

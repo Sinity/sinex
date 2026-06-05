@@ -181,7 +181,7 @@ impl ReplayExecutionEngine {
     ) -> Result<ReplayOperation> {
         let Some(_execution_lock) = self.replay.acquire_execution_lock(operation_id).await? else {
             return Err(SinexError::invalid_state(format!(
-                "Operation {operation_id} is already executing on another node"
+                "Operation {operation_id} is already executing on another executor"
             )));
         };
 
@@ -227,7 +227,7 @@ impl ReplayExecutionEngine {
     ) -> Result<ReplayOperation> {
         let Some(_execution_lock) = self.replay.acquire_execution_lock(operation_id).await? else {
             return Err(SinexError::invalid_state(format!(
-                "Operation {operation_id} is already executing on another node"
+                "Operation {operation_id} is already executing on another executor"
             )));
         };
 
@@ -485,10 +485,10 @@ impl ReplayExecutionEngine {
         })?;
         ensure_replay_gates_pass(operation_id, preview, gate_overrides)?;
 
-        let executor_node = ModuleName::new(submitter);
+        let executor_module = ModuleName::new(submitter);
         let operation = self
             .replay
-            .submit_previewed_for_execution(operation_id, submitter.to_string(), executor_node)
+            .submit_previewed_for_execution(operation_id, submitter.to_string(), executor_module)
             .await?;
         let (total_events, execution_window, preview_root_ids) =
             Self::execution_inputs_from_operation(operation_id, &operation)?;

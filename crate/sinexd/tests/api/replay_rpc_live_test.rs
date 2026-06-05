@@ -230,7 +230,7 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
         "gateway RPC must persist the authenticated submitter identity"
     );
     assert_eq!(
-        submit_result["operation"]["executor_node"].as_str(),
+        submit_result["operation"]["executor_module"].as_str(),
         Some("admin:token:live-rpc"),
         "gateway RPC submit must record the authenticated executor identity"
     );

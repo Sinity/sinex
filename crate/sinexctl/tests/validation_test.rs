@@ -2753,7 +2753,7 @@ fn fixture_replay_operation(state: &str) -> Value {
         "created_at": "2026-05-19T10:00:00Z",
         "approved_by": null,
         "approved_at": null,
-        "executor_node": null,
+        "executor_module": null,
         "started_at": null,
         "finished_at": null,
         "outcome": null,

@@ -1168,7 +1168,7 @@ let
       # /run/user/UID/hypr/<sig> on every compositor restart.  The oneshot
       # access-setup unit only runs at boot, so newly-created instance
       # directories never receive the u:sinex:rw- ACL grant on their
-      # sockets, and reconnection from the desktop ingestor fails with
+      # sockets, and reconnection from the desktop source fails with
       # Permission denied (issue #680).  Add a non-RemainAfterExit refresh
       # service plus a path unit that re-runs the ACL setup whenever the
       # Hyprland runtime root changes.

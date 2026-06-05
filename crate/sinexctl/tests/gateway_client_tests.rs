@@ -891,7 +891,7 @@ async fn test_gateway_client_replay_submit_previews_before_execute() -> TestResu
             "operation_id": "00000000-0000-0000-0000-000000000123",
             "state": state,
             "scope": {
-                "node_id": "test-node",
+                "source_name": "test-source",
                 "time_window": null,
                 "material_filter": null,
                 "filters": {}
@@ -909,7 +909,7 @@ async fn test_gateway_client_replay_submit_previews_before_execute() -> TestResu
             "created_at": "2026-04-02T00:00:00Z",
             "approved_by": "service:test",
             "approved_at": "2026-04-02T00:00:01Z",
-            "executor_node": null,
+            "executor_module": null,
             "started_at": null,
             "finished_at": null,
             "outcome": null,

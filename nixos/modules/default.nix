@@ -1641,7 +1641,7 @@ in
                 "text/html"
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               ];
-              description = "MIME types accepted by the document ingestor.";
+              description = "MIME types accepted by the document source.";
             };
             maxDocumentSize = mkOption {
               type = unsigned;

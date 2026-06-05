@@ -32,13 +32,13 @@ The service implements a strict fail-fast initialization policy:
 The complete path of a single event through the system:
 
 1. Source data exists (file change, shell command, window focus, systemd event).
-2. Ingestor detects change (inotify / polling / socket / journal API).
+2. Source runtime detects change (inotify / polling / socket / journal API).
 3. Source material registered in DB (`raw.source_material_registry`).
-4. Ingestor parses source bytes into typed payload struct.
+4. Source runtime parses source bytes into typed payload struct.
 5. `EventPayload` trait provides `(SOURCE, EVENT_TYPE)` as compile-time constants.
 6. `.from_material(source_material_id)` sets provenance + `anchor_byte`.
 7. `.build()` creates `Event<T>` with `UUIDv7` id, `ts_orig`, host, provenance.
-8. Privacy engine runs synchronously (per-event, in ingestor process).
+8. Privacy engine runs synchronously in the source runtime.
 9. `EventBatcher` accumulates (100 events OR 1 second, whichever first).
 10. Batch published to NATS `JetStream` (`SINEX_RAW_EVENTS`).
 11. The event-engine consumer receives the batch from NATS.
@@ -63,7 +63,7 @@ elif batch ≥ 50   → COPY protocol (staging table, SIMD-escaped, pooled trans
 else              → QueryBuilder VALUES (no staging overhead for small batches)
 ```
 
-**Implication:** automaton-heavy workloads never hit the COPY fast path. COPY only benefits material-provenance batches from ingestors.
+**Implication:** automaton-heavy workloads never hit the COPY fast path. COPY only benefits material-provenance batches from source runtimes.
 
 ### Ingest Semantics: Confirm-After-Commit
 

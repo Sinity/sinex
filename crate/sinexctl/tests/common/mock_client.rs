@@ -288,7 +288,7 @@ impl MockGatewayClient {
                 created_at: temporal::now().format_rfc3339(),
                 approved_by: None,
                 approved_at: None,
-                executor_node: None,
+                executor_module: None,
                 started_at: None,
                 finished_at: None,
                 outcome: None,

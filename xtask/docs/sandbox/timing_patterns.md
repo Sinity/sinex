@@ -264,23 +264,23 @@ async fn test_event_ordering(ctx: TestContext) -> Result<()> {
 
 | Type | Needs DATABASE_URL? | Example |
 |------|---------------------|---------|
-| **Ingestors** | No | fs-watcher, terminal-node, desktop-node |
+| **Sources** | No | fs-watcher, terminal-source, desktop-source |
 | **Automata** | Usually yes | analytics-automaton, health-aggregator |
 
-**Ingestors** only capture and publish events to NATS. **Automata** query historical events.
+**Sources** only capture and publish events to NATS. **Automata** query historical events.
 
-### Testing Ingestors Without Database
+### Testing Sources Without Database
 
 ```rust
 #[sinex_test]
-async fn test_ingestor_without_database(ctx: TestContext) -> Result<()> {
+async fn test_source_without_database(ctx: TestContext) -> Result<()> {
     std::env::set_var("SINEX_EDGE_MODE", "1");
     std::env::remove_var("DATABASE_URL");
 
     let ctx = ctx.with_nats().shared().await?;
 
-    // Initialize ingestor - works without DATABASE_URL
-    let node = MyIngestor::new(/* ... */);
+    // Initialize source - works without DATABASE_URL
+    let source = MySource::new(/* ... */);
     let runner = RuntimeRunner::new(/* ... */).await?;
 
     // Checkpoints work (always NATS KV)

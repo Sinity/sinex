@@ -139,7 +139,7 @@ async fn different_nodes_allowed_concurrent(ctx: TestContext) -> TestResult<()> 
     let gw = LiveGateway::start(ctx.database_url(), RPC_TOKEN, &mut env_guard).await?;
 
     let first = gw
-        .rpc_envelope(methods::REPLAY_CREATE_OPERATION, scope_for_node("node-a"))
+        .rpc_envelope(methods::REPLAY_CREATE_OPERATION, scope_for_node("executor-a"))
         .await?;
     assert!(
         first.get("result").is_some(),

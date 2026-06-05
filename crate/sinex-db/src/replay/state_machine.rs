@@ -297,8 +297,8 @@ pub struct ReplayOperation {
     pub approved_by: Option<String>,
     /// When approved
     pub approved_at: Option<Timestamp>,
-    /// Which node is executing
-    pub executor_node: Option<ModuleName>,
+    /// Runtime module or authenticated actor executing the replay
+    pub executor_module: Option<ModuleName>,
     /// When execution started
     pub started_at: Option<Timestamp>,
     /// When execution finished
@@ -419,7 +419,7 @@ impl ReplayStateMachine {
             created_at: now,
             approved_by: None,
             approved_at: None,
-            executor_node: None,
+            executor_module: None,
             started_at: None,
             finished_at: None,
             outcome: None,
@@ -433,7 +433,7 @@ impl ReplayStateMachine {
             created_at: operation.created_at,
             approved_by: operation.approved_by.clone(),
             approved_at: operation.approved_at,
-            executor_node: operation.executor_node.clone(),
+            executor_module: operation.executor_module.clone(),
             started_at: operation.started_at,
             finished_at: operation.finished_at,
             outcome: operation.outcome,
@@ -747,7 +747,7 @@ impl ReplayStateMachine {
         &self,
         operation_id: Uuid,
         approver: String,
-        executor_node: ModuleName,
+        executor_module: ModuleName,
     ) -> Result<ReplayOperation> {
         let repo = self.repo();
         let now = temporal::now();
@@ -814,7 +814,7 @@ impl ReplayStateMachine {
         meta.finished_at = None;
         meta.outcome = None;
         meta.error_details = None;
-        meta.executor_node = Some(executor_node.clone());
+        meta.executor_module = Some(executor_module.clone());
         let (status, msg) = map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
         repo.update_operation_meta(&mut tx, operation_id, meta_json.clone(), status, msg, None)
@@ -824,7 +824,7 @@ impl ReplayStateMachine {
         info!(
             operation_id = %operation_id,
             approver = %approver,
-            executor_node = %executor_node,
+            executor_module = %executor_module,
             "Atomically submitted replay operation for execution"
         );
 
@@ -835,7 +835,7 @@ impl ReplayStateMachine {
     pub async fn begin_execution(
         &self,
         operation_id: Uuid,
-        executor_node: ModuleName,
+        executor_module: ModuleName,
     ) -> Result<()> {
         let repo = self.repo();
         let now = temporal::now();
@@ -857,7 +857,7 @@ impl ReplayStateMachine {
         meta.finished_at = None;
         meta.outcome = None;
         meta.error_details = None;
-        meta.executor_node = Some(executor_node.clone());
+        meta.executor_module = Some(executor_module.clone());
         let (status, msg) = map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
         repo.update_operation_meta(&mut tx, operation_id, meta_json, status, msg, None)
@@ -866,7 +866,7 @@ impl ReplayStateMachine {
 
         info!(
             operation_id = %operation_id,
-            executor_node = %executor_node,
+            executor_module = %executor_module,
             "Atomically transitioned replay operation into execution"
         );
 
@@ -1030,26 +1030,26 @@ impl ReplayStateMachine {
         self.repo().try_acquire_execution_lock(operation_id).await
     }
 
-    /// Persist the executor node after execution has actually entered the Executing state.
-    pub async fn set_executor_node(
+    /// Persist the executor module after execution has actually entered the Executing state.
+    pub async fn set_executor_module(
         &self,
         operation_id: Uuid,
-        executor_node: ModuleName,
+        executor_module: ModuleName,
     ) -> Result<()> {
         let repo = self.repo();
-        let mut tx = repo.begin_context("set_executor_node").await?;
+        let mut tx = repo.begin_context("set_executor_module").await?;
 
         let existing = repo.fetch_meta_for_update(&mut tx, operation_id).await?;
         let mut meta = decode_meta_json(Some(existing))?;
         if meta.state != ReplayState::Executing {
             return Err(SinexError::invalid_state(
-                "Cannot set replay executor node unless the operation is executing",
+                "Cannot set replay executor module unless the operation is executing",
             )
             .with_context("current_state", format!("{:?}", meta.state))
             .with_id("operation_id", operation_id.to_string())
-            .with_operation("set_replay_executor_node"));
+            .with_operation("set_replay_executor_module"));
         }
-        meta.executor_node = Some(executor_node.clone());
+        meta.executor_module = Some(executor_module.clone());
         let meta_json = serde_json::to_value(&meta)?;
         repo.update_operation_meta_only(&mut tx, operation_id, meta_json)
             .await?;
@@ -1057,7 +1057,7 @@ impl ReplayStateMachine {
 
         info!(
             "RuntimeModule {} executing replay operation {}",
-            executor_node, operation_id
+            executor_module, operation_id
         );
         Ok(())
     }
@@ -1117,7 +1117,7 @@ impl ReplayStateMachine {
         meta.state = ReplayState::Failed;
         meta.finished_at = Some(temporal::now());
         meta.outcome = Some(ReplayOutcome::Failed);
-        meta.executor_node = None;
+        meta.executor_module = None;
         meta.error_details = Some(format!(
             "recovered from stale {} state (likely process crash)",
             state_json_label(recovered_state).to_ascii_lowercase()
@@ -1197,7 +1197,7 @@ pub struct MetaJson {
     pub created_at: Timestamp,
     pub approved_by: Option<String>,
     pub approved_at: Option<Timestamp>,
-    pub executor_node: Option<ModuleName>,
+    pub executor_module: Option<ModuleName>,
     pub started_at: Option<Timestamp>,
     pub finished_at: Option<Timestamp>,
     pub outcome: Option<ReplayOutcome>,
@@ -1286,7 +1286,7 @@ pub fn decode_meta_to_operation(
         created_at: meta.created_at,
         approved_by: meta.approved_by,
         approved_at: meta.approved_at,
-        executor_node: meta.executor_node,
+        executor_module: meta.executor_module,
         started_at: meta.started_at,
         finished_at: meta.finished_at,
         outcome: meta.outcome,

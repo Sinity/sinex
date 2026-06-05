@@ -51,7 +51,7 @@ async fn replay_execute_rejects_zero_event_preview_before_execution(
         stored.error_details.as_deref(),
         Some(err.to_string().as_str())
     );
-    assert!(stored.executor_node.is_none());
+    assert!(stored.executor_module.is_none());
 
     Ok(())
 }
@@ -105,7 +105,7 @@ async fn replay_execute_rejects_target_canonical_gate_without_override(
 
     let stored = replay.load_operation(operation.operation_id).await?;
     assert_eq!(stored.state, ReplayState::Failed);
-    assert!(stored.executor_node.is_none());
+    assert!(stored.executor_module.is_none());
 
     Ok(())
 }

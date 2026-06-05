@@ -222,9 +222,9 @@ pub struct ReplayOperation {
     /// When approved
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved_at: Option<String>,
-    /// Which node is executing
+    /// Runtime module or authenticated actor executing the replay
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor_node: Option<ModuleName>,
+    pub executor_module: Option<ModuleName>,
     /// When execution started
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,

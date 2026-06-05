@@ -1147,7 +1147,7 @@ mod tests {
             created_at: "2026-04-04T00:00:00Z".to_string(),
             approved_by: None,
             approved_at: None,
-            executor_node: None,
+            executor_module: None,
             started_at: None,
             finished_at: None,
             outcome: None,
