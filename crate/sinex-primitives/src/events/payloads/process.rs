@@ -74,7 +74,7 @@ pub struct AutomatonErrorPayload {
 // `sinex.process.*` and `sinex.automaton.error` are emitted by every long-
 // running sinex binary as part of standard lifecycle/health observability.
 // These are infra source contracts in the same sense as `blob-storage`: the
-// events exist today (event_engine/gateway/nodes publish them on boot, on
+// events exist today (sinexd modules publish them on boot, on
 // degradation, on shutdown), but they are not produced by a dedicated
 // systemd service — every binary participates. We register descriptors so
 // `sinexctl verify --sources` finds a claim for each declared

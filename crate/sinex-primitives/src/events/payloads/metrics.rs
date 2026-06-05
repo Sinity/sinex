@@ -34,7 +34,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex", event_type = "metric.counter")]
 pub struct MetricCounterPayload {
-    /// Metric name (e.g., "gateway.requests", "`event_engine.events_processed`")
+    /// Metric name (e.g., "api.requests", "`event_engine.events_processed`")
     pub name: String,
     /// Current counter value
     pub value: u64,
@@ -72,7 +72,7 @@ pub struct MetricGaugePayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex", event_type = "metric.histogram")]
 pub struct MetricHistogramPayload {
-    /// Metric name (e.g., "`gateway.request_latency_ms`")
+    /// Metric name (e.g., "`api.request_latency_ms`")
     pub name: String,
     /// Sample count in this window
     pub count: u64,
@@ -263,7 +263,7 @@ pub struct PoolStatsPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinexd.source", event_type = "processing.stats")]
 pub struct SourceProcessingStatsPayload {
-    /// RuntimeModule type (fs-ingestor, terminal-ingestor, etc.)
+    /// Runtime module kind (fs-source, terminal-source, etc.)
     pub module_kind: String,
     /// Events processed since last report
     pub events_processed: u64,
@@ -519,11 +519,11 @@ impl StreamStatsPayload {
 // counters/gauges/histograms (`sinex.metric.*`), component health
 // (`sinex.health.status`), and per-binary operational rollups
 // (`sinexd.event_engine.*`, `sinexd.api.*`, `sinexd.source.*`). These payloads have
-// no dedicated systemd unit — they are produced from inside event_engine, gateway,
-// and the runtime as those processes run. We register infra source
+// no dedicated systemd unit — they are produced from inside sinexd's
+// event_engine, API, sources, and automata modules. We register infra source
 // descriptors so the (source, event_type) pairs declared by `#[event_payload]`
 // are claimed by the source inventory; bindings continue to live with the
-// owning ingestor / runner-pack descriptors.
+// owning source or runner-pack descriptors.
 // ─────────────────────────────────────────────────────────────────────────────
 
 use crate::proof::{

@@ -20,7 +20,7 @@ use sinex_macros::EventPayload;
 use crate::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "document-ingestor", event_type = "document.ingested")]
+#[event_payload(source = "document-source", event_type = "document.ingested")]
 pub struct DocumentIngestedPayload {
     pub file_path: String,
     pub source_material_id: String,

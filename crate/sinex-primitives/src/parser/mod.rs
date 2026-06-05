@@ -1019,7 +1019,7 @@ mod tests {
         ParsedEventIntent {
             id: Id::new(),
             source_id: SourceId::from_static("document.staging"),
-            parser_id: ParserId::from_static("document-ingestor"),
+            parser_id: ParserId::from_static("document-source"),
             parser_version: "1.0.0".into(),
             event_type: payload.event_type(),
             event_source: payload.event_source(),

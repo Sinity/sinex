@@ -205,13 +205,6 @@
       "content_hash": "72351d4cd232e6458bf529fbb034454a74dcc0c6e90ff19525c4bfeab1ed514d"
     },
     {
-      "source": "document-ingestor",
-      "event_type": "document.ingested",
-      "version": "1.0.0",
-      "path": "document-ingestor/document.ingested.json",
-      "content_hash": "55eebee2a647cb4ce08a191ff922d9cfce7104571e5e30603b801ce70041f62a"
-    },
-    {
       "source": "document-parser",
       "event_type": "document.chunked",
       "version": "1.0.0",
@@ -224,6 +217,13 @@
       "version": "1.0.0",
       "path": "document-parser/document.parsed.json",
       "content_hash": "b98961dd916c0d0f475c4280016f4388c330d9dfb044b1fe8e921bdd8e5cc305"
+    },
+    {
+      "source": "document-source",
+      "event_type": "document.ingested",
+      "version": "1.0.0",
+      "path": "document-source/document.ingested.json",
+      "content_hash": "6a7a664807b9ca51634a533e6426d76e8960dfb1884c249e1b041f9fce2e2f9c"
     },
     {
       "source": "entity-enricher",
@@ -580,7 +580,7 @@
       "event_type": "metric.counter",
       "version": "1.0.0",
       "path": "sinex/metric.counter.json",
-      "content_hash": "c24d53f632618539b0544f38e870a4acf065cc2343ba2cfdc24614d42a6ae073"
+      "content_hash": "e62be9fc1de7454837a4a18f7a9ba4957919111f20c0905da57ef2b6fbfab42c"
     },
     {
       "source": "sinex",
@@ -594,7 +594,7 @@
       "event_type": "metric.histogram",
       "version": "1.0.0",
       "path": "sinex/metric.histogram.json",
-      "content_hash": "1c02faafabf345b1632f28b57871c330723ef2fb0b0bfeaa36dac9be6edb4759"
+      "content_hash": "49010f157569ea7dac6bcd2376058049092e01c3eaa35c76ea7177853d72032f"
     },
     {
       "source": "sinex",
@@ -720,7 +720,7 @@
       "event_type": "processing.stats",
       "version": "1.0.0",
       "path": "sinexd.source/processing.stats.json",
-      "content_hash": "775bb2ff119754c062c2342c2be312579de08e44422084962e01e5ff300d0da1"
+      "content_hash": "06d540c974b6654af8cb05b09c3e1d9250ba397c68726270c35268d0cae791b8"
     },
     {
       "source": "spotify",

@@ -19,14 +19,14 @@ ad hoc SQL is authority duplication.
 | Concern | Authority | Wrappers / projections | Demote or remove |
 |---|---|---|---|
 | Event persistence | `sinexd::event_engine` writing `core.events` through `sinex-db` repositories | `sinexd::api` query/RPC, `sinexctl query`, telemetry views | Direct ad hoc event inserts outside tests and explicit repair tooling. |
-| Source material registration | source-unit material registration paths backed by `raw.source_material_registry` | source adapters, parser jobs, workbench inspection | Parser-local material rows that bypass registration policy. |
+| Source material registration | source contract material registration paths backed by `raw.source_material_registry` | source adapters, parser jobs, workbench inspection | Parser-local material rows that bypass registration policy. |
 | Schema convergence | `sinex-schema apply` desired-state engine | `xtask ci schema-only`, `xtask schema strict-diff` | Hand-written DDL in runtime code; test-only DDL outside isolated fixtures. |
 | Event schema inventory | derived `EventPayload` registry and checked-in schema bundle | schema bundle, payload tests, runtime schema registration | Dormant active schemas without producers, unless marked advisory/future. |
 | Runtime deployment | NixOS module under `services.sinex` | `/etc/sinex/deployment-readiness.json`, systemd units, VM tests | Manual systemd edits as durable config; unchecked env-only deployment contracts. |
 | Runtime operation | `sinexd::api`/`sinexctl` authenticated runtime commands | `sinexctl status`, `sinexctl replay`, `sinexctl lifecycle` | `xtask` as production control plane. |
 | Developer verification | `xtask` local/CI workflows | GitHub Actions and concrete test/check commands | Raw cargo invocations, generated declaration catalogs, and one-off shell gates that bypass history. |
-| Source-adapter declaration | in-repo source adapter registrations and NixOS source binding manifest | `sinexd` source binding loader, NixOS module checks, parser tests | Parallel generated source-unit catalogs maintained as authority. |
-| Privacy/admission policy | DB/user policy applied by the event-engine admission chokepoint | audit/export/delete CLI surfaces, source-record field metadata | Parser/source-unit/automaton code that redacts, suppresses, or classifies fields through its own policy. |
+| Source-adapter declaration | in-repo source contract registrations and NixOS source binding manifest | `sinexd` source binding loader, NixOS module checks, parser tests | Parallel generated source catalogs maintained as authority. |
+| Privacy/admission policy | DB/user policy applied by the event-engine admission chokepoint | audit/export/delete CLI surfaces, source-record field metadata | Parser/source/automaton code that redacts, suppresses, or classifies fields through its own policy. |
 | External integrations | integration authority records and adapter contracts | Polylogue/Lynchpin/hledger/task bridge docs | Treating external formats as ontology by convenience. |
 
 ## Rules
@@ -50,12 +50,12 @@ ad hoc SQL is authority duplication.
 
 - Keep removing active event schemas that have no producer or mark them as
   advisory/future so declaration-to-consumer drift stays visible.
-- Route source-unit parser material creation through acquisition/material
+- Route source parser material creation through acquisition/material
   helpers rather than parser-local database writes.
 - Keep `xtask` runtime commands limited to local development/status views; live
   operation should be exposed through `sinexctl` and `sinexd::api` contracts.
-- Convert hand-maintained source lists into projections of
-  `SourceUnitDescriptor` where practical.
+- Convert hand-maintained source lists into projections of source contract
+  registrations where practical.
 - When strict schema drift finds a live/source mismatch, fix the desired schema
   or explicitly document the non-goal instead of adding another migration path.
 

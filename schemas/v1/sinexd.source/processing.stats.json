@@ -29,7 +29,7 @@
       "type": "integer"
     },
     "module_kind": {
-      "description": "RuntimeModule type (fs-ingestor, terminal-ingestor, etc.)",
+      "description": "Runtime module kind (fs-source, terminal-source, etc.)",
       "type": "string"
     },
     "queue_depth": {

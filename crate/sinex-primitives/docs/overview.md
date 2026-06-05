@@ -4,7 +4,7 @@
 
 - strong types that encode Sinex invariants;
 - the canonical event model and transport-facing payload helpers;
-- validation, namespace, and utility helpers shared by binaries and nodes.
+- validation, namespace, and utility helpers shared by binaries and runtime modules.
 
 It does not own database repositories or runtime services.
 

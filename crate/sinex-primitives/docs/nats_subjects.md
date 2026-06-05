@@ -35,7 +35,7 @@ Reference: `crate/sinexd/src/runtime/nats_publisher.rs`
 
 | Subject Pattern | Purpose | Publisher |
 |-----------------|---------|-----------|
-| `events.raw.<source>.<event_type>` | Raw events from ingestor nodes | Runtime via `NatsPublisher` |
+| `events.raw.<source>.<event_type>` | Raw events from source contracts | Runtime via `NatsPublisher` |
 | `events.confirmations.<event_id>` | Persistence acknowledgments | event engine |
 | `events.confirmation_retries.<event_id>` | Confirmation retry processing | event engine |
 | `events.processing_failures.<component>` | Processing failure envelopes | event engine |

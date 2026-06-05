@@ -48,7 +48,7 @@ pub struct StorageStatisticsPayload {
 // ─────────────────────────────────────────────────────────────────────────────
 // Source descriptor for blob storage infra events.
 //
-// `blob_storage` is not a normal ingestor source — it is sinex's
+// `blob_storage` is not a normal source contract — it is sinex's
 // content-addressable BLOB store, which emits operational events as it
 // retrieves, ingests, verifies blobs and reports aggregate statistics. We
 // register a descriptor so the (source, event_type) pairs declared via
@@ -85,7 +85,7 @@ register_source_contract! {
 }
 
 // Infra source: descriptor-only by design — events emitted from inside
-// other binaries (event_engine, gateway, runtime). The binding records the
+// sinexd runtime modules. The binding records the
 // embedded shape; `proposed: true` flags it as not a host-level adapter.
 register_source_runtime_binding! {
     SourceRuntimeBinding::builder(

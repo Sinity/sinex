@@ -61,7 +61,7 @@ enum VerifySubcommand {
     Baseline(baseline::BaselineArgs),
 }
 
-const DOCUMENT_INGESTOR_SOURCE: &str = "document-ingestor";
+const DOCUMENT_SOURCE: &str = "document-source";
 const DOCUMENT_INGESTED_EVENT_TYPE: &str = "document.ingested";
 const SOURCE_EVIDENCE_RECENT_WINDOW: Duration = Duration::from_hours(1);
 const VERIFY_EVENT_SAMPLE_LIMIT: i64 = 25;
@@ -839,7 +839,7 @@ async fn report_document_surface_check(
 
     let count = sample_events_matching(
         client,
-        &[DOCUMENT_INGESTOR_SOURCE],
+        &[DOCUMENT_SOURCE],
         DOCUMENT_INGESTED_EVENT_TYPE,
     )
     .await?;
@@ -1172,7 +1172,7 @@ fn build_document_smoke_path(descriptor: &DeploymentReadinessDescriptor) -> Resu
 
 fn document_smoke_query(file_path: &str) -> Result<EventQuery> {
     Ok(EventQuery {
-        sources: vec![EventSource::new(DOCUMENT_INGESTOR_SOURCE)?],
+        sources: vec![EventSource::new(DOCUMENT_SOURCE)?],
         event_types: vec![EventType::new(DOCUMENT_INGESTED_EVENT_TYPE)?],
         payload: Some(PayloadFilter::Contains {
             value: json!({ "file_path": file_path }),
@@ -1397,7 +1397,7 @@ mod tests {
         let query = document_smoke_query("/tmp/sinex-docs/.sinex-verify-abc.md")?;
 
         assert_eq!(query.sources.len(), 1);
-        assert_eq!(query.sources[0].as_str(), DOCUMENT_INGESTOR_SOURCE);
+        assert_eq!(query.sources[0].as_str(), DOCUMENT_SOURCE);
         assert_eq!(query.event_types.len(), 1);
         assert_eq!(query.event_types[0].as_str(), DOCUMENT_INGESTED_EVENT_TYPE);
         assert!(matches!(

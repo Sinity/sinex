@@ -33,6 +33,6 @@
   "title": "DocumentIngestedPayload",
   "type": "object",
   "x-sinex-event-type": "document.ingested",
-  "x-sinex-source": "document-ingestor",
+  "x-sinex-source": "document-source",
   "x-sinex-version": "1.0.0"
 }
