@@ -241,46 +241,22 @@ Run command for binary lifecycle management
 
 | Command | Purpose |
 |---|---|
-| `event-engine` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
-| `gateway` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
-| `runtime-module` | Run a specific node by name |
+| `module` | Run a specific runtime module target by name |
 | `core` | Run core services bundle (event engine + API) |
-| `all-ingestors` | Run all ingestors |
+| `all-sources` | Run all source scan targets |
 | `all-automatons` | Run all automatons |
 | `list` | List available binaries |
 | `tether` | Connect to a remote environment via The Tether |
 
-### `xtask run event-engine`
+### `xtask run module`
 
-Run sinexd (alias preserved post-collapse; runs the full supervisor)
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--instance-id` | yes | no | Instance ID for multi-instance coordination |
-
-
-### `xtask run gateway`
-
-Run sinexd (alias preserved post-collapse; runs the full supervisor)
+Run a specific runtime module target by name
 
 **Arguments**
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `--instance-id` | yes | no | Instance ID for multi-instance coordination |
-
-
-### `xtask run runtime-module`
-
-Run a specific node by name
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `name` | yes | yes | RuntimeModule name (e.g., fs-ingestor, analytics-automaton) |
+| `name` | yes | yes | RuntimeModule target name (e.g., fs-source, analytics-automaton) |
 | `--instance-id` | yes | no | Instance ID for multi-instance coordination |
 
 
@@ -295,9 +271,9 @@ Run core services bundle (event engine + API)
 | `--instance-id` | yes | no | Instance ID prefix |
 
 
-### `xtask run all-ingestors`
+### `xtask run all-sources`
 
-Run all ingestors
+Run all source scan targets
 
 **Arguments**
 

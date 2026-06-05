@@ -98,7 +98,7 @@ fn postprocess_zsh(script: &str) -> String {
         ":PACKAGES:($(xtask completions list-packages 2>/dev/null))",
     );
 
-    // The run node NAME arg shows as :NAME:_default in the generated completions.
+    // The run module NAME arg shows as :NAME:_default in the generated completions.
     // Replace it with dynamic run-target completion.
     script.replace(
         "':NAME:_default'",

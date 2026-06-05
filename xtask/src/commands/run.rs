@@ -5,7 +5,7 @@
 //! - `--watch` mode for development with seamless handoff
 //! - `--bg` support via jobs system
 //! - `--tether` mode for connecting to production NATS
-//! - Bundle shortcuts (core, all-nodes)
+//! - Bundle shortcuts (core, all-sources, all-automatons)
 //! - `--logs` mode: interleaved color-coded output from all bundle processes
 
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
@@ -49,7 +49,7 @@ fn make_instance_id(name: &str, prefix: Option<&str>) -> String {
 
 /// Build the runtime CLI arguments for the unified `sinexd` binary.
 ///
-/// Post-collapse, every short name (`event_engine`, `gateway`, automatons, source contracts)
+/// Post-collapse, every short name (`sinexd`, automatons, source contracts)
 /// resolves to the same `sinexd` binary. Source short names dispatch through
 /// `sinexd scan-source --source <id>`; everything else falls through to
 /// the default `serve` subcommand which runs the full supervisor.
@@ -65,7 +65,7 @@ fn runtime_cli_args(_package: &str, run_identity: &str, source: Option<&str>) ->
     })
 }
 
-/// Append node/gateway runtime args after the cargo `--` separator when needed.
+/// Append source runtime args after the cargo `--` separator when needed.
 fn append_binary_extra_args(
     args: &mut Vec<String>,
     package: &str,
@@ -344,40 +344,37 @@ async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
 ///
 /// Tuple layout: `(short_name, package, binary_name, source_id)`.
 ///
-/// Post-sinexd-collapse: every previously-separate binary folded into the
-/// unified `sinexd` daemon. The CLI short names are preserved so existing
-/// scripts and operator habits keep working, but they all build/run sinexd.
+/// Post-sinexd-collapse: previously separate binaries folded into the unified
+/// `sinexd` daemon. Dev targets use current source/automaton labels and all
+/// build/run sinexd.
 ///
-/// - `event_engine` / `gateway`: launch sinexd's supervisor (default `serve`
-///   subcommand). The supervisor brings up the event engine, the API, and
-///   every enabled source/automaton in one process — there is no
-///   meaningful "just the gateway" anymore.
-/// - Source short names (e.g. `fs-ingestor`): dispatch through
+/// - `sinexd`: launch sinexd's supervisor (default `serve` subcommand). The
+///   supervisor brings up the event engine, the API, and every enabled
+///   source/automaton in one process.
+/// - Source short names (e.g. `fs-source`): dispatch through
 ///   `sinexd scan-source --source <id>` for one-off scan-mode
 ///   runs against a single source.
 /// - Automaton short names: also resolve to the supervisor (`serve`) since
 ///   individual automatons are no longer separately runnable.
 static BINARIES: &[(&str, &str, &str, Option<&str>)] = &[
     // Core supervisor entry points (serve the whole daemon)
-    ("event_engine", "sinexd", "sinexd", None),
-    ("gateway", "sinexd", "sinexd", None),
     ("sinexd", "sinexd", "sinexd", None),
     // Source one-off scans (sinexd scan-source --source <id>)
-    ("fs-ingestor", "sinexd", "sinexd", Some("fs")),
+    ("fs-source", "sinexd", "sinexd", Some("fs")),
     (
-        "terminal-ingestor",
+        "terminal-source",
         "sinexd",
         "sinexd",
         Some("terminal.zsh-history"),
     ),
     (
-        "desktop-ingestor",
+        "desktop-source",
         "sinexd",
         "sinexd",
         Some("desktop.activitywatch"),
     ),
     (
-        "system-ingestor",
+        "system-source",
         "sinexd",
         "sinexd",
         Some("system.journald"),
@@ -393,12 +390,7 @@ static BINARIES: &[(&str, &str, &str, Option<&str>)] = &[
 ];
 
 const CORE_TARGETS: &[&str] = &["sinexd"];
-const INGESTOR_TARGETS: &[&str] = &[
-    "fs-ingestor",
-    "terminal-ingestor",
-    "desktop-ingestor",
-    "system-ingestor",
-];
+const SOURCE_TARGETS: &[&str] = &["fs-source", "terminal-source", "desktop-source", "system-source"];
 const AUTOMATON_TARGETS: &[&str] = &[
     "analytics-automaton",
     "health-automaton",
@@ -427,7 +419,7 @@ pub(crate) fn list_run_targets() -> Vec<String> {
         .map(|(name, _, _, _)| (*name).to_string())
         .collect();
     targets.extend(
-        ["core", "all-ingestors", "all-automatons"]
+        ["core", "all-sources", "all-automatons"]
             .into_iter()
             .map(str::to_string),
     );
@@ -438,21 +430,10 @@ pub(crate) fn list_run_targets() -> Vec<String> {
 /// Run subcommand variants
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum RunSubcommand {
-    /// Run sinexd (alias preserved post-collapse; runs the full supervisor)
-    EventEngine {
-        /// Instance ID for multi-instance coordination
-        #[arg(long)]
-        instance_id: Option<String>,
-    },
-    /// Run sinexd (alias preserved post-collapse; runs the full supervisor)
-    Gateway {
-        /// Instance ID for multi-instance coordination
-        #[arg(long)]
-        instance_id: Option<String>,
-    },
-    /// Run a specific node by name
+    /// Run a specific runtime module target by name
+    #[command(name = "module")]
     RuntimeModule {
-        /// RuntimeModule name (e.g., fs-ingestor, analytics-automaton)
+        /// RuntimeModule target name (e.g., fs-source, analytics-automaton)
         name: String,
         /// Instance ID for multi-instance coordination
         #[arg(long)]
@@ -464,8 +445,8 @@ pub enum RunSubcommand {
         #[arg(long)]
         instance_id: Option<String>,
     },
-    /// Run all ingestors
-    AllIngestors {
+    /// Run all source scan targets
+    AllSources {
         /// Instance ID prefix
         #[arg(long)]
         instance_id: Option<String>,
@@ -575,13 +556,6 @@ impl XtaskCommand for RunCommand {
 
         match &self.subcommand {
             RunSubcommand::List => Ok(execute_list(ctx)),
-            RunSubcommand::EventEngine { instance_id } => {
-                self.run_binary("event_engine", instance_id.clone(), ctx)
-                    .await
-            }
-            RunSubcommand::Gateway { instance_id } => {
-                self.run_binary("gateway", instance_id.clone(), ctx).await
-            }
             RunSubcommand::RuntimeModule { name, instance_id } => {
                 self.run_binary(name, instance_id.clone(), ctx).await
             }
@@ -589,9 +563,8 @@ impl XtaskCommand for RunCommand {
                 self.run_bundle(CORE_TARGETS, instance_id.clone(), ctx)
                     .await
             }
-            RunSubcommand::AllIngestors { instance_id } => {
-                self.run_bundle(INGESTOR_TARGETS, instance_id.clone(), ctx)
-                    .await
+            RunSubcommand::AllSources { instance_id } => {
+                self.run_bundle(SOURCE_TARGETS, instance_id.clone(), ctx).await
             }
             RunSubcommand::AllAutomatons { instance_id } => {
                 self.run_bundle(AUTOMATON_TARGETS, instance_id.clone(), ctx)
@@ -622,9 +595,7 @@ impl RunCommand {
     fn runs_single_binary(&self) -> bool {
         matches!(
             self.subcommand,
-            RunSubcommand::EventEngine { .. }
-                | RunSubcommand::Gateway { .. }
-                | RunSubcommand::RuntimeModule { .. }
+            RunSubcommand::RuntimeModule { .. }
         )
     }
 
@@ -632,7 +603,7 @@ impl RunCommand {
         matches!(
             self.subcommand,
             RunSubcommand::Core { .. }
-                | RunSubcommand::AllIngestors { .. }
+                | RunSubcommand::AllSources { .. }
                 | RunSubcommand::AllAutomatons { .. }
         )
     }
@@ -644,7 +615,7 @@ impl RunCommand {
     fn validate_flag_compatibility(&self, ctx: &CommandContext) -> Result<()> {
         if self.watch && !self.runs_single_binary() {
             bail!(
-                "--watch only supports single local binaries (`event_engine`, `gateway`, or `node`)"
+                "--watch only supports single local module targets"
             );
         }
 
@@ -1307,9 +1278,9 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
             println!("  {name:<25} ({package})");
         }
 
-        println!("\nIngestors:");
-        for name in INGESTOR_TARGETS {
-            let (_, package, _, _) = lookup_binary(name).expect("ingestor target must exist");
+        println!("\nSources:");
+        for name in SOURCE_TARGETS {
+            let (_, package, _, _) = lookup_binary(name).expect("source target must exist");
             println!("  {name:<25} ({package})");
         }
 
@@ -1321,7 +1292,7 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
 
         println!("\nBundles:");
         println!("  {:<25} {}", "core", CORE_TARGETS.join(", "));
-        println!("  {:<25} {}", "all-ingestors", INGESTOR_TARGETS.join(", "));
+        println!("  {:<25} {}", "all-sources", SOURCE_TARGETS.join(", "));
         println!(
             "  {:<25} {}",
             "all-automatons",
@@ -1351,7 +1322,7 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
     CommandResult::success()
         .with_data(serde_json::json!({
             "binaries": binaries,
-            "bundles": ["core", "all-ingestors", "all-automatons"],
+            "bundles": ["core", "all-sources", "all-automatons"],
             "special": ["tether", "document-scan"]
         }))
         .with_duration(ctx.elapsed())
@@ -1523,7 +1494,7 @@ mod tests {
         assert_eq!(
             runtime_cli_args(
                 "sinexd",
-                "terminal-ingestor-123",
+                "terminal-source-123",
                 Some("terminal.zsh-history")
             ),
             vec![
@@ -1531,7 +1502,7 @@ mod tests {
                 "--source".to_string(),
                 "terminal.zsh-history".to_string(),
                 "--service-name".to_string(),
-                "terminal-ingestor-123".to_string(),
+                "terminal-source-123".to_string(),
             ]
         );
         Ok(())
@@ -1540,13 +1511,13 @@ mod tests {
     #[sinex_test]
     async fn test_build_cargo_run_args_target_sinexd() -> ::xtask::sandbox::TestResult<()> {
         let command = base_command(RunSubcommand::RuntimeModule {
-            name: "terminal-ingestor".to_string(),
+            name: "terminal-source".to_string(),
             instance_id: None,
         });
         assert_eq!(
             command.build_cargo_run_args(
                 "sinexd",
-                "terminal-ingestor-123",
+                "terminal-source-123",
                 Some("terminal.zsh-history")
             ),
             vec![
@@ -1558,7 +1529,7 @@ mod tests {
                 "--source".to_string(),
                 "terminal.zsh-history".to_string(),
                 "--service-name".to_string(),
-                "terminal-ingestor-123".to_string(),
+                "terminal-source-123".to_string(),
             ]
         );
         Ok(())
@@ -1580,16 +1551,11 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ingestor_bundle_contains_only_real_runtime_ingestors()
+    async fn test_source_bundle_contains_only_real_runtime_sources()
     -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(
-            INGESTOR_TARGETS,
-            &[
-                "fs-ingestor",
-                "terminal-ingestor",
-                "desktop-ingestor",
-                "system-ingestor",
-            ]
+            SOURCE_TARGETS,
+            &["fs-source", "terminal-source", "desktop-source", "system-source"]
         );
         Ok(())
     }
@@ -1635,7 +1601,7 @@ mod tests {
             .expect_err("bundle watch must be rejected");
         assert!(
             err.to_string()
-                .contains("--watch only supports single local binaries")
+                .contains("--watch only supports single local module targets")
         );
         Ok(())
     }
@@ -1644,7 +1610,7 @@ mod tests {
     async fn test_logs_reject_background_mode() -> ::xtask::sandbox::TestResult<()> {
         let ctx = test_context(true);
         let mut command = base_command(RunSubcommand::RuntimeModule {
-            name: "fs-ingestor".to_string(),
+            name: "fs-source".to_string(),
             instance_id: None,
         });
         command.logs = true;
@@ -1668,7 +1634,7 @@ mod tests {
 
         {
             let journal = DevJournal::new(&journal_path)?;
-            journal.write_entry("sinexd", 12345, "gateway started");
+            journal.write_entry("sinexd", 12345, "sinexd started");
             journal.write_entry("sinexd", 12345, "listening on :8080");
         } // Journal dropped → writer task flushed and exited
 
@@ -1688,7 +1654,7 @@ mod tests {
             assert!(!entry["__REALTIME_TIMESTAMP"].as_str().unwrap().is_empty());
             assert!(!entry["_BOOT_ID"].as_str().unwrap().is_empty());
         }
-        assert_eq!(entries[0]["MESSAGE"], "gateway started");
+        assert_eq!(entries[0]["MESSAGE"], "sinexd started");
         assert_eq!(entries[1]["MESSAGE"], "listening on :8080");
 
         Ok(())
@@ -1697,7 +1663,10 @@ mod tests {
     #[sinex_test]
     async fn test_dev_journal_rejects_watch_mode() -> ::xtask::sandbox::TestResult<()> {
         let ctx = test_context(false);
-        let mut command = base_command(RunSubcommand::Gateway { instance_id: None });
+        let mut command = base_command(RunSubcommand::RuntimeModule {
+            name: "sinexd".to_string(),
+            instance_id: None,
+        });
         command.watch = true;
         command.dev_journal = true;
 
