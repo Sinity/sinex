@@ -1145,8 +1145,8 @@ pub async fn start_test_event_engine_with_config(
         // These env vars are part of the canonical env-first runtime contract;
         // the binary reads them directly into its typed config.
         // Do NOT use SINEX_EVENT_ENGINE_WORK_DIR here: event_engine's effective config
-        // surface is SINEX_ASSEMBLER_STATE_DIR plus SINEX_CONTENT_STORE_PATH.
-        cmd.env("SINEX_ASSEMBLER_STATE_DIR", wd.join("assembler_state"));
+        // surface is SINEX_MATERIAL_ASSEMBLER_DIR plus SINEX_CONTENT_STORE_PATH.
+        cmd.env("SINEX_MATERIAL_ASSEMBLER_DIR", wd.join("assembler_state"));
         cmd.env("SINEX_CONTENT_STORE_PATH", wd.join("content-store"));
         cmd.env(
             "SINEX_CONTENT_STORE_PROCESS_COUNTERS_PATH",

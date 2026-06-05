@@ -834,7 +834,7 @@ impl IngestService {
         let fetch_timeout = self.config.consumer_fetch_timeout_ms.as_duration();
         let fetch_max = self.config.consumer_fetch_max_messages.max(1);
         let max_ack_pending = self.config.consumer_max_ack_pending;
-        let stats_log_interval = Duration::from_secs(self.config.stats_log_interval_secs);
+        let telemetry_interval = Duration::from_secs(self.config.telemetry_interval_secs);
         let reject_initial_replay = self.config.reject_initial_replay;
         let future_ts_skew = time::Duration::seconds(self.config.ts_orig_future_skew_secs as i64);
         let heartbeat_handle = self.heartbeat_counter_handle.clone();
@@ -861,7 +861,7 @@ impl IngestService {
             )
             .with_batch_fetch_config(fetch_max, fetch_timeout)
             .with_max_ack_pending(max_ack_pending)
-            .with_stats_log_interval(stats_log_interval)
+            .with_stats_log_interval(telemetry_interval)
             .with_future_ts_skew(future_ts_skew)
             .with_ts_orig_lower_bound(ts_orig_lower_bound)
             .with_reject_initial_replay(reject_initial_replay)

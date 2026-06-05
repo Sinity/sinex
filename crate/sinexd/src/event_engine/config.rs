@@ -261,23 +261,6 @@ pub struct EventEngineConfig {
     #[validate(custom(function = "validate_positive_milliseconds"))]
     pub material_wal_sync_interval_ms: Milliseconds,
 
-    /// Enable `GitOps` schema sync service
-    ///
-    /// When enabled, event_engine periodically fetches configured Git repositories
-    /// and discovers JSON schema files to register in the database.
-    ///
-    /// Set via: `SINEX_EVENT_ENGINE_GITOPS_ENABLED=true`
-    #[serde(default)]
-    #[builder(default = false)]
-    pub gitops_enabled: bool,
-
-    /// Working directory for `GitOps` repository clones
-    ///
-    /// Set via: `SINEX_EVENT_ENGINE_GITOPS_WORK_DIR=/path/to/dir`
-    #[serde(default = "default_gitops_work_dir")]
-    #[builder(default = default_gitops_work_dir())]
-    pub gitops_work_dir: Utf8PathBuf,
-
     /// Schema reload interval in seconds
     ///
     /// How often event_engine reloads JSON schemas from the database.
@@ -289,15 +272,15 @@ pub struct EventEngineConfig {
     #[validate(range(min = 10, max = 3600))]
     pub schema_reload_interval_secs: u64,
 
-    /// Stats logging interval in seconds
+    /// Telemetry interval in seconds
     ///
-    /// How often event_engine logs processing statistics (events processed, failed, etc.).
+    /// How often event_engine emits processing telemetry (events processed, failed, etc.).
     ///
-    /// Set via: `SINEX_EVENT_ENGINE_STATS_LOG_INTERVAL_SECS=60`
-    #[serde(default = "default_stats_log_interval_secs")]
-    #[builder(default = default_stats_log_interval_secs())]
+    /// Set via: `SINEX_EVENT_ENGINE_TELEMETRY_INTERVAL_SECS=60`
+    #[serde(default = "default_telemetry_interval_secs")]
+    #[builder(default = default_telemetry_interval_secs())]
     #[validate(range(min = 5, max = 3600))]
-    pub stats_log_interval_secs: u64,
+    pub telemetry_interval_secs: u64,
 
     /// Core retry configuration (max attempts, delays, backoff, jitter).
     ///
@@ -362,17 +345,11 @@ impl EventEngineConfig {
         let content_store_env_override =
             strict_env_validated_path("SINEX_CONTENT_STORE_PATH", "content-store path")?;
         let assembler_state_dir_env_override =
-            strict_env_validated_path("SINEX_ASSEMBLER_STATE_DIR", "assembler state directory")?;
-        let gitops_work_dir_override = strict_env_validated_path(
-            "SINEX_EVENT_ENGINE_GITOPS_WORK_DIR",
-            "gitops work directory",
-        )?;
+            strict_env_validated_path("SINEX_MATERIAL_ASSEMBLER_DIR", "assembler state directory")?;
         let skip_schema_sync = shared_env::strict_flag("SINEX_SKIP_SCHEMA_SYNC")?.unwrap_or(false);
         let validate_schemas = shared_env::strict_flag("SINEX_VALIDATE_SCHEMAS")?.unwrap_or(true);
         let strict_validation =
             shared_env::strict_flag("SINEX_EVENT_ENGINE_STRICT_VALIDATION")?.unwrap_or(false);
-        let gitops_enabled =
-            shared_env::strict_flag("SINEX_EVENT_ENGINE_GITOPS_ENABLED")?.unwrap_or(false);
         let consumer_fetch_max_messages_env =
             shared_env::strict_parsed("SINEX_EVENT_ENGINE_CONSUMER_FETCH_MAX_MESSAGES")?;
         let consumer_fetch_timeout_ms_env =
@@ -384,9 +361,9 @@ impl EventEngineConfig {
         let schema_reload_interval_secs: u64 =
             shared_env::strict_parsed("SINEX_EVENT_ENGINE_SCHEMA_RELOAD_INTERVAL_SECS")?
                 .unwrap_or_else(default_schema_reload_interval_secs);
-        let stats_log_interval_secs: u64 =
-            shared_env::strict_parsed("SINEX_EVENT_ENGINE_STATS_LOG_INTERVAL_SECS")?
-                .unwrap_or_else(default_stats_log_interval_secs);
+        let telemetry_interval_secs: u64 =
+            shared_env::strict_parsed("SINEX_EVENT_ENGINE_TELEMETRY_INTERVAL_SECS")?
+                .unwrap_or_else(default_telemetry_interval_secs);
         let blob_gc_interval_secs: Option<u64> =
             shared_env::strict_parsed("SINEX_EVENT_ENGINE_BLOB_GC_INTERVAL_SECS")?;
         let pool_acquire_timeout_secs: u64 =
@@ -423,9 +400,8 @@ impl EventEngineConfig {
         config.skip_schema_sync = skip_schema_sync;
         config.validate_schemas = validate_schemas;
         config.strict_validation = strict_validation;
-        config.gitops_enabled = gitops_enabled;
         config.schema_reload_interval_secs = schema_reload_interval_secs;
-        config.stats_log_interval_secs = stats_log_interval_secs;
+        config.telemetry_interval_secs = telemetry_interval_secs;
         config.blob_gc_interval_secs = blob_gc_interval_secs;
         config.ts_orig_future_skew_secs = ts_orig_future_skew_secs;
         config.ts_orig_lower_bound_unix = ts_orig_lower_bound_unix;
@@ -436,9 +412,6 @@ impl EventEngineConfig {
         }
         if let Some(path) = content_store_env_override {
             config.content_store_path = path;
-        }
-        if let Some(path) = gitops_work_dir_override {
-            config.gitops_work_dir = path;
         }
         if let Some(path) = assembler_state_dir_env_override {
             config.assembler_state_dir = path;
@@ -794,10 +767,8 @@ impl Default for EventEngineConfig {
             material_wal_sync_bytes: default_material_wal_sync_bytes(),
             material_wal_sync_entries: default_material_wal_sync_entries(),
             material_wal_sync_interval_ms: default_material_wal_sync_interval_ms(),
-            gitops_enabled: false,
-            gitops_work_dir: default_gitops_work_dir(),
             schema_reload_interval_secs: default_schema_reload_interval_secs(),
-            stats_log_interval_secs: default_stats_log_interval_secs(),
+            telemetry_interval_secs: default_telemetry_interval_secs(),
             retry_config: RetryConfig::default(),
             startup_catch_up_max_concurrent: default_startup_catch_up_max_concurrent(),
             reject_initial_replay: default_reject_initial_replay(),
@@ -998,7 +969,7 @@ fn default_content_store_path() -> Utf8PathBuf {
 
 fn default_assembler_state_dir() -> Utf8PathBuf {
     if let Some(validated) =
-        env_validated_path("SINEX_ASSEMBLER_STATE_DIR", "assembler state directory")
+        env_validated_path("SINEX_MATERIAL_ASSEMBLER_DIR", "assembler state directory")
     {
         return validated;
     }
@@ -1242,27 +1213,11 @@ fn default_material_wal_sync_interval_ms() -> Milliseconds {
     }
 }
 
-fn default_gitops_work_dir() -> Utf8PathBuf {
-    if let Some(validated) = env_validated_path(
-        "SINEX_EVENT_ENGINE_GITOPS_WORK_DIR",
-        "gitops work directory",
-    ) {
-        return validated;
-    }
-
-    let gitops = default_work_dir().join("gitops");
-    validated_path_or_fallback(
-        &gitops,
-        Utf8PathBuf::from("/tmp/sinex/event_engine/gitops"),
-        "gitops work directory",
-    )
-}
-
 fn default_schema_reload_interval_secs() -> u64 {
     300 // 5 minutes
 }
 
-fn default_stats_log_interval_secs() -> u64 {
+fn default_telemetry_interval_secs() -> u64 {
     60 // 1 minute
 }
 
@@ -1323,8 +1278,7 @@ fn default_ts_orig_lower_bound_unix() -> i64 {
 mod tests {
     use super::{
         DurabilityThresholds, EventEngineConfig, default_assembler_state_dir,
-        default_content_store_path, default_gitops_work_dir, default_path_base_dir,
-        default_work_dir, env_validated_path,
+        default_content_store_path, default_path_base_dir, default_work_dir, env_validated_path,
     };
     use camino::Utf8PathBuf;
     use sinex_primitives::environment::environment;
@@ -1404,8 +1358,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("SINEX_EVENT_ENGINE_WORK_DIR", "/tmp/sinexd-config-root");
         env.set("SINEX_CONTENT_STORE_PATH", "../../bad-content-store");
-        env.set("SINEX_ASSEMBLER_STATE_DIR", "../../bad-state-dir");
-        env.set("SINEX_EVENT_ENGINE_GITOPS_WORK_DIR", "../../bad-gitops");
+        env.set("SINEX_MATERIAL_ASSEMBLER_DIR", "../../bad-state-dir");
 
         assert_eq!(
             default_content_store_path(),
@@ -1414,10 +1367,6 @@ mod tests {
         assert_eq!(
             default_assembler_state_dir(),
             Utf8PathBuf::from("/tmp/sinexd-config-root/assembler_state")
-        );
-        assert_eq!(
-            default_gitops_work_dir(),
-            Utf8PathBuf::from("/tmp/sinexd-config-root/gitops")
         );
         Ok(())
     }

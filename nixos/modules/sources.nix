@@ -564,10 +564,9 @@ let
                 # Explicit work and spool dirs prevent fallback to dirs::cache_dir() (~/.cache)
                 # which is blocked by ProtectHome = true in the systemd unit.
                 "SINEX_EVENT_ENGINE_WORK_DIR=${stateRoot}/event_engine/work"
-                "SINEX_ASSEMBLER_STATE_DIR=${ingestSpool}"
+                "SINEX_MATERIAL_ASSEMBLER_DIR=${ingestSpool}"
                 # Schema and validation behaviour.
                 "SINEX_SCHEMA_APPLY_ON_STARTUP=${if cfg.database.enable && cfg.database.autoSetup then "1" else "0"}"
-                "SINEX_EVENT_ENGINE_GITOPS_ENABLED=${if coreCfg.event_engine.gitopsEnabled then "true" else "false"}"
                 "SINEX_SKIP_SCHEMA_SYNC=${if coreCfg.event_engine.skipSchemaSync then "true" else "false"}"
                 "SINEX_EVENT_ENGINE_STRICT_VALIDATION=${if coreCfg.event_engine.strictValidation then "true" else "false"}"
                 "SINEX_VALIDATE_SCHEMAS=${if coreCfg.event_engine.validateSchemas then "true" else "false"}"
@@ -575,7 +574,7 @@ let
                 "SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=${if natsBootstrapEnabled then "true" else "false"}"
                 # Operational intervals.
                 "SINEX_EVENT_ENGINE_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.event_engine.schemaReloadIntervalSecs}"
-                "SINEX_EVENT_ENGINE_STATS_LOG_INTERVAL_SECS=${toString coreCfg.event_engine.statsLogIntervalSecs}"
+                "SINEX_EVENT_ENGINE_TELEMETRY_INTERVAL_SECS=${toString coreCfg.event_engine.telemetryIntervalSecs}"
                 # API config.
                 "SINEX_API_MAX_CONCURRENCY=${toString apiLimits.maxConcurrency}"
                 "SINEX_API_REQUEST_TIMEOUT_SECS=${toString apiLimits.requestTimeoutSec}"

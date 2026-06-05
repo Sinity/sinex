@@ -713,15 +713,6 @@ in
                   default = { };
                   description = "Resource limits for event_engine.";
                 };
-                gitopsEnabled = mkOption {
-                  type = bool;
-                  default = false;
-                  description = ''
-                    Enable GitOps schema sync service.
-                    When enabled, event_engine periodically fetches configured Git repositories
-                    and registers discovered JSON schema files in the database.
-                  '';
-                };
                 skipSchemaSync = mkOption {
                   type = bool;
                   default = false;
@@ -751,10 +742,10 @@ in
                     Lower values make schema updates take effect faster at the cost of more DB queries.
                   '';
                 };
-                statsLogIntervalSecs = mkOption {
+                telemetryIntervalSecs = mkOption {
                   type = positive;
                   default = 60;
-                  description = "Interval in seconds between processing statistics log entries.";
+                  description = "Interval in seconds between event_engine processing telemetry emissions.";
                 };
                 blobGcIntervalSecs = mkOption {
                   type = nullOr positive;

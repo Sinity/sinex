@@ -105,9 +105,8 @@ async fn cli_arguments_override_env_transport_values() -> TestResult<()> {
 async fn from_args_reads_env_backed_runtime_flags() -> TestResult<()> {
     let mut env = EnvGuard::new();
     env.set("SINEX_EVENT_ENGINE_STRICT_VALIDATION", "1");
-    env.set("SINEX_EVENT_ENGINE_GITOPS_ENABLED", "true");
     env.set("SINEX_EVENT_ENGINE_SCHEMA_RELOAD_INTERVAL_SECS", "123");
-    env.set("SINEX_EVENT_ENGINE_STATS_LOG_INTERVAL_SECS", "17");
+    env.set("SINEX_EVENT_ENGINE_TELEMETRY_INTERVAL_SECS", "17");
     env.set("SINEX_EVENT_ENGINE_CONSUMER_FETCH_MAX_MESSAGES", "321");
     env.set("SINEX_EVENT_ENGINE_CONSUMER_FETCH_TIMEOUT_MS", "654");
     env.set("SINEX_EVENT_ENGINE_CONSUMER_MAX_ACK_PENDING", "987");
@@ -119,7 +118,7 @@ async fn from_args_reads_env_backed_runtime_flags() -> TestResult<()> {
     env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_ENTRIES", "7");
     env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_INTERVAL_MS", "500");
     env.set(
-        "SINEX_ASSEMBLER_STATE_DIR",
+        "SINEX_MATERIAL_ASSEMBLER_DIR",
         "/tmp/sinexd-assembler-state",
     );
 
@@ -139,9 +138,8 @@ async fn from_args_reads_env_backed_runtime_flags() -> TestResult<()> {
     )?;
 
     assert!(config.strict_validation);
-    assert!(config.gitops_enabled);
     assert_eq!(config.schema_reload_interval_secs, 123);
-    assert_eq!(config.stats_log_interval_secs, 17);
+    assert_eq!(config.telemetry_interval_secs, 17);
     assert_eq!(config.consumer_fetch_max_messages, 321);
     assert_eq!(config.consumer_fetch_timeout_ms.as_millis(), 654);
     assert_eq!(config.consumer_max_ack_pending, 987);
@@ -203,7 +201,7 @@ async fn rejects_invalid_env_overrides() -> TestResult<()> {
 async fn from_args_rejects_invalid_path_env_overrides() -> TestResult<()> {
     let mut env = EnvGuard::new();
     env.set("SINEX_EVENT_ENGINE_WORK_DIR", "../../bad-work-dir");
-    env.set("SINEX_ASSEMBLER_STATE_DIR", "../../bad-state-dir");
+    env.set("SINEX_MATERIAL_ASSEMBLER_DIR", "../../bad-state-dir");
 
     let error = EventEngineConfig::from_args(
         Some("postgresql://cli/override".to_string()),
