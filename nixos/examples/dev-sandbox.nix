@@ -42,7 +42,7 @@
 
     core = {
       enable = true;
-      gateway.autoGenerateTls = true;
+      api.autoGenerateTls = true;
       event_engine = {
         batch = {
           size = 500;

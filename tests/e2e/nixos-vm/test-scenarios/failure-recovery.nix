@@ -292,7 +292,7 @@ pkgs.testers.nixosTest {
         cliPackage = sinexCliPackage;
         users.target = "test";
         secrets.apiAdminTokenFile = "/etc/sinex/api-admin-token";
-        core.gateway.autoGenerateTls = true;
+        core.api.autoGenerateTls = true;
         database.autoSetup = true;
         database.connectionPool.maxConnections = 20;
         lifecycle.preflight.enable = lib.mkForce false;

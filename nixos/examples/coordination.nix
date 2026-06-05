@@ -23,7 +23,7 @@
 
     core = {
       enable = true;
-      gateway.autoGenerateTls = true;
+      api.autoGenerateTls = true;
     };
 
     nats.environment = "prod";

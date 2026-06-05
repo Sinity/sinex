@@ -558,7 +558,7 @@ async fn handle_invalidation_message_returns_none_when_output_emit_fails(
         make_runtime_state_with_db(&ctx, "adapter-regression-scope-reconciler", None).await?;
     drop(event_receiver);
 
-    let mut adapter = AutomatonRuntime::new(ScopeReconcilerWrapper(TestScopeReconcilerNode));
+    let mut adapter = AutomatonRuntime::new(ScopeReconcilerWrapper(TestScopeReconcilerAutomaton));
     adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
     adapter.event_emitter = Some(runtime.event_emitter().clone());
     adapter.host = runtime.service_info().host().to_string();

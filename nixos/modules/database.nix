@@ -26,7 +26,7 @@ let
   sourcesEnabled = runtimeEnabled && cfg.sources.enable;
 
   ingestEnabled = coreEnabled && cfg.core.event_engine.enable;
-  gatewayEnabled = coreEnabled && cfg.core.gateway.enable;
+  apiEnabled = coreEnabled && cfg.core.api.enable;
 
   defaultInstances = cfg.runtime.defaults.instances;
   resolveInstances =
@@ -53,7 +53,7 @@ let
     else
       automataLib.countEnabled cfg.automata;
 
-  coreServiceCount = (if ingestEnabled then 1 else 0) + (if gatewayEnabled then 1 else 0);
+  coreServiceCount = (if ingestEnabled then 1 else 0) + (if apiEnabled then 1 else 0);
 
   totalServiceCount = coreServiceCount + runtimeServiceCount + automataCount;
 

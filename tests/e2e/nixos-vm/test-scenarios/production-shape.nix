@@ -1,7 +1,7 @@
 # Production-shape end-to-end proof for Sinex (#1135).
 #
 # Proves the FULL production pipeline in a real NixOS VM:
-#   source-driver host (fs) → NATS JetStream → event_engine → PostgreSQL → gateway RPC
+#   source-driver host (fs) → NATS JetStream → event_engine → PostgreSQL → API RPC
 #
 # Design choices:
 #   - Source unit: `fs` (filesystem watcher). Chosen because it is the
@@ -11,7 +11,7 @@
 #     this scenario proves that preflight passes on a production-shaped stack.
 #   - sinexVmTestSuite: not used. All assertions are inline Python so the
 #     proof is self-contained and readable in isolation.
-#   - Gateway query: via `sinexctl query --source fs-watcher` which hits the
+#   - API query: via `sinexctl query --source fs-watcher` which hits the
 #     real `events.query` RPC over mTLS. No DB-direct queries — the scenario
 #     asserts the full stack, not just persistence.
 #
@@ -67,8 +67,8 @@ pkgs.testers.nixosTest {
       };
     };
 
-    # Gateway must be reachable.
-    services.sinex.core.gateway.enable = lib.mkDefault true;
+    # API must be reachable.
+    services.sinex.core.api.enable = lib.mkDefault true;
 
     environment.systemPackages = with pkgs; [ jq curl ];
   };
@@ -91,7 +91,7 @@ pkgs.testers.nixosTest {
         # Schema is applied by sinexd before runtime modules start.
         machine.wait_for_unit("sinexd.service", timeout=60)
         # Source units are hosted in sinexd; there is no per-source-driver unit.
-        # Gateway health probe — confirms TLS is up.
+        # API health probe — confirms TLS is up.
         machine.wait_until_succeeds(
             f"curl -k -sf {GATEWAY_URL}/health",
             timeout=30
@@ -116,9 +116,9 @@ pkgs.testers.nixosTest {
         )
         print(f"Wrote smoke fixture to {SMOKE_FILE}")
 
-        # Poll the gateway RPC until the event appears in core.events.
+        # Poll the API RPC until the event appears in core.events.
         # Timeout 90s: fs watcher detects inotify change → publishes NATS batch
-        # (≤1s flush) → event_engine persists → gateway indexes.
+        # (≤1s flush) → event_engine persists → API indexes.
         deadline = 90
         found = False
         last_output = ""
@@ -141,12 +141,12 @@ pkgs.testers.nixosTest {
             time.sleep(1)
 
         assert found, (
-            f"No fs-watcher events returned by gateway after {deadline}s. "
+            f"No fs-watcher events returned by API after {deadline}s. "
             f"Last output: {last_output[:400]}"
         )
 
-    # ── Phase 4: Gateway RPC returns correct event fields ───────────────────
-    with subtest("Gateway RPC returns persisted event with correct shape"):
+    # ── Phase 4: API RPC returns correct event fields ───────────────────
+    with subtest("API RPC returns persisted event with correct shape"):
         raw = machine.succeed(
             "sinexctl --insecure query --source fs-watcher --format json"
         ).strip()
@@ -166,6 +166,6 @@ pkgs.testers.nixosTest {
             f"Expected event_type to start with 'file.', got '{event_type}'. Full event: {ev}"
 
         print(f"Proof: source={source!r}, event_type={event_type!r}")
-        print("Production-shape proof PASSED: source-driver host → event_engine → DB → gateway verified.")
+        print("Production-shape proof PASSED: source-driver host → event_engine → DB → API verified.")
   '';
 }

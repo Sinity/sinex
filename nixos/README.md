@@ -336,7 +336,7 @@ Current implementation:
 
 **Core Components:**
 - **sinexd::event_engine**: JetStream consumer + validator + single-writer persistence + confirmations/DLQ publisher
-- **sinexd::api**: HTTP/JSON-RPC API for CLI and web access
+- **sinexd::api**: HTTP/JSON-API for CLI and web access
 - **Source contracts / automata**: source capture and derived processing hosted by `sinexd`
 - **PostgreSQL**: Event storage with TimescaleDB for time-series data
 - **NATS JetStream**: Message bus for real-time event distribution
@@ -695,7 +695,7 @@ sinexctl --insecure verify --document-smoke --source-evidence --historical-evide
 
 **Service health endpoints:**
 ```bash
-# Gateway health
+# API health
 curl -k https://127.0.0.1:9999/health
 curl -k https://127.0.0.1:9999/ready
 

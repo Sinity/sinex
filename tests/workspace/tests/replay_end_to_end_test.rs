@@ -3,7 +3,7 @@
 //! Unlike `replay_lifecycle_test.rs` (which uses an in-process `ServiceContainer`),
 //! this test starts NATS + event engine + API as real subprocesses via `TestCoreStack`,
 //! seeds events through the full ingest path (NATS → event_engine → `PostgreSQL`), then
-//! orchestrates a replay through the gateway's HTTP JSON-RPC API.
+//! orchestrates a replay through the sinexd HTTP JSON-RPC API.
 //!
 //! What this test proves:
 //! - Events seeded via NATS are persisted by event_engine and visible to the gateway

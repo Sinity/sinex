@@ -32,10 +32,10 @@ let
   logDir = cfg.observability.logDir;
   blobDir = cfg.storage.blob.repositoryPath;
   tlsDir = "${stateRoot}/tls";
-  tlsAutoGenEnabled = coreEnabled && coreCfg.gateway.autoGenerateTls;
+  tlsAutoGenEnabled = coreEnabled && coreCfg.api.autoGenerateTls;
   # Ancillary service flags.
   # JetStream bootstrap is a hard requirement when enabled because event_engine and
-  # gateway assume the streams already exist at startup. Blob init remains soft.
+  # API assume the streams already exist at startup. Blob init remains soft.
   natsBootstrapEnabled = natsEnabled && cfg.nats.bootstrapStreams.enable;
   blobInitEnabled = cfg.storage.blob.enable && cfg.storage.blob.autoInit;
   postgresServiceUnits = optionals localPostgresEnabled [ "postgresql.service" "postgresql-setup.service" ];
@@ -46,7 +46,7 @@ let
     key="${tlsDir}/server-key.pem"
     ca="${tlsDir}/ca.pem"
     if [[ -f "$cert" && -f "$key" && -f "$ca" ]]; then
-      echo "Sinex gateway TLS credentials already present, skipping."
+      echo "Sinex API TLS credentials already present, skipping."
       exit 0
     fi
     mkdir -p "${tlsDir}"
@@ -55,8 +55,8 @@ let
       --output-dir "${tlsDir}" \
       --san localhost \
       --san 127.0.0.1 \
-      --ca-name "Sinex Gateway CA"
-    # Gateway needs the server cert, server key, and trust anchor at runtime.
+      --ca-name "Sinex API CA"
+    # API needs the server cert, server key, and trust anchor at runtime.
     chown root:${serviceUser} "$key" "$cert" "$ca"
     chmod 640 "$key" "$cert" "$ca"
     # Keep client and CA private keys root-only; they are operator artifacts, not service inputs.
@@ -69,7 +69,7 @@ let
     if [[ -f "${tlsDir}/ca-key.pem" ]]; then
       chmod 600 "${tlsDir}/ca-key.pem"
     fi
-    echo "Sinex gateway TLS credentials generated at ${tlsDir}"
+    echo "Sinex API TLS credentials generated at ${tlsDir}"
   '';
 
   sinexPackage = cfg.package;
@@ -133,13 +133,13 @@ let
     effectiveNatsCredsFile
     effectiveNatsNkeySeedFile
   ];
-  gatewaySecretAssertPaths = collectReadablePaths (
+  apiSecretAssertPaths = collectReadablePaths (
     [
       apiAdminTokenFile
-      cfg.core.gateway.tlsCertFile
-      cfg.core.gateway.tlsKeyFile
+      cfg.core.api.tlsCertFile
+      cfg.core.api.tlsKeyFile
     ]
-    ++ optionals coreCfg.gateway.requireClientTLS [ cfg.core.gateway.tlsClientCAFile ]
+    ++ optionals coreCfg.api.requireClientTLS [ cfg.core.api.tlsClientCAFile ]
   );
   existingPathAssertions = paths:
     let
@@ -258,7 +258,7 @@ let
     "SINEX_LOG_DIR=${logDir}"
     "SINEX_NATS_URL=${natsUrl}"
     "SINEX_NATS_MONITORING_PORT=${toString runtimeCfg.nats.monitoringPort}"
-    # Both event_engine and gateway access the same content-store root; set here
+    # Both event_engine and API access the same content-store root; set here
     # so all core services share a consistent path without per-service repetition.
     "SINEX_CONTENT_STORE_PATH=${blobDir}"
   ]
@@ -429,23 +429,23 @@ let
         "--nats-url ${natsUrl}"
         "--log-level ${coreCfg.event_engine.logLevel}"
       ] ++ coreCfg.event_engine.extraArgs);
-      gatewayLimits = coreCfg.gateway.limits;
+      apiLimits = coreCfg.api.limits;
       apiAdminTokenRuntimeFile = "${runtimeDir}/api-admin-token";
-      gatewayTlsCertRuntimeFile = "${runtimeDir}/gateway-server.pem";
-      gatewayTlsKeyRuntimeFile = "${runtimeDir}/gateway-server-key.pem";
-      gatewayTlsClientCaRuntimeFile = "${runtimeDir}/gateway-client-ca.pem";
-      gatewayTlsTrustAnchorRuntimeFile = "${runtimeDir}/gateway-ca.pem";
-      gatewayTlsTrustAnchorSourceFile =
-        if cfg.core.gateway.autoGenerateTls then
+      apiTlsCertRuntimeFile = "${runtimeDir}/api-server.pem";
+      apiTlsKeyRuntimeFile = "${runtimeDir}/api-server-key.pem";
+      apiTlsClientCaRuntimeFile = "${runtimeDir}/api-client-ca.pem";
+      apiTlsTrustAnchorRuntimeFile = "${runtimeDir}/api-ca.pem";
+      apiTlsTrustAnchorSourceFile =
+        if cfg.core.api.autoGenerateTls then
           "${tlsDir}/ca.pem"
         else
           null;
-      gatewayRuntimeInputStageScript =
+      apiRuntimeInputStageScript =
         if apiAdminTokenFile == null
-          && cfg.core.gateway.tlsCertFile == null
-          && cfg.core.gateway.tlsKeyFile == null
-          && gatewayTlsTrustAnchorSourceFile == null
-          && cfg.core.gateway.tlsClientCAFile == null
+          && cfg.core.api.tlsCertFile == null
+          && cfg.core.api.tlsKeyFile == null
+          && apiTlsTrustAnchorSourceFile == null
+          && cfg.core.api.tlsClientCAFile == null
         then null else
           pkgs.writeShellScript "sinexd-stage-runtime-inputs" ''
             set -euo pipefail
@@ -517,10 +517,10 @@ let
             "$INSTALL" -d -m 0750 -o ${serviceUser} -g ${serviceUser} "$runtime_dir"
 
             stage_api_admin_token ${escapeShellArg (if apiAdminTokenFile == null then "" else toString apiAdminTokenFile)} ${escapeShellArg apiAdminTokenRuntimeFile}
-            stage_file ${escapeShellArg (if cfg.core.gateway.tlsCertFile == null then "" else toString cfg.core.gateway.tlsCertFile)} ${escapeShellArg gatewayTlsCertRuntimeFile} 0440
-            stage_file ${escapeShellArg (if cfg.core.gateway.tlsKeyFile == null then "" else toString cfg.core.gateway.tlsKeyFile)} ${escapeShellArg gatewayTlsKeyRuntimeFile} 0400
-            stage_file ${escapeShellArg (if gatewayTlsTrustAnchorSourceFile == null then "" else toString gatewayTlsTrustAnchorSourceFile)} ${escapeShellArg gatewayTlsTrustAnchorRuntimeFile} 0444
-            stage_file ${escapeShellArg (if cfg.core.gateway.tlsClientCAFile == null then "" else toString cfg.core.gateway.tlsClientCAFile)} ${escapeShellArg gatewayTlsClientCaRuntimeFile} 0440
+            stage_file ${escapeShellArg (if cfg.core.api.tlsCertFile == null then "" else toString cfg.core.api.tlsCertFile)} ${escapeShellArg apiTlsCertRuntimeFile} 0440
+            stage_file ${escapeShellArg (if cfg.core.api.tlsKeyFile == null then "" else toString cfg.core.api.tlsKeyFile)} ${escapeShellArg apiTlsKeyRuntimeFile} 0400
+            stage_file ${escapeShellArg (if apiTlsTrustAnchorSourceFile == null then "" else toString apiTlsTrustAnchorSourceFile)} ${escapeShellArg apiTlsTrustAnchorRuntimeFile} 0444
+            stage_file ${escapeShellArg (if cfg.core.api.tlsClientCAFile == null then "" else toString cfg.core.api.tlsClientCAFile)} ${escapeShellArg apiTlsClientCaRuntimeFile} 0440
           '';
       # Ordering for core services.
       # Base: hard infrastructure that both services depend on.
@@ -532,7 +532,7 @@ let
       # the managed bootstrap path is enabled.
       coreAfter = coreRequires ++ optionals blobInitEnabled [ "sinex-blob-init.service" ];
       coreWants = optionals blobInitEnabled [ "sinex-blob-init.service" ];
-      gatewayAfter = coreAfter ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
+      apiAfter = coreAfter ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
     in
     if !coreEnabled then { } else
     {
@@ -540,16 +540,16 @@ let
         description = "Sinex daemon (event engine + API + automata + hosted source bindings)";
         wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
         restartIfChanged = cfg.runtime.restartOnSwitch;
-        after = gatewayAfter ++ (runtimeOverlay.afterUnits or [ ]);
+        after = apiAfter ++ (runtimeOverlay.afterUnits or [ ]);
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
         wants = coreWants ++ (runtimeOverlay.wantsUnits or [ ]);
         unitConfig =
           restartRateLimits
           // { PartOf = [ "sinex-runtime.target" ]; }
           // existingPathAssertions (
-            databaseSecretAssertPaths ++ natsSecretAssertPaths ++ gatewaySecretAssertPaths
+            databaseSecretAssertPaths ++ natsSecretAssertPaths ++ apiSecretAssertPaths
           );
-        serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources
+        serviceConfig = mkBaseServiceConfig coreCfg.api.resources
           (
             mkServiceEnv (
               [
@@ -576,22 +576,22 @@ let
                 # Operational intervals.
                 "SINEX_EVENT_ENGINE_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.event_engine.schemaReloadIntervalSecs}"
                 "SINEX_EVENT_ENGINE_STATS_LOG_INTERVAL_SECS=${toString coreCfg.event_engine.statsLogIntervalSecs}"
-                # API (gateway) config.
-                "SINEX_API_MAX_CONCURRENCY=${toString gatewayLimits.maxConcurrency}"
-                "SINEX_API_REQUEST_TIMEOUT_SECS=${toString gatewayLimits.requestTimeoutSec}"
-                "SINEX_API_MAX_BODY_BYTES=${toString gatewayLimits.maxBodyBytes}"
-                "SINEX_API_MAX_BLOB_BYTES=${toString gatewayLimits.maxBlobBytes}"
+                # API config.
+                "SINEX_API_MAX_CONCURRENCY=${toString apiLimits.maxConcurrency}"
+                "SINEX_API_REQUEST_TIMEOUT_SECS=${toString apiLimits.requestTimeoutSec}"
+                "SINEX_API_MAX_BODY_BYTES=${toString apiLimits.maxBodyBytes}"
+                "SINEX_API_MAX_BLOB_BYTES=${toString apiLimits.maxBlobBytes}"
                 "SINEX_API_POOL_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}"
                 "SINEX_API_POOL_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}"
                 "SINEX_API_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
-                "SINEX_API_RATE_LIMIT_ENABLED=${if coreCfg.gateway.limits.rateLimit.enable then "true" else "false"}"
-                "SINEX_API_RATE_LIMIT_REQUESTS_PER_SEC=${toString coreCfg.gateway.limits.rateLimit.requestsPerSec}"
-                "SINEX_API_RATE_LIMIT_BURST=${toString coreCfg.gateway.limits.rateLimit.burst}"
-                "SINEX_API_RATE_LIMIT_IDLE_TIMEOUT_SECS=${toString coreCfg.gateway.limits.rateLimit.idleTimeoutSec}"
-                "SINEX_API_RATE_LIMIT_PER_MINUTE=${toString coreCfg.gateway.limits.rateLimit.distributedPerMinute}"
-                "SINEX_API_RATE_LIMIT_WINDOW_SECS=${toString coreCfg.gateway.limits.rateLimit.distributedWindowSec}"
-                "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES=${toString coreCfg.gateway.nativeMessagingMaxSizeBytes}"
-                "SINEX_API_TCP_LISTEN=${coreCfg.gateway.listenAddress}"
+                "SINEX_API_RATE_LIMIT_ENABLED=${if coreCfg.api.limits.rateLimit.enable then "true" else "false"}"
+                "SINEX_API_RATE_LIMIT_REQUESTS_PER_SEC=${toString coreCfg.api.limits.rateLimit.requestsPerSec}"
+                "SINEX_API_RATE_LIMIT_BURST=${toString coreCfg.api.limits.rateLimit.burst}"
+                "SINEX_API_RATE_LIMIT_IDLE_TIMEOUT_SECS=${toString coreCfg.api.limits.rateLimit.idleTimeoutSec}"
+                "SINEX_API_RATE_LIMIT_PER_MINUTE=${toString coreCfg.api.limits.rateLimit.distributedPerMinute}"
+                "SINEX_API_RATE_LIMIT_WINDOW_SECS=${toString coreCfg.api.limits.rateLimit.distributedWindowSec}"
+                "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES=${toString coreCfg.api.nativeMessagingMaxSizeBytes}"
+                "SINEX_API_TCP_LISTEN=${coreCfg.api.listenAddress}"
                 # Collapsed-daemon selectors: tell sinexd which automata to
                 # host internally and where to load the source-binding
                 # manifest. Empty/unset = host none in that subsystem.
@@ -603,11 +603,11 @@ let
                 (coreCfg.event_engine.blobGcIntervalSecs != null)
                 "SINEX_EVENT_ENGINE_BLOB_GC_INTERVAL_SECS=${toString coreCfg.event_engine.blobGcIntervalSecs}"
               ++ optional (apiAdminTokenFile != null) "SINEX_API_ADMIN_TOKEN_FILE=${apiAdminTokenRuntimeFile}"
-              ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_API_TLS_CERT=${gatewayTlsCertRuntimeFile}"
-              ++ optional (cfg.core.gateway.tlsKeyFile != null) "SINEX_API_TLS_KEY=${gatewayTlsKeyRuntimeFile}"
-              ++ optional (cfg.core.gateway.tlsClientCAFile != null) "SINEX_API_TLS_CLIENT_CA=${gatewayTlsClientCaRuntimeFile}"
-              ++ optional (coreCfg.gateway.requireClientTLS) "SINEX_API_REQUIRE_CLIENT_TLS=1"
-              ++ optional (coreCfg.gateway.corsOrigins != null) "SINEX_API_CORS_ORIGINS=${coreCfg.gateway.corsOrigins}"
+              ++ optional (cfg.core.api.tlsCertFile != null) "SINEX_API_TLS_CERT=${apiTlsCertRuntimeFile}"
+              ++ optional (cfg.core.api.tlsKeyFile != null) "SINEX_API_TLS_KEY=${apiTlsKeyRuntimeFile}"
+              ++ optional (cfg.core.api.tlsClientCAFile != null) "SINEX_API_TLS_CLIENT_CA=${apiTlsClientCaRuntimeFile}"
+              ++ optional (coreCfg.api.requireClientTLS) "SINEX_API_REQUIRE_CLIENT_TLS=1"
+              ++ optional (coreCfg.api.corsOrigins != null) "SINEX_API_CORS_ORIGINS=${coreCfg.api.corsOrigins}"
               ++ (runtimeOverlay.environment or [ ])
             )
           )
@@ -621,9 +621,9 @@ let
                 passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
               };
             }
-            // optionalAttrs (gatewayRuntimeInputStageScript != null || (runtimeOverlay.execStartPre or [ ]) != [ ]) {
+            // optionalAttrs (apiRuntimeInputStageScript != null || (runtimeOverlay.execStartPre or [ ]) != [ ]) {
               ExecStartPre = lib.mkBefore (
-                lib.optional (gatewayRuntimeInputStageScript != null) "+${gatewayRuntimeInputStageScript}"
+                lib.optional (apiRuntimeInputStageScript != null) "+${apiRuntimeInputStageScript}"
                 ++ (runtimeOverlay.execStartPre or [ ])
               );
             }
@@ -646,7 +646,7 @@ let
     }
     // optionalAttrs tlsAutoGenEnabled {
       "sinex-tls-init" = {
-        description = "Generate Sinex gateway TLS credentials";
+        description = "Generate Sinex API TLS credentials";
         wantedBy = [ "multi-user.target" ];
         before = [ "sinexd.service" ];
         serviceConfig = {

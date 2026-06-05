@@ -951,7 +951,7 @@
               { lib, ... }:
               {
                 nixpkgs.config.allowUnfree = true;
-                services.sinex.core.gateway.enable = lib.mkForce false;
+                services.sinex.core.api.enable = lib.mkForce false;
               }
             )
           ];

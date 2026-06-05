@@ -1,5 +1,5 @@
 # mTLS Enforcement E2E Test
-# Tests gateway mTLS client certificate verification
+# Tests API mTLS client certificate verification
 { pkgs
 , pg_jsonschema
 , sinex ? null
@@ -28,8 +28,8 @@ pkgs.testers.nixosTest {
       })
     ];
 
-    # Override gateway configuration to enable mTLS
-    services.sinex.core.gateway = {
+    # Override API configuration to enable mTLS
+    services.sinex.core.api = {
       enable = true;
       requireClientTLS = true;
       listenAddress = "0.0.0.0:9999";
@@ -181,15 +181,15 @@ pkgs.testers.nixosTest {
         print("✓ Request with untrusted CA rejected (expected)")
         print(f"Error snippet: {result[:200]}")
 
-    with subtest("mTLS: Gateway logs show mTLS enforcement"):
-        # Check gateway logs for mTLS-related messages
+    with subtest("mTLS: API logs show mTLS enforcement"):
+        # Check API logs for mTLS-related messages
         logs = machine.succeed("journalctl -u sinexd.service -n 100 --no-pager")
-        print("Gateway logs (last 100 lines):")
+        print("API logs (last 100 lines):")
         print(logs)
 
-        # Verify gateway started with TLS
-        assert "RPC server listening on TLS" in logs or "TLS" in logs, "Gateway not running in TLS mode"
-        print("✓ Gateway logs confirm TLS mode")
+        # Verify API started with TLS
+        assert "RPC server listening on TLS" in logs or "TLS" in logs, "API not running in TLS mode"
+        print("✓ API logs confirm TLS mode")
 
     print("\n✅ mTLS enforcement test completed successfully!")
   '';

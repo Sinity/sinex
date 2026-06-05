@@ -1,5 +1,5 @@
 # sinexctl CLI E2E tests
-# Tests the CLI tool against a running gateway with structured JSON output
+# Tests the CLI tool against a running API with structured JSON output
 { pkgs
 , pg_jsonschema
 , sinex ? null
@@ -23,8 +23,8 @@ pkgs.testers.nixosTest {
       })
     ];
 
-    # Enable gateway for CLI tests
-    services.sinex.core.gateway.enable = true;
+    # Enable API for CLI tests
+    services.sinex.core.api.enable = true;
 
     # Enable filesystem source runtime to generate events
     services.sinex.runtime = {
@@ -46,11 +46,11 @@ pkgs.testers.nixosTest {
 
     start_all()
 
-    def wait_for_gateway():
-        """Wait for gateway to be ready and accepting connections"""
+    def wait_for_API():
+        """Wait for API to be ready and accepting connections"""
         machine.wait_for_unit("postgresql.service", timeout=60)
         machine.wait_for_unit("sinexd.service", timeout=60)
-        # Wait until gateway health endpoint responds
+        # Wait until API health endpoint responds
         machine.wait_until_succeeds(
             "curl -k -s https://127.0.0.1:9999/health",
             timeout=30
@@ -104,7 +104,7 @@ pkgs.testers.nixosTest {
     # Initialize test environment
     with subtest("System initialization"):
         machine.wait_for_unit("multi-user.target")
-        wait_for_gateway()
+        wait_for_API()
 
     # Test 1: sinexctl version and help
     with subtest("sinexctl version and help"):

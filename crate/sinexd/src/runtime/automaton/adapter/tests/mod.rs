@@ -231,9 +231,9 @@ struct ScopeReconcilerOutput {
     count: usize,
 }
 
-struct TestScopeReconcilerNode;
+struct TestScopeReconcilerAutomaton;
 
-impl ScopeReconciler for TestScopeReconcilerNode {
+impl ScopeReconciler for TestScopeReconcilerAutomaton {
     type State = TestScopeReconcilerState;
     type Input = ScopeReconcilerInput;
     type Output = ScopeReconcilerOutput;

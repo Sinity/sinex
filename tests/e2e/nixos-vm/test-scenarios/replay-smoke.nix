@@ -23,8 +23,8 @@ pkgs.testers.nixosTest {
       })
     ];
 
-    # Enable gateway (required for replay RPC)
-    services.sinex.core.gateway.enable = true;
+    # Enable API (required for replay RPC)
+    services.sinex.core.api.enable = true;
 
     # Enable filesystem source runtime to generate real events
     services.sinex.runtime = {

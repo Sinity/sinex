@@ -172,8 +172,8 @@ disabled (e.g. staging migrations).
   automaton hosts.
 
 ### Transport Security
-- gateway TLS lives under `services.sinex.core.gateway.{tlsCertFile,tlsKeyFile,tlsClientCAFile,requireClientTLS,autoGenerateTls}`
-- non-loopback gateway binds require mTLS and a configured `tlsClientCAFile`
+- API TLS lives under `services.sinex.core.api.{tlsCertFile,tlsKeyFile,tlsClientCAFile,requireClientTLS,autoGenerateTls}`
+- non-loopback API binds require mTLS and a configured `tlsClientCAFile`
 - managed local NATS server TLS lives under `services.sinex.nats.tls.{enable,certFile,keyFile,caCertFile,verifyClients,verifyAndMap}`
 - managed local NATS subject-level authz for the current shared runtime identity lives under `services.sinex.nats.authorization.sharedClient.*`
 - shared NATS client transport lives under `services.sinex.runtime.nats.{servers,tls,auth}`
@@ -289,7 +289,7 @@ sops-nix), use `services.sinex.database.setupWaitForPaths` to gate
 - That descriptor now carries the API probe base URL, whether the API endpoint
   requires client TLS, the effective NATS server list, and all secret-material
   paths needed for readiness checks, including the generated API TLS trust
-  anchor when `core.gateway.autoGenerateTls = true`.
+  anchor when `core.api.autoGenerateTls = true`.
 - The module also emits `/etc/sinex/runtime-target.json`. This narrower
   descriptor is the runtime connection/status target for `sinexctl` and other
   status probes: API URL, auth/TLS material, database URL, NATS servers,

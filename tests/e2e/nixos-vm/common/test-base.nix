@@ -27,7 +27,7 @@ let
 
     lifecycle.preflight.enable = lib.mkDefault false;
 
-    core.gateway.autoGenerateTls = lib.mkDefault true;
+    core.api.autoGenerateTls = lib.mkDefault true;
 
     # The deployment-shaped stream topology declares retention caps larger than
     # the tiny VM default. NATS expects this value as a K/M/G/T-sized string.
@@ -74,7 +74,7 @@ in
       cliPackage = sinexCliPackage;
     };
 
-  # Provide dummy secrets expected by the gateway.
+  # Provide dummy secrets expected by the api.
   environment.etc."sinex/api-admin-token".text = "test-admin-token:admin";
   environment.variables = {
     SINEX_TEST_DB_NAME = databaseName;

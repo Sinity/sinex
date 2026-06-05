@@ -23,7 +23,7 @@
 
     nats.environment = "prod";
 
-    core.enable = false; # event_engine/gateway run on central cluster
+    core.enable = false; # event_engine/API run on central cluster
     lifecycle.maintenance.enable = false;
     observability.enable = false;
 

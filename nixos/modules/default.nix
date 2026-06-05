@@ -777,29 +777,29 @@ in
             description = "Ingestion daemon configuration.";
           };
 
-          gateway = mkOption {
+          api = mkOption {
             type = submodule {
               options = {
                 enable = mkOption {
                   type = bool;
                   default = true;
-                  description = "Enable the RPC gateway.";
+                  description = "Enable the API.";
                 };
                 logLevel = mkOption {
                   type = str;
                   default = cfg.logLevel;
                   defaultText = literalExpression "config.services.sinex.logLevel";
-                  description = "Log level for the gateway.";
+                  description = "Log level for the API.";
                 };
                 resources = mkOption {
                   type = resourceModule { defaultMemory = "8G"; defaultCpu = "75%"; };
                   default = { };
-                  description = "Resource limits for the gateway.";
+                  description = "Resource limits for the API.";
                 };
                 listenAddress = mkOption {
                   type = str;
                   default = "127.0.0.1:9999";
-                  description = "TCP listen address for the RPC gateway (host:port).";
+                  description = "TCP listen address for the API (host:port).";
                 };
                 requireClientTLS = mkOption {
                   type = bool;
@@ -812,7 +812,7 @@ in
                       maxConcurrency = mkOption {
                         type = positive;
                         default = 100;
-                        description = "Max concurrent RPC requests enforced by the gateway.";
+                        description = "Max concurrent RPC requests enforced by the API.";
                       };
                       requestTimeoutSec = mkOption {
                         type = positive;
@@ -836,7 +836,7 @@ in
                             enable = mkOption {
                               type = bool;
                               default = true;
-                              description = "Enable per-token rate limiting on the gateway.";
+                              description = "Enable per-token rate limiting on the API.";
                             };
                             requestsPerSec = mkOption {
                               type = positive;
@@ -858,7 +858,7 @@ in
                               default = 6000;
                               description = ''
                                 Distributed rate limiter: max requests per minute per token,
-                                enforced across all gateway instances via NATS KV.
+                                enforced across all API instances via NATS KV.
                                 Default 6000 = 100 req/s sustained.
                               '';
                             };
@@ -870,26 +870,26 @@ in
                           };
                         };
                         default = { };
-                        description = "Per-token rate limiting. Two complementary limiters operate in tandem: a local token-bucket (fast, in-process) and a distributed NATS KV limiter (consistent across gateway replicas).";
+                        description = "Per-token rate limiting. Two complementary limiters operate in tandem: a local token-bucket (fast, in-process) and a distributed NATS KV limiter (consistent across API replicas).";
                       };
                     };
                   };
                   default = { };
-                  description = "RPC resource guard configuration for the gateway.";
+                  description = "RPC resource guard configuration for the API.";
                 };
                 tlsCertFile = mkOption {
                   type = nullOr path;
-                  default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/server.pem" else null;
+                  default = if cfg.core.api.autoGenerateTls then cfg.stateRoot + "/tls/server.pem" else null;
                   description = ''
-                    Path to the gateway TLS certificate. Required unless autoGenerateTls is enabled.
+                    Path to the API TLS certificate. Required unless autoGenerateTls is enabled.
                     Exported as <literal>SINEX_API_TLS_CERT</literal>.
                   '';
                 };
                 tlsKeyFile = mkOption {
                   type = nullOr path;
-                  default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/server-key.pem" else null;
+                  default = if cfg.core.api.autoGenerateTls then cfg.stateRoot + "/tls/server-key.pem" else null;
                   description = ''
-                    Path to the gateway TLS private key. Required unless autoGenerateTls is enabled.
+                    Path to the API TLS private key. Required unless autoGenerateTls is enabled.
                     Exported as <literal>SINEX_API_TLS_KEY</literal>.
                   '';
                 };
@@ -897,7 +897,7 @@ in
                   type = nullOr path;
                   default = null;
                   description = ''
-                    Client CA bundle for gateway mTLS. Required for non-loopback binds
+                    Client CA bundle for API mTLS. Required for non-loopback binds
                     and whenever requireClientTLS is enabled. Exported as
                     <literal>SINEX_API_TLS_CLIENT_CA</literal>.
                   '';
@@ -906,11 +906,11 @@ in
                   type = bool;
                   default = false;
                   description = ''
-                    Automatically generate an rcgen-backed local PKI for the gateway on first boot.
+                    Automatically generate an rcgen-backed local PKI for the API on first boot.
                     Stores credentials at
                     <literal>''${stateRoot}/tls/{server.pem,server-key.pem,ca.pem,client.pem,client-key.pem}</literal>
                     and sets <option>tlsCertFile</option>/<option>tlsKeyFile</option> accordingly.
-                    The generated CA becomes the gateway trust anchor for deployment-readiness checks.
+                    The generated CA becomes the API trust anchor for deployment-readiness checks.
                     Suitable for single-host deployments. For production clusters, provide real certs.
                   '';
                 };
@@ -918,7 +918,7 @@ in
                   type = nullOr str;
                   default = null;
                   description = ''
-                    Comma-separated list of allowed CORS origins for the gateway HTTP interface.
+                    Comma-separated list of allowed CORS origins for the API HTTP interface.
                     Set to "*" to allow all origins (not recommended for production).
                     Null disables CORS headers entirely.
                   '';
@@ -933,12 +933,12 @@ in
                 extraArgs = mkOption {
                   type = strList;
                   default = [ ];
-                  description = "Additional command-line arguments for the gateway.";
+                  description = "Additional command-line arguments for the API.";
                 };
               };
             };
             default = { };
-            description = "Gateway configuration.";
+            description = "API configuration.";
           };
         };
       };
@@ -2267,21 +2267,21 @@ in
         "sinex-nats-client-nkey"
         "nats-client-nkey"
       ];
-      gatewayTlsCertFile = cfg.core.gateway.tlsCertFile;
-      gatewayTlsKeyFile = cfg.core.gateway.tlsKeyFile;
-      gatewayTlsTrustAnchorFile =
-        if cfg.core.gateway.autoGenerateTls then runtimeDir + "/gateway-ca.pem" else null;
-      gatewayTlsClientCAFile = cfg.core.gateway.tlsClientCAFile;
-      gatewayProbeListenAddress =
-        if hasPrefix "0.0.0.0:" cfg.core.gateway.listenAddress then
-          "127.0.0.1:${removePrefix "0.0.0.0:" cfg.core.gateway.listenAddress}"
-        else if hasPrefix "[::]:" cfg.core.gateway.listenAddress then
-          "[::1]:${removePrefix "[::]:" cfg.core.gateway.listenAddress}"
+      apiTlsCertFile = cfg.core.api.tlsCertFile;
+      apiTlsKeyFile = cfg.core.api.tlsKeyFile;
+      apiTlsTrustAnchorFile =
+        if cfg.core.api.autoGenerateTls then runtimeDir + "/api-ca.pem" else null;
+      apiTlsClientCAFile = cfg.core.api.tlsClientCAFile;
+      apiProbeListenAddress =
+        if hasPrefix "0.0.0.0:" cfg.core.api.listenAddress then
+          "127.0.0.1:${removePrefix "0.0.0.0:" cfg.core.api.listenAddress}"
+        else if hasPrefix "[::]:" cfg.core.api.listenAddress then
+          "[::1]:${removePrefix "[::]:" cfg.core.api.listenAddress}"
         else
-          cfg.core.gateway.listenAddress;
-      gatewayProbeBaseUrl =
-        if cfg.core.enable && cfg.core.gateway.enable then
-          "https://${gatewayProbeListenAddress}"
+          cfg.core.api.listenAddress;
+      apiProbeBaseUrl =
+        if cfg.core.enable && cfg.core.api.enable then
+          "https://${apiProbeListenAddress}"
         else
           null;
       deploymentManagedUnits = lib.unique (
@@ -2319,8 +2319,8 @@ in
           password_required = dbCfg.localAuth != "trust";
         };
         gateway = {
-          base_url = gatewayProbeBaseUrl;
-          require_client_tls = cfg.core.gateway.requireClientTLS;
+          base_url = apiProbeBaseUrl;
+          require_client_tls = cfg.core.api.requireClientTLS;
         };
         nats = {
           servers = cfg.runtime.nats.servers;
@@ -2401,15 +2401,15 @@ in
         expectations = {
           schema_apply = cfg.database.enable && cfg.database.autoSetup;
           nats_streams = cfg.enable && (cfg.core.enable || cfg.runtime.enable);
-          gateway_ready = cfg.enable && cfg.core.enable && cfg.core.gateway.enable;
+          gateway_ready = cfg.enable && cfg.core.enable && cfg.core.api.enable;
         };
         secrets = {
           database_password_file = effectiveDatabasePasswordFile;
           api_admin_token_file = apiAdminTokenFile;
-          gateway_tls_cert_file = gatewayTlsCertFile;
-          gateway_tls_key_file = gatewayTlsKeyFile;
-          gateway_tls_trust_anchor_file = gatewayTlsTrustAnchorFile;
-          gateway_tls_client_ca_file = gatewayTlsClientCAFile;
+          gateway_tls_cert_file = apiTlsCertFile;
+          gateway_tls_key_file = apiTlsKeyFile;
+          gateway_tls_trust_anchor_file = apiTlsTrustAnchorFile;
+          gateway_tls_client_ca_file = apiTlsClientCAFile;
           nats_ca_cert_file = effectiveNatsCaCertFile;
           nats_client_cert_file = effectiveNatsClientCertFile;
           nats_client_key_file = effectiveNatsClientKeyFile;
@@ -2440,13 +2440,13 @@ in
           password_required = dbCfg.localAuth != "trust";
         };
         gateway = {
-          base_url = gatewayProbeBaseUrl;
+          base_url = apiProbeBaseUrl;
           token_file = apiAdminTokenFile;
           token_role = "admin";
-          ca_cert_file = gatewayTlsTrustAnchorFile;
+          ca_cert_file = apiTlsTrustAnchorFile;
           client_cert_file = null;
           client_key_file = null;
-          require_client_tls = cfg.core.gateway.requireClientTLS;
+          require_client_tls = cfg.core.api.requireClientTLS;
           insecure = false;
         };
         nats = {
@@ -2493,7 +2493,7 @@ in
           { path = logDir; mode = "0755"; }
         ]
         ++ optionals (cfg.storage.blob.enable) [{ path = blobDir; mode = "0750"; }]
-        ++ optionals (cfg.core.enable && cfg.core.gateway.autoGenerateTls) [{ path = "${stateRoot}/tls"; mode = "0750"; }]
+        ++ optionals (cfg.core.enable && cfg.core.api.autoGenerateTls) [{ path = "${stateRoot}/tls"; mode = "0750"; }]
         ++ optionals (cfg.shell.asciinema.autoRecord && targetUser != null && hasPrefix "/" asciiPath) [
           { path = asciiPath; mode = "0770"; user = targetUser; group = targetGroup; }
         ];
@@ -2526,7 +2526,7 @@ in
           (cfg.nats.enable || cfg.nats.autoSetup)
           && cfg.nats.bootstrapStreams.enable
         ) [ "sinex-nats-bootstrap" ]
-        ++ lib.optionals (cfg.core.enable && cfg.core.gateway.enable && cfg.core.gateway.autoGenerateTls) [
+        ++ lib.optionals (cfg.core.enable && cfg.core.api.enable && cfg.core.api.autoGenerateTls) [
           "sinex-tls-init"
         ]
         ++ lib.optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData && cfg.storage.blob.autoInit) [
@@ -2574,7 +2574,7 @@ in
             message = "services.sinex.package must be set when services.sinex.enable = true.";
           }
           {
-            assertion = (!cfg.core.enable || !cfg.core.gateway.enable) || apiAdminTokenFile != null;
+            assertion = (!cfg.core.enable || !cfg.core.api.enable) || apiAdminTokenFile != null;
             message = ''
               API requires an admin token file. Set services.sinex.secrets.apiAdminTokenFile,
               provide an agenix secret named sinex-api-admin-token, or define
@@ -2583,26 +2583,26 @@ in
           }
           {
             assertion =
-              (!cfg.core.enable || !cfg.core.gateway.enable)
-              || (gatewayTlsCertFile != null && gatewayTlsKeyFile != null);
-            message = "Gateway TCP/TLS requires tlsCertFile and tlsKeyFile when gateway is enabled.";
+              (!cfg.core.enable || !cfg.core.api.enable)
+              || (apiTlsCertFile != null && apiTlsKeyFile != null);
+            message = "API TCP/TLS requires tlsCertFile and tlsKeyFile when API is enabled.";
           }
           {
             # Non-loopback bindings must enforce mTLS; loopback-only listeners are trusted.
             assertion =
-              (!cfg.core.enable || !cfg.core.gateway.enable)
-              || (hasPrefix "127." cfg.core.gateway.listenAddress)
-              || (hasPrefix "[::1]" cfg.core.gateway.listenAddress)
-              || cfg.core.gateway.requireClientTLS;
-            message = "Gateway binds to non-loopback address '${cfg.core.gateway.listenAddress}'; set services.sinex.core.gateway.requireClientTLS = true and configure tlsClientCAFile.";
+              (!cfg.core.enable || !cfg.core.api.enable)
+              || (hasPrefix "127." cfg.core.api.listenAddress)
+              || (hasPrefix "[::1]" cfg.core.api.listenAddress)
+              || cfg.core.api.requireClientTLS;
+            message = "API binds to non-loopback address '${cfg.core.api.listenAddress}'; set services.sinex.core.api.requireClientTLS = true and configure tlsClientCAFile.";
           }
           {
             # mTLS requires a client CA bundle to verify the certificates presented by clients.
             assertion =
-              (!cfg.core.enable || !cfg.core.gateway.enable)
-              || (!cfg.core.gateway.requireClientTLS)
-              || (gatewayTlsClientCAFile != null);
-            message = "Gateway mTLS (requireClientTLS = true) requires tlsClientCAFile. Set services.sinex.core.gateway.tlsClientCAFile.";
+              (!cfg.core.enable || !cfg.core.api.enable)
+              || (!cfg.core.api.requireClientTLS)
+              || (apiTlsClientCAFile != null);
+            message = "API mTLS (requireClientTLS = true) requires tlsClientCAFile. Set services.sinex.core.api.tlsClientCAFile.";
           }
           {
             assertion = (effectiveNatsClientCertFile == null) == (effectiveNatsClientKeyFile == null);
