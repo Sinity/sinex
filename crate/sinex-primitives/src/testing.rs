@@ -82,6 +82,7 @@ pub fn event_fixture(
         event_type,
         payload,
         ts_orig: Some(Timestamp::now()),
+        ts_quality: None,
         host: HostName::new(gethostname::gethostname().to_string_lossy().to_string())
             .unwrap_or_else(|_| HostName::from_static("unknown-host")),
         source_run_id: Some(Uuid::now_v7()),

@@ -83,6 +83,9 @@ pub enum Events {
     EquivalenceKey,
     CreatedByOperationId,
     NodeModel,
+
+    /// Quality rung of the resolved `ts_orig` (TemporalSourceType display string).
+    TsQuality,
 }
 
 impl TableDef for Events {
@@ -142,6 +145,11 @@ pub struct EventRecord {
     pub equivalence_key: Option<String>,
     pub created_by_operation_id: Option<Uuid>,
     pub node_model: Option<String>,
+
+    /// Quality rung of the resolved `ts_orig` (`TemporalSourceType` display
+    /// string, e.g. `intrinsic_content` / `staged_at`). Nullable for legacy
+    /// rows written before #1570 Prong B.
+    pub ts_quality: Option<String>,
 }
 
 impl Events {
@@ -207,6 +215,10 @@ impl Events {
             .col(ColumnDef::new(Events::CreatedByOperationId).custom(Alias::new("UUID")))
             .col(ColumnDef::new(Events::NodeModel).text().check(
                 Expr::cust("node_model IS NULL OR node_model IN ('transducer', 'windowed', 'scope_reconciler')")
+            ))
+            // #1570 Prong B: resolved ts_orig quality rung (TemporalSourceType display string).
+            .col(ColumnDef::new(Events::TsQuality).text().check(
+                Expr::cust("ts_quality IS NULL OR ts_quality IN ('realtime_capture', 'intrinsic_content', 'inferred_mtime', 'inferred_ctime', 'inferred_user', 'staged_at')")
             ))
             // The Provenance XOR Invariant: an event MUST have exactly one type of provenance.
             .check(

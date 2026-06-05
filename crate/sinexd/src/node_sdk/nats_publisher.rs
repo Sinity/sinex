@@ -111,7 +111,8 @@ struct PublishEvent<'a> {
     id: String,
     source: &'a str,
     event_type: &'a str,
-    ts_orig: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ts_orig: Option<String>,
     host: &'a str,
     payload: &'a JsonValue,
     source_run_id: Option<String>,
@@ -129,6 +130,8 @@ struct PublishEvent<'a> {
     equivalence_key: Option<&'a str>,
     created_by_operation_id: Option<String>,
     node_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ts_quality: Option<String>,
 }
 
 impl NatsPublisher {
@@ -633,9 +636,10 @@ fn build_publish_payload(
     let event_id = event.id.as_ref().ok_or_else(|| {
         sinex_primitives::SinexError::processing("Event ID is required".to_string())
     })?;
-    let ts_orig = event.ts_orig.ok_or_else(|| {
-        sinex_primitives::SinexError::processing("Event ts_orig is required".to_string())
-    })?;
+    // #1570 Prong B: material-provenance events defer `ts_orig` to ingestd
+    // admission (resolved post-readiness from the source-material timing tier),
+    // so it may legitimately be absent on the wire. Serialize what we have.
+    let ts_orig = event.ts_orig.map(|ts| ts.format_rfc3339());
     let event_id_str = event_id.to_string();
 
     let payload_schema_id = event.payload_schema_id.map(|id| id.to_string());
@@ -649,7 +653,7 @@ fn build_publish_payload(
         id: event_id_str.clone(),
         source: event.source.as_str(),
         event_type: event.event_type.as_str(),
-        ts_orig: ts_orig.format_rfc3339(),
+        ts_orig,
         host: event.host.as_str(),
         payload: &event.payload,
         source_run_id: event.source_run_id.map(|id| id.to_string()),
@@ -667,6 +671,7 @@ fn build_publish_payload(
         equivalence_key: event.equivalence_key.as_deref(),
         created_by_operation_id: event.created_by_operation_id.map(|id| id.to_string()),
         node_model: event.node_model.map(|model| model.to_string()),
+        ts_quality: event.ts_quality.map(|quality| quality.to_string()),
     };
 
     let encoded = serde_json::to_vec(&payload).map_err(sinex_primitives::SinexError::from)?;

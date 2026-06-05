@@ -26,7 +26,9 @@ use async_nats::{Client as NatsClient, jetstream};
 use futures::future::{BoxFuture, join_all};
 use serde::{Deserialize, Serialize};
 use sinex_db::DbPool;
+use sinex_db::DbPoolExt;
 use sinex_db::repositories::COPY_BATCH_THRESHOLD;
+use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_primitives::Timestamp;
 use sinex_primitives::constants::env_vars;
 use sinex_primitives::{
@@ -54,6 +56,9 @@ use crate::event_engine::{
     material_ready_set::MaterialReadySet,
     validator::IngestEventValidator,
 };
+use crate::node_sdk::ingestion_helpers::{LedgerEntry, LedgerReader, MaterialTiming};
+use sinex_primitives::Id;
+use sinex_primitives::domain::SourceMaterialTimingInfoType;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::Provenance;
 
@@ -1117,7 +1122,7 @@ impl JetStreamConsumer {
         let deferred_before = self.stats.events_deferred.load(Ordering::Relaxed);
         let failed_before = self.stats.events_failed.load(Ordering::Relaxed);
 
-        let result = self.persist_and_confirm_batch(&batch).await;
+        let result = self.persist_and_confirm_batch(&mut batch).await;
 
         // Emit batch stats on success
         if result.is_ok()
@@ -1198,14 +1203,16 @@ impl JetStreamConsumer {
     }
 
     #[tracing::instrument(skip(self, batch), fields(batch_size = batch.len()))]
-    async fn persist_and_confirm_batch(&self, batch: &[PreparedEvent]) -> IngestdResult<()> {
+    async fn persist_and_confirm_batch(&self, batch: &mut Vec<PreparedEvent>) -> IngestdResult<()> {
         // Pre-filter: defer events whose source material isn't registered yet.
         // This prevents FK violations without relying on database error handling.
-        let batch = if let Some(ref ready_set) = self.ready_set {
+        // We partition by index (not reference) so that ready events can be
+        // mutated in place by the post-readiness `ts_orig` resolution below.
+        let ready_indices: Vec<usize> = if let Some(ref ready_set) = self.ready_set {
             let mut ready = Vec::with_capacity(batch.len());
             let mut not_ready = Vec::new();
 
-            for prepared in batch {
+            for (idx, prepared) in batch.iter().enumerate() {
                 let is_ready = match &prepared.event.provenance {
                     // Material provenance: first consult the in-memory set, then fall back
                     // to the registry so externally-registered materials are not deferred forever.
@@ -1217,9 +1224,9 @@ impl JetStreamConsumer {
                 };
 
                 if is_ready {
-                    ready.push(prepared);
+                    ready.push(idx);
                 } else {
-                    not_ready.push(prepared);
+                    not_ready.push(idx);
                 }
             }
 
@@ -1231,7 +1238,8 @@ impl JetStreamConsumer {
                 );
                 let mut settlement_errors = Vec::new();
                 let mut deferred_count = 0_u64;
-                for prepared in &not_ready {
+                for &idx in &not_ready {
+                    let prepared = &batch[idx];
                     let material_id = match &prepared.event.provenance {
                         Provenance::Material { id, .. } => Some(*id.as_uuid()),
                         Provenance::Derived { .. } => None,
@@ -1259,10 +1267,132 @@ impl JetStreamConsumer {
             }
             ready
         } else {
-            batch.iter().collect()
+            (0..batch.len()).collect()
         };
 
-        self.persist_and_confirm_prepared_batch(&batch).await
+        // #1570 Prong B: resolve deferred `ts_orig` for ready material events.
+        // This runs *after* the readiness gate above, so every material here has
+        // a registry row visible in the DB — the source-material timing tier can
+        // always resolve a stable `(ts_orig, ts_quality)`.
+        self.resolve_ready_ts_orig(batch, &ready_indices).await?;
+
+        let ready: Vec<&PreparedEvent> = ready_indices.iter().map(|&idx| &batch[idx]).collect();
+        self.persist_and_confirm_prepared_batch(&ready).await
+    }
+
+    /// Resolve a deferred `ts_orig` (and its `ts_quality` rung) for ready
+    /// material-provenance events from the source-material timing tier
+    /// (#1570 Prong B).
+    ///
+    /// The parser owns the `IntrinsicContent` case and stamps `ts_orig`
+    /// directly; otherwise material events arrive with `ts_orig = None` as the
+    /// "derive me" signal. Here — guaranteed to run after the `MaterialReadySet`
+    /// FK gate has confirmed the registry row is visible — we read the registry
+    /// timing summary plus any sub-material `temporal_ledger` entries (wrapped
+    /// streams) and resolve a stable value. The `staged_at` floor guarantees a
+    /// result, so the NOT-NULL `ts_orig` column is always satisfied.
+    ///
+    /// Timing rows + ledger entries are fetched once per distinct material so a
+    /// large same-material batch (the COPY fast path) does not incur a DB round
+    /// trip per event.
+    async fn resolve_ready_ts_orig(
+        &self,
+        batch: &mut [PreparedEvent],
+        ready_indices: &[usize],
+    ) -> IngestdResult<()> {
+        // Collect distinct materials that actually need resolution.
+        let mut needed: Vec<Uuid> = Vec::new();
+        for &idx in ready_indices {
+            let event = &batch[idx].event;
+            if event.ts_orig.is_some() {
+                continue;
+            }
+            if let Provenance::Material { id, .. } = &event.provenance {
+                let material_id = *id.as_uuid();
+                if !needed.contains(&material_id) {
+                    needed.push(material_id);
+                }
+            }
+        }
+        if needed.is_empty() {
+            return Ok(());
+        }
+
+        // Fetch timing + ledger once per material into a batch-local cache.
+        let materials = self.pool.source_materials();
+        let mut cache: HashMap<Uuid, (MaterialTiming, LedgerReader)> =
+            HashMap::with_capacity(needed.len());
+        for material_id in needed {
+            let record = materials
+                .get_by_id(Id::<SourceMaterialRecord>::from_uuid(material_id))
+                .await
+                .map_err(|e| {
+                    SinexError::database("failed to read source material for ts_orig resolution")
+                        .with_context("material_id", material_id.to_string())
+                        .with_source(e)
+                })?;
+            let Some(record) = record else {
+                // Should not happen post-readiness, but skip rather than mis-stamp.
+                warn!(
+                    %material_id,
+                    "ts_orig resolution: registry row missing after readiness gate"
+                );
+                continue;
+            };
+
+            let timing_info_type = record
+                .timing_info_type
+                .parse::<SourceMaterialTimingInfoType>()
+                .unwrap_or(SourceMaterialTimingInfoType::Unknown);
+            let timing = MaterialTiming {
+                timing_info_type,
+                start_time: record.start_time,
+                staged_at: record.staged_at,
+            };
+
+            let ledger_rows = materials
+                .read_temporal_ledger(material_id)
+                .await
+                .map_err(|e| {
+                    SinexError::database("failed to read temporal ledger for ts_orig resolution")
+                        .with_context("material_id", material_id.to_string())
+                        .with_source(e)
+                })?;
+            let entries: Vec<LedgerEntry> = ledger_rows
+                .into_iter()
+                .map(|entry| LedgerEntry {
+                    offset_start: entry.offset_start,
+                    offset_end: entry.offset_end,
+                    ts_capture: entry.ts_capture,
+                    precision: entry.precision,
+                    source_type: entry.source_type,
+                })
+                .collect();
+            cache.insert(
+                material_id,
+                (timing, LedgerReader::new(material_id, entries)),
+            );
+        }
+
+        // Assign the resolved value per event.
+        for &idx in ready_indices {
+            let event = &mut batch[idx].event;
+            if event.ts_orig.is_some() {
+                continue;
+            }
+            let (material_id, anchor_byte) = match &event.provenance {
+                Provenance::Material {
+                    id, anchor_byte, ..
+                } => (*id.as_uuid(), *anchor_byte),
+                Provenance::Derived { .. } => continue,
+            };
+            if let Some((timing, reader)) = cache.get(&material_id) {
+                let (ts_orig, rung) = reader.derive_ts_orig(anchor_byte, timing);
+                event.ts_orig = Some(ts_orig);
+                event.ts_quality = Some(rung);
+            }
+        }
+        Ok(())
     }
 
     /// Persist and settle a prepared batch.

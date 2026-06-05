@@ -1336,9 +1336,15 @@ fn intent_to_event_with_anchor(
     let builder: EventBuilder<JsonValue, NoProvenance> =
         EventBuilder::new_internal(intent.event_source, intent.event_type, intent.payload);
 
-    let mut builder = builder
-        .from_material(material_id, anchor_byte_override)
-        .at_time(intent.ts_orig);
+    // #1570 Prong B two-sided join: when the parser resolved the timing
+    // evidence (intrinsic field, mtime, user-declared) it owns ts_orig and its
+    // quality rung. Otherwise (wrapper-ledger or staged-at fallback) it leaves
+    // ts_orig unresolved so the admission/persistence stage derives it from the
+    // source-material timing tier.
+    let mut builder = builder.from_material(material_id, anchor_byte_override);
+    if let Some(quality) = intent.timing.resolved_quality() {
+        builder = builder.at_time_with_quality(intent.ts_orig, quality);
+    }
     if let (Some(start), Some(end)) = (offset_start, offset_end) {
         builder = builder
             .with_offset_start(start)

@@ -246,6 +246,9 @@ where
             event_type: EventType::new(resolved_event_type)?,
             payload,
             ts_orig: Some(ts_orig),
+            // Derived events carry no source-material timing rung; ts_orig is the
+            // synthesis-time value chosen by the temporal policy.
+            ts_quality: None,
             host: HostName::new(&self.host)?,
             source_run_id: self
                 .runtime

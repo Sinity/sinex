@@ -170,6 +170,7 @@ impl DemoCommand {
                     equivalence_key: None,
                     created_by_operation_id: None,
                     node_model: None,
+                    ts_quality: None,
                 };
                 batch.push(row);
             }

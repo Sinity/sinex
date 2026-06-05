@@ -504,6 +504,7 @@ async fn process_batch_with_dlq_fallback_propagates_checkpoint_errors(
         equivalence_key: None,
         created_by_operation_id: None,
         node_model: None,
+        ts_quality: None,
         anchor_payload_hash: None,
     };
 
@@ -562,6 +563,7 @@ async fn process_batch_with_dlq_fallback_fails_when_dlq_route_fails(
         equivalence_key: None,
         created_by_operation_id: None,
         node_model: None,
+        ts_quality: None,
         anchor_payload_hash: None,
     };
 

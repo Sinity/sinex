@@ -109,6 +109,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
             equivalence_key: None,
             created_by_operation_id: None,
             node_model: None,
+            ts_quality: None,
             anchor_payload_hash: None,
         };
         let payload = serde_json::to_vec(&event)?;
