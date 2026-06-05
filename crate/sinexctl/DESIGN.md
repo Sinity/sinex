@@ -30,7 +30,7 @@ CLI flags still win so one-off overrides remain possible.
 
 - API/system: `gateway`, `core`
 - Query/inspection: `query`, `verify` (bounded runtime evidence checks plus optional active document deployment smoke and descriptor-aware collector-surface evidence, distinguishing recent `ts_orig` samples from merely historical persisted rows, with local deployment-descriptor awareness for managed oneshot surfaces), `automata`, `status`, `recent`, `errors`, `watch`, `tui`
-- Operations: `ops`, `audit`, `node`, `replay`, `dlq`, `lifecycle`, `gitops`
+- Operations: `ops`, `audit`, `replay`, `dlq`, `lifecycle`, `gitops`
 - Local tooling: `config`, `completions`
 
 ## Transport and Auth
@@ -55,15 +55,15 @@ CLI flags still win so one-off overrides remain possible.
 
 ## Design Constraints
 
-- Keep command names aligned with gateway method namespaces where practical (`replay.*`, `dlq.*`, `node.*`).
+- Keep command names aligned with gateway method namespaces where practical (`replay.*`, `dlq.*`, `automata.*`).
 - Keep operator behavior on the gateway surface; avoid hidden direct-DB fallback modes.
 - Prefer explicit operator intent for destructive flows (`dlq purge --confirm`, lifecycle tombstone approvals).
 
 ## Format-Capability Registry
 
 Every command declares its operator UX contract in the command catalog
-(`crate/cli/src/model/format_registry.rs`). The catalog maps command paths
-(e.g. `"node list"`, `"replay watch"`) to command metadata that records:
+(`crate/sinexctl/src/model/format_registry.rs`). The catalog maps command paths
+(e.g. `"automata status"`, `"replay watch"`) to command metadata that records:
 
 - `supported`: which [`OutputFormat`] values the command handles
 - `streaming`: whether the command emits an unbounded stream (NDJSON/YAML lines)
@@ -116,7 +116,7 @@ When adding a new command:
 
 ## Pointers
 
-- Entrypoint: `crate/cli/src/main.rs`
-- Commands: `crate/cli/src/commands/`
-- Gateway client: `crate/cli/src/client/gateway.rs`
-- Config layering: `crate/cli/src/config.rs`
+- Entrypoint: `crate/sinexctl/src/main.rs`
+- Commands: `crate/sinexctl/src/commands/`
+- Gateway client: `crate/sinexctl/src/client/gateway.rs`
+- Config layering: `crate/sinexctl/src/config.rs`

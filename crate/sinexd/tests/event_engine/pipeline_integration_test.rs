@@ -193,7 +193,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
         );
         assert!(
             stored_event.module_run_id.is_none(),
-            "external pipeline events should not claim a managed node run"
+            "external pipeline events should not claim a managed module run"
         );
 
         let event_id_display = stored_event

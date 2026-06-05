@@ -18,6 +18,6 @@ pub struct ModelEffectRecord {
     pub replay_policy: String,
     pub recorded_at: time::OffsetDateTime,
     pub recorded_by: String,
-    pub source_node_id: Option<String>,
+    pub source_module_name: Option<String>,
     pub source_event_id: Option<sqlx::types::Uuid>,
 }

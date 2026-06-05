@@ -923,13 +923,13 @@ impl StateRepository<'_> {
     /// states go through `update_module_run_status`. Previously this method
     /// wrote `status = 'active'`, which collided with
     /// `update_module_run_heartbeat`'s `WHERE status = 'running'` filter and
-    /// silently disabled per-run heartbeats for every node — see
+    /// silently disabled per-run heartbeats for every module — see
     /// the regression test `heartbeat_paths_do_not_collide_on_status` and
-    /// the production symptom "Heartbeat did not persist because the node
+    /// the production symptom "Heartbeat did not persist because the module
     /// run row is missing".
     ///
     /// Returns whether a matching manifest row was updated. The query
-    /// targets only non-terminal rows so a re-launched node after a crash
+    /// targets only non-terminal rows so a re-launched module after a crash
     /// will create a fresh row via `start_run` rather than refresh a
     /// `failed`/`stopped` one.
     pub async fn update_module_heartbeat_for_version(
@@ -964,7 +964,7 @@ impl StateRepository<'_> {
             .await
     }
 
-    /// Mark a specific node's latest run as inactive.
+    /// Mark a specific module's latest run as inactive.
     ///
     /// Returns whether a matching run row was updated.
     pub async fn mark_module_inactive_for_version(
@@ -1043,7 +1043,7 @@ impl StateRepository<'_> {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Insert a concrete node-run row for a single process execution.
+    /// Insert a concrete module-run row for a single process execution.
     pub async fn start_module_run(
         &self,
         manifest_id: i32,
@@ -1163,7 +1163,7 @@ impl StateRepository<'_> {
         Ok(result.rows_affected() > 0)
     }
 
-    /// List live node presence, preferring concrete run rows and falling back
+    /// List live module presence, preferring concrete run rows and falling back
     /// to manifest heartbeats for services that do not yet register runs.
     pub async fn list_live_runtime_presence(
         &self,
@@ -1252,7 +1252,7 @@ impl StateRepository<'_> {
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "list live node presence"))
+        .map_err(|e| db_error(e, "list live module presence"))
         .map(|mut modules| {
             modules.sort_by(|left, right| {
                 left.module_name
@@ -1347,9 +1347,10 @@ impl StateRepository<'_> {
 
     /// List operator-facing status for registered automata.
     ///
-    /// The durable base is the runtime registry (`node_manifests` + latest
-    /// `source_runs`). Derived-node-specific runtime details come from SDK
-    /// self-observation events in `core.events`, keyed by node/run labels.
+    /// The durable base is the runtime registry (`core.manifests` + latest
+    /// `core.runs`). Automaton-specific runtime details come from runtime
+    /// self-observation events in `core.events`, keyed by persisted telemetry
+    /// label names.
     pub async fn list_automata_status(
         &self,
         stale_after: Duration,
@@ -1412,7 +1413,7 @@ impl StateRepository<'_> {
                 FROM core.runs nr
                 WHERE nr.manifest_id = nm.id
                 -- Prefer an active (running/draining/paused) run over a more-recently-started
-                -- terminal run, so a restarted node doesn't immediately appear as failed/stopped.
+                -- terminal run, so a restarted module doesn't immediately appear as failed/stopped.
                 ORDER BY (CASE WHEN nr.status IN ('running', 'draining', 'paused') THEN 1 ELSE 0 END) DESC,
                          nr.started_at DESC
                 LIMIT 1
@@ -2231,7 +2232,7 @@ mod tests {
     use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
     #[sinex_serial_test]
-    async fn node_heartbeat_stale_after_defaults_invalid_override() -> xtask::sandbox::TestResult<()>
+    async fn module_heartbeat_stale_after_defaults_invalid_override() -> xtask::sandbox::TestResult<()>
     {
         let mut env = EnvGuard::new();
         env.set("SINEX_MODULE_HEARTBEAT_STALE_SECS", "bogus");
@@ -2246,7 +2247,7 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn node_heartbeat_stale_after_defaults_zero_override() -> xtask::sandbox::TestResult<()> {
+    async fn module_heartbeat_stale_after_defaults_zero_override() -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_MODULE_HEARTBEAT_STALE_SECS", "0");
 

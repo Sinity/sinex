@@ -615,14 +615,14 @@
       "event_type": "process.shutdown",
       "version": "1.0.0",
       "path": "sinex/process.shutdown.json",
-      "content_hash": "33211b7594815ba018d2e4da7996f03d812ba4ec770d68003535ac26b9beed8e"
+      "content_hash": "548f160bd963714faa9ab59fa3fbcc5bd6fa66af4b27e3db3080d5f0546ace1d"
     },
     {
       "source": "sinex",
       "event_type": "process.started",
       "version": "1.0.0",
       "path": "sinex/process.started.json",
-      "content_hash": "df32e2aa9aecded870510b4d1116b7640d5b197d3417844721fd03c92925a8fb"
+      "content_hash": "99f4569f0fd179c54a5026711eb17008bddc733876da8753de33637cdf74d5c0"
     },
     {
       "source": "sinexctl",

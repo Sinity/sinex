@@ -64,7 +64,7 @@ pub struct StreamBatchRow {
     pub source_event_ids: Option<Vec<EventId>>,
     /// Schema ID for payload validation
     pub payload_schema_id: Option<Uuid>,
-    /// UUID of the node run session that produced this event
+    /// UUID of the module run session that produced this event
     pub module_run_id: Option<Uuid>,
     /// Associated blob IDs
     pub associated_blob_ids: Option<Vec<Uuid>>,
@@ -74,7 +74,7 @@ pub struct StreamBatchRow {
     // Synthetic event metadata (nullable — only set for derived/synthesized events)
     /// Temporal policy used for `ts_orig` derivation
     pub temporal_policy: Option<String>,
-    /// Version of the node logic that produced this event
+    /// Version of the producer logic that produced this event
     pub semantics_version: Option<String>,
     /// Scope identifier for scope-reconciler replacement
     pub scope_key: Option<String>,

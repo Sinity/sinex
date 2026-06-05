@@ -546,7 +546,7 @@ async fn node_manifest_inactive_marks_only_requested_version(ctx: TestContext) -
 #[sinex_test]
 async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
-    let module_name = ModuleName::new("node-run-lifecycle");
+    let module_name = ModuleName::new("module-run-lifecycle");
 
     let manifest = repo
         .register_module(
@@ -688,7 +688,7 @@ async fn heartbeat_paths_do_not_collide_on_status(ctx: TestContext) -> TestResul
 #[sinex_test]
 async fn node_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
-    let module_name = ModuleName::new("node-run-heartbeat-terminal");
+    let module_name = ModuleName::new("module-run-heartbeat-terminal");
 
     let manifest = repo
         .register_module(

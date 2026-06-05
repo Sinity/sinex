@@ -30,7 +30,7 @@ use sqlx::FromRow;
 /// Synthesized events carry 6 nullable metadata columns directly on `core.events`:
 ///
 /// - `temporal_policy` — which `SyntheticTemporalPolicy` governed `ts_orig`
-/// - `semantics_version` — node logic version for deterministic replay
+/// - `semantics_version` — producer logic version for deterministic replay
 /// - `scope_key` — scope identifier for scope-reconciler replacement
 /// - `equivalence_key` — output slot identifier for targeted replacement
 /// - `created_by_operation_id` — FK to the replay/operation that spawned this event

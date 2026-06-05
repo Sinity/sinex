@@ -76,7 +76,7 @@ Adding a method requires registering it in `rpc_registry.rs`, wiring a handler i
 
 - Gateway failures surface JSON-RPC errors and transport errors with command-level context.
 * `db` commands propagate SQLx/database connectivity errors directly with additional hints.
-* Completion and help output derive from live metadata where possible (see `crate/cli/DESIGN.md`).
+* Completion and help output derive from live metadata where possible (see `crate/sinexctl/DESIGN.md`).
 
 ## 4. Service Layer Responsibilities
 

@@ -110,7 +110,7 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// See `crate/lib/sinexd/docs/declarative_parser.md` for the locked
+/// See `crate/sinexd/docs/declarative_parser.md` for the locked
 /// design.
 #[proc_macro_derive(
     SourceRecord,

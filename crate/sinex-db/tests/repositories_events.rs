@@ -164,14 +164,14 @@ async fn events_repository_rejects_unknown_module_run_id(ctx: TestContext) -> Te
         .source_materials()
         .register_in_flight(
             sinex_db::repositories::source_materials::material_types::STREAM,
-            Some("test-node-run-integrity-material"),
+            Some("test-module-run-integrity-material"),
             json!({ "test": true }),
         )
         .await?;
     let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
 
     let payload = FileCreatedPayload::test_default(
-        RecordedPath::from_observed("/tmp/node-run-integrity.txt")
+        RecordedPath::from_observed("/tmp/module-run-integrity.txt")
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
     let event = Event::builder(payload)

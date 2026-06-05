@@ -1,6 +1,6 @@
 //! RuntimeModule runtime scaffold for integration tests.
 //!
-//! Provides fully wired runtime infrastructure for testing nodes,
+//! Provides fully wired runtime infrastructure for testing modules,
 //! including NATS connections, checkpoint management, and event emission.
 
 use std::{collections::HashMap, sync::Arc};
@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use super::nats::create_or_open_kv_store;
 use super::{EphemeralNats, Sandbox};
 
-/// Fully wired runtime scaffold for node integration tests.
+/// Fully wired runtime scaffold for module integration tests.
 pub struct TestRuntime {
     pub runtime: RuntimeContext,
     pub event_rx: mpsc::Receiver<Event<JsonValue>>,
@@ -123,7 +123,7 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
         let runtime = RuntimeContext::new(service_info, handles, raw_config, work_dir);
 
         // Track the runtime's background pieces for deterministic teardown.
-        ctx.register_background_handle("node-runtime", nats.process_handle())
+        ctx.register_background_handle("runtime", nats.process_handle())
             .await;
 
         Ok(TestRuntime {

@@ -5,7 +5,7 @@
 //! fields' `#[source]` / `#[privacy]` / `#[timestamp]` / `#[occurrence_key]` /
 //! `#[suppress_if]` / `#[required]` / `#[skip]` / `#[default]` attributes.
 //!
-//! See `crate/lib/sinexd/docs/declarative_parser.md` for the locked
+//! See `crate/sinexd/docs/declarative_parser.md` for the locked
 //! design.
 
 use proc_macro2::TokenStream;
