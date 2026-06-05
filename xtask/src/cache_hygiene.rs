@@ -9,8 +9,10 @@
 //! 1. **cargo-sweep** (if available in PATH): removes unreferenced dep
 //!    artifacts. Cargo-aware, safe.
 //! 2. **incremental/ keep-N-newest-per-crate** (always): for each `<crate>-`
-//!    prefix in `incremental/`, keep the N most-recently-modified hash dirs,
-//!    delete the rest. Mirrors what cargo-sweep does for incremental.
+//!    prefix in `incremental/`, keep the newest hash dir by default and delete
+//!    the rest. Mirrors what cargo-sweep does for incremental, but intentionally
+//!    more aggressively because incremental compilation is an opt-in local
+//!    edit-loop policy in this repo.
 //! 3. **Disk-usage report** before + after.
 //!
 //! See issue #1213 for the broader cancel-reason substrate, and issue (TBD)
@@ -22,12 +24,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
-/// How many hash-variant dirs to keep per crate in `incremental/`.
+/// Default number of hash-variant dirs to keep per crate in `incremental/`.
 ///
 /// Cargo writes a new dir on each fingerprint change (feature set, rustc
-/// version, source modification). Keeping the 3 most recent gives warm-cache
-/// hits for the active config + one recent config + one older config.
-const KEEP_PER_CRATE: usize = 3;
+/// version, source modification). Keep only the newest variant by default:
+/// incremental is not the normal sccache-backed build policy, so stale variants
+/// should not accumulate across feature/config experiments.
+const DEFAULT_KEEP_PER_CRATE: usize = 1;
 
 /// Threshold above which doctor warns the user.
 pub const WARN_PERCENT: f64 = 70.0;
@@ -123,7 +126,7 @@ pub struct ReclaimReport {
 /// Reclaim space from `target_dir`.
 ///
 /// Runs `cargo-sweep --time 30 --recursive` if available, then prunes
-/// `incremental/` to the `KEEP_PER_CRATE` newest hash dirs per crate.
+/// `incremental/` to the configured newest hash dirs per crate.
 pub fn reclaim(target_dir: &Path) -> Result<ReclaimReport> {
     let before = disk_usage(target_dir).ok();
     let mut report = ReclaimReport {
@@ -160,13 +163,27 @@ pub fn reclaim(target_dir: &Path) -> Result<ReclaimReport> {
     // Step 2: incremental keep-N-newest-per-crate
     let incremental_dir = target_dir.join("debug").join("incremental");
     if incremental_dir.exists() {
-        let (deleted, bytes) = prune_incremental(&incremental_dir, KEEP_PER_CRATE)?;
+        let keep_per_crate = incremental_keep_per_crate();
+        let (deleted, bytes) = prune_incremental(&incremental_dir, keep_per_crate)?;
         report.incremental_dirs_deleted = deleted;
         report.incremental_bytes_reclaimed = bytes;
     }
 
     report.after = disk_usage(target_dir).ok();
     Ok(report)
+}
+
+fn incremental_keep_per_crate() -> usize {
+    std::env::var("SINEX_INCREMENTAL_KEEP_PER_CRATE")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_KEEP_PER_CRATE)
+}
+
+#[must_use]
+pub fn configured_incremental_keep_per_crate() -> usize {
+    incremental_keep_per_crate()
 }
 
 /// For each `<crate>-` prefix in `incremental_dir`, keep the `keep_n` most
