@@ -257,7 +257,7 @@ Wave-B (#1054/#1223/#1225) dissolved the old split admission/API/process binarie
 |----------|-------|--------|----------|
 | TV-076 | The admission/event-writer role is a distinct binary | superseded | `crate/sinexd/Cargo.toml` (`name = "sinexd"`); event engine is `sinexd::event_engine`. Wave-B #1054/#1223/#1225. |
 | TV-077 | Merging the old admission and API binaries was a rejected design alternative | superseded | Wave-B reversed it: `sinexd` hosts both behind internal module boundaries; `nixos/modules/default.nix` `runner_binary = "sinexd"`. |
-| TV-078 | `AutomatonAdapter<N>` / `IngestorNodeAdapter<T>` are the adapter type names | superseded | `AutomatonRuntime<N>` (`sinexd/src/runtime/automaton/adapter/mod.rs:84`); `SourceUnitRuntime<I>` (`sinexd/src/runtime/source_driver.rs:144`). |
+| TV-078 | `AutomatonAdapter<N>` / `IngestorNodeAdapter<T>` are the adapter type names | superseded | `AutomatonRuntime<N>` (`sinexd/src/runtime/automaton/adapter/mod.rs:84`); `SourceDriverRuntime<I>` (`sinexd/src/runtime/source_driver.rs:144`). |
 | TV-079 | `sinex-desktop-ingestor` is a deployed binary | superseded | Desktop capture is source contracts hosted in sinexd; no such crate in `crate/`. |
 
 ### Batch 5 (2026-05-30) — binary-name drain (event-taxonomy, cli-tui, intelligence-designs)

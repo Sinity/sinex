@@ -41,8 +41,8 @@ The state must survive service restart. Initial persistence can be a state file
 under the runtime state directory plus an operation/audit record for toggles.
 Services must load current state before resuming live capture.
 
-Gateway/CLI may toggle and query the state. Source nodes consume the state; they
-do not decide policy by themselves.
+`sinexd::api` and `sinexctl` may toggle and query the state. Source runtimes
+consume the state; they do not decide policy by themselves.
 
 ## Capture Behavior
 

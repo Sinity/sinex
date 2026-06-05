@@ -36,7 +36,7 @@ This is the complete path of an event through the system. Each step is a decisio
 | 16 | COPY batch failure — one bad row kills 1000-row batch | `insert_stream_batch()` error | Bisect-retry: the batch is split in half and each sub-batch retried independently (`jetstream_consumer.rs`); isolated poison rows route to DLQ while healthy siblings commit |
 | 12 | JSON parse failure | Immediate in `prepare_event()` | Route to DLQ |
 | 14 | Material FK not ready | MaterialReadySet pre-check | NAK + retry after delay (safe) |
-| 18 | NATS confirmation publish failure | Per-event result check | Warn log only — event persisted but node doesn't know |
+| 18 | NATS confirmation publish failure | Per-event result check | Warn log only — event persisted but the producer may not observe confirmation |
 | 20 | Checkpoint save failure (NATS KV slow) | Warn log only | RuntimeModule continues with stale checkpoint; crash -> duplicates |
 
 ### Batch Insert Routing Decision

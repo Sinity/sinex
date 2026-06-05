@@ -58,9 +58,9 @@ Parser locality asks whether source interpretation lives in bespoke source
 crates or in a shared parser registry over input-shape adapters. The target
 direction is the registry/substrate model.
 
-Process count asks whether that substrate runs in-process with persistence,
-in separate managed nodes, or outside the main codebase. That remains open in
-#1054. The default should be conservative:
+Process count asks whether that substrate runs inside `sinexd`, behind a
+purpose-built external producer boundary, or outside the main codebase. The
+default should be conservative:
 
 - staged local files, directories, dumps, and databases should not get a new
   long-running crate or binary by default
@@ -71,9 +71,9 @@ in separate managed nodes, or outside the main codebase. That remains open in
 
 This yields a likely two-tier shape:
 
-1. Local staged-source processing runs close to persistence, normally inside
-   `sinexd::sources`, and uses the same validation/repository code as ordinary
-   ingestion.
+1. Local staged-source processing runs inside `sinexd::sources`, using the same
+   validation/repository code as ordinary ingestion unless a source has a
+   concrete reason to publish through an external boundary.
 2. Live capture processes remain for ephemeral streams, target-user bridges,
    browser extension/native messaging, D-Bus, Hyprland IPC, audio/screen
    capture, and other cases where process isolation or target-session access is

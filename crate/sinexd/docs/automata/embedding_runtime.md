@@ -117,7 +117,7 @@ single embeddings at 20–50ms, batches of 32 at 200–400ms, sustainable
 ~80–160 vectors/sec. Foreground throughput is bounded by event ingest rate,
 not by the embedder; backfill is throttled to avoid starving other automata.
 
-The batch size for the Ollama call is independent of the node's input batch.
+The batch size for the Ollama call is independent of the automaton's input batch.
 The current default is 32, configurable.
 
 ## Backfill Pacing

@@ -3,7 +3,7 @@
 ### Data Flow
 
 ```
-Nodes (Sources)            Nodes (Automata)           Clients
+Sources                    Automata                   Clients
   fs, terminal,              canonicalizer,             CLI (sinexctl),
   desktop, system,           analytics, health          browser extension
   document                        |                         |
@@ -98,7 +98,8 @@ All share `AutomatonRuntime<N>` for: NATS consumer, checkpoint persistence, heal
 
 Each derived event carries `automaton_model`, `temporal_policy`, and `semantics_version` — self-documenting provenance metadata.
 
-**Current automata** (in `sinexd::automata`, deployed as per-automaton systemd services via `sinexd`):
+**Current automata** (in `sinexd::automata`, hosted by `sinexd` and enabled
+through the NixOS `services.sinex.automata` configuration):
 - Command canonicalizer — Transducer, `command.canonical`
 - Analytics — Windowed (250-event window), `analytics.insight`
 - Health aggregator — ScopeReconciler, `health.aggregated_report`

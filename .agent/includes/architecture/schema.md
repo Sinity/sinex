@@ -26,7 +26,7 @@ unions across CAs); `current_device_state` remains a regular materialized view
 |----------|------|--------|----------------|
 | `event_engine_batch_stats_1h` | Continuous aggregate | 1h | Batch size, latency, deferred/failed counts |
 | `gateway_stats_1h` | Continuous aggregate | 1h | Request stats, latency, rate limits |
-| `node_stats_1h` | Continuous aggregate | 1h | Events processed, latency, queue depth per node |
+| `node_stats_1h` | Continuous aggregate | 1h | Events processed, latency, queue depth per runtime module |
 | `stream_stats_1h` | Continuous aggregate | 1h | JetStream fill %, message counts |
 | `metric_counters_1h` | Continuous aggregate | 1h | Named metric counter totals |
 | `assembly_stats_1h` | Continuous aggregate | 1h | Material assembler state-machine activity |

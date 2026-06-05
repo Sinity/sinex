@@ -54,8 +54,8 @@ Families (canonical event_type and minimal payload)
   - `ld.delta`: target_note_id, patch_hash|full_text_hash, model_name?, model_version?, rationale_hash?, ts_client?
 
 - Metrics/Diagnostics (internal)
-  - `system.heartbeat`: node, version?, uptime_s?
-  - `ingestion.anchor_mismatch`: node, material_id, anchor_byte, rule_id, expected?, observed?
+  - `process.heartbeat`: module_name, module_kind?, version?, uptime_s?
+  - `ingestion.anchor_mismatch`: module_name, material_id, anchor_byte, rule_id, expected?, observed?
   - `annex.probe`: sample_size, failures, bytes_missing, duration_ms
 
 Notes

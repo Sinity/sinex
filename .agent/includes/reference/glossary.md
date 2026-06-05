@@ -56,7 +56,7 @@ Parsed into `ContentStoreKey` (backend, size, digest).
 ### continuous aggregate (CA)
 A TimescaleDB feature that automatically maintains pre-computed rollups of
 time-series data. Sinex uses CAs for telemetry and activity rollups such as
-event-engine batch stats, API stats, node stats, stream stats, command
+event-engine batch stats, API stats, runtime-module stats, stream stats, command
 frequency, file activity, window focus, and system state. Historical imports
 may require explicit refresh depending on the relation and policy.
 
@@ -104,10 +104,11 @@ through COPY (>= 50 material events) or QueryBuilder (< 50 events). Derived
 events always use QueryBuilder with REPEATABLE READ transactions.
 
 ### ingestor
-A node that captures raw data from an external source (filesystem, terminal,
-desktop, system, browser, documents), registers source materials, and emits
-material-provenance events. Ingestors implement the `SourceDriver` trait with
-three scan modes: snapshot, historical, and continuous.
+A source-side runtime component that captures raw data from an external source
+(filesystem, terminal, desktop, system, browser, documents), registers source
+materials, and emits material-provenance events. Current ingestors implement
+the `SourceDriver` trait with three scan modes: snapshot, historical, and
+continuous.
 
 ## M
 
@@ -119,7 +120,8 @@ material-provenance events for the event engine to persist.
 ### material provenance
 One of the two provenance types: `source_material_id` is set, `source_event_ids`
 is NULL. Means "I interpreted this byte range of this source file." Created by
-ingestors. Can be replayed by re-reading the source material.
+source-side runtime components. Can be replayed by re-reading the source
+material.
 
 ## P
 
@@ -140,8 +142,8 @@ constraint at the DB level and `EventBuilder` typestate at compile time.
 ### replay
 The process of archiving old events and re-processing source material through
 the normal pipeline. Replay is not a special mode — after archiving, the system
-runs normally: NATS scan command triggers the ingestor to re-read the source
-material, fresh events flow through the standard pipeline. Replay applies
+runs normally: NATS scan command triggers the source runtime to re-read the
+source material, fresh events flow through the standard pipeline. Replay applies
 current privacy rules and schema validation, not the original ones.
 
 ## S

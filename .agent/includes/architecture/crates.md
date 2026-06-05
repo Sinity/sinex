@@ -9,8 +9,8 @@
 | Dynamic events | `sinex_primitives::events::{DynamicPayload, builder::EventBuilder}` | For runtime source/type |
 | DB access | `sinex_db::DbPoolExt` | `pool.events()`, `pool.blobs()`, `pool.source_materials()` etc. |
 | DB schema | `sinex_schema` (or `sinex_db::schema` re-export) | Schema definitions + declarative convergence engine |
-| Runtime support | `crate::runtime::*` (inside sinexd; historical module name) | `SourceDriver`, `RuntimeConfig`, `RuntimeCliRunner`, runtime adapters |
-| Derived nodes | `crate::runtime::{Transducer, Windowed, ScopeReconciler}` | Via `AutomatonRuntime<N>` |
+| Runtime support | `crate::runtime::*` (inside sinexd) | `SourceDriver`, `RuntimeConfig`, `RuntimeCliRunner`, runtime adapters |
+| Automata | `crate::runtime::{Transducer, Windowed, ScopeReconciler}` | Via `AutomatonRuntime<N>` |
 | Privacy | `sinex_primitives::privacy::*` | `privacy::engine()`, `ProcessingContext` |
 | Domain enums | `sinex_primitives::domain::*` | `OperationStatus`, `HealthStatus`, `DataTier`, `ModuleKind` etc. |
 | Event field enums | `sinex_primitives::events::enums::*` | `FileModificationType`, `ShutdownReason`, etc. |
@@ -28,7 +28,7 @@ crate/
   sinexd/              Unified daemon; internal modules:
     sinexd::event_engine   NATS consumer -> batch writes -> confirmations
     sinexd::api            JSON-RPC, SSE subscriptions, native messaging
-    sinexd::sources        Source host; parser/input-shape adapters
+    sinexd::sources        Source registry; parser/input-shape adapters
     sinexd::runtime       Inline runtime support: lifecycle, checkpoints, replay,
                            source adapters, automaton runtime
     sinexd::automata       Consolidated automata: canonicalizer, analytics, health,

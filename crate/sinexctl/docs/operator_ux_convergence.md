@@ -14,7 +14,7 @@ surfaces are read or interaction projections over the same DTOs.
 | Command metadata | Clap leaf tree, `command_path()` match, and format registry all need manual updates. | A command catalog owns UX metadata; format validation and future projections read it. |
 | RPC methods | Command paths call typed `GatewayClient` methods, but method metadata still lives across DTO modules, registry setup, CLI wrappers, and docs. | Typed RPC descriptors remain the single contract for method names, request/response DTOs, role, stability, and catalog metadata. |
 | Output | Many commands hand-match JSON/YAML/table and print their own sections. | Commands return through shared output helpers and view DTOs; bespoke renderers are limited to genuinely interactive surfaces. |
-| Runtime summary | `status`, `now`, `nodes`, `recent`, `watch`, and `tui` each assemble overlapping status/event views. | Shared runtime/event view models feed shortcut commands, TUI, and agent-facing projections. |
+| Runtime summary | `status`, `now`, `runtime`, `recent`, `watch`, and `tui` each assemble overlapping status/event views. | Shared runtime/event view models feed shortcut commands, TUI, and agent-facing projections. |
 | Projection surfaces | CLI, MCP, and future SinexFS risk defining separate JSON shapes. | MCP/SinexFS use `sinexd` API or CLI JSON read models with IDs, caveats, provenance refs, redaction metadata, and `generated_at`. |
 
 ## Authority Rules

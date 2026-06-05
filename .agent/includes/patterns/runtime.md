@@ -9,14 +9,14 @@
 | Accumulate-then-emit (sessions, summaries) | `Windowed` + `AutomatonRuntime` | accumulate() + emit_window() |
 | Per-scope state reconciliation | `ScopeReconciler` + `AutomatonRuntime` | Per-scope state + reconcile() |
 
-Automata are registered via `AutomatonSpec` in `automata::registry`. Source
-units are semantic capture/parser contracts registered via
+Automata are registered via `AutomatonSpec` in `automata::registry`. Sources
+have semantic capture/parser contracts registered via
 `register_source_contract!`; deployment bindings come from
 `register_source_runtime_binding!` plus the NixOS-generated binding manifest.
-The historical `RuntimeCliRunner`/`runtime` names still exist in code, but do not
-imply a separate node crate or per-source systemd unit.
+The `RuntimeCliRunner`/`runtime` names are the inline sinexd runtime substrate;
+they do not imply a separate crate or per-source systemd unit.
 
-### Ingestor Pattern
+### Source Pattern
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -28,13 +28,13 @@ use tokio::sync::watch;
 struct MyState { /* checkpoint state — persisted automatically */ }
 
 #[derive(Default)]
-struct MyIngestor;
+struct MySource;
 
-impl SourceDriver for MyIngestor {
+impl SourceDriver for MySource {
     type Config = serde_json::Value;
     type State = MyState;
 
-    fn name(&self) -> &str { "my-ingestor" }
+    fn name(&self) -> &str { "my-source" }
 
     async fn initialize(&mut self, state: &mut Self::State, _config: Self::Config,
         _runtime: &RuntimeContext) -> crate::runtime::RuntimeResult<()> { Ok(()) }
@@ -53,10 +53,10 @@ impl SourceDriver for MyIngestor {
     }
 }
 
-pub type MyIngestorNode = SourceDriverRuntime<MyIngestor>;
+pub type MySourceRuntime = SourceDriverRuntime<MySource>;
 ```
 
-### Derived RuntimeModule Pattern (Transducer — Stateless)
+### Automaton Pattern (Transducer — Stateless)
 
 ```rust
 use crate::runtime::{Transducer, AutomatonRuntime, AutomatonLogicError};
@@ -72,7 +72,7 @@ impl Transducer for MyTransducer {
     fn input_event_type(&self) -> &'static str { "command.executed" }
     fn output_event_type(&self) -> &'static str { "command.canonical" }
 
-    async fn process(&mut self, input: Self::Input, _ctx: &NodeEventContext)
+    async fn process(&mut self, input: Self::Input, _ctx: &AutomatonContext)
         -> Result<Option<Self::Output>, AutomatonLogicError>
     {
         // Return Some(output) to emit, None to filter
@@ -81,7 +81,7 @@ impl Transducer for MyTransducer {
 }
 ```
 
-### Derived RuntimeModule Pattern (Windowed — Accumulate Then Emit)
+### Automaton Pattern (Windowed — Accumulate Then Emit)
 
 ```rust
 use crate::runtime::{Windowed, AutomatonRuntime, DerivedOutput, AutomatonLogicError};
@@ -131,7 +131,7 @@ impl Windowed for SessionDetector {
 
 ```rust
 use crate::runtime::{
-    // Core node types
+    // Runtime module types
     SourceDriver, SourceDriverRuntime,
     Transducer, Windowed, ScopeReconciler,
     AutomatonRuntime,
@@ -147,4 +147,4 @@ use crate::runtime::{
 };
 ```
 
-Reference: `crate/sinexd/src/runtime/` (historical module name; runtime support lives inline in sinexd)
+Reference: `crate/sinexd/src/runtime/` (runtime support lives inline in sinexd)

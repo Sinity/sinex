@@ -1,6 +1,8 @@
 # Distributed Advisory Locking
 
-Sinex utilizes PostgreSQL advisory locks for cross-process coordination, ensuring that critical operations like schema migrations or single-writer tasks are executed by only one node at a time.
+Sinex utilizes PostgreSQL advisory locks for cross-process coordination,
+ensuring that critical operations like schema convergence or single-writer
+tasks are executed by only one runtime instance at a time.
 
 ## Core Mechanism
 
@@ -27,7 +29,8 @@ The system employs an **RAII (Resource Acquisition Is Initialization)** pattern 
 Advisory locks are primarily used for:
 - **Migration Coordination**: Ensuring that only one `sinexd::event_engine`
   instance applies schema updates at a time.
-- **Singleton Services**: Coordinating tasks that should only run on a single node in a cluster (e.g., certain maintenance or archival jobs).
+- **Singleton Services**: Coordinating tasks that should only run on a single
+  runtime instance (e.g., certain maintenance or archival jobs).
 
 ## Observability
 
