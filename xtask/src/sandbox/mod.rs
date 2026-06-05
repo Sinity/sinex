@@ -30,7 +30,7 @@ pub mod orchestrator;
 pub mod postgres;
 pub mod preflight;
 pub mod prelude;
-#[cfg(any(feature = "runtime-introspection", test))]
+#[cfg(feature = "runtime-introspection")]
 pub mod runtime;
 pub mod slog;
 pub mod snapshot;
@@ -69,7 +69,7 @@ pub use orchestrator::{
 };
 pub use prelude::SinexError;
 pub use prelude::TestContext;
-#[cfg(any(feature = "runtime-introspection", test))]
+#[cfg(feature = "runtime-introspection")]
 pub use runtime::{TestRuntime, TestRuntimeBuilder};
 pub use snapshot::TestSnapshot;
 pub use stack::{TEST_RPC_TOKEN, TestCoreStack};

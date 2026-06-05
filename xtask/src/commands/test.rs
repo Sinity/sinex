@@ -228,6 +228,10 @@ pub struct TestCommand {
     #[arg(long)]
     pub lib: bool,
 
+    /// Cargo features to enable for the selected test packages.
+    #[arg(long = "features", value_delimiter = ',')]
+    pub cargo_features: Vec<String>,
+
     /// Print what would happen
     #[arg(long)]
     pub dry_run: bool,
@@ -638,6 +642,7 @@ impl TestCommand {
                 "excluded_packages": execution_plan.excluded_packages,
                 "test_binaries": effective_test_binaries,
                 "lib": effective_lib_target,
+                "features": normalize_packages(&self.cargo_features),
                 "filter": effective_filter,
                 "runtime_binary_requirements": runtime_binary_requirements,
                 "db_pool_size": db_pool_size,
@@ -857,6 +862,9 @@ impl TestCommand {
         }
         if self.all {
             args.push("--all".to_string());
+        }
+        for feature in normalize_packages(&self.cargo_features) {
+            args.push(format!("--features={feature}"));
         }
         if self.no_reuse {
             args.push("--no-reuse".to_string());
@@ -1107,6 +1115,10 @@ impl TestCommand {
         );
         push_flag(&mut args, self.no_reuse, "--no-reuse");
         push_flag(&mut args, self.lib, "--lib");
+        for feature in normalize_packages(&self.cargo_features) {
+            args.push("--features".to_string());
+            args.push(feature);
+        }
         if !matches!(self.impact_mode, crate::impact::ImpactMode::Balanced) {
             args.push(format!("--impact-mode={}", self.impact_mode.as_str()));
         }
@@ -1493,6 +1505,7 @@ fn execute_nextest_list(
     execution_plan: &plan::NextestExecutionPlan,
     effective_test_binaries: &[String],
     effective_lib_target: bool,
+    cargo_features: &[String],
     effective_filter: Option<&str>,
 ) -> Result<CommandResult> {
     let mut cmd = crate::process::ProcessBuilder::cargo().args(["nextest", "list"]);
@@ -1511,6 +1524,9 @@ fn execute_nextest_list(
     }
     if effective_lib_target {
         cmd = cmd.arg("--lib");
+    }
+    for feature in cargo_features {
+        cmd = cmd.args(["--features", feature]);
     }
     if let Some(filter) = effective_filter {
         cmd = cmd.args(["-E", filter]);
@@ -1547,6 +1563,10 @@ fn print_dry_run_plan(
     }
     if !effective_test_binaries.is_empty() {
         println!("  test binaries: {}", effective_test_binaries.join(", "));
+    }
+    let features = normalize_packages(&this.cargo_features);
+    if !features.is_empty() {
+        println!("  features: {}", features.join(", "));
     }
     println!("  lib target: {effective_lib_target}");
     if let Some(filter) = effective_filter {
@@ -1913,6 +1933,7 @@ impl XtaskCommand for TestCommand {
                 &execution_plan,
                 &effective_test_binaries,
                 effective_lib_target,
+                &normalize_packages(&self.cargo_features),
                 effective_filter.as_deref(),
             );
         }
@@ -2032,6 +2053,10 @@ impl XtaskCommand for TestCommand {
         if effective_lib_target {
             runner.add_arg("--lib");
         }
+        for feature in normalize_packages(&self.cargo_features) {
+            runner.add_arg("--features");
+            runner.add_arg(feature);
+        }
         if let Some(ref filter) = effective_filter {
             runner.add_arg("-E");
             runner.add_arg(filter);
@@ -2144,6 +2169,7 @@ impl XtaskCommand for TestCommand {
                             "excluded_packages": execution_plan.excluded_packages,
                             "test_binaries": effective_test_binaries,
                             "lib": effective_lib_target,
+                            "features": normalize_packages(&self.cargo_features),
                             "filter": effective_filter,
                             "runtime_binary_requirements": runtime_binary_requirements,
                             "db_pool_size": self.narrow_test_db_pool_size(
@@ -2440,6 +2466,25 @@ mod tests {
             (1..=HEAVY_TEST_THREAD_CAP).contains(&n),
             "--threads={n} is outside the expected range 1..={HEAVY_TEST_THREAD_CAP}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_semantic_invocation_args_include_cargo_features()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            cargo_features: vec!["runtime-introspection".to_string()],
+            ..Default::default()
+        };
+
+        let args = command.semantic_invocation_args(
+            &WorkloadScope::Packages(vec!["xtask".to_string()]),
+            Some("test(deployment_readiness)"),
+            &[],
+            true,
+        );
+
+        assert!(args.contains(&"--features=runtime-introspection".to_string()));
         Ok(())
     }
 
@@ -3130,6 +3175,7 @@ mod tests {
             impact_mode: crate::impact::ImpactMode::Aggressive,
             packages: vec!["xtask".to_string()],
             filter: Some("test(freshness_explain)".to_string()),
+            cargo_features: vec!["runtime-introspection".to_string()],
             ..Default::default()
         };
 
@@ -3148,6 +3194,12 @@ mod tests {
                 .find(|window| window[0] == "-E")
                 .map(|window| window[1].as_str()),
             Some("test(freshness_explain)")
+        );
+        assert_eq!(
+            args.windows(2)
+                .find(|window| window[0] == "--features")
+                .map(|window| window[1].as_str()),
+            Some("runtime-introspection")
         );
         Ok(())
     }

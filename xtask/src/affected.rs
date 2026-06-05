@@ -16,8 +16,15 @@ use walkdir::WalkDir;
 #[derive(Clone, Debug)]
 struct WorkspaceMetadata {
     packages: Vec<String>,
-    forward_deps: HashMap<String, HashSet<String>>,
     reverse_deps: HashMap<String, HashSet<String>>,
+    dependency_specs: HashMap<String, Vec<DependencySpec>>,
+    features: HashMap<String, HashMap<String, Vec<String>>>,
+}
+
+#[derive(Clone, Debug)]
+struct DependencySpec {
+    name: String,
+    optional: bool,
 }
 
 /// Process-lifetime cache for workspace metadata (R3 accepted).
@@ -36,6 +43,8 @@ impl WorkspaceMetadata {
 
         let mut packages = Vec::with_capacity(packages_array.len());
         let mut forward_deps: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut dependency_specs_by_package: HashMap<String, Vec<DependencySpec>> = HashMap::new();
+        let mut features_by_package: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
 
         for (package_index, pkg) in packages_array.iter().enumerate() {
             let name = pkg["name"].as_str().with_context(|| {
@@ -44,21 +53,50 @@ impl WorkspaceMetadata {
             let deps = pkg["dependencies"].as_array().with_context(|| {
                 format!("cargo metadata package[{name}] is missing dependencies array")
             })?;
-            let deps = deps
+            let package_dependency_specs = deps
                 .iter()
                 .enumerate()
                 .map(|(dependency_index, dep)| {
-                    dep["name"].as_str().map(str::to_owned).with_context(|| {
+                    let name = dep["name"].as_str().map(str::to_owned).with_context(|| {
                         format!(
                             "cargo metadata package[{name}] dependency[{dependency_index}] is missing a string name"
                         )
-                    })
+                    })?;
+                    let optional = dep["optional"].as_bool().unwrap_or(false);
+                    Ok(DependencySpec { name, optional })
                 })
-                .collect::<Result<HashSet<_>>>()?;
+                .collect::<Result<Vec<_>>>()?;
+            let deps = package_dependency_specs
+                .iter()
+                .map(|dep| dep.name.clone())
+                .collect::<HashSet<_>>();
+
+            let feature_map = pkg["features"]
+                .as_object()
+                .map(|features| {
+                    features
+                        .iter()
+                        .map(|(feature, members)| {
+                            let members = members
+                                .as_array()
+                                .map(|members| {
+                                    members
+                                        .iter()
+                                        .filter_map(|member| member.as_str().map(str::to_owned))
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
+                            (feature.clone(), members)
+                        })
+                        .collect::<HashMap<_, _>>()
+                })
+                .unwrap_or_default();
 
             let name = name.to_owned();
             packages.push(name.clone());
-            forward_deps.insert(name, deps);
+            forward_deps.insert(name.clone(), deps);
+            dependency_specs_by_package.insert(name.clone(), package_dependency_specs);
+            features_by_package.insert(name, feature_map);
         }
 
         // Build reverse dependency map
@@ -74,8 +112,9 @@ impl WorkspaceMetadata {
 
         Ok(Self {
             packages,
-            forward_deps,
             reverse_deps,
+            dependency_specs: dependency_specs_by_package,
+            features: features_by_package,
         })
     }
 
@@ -99,26 +138,19 @@ impl WorkspaceMetadata {
     }
 }
 
-/// Return the requested workspace packages plus their transitive workspace dependencies.
-pub fn package_dependency_closure(packages: &[String]) -> Result<Vec<String>> {
-    let metadata = if let Some(m) = WORKSPACE_METADATA.get() {
-        m
-    } else {
-        let m = WorkspaceMetadata::load()?;
-        WORKSPACE_METADATA.get_or_init(|| m)
-    };
-    Ok(package_dependency_closure_from_forward(
-        packages,
-        &metadata.forward_deps,
-    ))
-}
-
-/// Return the dependency closure using metadata loaded from a specific workspace root.
-pub fn package_dependency_closure_in(cwd: &Path, packages: &[String]) -> Result<Vec<String>> {
+/// Return the requested workspace packages plus dependencies active for the
+/// selected packages' default features and explicitly requested Cargo features.
+pub fn active_package_dependency_closure_in(
+    cwd: &Path,
+    packages: &[String],
+    requested_features: &[String],
+) -> Result<Vec<String>> {
     let metadata = WorkspaceMetadata::load_in(cwd)?;
-    Ok(package_dependency_closure_from_forward(
+    Ok(active_package_dependency_closure_from_metadata(
         packages,
-        &metadata.forward_deps,
+        requested_features,
+        &metadata.dependency_specs,
+        &metadata.features,
     ))
 }
 
@@ -765,21 +797,35 @@ fn transitive_dependents(
     affected
 }
 
-fn package_dependency_closure_from_forward(
+fn active_package_dependency_closure_from_metadata(
     packages: &[String],
-    forward_deps: &HashMap<String, HashSet<String>>,
+    requested_features: &[String],
+    dependency_specs: &HashMap<String, Vec<DependencySpec>>,
+    features: &HashMap<String, HashMap<String, Vec<String>>>,
 ) -> Vec<String> {
-    let workspace_packages: HashSet<&str> = forward_deps.keys().map(String::as_str).collect();
+    let workspace_packages: HashSet<&str> = dependency_specs.keys().map(String::as_str).collect();
+    let root_packages: HashSet<&str> = packages.iter().map(String::as_str).collect();
     let mut closure: HashSet<String> = packages.iter().cloned().collect();
     let mut to_process: Vec<String> = packages.to_vec();
 
     while let Some(pkg) = to_process.pop() {
-        let Some(deps) = forward_deps.get(&pkg) else {
+        let Some(deps) = dependency_specs.get(&pkg) else {
             continue;
         };
+        let requested = if root_packages.contains(pkg.as_str()) {
+            requested_features
+        } else {
+            &[]
+        };
+        let active_optional_deps =
+            active_optional_dependencies(deps, features.get(&pkg), requested);
+
         for dep in deps {
-            if workspace_packages.contains(dep.as_str()) && closure.insert(dep.clone()) {
-                to_process.push(dep.clone());
+            if dep.optional && !active_optional_deps.contains(dep.name.as_str()) {
+                continue;
+            }
+            if workspace_packages.contains(dep.name.as_str()) && closure.insert(dep.name.clone()) {
+                to_process.push(dep.name.clone());
             }
         }
     }
@@ -787,6 +833,59 @@ fn package_dependency_closure_from_forward(
     let mut closure: Vec<String> = closure.into_iter().collect();
     closure.sort();
     closure
+}
+
+fn active_optional_dependencies(
+    deps: &[DependencySpec],
+    features: Option<&HashMap<String, Vec<String>>>,
+    requested_features: &[String],
+) -> HashSet<String> {
+    let optional_deps: HashSet<&str> = deps
+        .iter()
+        .filter(|dep| dep.optional)
+        .map(|dep| dep.name.as_str())
+        .collect();
+    if optional_deps.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut active_features = HashSet::new();
+    let mut to_process = vec!["default".to_string()];
+    to_process.extend(requested_features.iter().cloned());
+    let mut active_deps = HashSet::new();
+
+    while let Some(feature) = to_process.pop() {
+        if !active_features.insert(feature.clone()) {
+            continue;
+        }
+        let Some(members) = features.and_then(|features| features.get(&feature)) else {
+            if optional_deps.contains(feature.as_str()) {
+                active_deps.insert(feature);
+            }
+            continue;
+        };
+
+        for member in members {
+            if let Some(dep) = member.strip_prefix("dep:") {
+                if optional_deps.contains(dep) {
+                    active_deps.insert(dep.to_string());
+                }
+            } else if let Some((dep, _feature)) = member.split_once('/') {
+                let dep = dep.strip_suffix('?').unwrap_or(dep);
+                if optional_deps.contains(dep) {
+                    active_deps.insert(dep.to_string());
+                } else {
+                    to_process.push(member.clone());
+                }
+            } else if optional_deps.contains(member.as_str()) {
+                active_deps.insert(member.clone());
+            } else {
+                to_process.push(member.clone());
+            }
+        }
+    }
+
+    active_deps
 }
 
 /// Returns true when any `nixos/**/*.nix` or `flake.nix`/`flake.lock` file is dirty.
@@ -1221,6 +1320,61 @@ path = "tests/sources/registry_dispatch_test.rs"
     }
 
     #[sinex_test]
+    async fn test_active_dependency_closure_respects_optional_feature_deps() -> TestResult<()> {
+        let mut dependency_specs = HashMap::new();
+        dependency_specs.insert(
+            "xtask".to_string(),
+            vec![
+                DependencySpec {
+                    name: "sinex-db".to_string(),
+                    optional: false,
+                },
+                DependencySpec {
+                    name: "sinexd".to_string(),
+                    optional: true,
+                },
+            ],
+        );
+        dependency_specs.insert("sinex-db".to_string(), Vec::new());
+        dependency_specs.insert("sinexd".to_string(), Vec::new());
+
+        let mut xtask_features = HashMap::new();
+        xtask_features.insert(
+            "runtime-introspection".to_string(),
+            vec!["dep:sinexd".to_string()],
+        );
+        let mut features = HashMap::new();
+        features.insert("xtask".to_string(), xtask_features);
+
+        let default_closure = active_package_dependency_closure_from_metadata(
+            &["xtask".to_string()],
+            &[],
+            &dependency_specs,
+            &features,
+        );
+        assert_eq!(
+            default_closure,
+            vec!["sinex-db".to_string(), "xtask".to_string()]
+        );
+
+        let feature_closure = active_package_dependency_closure_from_metadata(
+            &["xtask".to_string()],
+            &["runtime-introspection".to_string()],
+            &dependency_specs,
+            &features,
+        );
+        assert_eq!(
+            feature_closure,
+            vec![
+                "sinex-db".to_string(),
+                "sinexd".to_string(),
+                "xtask".to_string()
+            ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_affected_summary_empty() -> TestResult<()> {
         let summary = affected_summary(&[]);
         assert!(summary.contains("No packages affected"));
@@ -1338,35 +1492,11 @@ path = "tests/sources/registry_dispatch_test.rs"
             Some(&HashSet::from(["xtask".to_string()]))
         );
         assert_eq!(
-            parsed.forward_deps.get("xtask"),
-            Some(&HashSet::from(["sinex-primitives".to_string()]))
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_package_dependency_closure_includes_transitive_workspace_deps() -> TestResult<()>
-    {
-        let forward_deps = HashMap::from([
-            (
-                "sinex-db".to_string(),
-                HashSet::from(["sinex-primitives".to_string(), "sqlx".to_string()]),
-            ),
-            (
-                "sinex-primitives".to_string(),
-                HashSet::from(["sinex-macros".to_string()]),
-            ),
-            ("sinex-macros".to_string(), HashSet::new()),
-        ]);
-
-        assert_eq!(
-            package_dependency_closure_from_forward(&["sinex-db".to_string()], &forward_deps),
-            vec![
-                "sinex-db".to_string(),
-                "sinex-macros".to_string(),
-                "sinex-primitives".to_string(),
-            ],
-            "package-scoped proof fingerprints must include dirty workspace dependencies but not external crates"
+            parsed
+                .dependency_specs
+                .get("xtask")
+                .map(|deps| deps.iter().map(|dep| dep.name.as_str()).collect::<Vec<_>>()),
+            Some(vec!["sinex-primitives"])
         );
         Ok(())
     }

@@ -990,6 +990,55 @@ fn extract_explicit_packages(command: &str, args: &[String]) -> Vec<String> {
     packages
 }
 
+fn extract_cargo_features(command: &str, args: &[String]) -> Vec<String> {
+    if !matches!(command, "check" | "build" | "fix" | "test") {
+        return vec![];
+    }
+
+    let mut features = Vec::new();
+    let mut take_next = false;
+
+    for arg in args {
+        if command == "test" && arg == "--" {
+            break;
+        }
+        if take_next {
+            features.extend(split_cargo_features(arg));
+            take_next = false;
+            continue;
+        }
+        if arg == "--features" {
+            take_next = true;
+        } else if let Some(value) = arg.strip_prefix("--features=") {
+            features.extend(split_cargo_features(value));
+        }
+    }
+
+    features.sort();
+    features.dedup();
+    features
+}
+
+fn split_cargo_features(value: &str) -> impl Iterator<Item = String> + '_ {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|feature| !feature.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn scoped_fingerprint_packages_in(
+    cwd: &Path,
+    packages: &[String],
+    features: &[String],
+) -> Result<Vec<String>> {
+    if features.is_empty() {
+        crate::affected::active_package_dependency_closure_in(cwd, packages, &[])
+    } else {
+        crate::affected::active_package_dependency_closure_in(cwd, packages, features)
+    }
+}
+
 /// R1: Compute a scoped tree fingerprint for the given command and args.
 ///
 /// If the command targets explicit packages (via `-p`), hashes only the git diff
@@ -1000,13 +1049,13 @@ fn extract_explicit_packages(command: &str, args: &[String]) -> Vec<String> {
 /// packages are specified (affected-mode and workspace-wide invocations).
 fn scoped_tree_fingerprint_in(cwd: &Path, command: &str, args: &[String]) -> Result<String> {
     let packages = extract_explicit_packages(command, args);
+    let features = extract_cargo_features(command, args);
 
     if packages.is_empty() {
         // No -p flag: use whole-workspace fingerprint (safe, over-inclusive)
         return tree_fingerprint_in(cwd);
     }
-    let fingerprint_packages = match crate::affected::package_dependency_closure_in(cwd, &packages)
-    {
+    let fingerprint_packages = match scoped_fingerprint_packages_in(cwd, &packages, &features) {
         Ok(closure) => closure,
         Err(error) => {
             tracing::warn!(
@@ -1066,11 +1115,13 @@ fn scoped_tree_fingerprint(command: &str, args: &[String]) -> Result<String> {
 /// see the command/scope inputs before trusting a fresh-hit decision.
 pub fn explain_freshness(command: &str, args: &[String]) -> Result<FreshnessExplanation> {
     let packages = extract_explicit_packages(command, args);
+    let features = extract_cargo_features(command, args);
     let scope = if packages.is_empty() {
         FreshnessScopeExplanation::Workspace
     } else {
         let fingerprint_packages =
-            crate::affected::package_dependency_closure(&packages).unwrap_or(packages);
+            scoped_fingerprint_packages_in(Path::new("."), &packages, &features)
+                .unwrap_or(packages);
         let mut packages = fingerprint_packages
             .into_iter()
             .map(|package| PackageScopeInput {
@@ -1247,6 +1298,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                 "-E" | "--filter" => Some("--filter="),
                 "--test" => Some("--test="),
                 "--exclude" => Some("--exclude="),
+                "--features" => Some("--features="),
                 "--runtime-binary" => Some("--runtime-binary="),
                 "--threads" => Some("--threads="),
                 "--retries" => Some("--retries="),
@@ -1302,6 +1354,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                 } else if arg.starts_with("--filter=")
                     || arg.starts_with("--test=")
                     || arg.starts_with("--exclude=")
+                    || arg.starts_with("--features=")
                     || arg.starts_with("--runtime-binary=")
                     || arg.starts_with("--threads=")
                     || arg.starts_with("--retries=")
@@ -2105,6 +2158,31 @@ mod tests {
                 "case-name".into(),
             ]
         ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_cargo_features_are_scope_relevant() -> TestResult<()> {
+        let without_features = scope_key("test", &["-p".into(), "xtask".into()]);
+        let with_features = scope_key(
+            "test",
+            &[
+                "-p".into(),
+                "xtask".into(),
+                "--features".into(),
+                "runtime-introspection".into(),
+            ],
+        );
+        let with_features_combined = scope_key(
+            "test",
+            &[
+                "--scope=packages:xtask".into(),
+                "--features=runtime-introspection".into(),
+            ],
+        );
+
+        assert_ne!(without_features, with_features);
+        assert_eq!(with_features, with_features_combined);
         Ok(())
     }
 

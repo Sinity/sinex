@@ -12,15 +12,15 @@ use serde::Serialize;
 use sinex_primitives::{DeploymentReadinessDescriptor, privacy::load_private_mode_state};
 use std::path::{Path, PathBuf};
 // Only the gated `deployment` submodule needs `Duration` (for DEPLOYMENT_READY_TIMEOUT).
-#[cfg(any(feature = "runtime-introspection", test))]
+#[cfg(feature = "runtime-introspection")]
 use std::time::Duration;
 use walkdir::WalkDir;
 
 // Consumed only by the real `deployment` submodule, which is gated behind the
 // same cfg; without the gate these are dead code in the default (non-introspection) build.
-#[cfg(any(feature = "runtime-introspection", test))]
+#[cfg(feature = "runtime-introspection")]
 const DEPLOYMENT_READY_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(any(feature = "runtime-introspection", test))]
+#[cfg(feature = "runtime-introspection")]
 const RECOMMENDED_INOTIFY_MAX_USER_WATCHES: u64 = 524_288;
 
 /// Probe developer-environment health and deployment readiness.
@@ -2017,9 +2017,9 @@ where
     warnings
 }
 
-#[cfg(any(feature = "runtime-introspection", test))]
+#[cfg(feature = "runtime-introspection")]
 mod deployment;
-#[cfg(not(any(feature = "runtime-introspection", test)))]
+#[cfg(not(feature = "runtime-introspection"))]
 mod deployment {
     use crate::command::CommandContext;
     use color_eyre::eyre::{Result, bail};
@@ -2074,7 +2074,7 @@ mod deployment {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "runtime-introspection"))]
 use deployment::*;
 pub(crate) use deployment::{DeploymentReadinessItem, check_gateway_ready};
 use deployment::{
@@ -2082,5 +2082,5 @@ use deployment::{
     resolve_effective_database_probe_url,
 };
 
-#[cfg(test)]
+#[cfg(all(test, feature = "runtime-introspection"))]
 mod tests;

@@ -118,7 +118,7 @@ fn open_schema_apply_lock_file(state_dir: &Path) -> Result<std::fs::File> {
 const PREFLIGHT_CACHE_DEFAULT_TTL_SECS: u64 = 60;
 pub(crate) const SCHEMA_READINESS_PROBE_TIMEOUT_SECS: u64 = 5;
 // Consumed only by the cfg-gated `doctor::deployment` submodule.
-#[cfg(any(feature = "runtime-introspection", test))]
+#[cfg(feature = "runtime-introspection")]
 pub(crate) const SCHEMA_READINESS_PROBE_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(SCHEMA_READINESS_PROBE_TIMEOUT_SECS);
 const SCHEMA_APPLY_LOCK_WAIT_TIMEOUT_SECS: u64 = 30;

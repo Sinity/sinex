@@ -115,8 +115,5 @@ shadow-rs = { workspace = true }
 [dev-dependencies]
 vt100 = "0.16"
 
-[dev-dependencies.sinexd]
-path = "../crate/sinexd"
-
 [lints]
 workspace = true
