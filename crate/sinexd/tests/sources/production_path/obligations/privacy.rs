@@ -20,7 +20,7 @@
 
 use crate::AdapterKind;
 use sinex_primitives::parser::SourceId;
-use sinex_primitives::proof::{self, PrivacyTier};
+use sinex_primitives::source_contracts::{self, PrivacyTier};
 use sinexd::sources::dispatch::find_parser_factory;
 
 /// Run the privacy obligation for a source.
@@ -51,7 +51,7 @@ pub async fn run(
 pub async fn run_metadata_only(source_id: &str) -> Result<(), String> {
     let source_id = SourceId::new(source_id.to_owned())
         .map_err(|error| format!("privacy metadata: invalid source id: {error}"))?;
-    let descriptor = proof::find_source_contract(&source_id)
+    let descriptor = source_contracts::find_source_contract(&source_id)
         .ok_or_else(|| format!("privacy metadata: unknown source '{}'", source_id.as_str()))?;
     if descriptor.privacy_tier == PrivacyTier::Public {
         return Ok(());

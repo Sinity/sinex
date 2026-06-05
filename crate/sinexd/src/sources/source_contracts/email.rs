@@ -1,6 +1,6 @@
 //! Email capture source — `email.mailbox` (#1469).
 
-use sinex_primitives::proof::{
+use sinex_primitives::source_contracts::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };

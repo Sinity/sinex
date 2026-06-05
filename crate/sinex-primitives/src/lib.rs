@@ -24,12 +24,12 @@ pub mod non_empty;
 pub mod parser;
 pub mod primitives;
 pub mod privacy;
-pub mod proof;
 pub mod query;
 pub mod rpc;
 pub mod runtime_target;
 pub mod schema_constraints;
 pub mod semantic;
+pub mod source_contracts;
 pub mod views;
 
 /// Re-exports used by macros generated from `sinex-macros`.
@@ -109,7 +109,6 @@ pub use events::{Event, SourceMaterial, Timestamp};
 pub use ids::Id;
 pub use llm::*;
 pub use primitives::Uuid;
-pub use proof::{SourceRuntimeBinding, SubjectQuery, SubjectRef};
 pub use query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
     LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PathOp, PayloadFilter,
@@ -124,6 +123,7 @@ pub use runtime_target::{
 };
 pub use semantic::*;
 pub use serde_json::Value as JsonValue;
+pub use source_contracts::{SourceRuntimeBinding, SubjectQuery, SubjectRef};
 pub use task_domain::*;
 pub use temporal::{OffsetDateTime, now};
 pub use units::{Bytes, Seconds};

@@ -11,7 +11,7 @@ use crate::runtime::{
     stream::{Checkpoint, ContinuousStart, RuntimeCapabilities, ScanArgs, ScanReport, TimeHorizon},
 };
 use serde::{Deserialize, Serialize};
-use sinex_primitives::proof::{
+use sinex_primitives::source_contracts::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };

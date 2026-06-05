@@ -127,7 +127,8 @@ const fn is_subject_char(byte: u8) -> bool {
 #[macro_export]
 macro_rules! subject_ref {
     ($value:literal) => {{
-        const SUBJECT: $crate::proof::SubjectRef = $crate::proof::SubjectRef::from_static($value);
+        const SUBJECT: $crate::source_contracts::SubjectRef =
+            $crate::source_contracts::SubjectRef::from_static($value);
         SUBJECT
     }};
 }
@@ -135,7 +136,8 @@ macro_rules! subject_ref {
 #[macro_export]
 macro_rules! subject_query {
     ($value:literal) => {{
-        const QUERY: $crate::proof::SubjectQuery = $crate::proof::SubjectQuery::from_static($value);
+        const QUERY: $crate::source_contracts::SubjectQuery =
+            $crate::source_contracts::SubjectQuery::from_static($value);
         QUERY
     }};
 }
@@ -669,11 +671,11 @@ pub mod __register {
 macro_rules! register_source_contract {
     // Plain form — descriptor only.
     ($descriptor:expr $(,)?) => {
-        $crate::proof::__register::inventory::submit! { $descriptor }
+        $crate::source_contracts::__register::inventory::submit! { $descriptor }
     };
     // Named form.
     (descriptor: $descriptor:expr $(,)?) => {
-        $crate::proof::__register::inventory::submit! { $descriptor }
+        $crate::source_contracts::__register::inventory::submit! { $descriptor }
     };
 }
 
@@ -685,7 +687,7 @@ macro_rules! register_source_contract {
 #[macro_export]
 macro_rules! register_source_runtime_binding {
     ($binding:expr $(,)?) => {
-        $crate::proof::__register::inventory::submit! { $binding }
+        $crate::source_contracts::__register::inventory::submit! { $binding }
     };
 }
 
@@ -711,7 +713,7 @@ mod tests {
         // (no extra rules) since inventory submission from tests is link-time only.
         // The with-rules form is syntactically tested via the macro expansion path
         // verified by the trybuild suite.
-        use crate::proof::{
+        use crate::source_contracts::{
             Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, SourceContract,
         };
 

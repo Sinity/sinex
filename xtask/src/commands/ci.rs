@@ -370,7 +370,7 @@ async fn execute_workspace(
     ctx.finish_stage(stage, true);
 
     // Heavy slice for sinex-primitives: runs the trybuild compile-failure
-    // tests (`proof_descriptor_compile_failures` + `id_type_mismatch_is_compile_error`)
+    // tests (`source_contract_compile_failures` + `id_type_mismatch_is_compile_error`)
     // that the full-suite run skips. Gated to one package so unrelated heavy
     // tests (e.g. `#[ignore = "external"]` in sinexd) don't pull in
     // infrastructure dependencies (#1215).

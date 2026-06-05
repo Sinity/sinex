@@ -1,5 +1,5 @@
 use sinex_primitives::{
-    proof::{CheckpointFamily, RuntimeShape, SourceRuntimeBinding, SourceBuildImpact},
+    source_contracts::{CheckpointFamily, RuntimeShape, SourceRuntimeBinding, SourceBuildImpact},
     subject_ref,
 };
 

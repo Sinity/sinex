@@ -82,7 +82,7 @@ pub struct AutomatonErrorPayload {
 // because the runtime owners are existing pack bindings.
 // ─────────────────────────────────────────────────────────────────────────────
 
-use crate::proof::{
+use crate::source_contracts::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceBuildImpact,

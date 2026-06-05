@@ -65,7 +65,7 @@ async fn test_fs_adapter_factory_and_parser_registered() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_fs_binding_uses_content_drop_adapter() -> TestResult<()> {
-    let binding = sinex_primitives::proof::source_runtime_bindings()
+    let binding = sinex_primitives::source_contracts::source_runtime_bindings()
         .find(|binding| binding.source_id == "fs")
         .expect("fs source binding must be registered");
 
@@ -74,11 +74,11 @@ async fn test_fs_binding_uses_content_drop_adapter() -> TestResult<()> {
     assert_eq!(binding.checkpoint_policy, "append_stream");
     assert_eq!(
         binding.runtime_shape,
-        sinex_primitives::proof::RuntimeShape::Continuous
+        sinex_primitives::source_contracts::RuntimeShape::Continuous
     );
     assert_eq!(
         binding.checkpoint_family,
-        sinex_primitives::proof::CheckpointFamily::AppendStream
+        sinex_primitives::source_contracts::CheckpointFamily::AppendStream
     );
 
     Ok(())

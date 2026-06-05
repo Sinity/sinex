@@ -45,7 +45,7 @@ use sinex_primitives::{
         ParserManifest, SourceId, SourceRecord, TimingEvidence,
     },
     privacy::ProcessingContext,
-    proof::{
+    source_contracts::{
         CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
         SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
     },

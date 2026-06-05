@@ -11,7 +11,7 @@ pub use parser::FilesystemParser;
 
 use crate::register_source;
 use crate::runtime::parser::FileContentDropAdapter;
-use sinex_primitives::proof::{
+use sinex_primitives::source_contracts::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceContract, SourceRuntimeBinding, SubjectRef,
 };
@@ -66,6 +66,6 @@ register_source_runtime_binding! {
     .runtime_shape(RuntimeShape::Continuous)
     .package_impact("no_new_output")
     .implementation_mode("sinexd:source")
-    .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
+    .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }

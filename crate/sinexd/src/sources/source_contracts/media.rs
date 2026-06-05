@@ -1,6 +1,6 @@
 //! Media capture source contracts — audio transcription + screen OCR (#1043).
 
-use sinex_primitives::proof::{
+use sinex_primitives::source_contracts::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };

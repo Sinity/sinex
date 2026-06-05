@@ -58,7 +58,7 @@ pub struct StorageStatisticsPayload {
 // produced from inside long-running sinex processes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-use crate::proof::{
+use crate::source_contracts::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceBuildImpact,

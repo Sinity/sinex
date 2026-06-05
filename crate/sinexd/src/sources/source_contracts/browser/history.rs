@@ -17,7 +17,7 @@ use tracing::warn;
 use crate::runtime::parser::{
     AppendOnlyFileAdapter, ChainedAdapter, MaterialParser, ParserError, ParserResult,
 };
-use sinex_primitives::proof::{
+use sinex_primitives::source_contracts::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };

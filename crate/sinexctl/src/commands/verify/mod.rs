@@ -9,8 +9,8 @@ use serde::Serialize;
 use serde_json::json;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::schema_registry::get_all_payloads;
-use sinex_primitives::proof;
 use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter, TimeRange};
+use sinex_primitives::source_contracts;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{DeploymentReadinessDescriptor, Uuid};
 use tokio::process::Command;
@@ -41,8 +41,8 @@ pub struct VerifyCommand {
     /// declares a (source, `event_type`) with no matching payload) and
     /// unclaimed payloads (payload has no `register_source_contract!` entry).
     ///
-    /// Uses descriptors compiled into this binary. Source catalog JSON
-    /// files are not a runtime authority.
+    /// Uses source contracts compiled into this binary. Generated source
+    /// catalog JSON files are not a runtime authority.
     #[arg(long = "sources", default_value_t = false)]
     source_contracts: bool,
 
@@ -515,7 +515,7 @@ struct SourceContractsReport {
 fn build_source_contracts_report() -> SourceContractsReport {
     let mut descriptor_count = 0usize;
     let mut declared_pairs = BTreeSet::new();
-    for descriptor in proof::all_source_contracts() {
+    for descriptor in source_contracts::all_source_contracts() {
         descriptor_count += 1;
         for (src, ty) in descriptor.event_types {
             declared_pairs.insert(((*src).to_string(), (*ty).to_string()));

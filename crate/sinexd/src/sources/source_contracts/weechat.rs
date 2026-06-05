@@ -23,7 +23,7 @@
 use crate::register_source;
 use crate::runtime::parser::{AppendOnlyFileAdapter, WeeChatLogParser};
 use sinex_macros::SourceRecord;
-use sinex_primitives::proof::{
+use sinex_primitives::source_contracts::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };

@@ -87,7 +87,7 @@ Use a GitHub issue or an explicit source document/report before implementation
 starts.
 
 Target-vision-derived claims that may steer architecture, issue scope, naming,
-or proof obligations should also be checked against
+or verification obligations should also be checked against
 [`target-vision-claim-ledger.md`](.github/target-vision-claim-ledger.md).
 The ledger records whether a claim is raw, issue-backed, implemented, verified,
 semantic debt, superseded, or rejected. Do not copy full target-vision prose

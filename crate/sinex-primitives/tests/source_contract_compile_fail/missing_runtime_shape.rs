@@ -1,12 +1,12 @@
 use sinex_primitives::{
-    proof::{RuntimeShape, SourceRuntimeBinding, SourceBuildImpact},
+    source_contracts::{CheckpointFamily, SourceRuntimeBinding, SourceBuildImpact},
     subject_ref,
 };
 
 fn main() {
     let _ = SourceRuntimeBinding::builder(
-        subject_ref!("runtime_unit:test.missing_checkpoint_family"),
-        "test.missing_checkpoint_family",
+        subject_ref!("runtime_unit:test.missing_runtime_shape"),
+        "test.missing_runtime_shape",
         "test",
     )
     .adapter("sqlite_row_stream")
@@ -14,7 +14,7 @@ fn main() {
     .privacy_context("command")
     .material_policy("canonical_json_lines")
     .checkpoint_policy("row_id")
-    .runtime_shape(RuntimeShape::Continuous)
+    .checkpoint_family(CheckpointFamily::AppendStream)
     .build_impact(SourceBuildImpact::ZERO)
     .build();
 }

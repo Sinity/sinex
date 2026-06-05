@@ -526,7 +526,7 @@ impl StreamStatsPayload {
 // owning source or runner-pack descriptors.
 // ─────────────────────────────────────────────────────────────────────────────
 
-use crate::proof::{
+use crate::source_contracts::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceBuildImpact,

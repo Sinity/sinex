@@ -51,7 +51,7 @@
 //! `(content_hash, conversation_id)` — the content hash detects changed
 //! conversations; the `conversation_id` provides the stable external key.
 
-use sinex_primitives::proof::{
+use sinex_primitives::source_contracts::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };

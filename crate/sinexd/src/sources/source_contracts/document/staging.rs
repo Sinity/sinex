@@ -34,7 +34,7 @@ use sinex_primitives::{
         SourceRecord, TimingEvidence,
     },
     privacy::{ProcessingContext, SensitivityHint},
-    proof::{
+    source_contracts::{
         CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
         SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
     },

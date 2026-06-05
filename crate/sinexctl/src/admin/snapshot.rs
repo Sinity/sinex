@@ -8,7 +8,7 @@
 use clap::Parser;
 use color_eyre::eyre::{Context, Result, bail, eyre};
 use serde::Serialize;
-use sinex_primitives::proof;
+use sinex_primitives::source_contracts;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
@@ -983,7 +983,7 @@ fn git_sha() -> Option<String> {
 }
 
 fn registered_source_ids() -> Vec<String> {
-    let mut ids: Vec<String> = proof::all_source_contracts()
+    let mut ids: Vec<String> = source_contracts::all_source_contracts()
         .map(|descriptor| descriptor.id.to_string())
         .collect();
     ids.sort();

@@ -40,7 +40,7 @@ use sinex_primitives::parser::{
     ParserManifest, SourceId, SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::proof::{
+use sinex_primitives::source_contracts::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };

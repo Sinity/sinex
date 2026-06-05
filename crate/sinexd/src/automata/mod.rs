@@ -2,7 +2,7 @@
 //!
 //! Implementations are registered at program load via
 //! `register_source_contract!` in each submodule. The
-//! [`SourceContract`](sinex_primitives::proof::SourceContract)
+//! [`SourceContract`](sinex_primitives::source_contracts::SourceContract)
 //! catalog discovers them through `inventory`.
 
 pub mod analytics;

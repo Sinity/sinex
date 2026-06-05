@@ -1,5 +1,5 @@
 error[E0599]: no method named `build` found for struct `SourceRuntimeBindingBuilder<HasOutput, MissingPrivacy, HasMaterial, CheckpointPresent, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact>` in the current scope
-  --> tests/proof_compile_fail/missing_privacy.rs:19:6
+  --> tests/source_contract_compile_fail/missing_privacy.rs:19:6
    |
  7 |       let _ = SourceRuntimeBinding::builder(
    |  _____________-

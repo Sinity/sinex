@@ -263,7 +263,7 @@ pub type HourlySummarizerRuntime = WindowedAdapter<HourlySummarizer>;
 
 // --- Source descriptor (issue #690 / #734) ---
 
-use sinex_primitives::proof::{
+use sinex_primitives::source_contracts::{
     CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
     OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
     RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape,
@@ -307,6 +307,6 @@ register_source_runtime_binding! {
     .runtime_shape(ContractRuntimeShape::Continuous)
     .package_impact("no_new_output")
     .implementation_mode("in_process:sinexd")
-    .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)
+    .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }

@@ -1,20 +1,20 @@
 use sinex_primitives::{
-    proof::{CheckpointFamily, RuntimeShape, SourceRuntimeBinding, SourceBuildImpact},
+    source_contracts::{CheckpointFamily, RuntimeShape, SourceRuntimeBinding},
     subject_ref,
 };
 
 fn main() {
     let _ = SourceRuntimeBinding::builder(
-        subject_ref!("runtime_unit:test.missing_privacy"),
-        "test.missing_privacy",
+        subject_ref!("runtime_unit:test.missing_build_impact"),
+        "test.missing_build_impact",
         "test",
     )
     .adapter("sqlite_row_stream")
     .output_event_type("test.output")
+    .privacy_context("command")
     .material_policy("canonical_json_lines")
     .checkpoint_policy("row_id")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::Continuous)
-    .build_impact(SourceBuildImpact::ZERO)
     .build();
 }

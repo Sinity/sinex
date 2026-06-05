@@ -1,12 +1,12 @@
 //! Source registry — validates and enumerates source contracts from the
 //! compile-time [`SourceContract`] inventory.
 //!
-//! The registry wraps [`sinex_primitives::proof::all_source_contracts`] to provide
+//! The registry wraps [`sinex_primitives::source_contracts::all_source_contracts`] to provide
 //! a stable lookup surface. At link time, every crate that calls
 //! [`register_source_contract!`] contributes its descriptors to the inventory.
 
 use sinex_primitives::parser::SourceId;
-use sinex_primitives::proof::{self, SourceContract};
+use sinex_primitives::source_contracts::{self, SourceContract};
 
 /// Registry of source contracts loaded from the compile-time inventory.
 ///
@@ -25,7 +25,7 @@ impl SourceContractRegistry {
     /// Find a source contract by its `id`.
     #[must_use]
     pub fn find(&self, id: &SourceId) -> Option<&'static SourceContract> {
-        proof::find_source_contract(id)
+        source_contracts::find_source_contract(id)
     }
 
     /// Validate that a source id is registered.
@@ -57,13 +57,13 @@ impl SourceContractRegistry {
     /// List all registered source contracts.
     #[must_use]
     pub fn list(&self) -> Vec<&'static SourceContract> {
-        proof::all_source_contracts().collect()
+        source_contracts::all_source_contracts().collect()
     }
 
     /// List the ids of all registered source contracts.
     #[must_use]
     pub fn list_ids(&self) -> Vec<&'static str> {
-        proof::all_source_contracts()
+        source_contracts::all_source_contracts()
             .map(|descriptor| descriptor.id)
             .collect()
     }

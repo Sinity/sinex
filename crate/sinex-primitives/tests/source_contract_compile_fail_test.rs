@@ -4,7 +4,7 @@
 // `--heavy` slice for this package explicitly so coverage isn't lost (#1215).
 #[test]
 #[ignore = "heavy: trybuild compile-failure (run via --heavy)"]
-fn proof_descriptor_compile_failures() {
+fn source_contract_compile_failures() {
     let t = trybuild::TestCases::new();
-    t.compile_fail("tests/proof_compile_fail/*.rs");
+    t.compile_fail("tests/source_contract_compile_fail/*.rs");
 }
