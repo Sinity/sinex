@@ -1836,22 +1836,6 @@ impl XtaskCommand for TestCommand {
             return Ok(early_return);
         }
 
-        // Preflight is default ON unless explicitly disabled
-        if !self.skip_preflight {
-            let stage = ctx.start_stage("preflight");
-            let ready = crate::preflight::ensure_ready(ctx);
-            ctx.finish_stage(stage, ready.is_ok());
-            ready?;
-        }
-
-        // Determine profile
-        // Available profiles in .config/nextest.toml:
-        //   default = 24 threads, fail-fast=false (good for CI/batch runs)
-        //   debug   = 1 thread, 300s slow-timeout (good for investigating tests)
-        let profile = if self.debug { "debug" } else { "default" };
-        let use_fail_fast = self.fail_fast;
-
-        // Affected mode is default ON, --all disables it.
         let raw_impact_packages = impact_plan
             .as_ref()
             .and_then(crate::impact::packages_for_plan);
@@ -1860,17 +1844,14 @@ impl XtaskCommand for TestCommand {
             .and_then(|plan| plan.impact_filter.clone())
             .or_else(|| self.filter.clone());
 
-        // Determine the package set to test and subtract reusable proofs.
-        // Two paths:
-        //   (a) Impact plan selected packages → subtract reusable (existing path).
-        //   (b) Explicit -p packages (no impact plan) → also try subtraction.
+        // Determine the package set to test and subtract reusable proofs before
+        // preflight. A reusable proof or package-proof hit should not start
+        // Postgres/NATS only to discover that no tests need to run.
         let (impact_packages, reused_package_proofs) = {
             let packages_for_subtraction: Option<Vec<String>> =
                 if let Some(packages) = raw_impact_packages.as_ref() {
-                    // Path (a): packages from impact planner
                     Some(packages.clone())
                 } else if !self.packages.is_empty() && effective_filter.is_none() {
-                    // Path (b): explicit -p packages, no filter
                     Some(normalize_packages(&self.packages))
                 } else {
                     None
@@ -1926,8 +1907,8 @@ impl XtaskCommand for TestCommand {
         );
         ctx.record_invocation_args(&coordination_args);
 
-        // List is an introspection command, not a proof-producing or proof-consuming
-        // test run. Keep it before proof fingerprints and reuse gates.
+        // List is an introspection command, not a proof-producing or
+        // proof-consuming test run. It also does not need runtime preflight.
         if self.list {
             return execute_nextest_list(
                 &execution_plan,
@@ -1976,6 +1957,21 @@ impl XtaskCommand for TestCommand {
                 }
             }
         }
+
+        // Preflight is default ON unless explicitly disabled
+        if !self.skip_preflight {
+            let stage = ctx.start_stage("preflight");
+            let ready = crate::preflight::ensure_ready(ctx);
+            ctx.finish_stage(stage, ready.is_ok());
+            ready?;
+        }
+
+        // Determine profile
+        // Available profiles in .config/nextest.toml:
+        //   default = 24 threads, fail-fast=false (good for CI/batch runs)
+        //   debug   = 1 thread, 300s slow-timeout (good for investigating tests)
+        let profile = if self.debug { "debug" } else { "default" };
+        let use_fail_fast = self.fail_fast;
         self.guard_broad_start_pressure(
             ctx,
             &execution_plan,
