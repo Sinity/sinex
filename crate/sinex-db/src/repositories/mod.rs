@@ -58,7 +58,7 @@ pub use source_materials::{
     relation_types as source_material_relation_types, timing_info_types,
 };
 pub use state::{
-    ManifestRow, NodeRun, Operation, OperationRecord, OperationStatistics, StateRepository,
+    ManifestRow, ModuleRun, Operation, OperationRecord, OperationStatistics, StateRepository,
     SystemHealthReport,
 };
 

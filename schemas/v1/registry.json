@@ -625,20 +625,6 @@
       "content_hash": "df32e2aa9aecded870510b4d1116b7640d5b197d3417844721fd03c92925a8fb"
     },
     {
-      "source": "sinex.runtime",
-      "event_type": "derived.latency_snapshot",
-      "version": "1.0.0",
-      "path": "sinex.runtime/derived.latency_snapshot.json",
-      "content_hash": "7e7fc786a718f0eb2dea424e0a0becb436d43216f5ac359849548bfcb79120b7"
-    },
-    {
-      "source": "sinex.runtime",
-      "event_type": "processing.stats",
-      "version": "1.0.0",
-      "path": "sinex.runtime/processing.stats.json",
-      "content_hash": "e6bd27948158585665b3e6257fbfc82ec72e7a12c7ff99b2a5c5f8dbb24258da"
-    },
-    {
       "source": "sinexctl",
       "event_type": "task.linked",
       "version": "1.0.0",
@@ -695,6 +681,13 @@
       "content_hash": "f5a86f07dac8a7a1dbc51a55bc6dea9301e48ed3b99da67b5660bda774344fb6"
     },
     {
+      "source": "sinexd.automaton",
+      "event_type": "latency_snapshot",
+      "version": "1.0.0",
+      "path": "sinexd.automaton/latency_snapshot.json",
+      "content_hash": "fd2fd09469590458f2e45331f62bbb8d4ebf7ada041eff3f8220850be8a4e1ee"
+    },
+    {
       "source": "sinexd.event_engine",
       "event_type": "assembly.stats",
       "version": "1.0.0",
@@ -721,6 +714,13 @@
       "version": "1.0.0",
       "path": "sinexd.event_engine/stream.stats.json",
       "content_hash": "5da9a3f2ed816407750144699822ef835e553e45f177cd97443f18eb98bcc0a7"
+    },
+    {
+      "source": "sinexd.source",
+      "event_type": "processing.stats",
+      "version": "1.0.0",
+      "path": "sinexd.source/processing.stats.json",
+      "content_hash": "2ca205bf457c46cdd22b9245a8a02ecc8d869eac7681b5ef04f99b7ec35875df"
     },
     {
       "source": "spotify",

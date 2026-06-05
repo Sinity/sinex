@@ -65,7 +65,7 @@
   ],
   "title": "AutomatonLatencySnapshotPayload",
   "type": "object",
-  "x-sinex-event-type": "derived.latency_snapshot",
-  "x-sinex-source": "sinex.runtime",
+  "x-sinex-event-type": "latency_snapshot",
+  "x-sinex-source": "sinexd.automaton",
   "x-sinex-version": "1.0.0"
 }

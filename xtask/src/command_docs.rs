@@ -41,7 +41,7 @@ const HELP_CATEGORIES: &[HelpCategory] = &[
     },
     HelpCategory {
         title: "Diagnostics",
-        command_paths: &["doctor", "ra-diagnose", "privacy", "schema"],
+        command_paths: &["doctor", "ra-diagnose", "ra", "privacy", "schema"],
     },
     HelpCategory {
         title: "Documentation",
@@ -164,6 +164,20 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 notes: &[
                     "This command reuses the rust-analyzer contract checks surfaced by `xtask doctor --rust-analyzer`.",
                     "Use --collect-diagnostics only when you want rust-analyzer's batch diagnostics subcommand; the default remains a cheap process/config probe.",
+                ],
+            },
+            GuideEntry {
+                path: "ra",
+                fallback_summary: "Run rust-analyzer search and refactor helpers",
+                when: "you need rust-analyzer structured search, structured search-replace, or batch diagnostics during refactors",
+                examples: &[
+                    "xtask ra search 'register_module(\\$a)'",
+                    "xtask ra ssr '\\$a.into_builder() ==>> EventBuilder::from(\\$a)' --apply",
+                    "xtask ra diagnostics --severity error --disable-build-scripts",
+                ],
+                notes: &[
+                    "`xtask ra ssr` is dry-run by default; pass `--apply` to let rust-analyzer edit files.",
+                    "This wraps rust-analyzer's available CLI primitives. rust-analyzer does not expose a stable standalone rename-at-position CLI.",
                 ],
             },
             GuideEntry {

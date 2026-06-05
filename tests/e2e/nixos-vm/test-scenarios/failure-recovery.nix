@@ -381,8 +381,6 @@ host    all             all             127.0.0.1/32            trust
 host    all             all             ::1/128                 trust
 '';
 
-      systemd.services.sinexd.after = [ "sinex-schema-apply.service" ];
-      systemd.services.sinexd.requires = [ "sinex-schema-apply.service" ];
       systemd.services.sinexd.path = [ pkgs.git pkgs.git-annex ];
       systemd.services.sinex-blob-init.path = [ pkgs.git pkgs.git-annex ];
       systemd.services.sinex-system-1.enable = lib.mkForce false;

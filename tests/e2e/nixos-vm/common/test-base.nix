@@ -81,11 +81,9 @@ in
     SINEX_RPC_TOKEN_FILE = "/etc/sinex/api-admin-token";
   };
 
-  # Use the real NixOS schema-apply unit rather than shadowing it with a second
-  # VM-local migration service. Double-applying the declarative schema races on
-  # type creation and breaks boot.
-  systemd.services.sinexd.after = [ "sinex-schema-apply.service" "sinex-blob-init.service" ];
-  systemd.services.sinexd.requires = [ "sinex-schema-apply.service" "sinex-blob-init.service" ];
+  # sinexd applies schema at startup in the NixOS deployment shape.
+  systemd.services.sinexd.after = [ "sinex-blob-init.service" ];
+  systemd.services.sinexd.requires = [ "sinex-blob-init.service" ];
   systemd.services.sinexd.path = [ pkgs.git pkgs.git-annex ];
   systemd.services.sinex-blob-init.path = [ pkgs.git pkgs.git-annex ];
   systemd.services.sinex-filesystem-1.serviceConfig.Type = lib.mkForce "simple";
@@ -230,12 +228,10 @@ host    all             all             ::1/128                 trust
   };
 
   systemd.services.sinexd.after = lib.mkAfter [
-    "sinex-schema-apply.service"
     "sinex-blob-init.service"
     "sinexd-annex-setup.service"
   ];
   systemd.services.sinexd.requires = lib.mkAfter [
-    "sinex-schema-apply.service"
     "sinex-blob-init.service"
     "sinexd-annex-setup.service"
   ];

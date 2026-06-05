@@ -88,8 +88,7 @@ pkgs.testers.nixosTest {
     with subtest("Stack ready"):
         machine.wait_for_unit("multi-user.target")
         machine.wait_for_unit("postgresql.service", timeout=60)
-        # Schema must be applied before anything else.
-        machine.wait_for_unit("sinex-schema-apply.service", timeout=90)
+        # Schema is applied by sinexd before runtime modules start.
         machine.wait_for_unit("sinexd.service", timeout=60)
         # Source units are hosted in sinexd; there is no per-source-unit unit.
         # Gateway health probe — confirms TLS is up.

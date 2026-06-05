@@ -199,6 +199,11 @@ async fn serve(cli: &Cli) -> color_eyre::Result<()> {
         cli.namespace.clone(),
     )?;
 
+    if schema_apply_on_startup_from_env() {
+        tracing::info!("applying database schema before starting sinexd modules");
+        sinex_db::apply_schema_for_url(&event_engine_config.database_url).await?;
+    }
+
     event_engine_config.validate().await?;
 
     let api_config = match cli.database_url.as_ref() {
@@ -224,6 +229,14 @@ fn api_enabled_from_env() -> bool {
     match std::env::var("SINEX_API_ENABLED") {
         Ok(value) => !matches!(value.trim(), "0" | "false" | "no" | "off"),
         Err(_) => true,
+    }
+}
+
+/// Read the `SINEX_SCHEMA_APPLY_ON_STARTUP` toggle (default `false`).
+fn schema_apply_on_startup_from_env() -> bool {
+    match std::env::var("SINEX_SCHEMA_APPLY_ON_STARTUP") {
+        Ok(value) => matches!(value.trim(), "1" | "true" | "yes" | "on"),
+        Err(_) => false,
     }
 }
 

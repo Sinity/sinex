@@ -38,6 +38,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `git-stack` | Plan and materialize PR-sized git branch stacks from the current commit graph |
 | `doctor` | Probe developer-environment health and deployment readiness |
 | `ra-diagnose` | Diagnose rust-analyzer process footprint and local workspace contract |
+| `ra` | Rust-analyzer refactor/search helpers |
 | `privacy` | Run privacy-engine catalog, test, key, and config utilities |
 | `schema` | Schema verification command group |
 | `verify` | Verify phase plans and performance contracts |
@@ -1451,6 +1452,54 @@ Diagnose rust-analyzer process footprint and local workspace contract
 |---|---|---|---|
 | `--collect-diagnostics` | no | no | Also run rust-analyzer's batch diagnostics subcommand |
 | `--severity` | yes | no | Minimum severity for --collect-diagnostics |
+
+
+## `xtask ra`
+
+Rust-analyzer refactor/search helpers
+
+**Subcommands**
+
+| Command | Purpose |
+|---|---|
+| `search` | Run rust-analyzer structured search |
+| `ssr` | Run rust-analyzer structured search replace |
+| `diagnostics` | Run rust-analyzer batch diagnostics |
+
+### `xtask ra search`
+
+Run rust-analyzer structured search
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `pattern` | yes | no | Structured search pattern, e.g. `$a.foo($b)` |
+
+
+### `xtask ra ssr`
+
+Run rust-analyzer structured search replace
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `rule` | yes | no | Structured search-replace rule, e.g. `$a.foo($b) ==>> bar($a, $b)` |
+| `--apply` | no | no | Apply edits. Without this flag, only print the command that would run |
+
+
+### `xtask ra diagnostics`
+
+Run rust-analyzer batch diagnostics
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--severity` | yes | no | Minimum severity accepted by rust-analyzer |
+| `--disable-build-scripts` | no | no | Do not run build scripts or load OUT_DIR values |
+| `--disable-proc-macros` | no | no | Do not expand proc macros |
 
 
 ## `xtask privacy`

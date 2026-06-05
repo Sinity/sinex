@@ -303,6 +303,8 @@ enum Commands {
     #[command(hide = true)]
     RaDiagnose(RaDiagnoseCommand),
     #[command(hide = true)]
+    Ra(commands::RaCommand),
+    #[command(hide = true)]
     Privacy(PrivacyCommand),
     #[command(hide = true)]
     Schema(SchemaCommand),
@@ -395,6 +397,7 @@ fn command_dispatch_metadata(
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata()),
         Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata()),
         Commands::RaDiagnose(cmd) => ("ra-diagnose", None, None, cmd.metadata()),
+        Commands::Ra(cmd) => ("ra", None, None, cmd.metadata()),
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata()),
         Commands::Schema(cmd) => ("schema", None, None, cmd.metadata()),
         Commands::Verify(cmd) => ("verify", None, None, cmd.metadata()),
@@ -542,6 +545,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
             Commands::Doctor(cmd) => cmd.execute(&ctx).await,
             Commands::RaDiagnose(cmd) => cmd.execute(&ctx).await,
+            Commands::Ra(cmd) => cmd.execute(&ctx).await,
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,
             Commands::Schema(cmd) => cmd.execute(&ctx).await,
             Commands::Verify(cmd) => cmd.execute(&ctx).await,

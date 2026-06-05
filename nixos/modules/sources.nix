@@ -21,7 +21,6 @@ let
   coreEnabled = sinexEnabled && coreCfg.enable;
   runtimeEnabled = sinexEnabled && runtimeCfg.enable;
   natsEnabled = cfg.nats.enable || cfg.nats.autoSetup;
-  schemaApplyEnabled = cfg.database.enable && cfg.database.autoSetup;
   localPostgresEnabled = cfg.database.enable && (cfg.database.autoSetup || config.services.postgresql.enable);
 
   stateRoot = cfg.stateRoot;
@@ -36,7 +35,6 @@ let
   # gateway assume the streams already exist at startup. Blob init remains soft.
   natsBootstrapEnabled = natsEnabled && cfg.nats.bootstrapStreams.enable;
   blobInitEnabled = cfg.storage.blob.enable && cfg.storage.blob.autoInit;
-  schemaApplyUnits = optionals schemaApplyEnabled [ "sinex-schema-apply.service" ];
   postgresServiceUnits = optionals localPostgresEnabled [ "postgresql.service" "postgresql-setup.service" ];
 
   genTlsScript = pkgs.writeShellScript "sinex-tls-init" ''
@@ -525,7 +523,6 @@ let
       # Base: hard infrastructure that both services depend on.
       coreRequires =
         postgresServiceUnits
-        ++ schemaApplyUnits
         ++ optionals natsEnabled [ "nats.service" ]
         ++ optionals natsBootstrapEnabled [ "sinex-nats-bootstrap.service" ];
       # Core services should not start before stream bootstrap has succeeded when
@@ -566,6 +563,7 @@ let
                 "SINEX_EVENT_ENGINE_WORK_DIR=${stateRoot}/event_engine/work"
                 "SINEX_ASSEMBLER_STATE_DIR=${ingestSpool}"
                 # Schema and validation behaviour.
+                "SINEX_SCHEMA_APPLY_ON_STARTUP=${if cfg.database.enable && cfg.database.autoSetup then "1" else "0"}"
                 "SINEX_EVENT_ENGINE_GITOPS_ENABLED=${if coreCfg.event_engine.gitopsEnabled then "true" else "false"}"
                 "SINEX_SKIP_SCHEMA_SYNC=${if coreCfg.event_engine.skipSchemaSync then "true" else "false"}"
                 "SINEX_EVENT_ENGINE_STRICT_VALIDATION=${if coreCfg.event_engine.strictValidation then "true" else "false"}"
@@ -1534,8 +1532,7 @@ let
       );
       env = mkServiceEnv ([ "RUST_LOG=${runtimeCfg.defaults.logLevel}" ] ++ toEnvList sat.env);
       requiredUnits =
-        schemaApplyUnits
-        ++ postgresServiceUnits
+        postgresServiceUnits
         ++ optionals natsEnabled [ "nats.service" ]
         ++ optionals natsBootstrapEnabled [ "sinex-nats-bootstrap.service" ];
       accessWritePaths =

@@ -1,4 +1,4 @@
-//! RuntimeActor runtime status handlers.
+//! runtime module runtime status handlers.
 //!
 //! These surfaces expose live runtime module presence and aggregate health for operators.
 
@@ -94,7 +94,7 @@ pub async fn handle_runtime_health(
     Ok(RuntimeHealthResponse {
         active_count: health.active_count,
         inactive_count: health.inactive_count,
-        unique_modules: health.unique_nodes,
+        unique_modules: health.unique_modules,
         active_run_count: health.active_run_count,
         oldest_heartbeat: health.oldest_heartbeat,
     })

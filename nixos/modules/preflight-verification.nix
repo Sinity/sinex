@@ -20,14 +20,12 @@ let
   natsEnabled = cfg.nats.enable || cfg.nats.autoSetup;
 
   sinexEnabled = cfg.enable;
-  schemaApplyEnabled = cfg.database.enable && cfg.database.autoSetup;
   preflightEnabled = sinexEnabled && preflight.enable;
   updatesEnabled = sinexEnabled && updates.enable;
 
   generatedUnits = config.sinex._generatedUnits;
   localPostgresEnabled = cfg.database.enable && (cfg.database.autoSetup || config.services.postgresql.enable);
   localPostgresUnits = optionals localPostgresEnabled [ "postgresql.service" "postgresql-setup.service" ];
-  schemaApplyUnits = optionals schemaApplyEnabled [ "sinex-schema-apply.service" ];
   # Guard core units only when the core subsystem is enabled.
   # Always guard core and generated support units: source bindings and automata
   # emit to NATS, so event_engine must pass preflight before either layer
@@ -35,7 +33,6 @@ let
   coreEnabled = sinexEnabled && (cfg.core.enable or false);
   coreUnitsToGuard = lib.optionals coreEnabled [ "sinexd" ];
   unitsToGuard = coreUnitsToGuard ++ generatedUnits;
-  allDatabases = unique ([ cfg.database.name ] ++ cfg.database.extraDatabases);
 
   stateRoot = cfg.stateRoot;
   logDir = cfg.observability.logDir;
@@ -149,20 +146,6 @@ let
     passwordFile = effectiveDatabasePasswordFile;
   };
 
-  schemaApplyScript = pkgs.writeShellScript "sinex-schema-apply" ''
-    set -euo pipefail
-
-    export SINEX_STATE_DIR=${escapeShellArg stateRoot}
-    for db_name in ${concatStringsSep " " (map escapeShellArg allDatabases)}; do
-      echo "$(date): applying Sinex schema to $db_name"
-      export SINEX_DB_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}
-      export SINEX_DB_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}
-      export SINEX_DB_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}
-      ${cfg.adminPackage}/bin/xtask infra schema-apply \
-        --database-url "postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/$db_name"
-    done
-  '';
-
   unitsShellList = concatStringsSep " " (map (unit: escapeShellArg "${unit}.service") unitsToGuard);
 
   updateScript = pkgs.writeShellScript "sinex-coordinated-update" ''
@@ -246,29 +229,6 @@ let
 in
 {
   config = mkMerge [
-    (mkIf schemaApplyEnabled {
-      systemd.services.sinex-schema-apply = {
-        description = "Apply Sinex declarative schema";
-        wantedBy = [ "multi-user.target" ];
-        wants = [ "network-online.target" ];
-        after = [ "network-online.target" ] ++ localPostgresUnits;
-        requires = localPostgresUnits;
-        serviceConfig = {
-          ExecStart = mkDatabasePasswordExec {
-            name = "schema-apply";
-            command = schemaApplyScript;
-            passwordFile = effectiveDatabasePasswordFile;
-          };
-          TimeoutStartSec = preflight.schemaApplyTimeoutSec;
-          ReadWritePaths = [ stateRoot ];
-        } // mkHelperServiceConfig {
-          user = serviceUser;
-          group = serviceUser;
-          remainAfterExit = true;
-        };
-      };
-    })
-
     (mkIf preflightEnabled {
       systemd.services =
         let
@@ -280,15 +240,13 @@ in
             wantedBy = [ "multi-user.target" ];
             wants = [ "network-online.target" ];
             after = [ "network-online.target" ]
-            ++ schemaApplyUnits
             ++ localPostgresUnits
             ++ optionals natsEnabled [ "nats.service" ];
             # Require only the infrastructure that preflight actively checks.
             # Target-user bridge helpers are best-effort: if a desktop/browser
             # runtime is not visible yet, preflight should still run and the
             # affected runtime can recover via its own access bootstrap.
-            requires = schemaApplyUnits
-            ++ localPostgresUnits
+            requires = localPostgresUnits
             ++ optionals natsEnabled [ "nats.service" ];
             path = [ pkgs.postgresql ];
             environment = preflightEnvironment;

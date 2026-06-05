@@ -252,8 +252,8 @@ services.sinex = {
 The module then:
 
 - strips `wantedBy = [ "multi-user.target" ]` from every Sinex-owned
-  long-running service, every bootstrap one-shot (`sinex-schema-apply`,
-  `sinex-tls-init`, `sinex-blob-init`, `sinex-nats-bootstrap`,
+  long-running service, every bootstrap one-shot (`sinex-tls-init`,
+  `sinex-blob-init`, `sinex-nats-bootstrap`,
   `sinex-kitty-setup`, `sinex-preflight`, `sinex-document-scan`, the managed
   `nats.service`), plus generated automaton/support units;
 - when `includeDatabase = true`, also strips it from `postgresql.service`,
@@ -278,9 +278,8 @@ sops-nix), use `services.sinex.database.setupWaitForPaths` to gate
   operator CLI placed on PATH. Do not use the aggregate runtime package as a
   global CLI surface unless you intentionally want every packaged binary on
   interactive PATH.
-- The module now wires a first-boot `sinex-schema-apply` oneshot before guarded
-  services and before `sinex-preflight`, so schema creation is part of the real
-  deployment path instead of a VM-only convention.
+- The module enables `SINEX_SCHEMA_APPLY_ON_STARTUP=1` for managed database
+  deployments, so `sinexd` applies schema before starting runtime modules.
 - When `services.sinex.enable = true`, the module emits
   `/etc/sinex/deployment-readiness.json`, the canonical descriptor consumed by
   `xtask doctor --deployment-readiness` and the config-derived preflight

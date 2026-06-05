@@ -50,17 +50,17 @@ fn trigger_shutdown(shutdown_flag: &Arc<AtomicBool>, shutdown_notify: &Arc<tokio
     }
 }
 
-fn log_node_manifest_write_failure(
+fn log_module_manifest_write_failure(
     operation: &'static str,
     module_name: &ModuleName,
     error: &SinexError,
 ) {
     warn!(
         operation,
-        node = %module_name,
+        module = %module_name,
         version = env!("CARGO_PKG_VERSION"),
         error = %error,
-        "Failed to persist event_engine node manifest state"
+        "Failed to persist event_engine module manifest state"
     );
 }
 
@@ -405,7 +405,7 @@ impl IngestService {
             let module_name = ModuleName::new("sinexd");
             let manifest_id = match pool
                 .state()
-                .register_node(
+                .register_module(
                     &module_name,
                     ModuleKind::Service,
                     env!("CARGO_PKG_VERSION"),
@@ -441,7 +441,7 @@ impl IngestService {
                 ServiceName::new("sinexd"),
                 sinex_primitives::Seconds::from_secs(60),
             )
-            .with_node_name(ModuleName::new("sinexd"))
+            .with_module_name(ModuleName::new("sinexd"))
             .with_db_pool(pool.clone());
             self.heartbeat_counter_handle = Some(emitter.get_counter_handle());
 
@@ -455,10 +455,10 @@ impl IngestService {
                         let module_name = ModuleName::new("sinexd");
                         if let Err(error) = heartbeat_pool
                             .state()
-                            .mark_node_inactive_for_version(&module_name, env!("CARGO_PKG_VERSION"))
+                            .mark_module_inactive_for_version(&module_name, env!("CARGO_PKG_VERSION"))
                             .await
                         {
-                            log_node_manifest_write_failure("mark_node_inactive", &module_name, &error);
+                            log_module_manifest_write_failure("mark_module_inactive", &module_name, &error);
                         }
                     }
                 }
@@ -1947,11 +1947,11 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn log_node_manifest_write_failure_accepts_processing_errors()
+    async fn log_module_manifest_write_failure_accepts_processing_errors()
     -> xtask::sandbox::TestResult<()> {
         let module_name = ModuleName::new("sinexd");
-        let error = SinexError::processing("node manifest update exploded");
-        log_node_manifest_write_failure("mark_node_inactive", &module_name, &error);
+        let error = SinexError::processing("module manifest update exploded");
+        log_module_manifest_write_failure("mark_module_inactive", &module_name, &error);
         Ok(())
     }
 }

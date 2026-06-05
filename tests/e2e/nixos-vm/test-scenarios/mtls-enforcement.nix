@@ -64,7 +64,6 @@ pkgs.testers.nixosTest {
     with subtest("System initialization"):
         machine.wait_for_unit("multi-user.target")
         machine.wait_for_unit("postgresql.service", timeout=60)
-        machine.wait_for_unit("sinex-schema-apply.service", timeout=60)
         machine.wait_for_unit("sinexd.service", timeout=60)
         machine.wait_for_open_port(9999, timeout=30)
         print("✓ All services started")

@@ -46,9 +46,9 @@
     "queue_depth",
     "error_count"
   ],
-  "title": "NodeProcessingStatsPayload",
+  "title": "SourceProcessingStatsPayload",
   "type": "object",
   "x-sinex-event-type": "processing.stats",
-  "x-sinex-source": "sinex.runtime",
+  "x-sinex-source": "sinexd.source",
   "x-sinex-version": "1.0.0"
 }

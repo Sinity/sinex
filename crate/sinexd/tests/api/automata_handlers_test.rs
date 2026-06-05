@@ -60,7 +60,7 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
     let module_name = ModuleName::new("canonicalizer-test");
     let manifest = pool
         .state()
-        .register_node(
+        .register_module(
             &module_name,
             ModuleKind::Automaton,
             "1.0.0-test",
@@ -69,7 +69,7 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
         .await?;
     let run = pool
         .state()
-        .start_node_run(
+        .start_module_run(
             manifest.id,
             "sinex-canonicalizer-test",
             "instance-a",
@@ -164,7 +164,7 @@ async fn automata_status_handles_live_run_without_metric_events(
     let module_name = ModuleName::new("session-detector-test");
     let manifest = pool
         .state()
-        .register_node(
+        .register_module(
             &module_name,
             ModuleKind::Automaton,
             "1.0.0-test",
@@ -173,7 +173,7 @@ async fn automata_status_handles_live_run_without_metric_events(
         .await?;
     let run = pool
         .state()
-        .start_node_run(
+        .start_module_run(
             manifest.id,
             "sinex-session-detector-test",
             "instance-a",

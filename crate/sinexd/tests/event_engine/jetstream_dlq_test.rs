@@ -545,7 +545,7 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
     let manifest = ctx
         .pool
         .state()
-        .register_node(
+        .register_module(
             &ModuleName::new(format!("fk-enriched-node-{suffix}")),
             ModuleKind::Source,
             "1.0.0",
@@ -555,7 +555,7 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
     let node_run = ctx
         .pool
         .state()
-        .start_node_run(
+        .start_module_run(
             manifest.id,
             "fk-enriched-test-service",
             &format!("instance-{suffix}"),

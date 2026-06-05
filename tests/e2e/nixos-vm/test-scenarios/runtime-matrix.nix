@@ -208,9 +208,8 @@ SQL
         machine.succeed(f"systemctl is-active {unit}")
 
     with subtest("Deployment readiness ordering"):
-        for unit in ["sinex-schema-apply.service", "sinex-blob-init.service"]:
+        for unit in ["sinex-blob-init.service"]:
             machine.wait_for_unit(unit)
-        machine.succeed("systemctl show -p Result --value sinex-schema-apply.service | grep '^success$'")
         machine.succeed("systemctl show -p Result --value sinex-blob-init.service | grep '^success$'")
         machine.succeed("test -s /etc/sinex/api-admin-token")
         machine.succeed("su - postgres -c 'psql -d sinex -At -c \"SELECT 1\"' | grep '^1$'")

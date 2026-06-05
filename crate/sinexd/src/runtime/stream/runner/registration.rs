@@ -36,7 +36,7 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         let module_kind = self.node.module_kind();
         let manifest = pool
             .state()
-            .register_node(&module_name, module_kind, version, None)
+            .register_module(&module_name, module_kind, version, None)
             .await
             .map_err(|error| {
                 SinexError::processing(format!(
@@ -91,10 +91,10 @@ impl<T: RuntimeActor + 'static> RuntimeRunner<T> {
         let Some(source_run_id) = service_info.source_run_id() else {
             return;
         };
-        let source_run_id = Id::<sinex_db::repositories::state::NodeRun>::from_uuid(source_run_id);
+        let source_run_id = Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(source_run_id);
         if let Err(error) = pool
             .state()
-            .update_node_run_status(source_run_id, status)
+            .update_module_run_status(source_run_id, status)
             .await
         {
             warn!(

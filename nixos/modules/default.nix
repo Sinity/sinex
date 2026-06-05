@@ -2025,11 +2025,6 @@ in
               options = {
                 enable = mkOption { type = bool; default = true; description = "Enable preflight verification gates."; };
                 timeoutSec = mkOption { type = positive; default = 120; description = "Preflight timeout in seconds."; };
-                schemaApplyTimeoutSec = mkOption {
-                  type = positive;
-                  default = 600;
-                  description = "Schema-apply timeout in seconds.";
-                };
                 skip = mkOption {
                   type = listOf (enum [
                     "database"
@@ -2513,10 +2508,7 @@ in
       generatedRuntimeUnitNames =
         lib.optionals cfg.enable (config.sinex._generatedUnits or [ ]);
       bootstrapAuxUnitNames =
-        lib.optionals (cfg.database.enable && cfg.database.autoSetup) [
-          "sinex-schema-apply"
-        ]
-        ++ lib.optionals (cfg.nats.enable || cfg.nats.autoSetup) [
+        lib.optionals (cfg.nats.enable || cfg.nats.autoSetup) [
           "nats"
         ]
         ++ lib.optionals (

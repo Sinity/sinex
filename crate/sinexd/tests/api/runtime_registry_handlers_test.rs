@@ -20,7 +20,7 @@ async fn register_test_node(
     let module_name = ModuleName::new(name);
     Ok(pool
         .state()
-        .register_node(&module_name, module_kind, version, Some("test node"))
+        .register_module(&module_name, module_kind, version, Some("test node"))
         .await?)
 }
 
@@ -44,7 +44,7 @@ async fn list_active_uses_manifest_fallback_without_run(ctx: TestContext) -> Tes
     register_test_node(pool, "manifest-only-node", ModuleKind::Service, "1.0.0-test").await?;
     assert!(
         pool.state()
-            .update_node_heartbeat_for_version(&module_name, "1.0.0-test")
+            .update_module_heartbeat_for_version(&module_name, "1.0.0-test")
             .await?
     );
 
@@ -69,7 +69,7 @@ async fn list_active_surfaces_run_identity_when_available(ctx: TestContext) -> T
 
     let run = pool
         .state()
-        .start_node_run(
+        .start_module_run(
             manifest.id,
             "sinex-run-backed-node",
             "instance-a",
@@ -105,7 +105,7 @@ async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResul
         register_test_node(pool, "parallel-run-node", ModuleKind::Source, "1.0.0-test").await?;
 
     pool.state()
-        .start_node_run(
+        .start_module_run(
             manifest.id,
             "sinex-parallel-run-node",
             "instance-a",
@@ -115,7 +115,7 @@ async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResul
         )
         .await?;
     pool.state()
-        .start_node_run(
+        .start_module_run(
             manifest.id,
             "sinex-parallel-run-node",
             "instance-b",
@@ -166,7 +166,7 @@ async fn health_counts_unique_modules_and_concrete_runs(ctx: TestContext) -> Tes
     .await?;
 
     pool.state()
-        .start_node_run(
+        .start_module_run(
             run_manifest.id,
             "sinex-run-health-node",
             "instance-a",
@@ -177,7 +177,7 @@ async fn health_counts_unique_modules_and_concrete_runs(ctx: TestContext) -> Tes
         .await?;
     assert!(
         pool.state()
-            .update_node_heartbeat_for_version(&manifest_only, "1.0.0-test")
+            .update_module_heartbeat_for_version(&manifest_only, "1.0.0-test")
             .await?
     );
 

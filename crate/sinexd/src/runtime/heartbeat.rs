@@ -163,7 +163,7 @@ impl HeartbeatEmitter {
     }
 
     #[must_use]
-    pub fn with_node_name(mut self, module_name: ModuleName) -> Self {
+    pub fn with_module_name(mut self, module_name: ModuleName) -> Self {
         self.module_name = Some(module_name);
         self
     }
@@ -198,7 +198,7 @@ impl HeartbeatEmitter {
             runtime.service_info().service_name().clone(),
             interval_seconds,
         )
-        .with_node_name(ModuleName::new(runtime.module_name()))
+        .with_module_name(ModuleName::new(runtime.module_name()))
         .with_version(runtime.version().to_string());
 
         let emitter = if let Some(source_run_id) = runtime.source_run_id() {
@@ -412,41 +412,41 @@ impl HeartbeatEmitter {
                 warn!(
                     service = %metrics.service_name,
                     skipped = warn_skipped,
-                    "Heartbeat persistence is configured without a node identity; database heartbeat updates are disabled (rate-limited)"
+                    "Heartbeat persistence is configured without a module identity; database heartbeat updates are disabled (rate-limited)"
                 );
             }
             if let Some(module_name) = &self.module_name {
                 match pool
                     .state()
-                    .update_node_heartbeat_for_version(module_name, &metrics.version)
+                    .update_module_heartbeat_for_version(module_name, &metrics.version)
                     .await
                 {
                     Ok(true) => {}
                     Ok(false) => {
                         self.record_error(&format!(
-                            "Heartbeat did not persist because the node manifest row is missing for {module_name}"
+                            "Heartbeat did not persist because the module manifest row is missing for {module_name}"
                         ));
                         if log_persistence_warn {
                             warn!(
-                                node = %module_name,
+                                module = %module_name,
                                 service = %metrics.service_name,
                                 version = %metrics.version,
                                 skipped = warn_skipped,
-                                "Heartbeat did not persist because the node manifest row is missing (rate-limited)"
+                                "Heartbeat did not persist because the module manifest row is missing (rate-limited)"
                             );
                         }
                     }
                     Err(e) => {
                         self.record_error(&format!(
-                            "Failed to persist node manifest heartbeat to database: {e}"
+                            "Failed to persist module manifest heartbeat to database: {e}"
                         ));
                         if log_persistence_warn {
                             warn!(
-                                node = %module_name,
+                                module = %module_name,
                                 service = %metrics.service_name,
                                 error = %e,
                                 skipped = warn_skipped,
-                                "Failed to persist node manifest heartbeat to database (rate-limited)"
+                                "Failed to persist module manifest heartbeat to database (rate-limited)"
                             );
                         }
                     }
@@ -455,29 +455,29 @@ impl HeartbeatEmitter {
 
             if let Some(source_run_id) = self.source_run_id {
                 let typed_source_run_id =
-                    Id::<sinex_db::repositories::state::NodeRun>::from_uuid(source_run_id);
+                    Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(source_run_id);
                 match pool
                     .state()
-                    .update_node_run_heartbeat(typed_source_run_id)
+                    .update_module_run_heartbeat(typed_source_run_id)
                     .await
                 {
                     Ok(true) => {}
                     Ok(false) => {
                         self.record_error(&format!(
-                            "Heartbeat did not persist because the node run row is missing for {source_run_id}"
+                            "Heartbeat did not persist because the module run row is missing for {source_run_id}"
                         ));
                         if log_persistence_warn {
                             warn!(
                                 service = %metrics.service_name,
                                 source_run_id = %source_run_id,
                                 skipped = warn_skipped,
-                                "Heartbeat did not persist because the node run row is missing (rate-limited)"
+                                "Heartbeat did not persist because the module run row is missing (rate-limited)"
                             );
                         }
                     }
                     Err(e) => {
                         self.record_error(&format!(
-                            "Failed to persist node run heartbeat to database: {e}"
+                            "Failed to persist module run heartbeat to database: {e}"
                         ));
                         if log_persistence_warn {
                             warn!(
@@ -485,7 +485,7 @@ impl HeartbeatEmitter {
                                 source_run_id = %source_run_id,
                                 error = %e,
                                 skipped = warn_skipped,
-                                "Failed to persist node run heartbeat to database (rate-limited)"
+                                "Failed to persist module run heartbeat to database (rate-limited)"
                             );
                         }
                     }
@@ -501,7 +501,7 @@ impl HeartbeatEmitter {
             uptime_seconds = metrics.uptime_seconds,
             memory_usage_mb = metrics.memory_usage_mb,
             errors_count = metrics.errors_count,
-            "RuntimeActor heartbeat emitted"
+            "runtime module heartbeat emitted"
         );
 
         self.emit_status_alert_if_needed(&metrics);
@@ -570,7 +570,7 @@ impl HeartbeatEmitter {
             HealthStatus::Healthy | HealthStatus::Unknown => {
                 info!(
                     service = %metrics.service_name,
-                    "RuntimeActor recovered to healthy status"
+                    "runtime module recovered to healthy status"
                 );
             }
             HealthStatus::Degraded => {
@@ -646,7 +646,7 @@ impl HeartbeatEmitter {
             status = %metrics.status,
             errors = recent_errors_in_window,
             event_type = %event_type,
-            "RuntimeActor transitioned to state"
+            "runtime module transitioned to state"
         );
     }
 }

@@ -900,7 +900,7 @@ async fn mcp_runtime_health_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["query"]["stale_after_secs"], 120);
     assert_eq!(response["items"]["result"]["active_count"], 2);
     assert_eq!(response["items"]["result"]["inactive_count"], 1);
-    assert_eq!(response["items"]["result"]["unique_nodes"], 3);
+    assert_eq!(response["items"]["result"]["unique_modules"], 3);
     assert_eq!(response["redaction"]["raw_samples"], false);
     Ok(())
 }
@@ -2118,7 +2118,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                 "runtime.health" => json!({
                     "active_count": 2,
                     "inactive_count": 1,
-                    "unique_nodes": 3,
+                    "unique_modules": 3,
                     "active_run_count": 2,
                     "oldest_heartbeat": "2026-05-19T11:50:00Z"
                 }),
