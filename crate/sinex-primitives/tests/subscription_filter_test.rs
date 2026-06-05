@@ -19,6 +19,7 @@ fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::V
         host,
         payload,
         ts_orig: Some(Timestamp::now()),
+        ts_quality: None,
         source_run_id: None,
         payload_schema_id: None,
         provenance: Provenance::Material {

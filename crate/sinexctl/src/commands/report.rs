@@ -780,6 +780,7 @@ mod tests {
                 event_type: ActivitySessionBoundaryPayload::EVENT_TYPE,
                 payload: serde_json::to_value(&payload)?,
                 ts_orig: Some(end),
+                ts_quality: None,
                 host: sinex_primitives::events::builder::get_hostname(),
                 source_run_id: None,
                 payload_schema_id: None,

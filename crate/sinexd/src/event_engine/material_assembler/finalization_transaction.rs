@@ -7,10 +7,7 @@
 use crate::node_sdk::content_store::ContentStoreKey;
 use serde_json::json;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
-use sinex_db::{
-    models::blob::Blob,
-    repositories::{DbPoolExt, TemporalLedgerEntry},
-};
+use sinex_db::{models::blob::Blob, repositories::DbPoolExt};
 use sinex_primitives::{Id, JsonValue, MaterialStatus, Uuid};
 use tracing::{error, info, warn};
 
@@ -24,7 +21,6 @@ pub(super) enum FinalizationErrorKind {
     EnsureMaterialRecord,
     UpsertBlob,
     FinalizeMaterialRecord,
-    RecordLedgerEntry,
     Commit,
     CommitOutcomeUnknown,
 }
@@ -36,7 +32,6 @@ impl FinalizationErrorKind {
             Self::EnsureMaterialRecord => "ensure_material_record",
             Self::UpsertBlob => "upsert_blob",
             Self::FinalizeMaterialRecord => "finalize_material_record",
-            Self::RecordLedgerEntry => "record_ledger_entry",
             Self::Commit => "commit",
             Self::CommitOutcomeUnknown => "commit_outcome_unknown",
         }
@@ -219,23 +214,14 @@ impl<'a> FinalizationTransaction<'a> {
             ));
         }
 
-        if let Err(error) = self
-            .record_ledger_entry_with_executor(&mut tx, request.final_state)
-            .await
-        {
-            let error = match tx.rollback().await {
-                Ok(()) => error,
-                Err(rollback_error) => {
-                    rollback_finalization_failure(error, rollback_error, "record_ledger_entry")
-                }
-            };
-            self.cleanup_content_import_failure(request.content_key)
-                .await;
-            return Err(FinalizationError::new(
-                FinalizationErrorKind::RecordLedgerEntry,
-                error,
-            ));
-        }
+        // #1570 Prong B: the whole-material `realtime_capture` temporal-ledger
+        // entry that used to be written here was redundant with the material
+        // registry timing (`start_time` + `timing_info_type = realtime`, set at
+        // registration by `register_external_in_flight`, and `end_time` set by
+        // `update_material_state`). Material-tier `ts_orig` now resolves from the
+        // registry at the admission stage, so no ledger write is needed here.
+        // The temporal ledger is reserved for genuine sub-material wrapped-stream
+        // entries.
 
         match tx.commit().await {
             Ok(()) => Ok(FinalizedHandle {
@@ -385,29 +371,6 @@ impl<'a> FinalizationTransaction<'a> {
         )
         .await
         .map_err(|e| SinexError::database("Failed to finalize material").with_source(e))
-    }
-
-    async fn record_ledger_entry_with_executor(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        state: &FinalizationState,
-    ) -> IngestdResult<()> {
-        let entry = TemporalLedgerEntry::realtime_capture(
-            state.material_id,
-            state.expected_offset,
-            state.started_at,
-        );
-
-        self.assembler
-            .pool
-            .source_materials()
-            .append_temporal_ledger_with_executor(&mut **tx, entry)
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to append temporal ledger entry").with_source(e)
-            })?;
-
-        Ok(())
     }
 
     async fn cleanup_content_import_failure(&self, content_key: &ContentStoreKey) {

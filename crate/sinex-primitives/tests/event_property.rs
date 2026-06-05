@@ -22,6 +22,7 @@ fn test_event(source: EventSource, event_type: EventType, payload: JsonValue) ->
         source,
         event_type,
         ts_orig: Some(Timestamp::now()),
+        ts_quality: None,
         host: HostName::from_static("localhost"),
         payload,
         source_run_id: Some(Uuid::now_v7()),

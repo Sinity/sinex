@@ -39,7 +39,8 @@ macro_rules! event_select_columns {
          scope_key, \
          equivalence_key, \
          created_by_operation_id::uuid as created_by_operation_id, \
-         node_model"
+         node_model, \
+         ts_quality"
     };
 }
 
@@ -72,7 +73,7 @@ mod tests {
     /// 2. Update the `EventRecord` struct in both schema + sinex-db conversions.rs
     /// 3. Update the `event_select_columns!` macro above
     /// 4. Update this constant
-    const EXPECTED_COLUMN_COUNT: usize = 25;
+    const EXPECTED_COLUMN_COUNT: usize = 26;
 
     /// Load-bearing column names that MUST appear in `event_select_columns!`.
     /// Every column that appears in the SELECT list should appear here so that
@@ -103,6 +104,7 @@ mod tests {
         "equivalence_key",
         "created_by_operation_id",
         "node_model",
+        "ts_quality",
     ];
 
     #[sinex_test]

@@ -389,11 +389,20 @@ impl AdmissionService {
 
     async fn admit_event_with_metadata(
         &self,
-        event: Event<JsonValue>,
+        mut event: Event<JsonValue>,
         metadata: Option<CandidateEventMetadata>,
     ) -> IngestdResult<AdmissionDecision> {
-        if event.ts_orig.is_none() {
-            warn!(event_id = ?event.id, "Event validation failed: missing ts_orig");
+        // #1570 Prong B: material-provenance events legitimately arrive with
+        // `ts_orig = None` — they defer resolution to the persistence stage,
+        // which reads the source-material timing tier *after* the
+        // `MaterialReadySet` FK gate confirms the registry row is visible (see
+        // `JetStreamConsumer::resolve_ready_ts_orig`). Resolving here would run
+        // before that gate and false-reject the FK-race case. Only derived
+        // events (which the builder always stamps with a synthesis `now()`)
+        // truly must carry `ts_orig` by admission time; a missing one there is a
+        // bug, so reject it.
+        if event.ts_orig.is_none() && !matches!(event.provenance, Provenance::Material { .. }) {
+            warn!(event_id = ?event.id, "Event validation failed: missing ts_orig on derived event");
             return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
                 AdmissionRejectionKind::MissingTimestamp,
                 "Validation failed: missing ts_orig",
@@ -476,7 +485,6 @@ impl AdmissionService {
             }
         };
 
-        let mut event = event;
         if let Some(schema_id) = validated_schema_id {
             event.payload_schema_id = Some(schema_id);
         }
@@ -972,6 +980,7 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> IngestdResult<Vec<Stream
                 equivalence_key: event.equivalence_key.clone(),
                 created_by_operation_id: event.created_by_operation_id,
                 node_model: event.node_model.map(|model| model.to_string()),
+                ts_quality: event.ts_quality.map(|quality| quality.to_string()),
             })
         })
         .collect()
