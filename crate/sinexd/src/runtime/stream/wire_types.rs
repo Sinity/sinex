@@ -111,7 +111,7 @@ pub struct ScanArgs {
     pub max_events: u64,
 
     /// Reserved for the #1050 offline-import dedup path (DB-backed
-    /// `build_occurrence_filter`). Live source-unit scans have no DB pool, so
+    /// `build_occurrence_filter`). Live source scans have no DB pool, so
     /// this is not consumed at the live boundary; live occurrence identity is
     /// carried via `equivalence_key` (#1570 Prong C) for the curation workbench,
     /// and automatic admission-side suppression is tracked separately.

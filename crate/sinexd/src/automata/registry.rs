@@ -1,15 +1,13 @@
-//! Static catalog of derived-node automata hosted in `sinexd`.
+//! Static catalog of automata hosted in `sinexd`.
 //!
 //! The supervisor reads `SINEX_AUTOMATA_ENABLED` (comma-separated list of
 //! automaton names, or the literal `all`) and dispatches each enabled entry
 //! through [`spawn`] into the supervisor task tree. Each spawn synthesizes a
 //! `RuntimeCli` argv with `--service-name sinex-<name>` and the `service`
 //! subcommand, then drives it through the standard
-//! [`RuntimeCliRunner`](crate::runtime::runtime_cli::RuntimeCliRunner) lifecycle —
-//! the same lifecycle the deleted `sinex-process` per-automaton binary
-//! used, just in-process.
+//! [`RuntimeCliRunner`](crate::runtime::runtime_cli::RuntimeCliRunner) lifecycle.
 //!
-//! Adding a new automaton is two lines below: import the node alias and add
+//! Adding a new automaton is two lines below: import the adapter alias and add
 //! an `AutomatonSpec` entry.
 
 use futures::future::BoxFuture;
@@ -29,9 +27,7 @@ pub type AutomatonRunFn = fn() -> BoxFuture<'static, Result<()>>;
 
 /// Static catalog entry for one hosted automaton.
 pub struct AutomatonSpec {
-    /// CLI-friendly name. Matches the historical `--automaton <name>`
-    /// selector for `sinex-process` so operator-facing tooling and
-    /// `SINEX_AUTOMATA_ENABLED` lists stay stable across the collapse.
+    /// CLI-friendly name used by `SINEX_AUTOMATA_ENABLED` and status surfaces.
     pub name: &'static str,
     /// Spawner that constructs and drives the automaton's `RuntimeCliRunner`.
     pub run: AutomatonRunFn,
@@ -154,12 +150,11 @@ pub fn parse_enabled(raw: Option<&str>) -> Result<Vec<&'static AutomatonSpec>> {
 ///
 /// Builds an in-process argv equivalent to:
 /// ```text
-/// sinex-process --automaton <name> --service-name sinex-<name> service
+/// sinexd <automaton runtime args> --service-name sinex-<name> service
 /// ```
-/// then dispatches through [`RuntimeCliRunner`] just as the deleted
-/// `sinex-process` trampoline did. Env-var fallbacks for NATS/TLS/database
-/// remain effective because `clap`'s `env` attribute reads the process
-/// environment at parse time.
+/// then dispatches through [`RuntimeCliRunner`]. Env-var fallbacks for
+/// NATS/TLS/database remain effective because `clap`'s `env` attribute reads
+/// the process environment at parse time.
 async fn run_one<T>(name: &'static str) -> Result<()>
 where
     T: crate::runtime::stream::RuntimeActor

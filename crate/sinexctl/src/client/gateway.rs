@@ -649,7 +649,7 @@ impl GatewayClient {
 
     // ==================== RuntimeActor Commands ====================
 
-    /// List derived-node/automata status.
+    /// List automata status.
     pub async fn automata_status(
         &self,
         stale_after_secs: u64,

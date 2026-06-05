@@ -44,7 +44,7 @@ async fn test_enhance_node_not_found() -> TestResult<()> {
     let enhanced = enhance_rpc_error("coordination.instance_health", original);
     let enhanced_str = enhanced.to_string();
 
-    assert!(enhanced_str.contains("sinexctl node list"));
+    assert!(enhanced_str.contains("sinexctl runtime list"));
     Ok(())
 }
 

@@ -2,7 +2,7 @@
 //!
 //! `sinexd` is one process hosting the event engine (admission +
 //! persistence + confirmation), the operator API (JSON-RPC + SSE +
-//! native-messaging), source dispatch, and derived-node automata.
+//! native-messaging), source dispatch, and automata.
 //! NATS remains the durable event-intent / confirmation / DLQ /
 //! replay-control fabric.
 

@@ -109,7 +109,7 @@ fn enhance_not_found_error(method: &str, err: &Report) -> Report {
         | methods::COORDINATION_LIST_INSTANCES
         | methods::COORDINATION_GET_LEADER
         | methods::COORDINATION_INSTANCE_HEALTH => {
-            "Use 'sinexctl node list' to see all available nodes"
+            "Use 'sinexctl runtime list' to see all available nodes"
         }
         methods::OPS_START | methods::OPS_LIST | methods::OPS_GET | methods::OPS_CANCEL => {
             "Use 'sinexctl ops list' to see all operations"

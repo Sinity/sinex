@@ -589,7 +589,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
         McpCatalogEntry {
             name: "sinex.automata_status",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only derived-node automata liveness, checkpoint, and lag status.",
+            description: "Read-only automata liveness, checkpoint, and lag status.",
             backing_rpc_methods: &[methods::AUTOMATA_STATUS],
             read_only: true,
         },

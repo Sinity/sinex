@@ -119,7 +119,7 @@ const NONE: &[OutputFormat] = &[];
 /// Build the complete format-capability registry for `sinexctl`.
 ///
 /// Keys match the command path as it appears in `sinexctl --help`, using
-/// space-separated segments (e.g. `"node list"`, `"replay plan"`).
+/// space-separated segments (e.g. `"runtime list"`, `"replay plan"`).
 ///
 /// Commands that produce no user-visible output (e.g. `completions`,
 /// `tui`, `demo`) appear with an empty supported set and a note explaining
@@ -145,19 +145,19 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
 
     // ── RuntimeActor ─────────────────────────────────────────────────────────────────
-    m.insert("node list", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("runtime list", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
-        "node status",
+        "runtime status",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert("ingestors", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("node drain", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("runtime drain", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
-        "node resume",
+        "runtime resume",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "node set-horizon",
+        "runtime set-horizon",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
@@ -806,9 +806,9 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "lifecycle tombstone approve",
         "lifecycle tombstone cancel",
         "lifecycle tombstone create",
-        "node drain",
-        "node resume",
-        "node set-horizon",
+        "runtime drain",
+        "runtime resume",
+        "runtime set-horizon",
         "ops cancel",
         "ops start",
         "privacy private-mode disable",
@@ -876,9 +876,9 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "instructions hyprland-workspace"
         | "lifecycle tombstone cancel"
         | "lifecycle tombstone create"
-        | "node drain"
-        | "node resume"
-        | "node set-horizon"
+        | "runtime drain"
+        | "runtime resume"
+        | "runtime set-horizon"
         | "ops cancel"
         | "ops start"
         | "privacy private-mode disable"
@@ -913,7 +913,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "gateway ping" => &[methods::SYSTEM_PING],
         "gateway version" => &[methods::SYSTEM_VERSION],
         "core health" => &[methods::SYSTEM_HEALTH],
-        "node list" | "modules" => &[methods::COORDINATION_LIST_INSTANCES],
+        "runtime list" | "modules" => &[methods::COORDINATION_LIST_INSTANCES],
         "status" => &[
             methods::SYSTEM_VERSION,
             methods::SYSTEM_HEALTH,
@@ -931,11 +931,11 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::DLQ_LIST,
             methods::EVENTS_QUERY,
         ],
-        "node status" => &[methods::COORDINATION_INSTANCE_HEALTH],
+        "runtime status" => &[methods::COORDINATION_INSTANCE_HEALTH],
         "ingestors" => &[methods::INGESTORS_STATUS],
-        "node drain" => &[methods::RUNTIME_DRAIN],
-        "node resume" => &[methods::RUNTIME_RESUME],
-        "node set-horizon" => &[methods::RUNTIME_SET_HORIZON],
+        "runtime drain" => &[methods::RUNTIME_DRAIN],
+        "runtime resume" => &[methods::RUNTIME_RESUME],
+        "runtime set-horizon" => &[methods::RUNTIME_SET_HORIZON],
         "automata" => &[methods::AUTOMATA_STATUS],
         "replay plan" | "replay run" => &[methods::REPLAY_CREATE_OPERATION],
         "replay preview" => &[methods::REPLAY_PREVIEW_OPERATION],
@@ -1550,7 +1550,7 @@ mod tests {
             "recent",
             "errors",
             "automata",
-            "node list",
+            "runtime list",
             "replay plan",
             "replay watch",
             "dlq list",

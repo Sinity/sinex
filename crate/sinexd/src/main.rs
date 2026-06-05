@@ -1,7 +1,7 @@
 //! `sinexd` — the Sinex local daemon.
 //!
 //! Single binary hosting the event engine, the operator API, the enabled
-//! derived-node automata, and the configured source bindings. The
+//! automata, and the configured source bindings. The
 //! default subcommand (`serve`, also the no-subcommand path) starts the
 //! supervisor; auxiliary subcommands run one-off scans against a single
 //! source (used by oneshot units like the document snapshot scan).

@@ -1,7 +1,7 @@
 //! Module lifecycle, cancellation, and startup/shutdown ordering.
 //!
 //! `sinexd` is a single daemon hosting the event engine (admission +
-//! persistence + confirmation), the operator API, the enabled derived-node
+//! persistence + confirmation), the operator API, the enabled
 //! automata, and the configured source bindings. Each module starts
 //! as a tokio task under the supervisor. The shutdown signal is sourced from
 //! `crate::runtime::service_runtime::spawn_shutdown_task` which handles

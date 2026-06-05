@@ -2065,7 +2065,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "description": "fixture automaton",
                             "manifest_status": "registered",
                             "live": true,
-                            "service_name": "sinex-process-session-detector.service",
+                            "service_name": "sinex-session-detector.service",
                             "instance_id": "session-detector-1",
                             "source_run_id": null,
                             "host": "test-host",

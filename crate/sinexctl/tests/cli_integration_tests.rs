@@ -58,7 +58,7 @@ mod help_tests {
             .args(["node", "--help"])
             .assert()
             .success()
-            .stdout(predicate::str::contains("RuntimeActor operations"))
+            .stdout(predicate::str::contains("Runtime module operations"))
             .stdout(predicate::str::contains("list"))
             .stdout(predicate::str::contains("status"))
             .stdout(predicate::str::contains("drain"))
@@ -359,7 +359,7 @@ mod error_handling_tests {
 
     #[sinex_test]
     async fn test_missing_required_args() -> TestResult<()> {
-        // node status requires a node name
+        // runtime status requires a module name
         sinexctl()
             .args(["node", "status"])
             .assert()

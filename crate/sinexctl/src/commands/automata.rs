@@ -8,7 +8,7 @@ use crate::client::GatewayClient;
 use crate::fmt::{CommandOutput, format_heartbeat_age};
 use crate::model::OutputFormat;
 
-/// Show derived-node/automata runtime status
+/// Show automata runtime status
 #[derive(Debug, Args)]
 #[command(after_help = "\
 EXAMPLES:

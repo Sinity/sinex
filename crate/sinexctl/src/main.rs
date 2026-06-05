@@ -112,8 +112,8 @@ enum Commands {
         cmd: CoreCommands,
     },
 
-    /// RuntimeActor operations
-    RuntimeActor {
+    /// Runtime module operations
+    Runtime {
         #[command(subcommand)]
         cmd: RuntimeCommands,
     },
@@ -365,7 +365,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Gateway { cmd } => cmd.execute(&client, format).await?,
                 Commands::Blob { .. } => unreachable!("Blob command handled above"),
                 Commands::Core { cmd } => cmd.execute(&client, format).await?,
-                Commands::RuntimeActor { cmd } => cmd.execute(&client, format).await?,
+                Commands::Runtime { cmd } => cmd.execute(&client, format).await?,
                 Commands::Automata(cmd) => cmd.execute(&client, format).await?,
                 Commands::Ingestors(cmd) => cmd.execute(&client, format).await?,
                 Commands::Replay { cmd } => cmd.execute(&client, format).await?,
@@ -504,12 +504,12 @@ fn command_path(cmd: &Commands) -> String {
             BlobCommands::VerifyIntegrity(_) => "blob verify-integrity".to_string(),
         },
         Commands::Core { .. } => "core health".to_string(),
-        Commands::RuntimeActor { cmd } => match cmd {
-            RuntimeCommands::List { .. } => "node list".to_string(),
-            RuntimeCommands::Status { .. } => "node status".to_string(),
-            RuntimeCommands::Drain { .. } => "node drain".to_string(),
-            RuntimeCommands::Resume { .. } => "node resume".to_string(),
-            RuntimeCommands::SetHorizon { .. } => "node set-horizon".to_string(),
+        Commands::Runtime { cmd } => match cmd {
+            RuntimeCommands::List { .. } => "runtime list".to_string(),
+            RuntimeCommands::Status { .. } => "runtime status".to_string(),
+            RuntimeCommands::Drain { .. } => "runtime drain".to_string(),
+            RuntimeCommands::Resume { .. } => "runtime resume".to_string(),
+            RuntimeCommands::SetHorizon { .. } => "runtime set-horizon".to_string(),
         },
         Commands::Automata(_) => "automata".to_string(),
         Commands::Ingestors(_) => "ingestors".to_string(),
