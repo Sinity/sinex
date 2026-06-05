@@ -10,7 +10,7 @@
 //! 8 KiB per node, runs in microseconds at p50/p99 read time, and adds zero
 //! per-event allocation on the write path. That is the right operating point.
 //!
-//! When this becomes wrong (more nodes, higher rates, or external scrape
+//! When this becomes wrong (more modules, higher rates, or external scrape
 //! cannot meet the cardinality budget), the natural successor is
 //! `tdigest`/`hdrhistogram` behind the same `LatencyWindow` API.
 //!
@@ -29,7 +29,7 @@
 use std::time::{Duration, Instant};
 
 /// Default sample reservoir size. 1024 samples is enough for stable p50/p99
-/// signals at typical derived-node throughput while keeping the read-side
+/// signals at typical automaton throughput while keeping the read-side
 /// sort cost negligible. Public for tests and downstream tuning; the adapter
 /// constructs windows with this default.
 pub const DEFAULT_LATENCY_RESERVOIR: usize = 1024;

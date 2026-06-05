@@ -11,11 +11,11 @@ sinexctl gateway ping --token "$SINEX_API_TOKEN"
 # Query recent events
 sinexctl query -s 1h --token "$SINEX_API_TOKEN"
 
-# List nodes and replay operations
-sinexctl node list --token "$SINEX_API_TOKEN"
+# List runtime modules and replay operations
+sinexctl runtime list --token "$SINEX_API_TOKEN"
 sinexctl replay list --token "$SINEX_API_TOKEN"
 
-# Inspect derived-node/automata runtime health and checkpoint position
+# Inspect automata runtime health and checkpoint position
 sinexctl automata --token "$SINEX_API_TOKEN"
 
 # Run runtime evidence checks, including passive derived-signal checks, managed
@@ -33,7 +33,7 @@ sinexctl dlq list --token "$SINEX_API_TOKEN"
 - `query`: event search and filtering
 - `verify`: bounded runtime evidence checks for pipeline activity, gateway reachability, passive derived outputs, managed document-scan smoke, enabled long-running collector surfaces, locally declared deployment surfaces, and historical backfill
 - `node`: list/status/drain/resume/horizon
-- `automata`: derived-node runtime health, checkpoints, replay/output recency, and SDK telemetry
+- `automata`: automaton runtime health, checkpoints, replay/output recency, and SDK telemetry
 - `replay`: plan/submit/watch/list
 - `dlq`: list/peek/requeue/purge
 - `ops`, `audit`: operation lifecycle and audit trail

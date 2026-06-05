@@ -11,7 +11,7 @@ use std::time::Duration;
 
 type Result<T> = std::result::Result<T, SinexError>;
 
-/// List registered automata with run, checkpoint, and derived-node telemetry.
+/// List registered automata with run, checkpoint, and automaton telemetry.
 pub async fn handle_automata_status(
     pool: &PgPool,
     request: AutomataStatusRequest,

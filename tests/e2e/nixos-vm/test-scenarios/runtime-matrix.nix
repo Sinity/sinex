@@ -164,11 +164,9 @@ SQL
       chmod 0644 /home/test/.zsh_history /home/test/.bash_history /home/test/.local/share/atuin/history.db /home/test/.local/share/fish/fish_history /home/test/.local/share/qutebrowser/history.sqlite /home/test/.local/share/qutebrowser/webengine/History
     '';
 
-    # VM tests only need process liveness here. Keep browser aligned with the
-    # filesystem VM override from common/test-base.nix so wait_for_unit does not
-    # depend on sd_notify readiness timing.
-    systemd.services.sinex-browser-1.serviceConfig.Type = lib.mkForce "simple";
-    systemd.services.sinex-browser-1.serviceConfig.TimeoutStartSec = lib.mkForce "infinity";
+    # VM tests exercise the collapsed sinexd process. Old per-source service
+    # overrides must not be present here; the test body asserts those units are
+    # absent from the generated systemd surface.
   };
 
   testScript = ''

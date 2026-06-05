@@ -80,7 +80,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 ///
 /// ### [`Class::Confirmation`] — persistence acknowledgement signals
 ///
-/// Per-event ACK signals from event_engine to derived-node adapters. Loss causes
+/// Per-event ACK signals from event_engine to automaton adapters. Loss causes
 /// duplicate processing (not data loss); automata re-check against DB state.
 ///
 /// - **Subject pattern**: `{env}.events.confirmations.{event_id}`

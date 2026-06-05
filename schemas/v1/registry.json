@@ -685,7 +685,7 @@
       "event_type": "latency_snapshot",
       "version": "1.0.0",
       "path": "sinexd.automaton/latency_snapshot.json",
-      "content_hash": "234a5cd8ebe40c1e922679509f4f4bb675f69a7334e5e5a5b953dc73fa7ed50e"
+      "content_hash": "8fa7bcee925749acfff87544e44924da6c1fd15965302b9a09ccdac640f2ccf5"
     },
     {
       "source": "sinexd.event_engine",

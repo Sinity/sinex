@@ -8,7 +8,7 @@
 - Added exponential backoff retry for RPC calls (3 attempts, configurable)
 - Smart error detection (retries 5xx, timeouts; skips 4xx auth errors)
 - Enhanced error messages with troubleshooting guides
-- Context-aware suggestions (e.g., "Use 'sinexctl node list'")
+- Context-aware suggestions (e.g., "Use 'sinexctl runtime list'")
 
 **Validation & Safety:**
 - Comprehensive input validation module

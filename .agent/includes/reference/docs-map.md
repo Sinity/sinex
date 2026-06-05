@@ -26,7 +26,7 @@
 | Inline runtime / source contracts | `crate/sinexd/docs/sources/`, `crate/sinexd/src/runtime/` |
 | Source-material evidence lanes | `crate/sinexd/docs/sources/evidence_lanes.md`, `crate/sinexd/docs/sources/sqlite_evidence_lane.md` |
 | Integration authority | `crate/sinexd/docs/sources/integration_authority.md` |
-| Automata / derived-node guidance | `crate/sinexd/docs/automata/` |
+| Automata guidance | `crate/sinexd/docs/automata/` |
 | Checkpoints/replay | `crate/sinexd/docs/sources/historical_backfill_runtime_plane.md`, `crate/sinexd/docs/api/replay_control.md` |
 | Staged export parsers | `crate/sinexd/docs/sources/adding_staged_export_parser.md` |
 | Provenance | `README.md#the-provenance-model-read-this-first` |

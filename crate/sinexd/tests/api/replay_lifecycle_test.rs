@@ -166,7 +166,7 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
         .expect("seeded replay target should carry ts_orig");
 
     let cascade_event = DynamicPayload::new(
-        "derived-node",
+        "automaton",
         "file.derived",
         serde_json::json!({ "path": "/tmp/replay-lifecycle-derived.txt" }),
     )

@@ -1,6 +1,6 @@
 //! Automaton event payloads.
 //!
-//! Keep this module tied to event types emitted by real derived-node crates.
+//! Keep this module tied to event types emitted by real automaton crates.
 //! Future automata should add payload contracts when their emitters land, not
 //! ahead of implementation.
 

@@ -587,7 +587,7 @@ pub struct ThroughputSourceEntry {
     pub eps_24h: f64,
 }
 
-/// Per-component aggregate: event_engine/gateway/derived-nodes lumped into one
+/// Per-component aggregate: event_engine/gateway/automatons lumped into one
 /// row each so an operator can see "is the gateway above its long-run rate?"
 /// in a glance.
 #[derive(Debug, Clone, Serialize, Deserialize)]

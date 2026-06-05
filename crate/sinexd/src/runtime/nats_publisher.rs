@@ -503,7 +503,7 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish a derived-node processing failure envelope.
+    /// Publish a automaton processing failure envelope.
     ///
     /// `transport::Class::Derived` (failure routing) — routes to the
     /// processing-failure stream (`events.processing_failures.*`), not the

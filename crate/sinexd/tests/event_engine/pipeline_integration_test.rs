@@ -420,7 +420,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
     }
 
     // Phase 2: Simulate processing pipeline transformations
-    // In a real system, this would be done by automata/nodes
+    // In a real system, this would be done by automata.
     let mut transformed_event_ids = Vec::new();
 
     for raw_event_id in &raw_event_ids {

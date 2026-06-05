@@ -278,19 +278,19 @@ pub struct SourceProcessingStatsPayload {
     pub error_count: u64,
 }
 
-/// Derived-node per-event latency snapshot
+/// Automaton per-event latency snapshot
 ///
 /// Single-event replacement for the six separate `metric.gauge` emissions that
 /// `AutomatonRuntime::observe_processing_latency` previously produced
 /// (`derived.event_lag_ms`, `derived.tick_runtime_ms`, the two
 /// `event_lag_p{50,99}_ms` reservoir percentiles, `derived.tick_runtime_p99_ms`,
 /// and `derived.throughput_eps`). Reducing six rows-per-snapshot to one row
-/// cuts derived-node telemetry volume by ~6x without any information loss; see
+/// cuts automaton telemetry volume by ~6x without any information loss; see
 /// issue #1556.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinexd.automaton", event_type = "latency_snapshot")]
 pub struct AutomatonLatencySnapshotPayload {
-    /// Derived-node name (e.g., "session-detector")
+    /// Automaton name (e.g., "session-detector")
     pub module_name: String,
     /// Last lag sample (ms) — wall time between upstream `ts_orig` and dispatch
     #[serde(

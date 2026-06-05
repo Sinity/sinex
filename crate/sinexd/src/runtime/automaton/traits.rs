@@ -178,7 +178,7 @@ pub trait Transducer: Send + Sync + 'static {
 ///
 /// # Scope invalidation
 ///
-/// Windowed nodes do **not** set `scope_key` on their outputs and are
+/// Windowed modules do **not** set `scope_key` on their outputs and are
 /// **out of scope** for scope-based invalidation recompute (see #1569).
 /// The input-driven accumulation model is authoritative; `recompute_window`
 /// is provided for ad-hoc replay but is not called by the invalidation path.
@@ -502,9 +502,9 @@ pub trait Automaton: Send + Sync + 'static {
         state: &Self::State,
     ) -> impl std::future::Future<Output = Result<(), AutomatonLogicError>> + Send;
 
-    /// Clock-driven flush for `Windowed` nodes (trailing-bucket emission).
+    /// Clock-driven flush for `Windowed` modules (trailing-bucket emission).
     ///
-    /// Called by the SDK periodic timer with the current wall time. Returns
+    /// Called by the runtime periodic timer with the current wall time. Returns
     /// any output events produced by flushing the open accumulator.
     ///
     /// Default: returns empty — non-windowed models do not flush on a timer.
@@ -687,7 +687,7 @@ impl<N: Windowed> Automaton for WindowedWrapper<N> {
         self.0.on_shutdown(state).await
     }
 
-    /// Clock-driven trailing-bucket flush for `Windowed` nodes.
+    /// Clock-driven trailing-bucket flush for `Windowed` modules.
     ///
     /// Calls `flush_due(state, now)`. If true, calls `emit()` and returns the
     /// serialized output. The accumulator is reset inside `emit()` by the
@@ -761,7 +761,7 @@ where
                 serialize_outputs(self.0.reconcile(state, scope_key, input, context).await?)
             }
             _ => Err(AutomatonLogicError::Processing(format!(
-                "ScopeReconciler '{}' returned {} live scope keys; derived-node live processing supports at most one scope per trigger",
+                "ScopeReconciler '{}' returned {} live scope keys; automaton live processing supports at most one scope per trigger",
                 self.0.name(),
                 scope_keys.len()
             ))),

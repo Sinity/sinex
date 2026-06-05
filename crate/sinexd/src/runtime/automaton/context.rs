@@ -10,7 +10,7 @@ use crate::runtime::AutomatonLogicError;
 use crate::runtime::RuntimeResult;
 use crate::runtime::SinexError;
 
-/// Rich trigger context passed to every derived-node processing call.
+/// Rich trigger context passed to every automaton processing call.
 #[derive(Debug, Clone)]
 pub struct AutomatonContext {
     /// The event that triggered this processing call.
@@ -55,7 +55,7 @@ impl AutomatonContext {
     pub fn require_ts_orig(&self) -> Result<Timestamp, AutomatonLogicError> {
         self.ts_orig.ok_or_else(|| {
             AutomatonLogicError::InputParsing(format!(
-                "derived-node trigger event {} is missing ts_orig (source={}, event_type={}, processing_mode={})",
+                "automaton trigger event {} is missing ts_orig (source={}, event_type={}, processing_mode={})",
                 self.trigger_event_id,
                 self.source,
                 self.event_type,
@@ -67,7 +67,7 @@ impl AutomatonContext {
     /// Create a context for live processing of a new event.
     pub fn live(event: &Event<JsonValue>) -> RuntimeResult<Self> {
         let trigger_event_id = event.id.ok_or_else(|| {
-            SinexError::validation("derived-node trigger event is missing an id")
+            SinexError::validation("automaton trigger event is missing an id")
                 .with_context("processing_mode", ProcessingMode::Live.to_string())
                 .with_context("event_type", event.event_type.as_ref())
                 .with_context("source", event.source.as_ref())
@@ -111,7 +111,7 @@ impl AutomatonContext {
         operation_id: Option<Id<OperationMarker>>,
     ) -> RuntimeResult<Self> {
         let trigger_event_id = event.id.ok_or_else(|| {
-            SinexError::validation("derived-node replay event is missing an id")
+            SinexError::validation("automaton replay event is missing an id")
                 .with_context("processing_mode", ProcessingMode::Replay.to_string())
                 .with_context("event_type", event.event_type.as_ref())
                 .with_context("source", event.source.as_ref())

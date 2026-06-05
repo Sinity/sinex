@@ -1,4 +1,4 @@
-//! Workspace-level contracts for production derived-node output schemas.
+//! Workspace-level contracts for production automaton output schemas.
 
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinexd::automata::{

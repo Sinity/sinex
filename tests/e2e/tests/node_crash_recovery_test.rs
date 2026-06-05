@@ -1,7 +1,7 @@
-//! Adversarial tests for node crash recovery during material acquisition.
+//! Adversarial tests for source-driver crash recovery during material acquisition.
 //!
 //! These scenarios exercise Stage-as-You-Go’s `JetStream` material pipeline when
-//! nodes crash mid-acquisition. Since nodes no longer write directly
+//! source drivers crash mid-acquisition. Since source drivers no longer write directly
 //! to Postgres, we stand up a test `event_engine` to consume begin/slice/end messages
 //! and persist registry state.
 
@@ -251,7 +251,7 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
     Ok(())
 }
 
-/// Detect orphaned materials left sensing after multiple nodes crash.
+/// Detect orphaned materials left sensing after multiple source drivers crash.
 #[sinex_test]
 async fn test_orphaned_material_detection_and_recovery(ctx: TestContext) -> Result<()> {
     let EventEngineSetup {

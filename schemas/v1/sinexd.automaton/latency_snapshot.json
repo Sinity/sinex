@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Derived-node per-event latency snapshot\n\nSingle-event replacement for the six separate `metric.gauge` emissions that\n`AutomatonRuntime::observe_processing_latency` previously produced\n(`derived.event_lag_ms`, `derived.tick_runtime_ms`, the two\n`event_lag_p{50,99}_ms` reservoir percentiles, `derived.tick_runtime_p99_ms`,\nand `derived.throughput_eps`). Reducing six rows-per-snapshot to one row\ncuts derived-node telemetry volume by ~6x without any information loss; see\nissue #1556.",
+  "description": "Automaton per-event latency snapshot\n\nSingle-event replacement for the six separate `metric.gauge` emissions that\n`AutomatonRuntime::observe_processing_latency` previously produced\n(`derived.event_lag_ms`, `derived.tick_runtime_ms`, the two\n`event_lag_p{50,99}_ms` reservoir percentiles, `derived.tick_runtime_p99_ms`,\nand `derived.throughput_eps`). Reducing six rows-per-snapshot to one row\ncuts automaton telemetry volume by ~6x without any information loss; see\nissue #1556.",
   "properties": {
     "event_lag_ms": {
       "description": "Last lag sample (ms) — wall time between upstream `ts_orig` and dispatch",
@@ -34,7 +34,7 @@
       "type": "object"
     },
     "module_name": {
-      "description": "Derived-node name (e.g., \"session-detector\")",
+      "description": "Automaton name (e.g., \"session-detector\")",
       "type": "string"
     },
     "throughput_eps": {

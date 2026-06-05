@@ -65,7 +65,7 @@ call in the source.
 | `crate/sinexd/src/event_engine/jetstream_consumer.rs` | DLQ re-publish (`publish_dlq_entry`) | `Critical` |
 | `crate/sinexd/src/event_engine/material_assembler/finalize.rs` | material DLQ routing | `SourceMaterial` |
 | `crate/sinexd/src/event_engine/service.rs` | active schema broadcast | `Control` |
-| `crate/sinexd/src/api/handlers/nodes.rs` | drain/resume/horizon command publish | `Control` |
+| `crate/sinexd/src/api/handlers/modules.rs` | drain/resume/horizon command publish | `Control` |
 | `crate/sinexd/src/api/replay_control/` | replay control response | `Control` |
 | `crate/sinexd/src/api/replay_control/` | `publish_scope_invalidations` | `Invalidation` |
 
@@ -94,7 +94,7 @@ confusion; the boundaries below are authoritative.
   not transform its input, a windowed node emitted an invalid output, a
   transducer panicked.
 - **Who writes**: `NatsPublisher::publish_processing_failure` (called from
-  derived-node adapter).
+  automaton adapter).
 - **Who reads**: operator tooling; not automatically retried (retry = re-run
   the automaton via replay).
 - **Subject**: `{env}.events.processing_failures.{node}.{event_id}` (stream:
@@ -161,7 +161,7 @@ deduplicates via equivalence key or scope reconciliation.
 ### `Invalidation` — scope fan-out
 
 No special drain needed. JetStream holds undelivered invalidations for all
-durable consumers. Derived nodes that restart will receive queued
+durable consumers. Automata that restart will receive queued
 invalidations and recompute affected scopes.
 
 ### `Control` — coordination traffic
@@ -199,7 +199,7 @@ A `TimeoutStopSec = 30s` is sufficient for all current components.
 
 ## Test shutdown behavior
 
-In the sandbox (`xtask::sandbox`), nodes receive a controlled shutdown via
+In the sandbox (`xtask::sandbox`), modules receive a controlled shutdown via
 `shutdown_rx`. The drain sequence is identical to SIGTERM. Tests that assert on
 event counts must call `ctx.timing().wait_for_event_count(N)` before triggering
 shutdown; otherwise in-flight events may not yet be confirmed.

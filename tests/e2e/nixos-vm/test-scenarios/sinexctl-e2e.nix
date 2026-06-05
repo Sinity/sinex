@@ -132,26 +132,26 @@ pkgs.testers.nixosTest {
         assert "timeout" in config_json, "Config should have timeout"
         print(f"Config loaded successfully with {len(config_json)} fields")
 
-    # Test 3: RuntimeModule listing with JSON output
-    with subtest("sinexctl node list with JSON"):
-        # List nodes - may be empty initially
-        nodes_output = sinexctl("node list -f json", check=False)
-        exit_code = nodes_output[0]
-        output = nodes_output[1]
+    # Test 3: Runtime module listing with JSON output
+    with subtest("sinexctl runtime list with JSON"):
+        # List runtime modules - may be empty initially
+        modules_output = sinexctl("runtime list -f json", check=False)
+        exit_code = modules_output[0]
+        output = modules_output[1]
 
         if exit_code == 0 and output.strip():
-            nodes = flatten_json_items(parse_json_output(output), ("nodes", "instances"))
-            for node in nodes:
-                if isinstance(node, dict):
-                    name = node.get("name") or node.get("module_name") \
-                        or node.get("service_name") or node.get("instance_id") or "unknown"
-                    print(f"Found node: {name}")
+            modules = flatten_json_items(parse_json_output(output), ("modules", "instances"))
+            for module in modules:
+                if isinstance(module, dict):
+                    name = module.get("name") or module.get("module_name") \
+                        or module.get("service_name") or module.get("instance_id") or "unknown"
+                    print(f"Found runtime module: {name}")
                 else:
-                    print(f"Found node entry: {node}")
-            if not nodes:
-                print("No nodes registered yet (expected for fresh install)")
+                    print(f"Found runtime module entry: {module}")
+            if not modules:
+                print("No runtime modules registered yet (expected for fresh install)")
         else:
-            print("No nodes registered yet (expected for fresh install)")
+            print("No runtime modules registered yet (expected for fresh install)")
 
     # Test 4: Generate events and query
     with subtest("Event generation and query"):

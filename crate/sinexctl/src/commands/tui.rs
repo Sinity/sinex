@@ -1110,7 +1110,7 @@ fn automaton_dlq_card(app: &App) -> Option<OperationRoomCard> {
         .iter()
         .find(|message| is_automaton_material_dlq(message))?;
     Some(OperationRoomCard {
-        title: "derived-node telemetry DLQ material gap".to_string(),
+        title: "automaton telemetry DLQ material gap".to_string(),
         authority: "admin".to_string(),
         phase: "blocked".to_string(),
         progress: format!(
@@ -1131,7 +1131,7 @@ fn automaton_dlq_card(app: &App) -> Option<OperationRoomCard> {
         caveats: vec![
             "first-class DLQ class: likely missing source-material registration for derived telemetry".to_string(),
             "requeue will probably re-DLQ until the Source Readiness Cockpit row is fixed".to_string(),
-            "downstream projections may miss derived-node telemetry until repaired".to_string(),
+            "downstream projections may miss automaton telemetry until repaired".to_string(),
         ],
         actions: vec![
             OperationRoomAction::new(
@@ -1150,7 +1150,7 @@ fn automaton_dlq_card(app: &App) -> Option<OperationRoomCard> {
                 "sinexctl dlq requeue --all",
             ),
         ],
-        audit_refs: vec!["Ref #1241 derived-node telemetry DLQ verification".to_string()],
+        audit_refs: vec!["Ref #1241 automaton telemetry DLQ verification".to_string()],
     })
 }
 
