@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TimelineViewport v3",
+  "type": "object",
+  "required": [
+    "time_range",
+    "lanes",
+    "selection",
+    "actions"
+  ],
+  "properties": {
+    "time_range": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "lanes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "selection": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true
+    },
+    "query_echo": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "overlays": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "$ref": "action-availability-v3.schema.json"
+      }
+    }
+  }
+}
