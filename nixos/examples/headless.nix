@@ -30,7 +30,9 @@
     runtime = {
       enable = true;
       defaults.logLevel = "info";
+    };
 
+    sources = {
       filesystem = {
         enable = true;
         instances = 1;
@@ -53,14 +55,14 @@
       terminal.enable = false;
       browser.enable = false;
       desktop.enable = false;
+    };
 
-      automata = {
-        enable = true;
-        canonicalizer.enable = true;
-        healthAggregator.enable = true;
-        analyticsAutomaton.enable = true;
-        sessionDetector.enable = true;
-      };
+    automata = {
+      enable = true;
+      canonicalizer.enable = true;
+      healthAggregator.enable = true;
+      analyticsAutomaton.enable = true;
+      sessionDetector.enable = true;
     };
 
     observability.enable = false;

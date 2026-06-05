@@ -16,10 +16,13 @@ let
   cfg = config.services.sinex;
   coreCfg = cfg.core;
   runtimeCfg = cfg.runtime;
+  sourceCfg = cfg.sources;
+  automataCfg = cfg.automata;
 
   sinexEnabled = cfg.enable;
   coreEnabled = sinexEnabled && coreCfg.enable;
   runtimeEnabled = sinexEnabled && runtimeCfg.enable;
+  sourceRuntimeEnabled = runtimeEnabled && sourceCfg.enable;
   natsEnabled = cfg.nats.enable || cfg.nats.autoSetup;
   localPostgresEnabled = cfg.database.enable && (cfg.database.autoSetup || config.services.postgresql.enable);
 
@@ -325,7 +328,7 @@ let
     if targetUser == null then null
     else lib.attrByPath [ "users" "users" targetUser "uid" ] null config;
   effectiveDocumentRoots =
-    if runtimeCfg.document.allowedRoots != [ ] then runtimeCfg.document.allowedRoots
+    if sourceCfg.document.allowedRoots != [ ] then sourceCfg.document.allowedRoots
     else if targetHome == null then [ ]
     else [ "${targetHome}/Documents" ];
   terminalSourceIdForShell = shell:
@@ -669,7 +672,7 @@ let
   # binding manifest below.
   mkFilesystemBindings =
     let
-      sat = runtimeCfg.filesystem;
+      sat = sourceCfg.filesystem;
       instances = resolveInstances sat.instances;
       resources = resolveResources sat.resources;
       runtimeConfig = {
@@ -704,7 +707,7 @@ let
   # Returns source bindings plus the ACL setup one-shot service.
   mkTerminalGlue =
     let
-      sat = runtimeCfg.terminal;
+      sat = sourceCfg.terminal;
       instances = resolveInstances sat.instances;
       resources = resolveResources sat.resources;
       effectiveHistorySources =
@@ -921,7 +924,7 @@ let
   # Returns source bindings, support units, and desktop bridge paths.
   mkDesktopGlue =
     let
-      sat = runtimeCfg.desktop;
+      sat = sourceCfg.desktop;
       resources = resolveResources sat.resources;
       clipboardEnv = if sat.clipboard.enable then { SINEX_CLIPBOARD = "1"; } else { SINEX_CLIPBOARD = "0"; };
       bridgeEnvFile = "${runtimeDir}/desktop-target.env";
@@ -1256,7 +1259,7 @@ let
   # Browser source binding contribution.
   mkBrowserGlue =
     let
-      sat = runtimeCfg.browser;
+      sat = sourceCfg.browser;
       instances = resolveInstances sat.instances;
       resources = resolveResources sat.resources;
       # Post-Wave-B fold (#1081): browser.history uses
@@ -1400,7 +1403,7 @@ let
   # System source binding contribution.
   mkSystemGlue =
     let
-      sat = runtimeCfg.system;
+      sat = sourceCfg.system;
       resources = resolveResources sat.resources;
       # Post-Wave-B fold (#1081): system source contracts share this config blob.
       # Each parser only reads what its source-specific code touches.
@@ -1498,7 +1501,7 @@ let
 
   mkDocumentUnits =
     let
-      sat = runtimeCfg.document;
+      sat = sourceCfg.document;
       resources = resolveResources sat.resources;
       documentRoots = unique (map toString effectiveDocumentRoots);
       runtimeConfig = builtins.toJSON {
@@ -1644,9 +1647,9 @@ let
   # SINEX_AUTOMATA_ENABLED. The catalog still drives which names are
   # eligible; selection comes from each automaton's enable flag.
   automataEnabledNames =
-    if !(runtimeEnabled && runtimeCfg.automata.enable) then [ ] else
+    if !(runtimeEnabled && automataCfg.enable) then [ ] else
     map (spec: spec.automaton)
-      (filter (spec: runtimeCfg.automata.${spec.optionName}.enable) automataLib.specs);
+      (filter (spec: automataCfg.${spec.optionName}.enable) automataLib.specs);
 
   # ── Support-glue assembly ────────────────────────────────────────────────
   # Post-collapse: per-source service emission is gone. Each domain glue
@@ -1657,19 +1660,19 @@ let
   # SupplementaryGroups / unit path packages — merged into sinexd.service).
   emptyGlue = { bindings = { }; supportUnits = { }; overlay = { }; };
   terminalGlue =
-    if runtimeEnabled && runtimeCfg.terminal.enable then mkTerminalGlue
+    if sourceRuntimeEnabled && sourceCfg.terminal.enable then mkTerminalGlue
     else emptyGlue;
   desktopGlue =
-    if runtimeEnabled && runtimeCfg.desktop.enable then mkDesktopGlue
+    if sourceRuntimeEnabled && sourceCfg.desktop.enable then mkDesktopGlue
     else emptyGlue // { paths = { }; };
   browserGlue =
-    if runtimeEnabled && runtimeCfg.browser.enable then mkBrowserGlue
+    if sourceRuntimeEnabled && sourceCfg.browser.enable then mkBrowserGlue
     else emptyGlue;
   systemGlue =
-    if runtimeEnabled && runtimeCfg.system.enable then mkSystemGlue
+    if sourceRuntimeEnabled && sourceCfg.system.enable then mkSystemGlue
     else { bindings = { }; overlay = { }; };
   filesystemGlue =
-    if runtimeEnabled && runtimeCfg.filesystem.enable then mkFilesystemBindings
+    if sourceRuntimeEnabled && sourceCfg.filesystem.enable then mkFilesystemBindings
     else { bindings = { }; overlay = { }; };
 
   # All domain-specific source bindings merged together.
@@ -1718,7 +1721,7 @@ let
   # Source-binding manifest consumed by sinexd via SINEX_SOURCE_BINDINGS_PATH.
   # Schema mirrors `sinexd::sources::bindings::SourceBindingsManifest`.
   activeManifestBindings =
-    if !runtimeEnabled then [ ]
+    if !sourceRuntimeEnabled then [ ]
     else
       concatMap
         (id:
@@ -1752,7 +1755,7 @@ let
     );
 
   documentScanService =
-    if !(runtimeEnabled && runtimeCfg.document.enable) then { units = { }; supportUnits = { }; } else mkDocumentUnits;
+    if !(sourceRuntimeEnabled && sourceCfg.document.enable) then { units = { }; supportUnits = { }; } else mkDocumentUnits;
 
   coreServices = mkCoreServices {
     automataEnabledList = automataEnabledNames;
@@ -1789,13 +1792,13 @@ in
       ];
       systemd.paths = desktopGlue.paths or { };
       systemd.timers = mkMerge [
-        (optionalAttrs (runtimeEnabled && runtimeCfg.document.enable && runtimeCfg.document.schedule != null) {
+        (optionalAttrs (sourceRuntimeEnabled && sourceCfg.document.enable && sourceCfg.document.schedule != null) {
           "sinex-document-scan" = {
             description = "Schedule Sinex document snapshot scans";
             wantedBy = [ "timers.target" ];
             timerConfig = {
-              OnCalendar = runtimeCfg.document.schedule;
-              Persistent = runtimeCfg.document.persistentTimer;
+              OnCalendar = sourceCfg.document.schedule;
+              Persistent = sourceCfg.document.persistentTimer;
             };
           };
         })

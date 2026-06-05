@@ -44,8 +44,8 @@ values derived from `stateRoot` and the global `logLevel`.
     database.autoSetup = true;
     nats.autoSetup = true; # defaulted on when services.sinex.enable = true
 
-    runtime.filesystem.watchPaths = [ "/home/alice" "/workspace" ];
-    runtime.automata.canonicalizer.profile = "heavy";
+    sources.filesystem.watchPaths = [ "/home/alice" "/workspace" ];
+    automata.canonicalizer.profile = "heavy";
 
     observability.monitoring = {
       enable = true;
@@ -121,7 +121,7 @@ disabled (e.g. staging migrations).
   resource limits. Individual runtime modules can override by setting their field to
   `null` (inherit) or a concrete value. See
   [`resource-scoping.md`](resource-scoping.md).
-- `runtime.document` is intentionally not a long-running source task. It renders a
+- `sources.document` is intentionally not a long-running source task. It renders a
   managed oneshot service (`sinex-document-scan.service`) plus an optional
   timer (`sinex-document-scan.timer`), and the module requires that at least
   one of `runOnBoot` or `schedule` is enabled so the surface actually runs.
@@ -137,8 +137,8 @@ disabled (e.g. staging migrations).
   `terminal`, `browser`, `desktop`, `system`) default to singleton startup
   (`instances = 1`) so the first live host enable does not double-run capture
   runtime modules before coordination is intentionally introduced.
-- `runtime.terminal.historySources`, `runtime.browser.{dumpSources,sqliteSources}`,
-  and `runtime.desktop.session.*` remain the typed override surfaces when the
+- `sources.terminal.historySources`, `sources.browser.{dumpSources,sqliteSources}`,
+  and `sources.desktop.session.*` remain the typed override surfaces when the
   target user layout is non-standard or a deployment needs explicit socket/runtime
   wiring.
 - Desktop target-user access is a two-step bridge. First, the root
@@ -151,7 +151,7 @@ disabled (e.g. staging migrations).
   the resolved `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`,
   `SINEX_HYPRLAND_RUNTIME_DIR`, `SINEX_HYPRLAND_INSTANCE_SIGNATURE`, and explicit
   socket overrides when configured.
-- Prefer the typed `runtime.desktop.session.{runtimeDir,waylandDisplay,
+- Prefer the typed `sources.desktop.session.{runtimeDir,waylandDisplay,
   hyprlandInstanceSignature,hyprlandEventSocket,hyprlandCommandSocket}` options
   over ad hoc per-unit environment variables. `desktop.window-manager` resolves
   the Hyprland event socket from `SINEX_HYPRLAND_EVENT_SOCKET` first, then from
@@ -164,7 +164,7 @@ disabled (e.g. staging migrations).
   Sinex services default to low CPU/IO scheduler weight (`CPUWeight=10`,
   `IOWeight=10`), idle IO scheduling, and `Nice=10` in addition to their
   per-service `MemoryHigh`, `MemoryMax`, and `CPUQuota` settings.
-- Automata use named profiles defined under `runtime.automata.profiles`; set
+- Automata use named profiles defined under `automata.profiles`; set
   `profile = "light"|"standard"|"heavy"` to select batch and resource limits.
 - The module emits `sinexd` as the only long-running Sinex runtime unit.
   Support oneshots/timers such as preflight, blob init, document scan, and

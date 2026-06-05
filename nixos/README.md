@@ -263,9 +263,9 @@ services.sinex.runtime = {
 };
 ```
 
-`runtime.terminal.access.bindReadOnlyPaths`,
-`runtime.browser.access.bindReadOnlyPaths`, and
-`runtime.desktop.access.bindReadOnlyPaths` remain available as escape hatches, but
+`sources.terminal.access.bindReadOnlyPaths`,
+`sources.browser.access.bindReadOnlyPaths`, and
+`sources.desktop.access.bindReadOnlyPaths` remain available as escape hatches, but
 they are no longer the primary workstation path.
 
 ### Production Setup with Hot Standby

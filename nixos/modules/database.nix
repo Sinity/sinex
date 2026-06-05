@@ -23,6 +23,7 @@ let
   sinexEnabled = cfg.enable;
   coreEnabled = sinexEnabled && cfg.core.enable;
   runtimeEnabled = sinexEnabled && cfg.runtime.enable;
+  sourcesEnabled = runtimeEnabled && cfg.sources.enable;
 
   ingestEnabled = coreEnabled && cfg.core.event_engine.enable;
   gatewayEnabled = coreEnabled && cfg.core.gateway.enable;
@@ -36,21 +37,21 @@ let
     if value != null then value else defaultInstances;
 
   runtimeServiceCount =
-    if !runtimeEnabled then
+    if !sourcesEnabled then
       0
     else
-      (if cfg.runtime.filesystem.enable then resolveInstances cfg.runtime.filesystem else 0)
-      + (if cfg.runtime.terminal.enable then resolveInstances cfg.runtime.terminal else 0)
-      + (if cfg.runtime.browser.enable then resolveInstances cfg.runtime.browser else 0)
-      + (if cfg.runtime.desktop.enable then resolveInstances cfg.runtime.desktop else 0)
-      + (if cfg.runtime.system.enable then resolveInstances cfg.runtime.system else 0);
+      (if cfg.sources.filesystem.enable then resolveInstances cfg.sources.filesystem else 0)
+      + (if cfg.sources.terminal.enable then resolveInstances cfg.sources.terminal else 0)
+      + (if cfg.sources.browser.enable then resolveInstances cfg.sources.browser else 0)
+      + (if cfg.sources.desktop.enable then resolveInstances cfg.sources.desktop else 0)
+      + (if cfg.sources.system.enable then resolveInstances cfg.sources.system else 0);
 
-  automataEnabled = runtimeEnabled && cfg.runtime.automata.enable;
+  automataEnabled = runtimeEnabled && cfg.automata.enable;
   automataCount =
     if !automataEnabled then
       0
     else
-      automataLib.countEnabled cfg.runtime.automata;
+      automataLib.countEnabled cfg.automata;
 
   coreServiceCount = (if ingestEnabled then 1 else 0) + (if gatewayEnabled then 1 else 0);
 

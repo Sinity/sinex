@@ -38,18 +38,22 @@
 
     runtime = {
       enable = true;
+    };
+
+    sources = {
       filesystem.watchPaths = [ "/home/observer" ];
       terminal.enable = true;
       browser.enable = true;
       desktop.enable = true;
       system.enable = true;
-      automata = {
-        enable = true;
-        canonicalizer.enable = true;
-        healthAggregator.enable = true;
-        analyticsAutomaton.enable = true;
-        sessionDetector.enable = true;
-      };
+    };
+
+    automata = {
+      enable = true;
+      canonicalizer.enable = true;
+      healthAggregator.enable = true;
+      analyticsAutomaton.enable = true;
+      sessionDetector.enable = true;
     };
 
     observability = {

@@ -43,7 +43,9 @@
           SINEX_EDGE_MODE = "1";
         };
       };
+    };
 
+    sources = {
       filesystem = {
         enable = true;
         instances = 1;
@@ -57,14 +59,14 @@
 
       desktop.enable = false;
       system.enable = false;
+    };
 
-      automata = {
-        enable = false;
-        canonicalizer.enable = false;
-        healthAggregator.enable = false;
-        analyticsAutomaton.enable = false;
-        sessionDetector.enable = false;
-      };
+    automata = {
+      enable = false;
+      canonicalizer.enable = false;
+      healthAggregator.enable = false;
+      analyticsAutomaton.enable = false;
+      sessionDetector.enable = false;
     };
 
     shell.kitty.enable = false;

@@ -60,7 +60,9 @@
       };
       coordination.enable = false;
       defaults.logLevel = "info";
+    };
 
+    sources = {
       filesystem = {
         enable = true;
         instances = 1;
@@ -75,14 +77,14 @@
       };
       desktop.enable = false;
       system.enable = false;
+    };
 
-      automata = {
-        enable = true;
-        canonicalizer.enable = true;
-        healthAggregator.enable = true;
-        analyticsAutomaton.enable = true;
-        sessionDetector.enable = true;
-      };
+    automata = {
+      enable = true;
+      canonicalizer.enable = true;
+      healthAggregator.enable = true;
+      analyticsAutomaton.enable = true;
+      sessionDetector.enable = true;
     };
 
     observability = {

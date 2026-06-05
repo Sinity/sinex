@@ -71,7 +71,9 @@
         leadershipTimeoutSec = 60;
         handoffTimeoutSec = 30;
       };
+    };
 
+    sources = {
       filesystem = {
         enable = true;
         instances = 2;
@@ -117,14 +119,14 @@
           cpuQuota = "60%";
         };
       };
+    };
 
-      automata = {
-        enable = true;
-        canonicalizer.enable = true;
-        healthAggregator.enable = true;
-        analyticsAutomaton.enable = true;
-        sessionDetector.enable = true;
-      };
+    automata = {
+      enable = true;
+      canonicalizer.enable = true;
+      healthAggregator.enable = true;
+      analyticsAutomaton.enable = true;
+      sessionDetector.enable = true;
     };
 
     observability = {

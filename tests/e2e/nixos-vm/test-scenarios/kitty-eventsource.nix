@@ -24,8 +24,8 @@ pkgs.testers.nixosTest {
     # Kitty-specific sinex configuration
     services.sinex = {
       users.target = lib.mkForce "testuser";
-      runtime.filesystem.enable = true;
-      runtime.terminal.enable = true;
+      sources.filesystem.enable = true;
+      sources.terminal.enable = true;
 
       shell = {
         asciinema.autoRecord = false;

@@ -38,7 +38,9 @@
         leadershipTimeoutSec = 120;
         handoffTimeoutSec = 60;
       };
+    };
 
+    sources = {
       filesystem = {
         enable = true;
         instances = 3;   # one leader + two standbys
@@ -62,14 +64,14 @@
         enable = true;
         instances = 2;
       };
+    };
 
-      automata = {
-        enable = true;
-        canonicalizer.enable = true;
-        healthAggregator.enable = true;
-        analyticsAutomaton.enable = true;
-        sessionDetector.enable = true;
-      };
+    automata = {
+      enable = true;
+      canonicalizer.enable = true;
+      healthAggregator.enable = true;
+      analyticsAutomaton.enable = true;
+      sessionDetector.enable = true;
     };
 
     observability = {

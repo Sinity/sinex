@@ -26,7 +26,7 @@ pkgs.testers.nixosTest {
       })
     ];
 
-    services.sinex.runtime.filesystem = {
+    services.sinex.sources.filesystem = {
       enable = true;
       watchPaths = [ "/var/lib/sinex/watched" ];
     };
