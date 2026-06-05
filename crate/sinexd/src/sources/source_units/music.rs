@@ -20,9 +20,12 @@
 //! len: 1 }` per intent — `<index>` is the entry's position in the array,
 //! which is stable across replays of the same export.
 //!
-//! Occurrence identity is expressed by `occurrence_key` (occurrence-level dedup
-//! is planned, not yet wired — `build_occurrence_filter` has no production
-//! callers; see #1570 Prong C / #1050):
+//! Occurrence identity is expressed by `occurrence_key`, carried onto events as
+//! `equivalence_key` (#1570 Prong C) so the curation duplicate workbench can
+//! group equivalent occurrences. DB-backed scan-time dedup via
+//! `build_occurrence_filter` is the offline #1050 import path (live source
+//! units have no DB pool); automatic admission-side suppression is tracked
+//! separately:
 //! `(track_uri, track_name, artist_name, started_at, played_ms)` — the
 //! same 5 fields in the same order on every row, regardless of whether
 //! `spotify_track_uri` is populated. Rows without a URI carry an empty
