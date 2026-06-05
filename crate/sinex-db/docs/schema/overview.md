@@ -15,7 +15,7 @@ engine that applies it. It uses `sea-query` to define the schema in a type-safe,
 
 | Schema | Purpose & Key Tables |
 | --- | --- |
-| `core` | Primary event store and domain tables: `core.events`, `core.event_tombstones`, `core.operations_log`, `core.node_manifests`, `core.entities`, `core.entity_relations`, `core.blobs`, tagging/annotation/embedding tables. |
+| `core` | Primary event store and domain tables: `core.events`, `core.event_tombstones`, `core.operations_log`, `core.manifests`, `core.runs`, `core.entities`, `core.entity_relations`, `core.blobs`, tagging/annotation/embedding tables. |
 | `raw` | Provenance staging and source registries: `raw.source_material_registry`, `raw.temporal_ledger`. |
 | `audit` | Archive tier table: `audit.archived_events`. |
 | `sinex_schemas` | Payload schema and contract management: `event_payload_schemas`, `validation_cache`, `dlq_events`. |

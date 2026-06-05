@@ -709,7 +709,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(overview, chunks[0]);
 
     // Right: RuntimeModule list
-    let node_items: Vec<ListItem> = app
+    let module_items: Vec<ListItem> = app
         .modules
         .iter()
         .map(|n| {
@@ -732,10 +732,10 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let runtime_list = List::new(if node_items.is_empty() {
+    let runtime_list = List::new(if module_items.is_empty() {
         vec![ListItem::new("No modules registered")]
     } else {
-        node_items
+        module_items
     })
     .block(Block::default().title("Modules").borders(Borders::ALL));
     f.render_widget(runtime_list, chunks[1]);

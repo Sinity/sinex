@@ -1302,7 +1302,7 @@ impl StateRepository<'_> {
                   )
                 GROUP BY nm.name
             ),
-            node_inventory AS (
+            module_inventory AS (
                 SELECT DISTINCT name
                 FROM core.manifests
 
@@ -1312,13 +1312,13 @@ impl StateRepository<'_> {
                 FROM core.runs nr
                 JOIN core.manifests nm ON nm.id = nr.manifest_id
             ),
-            node_status AS (
+            module_status AS (
                 SELECT
                     ni.name,
                     COALESCE(ar.active_run_count, 0) AS active_run_count,
                     COALESCE(ar.latest_heartbeat_at, mol.latest_heartbeat_at) AS latest_heartbeat_at,
                     (ar.name IS NOT NULL OR mol.name IS NOT NULL) AS has_live_instance
-                FROM node_inventory ni
+                FROM module_inventory ni
                 LEFT JOIN active_runs ar ON ar.name = ni.name
                 LEFT JOIN manifest_only_live mol ON mol.name = ni.name
             )
@@ -1328,7 +1328,7 @@ impl StateRepository<'_> {
                 COUNT(*) as "unique_modules!",
                 COALESCE(SUM(active_run_count), 0)::bigint as "active_run_count!",
                 MIN(latest_heartbeat_at) FILTER (WHERE has_live_instance) as "oldest_heartbeat: sinex_primitives::temporal::Timestamp"
-            FROM node_status
+            FROM module_status
             "#,
             *cutoff
         )

@@ -76,7 +76,7 @@ pub const DLQ_PEEK: &str = "dlq.peek";
 pub const DLQ_REQUEUE: &str = "dlq.requeue";
 pub const DLQ_PURGE: &str = "dlq.purge";
 
-// Nodes
+// Runtime
 pub const RUNTIME_LIST: &str = "runtime.list";
 pub const RUNTIME_LIST_ACTIVE: &str = "runtime.list_active";
 pub const RUNTIME_HEALTH: &str = "runtime.health";
