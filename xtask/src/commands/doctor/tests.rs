@@ -1928,10 +1928,7 @@ async fn test_rust_analyzer_workspace_contract_lists_xtask_dev_deps()
     let dir = tempfile::tempdir()?;
     fs::create_dir_all(dir.path().join("crate/uses-xtask"))?;
     fs::create_dir_all(dir.path().join("crate/no-xtask"))?;
-    fs::create_dir_all(
-        dir.path()
-            .join(".claude/worktrees/stale/crate/old-runtime"),
-    )?;
+    fs::create_dir_all(dir.path().join(".claude/worktrees/stale/crate/old-runtime"))?;
     fs::create_dir_all(dir.path().join("target/ignored"))?;
     fs::write(
         dir.path().join("crate/uses-xtask/Cargo.toml"),

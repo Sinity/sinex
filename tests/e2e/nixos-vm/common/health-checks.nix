@@ -51,13 +51,13 @@
         echo "⚠️  No active sinex-* units detected"
       fi
 
-      # Ensure filesystem nodes are alive when defined
+      # Ensure filesystem source runtimes are alive when defined
       FS_UNIT_FILES=$(systemctl list-unit-files 'sinex-filesystem-*.service' --no-legend --plain 2>/dev/null || true)
       if [[ -n "$FS_UNIT_FILES" ]]; then
         if echo "$SINEX_UNITS" | grep -q 'sinex-filesystem'; then
-          echo "✅ Filesystem nodes active"
+          echo "✅ Filesystem source runtimes active"
         else
-          echo "❌ Filesystem nodes declared but not active"
+          echo "❌ Filesystem source runtimes declared but not active"
           FAILED=1
         fi
       fi

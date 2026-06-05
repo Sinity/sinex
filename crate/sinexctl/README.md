@@ -32,7 +32,7 @@ sinexctl dlq list --token "$SINEX_API_TOKEN"
 - `core`: system health
 - `query`: event search and filtering
 - `verify`: bounded runtime evidence checks for pipeline activity, gateway reachability, passive derived outputs, managed document-scan smoke, enabled long-running collector surfaces, locally declared deployment surfaces, and historical backfill
-- `node`: list/status/drain/resume/horizon
+- `runtime`: list/status/drain/resume/horizon
 - `automata`: automaton runtime health, checkpoints, replay/output recency, and SDK telemetry
 - `replay`: plan/submit/watch/list
 - `dlq`: list/peek/requeue/purge

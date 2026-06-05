@@ -1,7 +1,7 @@
 //! Distributed Coordination Resilience Tests
 //!
 //! These tests verify the distributed coordination mechanisms used for
-//! work distribution, including advisory locking and node coordination.
+//! work distribution, including advisory locking and runtime-module coordination.
 //!
 //! ## Coverage Areas
 //! - Advisory lock acquisition and recovery
@@ -140,16 +140,16 @@ async fn test_advisory_lock_timeout(ctx: TestContext) -> Result<()> {
 // RuntimeModule Instance Coordination Tests
 // =============================================================================
 
-/// Test that node instances can be registered and tracked using NATS KV.
+/// Test that module instances can be registered and tracked using NATS KV.
 #[sinex_test]
-async fn test_node_instance_registration(ctx: TestContext) -> Result<()> {
+async fn test_module_instance_registration(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
     let client = nats.connect().await?;
     let js = async_nats::jetstream::new(client);
     ensure_coordination_buckets(&js).await?;
 
-    let service_name = format!("test-node-{}", uuid::Uuid::new_v4());
+    let service_name = format!("test-source-{}", uuid::Uuid::new_v4());
     let instance_id = uuid::Uuid::new_v4().to_string();
 
     let kv_client = CoordinationKvClient::new(js.clone(), service_name.clone());
@@ -195,9 +195,9 @@ async fn test_node_instance_registration(ctx: TestContext) -> Result<()> {
     Ok(())
 }
 
-/// Test that multiple node instances can coexist in KV.
+/// Test that multiple module instances can coexist in KV.
 #[sinex_test]
-async fn test_multiple_node_instances(ctx: TestContext) -> Result<()> {
+async fn test_multiple_module_instances(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
     let client = nats.connect().await?;
@@ -405,7 +405,7 @@ async fn test_leadership_transfer(ctx: TestContext) -> Result<()> {
 async fn test_concurrent_coordination_stress(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
-    // Share client? Or new client per task? Real nodes have own clients.
+    // Share client? Or new client per task? Real runtime modules have their own clients.
     // For test perf, we can share NATS connection but new KV clients.
 
     let client = nats.connect().await?;

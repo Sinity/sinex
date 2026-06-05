@@ -21,6 +21,7 @@ where
     #[cfg(feature = "messaging")]
     pub(super) fn derived_metric_labels(&self) -> HashMap<String, String> {
         let mut labels = HashMap::new();
+        labels.insert("module".to_string(), self.automaton.name().to_string());
         labels.insert("automaton".to_string(), self.automaton.name().to_string());
         labels.insert(
             "automaton_model".to_string(),

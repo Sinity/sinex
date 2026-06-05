@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use xtask::sandbox::prelude::*;
 
-async fn spawn_fake_scan_node(
+async fn spawn_fake_scan_source_runtime(
     pool: DbPool,
     nats: async_nats::Client,
     env: sinex_primitives::environment::SinexEnvironment,
@@ -31,7 +31,7 @@ async fn spawn_fake_scan_node(
         let Some(msg) = sub.next().await else { return };
 
         let Ok(command) = serde_json::from_slice::<SourceScanCommand>(&msg.payload) else {
-            eprintln!("fake scan node: invalid scan command payload");
+            eprintln!("fake scan source runtime: invalid scan command payload");
             return;
         };
         let operation_id = command.operation_id;
@@ -137,12 +137,12 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
         ..Default::default()
     })
     .await?;
-    let (scan_command_rx, scan_handle) = spawn_fake_scan_node(
+    let (scan_command_rx, scan_handle) = spawn_fake_scan_source_runtime(
         ctx.pool.clone(),
         nats.clone(),
         env.clone(),
-        "test-node",
-        "test-node",
+        "test-source",
+        "test-source",
         "file.created",
         1,
     )
@@ -152,7 +152,7 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
         .create_source_material(Some("replay-lifecycle-match"))
         .await?;
     let replay_event = DynamicPayload::new(
-        "test-node",
+        "test-source",
         "file.created",
         serde_json::json!({ "path": "/tmp/replay-lifecycle-match.txt" }),
     )
@@ -184,7 +184,7 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
         .create_source_material(Some("replay-lifecycle-nonmatch"))
         .await?;
     let nonmatch_event = DynamicPayload::new(
-        "test-node",
+        "test-source",
         "file.created",
         serde_json::json!({ "path": "/tmp/replay-lifecycle-nonmatch.txt" }),
     )
@@ -203,7 +203,7 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "module_name": "test-node",
+            "module_name": "test-source",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
             "material_filter": [replay_material.as_uuid().to_string()],
             "filters": { "event_types": ["file.created"] }
@@ -326,7 +326,7 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
                 name: Some(consumer_name.clone()),
                 deliver_policy: DeliverPolicy::All,
                 ack_policy: AckPolicy::Explicit,
-                filter_subject: env.nats_subject("events.raw.test-node.file_created"),
+                filter_subject: env.nats_subject("events.raw.test-source.file_created"),
                 ..Default::default()
             },
         )
@@ -412,7 +412,7 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
 
     let dispatched_command = scan_command_rx
         .await
-        .map_err(|_| color_eyre::eyre::eyre!("fake test-node did not receive scan command"))?;
+        .map_err(|_| color_eyre::eyre::eyre!("fake test-source did not receive scan command"))?;
     let replay_context = dispatched_command
         .args
         .replay
@@ -433,7 +433,7 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
 
     scan_handle
         .await
-        .map_err(|e| color_eyre::eyre::eyre!("fake scan node task failed: {e}"))?;
+        .map_err(|e| color_eyre::eyre::eyre!("fake scan source runtime task failed: {e}"))?;
 
     Ok(())
 }

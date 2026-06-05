@@ -152,7 +152,7 @@ async fn corrupt_operation_preview_summary(pool: &DbPool, operation_id: Uuid) ->
     Ok(())
 }
 
-async fn spawn_fake_scan_node(
+async fn spawn_fake_scan_source_runtime(
     nats: Client,
     env: SinexEnvironment,
     module_name: &str,
@@ -163,16 +163,17 @@ async fn spawn_fake_scan_node(
 )> {
     let module_name = module_name.to_string();
     let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
-    let mut sub = nats
-        .subscribe(subject)
-        .await
-        .map_err(|e| test_error(format!("failed to subscribe fake node dispatcher: {e}")))?;
+    let mut sub = nats.subscribe(subject).await.map_err(|e| {
+        test_error(format!(
+            "failed to subscribe fake source runtime dispatcher: {e}"
+        ))
+    })?;
     let (command_tx, command_rx) = tokio::sync::oneshot::channel();
 
     let handle = tokio::spawn(async move {
         if let Some(msg) = sub.next().await {
             let command: SourceScanCommand = serde_json::from_slice(&msg.payload)
-                .expect("fake node must receive a valid scan command");
+                .expect("fake source runtime must receive a valid scan command");
             let operation_id = command.operation_id;
             let progress_subject =
                 env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
@@ -188,7 +189,7 @@ async fn spawn_fake_scan_node(
                 };
                 nats.publish(reply, serde_json::to_vec(&ack).unwrap().into())
                     .await
-                    .expect("fake node ack publish should succeed");
+                    .expect("fake source runtime ack publish should succeed");
             }
 
             let report = ScanReport {
@@ -214,14 +215,14 @@ async fn spawn_fake_scan_node(
                 serde_json::to_vec(&progress).unwrap().into(),
             )
             .await
-            .expect("fake node progress publish should succeed");
+            .expect("fake source runtime progress publish should succeed");
         }
     });
 
     Ok((command_rx, handle))
 }
 
-async fn spawn_fake_scan_node_with_progress(
+async fn spawn_fake_scan_source_runtime_with_progress(
     nats: Client,
     env: SinexEnvironment,
     module_name: &str,
@@ -233,16 +234,17 @@ async fn spawn_fake_scan_node_with_progress(
 )> {
     let module_name = module_name.to_string();
     let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
-    let mut sub = nats
-        .subscribe(subject)
-        .await
-        .map_err(|e| test_error(format!("failed to subscribe fake node dispatcher: {e}")))?;
+    let mut sub = nats.subscribe(subject).await.map_err(|e| {
+        test_error(format!(
+            "failed to subscribe fake source runtime dispatcher: {e}"
+        ))
+    })?;
     let (command_tx, command_rx) = tokio::sync::oneshot::channel();
 
     let handle = tokio::spawn(async move {
         if let Some(msg) = sub.next().await {
             let command: SourceScanCommand = serde_json::from_slice(&msg.payload)
-                .expect("fake node must receive a valid scan command");
+                .expect("fake source runtime must receive a valid scan command");
             let operation_id = command.operation_id;
             let progress_subject =
                 env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
@@ -258,7 +260,7 @@ async fn spawn_fake_scan_node_with_progress(
                 };
                 nats.publish(reply, serde_json::to_vec(&ack).unwrap().into())
                     .await
-                    .expect("fake node ack publish should succeed");
+                    .expect("fake source runtime ack publish should succeed");
             }
 
             let report = ScanReport {
@@ -284,14 +286,14 @@ async fn spawn_fake_scan_node_with_progress(
                 serde_json::to_vec(&progress).unwrap().into(),
             )
             .await
-            .expect("fake node progress publish should succeed");
+            .expect("fake source runtime progress publish should succeed");
         }
     });
 
     Ok((command_rx, handle))
 }
 
-async fn spawn_fake_scan_node_ack_only(
+async fn spawn_fake_scan_source_runtime_ack_only(
     nats: Client,
     env: SinexEnvironment,
     module_name: &str,
@@ -301,16 +303,17 @@ async fn spawn_fake_scan_node_ack_only(
 )> {
     let module_name = module_name.to_string();
     let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
-    let mut sub = nats
-        .subscribe(subject)
-        .await
-        .map_err(|e| test_error(format!("failed to subscribe fake node dispatcher: {e}")))?;
+    let mut sub = nats.subscribe(subject).await.map_err(|e| {
+        test_error(format!(
+            "failed to subscribe fake source runtime dispatcher: {e}"
+        ))
+    })?;
     let (command_tx, command_rx) = tokio::sync::oneshot::channel();
 
     let handle = tokio::spawn(async move {
         if let Some(msg) = sub.next().await {
             let command: SourceScanCommand = serde_json::from_slice(&msg.payload)
-                .expect("fake node must receive a valid scan command");
+                .expect("fake source runtime must receive a valid scan command");
             let _ = command_tx.send(command.clone());
 
             if let Some(reply) = msg.reply {
@@ -322,7 +325,7 @@ async fn spawn_fake_scan_node_ack_only(
                 };
                 nats.publish(reply, serde_json::to_vec(&ack).unwrap().into())
                     .await
-                    .expect("fake node ack publish should succeed");
+                    .expect("fake source runtime ack publish should succeed");
             }
         }
     });

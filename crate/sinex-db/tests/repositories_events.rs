@@ -189,7 +189,7 @@ async fn events_repository_rejects_unknown_module_run_id(ctx: TestContext) -> Te
     let message = error.to_string();
     let normalized_message = message.to_lowercase();
     assert!(
-        normalized_message.contains("node_run")
+        normalized_message.contains("module_run")
             || normalized_message.contains("foreign key")
             || normalized_message.contains("constraint violation"),
         "unexpected error message: {message}"
@@ -1406,7 +1406,7 @@ async fn all_temporal_policy_variants_roundtrip(ctx: TestContext) -> TestResult<
     Ok(())
 }
 
-/// All node model enum variants roundtrip correctly.
+/// All automaton model enum variants roundtrip correctly.
 #[sinex_test]
 async fn all_automaton_model_variants_roundtrip(ctx: TestContext) -> TestResult<()> {
     let material_record = ctx
@@ -1414,7 +1414,7 @@ async fn all_automaton_model_variants_roundtrip(ctx: TestContext) -> TestResult<
         .source_materials()
         .register_in_flight(
             sinex_db::repositories::source_materials::material_types::STREAM,
-            Some("node-model-variants"),
+            Some("automaton-model-variants"),
             json!({ "test": true }),
         )
         .await?;

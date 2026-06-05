@@ -107,7 +107,10 @@ pub(super) fn runtime_binary_requirements_for_plan(
             binary: "sinexd",
         });
     }
-    if workload_scope_includes_any(&execution_plan.workload_scope, SINEXCTL_RUNTIME_TEST_PACKAGES) {
+    if workload_scope_includes_any(
+        &execution_plan.workload_scope,
+        SINEXCTL_RUNTIME_TEST_PACKAGES,
+    ) {
         requirements.push(RuntimeBinaryRequirement {
             package: "sinexctl",
             binary: "sinexctl",

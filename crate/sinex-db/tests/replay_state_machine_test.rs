@@ -80,7 +80,7 @@ async fn replay_preview_nulls_cascade_impact_when_metadata_queries_fail(
 }
 
 #[sinex_test]
-async fn replay_preview_maps_watcher_node_ids_to_emitted_event_sources(
+async fn replay_preview_maps_watcher_source_ids_to_emitted_event_sources(
     ctx: TestContext,
 ) -> TestResult<()> {
     let material_id = ctx
@@ -117,7 +117,7 @@ async fn replay_preview_maps_watcher_node_ids_to_emitted_event_sources(
     assert_eq!(
         preview["total_events"],
         serde_json::json!(1),
-        "watcher node ids should match the emitted fs-watcher event source during replay preview"
+        "watcher source names should match the emitted fs-watcher event source during replay preview"
     );
     assert_eq!(
         preview["root_event_ids"],

@@ -56,16 +56,16 @@ async fn test_mock_client_clear_calls() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_mock_client_node_operations() -> TestResult<()> {
+async fn test_mock_client_runtime_operations() -> TestResult<()> {
     let client = MockGatewayClient::new();
 
     client
-        .drain_runtime("node-1", Some("maintenance"))
+        .drain_runtime("module-1", Some("maintenance"))
         .await
         .unwrap();
-    client.resume_runtime("node-1").await.unwrap();
+    client.resume_runtime("module-1").await.unwrap();
     client
-        .set_runtime_horizon("node-1", "2024-01-01T00:00:00Z")
+        .set_runtime_horizon("module-1", "2024-01-01T00:00:00Z")
         .await
         .unwrap();
 

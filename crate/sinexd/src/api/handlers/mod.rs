@@ -10,7 +10,6 @@ pub mod curation;
 pub mod dlq;
 pub mod documents;
 pub mod health;
-pub mod source_status;
 pub mod instructions;
 pub mod lifecycle;
 pub mod llm;
@@ -24,6 +23,7 @@ pub mod runtime_presence;
 pub mod runtime_registry;
 pub mod semantic;
 pub mod shadow;
+pub mod source_status;
 pub mod sources;
 pub mod system;
 pub mod tasks;
@@ -48,7 +48,6 @@ pub use replay::{
 pub use audit::handle_audit_get;
 pub use automata::handle_automata_status;
 pub use dlq::{handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue};
-pub use source_status::handle_sources_status;
 pub use instructions::handle_hyprland_workspace_switch;
 pub use lifecycle::{
     handle_lifecycle_archive,
@@ -76,6 +75,7 @@ pub use semantic::{
     handle_semantic_lane_set_status, handle_semantic_lanes_list,
 };
 pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
+pub use source_status::handle_sources_status;
 
 pub use content::{handle_retrieve_blob, handle_store_blob};
 pub use coordination::{

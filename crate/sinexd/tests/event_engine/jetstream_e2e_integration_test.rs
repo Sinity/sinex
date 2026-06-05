@@ -86,7 +86,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     // None immediately (no-wait pull semantics) and the consumer task exits.
     let event_id = scope
         .publish(DynamicPayload::new(
-            "test-node",
+            "test-source",
             "test.event",
             json!({
                 "message": "E2E JetStream test event",
@@ -136,7 +136,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
         .get_by_id(event_id)
         .await?
         .expect("event should be persisted");
-    assert_eq!(event_from_db.source.as_str(), "test-node");
+    assert_eq!(event_from_db.source.as_str(), "test-source");
     assert_eq!(event_from_db.event_type.as_str(), "test.event");
 
     info!("🎉 E2E JetStream test PASSED");

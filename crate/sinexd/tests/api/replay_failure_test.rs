@@ -28,7 +28,7 @@ async fn replay_cancel_from_previewed_state(ctx: TestContext) -> TestResult<()> 
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "module_name": "test-node-1",
+            "source_name": "test-source-1",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
             "filters": {}
         }
@@ -139,7 +139,7 @@ async fn replay_cancel_from_approved_state(ctx: TestContext) -> TestResult<()> {
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "module_name": "test-node-2",
+            "source_name": "test-source-2",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
             "filters": {}
         }
@@ -253,14 +253,14 @@ async fn replay_list_filters_by_state(ctx: TestContext) -> TestResult<()> {
     let scope_start = ts - time::Duration::seconds(1);
     let scope_end = ts + time::Duration::seconds(1);
 
-    // Create three operations with different node_ids
+    // Create three operations with different source names
     let mut op_ids = Vec::new();
     for i in 1..=3 {
         let plan_req = json!({
             "command": "plan",
             "actor": "admin:test-user",
             "scope": {
-                "module_name": format!("test-node-{}", i),
+                "source_name": format!("test-source-{}", i),
                 "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
                 "filters": {}
             }
@@ -384,7 +384,7 @@ async fn replay_list_state_filter_applies_before_limit(ctx: TestContext) -> Test
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "module_name": "test-node-cancelled",
+            "source_name": "test-source-cancelled",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
             "filters": {}
         }
@@ -421,7 +421,7 @@ async fn replay_list_state_filter_applies_before_limit(ctx: TestContext) -> Test
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "module_name": "test-node-planning",
+            "source_name": "test-source-planning",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
             "filters": {}
         }
@@ -478,7 +478,7 @@ async fn replay_create_with_empty_scope_fails_gracefully(ctx: TestContext) -> Te
         .clone();
     let control_subject = services.environment().nats_subject("sinex.control.replay");
 
-    // Send plan with empty scope (no module_name, no time_window)
+    // Send plan with empty scope (no source_name, no time_window)
     let plan_req = json!({
         "command": "plan",
         "actor": "admin:test-user",
@@ -533,7 +533,7 @@ async fn replay_execute_dry_run_rejects_while_preserving_preview(
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "module_name": "dry-run-node",
+            "source_name": "dry-run-source",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
             "filters": {}
         }

@@ -33,7 +33,7 @@ async fn process_batch_halts_after_three_consecutive_checkpoint_save_failures(
         .expect("first checkpoint serialization failure should not halt the batch");
     assert!(
         first.is_empty(),
-        "unserializable checkpoint node should not emit output events"
+        "unserializable checkpoint automaton should not emit output events"
     );
 
     assert!(
@@ -71,7 +71,7 @@ async fn derived_outputs_propagate_runtime_module_run_id(ctx: TestContext) -> Te
     let output = outputs
         .into_iter()
         .next()
-        .expect("emitting node should produce one output event");
+        .expect("emitting automaton should produce one output event");
 
     assert_eq!(output.module_run_id, Some(module_run_id));
     Ok(())
@@ -91,13 +91,13 @@ async fn derived_outputs_carry_unique_random_uuidv7_ids() -> TestResult<()> {
         .await?
         .into_iter()
         .next()
-        .ok_or_else(|| color_eyre::eyre::eyre!("emitting node should produce an output"))?;
+        .ok_or_else(|| color_eyre::eyre::eyre!("emitting automaton should produce an output"))?;
     let second_output = second_adapter
         .process_one(input)
         .await?
         .into_iter()
         .next()
-        .ok_or_else(|| color_eyre::eyre::eyre!("emitting node should produce an output"))?;
+        .ok_or_else(|| color_eyre::eyre::eyre!("emitting automaton should produce an output"))?;
 
     let first_id = first_output
         .id
@@ -675,7 +675,7 @@ async fn handle_invalidation_message_checkpoints_state_only_mutations(
 
     let processed = adapter.handle_invalidation_message(&payload).await;
     assert_eq!(
-        processed.expect("state-only invalidation must not halt the node"),
+        processed.expect("state-only invalidation must not halt the automaton"),
         Some(0),
         "state-only invalidation should still be treated as a successful recomputation"
     );

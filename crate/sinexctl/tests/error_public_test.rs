@@ -39,7 +39,7 @@ async fn test_enhance_auth_error() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_enhance_node_not_found() -> TestResult<()> {
+async fn test_enhance_runtime_not_found() -> TestResult<()> {
     let original = eyre!("HTTP 404: RuntimeModule not found");
     let enhanced = enhance_rpc_error("coordination.instance_health", original);
     let enhanced_str = enhanced.to_string();

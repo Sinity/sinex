@@ -4325,7 +4325,7 @@ mod tests {
                     output: None,
                 },
                 StoredTestResult {
-                    test_name: "sinexd::replay_control::tests::node_never_reports_completion"
+                    test_name: "sinexd::replay_control::tests::source_runtime_never_reports_completion"
                         .into(),
                     package: "sinexd".into(),
                     status: TestStatus::Pass,

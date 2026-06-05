@@ -609,7 +609,7 @@ async fn mcp_replay_operations_call_uses_gateway_fixture() -> TestResult<()> {
         "sinex.replay_operations",
         json!({
             "state": "Planning",
-            "node": "terminal.atuin-history",
+            "module": "terminal.atuin-history",
             "limit": 5
         }),
     )
@@ -920,11 +920,11 @@ async fn mcp_runtime_active_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["tool"], "sinexd.sources_active");
     assert_eq!(response["query"]["stale_after_secs"], 120);
     assert_eq!(
-        response["items"]["result"]["nodes"][0]["module_name"],
+        response["items"]["result"]["modules"][0]["module_name"],
         "terminal.atuin-history"
     );
     assert_eq!(
-        response["items"]["result"]["nodes"][0]["heartbeat_source"],
+        response["items"]["result"]["modules"][0]["heartbeat_source"],
         "run"
     );
     assert_eq!(response["redaction"]["raw_samples"], false);
@@ -940,10 +940,13 @@ async fn mcp_runtime_registry_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["tool"], "sinexd.sources_registry");
     assert_eq!(
-        response["items"]["result"]["nodes"][0]["node_id"],
+        response["items"]["result"]["modules"][0]["module_name"],
         "terminal.atuin-history"
     );
-    assert_eq!(response["items"]["result"]["nodes"][0]["state"], "running");
+    assert_eq!(
+        response["items"]["result"]["modules"][0]["state"],
+        "running"
+    );
     assert_eq!(response["redaction"]["raw_samples"], false);
     Ok(())
 }
@@ -2120,7 +2123,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "oldest_heartbeat": "2026-05-19T11:50:00Z"
                 }),
                 "runtime.list_active" => json!({
-                    "nodes": [
+                    "modules": [
                         {
                             "module_name": "terminal.atuin-history",
                             "module_kind": "source",
@@ -2138,9 +2141,9 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     ]
                 }),
                 "runtime.list" => json!({
-                    "nodes": [
+                    "modules": [
                         {
-                            "node_id": "terminal.atuin-history",
+                            "module_name": "terminal.atuin-history",
                             "state": "running",
                             "last_heartbeat": "2026-05-19T11:59:59Z",
                             "processing_horizon": "2026-05-19T12:00:00Z"
@@ -2713,7 +2716,7 @@ fn fixture_operation() -> Value {
         "operation_type": "replay",
         "operator": "fixture",
         "scope": {
-            "node_id": "terminal.atuin-history"
+            "source_name": "terminal.atuin-history"
         },
         "result_status": "running",
         "result_message": null,
@@ -2729,7 +2732,7 @@ fn fixture_replay_operation(state: &str) -> Value {
         "operation_id": fixture_operation_id(),
         "state": state,
         "scope": {
-            "node_id": "terminal.atuin-history",
+            "source_name": "terminal.atuin-history",
             "time_window": null,
             "material_filter": null,
             "filters": {}

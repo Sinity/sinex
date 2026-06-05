@@ -128,10 +128,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 path: "run",
                 fallback_summary: "Run sinex binaries",
                 when: "you need to launch sinexd or a source/automaton runtime target during development",
-                examples: &[
-                    "xtask run module terminal-source --watch",
-                    "xtask run core",
-                ],
+                examples: &["xtask run module terminal-source --watch", "xtask run core"],
                 notes: &[],
             },
             GuideEntry {

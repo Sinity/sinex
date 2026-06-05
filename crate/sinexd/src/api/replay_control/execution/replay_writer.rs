@@ -394,7 +394,7 @@ impl ReplayExecutionEngine {
 
         checkpoint.total_events = material_roots.len() as u64;
 
-        // Step 2: Route staged-source scopes through source, not node scan.
+        // Step 2: Route staged-source scopes through source, not live source scan.
         // RuntimeModule scan publishes a SourceScanCommand to sinex.control.sources.{source}.scan;
         // staged-source replay creates a source_run and dispatches to the source
         // host (#1081) via a parse command. The routing decision is made here so both

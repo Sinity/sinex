@@ -17,7 +17,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
         operation_type: "archive".to_string(),
         operator: "event_engine@localhost".to_string(),
         scope: Some(json!({
-            "node": "event_engine",
+            "module": "event_engine",
             "mode": "source",
             "source": "fs-watcher"
         })),
@@ -36,7 +36,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
     assert_eq!(
         logged.scope,
         Some(json!({
-            "node": "event_engine",
+            "module": "event_engine",
             "mode": "source",
             "source": "fs-watcher"
         }))
@@ -56,7 +56,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
         operation_type: "restore".to_string(),
         operator: "api-user@localhost".to_string(),
         scope: Some(json!({
-            "node": "schema-manager",
+            "module": "schema-manager",
             "mode": "automaton",
             "target": "test-schema-1.0.0"
         })),
@@ -72,7 +72,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
     assert_eq!(
         failed.scope,
         Some(json!({
-            "node": "schema-manager",
+            "module": "schema-manager",
             "mode": "automaton",
             "target": "test-schema-1.0.0"
         }))
@@ -98,7 +98,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
     assert_eq!(by_actor[0].scope, logged.scope);
 
     let by_scope = repo
-        .get_operations_by_scope(json!({"node": "schema-manager"}), None)
+        .get_operations_by_scope(json!({"module": "schema-manager"}), None)
         .await?;
     assert_eq!(by_scope.len(), 1);
     assert_eq!(by_scope[0].id, failed.id);
@@ -130,7 +130,7 @@ async fn state_repository_collects_operation_statistics(ctx: TestContext) -> Tes
             operation_type: "purge".to_string(),
             operator: "test-service@localhost".to_string(),
             scope: Some(json!({
-                "node": "test",
+                "module": "test",
                 "mode": "automaton"
             })),
             result_status: status,
@@ -290,7 +290,7 @@ async fn log_operation_rejects_malformed_operation_type(ctx: TestContext) -> Tes
 #[sinex_test]
 async fn register_module_is_idempotent_per_manifest_version(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
-    let module_name = ModuleName::new("idempotent-node");
+    let module_name = ModuleName::new("idempotent-module");
 
     let first = repo
         .register_module(
@@ -421,7 +421,7 @@ async fn node_manifest_heartbeat_updates_only_requested_version(
     ctx: TestContext,
 ) -> TestResult<()> {
     let repo = ctx.pool.state();
-    let module_name = ModuleName::new("versioned-heartbeat-node");
+    let module_name = ModuleName::new("versioned-heartbeat-module");
 
     repo.register_module(
         &module_name,
@@ -486,7 +486,7 @@ async fn node_manifest_heartbeat_updates_only_requested_version(
 #[sinex_test]
 async fn node_manifest_inactive_marks_only_requested_version(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
-    let module_name = ModuleName::new("versioned-inactive-node");
+    let module_name = ModuleName::new("versioned-inactive-module");
 
     repo.register_module(
         &module_name,
@@ -544,7 +544,7 @@ async fn node_manifest_inactive_marks_only_requested_version(ctx: TestContext) -
 }
 
 #[sinex_test]
-async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> TestResult<()> {
+async fn module_run_lifecycle_persists_status_and_config(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
     let module_name = ModuleName::new("module-run-lifecycle");
 
@@ -616,14 +616,14 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
 
 /// Regression for the production "module run row is missing" symptom observed
 /// on sinnix-prime 2026-05-15: the two heartbeat paths called sequentially
-/// from a single node's heartbeat tick must not collide on `core.runs.status`.
+/// from a single module's heartbeat tick must not collide on `core.runs.status`.
 ///
 /// Mechanism: `start_run` inserts with `status = 'running'`.
 /// `update_module_heartbeat_for_version` (manifest-keyed) previously
 /// flipped the row to `status = 'active'`. The next call,
 /// `update_module_run_heartbeat` (id-keyed), filtered on `WHERE status =
 /// 'running'` and matched zero rows, logging "Heartbeat did not persist
-/// because the module run row is missing" every tick for every node.
+/// because the module run row is missing" every tick for every module.
 ///
 /// Five automatons on sinnix-prime were silently stuck in this loop:
 /// `relation-extractor` (also leaking 4.5 GB), `entity-extractor`,
@@ -686,7 +686,7 @@ async fn heartbeat_paths_do_not_collide_on_status(ctx: TestContext) -> TestResul
 }
 
 #[sinex_test]
-async fn node_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) -> TestResult<()> {
+async fn module_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
     let module_name = ModuleName::new("module-run-heartbeat-terminal");
 

@@ -45,7 +45,7 @@ fn test_scope_params() -> serde_json::Value {
     let scope_end = ts + time::Duration::seconds(10);
     json!({
         "scope": {
-            "module_name": "auth-test-node",
+            "module_name": "auth-test-source",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
         },
         "actor": "test:auth-tester"
@@ -250,7 +250,7 @@ async fn admin_full_lifecycle(ctx: TestContext) -> TestResult<()> {
         "approve must use the authenticated admin actor rather than request params"
     );
 
-    // Cancel instead of execute (no fake node to handle scan)
+    // Cancel instead of execute (no fake source runtime to handle scan)
     let cancel_resp = gw
         .rpc_envelope(
             methods::REPLAY_CANCEL_OPERATION,

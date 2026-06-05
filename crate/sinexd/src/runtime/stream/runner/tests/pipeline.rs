@@ -9,7 +9,7 @@ async fn encode_control_message_serializes_scan_ack() -> TestResult<()> {
     let operation_id = Uuid::now_v7();
     let ack = SourceScanAck {
         operation_id,
-        module_name: "test-node".to_string(),
+        module_name: "test-module".to_string(),
         accepted: true,
         error: None,
     };
@@ -29,14 +29,14 @@ async fn encode_control_message_reports_serialization_failure() -> TestResult<()
     let err = encode_control_message(
         "scan acknowledgement",
         operation_id,
-        "test-node",
+        "test-module",
         &FailingSerialize,
     )
     .expect_err("failing serializers must surface explicit control-plane errors");
 
     let text = err.to_string();
     assert!(text.contains("Failed to serialize scan acknowledgement"));
-    assert!(text.contains("test-node"));
+    assert!(text.contains("test-module"));
     assert!(text.contains(&operation_id.to_string()));
     Ok(())
 }
@@ -50,12 +50,12 @@ async fn publish_scan_ack_reports_nats_failures(ctx: TestContext) -> TestResult<
     let operation_id = Uuid::now_v7();
     let ack = SourceScanAck {
         operation_id,
-        module_name: "test-node".to_string(),
+        module_name: "test-module".to_string(),
         accepted: true,
         error: Some("x".repeat(2_000_000)),
     };
 
-    let error = RuntimeRunner::<RuntimeTestNode>::publish_scan_ack(
+    let error = RuntimeRunner::<RuntimeTestModule>::publish_scan_ack(
         &client,
         Some("sinex.test.reply".into()),
         &ack,
@@ -130,7 +130,7 @@ async fn run_service_drain_persists_source_checkpoint_and_updates_status(
         .map_err(|_| color_eyre::eyre::eyre!("source did not observe runtime drain"))?;
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {
-            if node_run_status(ctx.pool(), module_run_id).await? == "draining" {
+            if module_run_status(ctx.pool(), module_run_id).await? == "draining" {
                 return Ok::<(), color_eyre::Report>(());
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -159,7 +159,10 @@ async fn run_service_drain_persists_source_checkpoint_and_updates_status(
 
     let saved = checkpoint_manager.load_checkpoint().await?;
     assert_eq!(saved.checkpoint, expected_checkpoint);
-    assert_eq!(node_run_status(ctx.pool(), module_run_id).await?, "stopped");
+    assert_eq!(
+        module_run_status(ctx.pool(), module_run_id).await?,
+        "stopped"
+    );
     Ok(())
 }
 
@@ -172,14 +175,14 @@ async fn publish_scan_progress_reports_nats_failures(ctx: TestContext) -> TestRe
     let operation_id = Uuid::now_v7();
     let progress = SourceScanProgress {
         operation_id,
-        module_name: "test-node".to_string(),
+        module_name: "test-module".to_string(),
         events_processed: 1,
         events_emitted: 2,
         final_report: None,
         error: Some("x".repeat(2_000_000)),
     };
 
-    let error = RuntimeRunner::<RuntimeTestNode>::publish_scan_progress(
+    let error = RuntimeRunner::<RuntimeTestModule>::publish_scan_progress(
         &client,
         "sinex.test.progress".to_string(),
         &progress,
@@ -205,7 +208,7 @@ async fn finish_replay_forwarder_surfaces_forwarder_error() -> TestResult<()> {
     });
 
     let outcome =
-        RuntimeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
+        RuntimeRunner::<RuntimeTestModule>::finish_replay_forwarder(handle, emitted_counter)
             .await
             .expect_err("forwarder failures must fail the dispatched scan honestly");
 
@@ -228,7 +231,7 @@ async fn finish_replay_forwarder_surfaces_join_error() -> TestResult<()> {
     });
 
     let outcome =
-        RuntimeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
+        RuntimeRunner::<RuntimeTestModule>::finish_replay_forwarder(handle, emitted_counter)
             .await
             .expect_err("forwarder panics must fail the dispatched scan honestly");
 
@@ -255,7 +258,7 @@ async fn resolve_provisionals_to_events_surfaces_missing_confirmed_event(
         received_at: Timestamp::now(),
     };
 
-    let Err(error) = RuntimeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(
+    let Err(error) = RuntimeRunner::<RuntimeTestModule>::resolve_provisionals_to_events(
         &[provisional],
         &Some(ctx.pool().clone()),
     )
@@ -289,7 +292,7 @@ async fn build_event_from_provisional_rejects_invalid_module_run_id() -> TestRes
         received_at: Timestamp::now(),
     };
 
-    let error = RuntimeRunner::<RuntimeTestNode>::build_event_from_provisional(&provisional)
+    let error = RuntimeRunner::<RuntimeTestModule>::build_event_from_provisional(&provisional)
         .expect_err("invalid persisted module_run_id must fail honestly");
     assert!(error.to_string().contains("Invalid UUID for module_run_id"));
     Ok(())
@@ -301,9 +304,9 @@ async fn source_startup_skips_gap_fill_when_only_snapshot_created_checkpoint(
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let snapshot_checkpoint = Checkpoint::timestamp(Timestamp::now(), None);
-    let node = StartupSequenceTestNode::new(Checkpoint::None, snapshot_checkpoint);
-    let scans = node.scans.clone();
-    let mut runner = RuntimeRunner::new(node);
+    let module = StartupSequenceTestModule::new(Checkpoint::None, snapshot_checkpoint);
+    let scans = module.scans.clone();
+    let mut runner = RuntimeRunner::new(module);
     let work_dir = tempdir()?;
     runner
         .initialize_with_transport(
@@ -337,9 +340,10 @@ async fn source_startup_gap_fill_uses_preexisting_checkpoint(ctx: TestContext) -
     let preexisting_checkpoint =
         Checkpoint::timestamp(Timestamp::now() - time::Duration::minutes(15), None);
     let snapshot_checkpoint = Checkpoint::timestamp(Timestamp::now(), None);
-    let node = StartupSequenceTestNode::new(preexisting_checkpoint.clone(), snapshot_checkpoint);
-    let scans = node.scans.clone();
-    let mut runner = RuntimeRunner::new(node);
+    let module =
+        StartupSequenceTestModule::new(preexisting_checkpoint.clone(), snapshot_checkpoint);
+    let scans = module.scans.clone();
+    let mut runner = RuntimeRunner::new(module);
     let work_dir = tempdir()?;
     runner
         .initialize_with_transport(
@@ -393,7 +397,7 @@ async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db() ->
     };
 
     let Err(error) =
-        RuntimeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(&[provisional], &None)
+        RuntimeRunner::<RuntimeTestModule>::resolve_provisionals_to_events(&[provisional], &None)
             .await
     else {
         return Err(color_eyre::eyre::eyre!(
@@ -413,9 +417,9 @@ async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db() ->
 /// real adapter does this after 3 consecutive checkpoint CAS failures
 /// (see `automaton::adapter::process_batch`); we shortcut that
 /// behaviour to drive the runtime fallback path directly.
-struct CheckpointErrorBatchNode;
+struct CheckpointErrorBatchModule;
 
-impl RuntimeModule for CheckpointErrorBatchNode {
+impl RuntimeModule for CheckpointErrorBatchModule {
     type Config = ();
 
     async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
@@ -441,7 +445,7 @@ impl RuntimeModule for CheckpointErrorBatchNode {
     }
 
     fn module_name(&self) -> &'static str {
-        "runtime-checkpoint-error-node"
+        "runtime-checkpoint-error-module"
     }
 
     fn module_kind(&self) -> ModuleKind {
@@ -483,7 +487,7 @@ async fn process_batch_with_dlq_fallback_propagates_checkpoint_errors(
     let transport = EventTransport::Nats(Arc::new(crate::runtime::NatsPublisher::new(
         ctx.nats_client(),
     )));
-    let mut node = CheckpointErrorBatchNode;
+    let mut module = CheckpointErrorBatchModule;
     let event = Event {
         id: Some(EventId::from(Uuid::now_v7())),
         source: EventSource::new("runtime-test-source")?,
@@ -511,8 +515,8 @@ async fn process_batch_with_dlq_fallback_propagates_checkpoint_errors(
         anchor_payload_hash: None,
     };
 
-    let error = RuntimeRunner::<CheckpointErrorBatchNode>::process_batch_with_dlq_fallback(
-        &mut node,
+    let error = RuntimeRunner::<CheckpointErrorBatchModule>::process_batch_with_dlq_fallback(
+        &mut module,
         &transport,
         vec![event],
     )
@@ -542,7 +546,7 @@ async fn process_batch_with_dlq_fallback_fails_when_dlq_route_fails(
     let transport = EventTransport::Nats(Arc::new(crate::runtime::NatsPublisher::new(
         ctx.nats_client(),
     )));
-    let mut node = FailingBatchNode;
+    let mut module = FailingBatchModule;
     let event = Event {
         id: Some(EventId::from(Uuid::now_v7())),
         source: EventSource::new("runtime-test-source")?,
@@ -570,8 +574,8 @@ async fn process_batch_with_dlq_fallback_fails_when_dlq_route_fails(
         anchor_payload_hash: None,
     };
 
-    let error = RuntimeRunner::<FailingBatchNode>::process_batch_with_dlq_fallback(
-        &mut node,
+    let error = RuntimeRunner::<FailingBatchModule>::process_batch_with_dlq_fallback(
+        &mut module,
         &transport,
         vec![event],
     )
@@ -583,7 +587,7 @@ async fn process_batch_with_dlq_fallback_fails_when_dlq_route_fails(
         message.contains("failed to route failed automaton event to processing-failure stream")
     );
     assert!(message.contains("batch processing boom"));
-    assert!(message.contains("runtime-failing-batch-node"));
+    assert!(message.contains("runtime-failing-batch-module"));
     Ok(())
 }
 
@@ -593,7 +597,7 @@ async fn load_bridge_checkpoint_state_surfaces_corrupt_kv(ctx: TestContext) -> T
     let kv = ctx.checkpoint_kv().await?;
     let manager = CheckpointManager::new(
         kv.clone(),
-        "runtime-test-node".to_string(),
+        "runtime-test-module".to_string(),
         "runtime-group".to_string(),
         "runtime-consumer".to_string(),
     );
@@ -608,7 +612,7 @@ async fn load_bridge_checkpoint_state_surfaces_corrupt_kv(ctx: TestContext) -> T
     kv.put(&key, b"{ definitely not valid json".as_slice().into())
         .await?;
 
-    let error = RuntimeRunner::<RuntimeTestNode>::load_bridge_checkpoint_state(&manager)
+    let error = RuntimeRunner::<RuntimeTestModule>::load_bridge_checkpoint_state(&manager)
         .await
         .expect_err("corrupt bridge checkpoint state must surface");
     let message = format!("{error:#}");

@@ -27,13 +27,13 @@ use support::{
 };
 
 /// Helper for publishing test events with a specific source to NATS.
-struct TestNodePublisher {
+struct TestSourcePublisher {
     nats_client: async_nats::Client,
     source: String,
     namespace: Option<String>,
 }
 
-impl TestNodePublisher {
+impl TestSourcePublisher {
     fn with_namespace(
         nats_client: async_nats::Client,
         source: impl Into<String>,
@@ -544,7 +544,7 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
     )
     .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("confirm.{suffix}"),
         Some(setup.namespace.clone()),
@@ -602,7 +602,7 @@ async fn jetstream_consumer_queues_durable_confirmation_retries_without_raw_rede
 
     let event_id = Uuid::now_v7();
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("confirm-retry.{suffix}"),
         Some(setup.namespace.clone()),
@@ -679,7 +679,7 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
     let ts_orig_str = ts_orig.format(&Rfc3339)?;
     let expected_subnano = (ts_orig.nanosecond() % 1_000) as i32;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("subnano.{suffix}"),
         Some(setup.namespace.clone()),
@@ -792,7 +792,7 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_millis(500), &hooks).await?;
 
     let event_id = Uuid::now_v7();
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("ackwait.{suffix}"),
         Some(setup.namespace.clone()),
@@ -858,7 +858,7 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
 
     // One invalid payload (bad timestamp), one valid.
     let valid_event_id = Uuid::now_v7();
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         "dlq-source",
         Some(setup.namespace.clone()),
@@ -918,7 +918,7 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
     )
     .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("malformed.{suffix}"),
         Some(setup.namespace.clone()),
@@ -970,7 +970,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
 
     // Publish an event that will trigger the simulated DB failure.
     let event_id = Uuid::now_v7();
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         "db-fail",
         Some(setup.namespace.clone()),
@@ -1083,7 +1083,7 @@ async fn jetstream_consumer_sets_stable_dedupe_identity_on_dlq_messages(
             .await?;
 
     let event_id = Uuid::now_v7();
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         "dlq-dedupe",
         Some(setup.namespace.clone()),
@@ -1173,7 +1173,7 @@ async fn jetstream_consumer_stamps_retryable_dlq_headers(ctx: TestContext) -> Te
             .await?;
 
     let event_id = Uuid::now_v7();
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         "dlq.headers",
         Some(setup.namespace.clone()),
@@ -1262,7 +1262,7 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("dlq.{suffix}"),
         Some(setup.namespace.clone()),
@@ -1350,7 +1350,7 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
     .await?;
 
     let chaos = ChaosInjector::new(Duration::from_millis(5), 0.0);
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("chaos.{suffix}"),
         Some(setup.namespace.clone()),

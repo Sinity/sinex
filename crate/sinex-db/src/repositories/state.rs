@@ -1426,7 +1426,7 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.events_processed.run'
-                  AND e.payload->'labels'->>'node' = nm.name::text
+                  AND e.payload->'labels'->>'module' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
@@ -1441,7 +1441,7 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.checkpoint.revision'
-                  AND e.payload->'labels'->>'node' = nm.name::text
+                  AND e.payload->'labels'->>'module' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
@@ -1454,7 +1454,7 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.invalidations.pending'
-                  AND e.payload->'labels'->>'node' = nm.name::text
+                  AND e.payload->'labels'->>'module' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
@@ -1466,7 +1466,7 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.error_rate_5m'
-                  AND e.payload->'labels'->>'node' = nm.name::text
+                  AND e.payload->'labels'->>'module' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
@@ -2232,8 +2232,8 @@ mod tests {
     use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
     #[sinex_serial_test]
-    async fn module_heartbeat_stale_after_defaults_invalid_override() -> xtask::sandbox::TestResult<()>
-    {
+    async fn module_heartbeat_stale_after_defaults_invalid_override()
+    -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_MODULE_HEARTBEAT_STALE_SECS", "bogus");
 
@@ -2247,7 +2247,8 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn module_heartbeat_stale_after_defaults_zero_override() -> xtask::sandbox::TestResult<()> {
+    async fn module_heartbeat_stale_after_defaults_zero_override() -> xtask::sandbox::TestResult<()>
+    {
         let mut env = EnvGuard::new();
         env.set("SINEX_MODULE_HEARTBEAT_STALE_SECS", "0");
 

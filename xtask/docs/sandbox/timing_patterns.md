@@ -257,7 +257,7 @@ async fn test_event_ordering(ctx: TestContext) -> Result<()> {
 ### Architecture (as of Jan 2025)
 
 - **Checkpoints**: ALWAYS stored in NATS KV (`KV_sinex_checkpoints`)
-- **DATABASE_URL**: Optional — only needed for nodes that query events
+- **DATABASE_URL**: Optional — only needed for runtime modules that query events
 - **`SINEX_EDGE_MODE=1`**: Suppresses DATABASE_URL requirement + enables schema cache
 
 ### Database Dependency by RuntimeModule Type
@@ -300,7 +300,7 @@ async fn test_automaton_queries_events(ctx: TestContext) -> Result<()> {
     // DATABASE_URL present via TestContext
     let ctx = ctx.with_nats().shared().await?;
 
-    let node = MyAutomaton::new(/* ... */);
+    let automaton = MyAutomaton::new(/* ... */);
     let runner = RuntimeRunner::new(/* ... */).await?;
 
     // Automaton can query events via db_pool handle

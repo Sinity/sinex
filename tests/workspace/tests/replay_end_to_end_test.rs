@@ -8,7 +8,7 @@
 //! What this test proves:
 //! - Events seeded via NATS are persisted by event_engine and visible to the gateway
 //! - The replay plan/preview/approve/execute RPC sequence works over HTTPS
-//! - A fake scan node receives the scan command via NATS and can report progress
+//! - A fake scan source runtime receives the scan command via NATS and can report progress
 //! - All scoped events are archived to `audit.archived_events` and removed from `core.events`
 
 use futures::StreamExt;
@@ -25,10 +25,10 @@ use std::time::Duration;
 use xtask::sandbox::prelude::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fake scan node helper
+// Fake scan source-runtime helper
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn spawn_fake_scan_node(
+async fn spawn_fake_scan_source_runtime(
     pool: DbPool,
     nats: async_nats::Client,
     env: sinex_primitives::environment::SinexEnvironment,
@@ -49,7 +49,7 @@ async fn spawn_fake_scan_node(
         };
 
         let Ok(command) = serde_json::from_slice::<SourceScanCommand>(&msg.payload) else {
-            eprintln!("fake scan node: invalid scan command payload");
+            eprintln!("fake scan source runtime: invalid scan command payload");
             return;
         };
         let operation_id = command.operation_id;
@@ -111,7 +111,9 @@ async fn spawn_fake_scan_node(
             .execute(&pool)
             .await
             {
-                eprintln!("fake scan node: failed to create replay source material: {error}");
+                eprintln!(
+                    "fake scan source runtime: failed to create replay source material: {error}"
+                );
                 return;
             }
             for index in 0..events_processed {
@@ -125,13 +127,17 @@ async fn spawn_fake_scan_node(
                 {
                     Ok(event) => event,
                     Err(error) => {
-                        eprintln!("fake scan node: failed to build replay output event: {error}");
+                        eprintln!(
+                            "fake scan source runtime: failed to build replay output event: {error}"
+                        );
                         return;
                     }
                 };
                 event.created_by_operation_id = Some(operation_id);
                 if let Err(error) = pool.events().insert(event).await {
-                    eprintln!("fake scan node: failed to insert replay output event: {error}");
+                    eprintln!(
+                        "fake scan source runtime: failed to insert replay output event: {error}"
+                    );
                     return;
                 }
             }
@@ -206,7 +212,7 @@ async fn json_rpc(
 ///
 /// Exercises the full request path:
 /// - Events published to NATS, persisted by the event_engine subprocess
-/// - Fake scan node listening on NATS for scan commands
+/// - Fake scan source runtime listening on NATS for scan commands
 /// - Replay orchestration through the gateway subprocess via HTTPS JSON-RPC
 /// - Post-execution verification: archived rows in `audit.archived_events`, none in `core.events`
 #[sinex_test(timeout = 180)]
@@ -216,7 +222,7 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
 
     // ── Step 1: Seed events through the full ingest path ─────────────────
     let (material_id, event_ids) = stack
-        .seed_material_with_events("test-node", "file.created", 3)
+        .seed_material_with_events("test-source", "file.created", 3)
         .await?;
 
     assert_eq!(event_ids.len(), 3, "seeded 3 events");
@@ -226,12 +232,12 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
     let scope_start = Timestamp::now() - TemporalDuration::seconds(30);
     let scope_end = Timestamp::now() + TemporalDuration::seconds(30);
 
-    // ── Step 3: Spawn fake scan node on the stack's NATS ─────────────────
+    // ── Step 3: Spawn fake scan source runtime on the stack's NATS ─────────────────
     let nats = stack.nats_client();
     // SinexEnvironment::default() picks up the same environment as the stack
     let env = sinex_primitives::environment::SinexEnvironment::default();
     let (scan_command_rx, scan_handle) =
-        spawn_fake_scan_node(stack.pool().clone(), nats, env, "test-node", 3).await?;
+        spawn_fake_scan_source_runtime(stack.pool().clone(), nats, env, "test-source", 3).await?;
 
     // ── Step 4: Build HTTPS client (accepts self-signed test cert) ────────
     let http_client = reqwest::Client::builder()
@@ -249,7 +255,7 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
         methods::REPLAY_CREATE_OPERATION,
         json!({
             "scope": {
-                "module_name": "test-node",
+                "module_name": "test-source",
                 "time_window": [
                     scope_start.format_rfc3339(),
                     scope_end.format_rfc3339()
@@ -445,7 +451,7 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
     // Verify no cross-material contamination: seed a second material, replay
     // only the first, and assert the second's events are untouched.
     let (_material_b_id, event_b_ids) = stack
-        .seed_material_with_events("test-node-b", "file.created", 2)
+        .seed_material_with_events("test-source-b", "file.created", 2)
         .await?;
     assert_eq!(event_b_ids.len(), 2, "seeded 2 events for material B");
 
@@ -463,9 +469,9 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
         );
     }
 
-    // ── Step 11: Verify scan command was dispatched to the fake node ──────
+    // ── Step 11: Verify scan command was dispatched to the fake source runtime ──────
     let dispatched_command = scan_command_rx.await.map_err(|_| {
-        color_eyre::eyre::eyre!("fake test-node did not receive scan command within timeout")
+        color_eyre::eyre::eyre!("fake test-source did not receive scan command within timeout")
     })?;
 
     let replay_context = dispatched_command
@@ -486,7 +492,7 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
 
     scan_handle
         .await
-        .map_err(|e| color_eyre::eyre::eyre!("fake scan node task panicked: {e}"))?;
+        .map_err(|e| color_eyre::eyre::eyre!("fake scan source runtime task panicked: {e}"))?;
 
     // ── Cleanup ───────────────────────────────────────────────────────────
     stack.shutdown().await?;

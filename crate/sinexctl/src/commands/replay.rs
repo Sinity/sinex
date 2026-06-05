@@ -525,7 +525,7 @@ async fn execute_run(
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             eprintln!("  Cascade: {cascade_total} total ({total} direct + {derived} derived)");
-            if let Some(modules) = cascade.get("affected_nodes").and_then(|v| v.as_array()) {
+            if let Some(modules) = cascade.get("affected_modules").and_then(|v| v.as_array()) {
                 let names: Vec<&str> = modules.iter().filter_map(|n| n.as_str()).collect();
                 if !names.is_empty() {
                     eprintln!("  Affected: {}", names.join(", "));
@@ -713,10 +713,10 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
                 "  Cascade Total: {cascade_total} ({direct} direct + {derived} derived)\n"
             ));
 
-            if let Some(modules) = cascade.get("affected_nodes").and_then(|v| v.as_array()) {
+            if let Some(modules) = cascade.get("affected_modules").and_then(|v| v.as_array()) {
                 let names: Vec<&str> = modules.iter().filter_map(|n| n.as_str()).collect();
                 if !names.is_empty() {
-                    output.push_str(&format!("  Affected Nodes: {}\n", names.join(", ")));
+                    output.push_str(&format!("  Affected Modules: {}\n", names.join(", ")));
                 }
             }
 

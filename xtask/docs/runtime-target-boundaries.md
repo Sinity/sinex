@@ -9,7 +9,7 @@ the local checkout stack is down.
 | Surface | Owns | Does not own |
 | --- | --- | --- |
 | `xtask` | Repository development loops, checkout-local infra, generated docs, CI-style verification, local background jobs, developer ergonomics | Production operation, host proof commands, source ingestion semantics |
-| `sinexctl` | Live Sinex runtime operation through `sinexd::api`, event/query/replay/lifecycle/DLQ/node/status commands | Repository build/test loops, devshell state, local background job bookkeeping |
+| `sinexctl` | Live Sinex runtime operation through `sinexd::api`, event/query/replay/lifecycle/DLQ/runtime/status commands | Repository build/test loops, devshell state, local background job bookkeeping |
 | Rust tests | Correctness of crates, SDK behavior, ingestion semantics, replay/provenance invariants, API contracts | Operator dashboards, host activation proof |
 | Benchmarks/load tests | Measured throughput, latency, resource ceilings, regression trends | Arbitrary pass/fail "resource contracts" detached from measured baselines |
 | NixOS VM tests | Deployment wiring, service activation, hardening, host-like integration behavior | Routine local unit/integration correctness |
@@ -20,7 +20,7 @@ This means:
 - `xtask prove host` is the wrong shape. Host proof belongs to NixOS VM tests,
   NixOS activation checks, and `sinexctl` live-runtime probes.
 - `xtask exercise source-material` is the wrong shape. Source-material ingestion
-  correctness belongs to SDK/node tests and VM integration tests.
+  correctness belongs to runtime tests and VM integration tests.
 - `xtask status` may display runtime signals, but only as an attributed view of
   the target it is explicitly probing. It must never silently merge checkout
   state with deployed-host state.
@@ -67,7 +67,7 @@ Any status snapshot must preserve source attribution:
   telemetry;
 - stale telemetry is not equivalent to down services;
 - missing telemetry is not equivalent to healthy services;
-- API readiness, DB/NATS reachability, service unit state, node heartbeat,
+- API readiness, DB/NATS reachability, service unit state, runtime heartbeat,
   consumer lag, batch latency, and history/job state remain separate signals.
 
 The status renderer may summarize these signals, but JSON output must keep the

@@ -88,7 +88,7 @@ fn workspace_packages_from_metadata_output(output: &std::process::Output) -> Res
 /// replace that with a dynamic call to `xtask completions list-packages` so the shell
 /// queries the actual workspace at tab-complete time.
 ///
-/// Similarly, the run `node` subcommand's `<NAME>` argument gets wired to
+/// Similarly, the run `module` subcommand's `<NAME>` argument gets wired to
 /// `xtask completions list-run-targets`.
 fn postprocess_zsh(script: &str) -> String {
     // Replace `:PACKAGES:_default` with a call to xtask for the real package list.

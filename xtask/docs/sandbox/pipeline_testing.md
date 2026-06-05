@@ -1,6 +1,6 @@
 # Pipeline Testing
 
-Pipeline tests exercise the same flow that production uses: nodes publish to NATS JetStream,
+Pipeline tests exercise the same flow that production uses: source runtimes publish to NATS JetStream,
 the in-process `sinexd::event_engine` consumer persists events, and the database observes them. This ensures tests
 validate real behavior, not just mock wiring.
 
@@ -150,28 +150,28 @@ js.get_or_create_stream(jetstream::stream::Config {
 
 **Do not** call `env.nats_stream_name(...)` or construct stream names manually.
 
-## TestNodePublisher
+## TestSourcePublisher
 
-For tests that need to simulate node behavior directly:
+For tests that need to simulate source-publisher behavior directly:
 
 ```rust
-use xtask::sandbox::TestNodePublisher;
+use xtask::sandbox::TestSourcePublisher;
 
 let ctx = ctx.with_nats().shared().await?;
 let namespace = ctx.pipeline_namespace().prefix().to_string();
 
-let publisher = TestNodePublisher::with_namespace(
+let publisher = TestSourcePublisher::with_namespace(
     ctx.nats_client(),
     "fs-watcher",          // source name
     Some(namespace),       // namespace for isolation
 );
 
-// Publish like a real node would
+// Publish like a real source runtime would
 publisher.publish_event("file.created", json!({"path": "/tmp/demo"})).await?;
 ```
 
-TestNodePublisher wraps the runtime with test defaults. It publishes slices, payloads, and
-confirmations just like a production node.
+TestSourcePublisher wraps the runtime with test defaults. It publishes slices, payloads, and
+confirmations just like a production source runtime.
 
 ## NATS Client Access
 
@@ -259,7 +259,7 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
 | Subject pattern | `namespace.subject("subject.>")` |
 | Publish event | `ctx.publish_event(...)` |
 | Full pipeline + event_engine | `ctx.pipeline_scope().await?` |
-| RuntimeModule-style publisher | `TestNodePublisher::with_namespace(...)` |
+| Runtime module-style publisher | `TestSourcePublisher::with_namespace(...)` |
 | Wait for persistence | `scope.wait_for_event_count(n)` |
 
 ## When to Use What
@@ -269,7 +269,7 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
 | Unit test, no pipeline | Direct repository: `ctx.pool.events().insert()` |
 | Integration test | `ctx.publish_event()` |
 | Full pipeline with event_engine | `ctx.pipeline_scope()` |
-| Simulating node behavior | `TestNodePublisher` |
+| Simulating source-publisher behavior | `TestSourcePublisher` |
 | Custom JetStream setup | `ctx.jetstream()` + namespace |
 
 ## Troubleshooting

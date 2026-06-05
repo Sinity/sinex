@@ -58,7 +58,7 @@ impl StatusCommand {
         let mut warnings = Vec::new();
 
         collect_gateway_and_health_signals(client, &target, &mut signals, &mut warnings).await;
-        collect_node_and_dlq_signals(client, &mut signals, &mut warnings).await;
+        collect_runtime_and_dlq_signals(client, &mut signals, &mut warnings).await;
         let stalled_units =
             collect_source_and_stall_signals(client, &mut signals, &mut warnings).await;
 
@@ -220,7 +220,7 @@ fn component_latency_message(latency_ms: Option<f64>, detail: Option<&str>) -> O
     }
 }
 
-async fn collect_node_and_dlq_signals(
+async fn collect_runtime_and_dlq_signals(
     client: &GatewayClient,
     signals: &mut Vec<RuntimeStatusSignal>,
     warnings: &mut Vec<RuntimeStatusWarning>,

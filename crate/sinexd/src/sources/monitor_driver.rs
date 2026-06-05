@@ -435,7 +435,7 @@ mod tests {
     /// Verify MonitorDriver errors cleanly if `run_continuous` is called
     /// without a prior `initialize()`.
     #[sinex_test]
-    async fn test_monitor_driver_node_missing_runtime_errors() -> TestResult<()> {
+    async fn test_monitor_driver_missing_runtime_errors() -> TestResult<()> {
         fn noop_emit(
             _runtime: RuntimeContext,
             _material_id: Id<SourceMaterial>,
@@ -443,8 +443,7 @@ mod tests {
             Box::pin(async { Ok(vec![]) })
         }
 
-        let mut source =
-            MonitorDriver::new("test.monitor", MonitorPhase::ServiceStart, noop_emit);
+        let mut source = MonitorDriver::new("test.monitor", MonitorPhase::ServiceStart, noop_emit);
 
         // run_continuous without prior initialize() should return Err.
         let (_tx, rx) = watch::channel(false);
@@ -465,7 +464,7 @@ mod tests {
     /// Verify that a MonitorDriver with a noop emit function reflects the
     /// correct capabilities: continuous only, no snapshot/historical.
     #[sinex_test]
-    async fn test_monitor_driver_node_capabilities() -> TestResult<()> {
+    async fn test_monitor_driver_capabilities() -> TestResult<()> {
         fn noop_emit(
             _runtime: RuntimeContext,
             _material_id: Id<SourceMaterial>,

@@ -82,7 +82,7 @@ async fn scope_serialization_round_trips() -> Result<()> {
     filters.insert("max_size".to_string(), serde_json::json!(1024));
 
     let scope = ReplayScope {
-        source_name: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: Some((
             Timestamp::new(time::OffsetDateTime::new_utc(
                 Date::from_calendar_date(2024, Month::January, 1).unwrap(),
@@ -118,7 +118,7 @@ async fn scope_serialization_round_trips() -> Result<()> {
 #[sinex_test]
 async fn scope_normalized_filters_drop_empty_and_dedupe() -> Result<()> {
     let scope = ReplayScope {
-        source_name: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: Some(vec![
             Uuid::parse_str("018f3dd0-6ab6-7dd9-a0f2-2c6f99b67ed7")?,
@@ -147,7 +147,7 @@ async fn scope_normalized_filters_drop_empty_and_dedupe() -> Result<()> {
 #[sinex_test]
 async fn operations_default_to_planning() -> Result<()> {
     let scope = ReplayScope {
-        source_name: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: Some(vec![Uuid::now_v7()]),
         filters: HashMap::new(),
@@ -183,7 +183,7 @@ async fn operations_default_to_planning() -> Result<()> {
 async fn create_operation_persists_loadable_metadata_atomically(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        source_name: "atomic-create-node".to_string(),
+        source_name: "atomic-create-source".to_string(),
         time_window: None,
         material_filter: Some(vec![Uuid::now_v7()]),
         filters: HashMap::from([(
@@ -230,7 +230,7 @@ async fn create_operation_persists_loadable_metadata_atomically(ctx: TestContext
 async fn preview_updates_do_not_regress_approved_state(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        source_name: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -277,7 +277,7 @@ async fn submit_previewed_operation_sets_execution_metadata_atomically(
 ) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        source_name: "submit-node".to_string(),
+        source_name: "submit-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -334,7 +334,7 @@ async fn submit_previewed_operation_sets_execution_metadata_atomically(
 async fn begin_execution_sets_execution_metadata_atomically(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        source_name: "execute-node".to_string(),
+        source_name: "execute-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -382,7 +382,7 @@ async fn begin_execution_sets_execution_metadata_atomically(ctx: TestContext) ->
 async fn mark_failed_persists_pre_execution_and_execution_failures(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        source_name: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -428,7 +428,7 @@ async fn mark_failed_persists_pre_execution_and_execution_failures(ctx: TestCont
     let second_operation = replay
         .create_operation(
             ReplayScope {
-                source_name: "test-node-2".to_string(),
+                source_name: "test-source-2".to_string(),
                 time_window: None,
                 material_filter: None,
                 filters: HashMap::new(),
@@ -468,7 +468,7 @@ async fn mark_failed_persists_pre_execution_and_execution_failures(ctx: TestCont
 async fn cancel_enforces_state_transition_rules(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        source_name: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -527,7 +527,7 @@ async fn cancel_marks_executing_operation_as_cancelling_until_finalized(
 ) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        source_name: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -584,7 +584,7 @@ async fn cancel_marks_executing_operation_as_cancelling_until_finalized(
 async fn execution_lock_is_released_when_guard_drops(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        source_name: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -635,7 +635,7 @@ async fn execution_lock_is_released_when_guard_drops(ctx: TestContext) -> Result
 async fn recover_stale_executing_clears_executor_module(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        source_name: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -714,7 +714,7 @@ async fn recover_stale_executing_clears_executor_module(ctx: TestContext) -> Res
 async fn recover_stale_committing_clears_executor_module(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        source_name: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),

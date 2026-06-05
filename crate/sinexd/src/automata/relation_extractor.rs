@@ -221,8 +221,8 @@ pub type RelationExtractorRuntime = ScopeReconcilerAdapter<RelationExtractor>;
 use sinex_primitives::proof::{
     CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
     OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
-    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape, SourceContract,
-    SourceRuntimeBinding, SubjectRef,
+    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape,
+    SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

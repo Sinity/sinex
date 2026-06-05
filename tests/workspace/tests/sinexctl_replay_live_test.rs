@@ -182,7 +182,15 @@ async fn sinexctl_replay_plan_creates_operation(ctx: TestContext) -> color_eyre:
 
     let output = sinexctl_replay(
         &url,
-        &["plan", "--source", "test-source", "--since", "1h", "-f", "json"],
+        &[
+            "plan",
+            "--source",
+            "test-source",
+            "--since",
+            "1h",
+            "-f",
+            "json",
+        ],
     )
     .await;
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -217,7 +225,15 @@ async fn sinexctl_replay_preview_after_plan(ctx: TestContext) -> color_eyre::Res
     // Plan
     let plan_output = sinexctl_replay(
         &url,
-        &["plan", "--source", "test-source", "--since", "1h", "-f", "json"],
+        &[
+            "plan",
+            "--source",
+            "test-source",
+            "--since",
+            "1h",
+            "-f",
+            "json",
+        ],
     )
     .await;
     assert!(plan_output.status.success(), "plan should succeed");
@@ -254,7 +270,15 @@ async fn sinexctl_replay_approve_after_preview(ctx: TestContext) -> color_eyre::
 
     let plan_output = sinexctl_replay(
         &url,
-        &["plan", "--source", "test-source", "--since", "1h", "-f", "json"],
+        &[
+            "plan",
+            "--source",
+            "test-source",
+            "--since",
+            "1h",
+            "-f",
+            "json",
+        ],
     )
     .await;
     assert!(plan_output.status.success());
@@ -284,7 +308,15 @@ async fn sinexctl_replay_cancel_with_reason(ctx: TestContext) -> color_eyre::Res
 
     let plan_output = sinexctl_replay(
         &url,
-        &["plan", "--source", "test-source", "--since", "1h", "-f", "json"],
+        &[
+            "plan",
+            "--source",
+            "test-source",
+            "--since",
+            "1h",
+            "-f",
+            "json",
+        ],
     )
     .await;
     assert!(plan_output.status.success());
@@ -327,7 +359,15 @@ async fn sinexctl_replay_status_shows_state(ctx: TestContext) -> color_eyre::Res
 
     let plan_output = sinexctl_replay(
         &url,
-        &["plan", "--source", "test-source", "--since", "1h", "-f", "json"],
+        &[
+            "plan",
+            "--source",
+            "test-source",
+            "--since",
+            "1h",
+            "-f",
+            "json",
+        ],
     )
     .await;
     assert!(plan_output.status.success());
@@ -357,13 +397,17 @@ async fn sinexctl_replay_list_returns_operations(ctx: TestContext) -> color_eyre
     // Create two plans
     let plan1 = sinexctl_replay(
         &url,
-        &["plan", "--source", "source-a", "--since", "1h", "-f", "json"],
+        &[
+            "plan", "--source", "source-a", "--since", "1h", "-f", "json",
+        ],
     )
     .await;
     assert!(plan1.status.success());
     let plan2 = sinexctl_replay(
         &url,
-        &["plan", "--source", "source-b", "--since", "1h", "-f", "json"],
+        &[
+            "plan", "--source", "source-b", "--since", "1h", "-f", "json",
+        ],
     )
     .await;
     assert!(plan2.status.success());
@@ -398,7 +442,15 @@ async fn sinexctl_replay_list_filters_by_state(ctx: TestContext) -> color_eyre::
     // Create a plan, preview, then cancel it
     let plan_output = sinexctl_replay(
         &url,
-        &["plan", "--source", "test-source", "--since", "1h", "-f", "json"],
+        &[
+            "plan",
+            "--source",
+            "test-source",
+            "--since",
+            "1h",
+            "-f",
+            "json",
+        ],
     )
     .await;
     assert!(plan_output.status.success());

@@ -455,7 +455,7 @@ impl ReplayRepository<'_> {
     // ── Cascade query helpers ────────────────────────────────────────────
 
     /// Load distinct source names for derived events.
-    pub async fn load_cascade_affected_nodes(
+    pub async fn load_cascade_affected_modules(
         tx: &mut Transaction<'_, Postgres>,
         derived_ids: &[Uuid],
     ) -> Result<Vec<String>> {
@@ -470,7 +470,7 @@ impl ReplayRepository<'_> {
         .fetch_all(tx.as_mut())
         .await
         .map_err(|error| {
-            SinexError::database("Failed to load cascade affected nodes")
+            SinexError::database("Failed to load cascade affected modules")
                 .with_source(error.to_string())
                 .with_context("derived_event_count", derived_ids.len().to_string())
                 .with_operation("preview_cascade_impact")
@@ -540,7 +540,7 @@ impl ReplayRepository<'_> {
     pub async fn list_operations(
         &self,
         filter_state: Option<ReplayState>,
-        filter_node: Option<&str>,
+        filter_source_name: Option<&str>,
         limit: Option<i64>,
     ) -> Result<Vec<(Uuid, String, JsonValue, Option<JsonValue>)>> {
         let mut qb: QueryBuilder<'_, Postgres> = QueryBuilder::new(
@@ -548,9 +548,9 @@ impl ReplayRepository<'_> {
              FROM core.operations_log WHERE operation_type = 'replay'",
         );
 
-        if let Some(node) = filter_node {
+        if let Some(source_name) = filter_source_name {
             qb.push(" AND scope->>'source_name' = ");
-            qb.push_bind(node.to_string());
+            qb.push_bind(source_name.to_string());
         }
 
         if let Some(state) = filter_state {

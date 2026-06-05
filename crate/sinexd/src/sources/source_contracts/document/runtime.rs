@@ -1031,7 +1031,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn document_node_reports_empty_ingestion_history_before_scan()
+    async fn document_source_reports_empty_ingestion_history_before_scan()
     -> ::xtask::sandbox::TestResult<()> {
         let source = DocumentSourceDriver::new();
         let history = source.get_ingestion_history(10)?;
@@ -1041,7 +1041,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn document_node_reports_last_scan_as_activity_and_history()
+    async fn document_source_reports_last_scan_as_activity_and_history()
     -> ::xtask::sandbox::TestResult<()> {
         let source = DocumentSourceDriver::new();
         let started_at =

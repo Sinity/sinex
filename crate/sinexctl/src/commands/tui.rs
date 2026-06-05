@@ -299,7 +299,7 @@ impl App {
             }
         }
 
-        self.refresh_nodes_and_dlq().await;
+        self.refresh_runtime_and_dlq().await;
         self.refresh_operations_and_state().await;
         self.refresh_sources_and_events().await;
 
@@ -307,7 +307,7 @@ impl App {
         self.last_refresh = Instant::now();
     }
 
-    async fn refresh_nodes_and_dlq(&mut self) {
+    async fn refresh_runtime_and_dlq(&mut self) {
         match self.client.list_runtime(None).await {
             Ok(modules) => self.modules = modules,
             Err(e) => {

@@ -756,7 +756,7 @@ async fn derived_health_check_reflects_failed_health_reporter(ctx: TestContext) 
 
     assert!(
         !crate::runtime::stream::RuntimeModule::health_check(&adapter).await?,
-        "health_check should fail once the reporter marks the node failed"
+        "health_check should fail once the reporter marks the automaton failed"
     );
     Ok(())
 }
@@ -862,10 +862,10 @@ async fn load_state_rejects_kv_checkpoint_without_state_payload(
 #[sinex_test]
 async fn process_batch_halts_on_retry_error() -> TestResult<()> {
     let seen = Arc::new(AtomicUsize::new(0));
-    let node = RetryAutomaton {
+    let automaton = RetryAutomaton {
         seen: Arc::clone(&seen),
     };
-    let mut adapter = AutomatonRuntime::new(TransducerWrapper(node));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(automaton));
 
     let error = adapter
         .process_batch(vec![

@@ -322,7 +322,7 @@ async fn test_checkpoint_recovery_with_material_reference(ctx: TestContext) -> R
     let kv = ctx.checkpoint_kv().await?;
     let checkpoint_mgr = CheckpointManager::new(
         kv,
-        "crash-node".to_string(),
+        "crash-module".to_string(),
         "default".to_string(),
         "test-instance".to_string(),
     );

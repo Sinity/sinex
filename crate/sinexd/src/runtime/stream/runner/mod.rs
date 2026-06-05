@@ -104,12 +104,12 @@ mod command_listener;
 mod construct;
 mod control_messages;
 mod dispatch;
-mod source_startup;
 mod initialize;
 mod provisional;
 mod registration;
 mod service;
 mod shutdown_helpers;
+mod source_startup;
 
 impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// Get module capabilities

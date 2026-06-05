@@ -1,6 +1,6 @@
 //! Vertical proof: `WeeChat` parser through production-shaped pipeline (#1132).
 //!
-//! This test replaces the fake-scan-node pattern (direct DB inserts) with the
+//! This test replaces the fake-scan-runtime pattern (direct DB inserts) with the
 //! real parser pipeline: `AppendOnlyFileAdapter` → `WeeChatLogParser` →
 //! `ParsedEventIntent` → Event (material provenance) → `EventIntent` →
 //! NATS publish → event_engine admission → DB persistence → query verification.

@@ -48,7 +48,7 @@ pkgs.testers.nixosTest {
     # The base config disables it; re-enable here explicitly.
     services.sinex.lifecycle.preflight.enable = lib.mkForce true;
 
-    # Minimal node surface: only what's needed to prove the fs path.
+    # Minimal source surface: only what's needed to prove the fs path.
     services.sinex.runtime = {
       filesystem = {
         enable = true;

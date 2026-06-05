@@ -208,7 +208,7 @@ host    all             all             ::1/128                 trust
 
   # Ensure the event engine has its expected working directories before startup.
   # NB: do NOT self-reference config.systemd.services here — it causes infinite
-  # recursion because node-services.nix defines systemd.services based on
+  # recursion because runtime-services.nix defines systemd.services based on
   # config.services.sinex.core.  The module system auto-merges definitions.
   systemd.services.sinexd.serviceConfig = {
     PermissionsStartOnly = true;

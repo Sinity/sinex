@@ -15,13 +15,13 @@ use tokio::sync::Notify;
 use xtask::sandbox::prelude::*;
 
 #[derive(Default)]
-struct RuntimeTestNode;
+struct RuntimeTestModule;
 
 #[derive(Default)]
-struct FailingShutdownNode;
+struct FailingShutdownModule;
 
 #[derive(Default)]
-struct FailingBatchNode;
+struct FailingBatchModule;
 
 #[derive(Debug, Clone, PartialEq)]
 struct RecordedScan {
@@ -29,7 +29,7 @@ struct RecordedScan {
     until: &'static str,
 }
 
-struct StartupSequenceTestNode {
+struct StartupSequenceTestModule {
     checkpoint: std::sync::Arc<tokio::sync::Mutex<Checkpoint>>,
     scans: std::sync::Arc<tokio::sync::Mutex<Vec<RecordedScan>>>,
     snapshot_checkpoint: Checkpoint,
@@ -58,13 +58,13 @@ impl Default for DrainTestSource {
 
 #[cfg(feature = "messaging")]
 #[derive(Default)]
-struct DrainBridgeTestNode {
+struct DrainBridgeTestModule {
     processing_started: Arc<Notify>,
     release_processing: Arc<Notify>,
     processed_event_ids: Arc<tokio::sync::Mutex<Vec<Uuid>>>,
 }
 
-impl StartupSequenceTestNode {
+impl StartupSequenceTestModule {
     fn new(initial_checkpoint: Checkpoint, snapshot_checkpoint: Checkpoint) -> Self {
         Self {
             checkpoint: std::sync::Arc::new(tokio::sync::Mutex::new(initial_checkpoint)),
@@ -172,7 +172,7 @@ impl SourceDriver for DrainTestSource {
     }
 }
 
-impl RuntimeModule for RuntimeTestNode {
+impl RuntimeModule for RuntimeTestModule {
     type Config = ();
 
     async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
@@ -198,7 +198,7 @@ impl RuntimeModule for RuntimeTestNode {
     }
 
     fn module_name(&self) -> &'static str {
-        "runtime-test-node"
+        "runtime-test-module"
     }
 
     fn module_kind(&self) -> ModuleKind {
@@ -214,7 +214,7 @@ impl RuntimeModule for RuntimeTestNode {
 #[sinex_test]
 async fn automaton_consumer_config_keeps_raw_buffering_for_db_backed_confirmations()
 -> TestResult<()> {
-    let config = RuntimeRunner::<RuntimeTestNode>::automaton_consumer_config(
+    let config = RuntimeRunner::<RuntimeTestModule>::automaton_consumer_config(
         "sinex.entity-extractor",
         true,
         ProcessingModel::LeaderStandby,
@@ -231,7 +231,7 @@ async fn automaton_consumer_config_keeps_raw_buffering_for_db_backed_confirmatio
         "sinex_entity-extractor-automaton-confirmed-v2"
     );
 
-    let config_without_db = RuntimeRunner::<RuntimeTestNode>::automaton_consumer_config(
+    let config_without_db = RuntimeRunner::<RuntimeTestModule>::automaton_consumer_config(
         "sinex.entity-extractor",
         false,
         ProcessingModel::LeaderStandby,
@@ -246,7 +246,7 @@ async fn automaton_consumer_config_keeps_raw_buffering_for_db_backed_confirmatio
     Ok(())
 }
 
-impl RuntimeModule for FailingShutdownNode {
+impl RuntimeModule for FailingShutdownModule {
     type Config = ();
 
     async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
@@ -272,7 +272,7 @@ impl RuntimeModule for FailingShutdownNode {
     }
 
     fn module_name(&self) -> &'static str {
-        "failing-shutdown-node"
+        "failing-shutdown-module"
     }
 
     fn module_kind(&self) -> ModuleKind {
@@ -288,7 +288,7 @@ impl RuntimeModule for FailingShutdownNode {
     }
 }
 
-impl RuntimeModule for FailingBatchNode {
+impl RuntimeModule for FailingBatchModule {
     type Config = ();
 
     async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
@@ -314,7 +314,7 @@ impl RuntimeModule for FailingBatchNode {
     }
 
     fn module_name(&self) -> &'static str {
-        "runtime-failing-batch-node"
+        "runtime-failing-batch-module"
     }
 
     fn module_kind(&self) -> ModuleKind {
@@ -333,7 +333,7 @@ impl RuntimeModule for FailingBatchNode {
     }
 }
 
-impl RuntimeModule for StartupSequenceTestNode {
+impl RuntimeModule for StartupSequenceTestModule {
     type Config = ();
 
     async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
@@ -372,7 +372,7 @@ impl RuntimeModule for StartupSequenceTestNode {
     }
 
     fn module_name(&self) -> &'static str {
-        "startup-sequence-test-node"
+        "startup-sequence-test-module"
     }
 
     fn module_kind(&self) -> ModuleKind {
@@ -389,7 +389,7 @@ impl RuntimeModule for StartupSequenceTestNode {
 }
 
 #[cfg(feature = "messaging")]
-impl RuntimeModule for DrainBridgeTestNode {
+impl RuntimeModule for DrainBridgeTestModule {
     type Config = ();
 
     async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
@@ -415,7 +415,7 @@ impl RuntimeModule for DrainBridgeTestNode {
     }
 
     fn module_name(&self) -> &'static str {
-        "drain-bridge-test-node"
+        "drain-bridge-test-module"
     }
 
     fn module_kind(&self) -> ModuleKind {
@@ -601,7 +601,7 @@ async fn publish_confirmed_raw_event(
 }
 
 #[cfg(feature = "messaging")]
-async fn node_run_status(pool: &sinex_db::DbPool, module_run_id: Uuid) -> TestResult<String> {
+async fn module_run_status(pool: &sinex_db::DbPool, module_run_id: Uuid) -> TestResult<String> {
     let status =
         sqlx::query_scalar::<_, String>("SELECT status::text FROM core.runs WHERE id = $1")
             .bind(module_run_id)

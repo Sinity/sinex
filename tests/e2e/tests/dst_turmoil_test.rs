@@ -38,7 +38,7 @@ async fn run_turmoil_blocking(test: impl FnOnce() + Send + 'static) -> TestResul
 /// Deterministic exponential backoff with additive jitter.
 ///
 /// This mirrors the kind of retry logic used in sinex's reconnection paths
-/// (DLQ retry, node heartbeat) but is extracted here for testability under
+/// (DLQ retry, runtime heartbeat) but is extracted here for testability under
 /// turmoil's virtual clock.
 struct BackoffSchedule {
     #[allow(dead_code)]

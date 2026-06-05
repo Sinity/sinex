@@ -837,12 +837,8 @@ async fn report_document_surface_check(
         return Ok(());
     }
 
-    let count = sample_events_matching(
-        client,
-        &[DOCUMENT_SOURCE],
-        DOCUMENT_INGESTED_EVENT_TYPE,
-    )
-    .await?;
+    let count =
+        sample_events_matching(client, &[DOCUMENT_SOURCE], DOCUMENT_INGESTED_EVENT_TYPE).await?;
     if count > 0 {
         summary.pass(format!(
             "Managed document surface has at least {count} persisted {DOCUMENT_INGESTED_EVENT_TYPE} event samples"

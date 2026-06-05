@@ -769,8 +769,8 @@ fn family_for_path(path: &str) -> CommandFamily {
         "gateway" | "core" => CommandFamily::Gateway,
         "query" | "trace" | "recent" | "errors" | "watch" | "context" | "explain" | "verify"
         | "now" | "modules" | "status" => CommandFamily::Query,
-        "automata" | "replay" | "dlq" | "ops" | "audit" | "lifecycle"
-        | "git-ops" | "privacy" | "blob" => CommandFamily::Operate,
+        "automata" | "replay" | "dlq" | "ops" | "audit" | "lifecycle" | "git-ops" | "privacy"
+        | "blob" => CommandFamily::Operate,
         "sources" => CommandFamily::Sources,
         "declare" | "instructions" | "tasks" | "curation" | "semantics" | "llm" | "documents"
         | "annotate" => CommandFamily::Domain,

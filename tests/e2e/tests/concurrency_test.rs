@@ -103,7 +103,7 @@ async fn test_concurrent_checkpoint_updates(ctx: TestContext) -> TestResult<()> 
     let ctx_with_nats = ctx.with_nats().shared().await?;
     let kv = ctx_with_nats.checkpoint_kv().await?;
 
-    let module_name = format!("test_node_{}", Uuid::now_v7().to_string().to_lowercase());
+    let module_name = format!("test_module_{}", Uuid::now_v7().to_string().to_lowercase());
     let worker_count = 5;
     let checkpoints_per_worker = 10;
 

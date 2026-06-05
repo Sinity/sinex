@@ -373,12 +373,7 @@ static BINARIES: &[(&str, &str, &str, Option<&str>)] = &[
         "sinexd",
         Some("desktop.activitywatch"),
     ),
-    (
-        "system-source",
-        "sinexd",
-        "sinexd",
-        Some("system.journald"),
-    ),
+    ("system-source", "sinexd", "sinexd", Some("system.journald")),
     // Automatons — no per-automaton dispatch in the new layout; running any
     // of these brings up the full supervisor.
     ("analytics-automaton", "sinexd", "sinexd", None),
@@ -390,7 +385,12 @@ static BINARIES: &[(&str, &str, &str, Option<&str>)] = &[
 ];
 
 const CORE_TARGETS: &[&str] = &["sinexd"];
-const SOURCE_TARGETS: &[&str] = &["fs-source", "terminal-source", "desktop-source", "system-source"];
+const SOURCE_TARGETS: &[&str] = &[
+    "fs-source",
+    "terminal-source",
+    "desktop-source",
+    "system-source",
+];
 const AUTOMATON_TARGETS: &[&str] = &[
     "analytics-automaton",
     "health-automaton",
@@ -564,7 +564,8 @@ impl XtaskCommand for RunCommand {
                     .await
             }
             RunSubcommand::AllSources { instance_id } => {
-                self.run_bundle(SOURCE_TARGETS, instance_id.clone(), ctx).await
+                self.run_bundle(SOURCE_TARGETS, instance_id.clone(), ctx)
+                    .await
             }
             RunSubcommand::AllAutomatons { instance_id } => {
                 self.run_bundle(AUTOMATON_TARGETS, instance_id.clone(), ctx)
@@ -593,10 +594,7 @@ impl RunCommand {
     }
 
     fn runs_single_binary(&self) -> bool {
-        matches!(
-            self.subcommand,
-            RunSubcommand::RuntimeModule { .. }
-        )
+        matches!(self.subcommand, RunSubcommand::RuntimeModule { .. })
     }
 
     fn runs_bundle(&self) -> bool {
@@ -614,9 +612,7 @@ impl RunCommand {
 
     fn validate_flag_compatibility(&self, ctx: &CommandContext) -> Result<()> {
         if self.watch && !self.runs_single_binary() {
-            bail!(
-                "--watch only supports single local module targets"
-            );
+            bail!("--watch only supports single local module targets");
         }
 
         if self.watch && ctx.is_background() {
@@ -1555,7 +1551,12 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(
             SOURCE_TARGETS,
-            &["fs-source", "terminal-source", "desktop-source", "system-source"]
+            &[
+                "fs-source",
+                "terminal-source",
+                "desktop-source",
+                "system-source"
+            ]
         );
         Ok(())
     }

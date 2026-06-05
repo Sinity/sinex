@@ -719,7 +719,7 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
             ],
             foreign_keys: vec![NamedForeignKey {
                 name: "events_module_run_id_fkey",
-                statement_fn: Events::create_node_run_foreign_key,
+                statement_fn: Events::create_module_run_foreign_key,
             }],
             // node_version was the predecessor to module_run_id.
             // occurrence_id was removed when occurrence rows were folded back

@@ -21,7 +21,6 @@ use sinex_primitives::rpc::curation::CurationListProposalsRequest;
 use sinex_primitives::rpc::documents::{
     DocumentsGetChunksRequest, DocumentsGetRequest, DocumentsSearchRequest,
 };
-use sinex_primitives::rpc::source_status::SourcesStatusResponse;
 use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmPromptsListRequest, LlmRouteExplainRequest,
 };
@@ -35,6 +34,7 @@ use sinex_primitives::rpc::semantic::{
     SemanticEpochListRequest, SemanticLaneDiffsListRequest, SemanticLaneListRequest,
     SemanticLaneOutputsListRequest,
 };
+use sinex_primitives::rpc::source_status::SourcesStatusResponse;
 use sinex_primitives::rpc::sources::{
     SourcesContinuityRequest, SourcesCoverageRequest, SourcesDriftListRequest, SourcesListRequest,
     SourcesReadinessGetRequest, SourcesReadinessListRequest, SourcesShowRequest,
@@ -1588,7 +1588,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
     if let Some(result) = call_tool_events_sources(client, name, arguments.clone()).await? {
         return Ok(result);
     }
-    if let Some(result) = call_tool_nodes_analytics(client, name, arguments.clone()).await? {
+    if let Some(result) = call_tool_runtime_analytics(client, name, arguments.clone()).await? {
         return Ok(result);
     }
     if let Some(result) = call_tool_ops_infra(client, name, arguments.clone()).await? {
@@ -1634,7 +1634,7 @@ async fn call_tool_events_sources(
     Ok(Some(result))
 }
 
-async fn call_tool_nodes_analytics(
+async fn call_tool_runtime_analytics(
     client: &GatewayClient,
     name: &str,
     arguments: Value,

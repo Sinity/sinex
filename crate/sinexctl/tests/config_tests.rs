@@ -380,7 +380,7 @@ async fn test_config_aliases_from_toml() -> TestResult<()> {
 
         [aliases]
         h = ["health"]
-        nodes = ["node", "list"]
+        modules = ["runtime", "list"]
         q = ["query", "events"]
     "#;
 
@@ -389,8 +389,8 @@ async fn test_config_aliases_from_toml() -> TestResult<()> {
     assert_eq!(config.aliases.len(), 3);
     assert_eq!(config.aliases.get("h"), Some(&vec!["health".to_string()]));
     assert_eq!(
-        config.aliases.get("nodes"),
-        Some(&vec!["node".to_string(), "list".to_string()])
+        config.aliases.get("modules"),
+        Some(&vec!["runtime".to_string(), "list".to_string()])
     );
     Ok(())
 }

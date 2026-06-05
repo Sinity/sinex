@@ -26,7 +26,7 @@ impl<'a> Repository<'a> for IntegrityRepository<'a> {
 }
 
 impl IntegrityRepository<'_> {
-    /// Get the names of all expected automaton nodes from `core.manifests`.
+    /// Get the names of all expected automaton modules from `core.manifests`.
     pub async fn get_expected_automatons(&self) -> SinexResult<Vec<String>> {
         let names = sqlx::query_scalar!(
             r#"SELECT name FROM core.manifests WHERE manifest_type = 'automaton' ORDER BY name"#
@@ -92,7 +92,7 @@ impl IntegrityRepository<'_> {
         )
     }
 
-    /// Analyze a single node for checkpoint consistency issues.
+    /// Analyze a single module for checkpoint consistency issues.
     pub async fn analyze_node(
         &self,
         module_name: &str,
@@ -106,7 +106,7 @@ impl IntegrityRepository<'_> {
         let Some(snapshot) = snapshot else {
             issues.push(CheckpointInconsistency {
                 module_name: module_name.to_string(),
-                details: "No checkpoint found for node".to_string(),
+                details: "No checkpoint found for module".to_string(),
                 inconsistency_type: CheckpointInconsistencyType::MissingCheckpoint,
                 events_potentially_missed: 0,
             });

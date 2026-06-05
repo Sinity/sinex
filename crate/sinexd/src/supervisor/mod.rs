@@ -66,7 +66,7 @@ impl Supervisor {
         info!("sinexd starting");
 
         // Set hosted mode BEFORE spawning any subsystem tasks. In-process
-        // nodes and source bindings must NOT send sd_notify messages
+        // automata and source bindings must NOT send sd_notify messages
         // to systemd — only this top-level supervisor speaks for the unit.
         // Notably, fire-once monitor bindings emit STOPPING=1 on clean
         // exit; without this latch they would tell systemd the whole sinexd

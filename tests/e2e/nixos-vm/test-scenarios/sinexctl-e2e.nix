@@ -26,7 +26,7 @@ pkgs.testers.nixosTest {
     # Enable gateway for CLI tests
     services.sinex.core.gateway.enable = true;
 
-    # Enable filesystem node to generate events
+    # Enable filesystem source runtime to generate events
     services.sinex.runtime = {
       filesystem.enable = true;
       filesystem.watchPaths = lib.mkAfter [ "/var/lib/sinex/watched" ];
@@ -115,7 +115,7 @@ pkgs.testers.nixosTest {
         help_output = sinexctl("--help")
         assert "Commands:" in help_output, "Help should list commands"
         assert "query" in help_output, "Help should include query command"
-        assert "node" in help_output, "Help should include node command"
+        assert "runtime" in help_output, "Help should include runtime command"
         print("Help output verified")
 
     # Test 2: Config commands
@@ -229,8 +229,8 @@ pkgs.testers.nixosTest {
         assert result[0] != 0, "Invalid command should fail"
 
         # Missing required args should fail
-        result = machine.execute("sinexctl node status 2>&1")
-        assert result[0] != 0, "Missing node name should fail"
+        result = machine.execute("sinexctl runtime status 2>&1")
+        assert result[0] != 0, "Missing runtime module name should fail"
 
         print("Error handling works correctly")
 

@@ -1203,11 +1203,11 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "Run a specific node by name",
+          "about": "Run a specific runtime module target by name",
           "args": [
             {
               "global": false,
-              "help": "Node name (e.g., fs-ingestor, analytics-automaton)",
+              "help": "RuntimeModule target name (e.g., fs-source, analytics-automaton)",
               "long": null,
               "name": "name",
               "possible_values": [],
@@ -1226,7 +1226,7 @@ expression: json
               "takes_value": true
             }
           ],
-          "name": "node",
+          "name": "module",
           "subcommands": []
         },
         {
@@ -5102,7 +5102,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests)",
+              "help": "U5: Scope to a crate or directory group (e.g., sinex-db, core, runtime, tests)",
               "long": "scope",
               "name": "scope",
               "possible_values": [],

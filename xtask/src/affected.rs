@@ -1119,9 +1119,7 @@ mod tests {
     async fn test_infer_test_binaries_maps_aggregated_nested_integration_modules() -> TestResult<()>
     {
         let repo = tempfile::tempdir()?;
-        let root = repo
-            .path()
-            .join("crate/sinexd/tests/integration_tests.rs");
+        let root = repo.path().join("crate/sinexd/tests/integration_tests.rs");
         let nested = repo
             .path()
             .join("crate/sinexd/tests/integration/runtime_lifecycle_test.rs");

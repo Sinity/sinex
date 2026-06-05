@@ -116,7 +116,7 @@ fn insecure_https_client() -> TestResult<reqwest::Client> {
 ///     event_engine publishes to `{env}.{namespace}.events.confirmations.*`.
 ///   - Fixed here: `GatewayConfig::namespace` is now consumed by the bus, which
 ///     subscribes via `nats_subject_with_namespace`, matching the publisher.
-///   - Separately, the node preflight stream-existence check was made
+///   - Separately, the source preflight stream-existence check was made
 ///     namespace-aware so it stops 404-ing on `..._CONFIRMATIONS` under a
 ///     per-test namespace.
 #[sinex_test(timeout = 90)]

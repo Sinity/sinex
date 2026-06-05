@@ -51,7 +51,6 @@ use sinex_primitives::rpc::{
         HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD, HealthEffectRecordRequest,
         HealthEffectRecordResponse, HealthIntakeRecordRequest, HealthIntakeRecordResponse,
     },
-    source_status::{SOURCES_STATUS_METHOD, SourcesStatusRequest, SourcesStatusResponse},
     instructions::{
         HyprlandWorkspaceSwitchRequest, HyprlandWorkspaceSwitchResponse,
         INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
@@ -125,6 +124,7 @@ use sinex_primitives::rpc::{
         SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
     },
     shadow::{SHADOW_LIST_METHOD, ShadowListRequest, ShadowListResponse},
+    source_status::{SOURCES_STATUS_METHOD, SourcesStatusRequest, SourcesStatusResponse},
     sources::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_LIST_METHOD,
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,

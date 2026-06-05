@@ -331,7 +331,7 @@ async fn test_gateway_client_handles_rpc_error_with_data() -> TestResult<()> {
             "error": {
                 "code": -32602,
                 "message": "Invalid params",
-                "data": {"field": "node_id", "reason": "required"}
+                "data": {"field": "module_name", "reason": "required"}
             },
             "id": 1
         })))
@@ -351,7 +351,7 @@ async fn test_gateway_client_handles_rpc_error_with_data() -> TestResult<()> {
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(err.contains("Invalid params"));
-    assert!(err.contains("node_id"));
+    assert!(err.contains("module_name"));
     Ok(())
 }
 

@@ -156,7 +156,7 @@ impl Events {
     /// Generates the `CREATE TABLE` statement for `core.events`.
     #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
-        let mut node_run_foreign_key = Self::create_node_run_foreign_key();
+        let mut module_run_foreign_key = Self::create_module_run_foreign_key();
 
         Table::create()
             .table((Alias::new("core"), Events::Table))
@@ -265,7 +265,7 @@ impl Events {
                     .to(EventPayloadSchemas::table_iden(), Alias::new("id"))
                     .on_delete(ForeignKeyAction::SetNull)
             )
-            .foreign_key(&mut node_run_foreign_key)
+            .foreign_key(&mut module_run_foreign_key)
             .to_owned()
     }
 
@@ -274,7 +274,7 @@ impl Events {
     /// Fresh databases receive this during `CREATE TABLE`; existing databases
     /// converge the same named constraint via the schema convergence engine.
     #[must_use]
-    pub fn create_node_run_foreign_key() -> ForeignKeyCreateStatement {
+    pub fn create_module_run_foreign_key() -> ForeignKeyCreateStatement {
         ForeignKey::create()
             .name("events_module_run_id_fkey")
             .from(Self::table_iden(), Events::ModuleRunId)

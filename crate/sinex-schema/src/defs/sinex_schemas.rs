@@ -3,7 +3,7 @@
 //! This module defines the tables within the `sinex_schemas` and `core` namespaces
 //! that are responsible for managing the system's "meta-layer". This includes:
 //! - Data contracts for event payloads (`event_payload_schemas`).
-//! - Manifests for the nodes that interpret data (`source_manifests`).
+//! - Manifests for the modules that interpret data (`source_manifests`).
 //! - Sources for discovering schemas via `GitOps` (`gitops_schema_sources` - aspirational, see docs).
 //! - Caching for validation results (`validation_cache`).
 

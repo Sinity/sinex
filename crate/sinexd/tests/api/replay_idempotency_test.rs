@@ -1,7 +1,7 @@
-//! Tests replay idempotency guard: rejects duplicate operations for the same node.
+//! Tests replay idempotency guard: rejects duplicate operations for the same source.
 //!
 //! Verifies the guard added in `create_operation()` that prevents concurrent
-//! replay operations targeting the same `module_name`.
+//! replay operations targeting the same `source_name`.
 
 use serde_json::json;
 use sinex_primitives::rpc::methods;
@@ -13,22 +13,22 @@ use common::LiveGateway;
 
 const RPC_TOKEN: &str = "idempotency-test-token:admin";
 
-fn scope_for_node(module_name: &str) -> serde_json::Value {
+fn scope_for_source(source_name: &str) -> serde_json::Value {
     let ts = Timestamp::now();
     let scope_start = ts - time::Duration::seconds(10);
     let scope_end = ts + time::Duration::seconds(10);
     json!({
         "scope": {
-            "module_name": module_name,
+            "source_name": source_name,
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
         },
         "actor": "test:idempotency-tester"
     })
 }
 
-/// Creating two operations for the same node should fail on the second.
+/// Creating two operations for the same source should fail on the second.
 #[sinex_test(timeout = 60)]
-async fn duplicate_plan_for_same_node_rejected(ctx: TestContext) -> TestResult<()> {
+async fn duplicate_plan_for_same_source_rejected(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
@@ -40,7 +40,7 @@ async fn duplicate_plan_for_same_node_rejected(ctx: TestContext) -> TestResult<(
     let first = gw
         .rpc_envelope(
             methods::REPLAY_CREATE_OPERATION,
-            scope_for_node("idem-node"),
+            scope_for_source("idem-source"),
         )
         .await?;
     assert!(
@@ -48,11 +48,11 @@ async fn duplicate_plan_for_same_node_rejected(ctx: TestContext) -> TestResult<(
         "First create should succeed: {first}"
     );
 
-    // Second creation for same node: should fail
+    // Second creation for same source: should fail
     let second = gw
         .rpc_envelope(
             methods::REPLAY_CREATE_OPERATION,
-            scope_for_node("idem-node"),
+            scope_for_source("idem-source"),
         )
         .await?;
     // Check the JSON-RPC error code: -32803 maps to SinexError::InvalidState.
@@ -70,9 +70,9 @@ async fn duplicate_plan_for_same_node_rejected(ctx: TestContext) -> TestResult<(
     Ok(())
 }
 
-/// Concurrent creates for the same node should still admit only one active operation.
+/// Concurrent creates for the same source should still admit only one active operation.
 #[sinex_test(timeout = 60)]
-async fn concurrent_duplicate_plan_for_same_node_rejected(ctx: TestContext) -> TestResult<()> {
+async fn concurrent_duplicate_plan_for_same_source_rejected(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
@@ -82,11 +82,11 @@ async fn concurrent_duplicate_plan_for_same_node_rejected(ctx: TestContext) -> T
 
     let first = gw.rpc_envelope(
         methods::REPLAY_CREATE_OPERATION,
-        scope_for_node("idem-race-node"),
+        scope_for_source("idem-race-source"),
     );
     let second = gw.rpc_envelope(
         methods::REPLAY_CREATE_OPERATION,
-        scope_for_node("idem-race-node"),
+        scope_for_source("idem-race-source"),
     );
     let (first, second) = tokio::join!(first, second);
     let first = first?;
@@ -128,9 +128,9 @@ async fn concurrent_duplicate_plan_for_same_node_rejected(ctx: TestContext) -> T
     Ok(())
 }
 
-/// Different modules can have concurrent operations.
+/// Different sources can have concurrent operations.
 #[sinex_test(timeout = 60)]
-async fn different_nodes_allowed_concurrent(ctx: TestContext) -> TestResult<()> {
+async fn different_sources_allowed_concurrent(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
@@ -139,25 +139,31 @@ async fn different_nodes_allowed_concurrent(ctx: TestContext) -> TestResult<()> 
     let gw = LiveGateway::start(ctx.database_url(), RPC_TOKEN, &mut env_guard).await?;
 
     let first = gw
-        .rpc_envelope(methods::REPLAY_CREATE_OPERATION, scope_for_node("executor-a"))
+        .rpc_envelope(
+            methods::REPLAY_CREATE_OPERATION,
+            scope_for_source("executor-a"),
+        )
         .await?;
     assert!(
         first.get("result").is_some(),
-        "First node create should succeed: {first}"
+        "First source create should succeed: {first}"
     );
 
     let second = gw
-        .rpc_envelope(methods::REPLAY_CREATE_OPERATION, scope_for_node("node-b"))
+        .rpc_envelope(
+            methods::REPLAY_CREATE_OPERATION,
+            scope_for_source("source-b"),
+        )
         .await?;
     assert!(
         second.get("result").is_some(),
-        "Different node create should succeed: {second}"
+        "Different source create should succeed: {second}"
     );
 
     Ok(())
 }
 
-/// After cancelling, a new operation for the same node should succeed.
+/// After cancelling, a new operation for the same source should succeed.
 #[sinex_test(timeout = 60)]
 async fn cancelled_allows_new_operation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
@@ -171,7 +177,7 @@ async fn cancelled_allows_new_operation(ctx: TestContext) -> TestResult<()> {
     let create_resp = gw
         .rpc_envelope(
             methods::REPLAY_CREATE_OPERATION,
-            scope_for_node("cancel-node"),
+            scope_for_source("cancel-source"),
         )
         .await?;
     let op_id = create_resp["result"]["operation"]["operation_id"]
@@ -190,11 +196,11 @@ async fn cancelled_allows_new_operation(ctx: TestContext) -> TestResult<()> {
         "Cancel should succeed: {cancel_resp}"
     );
 
-    // New operation for same node after cancel: should succeed
+    // New operation for same source after cancel: should succeed
     let new_resp = gw
         .rpc_envelope(
             methods::REPLAY_CREATE_OPERATION,
-            scope_for_node("cancel-node"),
+            scope_for_source("cancel-source"),
         )
         .await?;
     assert!(

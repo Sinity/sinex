@@ -49,21 +49,21 @@ async fn nodes_drain_publishes_command(ctx: TestContext) -> TestResult<()> {
     let harness = NatsHarness::start(ctx).await?;
     let subject = harness
         .env
-        .nats_subject("sinex.control.sources.test-node-123.drain");
+        .nats_subject("sinex.control.sources.test-source-123.drain");
     let mut sub = harness.client.subscribe(subject.clone()).await?;
 
     let request = RuntimeDrainRequest {
-        module_name: "test-node-123".into(),
+        module_name: "test-source-123".into(),
         reason: Some("maintenance".to_string()),
     };
 
     let result =
         handle_runtime_drain(&harness.client, &harness.env, request, &admin_auth()).await?;
     assert_eq!(result.status, OperationStatus::Pending);
-    assert_eq!(result.module_name.as_str(), "test-node-123");
+    assert_eq!(result.module_name.as_str(), "test-source-123");
     let payload = expect_single_control_message(&mut sub, &subject).await?;
     assert_eq!(payload["action"], "drain");
-    assert_eq!(payload["module_name"], "test-node-123");
+    assert_eq!(payload["source_name"], "test-source-123");
     assert_eq!(payload["reason"], "maintenance");
     assert!(payload["timestamp"].as_str().is_some());
 
@@ -75,20 +75,20 @@ async fn nodes_resume_publishes_command(ctx: TestContext) -> TestResult<()> {
     let harness = NatsHarness::start(ctx).await?;
     let subject = harness
         .env
-        .nats_subject("sinex.control.sources.test-node-456.resume");
+        .nats_subject("sinex.control.sources.test-source-456.resume");
     let mut sub = harness.client.subscribe(subject.clone()).await?;
 
     let request = RuntimeResumeRequest {
-        module_name: "test-node-456".into(),
+        module_name: "test-source-456".into(),
     };
 
     let result =
         handle_runtime_resume(&harness.client, &harness.env, request, &admin_auth()).await?;
     assert_eq!(result.status, OperationStatus::Pending);
-    assert_eq!(result.module_name.as_str(), "test-node-456");
+    assert_eq!(result.module_name.as_str(), "test-source-456");
     let payload = expect_single_control_message(&mut sub, &subject).await?;
     assert_eq!(payload["action"], "resume");
-    assert_eq!(payload["module_name"], "test-node-456");
+    assert_eq!(payload["source_name"], "test-source-456");
     assert!(payload.get("reason").is_none());
     assert!(payload["timestamp"].as_str().is_some());
 
@@ -100,23 +100,23 @@ async fn nodes_set_horizon_publishes_command(ctx: TestContext) -> TestResult<()>
     let harness = NatsHarness::start(ctx).await?;
     let subject = harness
         .env
-        .nats_subject("sinex.control.sources.test-node-789.set-horizon");
+        .nats_subject("sinex.control.sources.test-source-789.set-horizon");
     let mut sub = harness.client.subscribe(subject.clone()).await?;
 
     let horizon = Timestamp::parse_rfc3339("2024-01-15T10:00:00Z")?;
     let request = RuntimeSetHorizonRequest {
-        module_name: "test-node-789".into(),
+        module_name: "test-source-789".into(),
         horizon,
     };
 
     let result =
         handle_runtime_set_horizon(&harness.client, &harness.env, request, &admin_auth()).await?;
     assert_eq!(result.status, OperationStatus::Pending);
-    assert_eq!(result.module_name.as_str(), "test-node-789");
+    assert_eq!(result.module_name.as_str(), "test-source-789");
     assert_eq!(result.horizon, horizon);
     let payload = expect_single_control_message(&mut sub, &subject).await?;
     assert_eq!(payload["action"], "set_horizon");
-    assert_eq!(payload["module_name"], "test-node-789");
+    assert_eq!(payload["source_name"], "test-source-789");
     assert_eq!(payload["horizon"], "2024-01-15T10:00:00Z");
     assert!(payload["timestamp"].as_str().is_some());
 
@@ -137,20 +137,20 @@ async fn runtime_list_surfaces_invalid_state_json(ctx: TestContext) -> TestResul
     )
     .await?;
     kv.put(
-        "broken-node",
+        "broken-module",
         br"{ definitely not valid json".as_slice().into(),
     )
     .await?;
 
     let error = handle_runtime_list(&harness.client, &harness.env, RuntimeListRequest {})
         .await
-        .expect_err("invalid node state should surface");
+        .expect_err("invalid runtime state should surface");
     assert!(
         error
             .to_string()
             .contains("RuntimeModule state is not valid JSON")
     );
-    assert!(error.to_string().contains("broken-node"));
+    assert!(error.to_string().contains("broken-module"));
     Ok(())
 }
 
@@ -165,7 +165,7 @@ async fn runtime_list_surfaces_bucket_open_failures(ctx: TestContext) -> TestRes
     assert!(
         error
             .to_string()
-            .contains("Failed to open node state bucket")
+            .contains("Failed to open runtime state bucket")
     );
     Ok(())
 }

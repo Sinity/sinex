@@ -730,7 +730,7 @@ impl<I: SourceDriver> ExplorationProvider for SourceDriverRuntime<I> {
 #[cfg(test)]
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
-    use super::{SourceDriverState, SourceDriverRuntime};
+    use super::{SourceDriverRuntime, SourceDriverState};
     use crate::runtime::checkpoint::{CheckpointManager, CheckpointState};
     use crate::runtime::shutdown::ShutdownConfig;
     use crate::runtime::stream::{

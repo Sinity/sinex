@@ -120,8 +120,6 @@ pub use material::{
     TransientErrorPredicate,
 };
 pub use nats_publisher::NatsPublisher;
-pub use pressure::PressureMonitor;
-pub use processing::AutomatonLogicError;
 pub use parser::SqliteSnapshotLinker;
 pub use parser::{
     ApiClient, ApiFetchCheckpoint, ApiFetchError, ApiFetchPage, ApiFetchRecordSource,
@@ -137,6 +135,8 @@ pub use parser::{
     SqliteRecordSource, SqliteRowCheckpoint, TimestampRecordCheckpoint,
     process_record_batch_lenient, stable_json_line,
 };
+pub use pressure::PressureMonitor;
+pub use processing::AutomatonLogicError;
 pub use runtime_cli::{
     RuntimeCli, RuntimeCliRunner, RuntimeCommand, parse_checkpoint, parse_time_horizon,
 };
@@ -147,7 +147,7 @@ pub use shutdown::wait_for_os_shutdown_signal;
 pub use shutdown::wait_for_shutdown_signal;
 pub use shutdown::wait_for_shutdown_signal_bool;
 pub use shutdown::{ShutdownConfig, default_checkpoint_path};
-pub use source_driver::{SourceDriverState, SourceDriver, SourceDriverRuntime};
+pub use source_driver::{SourceDriver, SourceDriverRuntime, SourceDriverState};
 pub use source_material::{
     stage_material, stage_material_from_file, stage_material_from_file_bounded,
 };

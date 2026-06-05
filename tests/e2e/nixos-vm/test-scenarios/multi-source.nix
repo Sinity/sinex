@@ -490,7 +490,7 @@ SQL
     # Wait for Sinex services
     machine.wait_for_unit("sinexd.service")
 
-    # Ensure node instances are online
+    # Ensure runtime module instances are online
     machine.fail("systemctl list-unit-files 'sinex-source@*.service' 'sinex-filesystem-*.service' 'sinex-*automaton.service' 'sinex-canonicalizer.service' --no-legend --plain | grep -v '^$'")
 
     # Verify core hubs are active

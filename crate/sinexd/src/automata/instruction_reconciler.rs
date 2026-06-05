@@ -18,8 +18,8 @@ use sinex_primitives::events::payloads::{
 use sinex_primitives::proof::{
     CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
     OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
-    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape, SourceContract,
-    SourceRuntimeBinding, SubjectRef,
+    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape,
+    SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{
     JsonValue, Timestamp, Uuid, register_source_contract, register_source_runtime_binding,

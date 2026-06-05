@@ -257,10 +257,7 @@ fn execute_run(
                 code: "CRATE_NOT_FOUND".to_string(),
                 message: format!("Could not find crate: {crate_name}"),
                 location: Some("fuzz::run".to_string()),
-                suggestion: Some(
-                    "Available locations checked: crate/, tests/, xtask"
-                        .to_string(),
-                ),
+                suggestion: Some("Available locations checked: crate/, tests/, xtask".to_string()),
             }));
         }
     };

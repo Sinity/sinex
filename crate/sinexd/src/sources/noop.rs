@@ -186,7 +186,9 @@ mod tests {
         let mut source = NoopSourceDriver;
         let mut state = NoopState;
 
-        let snapshot = source.scan_snapshot(&mut state, ScanArgs::default()).await?;
+        let snapshot = source
+            .scan_snapshot(&mut state, ScanArgs::default())
+            .await?;
         assert_noop_report(&snapshot, Checkpoint::None);
 
         let historical = source

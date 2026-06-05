@@ -22,8 +22,8 @@ use common::LiveGateway;
 
 const RPC_TOKEN: &str = "live-rpc-test-token:admin";
 
-/// Spawn a fake scan node on NATS that accepts the scan command and reports success.
-async fn spawn_fake_scan_node(
+/// Spawn a fake scan source runtime on NATS that accepts the scan command and reports success.
+async fn spawn_fake_scan_source_runtime(
     pool: DbPool,
     nats: async_nats::Client,
     env: sinex_primitives::environment::SinexEnvironment,
@@ -129,7 +129,7 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
     // ── Seed a target event with material provenance ────────────────
     let material_id = ctx.create_source_material(Some("rpc-live-match")).await?;
     let event = DynamicPayload::new(
-        "test-node",
+        "test-source",
         "file.created",
         json!({ "path": "/tmp/rpc-live.txt" }),
     )
@@ -139,18 +139,18 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
     let target_id = inserted.id.expect("seeded event must have an id").to_uuid();
     let ts = inserted.ts_orig.expect("seeded event must have ts_orig");
 
-    // ── Spawn fake scan node ────────────────────────────────────────
+    // ── Spawn fake scan source runtime ────────────────────────────────────────
     // Use the environment directly — creating a second ServiceContainer would
     // spawn a duplicate ReplayControlServer on the same NATS subject, causing
     // message races where the second server's error reply may beat the first.
     let nats = ctx.nats_client();
     let env = sinex_primitives::environment::environment();
-    let scan_handle = spawn_fake_scan_node(
+    let scan_handle = spawn_fake_scan_source_runtime(
         ctx.pool.clone(),
         nats.clone(),
         env,
-        "test-node",
-        "test-node",
+        "test-source",
+        "test-source",
         "file.created",
         1,
     )
@@ -165,7 +165,7 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
             methods::REPLAY_CREATE_OPERATION,
             json!({
                 "scope": {
-                    "module_name": "test-node",
+                    "module_name": "test-source",
                     "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
                     "material_filter": [material_id.as_uuid().to_string()],
                     "filters": { "event_types": ["file.created"] }
@@ -313,7 +313,7 @@ async fn replay_cancel_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<(
             methods::REPLAY_CREATE_OPERATION,
             json!({
                 "scope": {
-                    "module_name": "test-node",
+                    "module_name": "test-source",
                     "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
                 },
                 "actor": "admin:test-user"

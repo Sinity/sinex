@@ -31,7 +31,7 @@ struct MockClientInner {
 pub enum MockResponse {
     String(String),
     Health(SystemHealthResponse),
-    Nodes(Vec<InstanceInfo>),
+    RuntimeModules(Vec<InstanceInfo>),
     RuntimeStatus(RuntimeStatus),
     ReplayOperation(ReplayOperation),
     ReplayOperations(Vec<ReplayOperation>),
@@ -183,8 +183,8 @@ impl MockGatewayClient {
         Ok(self
             .get_response("list_runtime")
             .and_then(|r| {
-                if let MockResponse::Nodes(nodes) = r {
-                    Some(nodes)
+                if let MockResponse::RuntimeModules(modules) = r {
+                    Some(modules)
                 } else {
                     None
                 }
@@ -213,23 +213,27 @@ impl MockGatewayClient {
             }))
     }
 
-    pub(crate) async fn drain_runtime(&self, node_id: &str, reason: Option<&str>) -> Result<()> {
+    pub(crate) async fn drain_runtime(
+        &self,
+        module_name: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
         self.record_call(
             "drain_runtime",
-            vec![node_id.to_string(), reason.unwrap_or("").to_string()],
+            vec![module_name.to_string(), reason.unwrap_or("").to_string()],
         );
         Ok(())
     }
 
-    pub(crate) async fn resume_runtime(&self, node_id: &str) -> Result<()> {
-        self.record_call("resume_runtime", vec![node_id.to_string()]);
+    pub(crate) async fn resume_runtime(&self, module_name: &str) -> Result<()> {
+        self.record_call("resume_runtime", vec![module_name.to_string()]);
         Ok(())
     }
 
-    pub(crate) async fn set_runtime_horizon(&self, node_id: &str, horizon: &str) -> Result<()> {
+    pub(crate) async fn set_runtime_horizon(&self, module_name: &str, horizon: &str) -> Result<()> {
         self.record_call(
             "set_runtime_horizon",
-            vec![node_id.to_string(), horizon.to_string()],
+            vec![module_name.to_string(), horizon.to_string()],
         );
         Ok(())
     }
@@ -446,19 +450,19 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_mock_client_node_operations() -> TestResult<()> {
+    async fn test_mock_client_runtime_operations() -> TestResult<()> {
         let client = MockGatewayClient::new();
 
         client
-            .drain_runtime("node-1", Some("maintenance"))
+            .drain_runtime("module-1", Some("maintenance"))
             .await
             .expect("drain_runtime request failed");
         client
-            .resume_runtime("node-1")
+            .resume_runtime("module-1")
             .await
             .expect("resume_runtime request failed");
         client
-            .set_runtime_horizon("node-1", "2024-01-01T00:00:00Z")
+            .set_runtime_horizon("module-1", "2024-01-01T00:00:00Z")
             .await
             .expect("set_runtime_horizon request failed");
 

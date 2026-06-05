@@ -28,7 +28,7 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
     let env = environment();
-    let (scan_command_rx, scan_handle) = spawn_fake_scan_node_with_progress(
+    let (scan_command_rx, scan_handle) = spawn_fake_scan_source_runtime_with_progress(
         nats_client.clone(),
         env,
         "visibility-timeout-test",
@@ -56,7 +56,7 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
     let executor = ReplayExecutionEngine::new(replay.clone(), nats_client)
         .with_scan_completion_timeout(Duration::from_millis(100));
     let err = executor
-        .execute(planned.operation_id, "service:executor-node".into())
+        .execute(planned.operation_id, "service:executor-runtime".into())
         .await
         .expect_err("missing replay outputs must fail before completion");
     assert!(
@@ -87,13 +87,13 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
     assert_eq!(archived_target_count, 1);
 
     let dispatched_command = scan_command_rx.await.map_err(|_| {
-        test_error("fake visibility-timeout-test node did not receive a scan command")
+        test_error("fake visibility-timeout-test source runtime did not receive a scan command")
     })?;
     assert_eq!(dispatched_command.operation_id, planned.operation_id);
 
     scan_handle.await.map_err(|e| {
         test_error(format!(
-            "fake visibility-timeout-test node task failed: {e}"
+            "fake visibility-timeout-test source runtime task failed: {e}"
         ))
     })?;
 
@@ -101,7 +101,9 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
 }
 
 #[sinex_test]
-async fn replay_execution_fails_when_node_never_reports_completion(ctx: TestContext) -> Result<()> {
+async fn replay_execution_fails_when_source_runtime_never_reports_completion(
+    ctx: TestContext,
+) -> Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
 
     let material_id = ctx.create_source_material(Some("replay-timeout")).await?;
@@ -126,7 +128,8 @@ async fn replay_execution_fails_when_node_never_reports_completion(ctx: TestCont
     let nats_client = ctx.nats_client();
     let env = sinex_primitives::environment::environment();
     let (scan_command_rx, scan_handle) =
-        spawn_fake_scan_node_ack_only(nats_client.clone(), env.clone(), "timeout-test").await?;
+        spawn_fake_scan_source_runtime_ack_only(nats_client.clone(), env.clone(), "timeout-test")
+            .await?;
 
     let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
         .with_scan_completion_timeout(Duration::from_millis(100));
@@ -156,9 +159,13 @@ async fn replay_execution_fails_when_node_never_reports_completion(ctx: TestCont
         .approve(previewed.operation_id, "admin:approver".into())
         .await?;
     let err = client
-        .execute(approved.operation_id, "service:executor-node".into(), false)
+        .execute(
+            approved.operation_id,
+            "service:executor-runtime".into(),
+            false,
+        )
         .await
-        .expect_err("execute should fail when the node never reports completion");
+        .expect_err("execute should fail when the source runtime never reports completion");
     assert!(
         err.to_string().contains("archived cascade left untouched"),
         "timeout failure should explain why replay execution failed: {err}"
@@ -188,14 +195,14 @@ async fn replay_execution_fails_when_node_never_reports_completion(ctx: TestCont
         "timed-out replay should leave the archived cascade untouched"
     );
 
-    let dispatched_command = scan_command_rx
-        .await
-        .map_err(|_| test_error("fake timeout-test node did not receive a scan command"))?;
+    let dispatched_command = scan_command_rx.await.map_err(|_| {
+        test_error("fake timeout-test source runtime did not receive a scan command")
+    })?;
     assert_eq!(dispatched_command.operation_id, approved.operation_id);
 
     scan_handle
         .await
-        .map_err(|e| test_error(format!("fake timeout-test node task failed: {e}")))?;
+        .map_err(|e| test_error(format!("fake timeout-test source runtime task failed: {e}")))?;
 
     Ok(())
 }
@@ -229,9 +236,14 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
     let env = environment();
-    let (_scan_command_rx, scan_handle) =
-        spawn_fake_scan_node_with_progress(nats_client.clone(), env, "checkpoint-fail-test", 1, 0)
-            .await?;
+    let (_scan_command_rx, scan_handle) = spawn_fake_scan_source_runtime_with_progress(
+        nats_client.clone(),
+        env,
+        "checkpoint-fail-test",
+        1,
+        0,
+    )
+    .await?;
 
     let mut scope = sample_scope();
     scope.source_name = "checkpoint-fail-test".to_string();
@@ -253,7 +265,7 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
         .with_checkpoint_failures(Arc::new(AtomicUsize::new(1)))
         .with_scan_completion_timeout(Duration::from_secs(5));
     let err = executor
-        .execute(planned.operation_id, "service:executor-node".into())
+        .execute(planned.operation_id, "service:executor-runtime".into())
         .await
         .expect_err("checkpoint persistence failure should abort replay execution");
     assert!(
@@ -295,9 +307,11 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
         "checkpoint persistence failure before replacements should not leave archived rows behind"
     );
 
-    scan_handle
-        .await
-        .map_err(|e| test_error(format!("fake checkpoint-fail-test node task failed: {e}")))?;
+    scan_handle.await.map_err(|e| {
+        test_error(format!(
+            "fake checkpoint-fail-test source runtime task failed: {e}"
+        ))
+    })?;
 
     Ok(())
 }
@@ -329,7 +343,7 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
     let env = environment();
-    let (scan_command_rx, scan_handle) = spawn_fake_scan_node_with_progress(
+    let (scan_command_rx, scan_handle) = spawn_fake_scan_source_runtime_with_progress(
         nats_client.clone(),
         env,
         "replacement-record-fail-test",
@@ -366,7 +380,7 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
         .with_replacement_record_failures(Arc::new(AtomicUsize::new(1)))
         .with_scan_completion_timeout(Duration::from_secs(5));
     let err = executor
-        .execute(planned.operation_id, "service:executor-node".into())
+        .execute(planned.operation_id, "service:executor-runtime".into())
         .await
         .expect_err("replacement-record failure should abort replay execution");
     assert!(
@@ -436,7 +450,7 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
 
     scan_handle.await.map_err(|e| {
         test_error(format!(
-            "fake replacement-record-fail-test node task failed: {e}"
+            "fake replacement-record-fail-test source runtime task failed: {e}"
         ))
     })?;
 
@@ -501,9 +515,13 @@ async fn replay_execution_restores_archived_cascade_when_dispatch_fails_before_a
         .approve(previewed.operation_id, "admin:approver".into())
         .await?;
     let err = client
-        .execute(approved.operation_id, "service:executor-node".into(), false)
+        .execute(
+            approved.operation_id,
+            "service:executor-runtime".into(),
+            false,
+        )
         .await
-        .expect_err("execute should fail before scan ack when no node responder exists");
+        .expect_err("execute should fail before scan ack when no source responder exists");
     assert!(
         err.to_string().contains("restored archived cascade"),
         "pre-ack dispatch failures must explain that the archived cascade was restored: {err}"
@@ -582,7 +600,7 @@ async fn replay_execution_fails_before_archive_when_scope_metadata_collection_fa
     let executor = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client())
         .with_scope_metadata_failures(Arc::new(AtomicUsize::new(1)));
     let err = executor
-        .execute(planned.operation_id, "service:executor-node".into())
+        .execute(planned.operation_id, "service:executor-runtime".into())
         .await
         .expect_err("scope metadata collection failure should abort replay execution");
     assert!(
@@ -676,7 +694,7 @@ async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publi
     let executor = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client())
         .with_scope_invalidation_publish_failures(Arc::new(AtomicUsize::new(1)));
     let err = executor
-        .execute(planned.operation_id, "service:executor-node".into())
+        .execute(planned.operation_id, "service:executor-runtime".into())
         .await
         .expect_err("scope invalidation publish failure should abort replay execution");
     assert!(

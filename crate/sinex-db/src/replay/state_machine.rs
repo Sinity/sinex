@@ -682,8 +682,8 @@ impl ReplayStateMachine {
                 (all_ids, derived, max_depth)
             };
 
-            let affected_nodes =
-                ReplayRepository::load_cascade_affected_nodes(&mut tx, &derived_ids).await?;
+            let affected_modules =
+                ReplayRepository::load_cascade_affected_modules(&mut tx, &derived_ids).await?;
             let affected_scopes =
                 ReplayRepository::load_cascade_affected_scopes(&mut tx, &derived_ids).await?;
 
@@ -696,7 +696,7 @@ impl ReplayStateMachine {
                 "direct_events": root_ids.len(),
                 "derived_events": derived_ids.len(),
                 "max_depth": max_depth,
-                "affected_nodes": affected_nodes,
+                "affected_modules": affected_modules,
                 "affected_scopes": affected_scopes.into_iter()
                     .map(|(et, sk)| serde_json::json!({"event_type": et, "scope_key": sk}))
                     .collect::<Vec<_>>(),
@@ -1165,12 +1165,12 @@ impl ReplayStateMachine {
     pub async fn list_operations(
         &self,
         filter_state: Option<ReplayState>,
-        filter_node: Option<&str>,
+        filter_source_name: Option<&str>,
         limit: Option<i64>,
     ) -> Result<Vec<ReplayOperation>> {
         let repo = self.repo();
         let rows = repo
-            .list_operations(filter_state, filter_node, limit)
+            .list_operations(filter_state, filter_source_name, limit)
             .await?;
 
         let mut operations = Vec::new();

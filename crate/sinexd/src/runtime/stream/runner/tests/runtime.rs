@@ -16,12 +16,12 @@ async fn run_service_drain_finishes_inflight_automaton_batch_and_emits_completio
     let transport = EventTransport::Nats(Arc::new(NatsPublisher::new(client.clone())));
     let work_dir = tempdir()?;
 
-    let node = DrainBridgeTestNode::default();
-    let processing_started = node.processing_started.clone();
-    let release_processing = node.release_processing.clone();
-    let processed_event_ids = node.processed_event_ids.clone();
+    let module = DrainBridgeTestModule::default();
+    let processing_started = module.processing_started.clone();
+    let release_processing = module.release_processing.clone();
+    let processed_event_ids = module.processed_event_ids.clone();
 
-    let mut runner = RuntimeRunner::new(node);
+    let mut runner = RuntimeRunner::new(module);
     runner
         .initialize_with_transport(
             "runtime-drain-automaton-service".to_string(),
@@ -98,10 +98,7 @@ async fn signal_shutdown_channel_reports_dropped_receiver() -> TestResult<()> {
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     drop(rx);
 
-    assert!(!RuntimeRunner::<RuntimeTestNode>::signal_shutdown_channel(
-        tx,
-        "heartbeat"
-    ));
+    assert!(!RuntimeRunner::<RuntimeTestModule>::signal_shutdown_channel(tx, "heartbeat"));
     Ok(())
 }
 
@@ -109,7 +106,7 @@ async fn signal_shutdown_channel_reports_dropped_receiver() -> TestResult<()> {
 async fn signal_shutdown_channel_delivers_to_receiver() -> TestResult<()> {
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
-    assert!(RuntimeRunner::<RuntimeTestNode>::signal_shutdown_channel(
+    assert!(RuntimeRunner::<RuntimeTestModule>::signal_shutdown_channel(
         tx,
         "heartbeat"
     ));
@@ -122,7 +119,7 @@ async fn signal_watch_shutdown_reports_dropped_receiver() -> TestResult<()> {
     let (tx, rx) = tokio::sync::watch::channel(false);
     drop(rx);
 
-    assert!(!RuntimeRunner::<RuntimeTestNode>::signal_watch_shutdown(
+    assert!(!RuntimeRunner::<RuntimeTestModule>::signal_watch_shutdown(
         tx, "listener"
     ));
     Ok(())
@@ -132,7 +129,7 @@ async fn signal_watch_shutdown_reports_dropped_receiver() -> TestResult<()> {
 async fn signal_watch_shutdown_delivers_to_receiver() -> TestResult<()> {
     let (tx, mut rx) = tokio::sync::watch::channel(false);
 
-    assert!(RuntimeRunner::<RuntimeTestNode>::signal_watch_shutdown(
+    assert!(RuntimeRunner::<RuntimeTestModule>::signal_watch_shutdown(
         tx, "listener"
     ));
     rx.changed().await?;
@@ -149,7 +146,7 @@ async fn acquire_leader_standby_waits_for_existing_leader_release(
     let transport = EventTransport::Nats(Arc::new(crate::runtime::NatsPublisher::new(
         ctx.nats_client(),
     )));
-    let mut runner = RuntimeRunner::new(RuntimeTestNode);
+    let mut runner = RuntimeRunner::new(RuntimeTestModule);
     runner
         .initialize_with_transport(
             "runtime-standby-test".to_string(),
@@ -211,7 +208,7 @@ async fn shutdown_join_result_rejects_panicked_tasks() -> TestResult<()> {
     });
 
     let error =
-        RuntimeRunner::<RuntimeTestNode>::shutdown_join_result("runtime-task", handle.await)
+        RuntimeRunner::<RuntimeTestModule>::shutdown_join_result("runtime-task", handle.await)
             .expect_err("panicked runtime tasks must fail shutdown honestly");
     let message = format!("{error:#}");
     assert!(message.contains("Task failed during shutdown"));
@@ -362,7 +359,7 @@ async fn event_batcher_shutdown_result_rejects_join_panics() -> TestResult<()> {
         Ok::<(), SinexError>(())
     });
 
-    let error = RuntimeRunner::<RuntimeTestNode>::event_batcher_shutdown_result(handle.await)
+    let error = RuntimeRunner::<RuntimeTestModule>::event_batcher_shutdown_result(handle.await)
         .expect_err("panicked batcher tasks must fail shutdown honestly");
     let message = format!("{error:#}");
     assert!(message.contains("Event batcher failed during shutdown"));
@@ -380,7 +377,7 @@ async fn shutdown_task_waits_for_watch_signalled_exit() -> TestResult<()> {
     });
 
     let mut task = Some(task);
-    RuntimeRunner::<RuntimeTestNode>::shutdown_task(&mut task, Some(shutdown_tx), "listener")
+    RuntimeRunner::<RuntimeTestModule>::shutdown_task(&mut task, Some(shutdown_tx), "listener")
         .await?;
 
     assert!(finished.load(Ordering::SeqCst));
@@ -390,7 +387,7 @@ async fn shutdown_task_waits_for_watch_signalled_exit() -> TestResult<()> {
 
 #[sinex_test]
 async fn collapse_shutdown_errors_preserves_additional_failures() -> TestResult<()> {
-    let error = RuntimeRunner::<RuntimeTestNode>::collapse_shutdown_errors(vec![
+    let error = RuntimeRunner::<RuntimeTestModule>::collapse_shutdown_errors(vec![
         (
             "heartbeat".to_string(),
             SinexError::processing("primary shutdown failure"),
@@ -410,7 +407,7 @@ async fn collapse_shutdown_errors_preserves_additional_failures() -> TestResult<
 
 #[sinex_test]
 async fn shutdown_marks_runner_failed_when_cleanup_errors() -> TestResult<()> {
-    let mut runner = RuntimeRunner::new(FailingShutdownNode);
+    let mut runner = RuntimeRunner::new(FailingShutdownModule);
     runner.lifecycle = RunnerLifecycle::Initialized;
 
     let error = runner

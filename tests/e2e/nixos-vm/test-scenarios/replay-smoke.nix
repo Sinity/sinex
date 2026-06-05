@@ -26,7 +26,7 @@ pkgs.testers.nixosTest {
     # Enable gateway (required for replay RPC)
     services.sinex.core.gateway.enable = true;
 
-    # Enable filesystem node to generate real events
+    # Enable filesystem source runtime to generate real events
     services.sinex.runtime = {
       filesystem.enable = true;
       filesystem.watchPaths = lib.mkAfter [ "/var/lib/sinex/watched" ];
@@ -114,7 +114,7 @@ pkgs.testers.nixosTest {
     # ── Replay lifecycle ─────────────────────────────────────
     with subtest("Full replay lifecycle"):
         # Plan
-        plan_output = sinexctl("replay plan --node filesystem-watcher --since 1h -f json")
+        plan_output = sinexctl("replay plan --source filesystem-watcher --since 1h -f json")
         plan = json.loads(plan_output.strip().split('\n')[-1])
         op_id = plan.get("operation_id", plan.get("operation", {}).get("operation_id"))
         assert op_id is not None, f"Failed to get operation_id from plan: {plan}"

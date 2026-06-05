@@ -3,12 +3,82 @@ use serde_json::json;
 use sinexd::event_engine::{
     EventEngineResult, JetStreamConsumer, JetStreamTopology, validator::IngestEventValidator,
 };
+use sinex_primitives::{Uuid, environment, temporal};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use xtask::sandbox::{TestNodePublisher, prelude::*};
+use xtask::sandbox::prelude::*;
+
+const FIXTURE_SOURCE_MATERIAL_ID: &str = "00000000-0000-7000-8000-000000000000";
+
+struct TestSourcePublisher {
+    nats_client: async_nats::Client,
+    source: String,
+    namespace: Option<String>,
+}
+
+impl TestSourcePublisher {
+    fn with_namespace(
+        nats_client: async_nats::Client,
+        source: impl Into<String>,
+        namespace: Option<String>,
+    ) -> Self {
+        Self {
+            nats_client,
+            source: source.into(),
+            namespace,
+        }
+    }
+
+    async fn publish(&self, event_type: &str, payload: serde_json::Value) -> TestResult<Uuid> {
+        let event_id = Uuid::now_v7();
+        let event = serde_json::json!({
+            "id": event_id.to_string(),
+            "source": self.source,
+            "event_type": event_type,
+            "payload": payload,
+            "ts_orig": temporal::now().format_rfc3339(),
+            "host": "test-host",
+            "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+            "anchor_byte": 0,
+        });
+
+        let subject = environment().nats_subject_with_namespace(
+            self.namespace.as_deref(),
+            &format!(
+                "events.raw.{}.{}",
+                self.source.replace('.', "_"),
+                event_type.replace('.', "_")
+            ),
+        );
+        self.nats_client
+            .publish(subject, serde_json::to_vec(&event)?.into())
+            .await?;
+        self.nats_client.flush().await?;
+
+        Ok(event_id)
+    }
+}
+
+async fn ensure_fixture_source_material(ctx: &TestContext) -> TestResult<()> {
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry
+            (id, material_kind, source_identifier, status, timing_info_type, staged_at)
+        VALUES ($1::uuid, 'annex', 'test-fixture-material', 'completed', 'realtime', NOW())
+        ON CONFLICT (id) DO UPDATE
+        SET staged_at = EXCLUDED.staged_at,
+            status = EXCLUDED.status,
+            timing_info_type = EXCLUDED.timing_info_type
+        "#,
+        FIXTURE_SOURCE_MATERIAL_ID.parse::<uuid::Uuid>()?,
+    )
+    .execute(&ctx.pool)
+    .await?;
+    Ok(())
+}
 
 async fn start_event_engine(
     ctx: &TestContext,
@@ -57,8 +127,9 @@ async fn start_event_engine(
 }
 
 #[sinex_test]
-async fn end_to_end_single_node_full_flow(ctx: TestContext) -> TestResult<()> {
+async fn end_to_end_source_runtime_full_flow(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    ensure_fixture_source_material(&ctx).await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let suffix = format!("e2e-{}", uuid::Uuid::new_v4());
@@ -68,9 +139,9 @@ async fn end_to_end_single_node_full_flow(ctx: TestContext) -> TestResult<()> {
         .subscribe(topology.confirmations_subject.clone())
         .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         nats_client.clone(),
-        format!("node.{suffix}"),
+        format!("source.{suffix}"),
         Some(namespace),
     );
     let mut ids = Vec::new();
@@ -85,7 +156,7 @@ async fn end_to_end_single_node_full_flow(ctx: TestContext) -> TestResult<()> {
     WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
-            let source = format!("node.{suffix}");
+            let source = format!("source.{suffix}");
             async move {
                 let count: i64 =
                     sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE source = $1")

@@ -9,7 +9,7 @@ use sinex_primitives::rpc::runtime::{RuntimeHealthRequest, RuntimeListActiveRequ
 use sinexd::api::handlers::runtime_presence::{handle_runtime_health, handle_runtime_list_active};
 use xtask::sandbox::prelude::*;
 
-async fn register_test_node(
+async fn register_test_module(
     pool: &sinex_db::DbPool,
     name: &str,
     module_kind: ModuleKind,
@@ -18,19 +18,19 @@ async fn register_test_node(
     let module_name = ModuleName::new(name);
     Ok(pool
         .state()
-        .register_module(&module_name, module_kind, version, Some("test node"))
+        .register_module(&module_name, module_kind, version, Some("test module"))
         .await?)
 }
 
-fn find_node_in_list<'a>(
+fn find_module_in_list<'a>(
     list_json: &'a serde_json::Value,
     name: &str,
     instance_id: Option<&str>,
 ) -> Option<&'a serde_json::Value> {
     list_json["modules"].as_array().and_then(|modules| {
-        modules.iter().find(|node| {
-            node["module_name"].as_str() == Some(name)
-                && node["instance_id"].as_str() == instance_id
+        modules.iter().find(|module| {
+            module["module_name"].as_str() == Some(name)
+                && module["instance_id"].as_str() == instance_id
         })
     })
 }
@@ -38,11 +38,11 @@ fn find_node_in_list<'a>(
 #[sinex_test]
 async fn list_active_uses_manifest_fallback_without_run(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
-    let module_name = ModuleName::new("manifest-only-node");
+    let module_name = ModuleName::new("manifest-only-module");
 
-    register_test_node(
+    register_test_module(
         pool,
-        "manifest-only-node",
+        "manifest-only-module",
         ModuleKind::Service,
         "1.0.0-test",
     )
@@ -55,13 +55,13 @@ async fn list_active_uses_manifest_fallback_without_run(ctx: TestContext) -> Tes
 
     let list_result = handle_runtime_list_active(pool, RuntimeListActiveRequest::default()).await?;
     let list_result = serde_json::to_value(&list_result)?;
-    let node = find_node_in_list(&list_result, "manifest-only-node", None)
-        .expect("manifest-backed node should appear in active list");
+    let module = find_module_in_list(&list_result, "manifest-only-module", None)
+        .expect("manifest-backed module should appear in active list");
 
-    assert_eq!(node["heartbeat_source"].as_str(), Some("manifest"));
-    assert_eq!(node["status"].as_str(), Some("active"));
-    assert!(node["module_run_id"].is_null());
-    assert!(node["service_name"].is_null());
+    assert_eq!(module["heartbeat_source"].as_str(), Some("manifest"));
+    assert_eq!(module["status"].as_str(), Some("active"));
+    assert!(module["module_run_id"].is_null());
+    assert!(module["service_name"].is_null());
 
     Ok(())
 }
@@ -70,13 +70,13 @@ async fn list_active_uses_manifest_fallback_without_run(ctx: TestContext) -> Tes
 async fn list_active_surfaces_run_identity_when_available(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
     let manifest =
-        register_test_node(pool, "run-backed-node", ModuleKind::Source, "1.0.0-test").await?;
+        register_test_module(pool, "run-backed-module", ModuleKind::Source, "1.0.0-test").await?;
 
     let run = pool
         .state()
         .start_module_run(
             manifest.id,
-            "sinex-run-backed-node",
+            "sinex-run-backed-module",
             "instance-a",
             "test-host",
             None,
@@ -86,17 +86,20 @@ async fn list_active_surfaces_run_identity_when_available(ctx: TestContext) -> T
 
     let list_result = handle_runtime_list_active(pool, RuntimeListActiveRequest::default()).await?;
     let list_result = serde_json::to_value(&list_result)?;
-    let node = find_node_in_list(&list_result, "run-backed-node", Some("instance-a"))
-        .expect("run-backed node should appear in active list");
+    let module = find_module_in_list(&list_result, "run-backed-module", Some("instance-a"))
+        .expect("run-backed module should appear in active list");
     let run_id = run.id.to_string();
 
-    assert_eq!(node["heartbeat_source"].as_str(), Some("run"));
-    assert_eq!(node["status"].as_str(), Some("running"));
-    assert_eq!(node["module_run_id"].as_str(), Some(run_id.as_str()));
-    assert_eq!(node["service_name"].as_str(), Some("sinex-run-backed-node"));
-    assert_eq!(node["host"].as_str(), Some("test-host"));
+    assert_eq!(module["heartbeat_source"].as_str(), Some("run"));
+    assert_eq!(module["status"].as_str(), Some("running"));
+    assert_eq!(module["module_run_id"].as_str(), Some(run_id.as_str()));
+    assert_eq!(
+        module["service_name"].as_str(),
+        Some("sinex-run-backed-module")
+    );
+    assert_eq!(module["host"].as_str(), Some("test-host"));
     assert!(
-        !node["started_at"].is_null(),
+        !module["started_at"].is_null(),
         "run-backed modules should expose started_at"
     );
 
@@ -106,13 +109,18 @@ async fn list_active_surfaces_run_identity_when_available(ctx: TestContext) -> T
 #[sinex_test]
 async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
-    let manifest =
-        register_test_node(pool, "parallel-run-node", ModuleKind::Source, "1.0.0-test").await?;
+    let manifest = register_test_module(
+        pool,
+        "parallel-run-module",
+        ModuleKind::Source,
+        "1.0.0-test",
+    )
+    .await?;
 
     pool.state()
         .start_module_run(
             manifest.id,
-            "sinex-parallel-run-node",
+            "sinex-parallel-run-module",
             "instance-a",
             "test-host",
             None,
@@ -122,7 +130,7 @@ async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResul
     pool.state()
         .start_module_run(
             manifest.id,
-            "sinex-parallel-run-node",
+            "sinex-parallel-run-module",
             "instance-b",
             "test-host",
             None,
@@ -136,14 +144,18 @@ async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResul
         .as_array()
         .expect("modules should be an array");
 
-    let parallel_nodes = modules
+    let parallel_modules = modules
         .iter()
-        .filter(|node| node["module_name"].as_str() == Some("parallel-run-node"))
+        .filter(|module| module["module_name"].as_str() == Some("parallel-run-module"))
         .collect::<Vec<_>>();
-    assert_eq!(parallel_nodes.len(), 2, "parallel runs must stay distinct");
+    assert_eq!(
+        parallel_modules.len(),
+        2,
+        "parallel runs must stay distinct"
+    );
     assert_ne!(
-        parallel_nodes[0]["instance_id"].as_str(),
-        parallel_nodes[1]["instance_id"].as_str()
+        parallel_modules[0]["instance_id"].as_str(),
+        parallel_modules[1]["instance_id"].as_str()
     );
 
     Ok(())
@@ -152,19 +164,19 @@ async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResul
 #[sinex_test]
 async fn health_counts_unique_modules_and_concrete_runs(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
-    let manifest_only = ModuleName::new("manifest-health-node");
+    let manifest_only = ModuleName::new("manifest-health-module");
     let run_manifest =
-        register_test_node(pool, "run-health-node", ModuleKind::Source, "1.0.0-test").await?;
-    register_test_node(
+        register_test_module(pool, "run-health-module", ModuleKind::Source, "1.0.0-test").await?;
+    register_test_module(
         pool,
-        "manifest-health-node",
+        "manifest-health-module",
         ModuleKind::Service,
         "1.0.0-test",
     )
     .await?;
-    register_test_node(
+    register_test_module(
         pool,
-        "inactive-health-node",
+        "inactive-health-module",
         ModuleKind::Automaton,
         "1.0.0-test",
     )
@@ -173,7 +185,7 @@ async fn health_counts_unique_modules_and_concrete_runs(ctx: TestContext) -> Tes
     pool.state()
         .start_module_run(
             run_manifest.id,
-            "sinex-run-health-node",
+            "sinex-run-health-module",
             "instance-a",
             "test-host",
             None,

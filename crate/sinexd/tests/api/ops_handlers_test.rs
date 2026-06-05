@@ -382,7 +382,7 @@ async fn ops_cancel_replay_updates_replay_state_machine(ctx: TestContext) -> Tes
     let operation = replay
         .create_operation(
             ReplayScope {
-                source_name: "ops-replay-node".to_string(),
+                source_name: "ops-replay-source".to_string(),
                 time_window: None,
                 material_filter: None,
                 filters: HashMap::new(),

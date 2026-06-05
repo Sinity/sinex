@@ -139,7 +139,7 @@ pub struct RetryBudget {
     pub terminal: Box<Settlement>,
 }
 
-/// A progress proposal from a node to the runtime.
+/// A progress proposal from a runtime module to the runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressProposal {
     pub advance_checkpoint: bool,

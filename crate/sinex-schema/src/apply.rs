@@ -42,7 +42,7 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_events_scope_key",
     "ix_events_created_by_operation_id",
     "ix_events_sinex_metric_gauge_latest",
-    "ix_events_node_run_synthesis_latest",
+    "ix_events_module_run_synthesis_latest",
 ];
 const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_archived_events_ts_orig",
@@ -919,7 +919,7 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
         CREATE INDEX IF NOT EXISTS ix_events_sinex_metric_gauge_latest
         ON core.events (
             (payload->>'name'),
-            ((payload->'labels'->>'node')),
+            ((payload->'labels'->>'module')),
             ((payload->'labels'->>'module_run_id')),
             id DESC
         )
@@ -930,7 +930,7 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(
         pool,
         r"
-        CREATE INDEX IF NOT EXISTS ix_events_node_run_synthesis_latest
+        CREATE INDEX IF NOT EXISTS ix_events_module_run_synthesis_latest
         ON core.events (module_run_id, id DESC)
         WHERE module_run_id IS NOT NULL AND source_event_ids IS NOT NULL
         ",
