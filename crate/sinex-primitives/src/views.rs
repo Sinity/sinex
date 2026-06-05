@@ -284,7 +284,7 @@ pub struct EventSourceView {
     pub family: String,
     pub raw: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub unit_ref: Option<SinexObjectRef>,
+    pub source_ref: Option<SinexObjectRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -349,7 +349,7 @@ impl EventCardView {
             source: EventSourceView {
                 family: source_family(event.source.as_str()),
                 raw: event.source.to_string(),
-                unit_ref: Some(
+                source_ref: Some(
                     SinexObjectRef::new(SinexObjectKind::SourceDriver, event.source.to_string())
                         .with_label(event.source.to_string()),
                 ),

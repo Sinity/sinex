@@ -338,8 +338,9 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         "crate/sinexd/src/event_engine/material_assembler/finalize.rs",
         // Active-schema broadcast control notification.
         "crate/sinexd/src/event_engine/service.rs",
-        // Gateway/api node control command publishers (folded gateway).
-        "crate/sinexd/src/api/handlers/nodes.rs",
+        // Gateway/api replay and runtime control publishers (folded gateway).
+        "crate/sinexd/src/api/replay_control/server.rs",
+        "crate/sinexd/src/api/handlers/runtime_registry.rs",
         // Private-mode control broadcasts.
         "crate/sinexd/src/api/handlers/privacy.rs",
         // Replay control request/reply and invalidation publishers.

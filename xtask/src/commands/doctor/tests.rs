@@ -1926,26 +1926,26 @@ async fn test_rust_analyzer_report_is_explicitly_advisory() -> ::xtask::sandbox:
 async fn test_rust_analyzer_workspace_contract_lists_xtask_dev_deps()
 -> ::xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir()?;
-    fs::create_dir_all(dir.path().join("crate/lib/uses-xtask"))?;
-    fs::create_dir_all(dir.path().join("crate/lib/no-xtask"))?;
+    fs::create_dir_all(dir.path().join("crate/uses-xtask"))?;
+    fs::create_dir_all(dir.path().join("crate/no-xtask"))?;
     fs::create_dir_all(
         dir.path()
-            .join(".claude/worktrees/stale/crate/core/old-runtime"),
+            .join(".claude/worktrees/stale/crate/old-runtime"),
     )?;
     fs::create_dir_all(dir.path().join("target/ignored"))?;
     fs::write(
-        dir.path().join("crate/lib/uses-xtask/Cargo.toml"),
+        dir.path().join("crate/uses-xtask/Cargo.toml"),
         r#"
 [package]
 name = "uses-xtask"
 version = "0.1.0"
 
 [dev-dependencies]
-xtask = { path = "../../../xtask" }
+xtask = { path = "../../xtask" }
 "#,
     )?;
     fs::write(
-        dir.path().join("crate/lib/no-xtask/Cargo.toml"),
+        dir.path().join("crate/no-xtask/Cargo.toml"),
         r#"
 [package]
 name = "no-xtask"
@@ -1957,14 +1957,14 @@ serde = "1"
     )?;
     fs::write(
         dir.path()
-            .join(".claude/worktrees/stale/crate/core/old-runtime/Cargo.toml"),
+            .join(".claude/worktrees/stale/crate/old-runtime/Cargo.toml"),
         r#"
 [package]
 name = "ignored-stale-worktree"
 version = "0.1.0"
 
 [dev-dependencies]
-xtask = { path = "../../../../../xtask" }
+xtask = { path = "../../../../xtask" }
 "#,
     )?;
     fs::write(
@@ -2140,14 +2140,17 @@ disabled = []
 #[sinex_test]
 async fn test_rust_analyzer_cli_diagnostic_parser_reads_batch_output()
 -> ::xtask::sandbox::TestResult<()> {
-    let output = r#"at crate sinexctl, file /realm/project/sinex/crate/cli/src/lib.rs: Warning RustcLint("unused_variables") from LineCol { line: 12, col: 4 } to LineCol { line: 12, col: 10 }: unused variable"#;
+    let output = r#"at crate sinexctl, file /realm/project/sinex/crate/sinexctl/src/lib.rs: Warning RustcLint("unused_variables") from LineCol { line: 12, col: 4 } to LineCol { line: 12, col: 10 }: unused variable"#;
 
     let diagnostics = parse_rust_analyzer_cli_diagnostics(output);
 
     assert_eq!(diagnostics.len(), 1);
     let diagnostic = &diagnostics[0];
     assert_eq!(diagnostic.crate_name, "sinexctl");
-    assert_eq!(diagnostic.file, "/realm/project/sinex/crate/cli/src/lib.rs");
+    assert_eq!(
+        diagnostic.file,
+        "/realm/project/sinex/crate/sinexctl/src/lib.rs"
+    );
     assert_eq!(diagnostic.severity, "Warning");
     assert_eq!(
         diagnostic.diagnostic_kind,
@@ -2166,7 +2169,7 @@ async fn test_rust_analyzer_cli_diagnostic_maps_to_history_shape()
 -> ::xtask::sandbox::TestResult<()> {
     let diagnostic = RustAnalyzerCliDiagnostic {
         crate_name: "sinexctl".to_string(),
-        file: "/realm/project/sinex/crate/cli/src/lib.rs".to_string(),
+        file: "/realm/project/sinex/crate/sinexctl/src/lib.rs".to_string(),
         severity: "Warning".to_string(),
         diagnostic_kind: "RustcLint(\"unused_variables\")".to_string(),
         line: 12,
@@ -2186,7 +2189,7 @@ async fn test_rust_analyzer_cli_diagnostic_maps_to_history_shape()
     assert_eq!(stored.message, "unused variable");
     assert_eq!(
         stored.file_path.as_deref(),
-        Some("/realm/project/sinex/crate/cli/src/lib.rs")
+        Some("/realm/project/sinex/crate/sinexctl/src/lib.rs")
     );
     assert_eq!(stored.line, Some(13));
     assert_eq!(stored.column, Some(5));

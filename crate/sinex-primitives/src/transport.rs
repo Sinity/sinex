@@ -244,10 +244,10 @@ impl Class {
     pub const fn failure_routing(self) -> &'static str {
         match self {
             Self::Critical => {
-                "local recovery spool (sinex_event_recovery_spool.jsonl) in node work dir"
+                "local recovery spool (sinex_event_recovery_spool.jsonl) in module work dir"
             }
             Self::Derived => {
-                "processing-failure stream (events.processing_failures.{node}.{event_id})"
+                "processing-failure stream (events.processing_failures.{module}.{event_id})"
             }
             Self::SourceMaterial => "material acquisition operation fails before event publish",
             Self::Confirmation => {

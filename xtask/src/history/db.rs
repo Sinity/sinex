@@ -5927,7 +5927,7 @@ mod tests {
                 "test_name": "stage_as_you_go_records_material",
                 "package": "sinexd",
                 "edge_kind": "file",
-                "subject": "crate/lib/sinexd/src/stage_as_you_go.rs",
+                "subject": "crate/sinexd/src/stage_as_you_go.rs",
                 "fingerprint": null,
                 "origin": "unit-test"
               }
@@ -5937,7 +5937,7 @@ mod tests {
         let imported = db.import_test_dependency_artifacts(invocation_id, &artifact_dir)?;
         assert_eq!(imported, 1);
         let impacted = db.impacted_tests_for_changed_files(&[String::from(
-            "crate/lib/sinexd/src/stage_as_you_go.rs",
+            "crate/sinexd/src/stage_as_you_go.rs",
         )])?;
 
         assert_eq!(impacted.len(), 1);

@@ -55,7 +55,7 @@ pub struct InstanceInfo {
 /// Request: `coordination.list_instances`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ListInstancesRequest {
-    /// Filter by node type
+    /// Filter by module kind
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub module_kind: Option<ModuleKind>,
 }

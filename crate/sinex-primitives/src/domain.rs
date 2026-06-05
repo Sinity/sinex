@@ -1133,7 +1133,7 @@ define_string_type!(
     RegexPattern
 );
 
-// Consumer group types for nodes
+// Consumer group types for runtime modules
 define_string_type!(
     #[doc = "A consumer group name for distributed processing"]
     ConsumerGroup
@@ -1879,7 +1879,7 @@ impl std::str::FromStr for AutomatonModel {
     }
 }
 
-/// The mode in which a node is currently processing events.
+/// The mode in which a runtime module is currently processing events.
 ///
 /// Provided via trigger context so module logic can distinguish live arrival
 /// from historical scan, replay recomputation, etc.
@@ -1923,7 +1923,7 @@ impl std::str::FromStr for ProcessingMode {
 
 /// What caused a automaton to be triggered.
 ///
-/// Provided in the trigger context so nodes can distinguish between
+/// Provided in the trigger context so modules can distinguish between
 /// new evidence, late backfill, scope invalidation, etc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -2025,7 +2025,7 @@ define_string_type!(
     UserId
 );
 
-/// State of a processing node
+/// State of a processing runtime module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -2379,7 +2379,7 @@ impl std::str::FromStr for HealthStatus {
     }
 }
 
-/// Type of node in the system
+/// Type of runtime module in the system.
 ///
 /// `Display` rendering maps to `core.manifests.manifest_type`. The
 /// `#[derive(DbCheck)]` declaration below is the source of truth for the

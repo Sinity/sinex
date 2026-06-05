@@ -218,7 +218,7 @@ struct ReplayListArgs {
     #[serde(default)]
     state: Option<ReplayState>,
     #[serde(default)]
-    node: Option<String>,
+    module: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
 }
@@ -526,7 +526,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
         McpCatalogEntry {
             name: "sinex.replay_operations",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only replay operation list with state and node filters.",
+            description: "Read-only replay operation list with state and module filters.",
             backing_rpc_methods: &[methods::REPLAY_LIST_OPERATIONS],
             read_only: true,
         },
@@ -715,7 +715,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
         McpCatalogEntry {
             name: "sinex.source_stats",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only node processing telemetry buckets.",
+            description: "Read-only source processing telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_SOURCE_STATS],
             read_only: true,
         },
@@ -1070,7 +1070,7 @@ pub fn tools() -> Vec<McpTool> {
                             "Cancelled"
                         ]
                     },
-                    "node": { "type": "string" },
+                    "module": { "type": "string" },
                     "limit": {
                         "type": "integer",
                         "minimum": 1,
@@ -1899,7 +1899,7 @@ async fn task_state(client: &GatewayClient, arguments: Value) -> Result<Value> {
 async fn replay_operations(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: ReplayListArgs = serde_json::from_value(arguments)?;
     let operations = client
-        .replay_list_filtered(args.state, args.node.as_deref(), args.limit)
+        .replay_list_filtered(args.state, args.module.as_deref(), args.limit)
         .await?;
     Ok(envelope(
         "sinex.replay_operations",

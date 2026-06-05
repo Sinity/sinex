@@ -47,7 +47,7 @@ pub enum ReplayControlRequest {
     },
     List {
         state: Option<ReplayState>,
-        node: Option<String>,
+        module: Option<String>,
         limit: Option<i64>,
     },
 }

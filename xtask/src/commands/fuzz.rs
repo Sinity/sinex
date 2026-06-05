@@ -258,7 +258,7 @@ fn execute_run(
                 message: format!("Could not find crate: {crate_name}"),
                 location: Some("fuzz::run".to_string()),
                 suggestion: Some(
-                    "Available locations checked: crate/lib, crate/core, crate/nodes, cli"
+                    "Available locations checked: crate/, tests/, xtask"
                         .to_string(),
                 ),
             }));
@@ -462,13 +462,14 @@ struct FuzzManifestBin {
 fn find_crate_dir(crate_name: &str) -> Result<PathBuf> {
     let workspace_root = crate::config::workspace_root();
 
-    // Try common locations
-    let locations = [
-        workspace_root.join(format!("crate/lib/{crate_name}")),
-        workspace_root.join(format!("crate/core/{crate_name}")),
-        workspace_root.join(format!("crate/nodes/{crate_name}")),
-        workspace_root.join(format!("cli/{crate_name}")),
+    // Try common workspace package locations.
+    let mut locations = vec![
+        workspace_root.join(format!("crate/{crate_name}")),
+        workspace_root.join(format!("tests/{crate_name}")),
     ];
+    if crate_name == "xtask" {
+        locations.push(workspace_root.join("xtask"));
+    }
 
     for loc in &locations {
         if loc.join("Cargo.toml").exists() {

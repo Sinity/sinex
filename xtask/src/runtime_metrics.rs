@@ -254,7 +254,7 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
         .connect(db_url)
         .await?;
 
-    // 1. Heartbeat status from concrete node runs when present, falling back
+    // 1. Heartbeat status from concrete module runs when present, falling back
     // to manifest heartbeats for core services that have not adopted run
     // registration yet.
     let heartbeat_row = sqlx::query_as!(

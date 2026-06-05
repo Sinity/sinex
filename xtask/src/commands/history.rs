@@ -4004,7 +4004,7 @@ mod tests {
             ),
             sample_diagnostic(
                 "warning",
-                Some("crate/cli/src/main.rs"),
+                Some("crate/sinexctl/src/main.rs"),
                 Some("sinexctl"),
                 Some("W001"),
                 true,
@@ -4097,7 +4097,7 @@ mod tests {
                 code: Some("W001".into()),
                 message: "other package".into(),
                 package: Some("sinexctl".into()),
-                file_path: Some("crate/cli/src/main.rs".into()),
+                file_path: Some("crate/sinexctl/src/main.rs".into()),
                 fix_applicability: Some("MachineApplicable".into()),
                 ..Default::default()
             },
@@ -4419,7 +4419,7 @@ mod tests {
                 code: Some("W999".into()),
                 message: "check-only".into(),
                 package: Some("sinexctl".into()),
-                file_path: Some("crate/cli/src/lib.rs".into()),
+                file_path: Some("crate/sinexctl/src/lib.rs".into()),
                 fix_applicability: Some("MachineApplicable".into()),
                 ..Default::default()
             },
@@ -4490,7 +4490,7 @@ mod tests {
                 code: Some("W001".into()),
                 message: "not fixable".into(),
                 package: Some("sinexctl".into()),
-                file_path: Some("crate/cli/src/lib.rs".into()),
+                file_path: Some("crate/sinexctl/src/lib.rs".into()),
                 ..Default::default()
             },
         )?;

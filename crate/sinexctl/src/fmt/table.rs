@@ -6,22 +6,22 @@ use sinex_primitives::rpc::coordination::InstanceInfo;
 use sinex_primitives::rpc::replay::{ReplayOperation, ReplayState};
 use sinex_primitives::temporal::Timestamp;
 
-/// Format nodes as a table
-pub fn format_table_runtime(nodes: &[InstanceInfo]) -> String {
+/// Format runtime modules as a table.
+pub fn format_table_runtime(modules: &[InstanceInfo]) -> String {
     let mut builder = Builder::new();
     builder.push_record(["TYPE", "ID", "HOSTNAME", "LEADER", "LAST HEARTBEAT"]);
 
-    for node in nodes {
-        let leader_icon = if node.is_leader { "★" } else { "" };
-        let heartbeat = node
+    for module in modules {
+        let leader_icon = if module.is_leader { "★" } else { "" };
+        let heartbeat = module
             .last_heartbeat
             .as_ref()
             .map_or_else(|| style("none").dim().to_string(), format_heartbeat_age);
 
         builder.push_record([
-            node.module_kind.to_string(),
-            short_id(&node.instance_id),
-            node.hostname.as_deref().unwrap_or("-").to_string(),
+            module.module_kind.to_string(),
+            short_id(&module.instance_id),
+            module.hostname.as_deref().unwrap_or("-").to_string(),
             leader_icon.to_string(),
             heartbeat,
         ]);
@@ -36,7 +36,7 @@ pub fn format_table_runtime(nodes: &[InstanceInfo]) -> String {
 #[must_use]
 pub fn format_table_replay(operations: &[ReplayOperation]) -> String {
     let mut builder = Builder::new();
-    builder.push_record(["ID", "STATUS", "NODE", "CREATED"]);
+    builder.push_record(["ID", "STATUS", "SOURCE", "CREATED"]);
 
     for op in operations {
         builder.push_record([
@@ -250,14 +250,14 @@ mod tests {
 
     #[sinex_test]
     async fn format_table_runtime_single() -> TestResult<()> {
-        let node = InstanceInfo {
+        let module = InstanceInfo {
             instance_id: InstanceId::new("01HXYZ123456789ABCDEFGHIJK"),
             module_kind: ModuleKind::Source,
             hostname: Some(HostName::from_static("testhost")),
             last_heartbeat: Some(Timestamp::now()),
             is_leader: true,
         };
-        let result = format_table_runtime(&[node]);
+        let result = format_table_runtime(&[module]);
         assert!(result.contains("source"));
         assert!(result.contains("01HXYZ12..."));
         assert!(result.contains("testhost"));
@@ -267,14 +267,14 @@ mod tests {
 
     #[sinex_test]
     async fn format_table_runtime_no_heartbeat() -> TestResult<()> {
-        let node = InstanceInfo {
+        let module = InstanceInfo {
             instance_id: InstanceId::new("SHORTID"),
             module_kind: ModuleKind::Automaton,
             hostname: None,
             last_heartbeat: None,
             is_leader: false,
         };
-        let result = format_table_runtime(&[node]);
+        let result = format_table_runtime(&[module]);
         assert!(result.contains("automaton"));
         assert!(result.contains("SHORTID"));
         assert!(result.contains('-')); // hostname fallback
@@ -297,7 +297,7 @@ mod tests {
             operation_id: "01HXYZ123456789ABCDEFGHIJK".to_string(),
             state: ReplayState::Executing,
             scope: ReplayScope {
-                source_name: "my-node".to_string(),
+                source_name: "my-source".to_string(),
                 time_window: None,
                 material_filter: None,
                 filters: HashMap::new(),
@@ -327,7 +327,7 @@ mod tests {
         };
         let result = format_table_replay(&[op]);
         assert!(result.contains("01HXYZ12..."));
-        assert!(result.contains("my-node"));
+        assert!(result.contains("my-source"));
         Ok(())
     }
 }

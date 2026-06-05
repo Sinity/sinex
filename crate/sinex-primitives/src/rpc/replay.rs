@@ -395,7 +395,7 @@ pub struct ReplayListRequest {
     pub state: Option<ReplayState>,
     /// Filter by source module ID
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node: Option<String>,
+    pub module: Option<String>,
     /// Maximum results (default: unbounded)
     #[serde(default)]
     pub limit: Option<i64>,

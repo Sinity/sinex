@@ -151,7 +151,7 @@ pub async fn handle_replay_list_operations(
     _auth: &RpcAuthContext,
 ) -> Result<ReplayListResponse> {
     let operations = client
-        .list(req.state.map(db_replay_state), req.node, req.limit)
+        .list(req.state.map(db_replay_state), req.module, req.limit)
         .await
         .map_err(|error| {
             SinexError::service("failed to list replay operations").with_source(error)

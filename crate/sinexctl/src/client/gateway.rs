@@ -546,7 +546,7 @@ impl GatewayClient {
             .await
     }
 
-    /// Get the current coordination leader for a node type.
+    /// Get the current coordination leader for a module kind.
     pub async fn coordination_get_leader(&self, module_kind: String) -> Result<GetLeaderResponse> {
         let request = GetLeaderRequest {
             module_kind: serde_json::from_value(Value::String(module_kind))?,
@@ -691,7 +691,7 @@ impl GatewayClient {
         Ok(response.instances)
     }
 
-    /// List active node presence from runtime registry state.
+    /// List active runtime-module presence from runtime registry state.
     pub async fn runtime_list_active(
         &self,
         stale_after_secs: u64,
@@ -892,12 +892,12 @@ impl GatewayClient {
     pub async fn replay_list_filtered(
         &self,
         state: Option<ReplayState>,
-        node: Option<&str>,
+        module: Option<&str>,
         limit: Option<i64>,
     ) -> Result<Vec<ReplayOperation>> {
         let req = ReplayListRequest {
             state,
-            node: node.map(String::from),
+            module: module.map(String::from),
             limit,
         };
         let response: ReplayListResponse =
@@ -1833,7 +1833,7 @@ impl GatewayClient {
         Ok(response.buckets)
     }
 
-    /// Query node hourly operator telemetry.
+    /// Query source/runtime hourly operator telemetry.
     pub async fn telemetry_source_stats(
         &self,
         from: Option<String>,

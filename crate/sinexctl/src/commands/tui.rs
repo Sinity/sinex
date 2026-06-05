@@ -2365,7 +2365,7 @@ mod tests {
             phase: "failed".to_string(),
             progress: "42 / 100 events, batch 3".to_string(),
             affected_refs: vec![
-                "node: fixture.replay".to_string(),
+                "source: fixture.replay".to_string(),
                 "source-material: material-fixture".to_string(),
             ],
             caveats: vec![
@@ -2449,7 +2449,7 @@ mod tests {
             source: EventSourceView {
                 family: "ux-mk3".to_string(),
                 raw: "fixture.source".to_string(),
-                unit_ref: Some(SinexObjectRef::new(
+                source_ref: Some(SinexObjectRef::new(
                     SinexObjectKind::SourceDriver,
                     "ux.fixture-source",
                 )),

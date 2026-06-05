@@ -2,7 +2,7 @@
 //!
 //! This module provides typed request/response structures for all RPC methods
 //! exposed by the gateway. Using these types ensures compile-time safety for
-//! API contracts between CLI/nodes and the gateway.
+//! API contracts between CLI/runtime modules and the sinexd API.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

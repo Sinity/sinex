@@ -277,10 +277,10 @@ mod tests {
         let output = tempfile::tempdir()?;
 
         fs::write(source.path().join("flake.nix"), "{ }\n")?;
-        fs::create_dir_all(source.path().join("crate/nodes/new-node"))?;
+        fs::create_dir_all(source.path().join("crate/sinexd/src/sources"))?;
         fs::write(
-            source.path().join("crate/nodes/new-node/Cargo.toml"),
-            "[package]\nname = \"new-node\"\nversion = \"0.1.0\"\n",
+            source.path().join("crate/sinexd/src/sources/new_source.rs"),
+            "// source fixture\n",
         )?;
 
         fs::create_dir_all(source.path().join(".sinex/run"))?;
@@ -313,7 +313,7 @@ mod tests {
         assert!(
             output
                 .path()
-                .join("crate/nodes/new-node/Cargo.toml")
+                .join("crate/sinexd/src/sources/new_source.rs")
                 .is_file(),
             "new source files must survive staging"
         );

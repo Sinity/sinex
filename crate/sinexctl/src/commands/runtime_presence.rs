@@ -86,7 +86,7 @@ impl RuntimePresenceCommand {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Enriched node wrapper
+// Enriched runtime-module wrapper
 // ─────────────────────────────────────────────────────────────
 
 struct EnrichedRuntimeInfo {
@@ -106,8 +106,8 @@ fn render_modules_table(modules: &[EnrichedRuntimeInfo]) {
     }
 
     let total = modules.len();
-    let healthy_count = modules.iter().filter(|n| n.healthy).count();
-    let stale_count = modules.iter().filter(|n| n.stale).count();
+    let healthy_count = modules.iter().filter(|module| module.healthy).count();
+    let stale_count = modules.iter().filter(|module| module.stale).count();
     let unknown_count = total - healthy_count - stale_count;
 
     // Summary header
@@ -122,7 +122,7 @@ fn render_modules_table(modules: &[EnrichedRuntimeInfo]) {
         summary_parts.push(format!("{} unknown", style(unknown_count).dim()));
     }
     println!(
-        "{} node{}: {}",
+        "{} module{}: {}",
         style(total).bold(),
         if total == 1 { "" } else { "s" },
         summary_parts.join(", ")
@@ -140,31 +140,31 @@ fn render_modules_table(modules: &[EnrichedRuntimeInfo]) {
         "", "", "", "", "", ""
     );
 
-    for node in modules {
-        let name = node.info.instance_id.as_str();
-        let module_kind = node.info.module_kind.to_string().to_lowercase();
+    for module in modules {
+        let name = module.info.instance_id.as_str();
+        let module_kind = module.info.module_kind.to_string().to_lowercase();
 
-        let health = if node.healthy {
+        let health = if module.healthy {
             style("healthy").green()
-        } else if node.stale {
+        } else if module.stale {
             style("stale").yellow()
         } else {
             style("unknown").dim()
         };
 
-        let last_seen = node
+        let last_seen = module
             .info
             .last_heartbeat
             .as_ref()
             .map_or_else(|| "never".to_string(), format_heartbeat_age);
 
-        let host = node
+        let host = module
             .info
             .hostname
             .as_ref()
             .map_or("—", sinex_primitives::HostName::as_str);
 
-        let leader = if node.info.is_leader {
+        let leader = if module.info.is_leader {
             style("yes").cyan()
         } else {
             style("—").dim()

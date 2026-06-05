@@ -441,7 +441,7 @@ pub struct TelemetrySourceStatsRequest {
     pub limit: Option<i64>,
 }
 
-/// A single node-stat bucket.
+/// A single source/runtime-stat bucket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceStatsBucket {
     pub bucket: String,

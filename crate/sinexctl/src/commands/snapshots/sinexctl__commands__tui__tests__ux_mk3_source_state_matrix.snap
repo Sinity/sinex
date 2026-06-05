@@ -1,5 +1,5 @@
 ---
-source: crate/cli/src/commands/tui.rs
+source: crate/sinexctl/src/commands/tui.rs
 expression: matrix
 ---
 [

@@ -202,14 +202,14 @@ pub struct EventQuery {
 
     /// Filter to events with a specific `scope_key`.
     ///
-    /// Used by scope reconciler nodes to load the working set for a scope.
+/// Used by scope reconciler automata to load the working set for a scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_key: Option<String>,
 
     /// Filter to events produced by a specific source (for working set queries).
     ///
     /// Combined with `scope_key`, allows loading the current working set for
-    /// a scope reconciler node: all live events in that scope from that source.
+/// a scope reconciler automaton: all live events in that scope from that source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub equivalence_key: Option<String>,
 }

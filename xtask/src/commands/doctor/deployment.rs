@@ -525,7 +525,7 @@ pub(super) fn check_realm_accessible(target: &TargetIdentity) -> DeploymentReadi
     }
 }
 
-/// Check 3: terminal history sources currently consumed by the node are readable.
+/// Check 3: terminal history sources currently consumed by the runtime are readable.
 pub(super) fn check_terminal_sources(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
@@ -1086,13 +1086,13 @@ pub(super) fn check_singleton_workstation_topology(
     if offenders.is_empty() {
         DeploymentReadinessItem::pass(
             "singleton-workstation-topology",
-            "Workstation capture nodes are pinned to single-instance startup",
+            "Workstation capture sources are pinned to single-instance startup",
         )
     } else {
         DeploymentReadinessItem::fail(
             "singleton-workstation-topology",
             format!(
-                "Workstation capture nodes must stay singleton for first enable: {}",
+                "Workstation capture sources must stay singleton for first enable: {}",
                 offenders.join(", ")
             ),
         )

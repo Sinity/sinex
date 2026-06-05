@@ -239,7 +239,7 @@ tabled = "0.20"
 # File system watching
 notify = "8.2"
 
-# D-Bus (system.dbus source unit)
+# D-Bus (system.dbus source)
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 zvariant = "5"
 

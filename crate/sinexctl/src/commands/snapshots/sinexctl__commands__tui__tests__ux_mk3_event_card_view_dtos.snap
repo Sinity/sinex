@@ -1,5 +1,5 @@
 ---
-source: crate/cli/src/commands/tui.rs
+source: crate/sinexctl/src/commands/tui.rs
 expression: cards
 ---
 [
@@ -16,7 +16,7 @@ expression: cards
     "source": {
       "family": "ux-mk3",
       "raw": "fixture.source",
-      "unit_ref": {
+      "source_ref": {
         "kind": "source",
         "id": "ux.fixture-source"
       }
@@ -79,7 +79,7 @@ expression: cards
     "source": {
       "family": "ux-mk3",
       "raw": "fixture.source",
-      "unit_ref": {
+      "source_ref": {
         "kind": "source",
         "id": "ux.fixture-source"
       }
@@ -148,7 +148,7 @@ expression: cards
     "source": {
       "family": "ux-mk3",
       "raw": "fixture.source",
-      "unit_ref": {
+      "source_ref": {
         "kind": "source",
         "id": "ux.fixture-source"
       }

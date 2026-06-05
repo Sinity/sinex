@@ -1,5 +1,5 @@
 ---
-source: crate/cli/src/commands/tui.rs
+source: crate/sinexctl/src/commands/tui.rs
 expression: buffer_to_text(terminal.backend().buffer())
 ---
 ┌operation ux.operation.failed/audited─────────────────────────────────────────────┐
@@ -8,7 +8,7 @@ expression: buffer_to_text(terminal.backend().buffer())
 │Progress   42 / 100 events, batch 3                                               │
 │                                                                                  │
 │Affected Refs                                                                     │
-│node: fixture.replay                                                              │
+│source: fixture.replay                                                            │
 │source-material: material-fixture                                                 │
 │                                                                                  │
 │Caveats                                                                           │

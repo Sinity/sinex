@@ -1013,7 +1013,7 @@ mod tests {
     #[sinex_test]
     async fn test_infer_lib_target_for_test_filter_maps_inline_unit_tests() -> TestResult<()> {
         let repo = tempfile::tempdir()?;
-        let inline_test = repo.path().join("crate/lib/sinexd/src/coordination.rs");
+        let inline_test = repo.path().join("crate/sinexd/src/coordination.rs");
         fs::create_dir_all(inline_test.parent().expect("inline parent"))?;
         fs::write(
             &inline_test,
@@ -1121,20 +1121,20 @@ mod tests {
         let repo = tempfile::tempdir()?;
         let root = repo
             .path()
-            .join("crate/lib/sinexd/tests/integration_tests.rs");
+            .join("crate/sinexd/tests/integration_tests.rs");
         let nested = repo
             .path()
-            .join("crate/lib/sinexd/tests/integration/node_lifecycle_test.rs");
+            .join("crate/sinexd/tests/integration/runtime_lifecycle_test.rs");
         fs::create_dir_all(nested.parent().expect("nested parent"))?;
         fs::write(&root, "mod integration;\nmod support;\n")?;
         fs::write(
             &nested,
-            "#[sinex_test]\nasync fn test_node_concurrent_lifecycle() {}\n",
+            "#[sinex_test]\nasync fn test_runtime_concurrent_lifecycle() {}\n",
         )?;
 
         let inferred = infer_test_binaries_for_test_filter_in(
             repo.path(),
-            "test(test_node_concurrent_lifecycle)",
+            "test(test_runtime_concurrent_lifecycle)",
         )?;
         assert_eq!(inferred, vec!["integration_tests".to_string()]);
         Ok(())
