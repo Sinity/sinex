@@ -1,4 +1,4 @@
-//! Per-unit drain controller with material tracking and crash recovery.
+//! Per-source drain controller with material tracking and crash recovery.
 //!
 //! The [`SourceDrainController`] wraps the runtime's [`RuntimeDrainController`]
 //! and adds:
@@ -97,7 +97,7 @@ impl GapEvidence {
 
 // ── Drain controller ──────────────────────────────────────────────────────
 
-/// Per-unit drain controller with phased drain protocol and crash recovery
+/// Per-source drain controller with phased drain protocol and crash recovery.
 /// evidence.
 ///
 /// Each source in the source host gets its own controller,
@@ -117,7 +117,7 @@ pub struct SourceDrainController {
 }
 
 impl SourceDrainController {
-    /// Create a new per-unit drain controller.
+    /// Create a new per-source drain controller.
     #[must_use]
     pub fn new() -> Self {
         Self {

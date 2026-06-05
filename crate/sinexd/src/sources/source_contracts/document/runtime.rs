@@ -167,7 +167,7 @@ enum DocumentInspection {
     Skip(DocumentSkip),
 }
 
-/// Simplified document node that ingests local files.
+/// Simplified document source that ingests local files.
 pub struct DocumentSourceDriver {
     runtime: Option<RuntimeContext>,
     config: DocumentIngestorConfig,
@@ -1004,8 +1004,8 @@ mod tests {
     #[sinex_test]
     async fn document_source_state_is_unhealthy_before_initialize()
     -> ::xtask::sandbox::TestResult<()> {
-        let node = DocumentSourceDriver::new();
-        let state = node.get_source_state()?;
+        let source = DocumentSourceDriver::new();
+        let state = source.get_source_state()?;
 
         assert!(!state.is_connected);
         assert!(!state.healthy);
@@ -1017,8 +1017,8 @@ mod tests {
 
     #[sinex_test]
     async fn document_source_state_surfaces_invalid_config() -> ::xtask::sandbox::TestResult<()> {
-        let node = DocumentSourceDriver::new();
-        let state = node.get_source_state()?;
+        let source = DocumentSourceDriver::new();
+        let state = source.get_source_state()?;
 
         assert_eq!(
             state.metadata.get("config_error"),
@@ -1033,8 +1033,8 @@ mod tests {
     #[sinex_test]
     async fn document_node_reports_empty_ingestion_history_before_scan()
     -> ::xtask::sandbox::TestResult<()> {
-        let node = DocumentSourceDriver::new();
-        let history = node.get_ingestion_history(10)?;
+        let source = DocumentSourceDriver::new();
+        let history = source.get_ingestion_history(10)?;
 
         assert!(history.is_empty());
         Ok(())
@@ -1043,7 +1043,7 @@ mod tests {
     #[sinex_test]
     async fn document_node_reports_last_scan_as_activity_and_history()
     -> ::xtask::sandbox::TestResult<()> {
-        let node = DocumentSourceDriver::new();
+        let source = DocumentSourceDriver::new();
         let started_at =
             Timestamp::from_unix_timestamp(1_700_000_000).expect("timestamp should be valid");
         let finished_at =
@@ -1061,9 +1061,9 @@ mod tests {
             vec!["Skipped 1 unchanged document(s)".to_string()],
         );
 
-        node.record_scan_report(&report)?;
+        source.record_scan_report(&report)?;
 
-        let state = node.get_source_state()?;
+        let state = source.get_source_state()?;
         assert_eq!(state.last_updated, Some(finished_at));
         assert_eq!(state.recent_activity.len(), 1);
         assert!(state.recent_activity[0].description.contains("emitted 2"));
@@ -1072,7 +1072,7 @@ mod tests {
             Some(&json!(1))
         );
 
-        let history = node.get_ingestion_history(10)?;
+        let history = source.get_ingestion_history(10)?;
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].started_at, started_at);
         assert_eq!(history[0].completed_at, Some(finished_at));
@@ -1089,7 +1089,7 @@ mod tests {
             Some(1)
         );
 
-        assert!(node.get_ingestion_history(0)?.is_empty());
+        assert!(source.get_ingestion_history(0)?.is_empty());
         Ok(())
     }
 }

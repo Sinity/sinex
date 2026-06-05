@@ -391,8 +391,8 @@ pub async fn run_monitor_unit_delegated(
     use clap::Parser;
 
     let parsed = RuntimeCli::parse_from(args);
-    let node = MonitorDriver::new(source_id, phase, emit_fn);
-    let adapter = SourceDriverRuntime::new(node);
+    let source = MonitorDriver::new(source_id, phase, emit_fn);
+    let adapter = SourceDriverRuntime::new(source);
     let mut runner = RuntimeCliRunner::new(adapter);
     runner.run(parsed).await.map_err(std::convert::Into::into)
 }
@@ -443,13 +443,14 @@ mod tests {
             Box::pin(async { Ok(vec![]) })
         }
 
-        let mut node = MonitorDriver::new("test.monitor", MonitorPhase::ServiceStart, noop_emit);
+        let mut source =
+            MonitorDriver::new("test.monitor", MonitorPhase::ServiceStart, noop_emit);
 
         // run_continuous without prior initialize() should return Err.
         let (_tx, rx) = watch::channel(false);
         let mut state = MonitorState::default();
         let start = ContinuousStart::from_checkpoint(Checkpoint::None);
-        let result = node.run_continuous(&mut state, start, rx).await;
+        let result = source.run_continuous(&mut state, start, rx).await;
 
         assert!(result.is_err(), "expected Err when runtime not captured");
         let err = result.unwrap_err();
@@ -472,8 +473,8 @@ mod tests {
             Box::pin(async { Ok(vec![]) })
         }
 
-        let node = MonitorDriver::new("test.monitor", MonitorPhase::ServiceStart, noop_emit);
-        let caps = node.capabilities();
+        let source = MonitorDriver::new("test.monitor", MonitorPhase::ServiceStart, noop_emit);
+        let caps = source.capabilities();
 
         assert!(!caps.supports_snapshot, "monitors have no snapshot mode");
         assert!(

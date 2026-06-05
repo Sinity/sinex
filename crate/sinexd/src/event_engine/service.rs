@@ -1365,7 +1365,7 @@ impl IngestService {
             })
             .collect();
 
-        // Store full schemas in NATS KV for node-side validation
+        // Store full schemas in NATS KV for producer-side validation
         Self::store_schemas_in_kv(&entries, pool, &js).await?;
 
         // Broadcast metadata for cache invalidation signal using core NATS pub/sub.
@@ -1391,7 +1391,7 @@ impl IngestService {
         Ok(())
     }
 
-    /// Store full schema JSON in NATS KV for node validation
+    /// Store full schema JSON in NATS KV for producer validation.
     async fn store_schemas_in_kv(
         entries: &[SchemaBroadcastEntry],
         pool: &PgPool,
@@ -1458,7 +1458,7 @@ impl IngestService {
 
         info!(
             count = entries.len(),
-            "Stored full schemas in NATS KV for node validation"
+            "Stored full schemas in NATS KV for producer validation"
         );
 
         Ok(())

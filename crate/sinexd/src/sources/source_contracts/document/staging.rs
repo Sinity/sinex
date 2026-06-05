@@ -1,4 +1,4 @@
-//! `document.staging` source — document parser dispatch plus node-factory
+//! `document.staging` source — document parser dispatch plus source factory
 //! registration for the imperative document runtime.
 //!
 //! The source scans configured root directories for documents, fingerprints

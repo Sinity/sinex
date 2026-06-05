@@ -545,7 +545,7 @@ mod tests {
 
     #[sinex_test]
     async fn terminal_chunks_are_not_parser_redacted() -> TestResult<()> {
-        let node = DocumentParserAutomaton::default();
+        let automaton = DocumentParserAutomaton::default();
         let mut state = DocumentParserState::default();
         let event_id = Id::new();
         let context = AutomatonContext {
@@ -560,7 +560,7 @@ mod tests {
         };
         let token = ["ghp_", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"].concat();
 
-        let outputs = node.process_terminal(
+        let outputs = automaton.process_terminal(
             &mut state,
             serde_json::json!({
                 "command": "cat token",
@@ -592,9 +592,9 @@ pub type DocumentParserRuntime =
 // ── Source descriptor ─────────────────────────────────────────────
 
 use sinex_primitives::proof::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
+    OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
+    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape, SourceContract,
     SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
@@ -607,10 +607,10 @@ register_source_contract! {
             ("document-parser", "document.parsed"),
             ("document-parser", "document.chunked"),
         ],
-        privacy_tier: SuPrivacyTier::Sensitive,
-        horizons: &[SuHorizon::Continuous],
-        retention: SuRetentionPolicy::Forever,
-        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+        privacy_tier: ContractPrivacyTier::Sensitive,
+        horizons: &[ContractHorizon::Continuous],
+        retention: ContractRetentionPolicy::Forever,
+        occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
             "(source, parent_event_id, output_event_type, chunk_index)",
         ),
         access_policy: "event_stream_read",
@@ -632,8 +632,8 @@ register_source_runtime_binding! {
     .resource_shape("event_stream_consumer")
     .source_id("document-parser")
     .runner_pack("sinexd")
-    .checkpoint_family(SuCheckpointFamily::AppendStream)
-    .runtime_shape(SuRuntimeShape::Continuous)
+    .checkpoint_family(ContractCheckpointFamily::AppendStream)
+    .runtime_shape(ContractRuntimeShape::Continuous)
     .package_impact("no_new_output")
     .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)

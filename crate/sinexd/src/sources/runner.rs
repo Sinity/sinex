@@ -1,11 +1,11 @@
-//! Source runner — assembles per-unit runtime handles before the runtime
+//! Source runner — assembles per-source runtime handles before the runtime
 //! [`RuntimeRunner`](crate::runtime::stream::RuntimeRunner) takes over.
 //!
 //! Each source gets:
-//! - A per-unit [`SourceDrainController`] for the enhanced drain protocol
-//! - Per-unit checkpoint isolation via the `--source` flag (routed through
+//! - A per-source [`SourceDrainController`] for the enhanced drain protocol
+//! - Per-source checkpoint isolation via the `--source` flag (routed through
 //!   [`ServiceInfo::checkpoint_identity`](crate::runtime::stream::ServiceInfo))
-//! - Per-unit health reporting (auto-enabled by [`SourceDriverRuntime`])
+//! - Per-source health reporting (auto-enabled by [`SourceDriverRuntime`])
 //!
 //! The runner itself is thin — most lifecycle work is handled by the runtime's
 //! [`RuntimeRunner`] and [`SourceDriverRuntime`]. The source host adds drain
@@ -14,9 +14,9 @@
 use crate::sources::drain::SourceDrainController;
 use std::sync::Arc;
 
-/// Per-unit runtime context assembled during source startup.
+/// Per-source runtime context assembled during source startup.
 ///
-/// Holds the enhanced drain controller for the unit. The runtime's `RuntimeRunner`
+/// Holds the enhanced drain controller for the source. The runtime's `RuntimeRunner`
 /// already provides checkpoint, health, NATS, and DB handles through
 /// [`RuntimeHandles`](crate::runtime::stream::RuntimeHandles).
 #[derive(Debug)]
@@ -41,7 +41,7 @@ impl SourceRunner {
         &self.unit_id
     }
 
-    /// Access the per-unit drain controller.
+    /// Access the per-source drain controller.
     #[must_use]
     pub fn drain_controller(&self) -> Arc<SourceDrainController> {
         Arc::clone(&self.drain_controller)

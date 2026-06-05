@@ -183,13 +183,13 @@ mod tests {
 
     #[sinex_test]
     async fn noop_source_reports_zero_work() -> TestResult<()> {
-        let mut node = NoopSourceDriver;
+        let mut source = NoopSourceDriver;
         let mut state = NoopState;
 
-        let snapshot = node.scan_snapshot(&mut state, ScanArgs::default()).await?;
+        let snapshot = source.scan_snapshot(&mut state, ScanArgs::default()).await?;
         assert_noop_report(&snapshot, Checkpoint::None);
 
-        let historical = node
+        let historical = source
             .scan_historical(
                 &mut state,
                 Checkpoint::external(serde_json::json!(42), "unused start"),
@@ -201,7 +201,7 @@ mod tests {
 
         let (tx, rx) = watch::channel(false);
         tx.send(true)?;
-        let continuous = node
+        let continuous = source
             .run_continuous(
                 &mut state,
                 ContinuousStart::from_checkpoint(Checkpoint::external(

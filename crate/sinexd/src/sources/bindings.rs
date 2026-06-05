@@ -90,7 +90,7 @@ pub struct SourceBinding {
     pub extra_args: Vec<String>,
 
     /// Environment variables injected into the binding's process scope.
-    /// Replaces the per-unit `EnvironmentFile` overlays that existed when
+    /// Replaces the per-source `EnvironmentFile` overlays that existed when
     /// each source was a separate systemd unit. Keys set here
     /// override the daemon's inherited environment for the duration of
     /// the binding's lifecycle.
@@ -165,7 +165,7 @@ pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
 /// Drive one binding through the standard runtime lifecycle.
 ///
 /// Look up the source factory for the source id, then call it with a
-/// synthesized argv equivalent to the old per-unit `ExecStart`.
+/// synthesized argv equivalent to the old per-source `ExecStart`.
 pub async fn run_binding(binding: SourceBinding) -> Result<()> {
     let unit_id = SourceId::new(&binding.source_id).map_err(|error| {
         SinexError::configuration(format!(

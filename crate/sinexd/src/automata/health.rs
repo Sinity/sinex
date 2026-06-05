@@ -563,9 +563,9 @@ fn parse_health_status_field(
 // --- Source descriptor (issue #690 / #734) ---
 
 use sinex_primitives::proof::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
+    OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
+    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape, SourceContract,
     SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
@@ -580,10 +580,10 @@ register_source_contract! {
             ("health-aggregator", "health.aggregated_report"),
         ],
         // Health metrics describe component liveness, not user content.
-        privacy_tier: SuPrivacyTier::Public,
-        horizons: &[SuHorizon::Continuous],
-        retention: SuRetentionPolicy::Forever,
-        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+        privacy_tier: ContractPrivacyTier::Public,
+        horizons: &[ContractHorizon::Continuous],
+        retention: ContractRetentionPolicy::Forever,
+        occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
             "(source, component_scope, parent_event_ids)",
         ),
         access_policy: "event_stream_read",
@@ -605,8 +605,8 @@ register_source_runtime_binding! {
     .resource_shape("event_stream_consumer")
     .source_id("health")
     .runner_pack("sinexd")
-    .checkpoint_family(SuCheckpointFamily::AppendStream)
-    .runtime_shape(SuRuntimeShape::Continuous)
+    .checkpoint_family(ContractCheckpointFamily::AppendStream)
+    .runtime_shape(ContractRuntimeShape::Continuous)
     .package_impact("no_new_output")
     .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)

@@ -178,8 +178,8 @@ where
     use clap::Parser;
 
     let parsed = RuntimeCli::parse_from(args);
-    let node = AdapterBackedSource::<A, P>::new(source_id);
-    let adapter = SourceDriverRuntime::new(node);
+    let source = AdapterBackedSource::<A, P>::new(source_id);
+    let adapter = SourceDriverRuntime::new(source);
     let mut runner = RuntimeCliRunner::new(adapter);
     runner.run(parsed).await.map_err(std::convert::Into::into)
 }
@@ -202,7 +202,7 @@ where
     use clap::Parser;
 
     let parsed = RuntimeCli::parse_from(args);
-    let node = SourceDriverRuntime::new(I::default());
-    let mut runner = RuntimeCliRunner::new(node);
+    let source_runtime = SourceDriverRuntime::new(I::default());
+    let mut runner = RuntimeCliRunner::new(source_runtime);
     runner.run(parsed).await.map_err(std::convert::Into::into)
 }

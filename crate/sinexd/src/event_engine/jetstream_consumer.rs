@@ -186,9 +186,9 @@ fn is_source_material_fk_constraint_name(value: &str) -> bool {
             .is_some_and(|prefix| prefix.ends_with('_'))
 }
 
-/// Hard guard for node-supplied event IDs.
+/// Hard guard for producer-supplied event IDs.
 ///
-/// All node-minted event IDs must be RFC4122 `UUIDv7`. `event_engine` rejects every ID
+/// All producer-minted event IDs must be RFC4122 `UUIDv7`. `event_engine` rejects every ID
 /// that does not meet this requirement before it reaches the hypertable partition key.
 #[cfg(test)]
 fn is_uuid_v7(value: &Uuid) -> bool {

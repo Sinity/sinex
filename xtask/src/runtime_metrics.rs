@@ -229,7 +229,7 @@ impl RuntimeMetrics {
     }
 }
 
-/// Default stale threshold in seconds (matches SINEX_NODE_HEARTBEAT_STALE_SECS)
+/// Default stale threshold in seconds for runtime heartbeats.
 const HEARTBEAT_STALE_SECS: i64 = 120;
 const TELEMETRY_STALE_SECS: i64 = 120;
 const RUNTIME_LAG_WARN_THRESHOLD: f64 = 1000.0;

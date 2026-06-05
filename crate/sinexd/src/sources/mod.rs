@@ -1,6 +1,6 @@
 //! Source dispatch, registry, drain.
 //!
-//! Hosts the source machinery: dispatch into per-unit tasks, drain
+//! Hosts the source machinery: dispatch into per-source tasks, drain
 //! semantics for graceful shutdown, the registry, the runner, and every
 //! concrete source under `source_contracts/`.
 

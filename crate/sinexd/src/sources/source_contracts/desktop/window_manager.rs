@@ -89,7 +89,7 @@ register_source_runtime_binding! {
 
 /// Configuration for [`HyprlandParser`].
 ///
-/// At runtime the source host deserialises the node JSON config into this
+/// At runtime the source host deserialises the source JSON config into this
 /// struct via `UnixSocketStreamAdapter::Config` (the outer socket config), and
 /// passes parser-specific fields here.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

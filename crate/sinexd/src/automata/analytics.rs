@@ -317,9 +317,9 @@ pub type AnalyticsAutomatonRuntime = WindowedAdapter<AnalyticsAutomaton>;
 // --- Source descriptor (issue #690 / #734) ---
 
 use sinex_primitives::proof::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceContract,
+    CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
+    OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
+    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape, SourceContract,
     SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
@@ -335,10 +335,10 @@ register_source_contract! {
             ("derived.activity-window", "activity.window.summary"),
         ],
         // Inherits the privacy tier of its inputs (window titles, commands).
-        privacy_tier: SuPrivacyTier::Sensitive,
-        horizons: &[SuHorizon::Continuous],
-        retention: SuRetentionPolicy::Forever,
-        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+        privacy_tier: ContractPrivacyTier::Sensitive,
+        horizons: &[ContractHorizon::Continuous],
+        retention: ContractRetentionPolicy::Forever,
+        occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
             "(source, parent_event_ids)",
         ),
         access_policy: "event_stream_read",
@@ -360,8 +360,8 @@ register_source_runtime_binding! {
     .resource_shape("event_stream_consumer")
     .source_id("analytics")
     .runner_pack("sinexd")
-    .checkpoint_family(SuCheckpointFamily::AppendStream)
-    .runtime_shape(SuRuntimeShape::Continuous)
+    .checkpoint_family(ContractCheckpointFamily::AppendStream)
+    .runtime_shape(ContractRuntimeShape::Continuous)
     .package_impact("no_new_output")
     .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::proof::SourceBuildImpact::ZERO)

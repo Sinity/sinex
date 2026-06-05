@@ -84,7 +84,7 @@ impl ValidationStatsSnapshot {
 ///
 /// Renamed from `EventValidator` to `IngestEventValidator` to avoid name collision with
 /// the underlying DB validator — see issue #746 (A7). EventEngine-specific concerns are:
-/// `strict_mode` (reject events with no registered schema) and per-node `ValidationStats`.
+/// `strict_mode` (reject events with no registered schema) and per-producer `ValidationStats`.
 #[derive(Clone)]
 pub struct IngestEventValidator {
     inner: DbEventValidator,
