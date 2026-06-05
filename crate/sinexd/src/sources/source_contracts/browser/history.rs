@@ -80,7 +80,7 @@ register_source_runtime_binding! {
 }
 
 // ---------------------------------------------------------------------------
-// Timestamp heuristic (mirrors sinex-browser-ingestor logic)
+// Timestamp heuristic (mirrors sinex-browser-source logic)
 // ---------------------------------------------------------------------------
 
 /// Chromium Windows FILETIME epoch offset (microseconds from 1601-01-01 to Unix epoch).
@@ -593,7 +593,7 @@ fn build_intent(
 pub type BrowserHistoryAdapter =
     ChainedAdapter<crate::runtime::parser::SqliteRowAdapter, AppendOnlyFileAdapter>;
 
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "browser.history",
     adapter: BrowserHistoryAdapter,
     parser: BrowserHistoryParser,

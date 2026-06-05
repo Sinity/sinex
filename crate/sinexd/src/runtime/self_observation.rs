@@ -40,7 +40,7 @@ use sinex_primitives::events::payloads::{
     ApiRequestStatsPayload, AssemblyStatsPayload, ConsumerStartupSnapshotPayload,
     AutomatonLatencySnapshotPayload, EventEngineBatchStatsPayload, GatewayRpcCallPayload,
     HealthStatusPayload, MetricCounterPayload, MetricGaugePayload, MetricHistogramPayload,
-    NodeProcessingStatsPayload, PoolStatsPayload, RateLimitExceededPayload, ReplayStatsPayload,
+    SourceProcessingStatsPayload, PoolStatsPayload, RateLimitExceededPayload, ReplayStatsPayload,
     RpcStatus, StreamStatsPayload,
 };
 use sinex_primitives::events::{Event, Provenance, SourceMaterial};
@@ -684,7 +684,7 @@ impl SelfObserver {
     }
 
     /// Emit node processing statistics.
-    pub async fn emit_node_processing_stats(
+    pub async fn emit_source_processing_stats(
         &self,
         module_kind: &str,
         events_processed: u64,
@@ -693,7 +693,7 @@ impl SelfObserver {
         queue_depth: u32,
         error_count: u64,
     ) -> Result<(), SelfObservationError> {
-        self.publish(NodeProcessingStatsPayload {
+        self.publish(SourceProcessingStatsPayload {
             module_kind: module_kind.to_string(),
             events_processed,
             events_dropped,

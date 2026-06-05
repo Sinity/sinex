@@ -115,7 +115,7 @@ pub use telemetry::{
     handle_telemetry_current_device_state, handle_telemetry_current_health,
     handle_telemetry_file_activity, handle_telemetry_gateway_stats,
     handle_telemetry_event_engine_batch_stats, handle_telemetry_event_engine_validation,
-    handle_telemetry_metric_counters, handle_telemetry_runtime_stats,
+    handle_telemetry_metric_counters, handle_telemetry_source_stats,
     handle_telemetry_recent_activity, handle_telemetry_stream_stats, handle_telemetry_system_state,
     handle_telemetry_throughput, handle_telemetry_window_focus,
 };

@@ -25,7 +25,7 @@ use sinex_primitives::{register_source_contract, register_source_runtime_binding
 
 use crate::runtime::parser::{ClipboardPollingAdapter, MaterialParser, ParserError, ParserResult};
 
-use crate::register_adapter_ingestor;
+use crate::register_source;
 
 // ---------------------------------------------------------------------------
 // Source contract
@@ -188,7 +188,7 @@ impl MaterialParser for ClipboardParser {
 // Source factory registration
 // ---------------------------------------------------------------------------
 
-register_adapter_ingestor!(
+register_source!(
     source_id: "desktop.clipboard",
     adapter: ClipboardPollingAdapter,
     parser: ClipboardParser,

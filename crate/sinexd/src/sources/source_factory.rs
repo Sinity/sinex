@@ -2,13 +2,13 @@
 //!
 //! Replaces the `match source_name` arm in `main.rs` with a compile-time
 //! registry. Each source contributes a [`SourceFactoryEntry`] via
-//! [`register_source_driver!`] at link time — no match arms.
+//! [`register_source!`] at link time — no match arms.
 //!
 //! # How to add a new source
 //!
 //! 1. Implement `SourceDriver` for your source.
-//! 2. Call `register_source_driver!("your.unit.id", YourSourceDriver)` in the
-//!    source's module.
+//! 2. Call `register_source!(source_id: "your.unit.id", driver: YourSourceDriver)`
+//!    in the source's module.
 //!
 //! The binary automatically discovers and dispatches to your factory.
 
@@ -17,9 +17,9 @@ use sinex_primitives::parser::SourceId;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-/// Type-erased factory function for running a source ingestor.
+/// Type-erased factory function for running a source driver.
 ///
-/// Takes the filtered argv and returns a boxed future that drives the ingestor
+/// Takes the filtered argv and returns a boxed future that drives the source
 /// to completion. Using a `fn` pointer (not a closure) allows use inside
 /// `inventory::submit!` which requires const-constructible items.
 pub type SourceFactoryFn =
@@ -64,25 +64,73 @@ pub fn registered_source_factory_ids() -> Vec<SourceId> {
     ids
 }
 
-/// Register a source's [`SourceDriver`] with the source factory registry.
+/// Register a source with the parser/factory registries.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust,ignore
-/// register_source_driver!("noop", NoopSourceDriver);
+/// register_source!(source_id: "noop", driver: NoopSourceDriver);
+/// register_source!(source_id: "weechat.message", parser: WeeChatMessageRecord);
+/// register_source!(
+///     source_id: "terminal.atuin-history",
+///     adapter: SqliteRowAdapter,
+///     parser: AtuinHistoryRecord,
+/// );
+/// register_source!(
+///     source_id: "terminal.monitor",
+///     emit_at: MonitorPhase::ServiceStart,
+///     emit: emit_terminal_monitor,
+/// );
 /// ```
-///
-/// The macro creates a `SourceFactoryEntry` with a `fn` pointer wrapper around
-/// `run_ingestor::<I>(args)` and submits it to `inventory`.
 #[macro_export]
-macro_rules! register_source_driver {
-    ($id:expr, $module_kind:ty) => {
+macro_rules! register_source {
+    (source_id: $id:expr, driver: $driver:ty $(,)?) => {
         $crate::__submit_registry_entry!(
             $crate::sources::source_factory::SourceFactoryEntry,
             $id,
             |args| {
-                Box::pin($crate::sources::source_factory::run_ingestor::<$module_kind>(
-                    args,
+                Box::pin($crate::sources::source_factory::run_source_driver::<$driver>(args))
+            },
+        );
+    };
+
+    (source_id: $id:expr, parser: $parser:ty $(,)?) => {
+        $crate::__submit_registry_entry!(
+            $crate::sources::dispatch::ParserRegistryEntry,
+            $id,
+            || Box::new(<$parser>::default()) as Box<dyn $crate::sources::dispatch::ErasedParser>,
+        );
+    };
+
+    (
+        source_id: $id:expr,
+        adapter: $adapter:ty,
+        parser: $parser:ty $(,)?
+    ) => {
+        $crate::register_source!(source_id: $id, parser: $parser);
+        $crate::__submit_registry_entry!(
+            $crate::sources::source_factory::SourceFactoryEntry,
+            $id,
+            |args| {
+                Box::pin($crate::sources::source_factory::run_adapter_source::<
+                    $adapter,
+                    $parser,
+                >($id, args))
+            },
+        );
+    };
+
+    (
+        source_id: $id:expr,
+        emit_at: $phase:expr,
+        emit: $emit_fn:expr $(,)?
+    ) => {
+        $crate::__submit_registry_entry!(
+            $crate::sources::source_factory::SourceFactoryEntry,
+            $id,
+            |args| {
+                Box::pin($crate::sources::monitor_driver::run_monitor_unit_delegated(
+                    $id, $phase, $emit_fn, args,
                 ))
             },
         );
@@ -90,11 +138,7 @@ macro_rules! register_source_driver {
 }
 
 /// Shared `inventory::submit!` epilogue for `(source_id, factory_fn)`-shaped
-/// registry entries. Used by `register_source_driver!`, `register_parser!`,
-/// `register_adapter_ingestor!`, and `register_monitor_unit!` — all four submit
-/// the same field shape to inventory, differing only in entry type and closure body.
-///
-/// Direct use is discouraged; reach for the named `register_*` macros instead.
+/// registry entries.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __submit_registry_entry {
@@ -108,72 +152,12 @@ macro_rules! __submit_registry_entry {
     };
 }
 
-// `register_monitor_unit!` is defined in monitor_driver.rs and exported here
-// for documentation grouping. The macro itself lives in crate::sources::monitor_driver
-// because it needs pub access to that module's types.
-// Re-export is not possible for macros with #[macro_export] — they live at
-// the crate root automatically. Users call `crate::register_monitor_unit!`.
-
-/// Register an adapter-backed ingestor in one shot.
+/// Run an adapter-backed source through the standard SDK lifecycle.
 ///
-/// This macro is the primary Wave-B authoring surface. It combines
-/// `register_parser!` and `register_source_driver!` into a single call:
-///
-/// ```rust,ignore
-/// register_adapter_ingestor!(
-///     source_id: "terminal.atuin-history",
-///     adapter:        SqliteRowAdapter,
-///     parser:         AtuinHistoryRecord,
-/// );
-/// ```
-///
-/// The macro:
-/// 1. Registers `parser` in the `ParserRegistryEntry` inventory under
-///    `source_id` so the replay dispatch can reach it.
-/// 2. Registers an `AdapterBackedIngestor<adapter, parser>` in the
-///    `SourceFactoryEntry` inventory so `sinexd scan-source --source
-///    <source_id>` can start it.
-///
-/// Both `adapter` and `parser` must implement `Default`.
-/// Parser baseline config is supplied via `MaterialParser::baseline_adapter_config()`.
-///
-/// # Config shape
-///
-/// `AdapterBackedIngestor` deserializes the node JSON config into
-/// `adapter::Config`. Place all adapter-specific fields (e.g. `path`,
-/// `query`, `table`) at the top level of the source's config JSON.
-/// The adapter type's `Config` must implement `serde::Deserialize` and
-/// `Default`.
-#[macro_export]
-macro_rules! register_adapter_ingestor {
-    (
-        source_id: $id:expr,
-        adapter: $adapter:ty,
-        parser: $parser:ty $(,)?
-    ) => {
-        // 1. Register the parser in the dispatch registry (replay path).
-        $crate::register_parser!($id, $parser);
-
-        // 2. Register the source factory (continuous ingestion path).
-        $crate::__submit_registry_entry!(
-            $crate::sources::source_factory::SourceFactoryEntry,
-            $id,
-            |args| {
-                Box::pin($crate::sources::source_factory::run_adapter_ingestor::<
-                    $adapter,
-                    $parser,
-                >($id, args))
-            },
-        );
-    };
-}
-
-/// Run an adapter-backed ingestor through the standard SDK lifecycle.
-///
-/// Parallel to `run_ingestor` but constructs `AdapterBackedIngestor<A, P>`
-/// with the source id baked in. Called by `register_adapter_ingestor!`
+/// Parallel to `run_source_driver` but constructs `AdapterBackedSource<A, P>`
+/// with the source id baked in. Called by `register_source!`
 /// generated factories.
-pub async fn run_adapter_ingestor<A, P>(
+pub async fn run_adapter_source<A, P>(
     source_id: &'static str,
     args: Vec<std::ffi::OsString>,
 ) -> Result<(), Box<dyn std::error::Error>>
@@ -190,24 +174,24 @@ where
 {
     use crate::runtime::SourceDriverRuntime;
     use crate::runtime::runtime_cli::{RuntimeCli, RuntimeCliRunner};
-    use crate::runtime::parser::AdapterBackedIngestor;
+    use crate::runtime::parser::AdapterBackedSource;
     use clap::Parser;
 
     let parsed = RuntimeCli::parse_from(args);
-    let node = AdapterBackedIngestor::<A, P>::new(source_id);
+    let node = AdapterBackedSource::<A, P>::new(source_id);
     let adapter = SourceDriverRuntime::new(node);
     let mut runner = RuntimeCliRunner::new(adapter);
     runner.run(parsed).await.map_err(std::convert::Into::into)
 }
 
-/// Run a source ingestor through the standard SDK lifecycle.
+/// Run a source driver through the standard SDK lifecycle.
 ///
-/// Shared implementation used by all `register_source_driver!`-produced
+/// Shared implementation used by all `register_source!`-produced
 /// factories. Handles CLI parsing, SDK wiring, and shutdown.
 ///
 /// This function is `pub` so the macro can name it; callers should use the
 /// macro rather than this function directly.
-pub async fn run_ingestor<I>(
+pub async fn run_source_driver<I>(
     args: Vec<std::ffi::OsString>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where

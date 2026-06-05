@@ -6,7 +6,7 @@
 use sinex_primitives::rpc::telemetry::{
     AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
     FileActivityEntry, GatewayStatsBucket, EventEngineBatchStatsBucket, EventEngineValidationSnapshot,
-    MetricCounterBucket, RuntimeStatsBucket, RecentActivityEntry, StreamStatsBucket,
+    MetricCounterBucket, SourceStatsBucket, RecentActivityEntry, StreamStatsBucket,
     SystemStateBucket, TelemetryAssemblyStatsRequest, TelemetryAssemblyStatsResponse,
     TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
     TelemetryCurrentDeviceStateRequest, TelemetryCurrentDeviceStateResponse,
@@ -14,8 +14,8 @@ use sinex_primitives::rpc::telemetry::{
     TelemetryFileActivityResponse, TelemetryGatewayStatsRequest, TelemetryGatewayStatsResponse,
     TelemetryEventEngineBatchStatsRequest, TelemetryEventEngineBatchStatsResponse,
     TelemetryEventEngineValidationRequest, TelemetryEventEngineValidationResponse,
-    TelemetryMetricCountersRequest, TelemetryMetricCountersResponse, TelemetryRuntimeStatsRequest,
-    TelemetryRuntimeStatsResponse, TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
+    TelemetryMetricCountersRequest, TelemetryMetricCountersResponse, TelemetrySourceStatsRequest,
+    TelemetrySourceStatsResponse, TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
     TelemetryStreamStatsRequest, TelemetryStreamStatsResponse, TelemetrySystemStateRequest,
     TelemetrySystemStateResponse, TelemetryThroughputRequest, TelemetryThroughputResponse,
     TelemetryWindowFocusRequest, TelemetryWindowFocusResponse, ThroughputComponentEntry,
@@ -179,7 +179,7 @@ struct AssemblyStatsRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct RuntimeStatsRow {
+struct SourceStatsRow {
     bucket: OffsetDateTime,
     module_kind: Option<String>,
     total_events_processed: Option<i64>,
@@ -689,10 +689,10 @@ pub async fn handle_telemetry_assembly_stats(
     Ok(TelemetryAssemblyStatsResponse { buckets })
 }
 
-pub async fn handle_telemetry_runtime_stats(
+pub async fn handle_telemetry_source_stats(
     pool: &PgPool,
-    req: TelemetryRuntimeStatsRequest,
-) -> Result<TelemetryRuntimeStatsResponse> {
+    req: TelemetrySourceStatsRequest,
+) -> Result<TelemetrySourceStatsResponse> {
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
         req.time_range.to.as_deref(),
@@ -700,7 +700,7 @@ pub async fn handle_telemetry_runtime_stats(
     )?;
     let limit = resolve_positive_limit(req.limit)?;
 
-    let rows = sqlx::query_as::<_, RuntimeStatsRow>(
+    let rows = sqlx::query_as::<_, SourceStatsRow>(
         r"
         SELECT
             bucket,
@@ -711,7 +711,7 @@ pub async fn handle_telemetry_runtime_stats(
             max_queue_depth::bigint AS max_queue_depth,
             total_errors::bigint AS total_errors,
             sample_count
-        FROM sinex_telemetry.runtime_stats_1h
+        FROM sinex_telemetry.source_stats_1h
         WHERE bucket >= $1
           AND bucket <= $2
         ORDER BY bucket DESC, module_kind ASC NULLS LAST
@@ -723,11 +723,11 @@ pub async fn handle_telemetry_runtime_stats(
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(|error| telemetry_query_error("sinex_telemetry.runtime_stats_1h", error))?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.source_stats_1h", error))?;
 
     let buckets = rows
         .into_iter()
-        .map(|row| RuntimeStatsBucket {
+        .map(|row| SourceStatsBucket {
             bucket: fmt_rfc3339(row.bucket),
             module_kind: row.module_kind,
             total_events_processed: row.total_events_processed,
@@ -739,7 +739,7 @@ pub async fn handle_telemetry_runtime_stats(
         })
         .collect();
 
-    Ok(TelemetryRuntimeStatsResponse { buckets })
+    Ok(TelemetrySourceStatsResponse { buckets })
 }
 
 pub async fn handle_telemetry_metric_counters(

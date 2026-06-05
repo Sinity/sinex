@@ -1,6 +1,6 @@
 //! `terminal.bash-history` — bash history append-only file adapter.
 //!
-//! Folds the bash history source from `sinex-terminal-ingestor` into the
+//! Folds the bash history source from `sinex-terminal-source` into the
 //! source registries.
 //!
 //! Adapter: [`AppendOnlyFileAdapter`] — tails `~/.bash_history` line by line.
@@ -25,7 +25,7 @@ use sinex_primitives::proof::{
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
-use crate::register_adapter_ingestor;
+use crate::register_source;
 
 // ---------------------------------------------------------------------------
 // Source contract
@@ -176,7 +176,7 @@ impl MaterialParser for BashHistoryParser {
 // Source factory registration
 // ---------------------------------------------------------------------------
 
-register_adapter_ingestor!(
+register_source!(
     source_id: "terminal.bash-history",
     adapter: AppendOnlyFileAdapter,
     parser: BashHistoryParser,

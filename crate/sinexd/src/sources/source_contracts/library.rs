@@ -367,7 +367,7 @@ fn read_mtime(path: &Utf8PathBuf) -> (Timestamp, TimingEvidence) {
 // Source factory registration
 // ---------------------------------------------------------------------------
 
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "docs-library-index",
     adapter: DirectoryWalkAdapter,
     parser: DocsLibraryParser,

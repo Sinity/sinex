@@ -313,9 +313,9 @@ let
   restartRateLimits = {
     # Long-running capture services must recover after transient infra outages
     # without requiring a manual `systemctl reset-failed`. Defaults disable the
-    # limit; workstations bound it via services.sinex.runtimeSystem.restartPolicy.
-    StartLimitIntervalSec = cfg.runtimeSystem.restartPolicy.intervalSec;
-    StartLimitBurst = cfg.runtimeSystem.restartPolicy.burst;
+    # limit; workstations bound it via services.sinex.runtime.restartPolicy.
+    StartLimitIntervalSec = cfg.runtime.restartPolicy.intervalSec;
+    StartLimitBurst = cfg.runtime.restartPolicy.burst;
   };
 
   mkServiceEnv = additionalEnv: baseEnv ++ coordinationEnv ++ additionalEnv;
@@ -345,8 +345,8 @@ let
       Type = "notify";
       User = serviceUser;
       Group = serviceUser;
-      Restart = cfg.runtimeSystem.restartPolicy.mode;
-      RestartSec = cfg.runtimeSystem.restartPolicy.backoffSec;
+      Restart = cfg.runtime.restartPolicy.mode;
+      RestartSec = cfg.runtime.restartPolicy.backoffSec;
       # 60s watchdog; the spawn_watchdog impl runs the pinger on a
       # dedicated std::thread (not a tokio task), so heavy COPY batches
       # on the async runtime can't starve the ping.
@@ -538,8 +538,8 @@ let
     {
       "sinexd" = {
         description = "Sinex daemon (event engine + API + automata + hosted source bindings)";
-        wantedBy = lib.optional cfg.runtimeSystem.target.attachToMultiUser "multi-user.target";
-        restartIfChanged = cfg.runtimeSystem.restartOnSwitch;
+        wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
+        restartIfChanged = cfg.runtime.restartOnSwitch;
         after = gatewayAfter ++ (runtimeOverlay.afterUnits or [ ]);
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
         wants = coreWants ++ (runtimeOverlay.wantsUnits or [ ]);

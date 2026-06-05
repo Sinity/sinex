@@ -1,7 +1,7 @@
 //! `system.journald` — stream all journald entries via `JournalctlStreamAdapter`.
 
 use crate::runtime::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
-use crate::register_parser;
+use crate::register_source;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::JournalSyncType;
 use sinex_primitives::events::payloads::system::{
@@ -269,10 +269,10 @@ impl MaterialParser for JournaldParser {
 }
 
 // Register for dispatch (replay path).
-register_parser!("system.journald", JournaldParser);
+register_source!(source_id: "system.journald", parser: JournaldParser);
 
 // Register source factory — JournalctlStreamAdapter + JournaldParser.
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "system.journald",
     adapter: JournalctlStreamAdapter,
     parser: JournaldParser,

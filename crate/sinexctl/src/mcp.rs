@@ -601,21 +601,21 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.runtime_health",
+            name: "sinex.source_health",
             kind: McpSurfaceKind::Tool,
             description: "Read-only aggregate runtime node health.",
             backing_rpc_methods: &[methods::RUNTIME_HEALTH],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.runtimes_active",
+            name: "sinex.sources_active",
             kind: McpSurfaceKind::Tool,
             description: "Read-only active runtime node presence.",
             backing_rpc_methods: &[methods::RUNTIME_LIST_ACTIVE],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.runtimes_registry",
+            name: "sinex.sources_registry",
             kind: McpSurfaceKind::Tool,
             description: "Read-only persisted node state registry.",
             backing_rpc_methods: &[methods::RUNTIME_LIST],
@@ -713,10 +713,10 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.runtime_stats",
+            name: "sinex.source_stats",
             kind: McpSurfaceKind::Tool,
             description: "Read-only node processing telemetry buckets.",
-            backing_rpc_methods: &[methods::TELEMETRY_RUNTIME_STATS],
+            backing_rpc_methods: &[methods::TELEMETRY_SOURCE_STATS],
             read_only: true,
         },
         McpCatalogEntry {
@@ -1187,9 +1187,9 @@ pub fn tools() -> Vec<McpTool> {
         mcp_tool("sinex.semantic_lane_diffs", lane_records_schema()),
         mcp_tool("sinex.automata_status", status_window_schema()),
         mcp_tool("sinex.ingestors_status", status_window_schema()),
-        mcp_tool("sinex.runtime_health", stale_after_schema()),
-        mcp_tool("sinex.runtimes_active", stale_after_schema()),
-        mcp_tool("sinex.runtimes_registry", empty_object_schema()),
+        mcp_tool("sinex.source_health", stale_after_schema()),
+        mcp_tool("sinex.sources_active", stale_after_schema()),
+        mcp_tool("sinex.sources_registry", empty_object_schema()),
         mcp_tool("sinex.event_engine_validation", empty_object_schema()),
         mcp_tool("sinex.event_engine_batch_stats", telemetry_buckets_schema()),
         mcp_tool("sinex.throughput", empty_object_schema()),
@@ -1203,7 +1203,7 @@ pub fn tools() -> Vec<McpTool> {
         mcp_tool("sinex.gateway_stats", telemetry_buckets_schema()),
         mcp_tool("sinex.stream_stats", telemetry_buckets_schema()),
         mcp_tool("sinex.assembly_stats", telemetry_buckets_schema()),
-        mcp_tool("sinex.runtime_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex.source_stats", telemetry_buckets_schema()),
         mcp_tool("sinex.metric_counters", telemetry_buckets_schema()),
         mcp_tool(
             "sinex.llm_prompts",
@@ -1642,9 +1642,9 @@ async fn call_tool_nodes_analytics(
     let result = match name {
         "sinex.automata_status" => automata_status(client, arguments).await?,
         "sinex.ingestors_status" => ingestors_status(client, arguments).await?,
-        "sinex.runtime_health" => runtime_health(client, arguments).await?,
-        "sinex.runtimes_active" => runtime_active(client, arguments).await?,
-        "sinex.runtimes_registry" => runtime_registry(client, arguments).await?,
+        "sinex.source_health" => runtime_health(client, arguments).await?,
+        "sinex.sources_active" => runtime_active(client, arguments).await?,
+        "sinex.sources_registry" => runtime_registry(client, arguments).await?,
         "sinex.event_engine_validation" => event_engine_validation(client, arguments).await?,
         "sinex.event_engine_batch_stats" => event_engine_batch_stats(client, arguments).await?,
         "sinex.system_health" => system_health(client, arguments).await?,
@@ -1661,7 +1661,7 @@ async fn call_tool_nodes_analytics(
         "sinex.gateway_stats" => gateway_stats(client, arguments).await?,
         "sinex.stream_stats" => stream_stats(client, arguments).await?,
         "sinex.assembly_stats" => assembly_stats(client, arguments).await?,
-        "sinex.runtime_stats" => runtime_stats(client, arguments).await?,
+        "sinex.source_stats" => source_stats(client, arguments).await?,
         "sinex.metric_counters" => metric_counters(client, arguments).await?,
         _ => return Ok(None),
     };
@@ -2059,7 +2059,7 @@ async fn runtime_health(client: &GatewayClient, arguments: Value) -> Result<Valu
     let args: StaleAfterArgs = serde_json::from_value(arguments)?;
     let response: RuntimeHealthResponse = client.runtime_health(args.stale_after_secs).await?;
     Ok(envelope(
-        "sinex.runtime_health",
+        "sinex.source_health",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2069,17 +2069,17 @@ async fn runtime_active(client: &GatewayClient, arguments: Value) -> Result<Valu
     let args: StaleAfterArgs = serde_json::from_value(arguments)?;
     let response: RuntimeListActiveResponse = client.runtime_list_active(args.stale_after_secs).await?;
     Ok(envelope(
-        "sinex.runtimes_active",
+        "sinex.sources_active",
         &json!(args),
         &json!({ "result": response }),
     ))
 }
 
 async fn runtime_registry(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.runtimes_registry", &arguments)?;
+    reject_non_empty_args("sinex.sources_registry", &arguments)?;
     let response: RuntimeListResponse = client.runtime_list().await?;
     Ok(envelope(
-        "sinex.runtimes_registry",
+        "sinex.sources_registry",
         &json!({}),
         &json!({ "result": response }),
     ))
@@ -2207,9 +2207,9 @@ telemetry_bucket_tool!(
     "buckets"
 );
 telemetry_bucket_tool!(
-    runtime_stats,
-    "sinex.runtime_stats",
-    telemetry_runtime_stats,
+    source_stats,
+    "sinex.source_stats",
+    telemetry_source_stats,
     "buckets"
 );
 telemetry_bucket_tool!(

@@ -14,7 +14,7 @@
 //! - [`register_source_contract!`] and [`register_source_runtime_binding!`] entries
 //!   so the source appears in the catalog and in `sinexctl sources list`.
 //!
-//! There is **no** `register_adapter_ingestor!` or `register_source_driver!`
+//! There is **no** `register_source!` or `register_source!`
 //! here. The Polylogue daemon is the producer; sinexd does not
 //! need to run a consumer process for this source. The NixOS module
 //! option `sinex.sources.polylogue.enable` (default `false`) gates a future

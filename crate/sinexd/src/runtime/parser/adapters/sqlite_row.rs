@@ -35,7 +35,7 @@ use crate::runtime::parser::{
 ///    construction time. Useful in tests and imperative callers.
 /// 2. **Config field:** set `path` in [`SqliteRowConfig`] — the config
 ///    value takes priority over the constructor value. Required when the
-///    adapter is wired via `register_adapter_ingestor!`, where the adapter
+///    adapter is wired via `register_source!`, where the adapter
 ///    is constructed via `Default` and the path arrives from the node's JSON
 ///    config at `initialize` time.
 #[derive(Debug, Clone, Default)]
@@ -96,7 +96,7 @@ pub struct SqliteRowConfig {
     /// Path to the `SQLite` database file.
     ///
     /// When non-empty, overrides the path supplied to [`SqliteRowAdapter::new`].
-    /// Required when using the adapter via `register_adapter_ingestor!` (where
+    /// Required when using the adapter via `register_source!` (where
     /// the adapter is constructed via `Default` and the path must come from
     /// the runtime config JSON).
     #[serde(default)]
@@ -161,7 +161,7 @@ pub struct SqliteRowConfig {
     /// the per-row stream.  Disabled by default (`interval_seconds: 0`).
     ///
     /// See [`SqliteSnapshotConfig`] for tunables. When enabled, the hosting
-    /// [`AdapterBackedIngestor`] spawns a tokio task that captures the file
+    /// [`AdapterBackedSource`] spawns a tokio task that captures the file
     /// at the configured cadence; per-row events continue to flow through
     /// the normal drain loop unaffected.
     ///
@@ -169,7 +169,7 @@ pub struct SqliteRowConfig {
     /// lane publishes source materials via the acquisition manager, which is
     /// itself behind `messaging`.
     ///
-    /// [`AdapterBackedIngestor`]: crate::runtime::parser::adapter_source::AdapterBackedIngestor
+    /// [`AdapterBackedSource`]: crate::runtime::parser::adapter_source::AdapterBackedSource
     #[cfg(feature = "messaging")]
     #[serde(default)]
     pub snapshot: SqliteSnapshotConfig,

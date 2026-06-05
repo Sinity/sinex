@@ -36,19 +36,6 @@
 
     # Developer sandbox runtime policy: deactivate auto-restart on NixOS
     # switch and bound restart loops so a buggy runtime can't spin forever.
-    runtimeSystem = {
-      target = {
-        attachToMultiUser = false;
-        manualStartOnly = true;
-      };
-      restartOnSwitch = false;
-      restartPolicy = {
-        intervalSec = 300;
-        burst = 5;
-        backoffSec = 15;
-      };
-    };
-
     bootstrap.restartPolicy = "no";
 
     lifecycle.maintenance.enable = true;
@@ -66,6 +53,16 @@
 
     runtime = {
       enable = true;
+      target = {
+        attachToMultiUser = false;
+        manualStartOnly = true;
+      };
+      restartOnSwitch = false;
+      restartPolicy = {
+        intervalSec = 300;
+        burst = 5;
+        backoffSec = 15;
+      };
       defaults.logLevel = "debug";
 
       coordination = {

@@ -27,7 +27,7 @@ use sinex_primitives::proof::{
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
-use crate::register_adapter_ingestor;
+use crate::register_source;
 
 // ---------------------------------------------------------------------------
 // Source contract
@@ -287,7 +287,7 @@ impl ZshHistoryParser {
 // Source factory registration
 // ---------------------------------------------------------------------------
 
-register_adapter_ingestor!(
+register_source!(
     source_id: "terminal.zsh-history",
     adapter: AppendOnlyFileAdapter,
     parser: ZshHistoryParser,

@@ -3,7 +3,7 @@
 use crate::runtime::parser::{
     FileDropAdapter, FileDropEventKind, FileDropRecordMetadata, MaterialParser, ParserError,
 };
-use crate::register_parser;
+use crate::register_source;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{DeviceType, UdevAction};
 use sinex_primitives::events::payloads::system::{
@@ -294,10 +294,10 @@ impl MaterialParser for UdevParser {
 }
 
 // Register for dispatch (replay path).
-register_parser!("system.udev", UdevParser);
+register_source!(source_id: "system.udev", parser: UdevParser);
 
 // Register source factory — FileDropAdapter + UdevParser.
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "system.udev",
     adapter: FileDropAdapter,
     parser: UdevParser,

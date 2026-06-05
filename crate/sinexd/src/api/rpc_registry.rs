@@ -89,7 +89,7 @@ use sinex_primitives::rpc::{
         TELEMETRY_CURRENT_DEVICE_STATE_METHOD, TELEMETRY_CURRENT_HEALTH_METHOD,
         TELEMETRY_FILE_ACTIVITY_METHOD, TELEMETRY_GATEWAY_STATS_METHOD,
         TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD, TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD,
-        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_RUNTIME_STATS_METHOD,
+        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_SOURCE_STATS_METHOD,
         TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_STREAM_STATS_METHOD,
         TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD, TELEMETRY_WINDOW_FOCUS_METHOD,
     },
@@ -642,7 +642,7 @@ fn build_registry_impl() -> RpcRegistry {
         handle_telemetry_current_device_state, handle_telemetry_current_health,
         handle_telemetry_file_activity, handle_telemetry_gateway_stats,
         handle_telemetry_event_engine_batch_stats, handle_telemetry_event_engine_validation,
-        handle_telemetry_metric_counters, handle_telemetry_runtime_stats,
+        handle_telemetry_metric_counters, handle_telemetry_source_stats,
         handle_telemetry_recent_activity, handle_telemetry_stream_stats,
         handle_telemetry_system_state, handle_telemetry_throughput, handle_telemetry_window_focus,
         handle_tombstone_approve, handle_tombstone_cancel, handle_tombstone_create,
@@ -823,8 +823,8 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_telemetry_assembly_stats),
         )
         .pool_typed_rpc(
-            TELEMETRY_RUNTIME_STATS_METHOD,
-            boxed!(handle_telemetry_runtime_stats),
+            TELEMETRY_SOURCE_STATS_METHOD,
+            boxed!(handle_telemetry_source_stats),
         )
         .pool_typed_rpc(
             TELEMETRY_METRIC_COUNTERS_METHOD,

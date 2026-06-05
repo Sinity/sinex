@@ -318,7 +318,7 @@ impl SharedJournalctlStream {
 /// A filtered view of a [`SharedJournalctlStream`].
 ///
 /// Implements [`InputShapeAdapter`] so it can plug into
-/// `register_adapter_ingestor!` in source contracts that share a subprocess.
+/// `register_source!` in source contracts that share a subprocess.
 ///
 /// Each subscriber maintains an independent cursor (the last journal cursor
 /// string seen through this filtered view). The underlying broadcast channel
@@ -349,7 +349,7 @@ impl InputShapeAdapter for JournalctlSubscriber {
         Err(crate::runtime::parser::ParserError::Adapter(
             "JournalctlSubscriber::open() is not supported — use \
              into_stream() to consume the subscriber as a stream instead. \
-             For integration with register_adapter_ingestor!, call \
+             For integration with register_source!, call \
              SharedJournalctlStream::subscribe() fresh for each open."
                 .into(),
         ))

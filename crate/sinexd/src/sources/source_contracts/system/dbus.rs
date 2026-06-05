@@ -5,7 +5,7 @@
 //! admission policy owns redaction and suppression.
 
 use crate::runtime::parser::{DbusStreamAdapter, MaterialParser, ParserError};
-use crate::register_parser;
+use crate::register_source;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{
     BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,
@@ -406,10 +406,10 @@ impl MaterialParser for DbusParser {
 }
 
 // Register for dispatch (replay path).
-register_parser!("system.dbus", DbusParser);
+register_source!(source_id: "system.dbus", parser: DbusParser);
 
 // Register source factory — DbusStreamAdapter + DbusParser.
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "system.dbus",
     adapter: DbusStreamAdapter,
     parser: DbusParser,

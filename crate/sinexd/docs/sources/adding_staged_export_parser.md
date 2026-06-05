@@ -36,7 +36,7 @@ Every staged-export parser is built from four pieces:
    These declare identity, privacy tier, retention, verification
    parser/source identity and runtime shape.
 
-4. **The registration triple** — `register_adapter_ingestor!(source_id,
+4. **The registration triple** — `register_source!(source_id,
    <Adapter>, <Parser>)` wires the parser into both the replay dispatch
    registry and the continuous-ingestion source factory.
 
@@ -77,7 +77,7 @@ Decide:
 - **Source id** — kebab-case, scoped: `spotify-extended-history`,
   `raindrop-bookmarks`, `facebook-messenger-thread`. Used in
   `SourceId::from_static(...)`, `register_source_contract!` `id:` field,
-  `register_adapter_ingestor!` `source_id:`, and as the binding
+  `register_source!` `source_id:`, and as the binding
   `SubjectRef`.
 - **Event source** — one segment, lowercased: `"spotify"`, `"raindrop"`,
   `"messenger"`. Mirrors the provider.
@@ -321,7 +321,7 @@ They do not name a separate crate or binary; source contracts are hosted by
 Two more lines at the bottom of the source file:
 
 ```rust
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "<source-id>",
     adapter: StaticFileAdapter,
     parser: <Provider>Parser,

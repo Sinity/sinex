@@ -1,4 +1,4 @@
-//! Document ingestor that captures materials directly into `JetStream` via
+//! Document source that captures materials directly into `JetStream` via
 //! the `AcquisitionManager` (Stage-as-You-Go).
 //!
 //! This imperative runtime owns configured-root scanning and document material
@@ -43,9 +43,9 @@ use tokio::io::AsyncReadExt;
 use tracing::{error, info, warn};
 
 const ENCODING_SNIFF_BYTES: usize = 4096;
-const MATERIAL_REASON_INGEST: &str = "document-ingestor:ingest";
+const MATERIAL_REASON_INGEST: &str = "document-source:ingest";
 
-/// Configuration for the document ingestor.
+/// Configuration for the document source.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DocumentIngestorConfig {
     /// Supported document MIME types. When empty, all types are accepted.
@@ -248,7 +248,7 @@ impl DocumentNode {
         Some(ActivityEntry {
             timestamp: completed_at,
             description: format!(
-                "document ingestor scanned {} target(s), emitted {} event(s), failed {} target(s)",
+                "document source scanned {} target(s), emitted {} event(s), failed {} target(s)",
                 report.successful_targets.len() + report.failed_targets.len(),
                 report.events_processed,
                 report.failed_targets.len()
@@ -280,7 +280,7 @@ impl DocumentNode {
         };
 
         vec![IngestionHistoryEntry {
-            id: format!("document-ingestor:{}", completed_at.format_rfc3339()),
+            id: format!("document-source:{}", completed_at.format_rfc3339()),
             started_at,
             completed_at: Some(completed_at),
             events_generated: report.events_processed,
@@ -761,7 +761,7 @@ impl SourceDriver for DocumentNode {
     type State = DocumentCheckpoint;
 
     fn name(&self) -> &'static str {
-        "document-ingestor"
+        "document-source"
     }
 
     fn capabilities(&self) -> RuntimeCapabilities {
@@ -896,20 +896,20 @@ impl ExplorationProvider for DocumentNode {
             (
                 false,
                 false,
-                "Document ingestor is not initialized".to_string(),
+                "Document source is not initialized".to_string(),
             )
         } else if let Some(error) = config_status {
             (
                 false,
                 false,
-                format!("Document ingestor configuration is invalid: {error}"),
+                format!("Document source configuration is invalid: {error}"),
             )
         } else {
             (
                 true,
                 true,
                 format!(
-                    "Document ingestor ready for {} root(s) via managed snapshot scans",
+                    "Document source ready for {} root(s) via managed snapshot scans",
                     self.config.allowed_roots.len()
                 ),
             )
@@ -944,7 +944,7 @@ impl ExplorationProvider for DocumentNode {
 
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> RuntimeResult<()> {
         Err(SinexError::invalid_state(
-            "Document ingestor does not support data export",
+            "Document source does not support data export",
         ))
     }
 }

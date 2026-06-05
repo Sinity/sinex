@@ -891,12 +891,12 @@ async fn mcp_runtime_health_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.runtime_health",
+        "sinexd.source_health",
         json!({ "stale_after_secs": 120 }),
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.runtime_health");
+    assert_eq!(response["tool"], "sinexd.source_health");
     assert_eq!(response["query"]["stale_after_secs"], 120);
     assert_eq!(response["items"]["result"]["active_count"], 2);
     assert_eq!(response["items"]["result"]["inactive_count"], 1);
@@ -912,12 +912,12 @@ async fn mcp_runtime_active_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.runtimes_active",
+        "sinexd.sources_active",
         json!({ "stale_after_secs": 120 }),
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.runtimes_active");
+    assert_eq!(response["tool"], "sinexd.sources_active");
     assert_eq!(response["query"]["stale_after_secs"], 120);
     assert_eq!(
         response["items"]["result"]["nodes"][0]["module_name"],
@@ -936,9 +936,9 @@ async fn mcp_runtime_registry_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.runtimes_registry", json!({})).await?;
+    let response = call_tool(&client, "sinexd.sources_registry", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.runtimes_registry");
+    assert_eq!(response["tool"], "sinexd.sources_registry");
     assert_eq!(
         response["items"]["result"]["nodes"][0]["node_id"],
         "terminal.atuin-history"
@@ -1213,13 +1213,13 @@ async fn mcp_assembly_stats_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn mcp_runtime_stats_call_uses_gateway_fixture() -> TestResult<()> {
+async fn mcp_source_stats_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.runtime_stats", telemetry_window_args()).await?;
+    let response = call_tool(&client, "sinex.source_stats", telemetry_window_args()).await?;
 
-    assert_eq!(response["tool"], "sinex.runtime_stats");
+    assert_eq!(response["tool"], "sinex.source_stats");
     assert_eq!(response["query"]["limit"], 3);
     assert_eq!(response["items"]["buckets"][0]["module_kind"], "ingestor");
     assert_eq!(
@@ -2330,7 +2330,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         }
                     ]
                 }),
-                "telemetry.runtime_stats" => json!({
+                "telemetry.source_stats" => json!({
                     "buckets": [
                         {
                             "bucket": "2026-05-19T12:00:00Z",

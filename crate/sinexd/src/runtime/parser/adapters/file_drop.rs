@@ -191,7 +191,7 @@ impl FileDropRecordMetadata {
 /// Adapter for a hot folder — watches paths and emits one record per event.
 ///
 /// Suitable for `file.created` / `file.modified` / `file.deleted` / `file.moved`
-/// event streams (e.g., the fs-ingestor and system.udev source contracts).
+/// event streams (e.g., the fs-source and system.udev source contracts).
 ///
 /// Cursor is `()` — this is a live stream with no replay capability.
 #[derive(Debug, Clone, Default)]

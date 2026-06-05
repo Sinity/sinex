@@ -1,22 +1,22 @@
 //! `document.staging` source — document parser dispatch plus node-factory
 //! registration for the imperative document runtime.
 //!
-//! The ingestor scans configured root directories for documents, fingerprints
+//! The source scans configured root directories for documents, fingerprints
 //! them for skip-unchanged logic, stages their bytes via `AcquisitionManager`,
 //! and emits one `document.ingested` material event plus zero or more
 //! `tag.applied` derived events (auto-tagged from MIME type) per file.
 //!
-//! # Why imperative `MaterialParser`, not `register_adapter_ingestor!`
+//! # Why imperative `MaterialParser`, not `register_source!`
 //!
 //! `document.staging` emits both material-provenance (`document.ingested`) and
 //! derived-provenance (`tag.applied`) events from a single parse. The
-//! `register_adapter_ingestor!` macro assumes one event type per source and
+//! `register_source!` macro assumes one event type per source and
 //! cannot express this multi-event emit pattern. An imperative `MaterialParser`
-//! + `register_source_driver!` is required.
+//! + `register_source!` is required.
 //!
 //! The `DocumentStagingParser` handles the dispatch-path (replay, testing).
 //! The full ingestion path uses `DocumentNode` directly via
-//! `register_source_driver!`.
+//! `register_source!`.
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use crate::runtime::tags;
@@ -51,7 +51,7 @@ register_source_contract! {
         id: "document.staging",
         namespace: "document",
         event_types: &[
-            ("document-ingestor", "document.ingested"),
+            ("document-source", "document.ingested"),
         ],
         privacy_tier: PrivacyTier::Secret,
         horizons: &[Horizon::Continuous, Horizon::Historical],
@@ -102,7 +102,7 @@ pub struct DocumentStagingParserConfig {}
 /// Imperative parser for the `document.staging` source.
 ///
 /// Used in the dispatch path (replay, testing). The full ingestion path uses
-/// `DocumentNode` registered via `register_source_driver!`.
+/// `DocumentNode` registered via `register_source!`.
 #[derive(Debug, Default)]
 pub struct DocumentStagingParser;
 
@@ -118,7 +118,7 @@ impl MaterialParser for DocumentStagingParser {
             source_id: SourceId::from_static("document.staging"),
             declared_event_types: vec![
                 (
-                    EventSource::from_static("document-ingestor"),
+                    EventSource::from_static("document-source"),
                     EventType::from_static("document.ingested"),
                 ),
                 (
@@ -208,10 +208,10 @@ impl MaterialParser for DocumentStagingParser {
 // Registrations
 // ---------------------------------------------------------------------------
 
-crate::register_parser!("document.staging", DocumentStagingParser);
+crate::register_source!(source_id: "document.staging", parser: DocumentStagingParser);
 
 // The full source runtime lifecycle uses DocumentNode; see `super::runtime`.
 // It is a `SourceDriver` implementation that manages its own checkpoint state
 // (`manages_own_checkpoints: true`) and supports snapshot + historical scans
 // but not continuous mode.
-crate::register_source_driver!("document.staging", super::runtime::DocumentNode);
+crate::register_source!(source_id: "document.staging", driver: super::runtime::DocumentNode);

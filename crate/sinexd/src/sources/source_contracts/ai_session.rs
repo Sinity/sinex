@@ -306,7 +306,7 @@ register_source_runtime_binding! {
     .build()
 }
 
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "ai-session-claude",
     adapter: StaticFileAdapter,
     parser: ClaudeSessionParser,
@@ -596,7 +596,7 @@ register_source_runtime_binding! {
     .build()
 }
 
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "ai-session-chatgpt",
     adapter: StaticFileAdapter,
     parser: ChatGptSessionParser,

@@ -52,7 +52,7 @@ pub async fn run(
         sinexd::sources::dispatch::find_parser_factory(&validated_id).ok_or_else(|| {
             format!(
                 "source '{source_id}' has no parser registered. \
-                 Register it with register_parser!(\"{source_id}\", YourParser) \
+                 Register it with register_source!(source_id: \"{source_id}\", parser: YourParser) \
                  in the source's module."
             )
         })?;

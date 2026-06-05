@@ -155,12 +155,12 @@ use sinex_primitives::rpc::{
     telemetry::{
         AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
         FileActivityEntry, GatewayStatsBucket, EventEngineBatchStatsBucket, EventEngineValidationSnapshot,
-        MetricCounterBucket, RuntimeStatsBucket, RecentActivityEntry, StreamStatsBucket,
+        MetricCounterBucket, SourceStatsBucket, RecentActivityEntry, StreamStatsBucket,
         SystemStateBucket, TELEMETRY_ASSEMBLY_STATS_METHOD, TELEMETRY_COMMAND_FREQUENCY_METHOD,
         TELEMETRY_CURRENT_DEVICE_STATE_METHOD, TELEMETRY_CURRENT_HEALTH_METHOD,
         TELEMETRY_FILE_ACTIVITY_METHOD, TELEMETRY_GATEWAY_STATS_METHOD,
         TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD, TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD,
-        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_RUNTIME_STATS_METHOD,
+        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_SOURCE_STATS_METHOD,
         TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_STREAM_STATS_METHOD,
         TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD, TELEMETRY_WINDOW_FOCUS_METHOD,
         TelemetryAssemblyStatsRequest, TelemetryAssemblyStatsResponse,
@@ -171,7 +171,7 @@ use sinex_primitives::rpc::{
         TelemetryGatewayStatsResponse, TelemetryEventEngineBatchStatsRequest,
         TelemetryEventEngineBatchStatsResponse, TelemetryEventEngineValidationRequest,
         TelemetryEventEngineValidationResponse, TelemetryMetricCountersRequest,
-        TelemetryMetricCountersResponse, TelemetryRuntimeStatsRequest, TelemetryRuntimeStatsResponse,
+        TelemetryMetricCountersResponse, TelemetrySourceStatsRequest, TelemetrySourceStatsResponse,
         TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
         TelemetryStreamStatsRequest, TelemetryStreamStatsResponse, TelemetrySystemStateRequest,
         TelemetrySystemStateResponse, TelemetryThroughputRequest, TelemetryThroughputResponse,
@@ -1834,18 +1834,18 @@ impl GatewayClient {
     }
 
     /// Query node hourly operator telemetry.
-    pub async fn telemetry_runtime_stats(
+    pub async fn telemetry_source_stats(
         &self,
         from: Option<String>,
         to: Option<String>,
         limit: Option<i64>,
-    ) -> Result<Vec<RuntimeStatsBucket>> {
-        let req = TelemetryRuntimeStatsRequest {
+    ) -> Result<Vec<SourceStatsBucket>> {
+        let req = TelemetrySourceStatsRequest {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let response: TelemetryRuntimeStatsResponse =
-            self.call_typed(TELEMETRY_RUNTIME_STATS_METHOD, &req).await?;
+        let response: TelemetrySourceStatsResponse =
+            self.call_typed(TELEMETRY_SOURCE_STATS_METHOD, &req).await?;
         Ok(response.buckets)
     }
 

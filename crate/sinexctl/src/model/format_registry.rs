@@ -532,7 +532,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry node-stats",
+        "telemetry source-stats",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -1048,7 +1048,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "telemetry file-activity" => &[methods::TELEMETRY_FILE_ACTIVITY],
         "telemetry recent-activity" => &[methods::TELEMETRY_RECENT_ACTIVITY],
         "telemetry system-state" => &[methods::TELEMETRY_SYSTEM_STATE],
-        "telemetry node-stats" => &[methods::TELEMETRY_RUNTIME_STATS],
+        "telemetry source-stats" => &[methods::TELEMETRY_SOURCE_STATS],
         "telemetry stream-stats" => &[methods::TELEMETRY_STREAM_STATS],
         "telemetry gateway-stats" => &[methods::TELEMETRY_GATEWAY_STATS],
         "telemetry assembly-stats" => &[methods::TELEMETRY_ASSEMBLY_STATS],

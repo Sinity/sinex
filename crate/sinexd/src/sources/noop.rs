@@ -2,7 +2,7 @@
 //!
 //! This source emits no events and idles in continuous mode until shutdown.
 //! It exists to prove the source host dispatch infrastructure works
-//! without depending on external ingestor crates. Real source contracts follow the
+//! without depending on external source crates. Real source contracts follow the
 //! same pattern with actual ingestion logic.
 
 use crate::runtime::{
@@ -11,7 +11,7 @@ use crate::runtime::{
         Checkpoint, ContinuousStart, RuntimeCapabilities, ScanArgs, ScanReport, TimeHorizon,
     },
 };
-use crate::register_source_driver;
+use crate::register_source;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 use tokio::sync::watch;
 
-register_source_driver!("noop", NoopSourceDriver);
+register_source!(source_id: "noop", driver: NoopSourceDriver);
 
 register_source_contract! {
     SourceContract {

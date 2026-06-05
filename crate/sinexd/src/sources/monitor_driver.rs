@@ -7,7 +7,7 @@
 //!
 //! # Design
 //!
-//! A monitor unit is registered via [`register_monitor_unit!`], which inserts a
+//! A monitor unit is registered via [`register_source!`], which inserts a
 //! [`SourceFactoryEntry`] backed by [`run_monitor_unit_delegated`]. The runner:
 //!
 //! 1. Opens a synthetic source material via `AcquisitionManager::begin_material`
@@ -29,7 +29,7 @@
 //!
 //! # Relationship to `register_source_contract!`
 //!
-//! `register_monitor_unit!` does NOT register the `SourceContract`. Call
+//! `register_source!` does NOT register the `SourceContract`. Call
 //! `register_source_contract!` from `sinex-primitives` separately. The two macros
 //! compose — one owns the descriptor inventory, the other owns the factory.
 
@@ -92,7 +92,7 @@ pub enum MonitorPhase {
 ///
 /// Using a `fn` pointer (not a boxed closure) allows use inside
 /// `inventory::submit!` which requires const-constructible items. Define an
-/// `async fn` with this signature and pass it to `register_monitor_unit!`.
+/// `async fn` with this signature and pass it to `register_source!`.
 pub type MonitorEmitFn = fn(
     runtime: RuntimeContext,
     material_id: Id<SourceMaterial>,
@@ -379,17 +379,17 @@ impl SourceDriver for MonitorDriverNode {
 }
 
 // =============================================================================
-// run_monitor_unit_delegated — called by register_monitor_unit! factory fn
+// run_monitor_unit_delegated — called by register_source! factory fn
 // =============================================================================
 
-/// Entry point called by [`register_monitor_unit!`]-generated factory functions.
+/// Entry point called by [`register_source!`]-generated factory functions.
 ///
 /// Wires up the standard SDK CLI + runner via `SourceDriverRuntime`, which
 /// calls `initialize()` (capturing runtime) then `run_continuous()` (driving
 /// `drive_monitor_phase`).
 ///
 /// This function is `pub` so the macro can name it; callers should use
-/// `register_monitor_unit!` rather than calling this directly.
+/// `register_source!` rather than calling this directly.
 pub async fn run_monitor_unit_delegated(
     source_id: &'static str,
     phase: MonitorPhase,
@@ -403,84 +403,6 @@ pub async fn run_monitor_unit_delegated(
     let adapter = SourceDriverRuntime::new(node);
     let mut runner = RuntimeCliRunner::new(adapter);
     runner.run(parsed).await.map_err(std::convert::Into::into)
-}
-
-// =============================================================================
-// register_monitor_unit! — public macro
-// =============================================================================
-
-/// Register a lifecycle-hook source with the source factory registry.
-///
-/// Monitor source contracts emit events at defined moments in the node lifecycle.
-/// They have no adapter input (no file, socket, or DB to poll).
-///
-/// # Signature
-///
-/// ```rust,ignore
-/// register_monitor_unit!(
-///     source_id: "terminal.monitor",
-///     emit_at: MonitorPhase::ServiceStart,
-///     emit: emit_terminal_monitor,
-/// );
-///
-/// async fn emit_terminal_monitor(
-///     runtime: RuntimeContext,
-///     material_id: Id<SourceMaterial>,
-/// ) -> RuntimeResult<Vec<Event<JsonValue>>> {
-///     let event = TerminalMonitoringStartedPayload {
-///         configured_sources: 3,
-///         enabled_sources: 3,
-///         start_time: Timestamp::now(),
-///     }
-///     .from_material(material_id)
-///     .build()?
-///     .to_json_event()?;
-///
-///     Ok(vec![event])
-/// }
-/// ```
-///
-/// # Phases
-///
-/// - [`MonitorPhase::ServiceStart`] — fire once at boot, then return.
-/// - [`MonitorPhase::PerInterval { period }`] — fire every `period`, loop until drain.
-/// - [`MonitorPhase::ServiceShutdown`] — wait for drain, then fire once.
-///
-/// # Material provenance
-///
-/// The runner opens a synthetic source material before each firing and passes
-/// its ID to your closure. Every event you return **must** use
-/// `.from_material(material_id)` provenance to satisfy the FK constraint on
-/// `core.events`.
-///
-/// # Descriptor registration
-///
-/// This macro does **not** register the [`SourceContract`]. Call
-/// `register_source_contract!` from `sinex-primitives` separately. The macros
-/// compose.
-///
-/// # Why `fn` pointer?
-///
-/// `inventory::submit!` requires const-constructible items. Closures that
-/// capture environment variables are not const-constructible. Define your
-/// emit logic as a top-level `async fn` and pass its name.
-#[macro_export]
-macro_rules! register_monitor_unit {
-    (
-        source_id: $id:expr,
-        emit_at: $phase:expr,
-        emit: $emit_fn:expr $(,)?
-    ) => {
-        $crate::__submit_registry_entry!(
-            $crate::sources::source_factory::SourceFactoryEntry,
-            $id,
-            |args| {
-                Box::pin($crate::sources::monitor_driver::run_monitor_unit_delegated(
-                    $id, $phase, $emit_fn, args,
-                ))
-            },
-        );
-    };
 }
 
 // =============================================================================

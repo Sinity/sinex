@@ -21,7 +21,7 @@
 //! No match arms.
 
 use crate::runtime::parser::{AppendOnlyFileAdapter, WeeChatLogParser};
-use crate::register_parser;
+use crate::register_source;
 use sinex_macros::SourceRecord;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
@@ -115,7 +115,7 @@ pub struct WeeChatMessageRecord {
     pub message: String,
 }
 
-register_parser!("weechat.message", WeeChatMessageRecord);
+register_source!(source_id: "weechat.message", parser: WeeChatMessageRecord);
 
 // ---------------------------------------------------------------------------
 // Source contract — "weechat.message" (declarative companion)
@@ -161,7 +161,7 @@ register_source_runtime_binding! {
 // Source factory — Phase 3 (Wave A substrate).
 //
 // The WeeChat source is file-based and runs through
-// AppendOnlyFileAdapter + WeeChatLogParser. `register_adapter_ingestor!`
+// AppendOnlyFileAdapter + WeeChatLogParser. `register_source!`
 // wires both the parser dispatch (for replay) and the source factory (for
 // continuous ingestion) in one call.
 //
@@ -171,7 +171,7 @@ register_source_runtime_binding! {
 // This is the canonical example; Wave-B folds follow the same pattern.
 // ---------------------------------------------------------------------------
 
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "weechat",
     adapter: AppendOnlyFileAdapter,
     parser: WeeChatLogParser,

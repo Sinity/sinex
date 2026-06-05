@@ -83,7 +83,7 @@ The current implementation already has the right acquisition shape:
 - `BufferedRecordSourceHarness` applies one retry/skip cursor policy.
 - `BufferedRecordMaterializer` appends stable per-record bytes and returns
   exact source-material anchors.
-- `AdapterBackedIngestor` keeps one `AppendStreamAcquirer` across drain cycles,
+- `AdapterBackedSource` keeps one `AppendStreamAcquirer` across drain cycles,
   so low-volume polling creates `O(rotation_count)` materials rather than
   `O(poll_count)` materials.
 - Terminal, desktop, and browser SQLite paths use this SDK path instead of

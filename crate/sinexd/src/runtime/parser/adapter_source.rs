@@ -1,19 +1,19 @@
-//! Generic [`AdapterBackedIngestor`] — wires an [`InputShapeAdapter`] to a
+//! Generic [`AdapterBackedSource`] — wires an [`InputShapeAdapter`] to a
 //! [`MaterialParser`] as a full [`SourceDriver`].
 //!
 //! # Purpose
 //!
-//! Wave-B ingestor folds need one line per source:
+//! Wave-B source folds need one line per source:
 //!
 //! ```rust,ignore
-//! register_adapter_ingestor!(
+//! register_source!(
 //!     source_id: "terminal.atuin-history",
 //!     adapter:        SqliteRowAdapter,
 //!     parser:         AtuinHistoryRecord,
 //! );
 //! ```
 //!
-//! `AdapterBackedIngestor<A, P>` is the `SourceDriver` implementation that
+//! `AdapterBackedSource<A, P>` is the `SourceDriver` implementation that
 //! backs every such registration. It handles:
 //!
 //! - Snapshot and historical scans (drive adapter stream → parse → emit).
@@ -53,7 +53,7 @@
 //!   `#[derive(SourceRecord)]` struct and for imperative parsers that `impl
 //!   Default`.
 //! - This struct does NOT own transport or admission — it calls
-//!   `runtime.event_emitter().emit()` exactly as every other ingestor does.
+//!   `runtime.event_emitter().emit()` exactly as every other source does.
 //!
 //! # Material lifecycle
 //!
@@ -64,7 +64,7 @@
 //! `O(rotation_count)`, not `O(poll_count)`.
 //!
 //! When `run_continuous` exits cleanly (shutdown signal), the current material
-//! is finalized. On ingestor drop the [`AppendStreamAcquirer`] finalizes via its
+//! is finalized. On source drop the [`AppendStreamAcquirer`] finalizes via its
 //! own `finalize` path.
 //!
 //! For adapters that return structured rows (e.g. `SqliteRowAdapter`), the
@@ -123,7 +123,7 @@ const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
 // Typed runtime config — wraps adapter config + optional binding flags
 // =============================================================================
 
-/// RuntimeActor-level config for [`AdapterBackedIngestor`].
+/// RuntimeActor-level config for [`AdapterBackedSource`].
 ///
 /// The adapter config is stored as raw JSON (`serde_json::Value`) and
 /// deserialized into `A::Config` during `initialize`. This avoids requiring
@@ -206,7 +206,7 @@ impl AdapterSourceConfig {
         let seconds = self.continuous_poll_interval_secs.unwrap_or(30);
         if seconds == 0 {
             return Err(crate::runtime::SinexError::configuration(
-                "AdapterBackedIngestor continuous_poll_interval_secs must be greater than zero",
+                "AdapterBackedSource continuous_poll_interval_secs must be greater than zero",
             ));
         }
         Ok(Duration::from_secs(seconds))
@@ -270,7 +270,7 @@ impl AdapterSourceConfig {
 // Adapter-node state (checkpoint-persisted)
 // =============================================================================
 
-/// Checkpoint state for [`AdapterBackedIngestor`].
+/// Checkpoint state for [`AdapterBackedSource`].
 ///
 /// Contains the adapter cursor (opaque to the SDK) and event counters.
 /// Serialized as the `IngestorState<S>::user_state` payload.
@@ -341,10 +341,10 @@ where
 }
 
 // =============================================================================
-// AdapterBackedIngestor
+// AdapterBackedSource
 // =============================================================================
 
-/// A generic ingestor that wraps `(A: InputShapeAdapter, P: MaterialParser)`.
+/// A generic source driver that wraps `(A: InputShapeAdapter, P: MaterialParser)`.
 ///
 /// Type parameters:
 /// - `A` — the input-shape adapter (e.g. `SqliteRowAdapter`,
@@ -355,8 +355,8 @@ where
 /// The adapter and parser are constructed via `Default`, then configured during
 /// `initialize`. The runtime config is deserialized into
 /// `AdapterSourceConfig<A::Config>`; the source id is hard-coded at
-/// registration time via the `register_adapter_ingestor!` macro.
-pub struct AdapterBackedIngestor<A, P>
+/// registration time via the `register_source!` macro.
+pub struct AdapterBackedSource<A, P>
 where
     A: InputShapeAdapter + Default + InputShapeAdapterExt,
     P: MaterialParser + Default,
@@ -434,16 +434,16 @@ struct MaterializedAdapterRecord {
     anchor_payload_hash: Option<[u8; 32]>,
 }
 
-impl<A, P> AdapterBackedIngestor<A, P>
+impl<A, P> AdapterBackedSource<A, P>
 where
     A: InputShapeAdapter + Default + InputShapeAdapterExt,
     P: MaterialParser + Default,
     A::Config: Clone + Serialize + DeserializeOwned,
     A::Cursor: Clone + Serialize + DeserializeOwned,
 {
-    /// Create a new adapter-backed ingestor for the given source id.
+    /// Create a new adapter-backed source for the given source id.
     ///
-    /// Called by `register_adapter_ingestor!` via `Default::default()` and the
+    /// Called by `register_source!` via `Default::default()` and the
     /// `new` constructor. Callers should normally use the macro, not this
     /// constructor directly.
     #[must_use]
@@ -467,7 +467,7 @@ where
         }
     }
 
-    /// Create a new adapter-backed ingestor with a custom rotation policy.
+    /// Create a new adapter-backed source with a custom rotation policy.
     ///
     /// Useful in tests to trigger rotation without writing 100 MB of data.
     #[must_use]
@@ -567,14 +567,14 @@ where
     /// Ensure the `AppendStreamAcquirer` is initialized, creating it from the
     /// acquisition manager if necessary.
     ///
-    /// Returns a mutable reference to the acquirer, or an error if the ingestor
+    /// Returns a mutable reference to the acquirer, or an error if the source
     /// has not been initialized yet.
     #[allow(clippy::expect_used)]
     fn ensure_stream_acquirer(&mut self) -> RuntimeResult<&mut AppendStreamAcquirer> {
         if self.stream_acquirer.is_none() {
             let manager = self.acquisition_manager.as_ref().ok_or_else(|| {
                 crate::runtime::SinexError::lifecycle(
-                    "AdapterBackedIngestor: acquisition_manager not set (initialize not called)",
+                    "AdapterBackedSource: acquisition_manager not set (initialize not called)",
                 )
             })?;
             self.stream_acquirer = Some(AppendStreamAcquirer::new(Arc::clone(manager)));
@@ -668,7 +668,7 @@ where
 
         let config = self.config.as_ref().ok_or_else(|| {
             crate::runtime::SinexError::lifecycle(
-                "AdapterBackedIngestor: adapter config not set (initialize not called)",
+                "AdapterBackedSource: adapter config not set (initialize not called)",
             )
         })?;
 
@@ -681,7 +681,7 @@ where
             .as_ref()
             .ok_or_else(|| {
                 crate::runtime::SinexError::lifecycle(
-                    "AdapterBackedIngestor: runtime not available (initialize not called)",
+                    "AdapterBackedSource: runtime not available (initialize not called)",
                 )
             })?
             .event_emitter()
@@ -690,7 +690,7 @@ where
         let source_id = sinex_primitives::parser::SourceId::new(self.source_id)
             .map_err(|e| {
                 crate::runtime::SinexError::validation(
-                    "invalid source_id in AdapterBackedIngestor",
+                    "invalid source_id in AdapterBackedSource",
                 )
                 .with_std_error(&e)
             })?;
@@ -857,7 +857,7 @@ where
 
         // The stream material is NOT finalized here — it persists across drain
         // cycles. Finalization happens when run_continuous exits (shutdown signal)
-        // or when the ingestor is dropped.
+        // or when the source is dropped.
 
         state.total_events_emitted += emitted;
         debug!(
@@ -870,7 +870,7 @@ where
     }
 }
 
-impl<A, P> Drop for AdapterBackedIngestor<A, P>
+impl<A, P> Drop for AdapterBackedSource<A, P>
 where
     A: InputShapeAdapter + Default + InputShapeAdapterExt,
     P: MaterialParser + Default,
@@ -891,7 +891,7 @@ where
     }
 }
 
-impl<A, P> Default for AdapterBackedIngestor<A, P>
+impl<A, P> Default for AdapterBackedSource<A, P>
 where
     A: InputShapeAdapter + Default + InputShapeAdapterExt,
     P: MaterialParser + Default,
@@ -909,7 +909,7 @@ where
 // SourceDriver impl
 // =============================================================================
 
-impl<A, P> SourceDriver for AdapterBackedIngestor<A, P>
+impl<A, P> SourceDriver for AdapterBackedSource<A, P>
 where
     A: InputShapeAdapter + Default + Send + Sync + 'static + InputShapeAdapterExt,
     P: MaterialParser + Default + Send + Sync + 'static,
@@ -951,7 +951,7 @@ where
             )
             .map_err(|e| {
                 crate::runtime::SinexError::lifecycle(
-                    "AdapterBackedIngestor: failed to build AcquisitionManager",
+                    "AdapterBackedSource: failed to build AcquisitionManager",
                 )
                 .with_context("source_id", self.source_id)
                 .with_std_error(&e)
@@ -980,7 +980,7 @@ where
         let adapter_json = merge_json_over(P::baseline_adapter_config(), config.adapter);
         let adapter_config: A::Config = serde_json::from_value(adapter_json).map_err(|e| {
             crate::runtime::SinexError::configuration(
-                "AdapterBackedIngestor: failed to deserialize adapter config",
+                "AdapterBackedSource: failed to deserialize adapter config",
             )
             .with_context("source_id", self.source_id)
             .with_std_error(&e)
@@ -1024,7 +1024,7 @@ where
             source = self.source_id,
             adapter_kind = A::KIND.as_str(),
             snapshot_lane = self.snapshot_task.is_some(),
-            "AdapterBackedIngestor initialized"
+            "AdapterBackedSource initialized"
         );
         Ok(())
     }
@@ -1093,7 +1093,7 @@ where
         info!(
             source = self.source_id,
             poll_interval_s = poll_interval.as_secs(),
-            "AdapterBackedIngestor entering continuous poll loop"
+            "AdapterBackedSource entering continuous poll loop"
         );
 
         loop {
@@ -1590,7 +1590,7 @@ mod tests {
         ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
             if acquisition.is_none() {
                 return Err(ParserError::Adapter(
-                    "adapter-backed ingestor did not provide acquisition manager".to_string(),
+                    "adapter-backed source did not provide acquisition manager".to_string(),
                 ));
             }
             let record = SourceRecord {
@@ -1835,19 +1835,19 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn adapter_backed_ingestor_refreshes_private_mode_binding()
+    async fn adapter_backed_source_refreshes_private_mode_binding()
     -> xtask::sandbox::TestResult<()> {
         let dir = tempfile::tempdir()?;
         save_private_mode_state(dir.path(), &RuntimePrivateModeState::disabled())?;
-        let mut ingestor =
-            AdapterBackedIngestor::<TestAdapter, TestParser>::new("desktop.clipboard");
-        ingestor.runtime_config = Some(AdapterSourceConfig {
+        let mut source =
+            AdapterBackedSource::<TestAdapter, TestParser>::new("desktop.clipboard");
+        source.runtime_config = Some(AdapterSourceConfig {
             private_mode_state_dir: Some(dir.path().to_path_buf()),
             ..Default::default()
         });
 
-        ingestor.refresh_binding_config()?;
-        assert!(!ingestor.binding_config.is_truthy("private_mode_active"));
+        source.refresh_binding_config()?;
+        assert!(!source.binding_config.is_truthy("private_mode_active"));
 
         let state = RuntimePrivateModeState::enabled_by(
             "sinity",
@@ -1856,8 +1856,8 @@ mod tests {
         );
         save_private_mode_state(dir.path(), &state)?;
 
-        ingestor.refresh_binding_config()?;
-        assert!(ingestor.binding_config.is_truthy("private_mode_active"));
+        source.refresh_binding_config()?;
+        assert!(source.binding_config.is_truthy("private_mode_active"));
         Ok(())
     }
 
@@ -1867,15 +1867,15 @@ mod tests {
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let (runtime, mut event_receiver) = make_adapter_runtime(&ctx).await?;
-        let mut ingestor = AdapterBackedIngestor::<OversizedRecordAdapter, EmittingParser>::new(
+        let mut source = AdapterBackedSource::<OversizedRecordAdapter, EmittingParser>::new(
             "desktop.clipboard",
         );
         let mut state = AdapterModuleState::default();
 
-        ingestor
+        source
             .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
             .await?;
-        let emitted = ingestor.drain_adapter(None, &mut state).await?;
+        let emitted = source.drain_adapter(None, &mut state).await?;
 
         assert_eq!(emitted, 0);
         assert!(
@@ -1893,21 +1893,21 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn adapter_backed_ingestor_preserves_already_materialized_record_provenance(
+    async fn adapter_backed_source_preserves_already_materialized_record_provenance(
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let (runtime, mut event_receiver) = make_adapter_runtime(&ctx).await?;
-        let mut ingestor =
-            AdapterBackedIngestor::<AlreadyMaterializedRecordAdapter, EmittingParser>::new(
+        let mut source =
+            AdapterBackedSource::<AlreadyMaterializedRecordAdapter, EmittingParser>::new(
                 "desktop.clipboard",
             );
         let mut state = AdapterModuleState::default();
 
-        ingestor
+        source
             .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
             .await?;
-        let emitted = ingestor.drain_adapter(None, &mut state).await?;
+        let emitted = source.drain_adapter(None, &mut state).await?;
         let event = event_receiver
             .recv()
             .await
@@ -1916,7 +1916,7 @@ mod tests {
         assert_eq!(emitted, 1);
         assert_eq!(state.cursor, Some(1));
         assert_eq!(
-            ingestor.current_material_id(),
+            source.current_material_id(),
             None,
             "pre-materialized records must not open the append-stream materializer",
         );
@@ -2013,20 +2013,20 @@ mod tests {
     async fn adapter_source_state_records_bounded_input_drift_history()
     -> xtask::sandbox::TestResult<()> {
         let source_id = SourceId::from_static("desktop.clipboard");
-        let mut ingestor =
-            AdapterBackedIngestor::<FingerprintAdapter, TestParser>::new("desktop.clipboard");
+        let mut source =
+            AdapterBackedSource::<FingerprintAdapter, TestParser>::new("desktop.clipboard");
         let mut state = AdapterModuleState::<u64>::default();
 
-        ingestor.adapter.fingerprint = Some(SourceRecordFingerprint::from_json(
+        source.adapter.fingerprint = Some(SourceRecordFingerprint::from_json(
             &serde_json::json!({"count": 1}),
         ));
-        ingestor.observe_input_fingerprint(&(), &mut state, &source_id);
+        source.observe_input_fingerprint(&(), &mut state, &source_id);
         assert!(state.recent_input_drifts.is_empty());
 
-        ingestor.adapter.fingerprint = Some(SourceRecordFingerprint::from_json(
+        source.adapter.fingerprint = Some(SourceRecordFingerprint::from_json(
             &serde_json::json!({"count": "1", "enabled": true}),
         ));
-        ingestor.observe_input_fingerprint(&(), &mut state, &source_id);
+        source.observe_input_fingerprint(&(), &mut state, &source_id);
 
         assert_eq!(state.recent_input_drifts.len(), 1);
         let drift = &state.recent_input_drifts[0];
@@ -2123,14 +2123,14 @@ mod tests {
     async fn occurrence_key_lands_as_equivalence_key() -> xtask::sandbox::TestResult<()> {
         use sinex_primitives::parser::{OccurrenceKey, occurrence_key_string};
         let key = OccurrenceKey {
-            source_unit_id: SourceUnitId::from_static("test.unit"),
+            source_id: SourceId::from_static("test.unit"),
             fields: vec![
                 ("track_uri".into(), "spotify:track:abc".into()),
                 ("played_ms".into(), "1234".into()),
             ],
         };
         let intent = ParsedEventIntent::builder()
-            .source_unit_id(SourceUnitId::from_static("test.unit"))
+            .source_id(SourceId::from_static("test.unit"))
             .parser_id(ParserId::from_static("test-parser"))
             .parser_version("1.0.0")
             .event_type(EventType::from_static("test.event"))
@@ -2161,7 +2161,7 @@ mod tests {
     async fn absent_occurrence_key_leaves_equivalence_key_none()
     -> xtask::sandbox::TestResult<()> {
         let intent = ParsedEventIntent::builder()
-            .source_unit_id(SourceUnitId::from_static("test.unit"))
+            .source_id(SourceId::from_static("test.unit"))
             .parser_id(ParserId::from_static("test-parser"))
             .parser_version("1.0.0")
             .event_type(EventType::from_static("test.event"))

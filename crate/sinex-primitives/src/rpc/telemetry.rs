@@ -79,10 +79,10 @@ telemetry_method!(
     TelemetryAssemblyStatsResponse
 );
 telemetry_method!(
-    TELEMETRY_RUNTIME_STATS_METHOD,
-    TELEMETRY_RUNTIME_STATS,
-    TelemetryRuntimeStatsRequest,
-    TelemetryRuntimeStatsResponse
+    TELEMETRY_SOURCE_STATS_METHOD,
+    TELEMETRY_SOURCE_STATS,
+    TelemetrySourceStatsRequest,
+    TelemetrySourceStatsResponse
 );
 telemetry_method!(
     TELEMETRY_METRIC_COUNTERS_METHOD,
@@ -428,12 +428,12 @@ pub struct TelemetryAssemblyStatsResponse {
 }
 
 // ─────────────────────────────────────────────────────────────
-// telemetry.runtime_stats
+// telemetry.source_stats
 // ─────────────────────────────────────────────────────────────
 
-/// Request: `telemetry.runtime_stats`
+/// Request: `telemetry.source_stats`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TelemetryRuntimeStatsRequest {
+pub struct TelemetrySourceStatsRequest {
     #[serde(flatten)]
     pub time_range: TelemetryTimeRange,
     /// Maximum number of buckets to return (default: 50).
@@ -443,7 +443,7 @@ pub struct TelemetryRuntimeStatsRequest {
 
 /// A single node-stat bucket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeStatsBucket {
+pub struct SourceStatsBucket {
     pub bucket: String,
     pub module_kind: Option<String>,
     pub total_events_processed: Option<i64>,
@@ -454,10 +454,10 @@ pub struct RuntimeStatsBucket {
     pub sample_count: i64,
 }
 
-/// Response: `telemetry.runtime_stats`
+/// Response: `telemetry.source_stats`
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TelemetryRuntimeStatsResponse {
-    pub buckets: Vec<RuntimeStatsBucket>,
+pub struct TelemetrySourceStatsResponse {
+    pub buckets: Vec<SourceStatsBucket>,
 }
 
 // ─────────────────────────────────────────────────────────────

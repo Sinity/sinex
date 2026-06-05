@@ -38,19 +38,6 @@
     # Workstation runtime policy: keep the runtime out of automatic activation
     # restarts and bound the restart loop so a misbehaving capture runtime can't
     # spin forever under interactive load.
-    runtimeSystem = {
-      target = {
-        attachToMultiUser = false;
-        manualStartOnly = true;
-      };
-      restartOnSwitch = false;
-      restartPolicy = {
-        intervalSec = 600;
-        burst = 3;
-        backoffSec = 30;
-      };
-    };
-
     # Surface bootstrap failures instead of looping silently on a workstation.
     bootstrap.restartPolicy = "no";
 
@@ -61,6 +48,16 @@
 
     runtime = {
       enable = true;
+      target = {
+        attachToMultiUser = false;
+        manualStartOnly = true;
+      };
+      restartOnSwitch = false;
+      restartPolicy = {
+        intervalSec = 600;
+        burst = 3;
+        backoffSec = 30;
+      };
       coordination.enable = false;
       defaults.logLevel = "info";
 

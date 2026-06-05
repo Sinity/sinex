@@ -8,7 +8,7 @@ use sinexd::api::handlers::{
     handle_telemetry_current_device_state, handle_telemetry_current_health,
     handle_telemetry_file_activity, handle_telemetry_gateway_stats,
     handle_telemetry_event_engine_batch_stats, handle_telemetry_event_engine_validation,
-    handle_telemetry_metric_counters, handle_telemetry_runtime_stats,
+    handle_telemetry_metric_counters, handle_telemetry_source_stats,
     handle_telemetry_recent_activity, handle_telemetry_stream_stats, handle_telemetry_system_state,
     handle_telemetry_window_focus,
 };
@@ -46,7 +46,7 @@ async fn refresh_telemetry_read_models(ctx: &TestContext) -> TestResult<()> {
         "sinex_telemetry.gateway_stats_1h",
         "sinex_telemetry.stream_stats_1h",
         "sinex_telemetry.assembly_stats_1h",
-        "sinex_telemetry.runtime_stats_1h",
+        "sinex_telemetry.source_stats_1h",
         "sinex_telemetry.metric_counters_1h",
         "sinex_telemetry.event_engine_batch_stats_1h",
     ] {
@@ -472,7 +472,7 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     .await?;
     insert_event(
         &ctx,
-        "sinex.runtime",
+        "sinexd.source",
         "processing.stats",
         json!({
             "module_kind": "terminal-ingestor",
@@ -539,8 +539,8 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
         handle_telemetry_stream_stats(ctx.pool(), telemetry_request(params.clone())?).await?;
     let assembly_stats: TelemetryAssemblyStatsResponse =
         handle_telemetry_assembly_stats(ctx.pool(), telemetry_request(params.clone())?).await?;
-    let runtime_stats: TelemetryRuntimeStatsResponse =
-        handle_telemetry_runtime_stats(ctx.pool(), telemetry_request(params.clone())?).await?;
+    let source_stats: TelemetrySourceStatsResponse =
+        handle_telemetry_source_stats(ctx.pool(), telemetry_request(params.clone())?).await?;
     let metric_counters: TelemetryMetricCountersResponse =
         handle_telemetry_metric_counters(ctx.pool(), telemetry_request(params.clone())?).await?;
     let event_engine_batch_stats: TelemetryEventEngineBatchStatsResponse =
@@ -583,13 +583,13 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     assert_eq!(assembly_stats.buckets[0].total_completed, Some(2));
     assert_eq!(assembly_stats.buckets[0].avg_duration_ms, Some(18.0));
 
-    assert_eq!(runtime_stats.buckets.len(), 1);
+    assert_eq!(source_stats.buckets.len(), 1);
     assert_eq!(
-        runtime_stats.buckets[0].module_kind.as_deref(),
+        source_stats.buckets[0].module_kind.as_deref(),
         Some("terminal-ingestor")
     );
-    assert_eq!(runtime_stats.buckets[0].total_events_processed, Some(40));
-    assert_eq!(runtime_stats.buckets[0].max_queue_depth, Some(4));
+    assert_eq!(source_stats.buckets[0].total_events_processed, Some(40));
+    assert_eq!(source_stats.buckets[0].max_queue_depth, Some(4));
 
     assert_eq!(metric_counters.buckets.len(), 1);
     assert_eq!(

@@ -1107,7 +1107,7 @@ in
               };
             };
             default = { };
-            description = "RuntimeActor defaults.";
+            description = "Source runtime defaults.";
           };
 
           filesystem = mkOption {
@@ -1718,10 +1718,176 @@ in
             description = "Coordination settings.";
           };
 
-        };
+
+          target = mkOption {
+            type = submodule {
+              options = {
+                attachToMultiUser = mkOption {
+                  type = bool;
+                  default = true;
+                  description = ''
+                    When true (default), Sinex runtime services attach to
+                    multi-user.target and start at boot. Set to false on
+                    hosts that gate the runtime behind a deferred timer or
+                    operator action; services attach to
+                    sinex-runtime.target instead, which only starts when
+                    explicitly pulled.
+                  '';
+                };
+                manualStartOnly = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    When true, sinex-runtime.target carries
+                    X-OnlyManualStart=true so it never starts implicitly.
+                    Has no effect when attachToMultiUser = true.
+                  '';
+                };
+                includeDatabase = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    When true, postgresql + postgresql-setup are pulled into
+                    sinex-runtime.target's dependency graph and their
+                    multi-user.target attachment is honored by
+                    attachToMultiUser. Use this on hosts where Postgres exists
+                    solely to serve Sinex and should not start at boot
+                    independently of the Sinex runtime. The module does not
+                    define postgresql itself; this only adjusts unit gating.
+                  '';
+                };
+                extraAfter = mkOption {
+                  type = with types; listOf str;
+                  default = [ ];
+                  example = [ "network-online.target" ];
+                  description = ''
+                    Additional units appended to sinex-runtime.target's After=
+                    list. Use for ordering against host-specific resources
+                    (e.g. network-online.target on hosts that defer the
+                    runtime until networking is up).
+                  '';
+                };
+              };
+            };
+            default = { };
+            description = "How runtime services are wired into systemd targets.";
+          };
+
+          deferredStart = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    When true, define sinex-runtime.timer with OnActiveSec=
+                    set to delay. The timer pulls sinex-runtime.target after
+                    boot when autoStart = true; when autoStart = false the
+                    timer is defined but not installed into timers.target
+                    (introspectable but inert).
+
+                    Use this with attachToMultiUser = false on hosts that
+                    bring the runtime up automatically but only after the
+                    desktop is settled.
+                  '';
+                };
+                autoStart = mkOption {
+                  type = bool;
+                  default = true;
+                  description = ''
+                    When true (default) and enable = true, install the
+                    deferred-start timer into timers.target so it fires
+                    automatically at boot. When false, the timer is defined
+                    but inert; operators can start it manually with
+                    systemctl start sinex-runtime.timer.
+                  '';
+                };
+                delay = mkOption {
+                  type = str;
+                  default = "5min";
+                  example = "2min";
+                  description = ''
+                    OnActiveSec= value for sinex-runtime.timer. Time after
+                    boot/timer activation before sinex-runtime.target is
+                    pulled.
+                  '';
+                };
+                accuracy = mkOption {
+                  type = str;
+                  default = "15s";
+                  description = "AccuracySec= for the deferred-start timer.";
+                };
+              };
+            };
+            default = { };
+            description = ''
+              Optional timer that automatically pulls sinex-runtime.target
+              after a delay. Mutually compatible with
+              attachToMultiUser = false; mutually exclusive with
+              attachToMultiUser = true (which makes the timer redundant).
+            '';
+          };
+
+          restartOnSwitch = mkOption {
+            type = bool;
+            default = true;
+            description = ''
+              When true (default), NixOS activation restarts changed Sinex
+              services. When false, services keep running with the
+              previously active code until next manual restart. Workstations
+              set false because activation under load triggers I/O pressure
+              while large in-memory state (NATS, Postgres) is recreated.
+            '';
+          };
+
+          restartPolicy = mkOption {
+            type = submodule {
+              options = {
+                mode = mkOption {
+                  type = enum [ "no" "on-failure" "always" "on-success" "on-abnormal" "on-watchdog" "on-abort" ];
+                  default = "on-failure";
+                  description = "systemd Restart= for runtime services.";
+                };
+                backoffSec = mkOption {
+                  type = positive;
+                  default = 10;
+                  description = "RestartSec=. Delay before retrying after a crash.";
+                };
+                intervalSec = mkOption {
+                  type = unsigned;
+                  default = 0;
+                  description = ''
+                    StartLimitIntervalSec=. 0 disables the rate limit
+                    (legacy behaviour for hosted deployments where capture
+                    must recover indefinitely).
+                  '';
+                };
+                burst = mkOption {
+                  type = unsigned;
+                  default = 0;
+                  description = ''
+                    StartLimitBurst=. Maximum start attempts within
+                    intervalSec; unit fails after this. 0 disables.
+                  '';
+                };
+              };
+            };
+            default = { };
+            description = ''
+              Failure-recovery policy applied to long-running Sinex services.
+              Default suits hosted deployments. Workstations bound the
+              policy:
+
+                services.sinex.runtime.restartPolicy = {
+                  intervalSec = 600;
+                  burst = 3;
+                };
+            '';
+          };
+                };
       };
       default = { };
-      description = "RuntimeActor ecosystem configuration.";
+      description = "Sinex runtime lifecycle and shared client configuration.";
     };
 
     observability = mkOption {
@@ -1928,179 +2094,6 @@ in
       description = "Lifecycle management configuration.";
     };
 
-    runtimeSystem = mkOption {
-      type = submodule {
-        options = {
-          target = mkOption {
-            type = submodule {
-              options = {
-                attachToMultiUser = mkOption {
-                  type = bool;
-                  default = true;
-                  description = ''
-                    When true (default), Sinex runtime services attach to
-                    multi-user.target and start at boot. Set to false on
-                    hosts that gate the runtime behind a deferred timer or
-                    operator action; services attach to
-                    sinex-runtime.target instead, which only starts when
-                    explicitly pulled.
-                  '';
-                };
-                manualStartOnly = mkOption {
-                  type = bool;
-                  default = false;
-                  description = ''
-                    When true, sinex-runtime.target carries
-                    X-OnlyManualStart=true so it never starts implicitly.
-                    Has no effect when attachToMultiUser = true.
-                  '';
-                };
-                includeDatabase = mkOption {
-                  type = bool;
-                  default = false;
-                  description = ''
-                    When true, postgresql + postgresql-setup are pulled into
-                    sinex-runtime.target's dependency graph and their
-                    multi-user.target attachment is honored by
-                    attachToMultiUser. Use this on hosts where Postgres exists
-                    solely to serve Sinex and should not start at boot
-                    independently of the Sinex runtime. The module does not
-                    define postgresql itself; this only adjusts unit gating.
-                  '';
-                };
-                extraAfter = mkOption {
-                  type = with types; listOf str;
-                  default = [ ];
-                  example = [ "network-online.target" ];
-                  description = ''
-                    Additional units appended to sinex-runtime.target's After=
-                    list. Use for ordering against host-specific resources
-                    (e.g. network-online.target on hosts that defer the
-                    runtime until networking is up).
-                  '';
-                };
-              };
-            };
-            default = { };
-            description = "How runtime services are wired into systemd targets.";
-          };
-
-          deferredStart = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption {
-                  type = bool;
-                  default = false;
-                  description = ''
-                    When true, define sinex-runtime.timer with OnActiveSec=
-                    set to delay. The timer pulls sinex-runtime.target after
-                    boot when autoStart = true; when autoStart = false the
-                    timer is defined but not installed into timers.target
-                    (introspectable but inert).
-
-                    Use this with attachToMultiUser = false on hosts that
-                    bring the runtime up automatically but only after the
-                    desktop is settled.
-                  '';
-                };
-                autoStart = mkOption {
-                  type = bool;
-                  default = true;
-                  description = ''
-                    When true (default) and enable = true, install the
-                    deferred-start timer into timers.target so it fires
-                    automatically at boot. When false, the timer is defined
-                    but inert; operators can start it manually with
-                    systemctl start sinex-runtime.timer.
-                  '';
-                };
-                delay = mkOption {
-                  type = str;
-                  default = "5min";
-                  example = "2min";
-                  description = ''
-                    OnActiveSec= value for sinex-runtime.timer. Time after
-                    boot/timer activation before sinex-runtime.target is
-                    pulled.
-                  '';
-                };
-                accuracy = mkOption {
-                  type = str;
-                  default = "15s";
-                  description = "AccuracySec= for the deferred-start timer.";
-                };
-              };
-            };
-            default = { };
-            description = ''
-              Optional timer that automatically pulls sinex-runtime.target
-              after a delay. Mutually compatible with
-              attachToMultiUser = false; mutually exclusive with
-              attachToMultiUser = true (which makes the timer redundant).
-            '';
-          };
-
-          restartOnSwitch = mkOption {
-            type = bool;
-            default = true;
-            description = ''
-              When true (default), NixOS activation restarts changed Sinex
-              services. When false, services keep running with the
-              previously active code until next manual restart. Workstations
-              set false because activation under load triggers I/O pressure
-              while large in-memory state (NATS, Postgres) is recreated.
-            '';
-          };
-
-          restartPolicy = mkOption {
-            type = submodule {
-              options = {
-                mode = mkOption {
-                  type = enum [ "no" "on-failure" "always" "on-success" "on-abnormal" "on-watchdog" "on-abort" ];
-                  default = "on-failure";
-                  description = "systemd Restart= for runtime services.";
-                };
-                backoffSec = mkOption {
-                  type = positive;
-                  default = 10;
-                  description = "RestartSec=. Delay before retrying after a crash.";
-                };
-                intervalSec = mkOption {
-                  type = unsigned;
-                  default = 0;
-                  description = ''
-                    StartLimitIntervalSec=. 0 disables the rate limit
-                    (legacy behaviour for hosted deployments where capture
-                    must recover indefinitely).
-                  '';
-                };
-                burst = mkOption {
-                  type = unsigned;
-                  default = 0;
-                  description = ''
-                    StartLimitBurst=. Maximum start attempts within
-                    intervalSec; unit fails after this. 0 disables.
-                  '';
-                };
-              };
-            };
-            default = { };
-            description = ''
-              Failure-recovery policy applied to long-running Sinex services.
-              Default suits hosted deployments. Workstations bound the
-              policy:
-
-                services.sinex.runtimeSystem.restartPolicy = {
-                  intervalSec = 600;
-                  burst = 3;
-                };
-            '';
-          };
-        };
-      };
-      default = { };
-      description = "Runtime systemd integration policy.";
-    };
 
     bootstrap = mkOption {
       type = submodule {
@@ -2508,7 +2501,7 @@ in
       # Auxiliary sinex-owned units that should be gated alongside the
       # long-running runtime services. Long-running services
       # (sinexd, hosted source bindings, automata) already wire their own wantedBy
-      # from cfg.runtimeSystem.target.attachToMultiUser and publish their service
+      # from cfg.runtime.target.attachToMultiUser and publish their service
       # names via config.sinex._generatedUnits. The auxiliary list here
       # covers the one-shots, the standalone sinex-document-scan and its
       # timer, NATS, and the bootstrap helpers that the long-running services
@@ -2563,11 +2556,11 @@ in
           && cfg.runtime.document.schedule != null
         ) [ "sinex-document-scan" ];
       runtimeDatabaseUnits =
-        lib.optionals cfg.runtimeSystem.target.includeDatabase [
+        lib.optionals cfg.runtime.target.includeDatabase [
           "postgresql.service"
         ]
         ++ lib.optionals (
-          cfg.runtimeSystem.target.includeDatabase && cfg.database.enable && cfg.database.autoSetup
+          cfg.runtime.target.includeDatabase && cfg.database.enable && cfg.database.autoSetup
         ) [ "postgresql-setup.service" ];
     in
     mkMerge [
@@ -2657,15 +2650,15 @@ in
 
         systemd.targets.sinex-runtime = {
           description = "Sinex runtime services aggregate target";
-          wantedBy = lib.optional cfg.runtimeSystem.target.attachToMultiUser "multi-user.target";
+          wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
           # Pull every sinex-owned auxiliary unit (and optionally postgresql)
           # into the runtime target's dependency graph. When
           # attachToMultiUser=false, this is the only thing that brings them
           # online; when true, it makes the target a coherent stop boundary.
           wants = runtimeAuxiliaryUnits ++ runtimeDatabaseUnits;
-          after = cfg.runtimeSystem.target.extraAfter;
+          after = cfg.runtime.target.extraAfter;
           unitConfig = lib.optionalAttrs
-            (cfg.runtimeSystem.target.manualStartOnly && !cfg.runtimeSystem.target.attachToMultiUser)
+            (cfg.runtime.target.manualStartOnly && !cfg.runtime.target.attachToMultiUser)
             { X-OnlyManualStart = true; };
         };
       })
@@ -2674,34 +2667,34 @@ in
       # timers, and (if includeDatabase) postgresql/postgresql-setup off
       # multi-user.target. The runtime target's wants graph above keeps them
       # reachable; this just prevents them from starting at boot independently.
-      (mkIf (cfg.enable && !cfg.runtimeSystem.target.attachToMultiUser) {
+      (mkIf (cfg.enable && !cfg.runtime.target.attachToMultiUser) {
         systemd.services = lib.genAttrs runtimeAuxiliaryUnitNames (_: {
           wantedBy = lib.mkForce [ ];
           unitConfig.PartOf = [ "sinex-runtime.target" ];
-          restartIfChanged = cfg.runtimeSystem.restartOnSwitch;
-        }) // lib.optionalAttrs cfg.runtimeSystem.target.includeDatabase {
+          restartIfChanged = cfg.runtime.restartOnSwitch;
+        }) // lib.optionalAttrs cfg.runtime.target.includeDatabase {
           postgresql = {
             wantedBy = lib.mkForce [ ];
             unitConfig = {
               PartOf = lib.mkAfter [ "sinex-runtime.target" ];
             };
-            restartIfChanged = cfg.runtimeSystem.restartOnSwitch;
+            restartIfChanged = cfg.runtime.restartOnSwitch;
           };
           postgresql-setup = {
             wantedBy = lib.mkForce [ ];
             unitConfig = {
               PartOf = [ "sinex-runtime.target" ];
             };
-            restartIfChanged = cfg.runtimeSystem.restartOnSwitch;
+            restartIfChanged = cfg.runtime.restartOnSwitch;
           };
         };
         systemd.timers = lib.genAttrs runtimeAuxiliaryTimerNames (_: {
-          wantedBy = lib.mkForce (lib.optionals cfg.runtimeSystem.target.attachToMultiUser [ "timers.target" ]);
+          wantedBy = lib.mkForce (lib.optionals cfg.runtime.target.attachToMultiUser [ "timers.target" ]);
           unitConfig.PartOf = [ "sinex-runtime.target" ];
         });
         # postgresql.target leaks into multi-user even with the runtime
         # service's wantedBy stripped; suppress it alongside.
-        systemd.targets = lib.optionalAttrs cfg.runtimeSystem.target.includeDatabase {
+        systemd.targets = lib.optionalAttrs cfg.runtime.target.includeDatabase {
           postgresql.wantedBy = lib.mkForce [ ];
         };
       })
@@ -2710,13 +2703,13 @@ in
       # The timer is always defined when configured so its shape is
       # introspectable (tests, status probes); wantedBy is gated separately
       # so deployers can keep the timer defined but inert.
-      (mkIf (cfg.enable && cfg.runtimeSystem.deferredStart.enable) {
+      (mkIf (cfg.enable && cfg.runtime.deferredStart.enable) {
         systemd.timers.sinex-runtime = {
           description = "Delay Sinex runtime startup until after boot";
-          wantedBy = lib.optionals cfg.runtimeSystem.deferredStart.autoStart [ "timers.target" ];
+          wantedBy = lib.optionals cfg.runtime.deferredStart.autoStart [ "timers.target" ];
           timerConfig = {
-            OnActiveSec = cfg.runtimeSystem.deferredStart.delay;
-            AccuracySec = cfg.runtimeSystem.deferredStart.accuracy;
+            OnActiveSec = cfg.runtime.deferredStart.delay;
+            AccuracySec = cfg.runtime.deferredStart.accuracy;
             Unit = "sinex-runtime.target";
           };
         };

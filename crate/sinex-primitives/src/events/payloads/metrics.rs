@@ -261,8 +261,8 @@ pub struct PoolStatsPayload {
 ///
 /// Addresses Issues 24, 29: Event Processing Metrics
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.runtime", event_type = "processing.stats")]
-pub struct NodeProcessingStatsPayload {
+#[event_payload(source = "sinexd.source", event_type = "processing.stats")]
+pub struct SourceProcessingStatsPayload {
     /// RuntimeActor type (fs-ingestor, terminal-ingestor, etc.)
     pub module_kind: String,
     /// Events processed since last report
@@ -288,7 +288,7 @@ pub struct NodeProcessingStatsPayload {
 /// cuts derived-node telemetry volume by ~6x without any information loss; see
 /// issue #1556.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.runtime", event_type = "derived.latency_snapshot")]
+#[event_payload(source = "sinexd.automaton", event_type = "latency_snapshot")]
 pub struct AutomatonLatencySnapshotPayload {
     /// Derived-node name (e.g., "session-detector")
     pub module_name: String,
@@ -518,7 +518,7 @@ impl StreamStatsPayload {
 // Every long-running sinex binary participates in self-observation:
 // counters/gauges/histograms (`sinex.metric.*`), component health
 // (`sinex.health.status`), and per-binary operational rollups
-// (`sinexd.event_engine.*`, `sinexd.api.*`, `sinex.runtime.*`). These payloads have
+// (`sinexd.event_engine.*`, `sinexd.api.*`, `sinexd.source.*`). These payloads have
 // no dedicated systemd unit — they are produced from inside event_engine, gateway,
 // and the runtime as those processes run. We register infra source
 // descriptors so the (source, event_type) pairs declared by `#[event_payload]`
@@ -594,7 +594,7 @@ register_source_contract! {
     SourceContract {
         id: "sinex-runtime-telemetry",
         namespace: "infra",
-        event_types: &[("sinex.runtime", "processing.stats")],
+        event_types: &[("sinexd.source", "processing.stats")],
         privacy_tier: SuPrivacyTier::Public,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,

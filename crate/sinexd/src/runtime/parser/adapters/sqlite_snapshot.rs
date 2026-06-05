@@ -2,7 +2,7 @@
 //!
 //! # Purpose
 //!
-//! [`SqliteRowAdapter`] (and the [`AdapterBackedIngestor`] that hosts it) capture
+//! [`SqliteRowAdapter`] (and the [`AdapterBackedSource`] that hosts it) capture
 //! row-projection bytes into a rotating stream material. That lane preserves
 //! per-row provenance: every event anchors into a byte range of a long-lived
 //! material whose contents are the JSON serialisations of the rows.
@@ -21,7 +21,7 @@
 //!
 //! # Lifecycle
 //!
-//! 1. Caller (`AdapterBackedIngestor` if `InputShapeAdapter::snapshot_lane` is
+//! 1. Caller (`AdapterBackedSource` if `InputShapeAdapter::snapshot_lane` is
 //!    `Some`) spawns a tokio task running [`SqliteSnapshotLane::run`].
 //! 2. The task loops: sleep `interval` → read DB file → hash contents → if
 //!    different from last snapshot, register a new source material and write
@@ -112,7 +112,7 @@ impl SqliteSnapshotConfig {
     }
 }
 
-/// Description of a snapshot lane handed to [`AdapterBackedIngestor`] by
+/// Description of a snapshot lane handed to [`AdapterBackedSource`] by
 /// `InputShapeAdapter::snapshot_lane`.
 ///
 /// The struct is opaque enough that callers can construct it from any source
@@ -159,7 +159,7 @@ impl SnapshotLaneSpec {
 
 /// The running snapshot lane.
 ///
-/// Instantiated by [`AdapterBackedIngestor::initialize`] when the adapter
+/// Instantiated by [`AdapterBackedSource::initialize`] when the adapter
 /// returns `Some(SnapshotLaneSpec)`. Run via [`Self::run`] inside a
 /// `tokio::spawn`; the parent holds the resulting `JoinHandle` and a shutdown
 /// `watch` sender to terminate the lane cooperatively.

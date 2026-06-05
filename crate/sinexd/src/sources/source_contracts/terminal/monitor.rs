@@ -1,7 +1,7 @@
 //! `terminal.monitor` — fire-once startup event for the terminal source pack.
 //!
 //! Registers `terminal.monitor` with the source contract inventory and
-//! with the source factory registry via [`register_monitor_unit!`]. On every
+//! with the source factory registry via [`register_source!`]. On every
 //! source boot this emits one [`TerminalMonitoringStartedPayload`]
 //! anchored to a synthetic material, then exits.
 //!
@@ -23,7 +23,7 @@ use sinex_primitives::{
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
-use crate::register_monitor_unit;
+use crate::register_source;
 use crate::sources::monitor_driver::MonitorPhase;
 
 // ---------------------------------------------------------------------------
@@ -70,7 +70,7 @@ register_source_runtime_binding! {
 // Source registration
 // ---------------------------------------------------------------------------
 
-register_monitor_unit!(
+register_source!(
     source_id: "terminal.monitor",
     emit_at: MonitorPhase::ServiceStart,
     emit: emit_terminal_monitor,

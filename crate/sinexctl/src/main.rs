@@ -691,7 +691,7 @@ fn command_path(cmd: &Commands) -> String {
             TelemetryCommands::GatewayStats { .. } => "telemetry gateway-stats".to_string(),
             TelemetryCommands::StreamStats { .. } => "telemetry stream-stats".to_string(),
             TelemetryCommands::AssemblyStats { .. } => "telemetry assembly-stats".to_string(),
-            TelemetryCommands::RuntimeStats { .. } => "telemetry node-stats".to_string(),
+            TelemetryCommands::SourceStats { .. } => "telemetry source-stats".to_string(),
             TelemetryCommands::MetricCounters { .. } => "telemetry metric-counters".to_string(),
             TelemetryCommands::EventEngineBatchStats { .. } => {
                 "telemetry event-engine-batch-stats".to_string()

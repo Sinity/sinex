@@ -247,7 +247,7 @@ register_source_runtime_binding! {
     .build()
 }
 
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "raindrop-bookmarks",
     adapter: StaticFileAdapter,
     parser: RaindropBookmarkParser,

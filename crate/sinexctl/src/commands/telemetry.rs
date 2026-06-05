@@ -3,7 +3,7 @@ use console::style;
 use sinex_primitives::rpc::telemetry::{
     AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
     FileActivityEntry, GatewayStatsBucket, EventEngineBatchStatsBucket, EventEngineValidationSnapshot,
-    MetricCounterBucket, RuntimeStatsBucket, RecentActivityEntry, StreamStatsBucket,
+    MetricCounterBucket, SourceStatsBucket, RecentActivityEntry, StreamStatsBucket,
     SystemStateBucket, WindowFocusBucket,
 };
 use tabled::{builder::Builder, settings::Style};
@@ -115,7 +115,7 @@ pub enum TelemetryCommands {
     },
 
     /// RuntimeActor hourly operator telemetry
-    RuntimeStats {
+    SourceStats {
         #[arg(long)]
         from: Option<String>,
         #[arg(long)]
@@ -279,16 +279,16 @@ impl TelemetryCommands {
                 .display(&format)?;
             }
 
-            Self::RuntimeStats { from, to, limit } => {
+            Self::SourceStats { from, to, limit } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let buckets = client
-                    .telemetry_runtime_stats(from_rfc, to_rfc, Some(*limit))
+                    .telemetry_source_stats(from_rfc, to_rfc, Some(*limit))
                     .await?;
                 CommandOutput::list(
                     buckets,
-                    "No node-stats data found.",
-                    format_runtime_stats_table,
+                    "No source-stats data found.",
+                    format_source_stats_table,
                 )
                 .display(&format)?;
             }
@@ -610,7 +610,7 @@ fn format_assembly_stats_table(buckets: &[AssemblyStatsBucket]) -> String {
     table.to_string()
 }
 
-fn format_runtime_stats_table(buckets: &[RuntimeStatsBucket]) -> String {
+fn format_source_stats_table(buckets: &[SourceStatsBucket]) -> String {
     let mut builder = Builder::new();
     builder.push_record([
         "BUCKET",

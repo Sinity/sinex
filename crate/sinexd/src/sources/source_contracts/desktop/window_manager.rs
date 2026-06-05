@@ -27,7 +27,7 @@ use sinex_primitives::{register_source_contract, register_source_runtime_binding
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult, UnixSocketStreamAdapter};
 
-use crate::register_adapter_ingestor;
+use crate::register_source;
 
 // ---------------------------------------------------------------------------
 // Source contract
@@ -369,7 +369,7 @@ fn dispatch_hyprland_event(
 // Source factory registration
 // ---------------------------------------------------------------------------
 
-register_adapter_ingestor!(
+register_source!(
     source_id: "desktop.window-manager",
     adapter: UnixSocketStreamAdapter,
     parser: HyprlandParser,

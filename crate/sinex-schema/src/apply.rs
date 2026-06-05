@@ -67,7 +67,7 @@ const TELEMETRY_CONTINUOUS_AGGREGATES: &[&str] = &[
     "gateway_stats_1h",
     "stream_stats_1h",
     "assembly_stats_1h",
-    "runtime_stats_1h",
+    "source_stats_1h",
     "metric_counters_1h",
     "event_engine_batch_stats_1h",
     "current_window_focus",
@@ -977,7 +977,7 @@ async fn recreate_telemetry_read_models(pool: &PgPool) -> Result<(), ApplyError>
                 'current_window_focus',
                 'current_system_state',
                 'metric_counters_1h',
-                'runtime_stats_1h',
+                'source_stats_1h',
                 'assembly_stats_1h',
                 'stream_stats_1h',
                 'gateway_stats_1h',
@@ -2116,7 +2116,7 @@ SELECT add_continuous_aggregate_policy('sinex_telemetry.assembly_stats_1h',
     end_offset => INTERVAL '1 hour',
     schedule_interval => INTERVAL '1 hour');
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.runtime_stats_1h
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.source_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
     time_bucket('1 hour', id) AS bucket,
@@ -2128,12 +2128,12 @@ SELECT
     SUM((payload->>'error_count')::bigint) AS total_errors,
     COUNT(*) AS sample_count
 FROM core.events
-WHERE source = 'sinex.runtime'
+WHERE source = 'sinexd.source'
   AND event_type = 'processing.stats'
 GROUP BY time_bucket('1 hour', id), payload->>'node_type'
 WITH NO DATA;
 
-SELECT add_continuous_aggregate_policy('sinex_telemetry.runtime_stats_1h',
+SELECT add_continuous_aggregate_policy('sinex_telemetry.source_stats_1h',
     start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 hour',
     schedule_interval => INTERVAL '1 hour');

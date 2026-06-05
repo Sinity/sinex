@@ -302,7 +302,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         telemetry::TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD.info(),
         telemetry::TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD.info(),
         telemetry::TELEMETRY_METRIC_COUNTERS_METHOD.info(),
-        telemetry::TELEMETRY_RUNTIME_STATS_METHOD.info(),
+        telemetry::TELEMETRY_SOURCE_STATS_METHOD.info(),
         telemetry::TELEMETRY_RECENT_ACTIVITY_METHOD.info(),
         telemetry::TELEMETRY_STREAM_STATS_METHOD.info(),
         telemetry::TELEMETRY_SYSTEM_STATE_METHOD.info(),

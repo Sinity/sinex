@@ -1,4 +1,4 @@
-//! System source contracts — Wave B fold of sinex-system-ingestor.
+//! System source contracts — Wave B fold of sinex-system-source.
 //!
 //! Five source contracts:
 //! - `system.monitor`  — fire-once startup annotation

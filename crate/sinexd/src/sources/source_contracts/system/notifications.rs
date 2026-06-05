@@ -145,7 +145,7 @@ register_source_runtime_binding! {
     .build()
 }
 
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "desktop.notification",
     adapter: crate::runtime::parser::DbusStreamAdapter,
     parser: NotificationParser,

@@ -147,7 +147,7 @@ pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
         if source_factory::find_source_factory(&unit_id).is_none() {
             errors.push(format!(
                 "{}: source contract registered but no source factory \
-                 (missing register_source_driver! / register_adapter_ingestor! call)",
+                 (missing register_source! factory call)",
                 binding.source_id
             ));
         }

@@ -18,11 +18,11 @@ lives and what deserves a runtime process boundary.
 ## Why
 
 `sinexctl sources stage` registers source material. It is not itself an
-ingestor. Once material is staged, some runtime still needs to enumerate bytes
+source. Once material is staged, some runtime still needs to enumerate bytes
 or records, dispatch a parser, and persist interpreted events.
 
 The previous mental model bundled unrelated mechanics into source-domain crates.
-For example, "terminal ingestor" contains several different source shapes:
+For example, "terminal source" contains several different source shapes:
 
 - Atuin: growing SQLite database plus shell-command parser
 - zsh/bash history: append-only file plus shell-history parser
@@ -134,16 +134,16 @@ are derived.
 | Directory of files | screenshots, recordings, document intake, WeeChat logs | Stage directory or file set, enumerate files with directory adapter, dispatch per-format parser. |
 | Growing SQLite DB | Atuin, ActivityWatch, browser history | SQLite input adapter plus parser; runtime topology chosen by liveness and locking needs. |
 | Append-only log | zsh/bash history, scribe-tap JSONL, IRC logs | Append-only adapter plus parser; continuous mode may share source processor or use a watcher. |
-| Local repository | git history | Repository/directory adapter plus git parser; not a `sinex-git-ingestor` crate by default. |
+| Local repository | git history | Repository/directory adapter plus git parser; not a `sinex-git-source` crate by default. |
 | Ephemeral IPC/API stream | Hyprland IPC, D-Bus signals, browser native messaging, live audio/screen capture | Separate capture process often justified; publish material frames or events through the runtime transport. |
 
 ## Migration Rules
 
-1. Do not add new permanent source-domain ingestor crates for staged or
+1. Do not add new permanent source-domain source crates for staged or
    replayable materials unless the process boundary is explicitly justified.
 2. Implement new source issues as source contracts plus parser modules
    over shared input-shape adapters where possible.
-3. Keep existing deployed ingestors working while the substrate is designed.
+3. Keep existing deployed sources working while the substrate is designed.
    They are legacy placement, not proof that every future source belongs in a
    matching crate.
 4. When a parser needs shared mechanics that are missing, add the input-shape

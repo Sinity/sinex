@@ -2,7 +2,7 @@
 //! against staged source material.
 //!
 //! The dispatch is fully registry-driven — no match arms. Source contracts register
-//! their parsers at link time via [`register_parser!`]; the dispatcher looks
+//! their parsers at link time via [`register_source!`]; the dispatcher looks
 //! them up by source id at call time.
 
 use futures::future::BoxFuture;
@@ -110,27 +110,6 @@ pub fn find_parser_factory(source_id: &SourceId) -> Option<ParserFactoryFn> {
 // Macro for registration
 // =============================================================================
 
-/// Register a `MaterialParser` implementation with the parser registry.
-///
-/// The parser type must implement `Default` and `MaterialParser`.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// register_parser!("weechat", WeeChatLogParser);
-/// ```
-#[macro_export]
-macro_rules! register_parser {
-    ($source_id:expr, $parser_type:ty) => {
-        $crate::__submit_registry_entry!(
-            $crate::sources::dispatch::ParserRegistryEntry,
-            $source_id,
-            || Box::new(<$parser_type>::default())
-                as Box<dyn $crate::sources::dispatch::ErasedParser>,
-        );
-    };
-}
-
 // =============================================================================
 // Dispatch function — registry-driven, no match arms
 // =============================================================================
@@ -139,7 +118,7 @@ macro_rules! register_parser {
 ///
 /// Looks up the parser for `source_id` in the compile-time registry. Returns
 /// an error for unregistered source contracts. No match arms — registration via
-/// [`register_parser!`] is the only path.
+/// [`register_source!`](crate::register_source) is the only path.
 #[must_use]
 pub fn default_parser_dispatch() -> ParserDispatchFn {
     Arc::new(

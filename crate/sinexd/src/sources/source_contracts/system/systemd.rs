@@ -4,7 +4,7 @@
 //! Records without `_SYSTEMD_UNIT` are silently skipped.
 
 use crate::runtime::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
-use crate::register_parser;
+use crate::register_source;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
 use sinex_primitives::events::payloads::system::{
@@ -319,10 +319,10 @@ impl MaterialParser for SystemdParser {
 }
 
 // Register for dispatch (replay path).
-register_parser!("system.systemd", SystemdParser);
+register_source!(source_id: "system.systemd", parser: SystemdParser);
 
 // Register source factory — JournalctlStreamAdapter + SystemdParser.
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "system.systemd",
     adapter: JournalctlStreamAdapter,
     parser: SystemdParser,

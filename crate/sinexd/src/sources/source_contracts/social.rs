@@ -242,7 +242,7 @@ register_source_runtime_binding! {
     .build()
 }
 
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "reddit-gdpr-comments",
     adapter: StaticFileAdapter,
     parser: RedditCommentParser,
@@ -426,7 +426,7 @@ register_source_runtime_binding! {
     .build()
 }
 
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "reddit-gdpr-posts",
     adapter: StaticFileAdapter,
     parser: RedditPostParser,
@@ -603,7 +603,7 @@ register_source_runtime_binding! {
     .build()
 }
 
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "wykop-entries",
     adapter: StaticFileAdapter,
     parser: WykopEntryParser,
@@ -784,7 +784,7 @@ register_source_runtime_binding! {
     .build()
 }
 
-crate::register_adapter_ingestor!(
+crate::register_source!(
     source_id: "wykop-entry-comments",
     adapter: StaticFileAdapter,
     parser: WykopEntryCommentParser,

@@ -56,7 +56,7 @@ use crate::event_engine::{
     material_ready_set::MaterialReadySet,
     validator::IngestEventValidator,
 };
-use crate::node_sdk::ingestion_helpers::{LedgerEntry, LedgerReader, MaterialTiming};
+use crate::runtime::ingestion_helpers::{LedgerEntry, LedgerReader, MaterialTiming};
 use sinex_primitives::Id;
 use sinex_primitives::domain::SourceMaterialTimingInfoType;
 use sinex_primitives::events::Event;
@@ -958,7 +958,7 @@ impl JetStreamConsumer {
                         let failed = self.stats.events_failed.load(Ordering::Relaxed);
                         let deferred = self.stats.events_deferred.load(Ordering::Relaxed);
                         let dlq_routed = self.stats.dlq_routed.load(Ordering::Relaxed);
-                        if let Err(e) = observer.emit_node_processing_stats(
+                        if let Err(e) = observer.emit_source_processing_stats(
                             "jetstream-consumer",
                             processed,
                             deferred + dlq_routed, // events_dropped = deferred + routed to DLQ
@@ -969,7 +969,7 @@ impl JetStreamConsumer {
                             warn!("Failed to emit processing stats: {}", e);
                         }
 
-                        // Emit operational health counters not covered by emit_node_processing_stats.
+                        // Emit operational health counters not covered by source processing stats.
                         // These are monotonic cumulative totals emitted as gauges (snapshot-at-tick).
                         let operational_gauges: &[(&'static str, u64)] = &[
                             ("event_engine.tombstoned_events_rejected_total", self.stats.tombstoned_events_rejected.load(Ordering::Relaxed)),

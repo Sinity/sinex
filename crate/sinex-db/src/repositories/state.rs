@@ -1472,8 +1472,8 @@ impl StateRepository<'_> {
                     (e.payload->>'tick_runtime_p99_ms')::float8 AS tick_runtime_p99_ms,
                     (e.payload->>'throughput_eps')::float8 AS throughput_eps
                 FROM core.events e
-                WHERE e.source = 'sinex.runtime'
-                  AND e.event_type = 'derived.latency_snapshot'
+                WHERE e.source = 'sinexd.automaton'
+                  AND e.event_type = 'latency_snapshot'
                   AND e.payload->>'module_name' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC

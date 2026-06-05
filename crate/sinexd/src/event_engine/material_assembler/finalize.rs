@@ -6,8 +6,6 @@
 
 use serde::Serialize;
 use sinex_db::repositories::DbPoolExt;
-#[cfg(test)]
-use sinex_db::repositories::TemporalLedgerEntry;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_primitives::MaterialStatus;
 use sinex_primitives::Timestamp;
