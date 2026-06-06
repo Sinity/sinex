@@ -120,6 +120,24 @@ pub enum HistorySubcommand {
         #[arg(long)]
         include_failures: bool,
     },
+    /// Explain build/test runtime for a day using xtask history facts.
+    Explain {
+        /// Day to inspect, in YYYY-MM-DD. Defaults to today in UTC.
+        #[arg(long)]
+        day: Option<String>,
+        /// Baseline day, in YYYY-MM-DD. Defaults to the previous UTC day.
+        #[arg(long)]
+        against: Option<String>,
+        /// Commands to include. Defaults to check,test,build.
+        #[arg(long = "command", value_delimiter = ',')]
+        commands: Vec<String>,
+        /// Number of slowest invocations/test-overhead rows to include.
+        #[arg(long, default_value = "8")]
+        limit: usize,
+        /// Include failed invocations in addition to successful invocations.
+        #[arg(long)]
+        include_failures: bool,
+    },
     /// Aggregate recorded resource pressure and block I/O by command/window.
     Resources {
         /// Exact UTC calendar day to inspect, in YYYY-MM-DD.
@@ -453,6 +471,21 @@ impl XtaskCommand for HistoryCommand {
                     limit,
                     include_failures,
                 } => execute_compare_days(
+                    db,
+                    day.as_deref(),
+                    against.as_deref(),
+                    commands,
+                    *limit,
+                    *include_failures,
+                    ctx,
+                ),
+                HistorySubcommand::Explain {
+                    day,
+                    against,
+                    commands,
+                    limit,
+                    include_failures,
+                } => execute_explain(
                     db,
                     day.as_deref(),
                     against.as_deref(),
@@ -1670,6 +1703,45 @@ struct SlowInvocationSummary {
     args_json: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct HistoryExplainReport {
+    day: String,
+    against: String,
+    commands: Vec<String>,
+    include_failures: bool,
+    command_deltas: Vec<CommandDayComparison>,
+    slowest_invocations: Vec<SlowInvocationSummary>,
+    stage_totals: Vec<ExplainStageSummary>,
+    test_overhead: Vec<ExplainTestOverheadRow>,
+    interpretation: Vec<String>,
+    evidence_limits: Vec<String>,
+    machine_followups: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ExplainStageSummary {
+    command: String,
+    stage_name: String,
+    invocation_count: usize,
+    total_duration_secs: f64,
+    avg_duration_secs: Option<f64>,
+    max_duration_secs: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ExplainTestOverheadRow {
+    invocation_id: i64,
+    started_at: String,
+    status: String,
+    duration_secs: f64,
+    test_body_duration_secs: f64,
+    non_test_overhead_secs: f64,
+    test_body_ratio: f64,
+    io_full: Option<f64>,
+    memory_full: Option<f64>,
+    args_json: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 struct CompareInvocationRow {
     id: i64,
@@ -2039,6 +2111,433 @@ fn execute_compare_days(
     }
 
     Ok(result)
+}
+
+fn execute_explain(
+    db: &HistoryDb,
+    day: Option<&str>,
+    against: Option<&str>,
+    commands: &[String],
+    limit: usize,
+    include_failures: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let today = time::OffsetDateTime::now_utc().date();
+    let day = day.map_or_else(|| today.to_string(), |value| value.trim().to_string());
+    let against = against.map_or_else(
+        || (today - time::Duration::days(1)).to_string(),
+        |value| value.trim().to_string(),
+    );
+    validate_history_day(&day, "--day")?;
+    validate_history_day(&against, "--against")?;
+    let commands = if commands.is_empty() {
+        vec!["check".to_string(), "test".to_string(), "build".to_string()]
+    } else {
+        commands.to_vec()
+    };
+    let command_list = commands
+        .iter()
+        .map(|command| sql_string_literal(command))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let status_filter = if include_failures {
+        "status IN ('success', 'failed')"
+    } else {
+        "status = 'success'"
+    };
+    let rows_sql = format!(
+        r"
+        SELECT id, command, status, exit_code, started_at, duration_secs,
+               host_io_pressure_full_avg10_max AS io_full,
+               host_memory_pressure_full_avg10_max AS memory_full,
+               process_memory_usage_max_mb AS process_memory_mb,
+               args_json
+        FROM invocations
+        WHERE command IN ({command_list})
+          AND date(started_at) IN ({}, {})
+          AND duration_secs IS NOT NULL
+          AND {status_filter}
+        ORDER BY started_at ASC
+        ",
+        sql_string_literal(&against),
+        sql_string_literal(&day)
+    );
+    let mut rows = db
+        .run_readonly_query(&rows_sql)?
+        .into_iter()
+        .map(|row| compare_row_from_json(&row))
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut command_deltas = Vec::new();
+    for command in &commands {
+        let baseline_rows = rows
+            .iter()
+            .filter(|row| row.command == *command && row.started_at.starts_with(&against))
+            .collect::<Vec<_>>();
+        let current_rows = rows
+            .iter()
+            .filter(|row| row.command == *command && row.started_at.starts_with(&day))
+            .collect::<Vec<_>>();
+        let baseline = summarize_compare_rows(&baseline_rows);
+        let current = summarize_compare_rows(&current_rows);
+        command_deltas.push(CommandDayComparison {
+            command: command.clone(),
+            avg_duration_delta_secs: option_delta(
+                current.avg_duration_secs,
+                baseline.avg_duration_secs,
+            ),
+            avg_duration_ratio: option_ratio(current.avg_duration_secs, baseline.avg_duration_secs),
+            median_duration_delta_secs: option_delta(
+                current.median_duration_secs,
+                baseline.median_duration_secs,
+            ),
+            median_duration_ratio: option_ratio(
+                current.median_duration_secs,
+                baseline.median_duration_secs,
+            ),
+            max_duration_delta_secs: option_delta(
+                current.max_duration_secs,
+                baseline.max_duration_secs,
+            ),
+            io_full_avg_delta: option_delta(current.avg_io_full, baseline.avg_io_full),
+            memory_full_avg_delta: option_delta(current.avg_memory_full, baseline.avg_memory_full),
+            baseline,
+            current,
+        });
+    }
+
+    rows.sort_by(|left, right| {
+        right
+            .duration_secs
+            .partial_cmp(&left.duration_secs)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let slowest_invocations = rows
+        .iter()
+        .filter(|row| row.started_at.starts_with(&day))
+        .take(limit)
+        .map(|row| SlowInvocationSummary {
+            id: row.id,
+            command: row.command.clone(),
+            status: row.status.clone(),
+            exit_code: row.exit_code,
+            started_at: row.started_at.clone(),
+            duration_secs: row.duration_secs,
+            io_full: row.io_full,
+            memory_full: row.memory_full,
+            process_memory_mb: row.process_memory_mb,
+            args_json: row.args_json.clone(),
+        })
+        .collect::<Vec<_>>();
+    let inv_status_filter = if include_failures {
+        "inv.status IN ('success', 'failed')"
+    } else {
+        "inv.status = 'success'"
+    };
+    let test_status_filter = if include_failures {
+        "i.status IN ('success', 'failed')"
+    } else {
+        "i.status = 'success'"
+    };
+    let stage_totals = load_explain_stage_totals(db, &day, &command_list, inv_status_filter)?;
+    let test_overhead = load_explain_test_overhead(db, &day, test_status_filter, limit)?;
+    let interpretation =
+        build_explain_interpretation(&command_deltas, &test_overhead, &stage_totals);
+    let machine_followups = slowest_invocations
+        .iter()
+        .take(3)
+        .map(|row| {
+            format!(
+                "lynchpin MCP machine_service_io_for_xtask_invocation invocation_id={}",
+                row.id
+            )
+        })
+        .collect::<Vec<_>>();
+    let report = HistoryExplainReport {
+        day,
+        against,
+        commands,
+        include_failures,
+        command_deltas,
+        slowest_invocations,
+        stage_totals,
+        test_overhead,
+        interpretation,
+        evidence_limits: vec![
+            "xtask history can prove invocation duration, stage timing, test body duration, runner/setup overhead, xtask-sampled PSI maxima, and aggregate host block-device counters when recorded.".to_string(),
+            "xtask history cannot name external service/process ownership for I/O stalls; use Lynchpin machine telemetry for cgroup/process/block-device attribution.".to_string(),
+            "A runner/setup-dominated test run means test bodies were not the wallclock cost center; it does not by itself distinguish cargo compile, linker, nextest startup, DB fixture setup, or kernel I/O wait.".to_string(),
+        ],
+        machine_followups,
+    };
+
+    let mut result = CommandResult::success()
+        .with_message(format!("Explained build/test runtime for {}", report.day))
+        .with_duration(ctx.elapsed());
+    if ctx.is_human() {
+        print_explain_report(&report);
+    } else {
+        result = result.with_data(serde_json::to_value(&report)?);
+    }
+    Ok(result)
+}
+
+fn load_explain_stage_totals(
+    db: &HistoryDb,
+    day: &str,
+    command_list: &str,
+    status_filter: &str,
+) -> Result<Vec<ExplainStageSummary>> {
+    let sql = format!(
+        r"
+        SELECT inv.command AS command,
+               st.stage_name AS stage_name,
+               COUNT(DISTINCT inv.id) AS invocation_count,
+               COALESCE(SUM(st.duration_secs), 0.0) AS total_duration_secs,
+               AVG(st.duration_secs) AS avg_duration_secs,
+               MAX(st.duration_secs) AS max_duration_secs
+        FROM stage_timings st
+        JOIN invocations inv ON inv.id = st.invocation_id
+        WHERE date(inv.started_at) = {}
+          AND inv.command IN ({command_list})
+          AND inv.duration_secs IS NOT NULL
+          AND {status_filter}
+        GROUP BY inv.command, st.stage_name
+        ORDER BY total_duration_secs DESC, inv.command, st.stage_name
+        ",
+        sql_string_literal(day)
+    );
+    db.run_readonly_query(&sql)?
+        .into_iter()
+        .map(|row| {
+            Ok(ExplainStageSummary {
+                command: json_string(&row, "command")?,
+                stage_name: json_string(&row, "stage_name")?,
+                invocation_count: json_i64(&row, "invocation_count")? as usize,
+                total_duration_secs: json_optional_f64(&row, "total_duration_secs")
+                    .unwrap_or_default(),
+                avg_duration_secs: json_optional_f64(&row, "avg_duration_secs"),
+                max_duration_secs: json_optional_f64(&row, "max_duration_secs"),
+            })
+        })
+        .collect()
+}
+
+fn load_explain_test_overhead(
+    db: &HistoryDb,
+    day: &str,
+    status_filter: &str,
+    limit: usize,
+) -> Result<Vec<ExplainTestOverheadRow>> {
+    let sql = format!(
+        r"
+        SELECT i.id AS invocation_id,
+               i.started_at AS started_at,
+               i.status AS status,
+               i.duration_secs AS duration_secs,
+               COALESCE(SUM(t.duration_secs), 0.0) AS test_body_duration_secs,
+               i.host_io_pressure_full_avg10_max AS io_full,
+               i.host_memory_pressure_full_avg10_max AS memory_full,
+               i.args_json AS args_json
+        FROM invocations i
+        LEFT JOIN test_results t ON t.invocation_id = i.id
+        WHERE i.command = 'test'
+          AND date(i.started_at) = {}
+          AND i.duration_secs IS NOT NULL
+          AND {status_filter}
+        GROUP BY i.id
+        ORDER BY i.duration_secs DESC
+        ",
+        sql_string_literal(day)
+    );
+    let mut rows = db
+        .run_readonly_query(&sql)?
+        .into_iter()
+        .map(|row| {
+            let duration_secs = json_optional_f64(&row, "duration_secs").unwrap_or_default();
+            let test_body_duration_secs =
+                json_optional_f64(&row, "test_body_duration_secs").unwrap_or_default();
+            let non_test_overhead_secs = (duration_secs - test_body_duration_secs).max(0.0);
+            let test_body_ratio = if duration_secs > 0.0 {
+                (test_body_duration_secs / duration_secs).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            Ok(ExplainTestOverheadRow {
+                invocation_id: json_i64(&row, "invocation_id")?,
+                started_at: json_string(&row, "started_at")?,
+                status: json_string(&row, "status")?,
+                duration_secs,
+                test_body_duration_secs,
+                non_test_overhead_secs,
+                test_body_ratio,
+                io_full: json_optional_f64(&row, "io_full"),
+                memory_full: json_optional_f64(&row, "memory_full"),
+                args_json: json_optional_string(&row, "args_json"),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    rows.sort_by(|left, right| {
+        right
+            .non_test_overhead_secs
+            .partial_cmp(&left.non_test_overhead_secs)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| right.invocation_id.cmp(&left.invocation_id))
+    });
+    rows.truncate(limit);
+    Ok(rows)
+}
+
+fn build_explain_interpretation(
+    command_deltas: &[CommandDayComparison],
+    test_overhead: &[ExplainTestOverheadRow],
+    stage_totals: &[ExplainStageSummary],
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(worst_ratio) = command_deltas
+        .iter()
+        .filter_map(|row| {
+            row.avg_duration_ratio
+                .map(|ratio| (row.command.as_str(), ratio))
+        })
+        .max_by(|left, right| {
+            left.1
+                .partial_cmp(&right.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    {
+        lines.push(format!(
+            "{} has the largest average duration ratio versus baseline: {:.2}x",
+            worst_ratio.0, worst_ratio.1
+        ));
+    }
+    if let Some(row) = test_overhead.first() {
+        if row.non_test_overhead_secs > row.test_body_duration_secs {
+            lines.push(format!(
+                "slowest test run #{} is runner/setup dominated: {:.1}s overhead vs {:.1}s summed test bodies",
+                row.invocation_id, row.non_test_overhead_secs, row.test_body_duration_secs
+            ));
+        }
+    }
+    if let Some(stage) = stage_totals.first() {
+        lines.push(format!(
+            "largest recorded stage bucket is {}:{} at {:.1}s total",
+            stage.command, stage.stage_name, stage.total_duration_secs
+        ));
+    }
+    if test_overhead.iter().any(|row| {
+        row.io_full
+            .is_some_and(|value| value >= crate::resources::thresholds::PSI_IO_FULL_WARN)
+    }) {
+        lines.push(
+            "one or more slow test invocations overlapped recorded host io.full pressure above xtask's warning threshold".to_string(),
+        );
+    }
+    if lines.is_empty() {
+        lines.push("no clear compile/test runtime regression signal found in xtask history for this window".to_string());
+    }
+    lines
+}
+
+fn print_explain_report(report: &HistoryExplainReport) {
+    println!(
+        "{}",
+        style(format!(
+            "Build/test runtime explanation for {} vs {}:",
+            report.day, report.against
+        ))
+        .bold()
+    );
+    let mut commands = Builder::new();
+    commands.push_record([
+        "CMD",
+        "N BASE",
+        "N DAY",
+        "AVG BASE",
+        "AVG DAY",
+        "AVG RATIO",
+        "MED RATIO",
+        "IO Δ",
+        "MEM Δ",
+    ]);
+    for row in &report.command_deltas {
+        commands.push_record([
+            row.command.clone(),
+            row.baseline.invocation_count.to_string(),
+            row.current.invocation_count.to_string(),
+            fmt_opt_secs(row.baseline.avg_duration_secs),
+            fmt_opt_secs(row.current.avg_duration_secs),
+            fmt_opt_float(row.avg_duration_ratio),
+            fmt_opt_float(row.median_duration_ratio),
+            fmt_opt_float(row.io_full_avg_delta),
+            fmt_opt_float(row.memory_full_avg_delta),
+        ]);
+    }
+    let mut table = commands.build();
+    table.with(Style::rounded());
+    println!("{table}");
+
+    if !report.test_overhead.is_empty() {
+        println!("\nSlow test invocations by non-test overhead:");
+        let mut tests = Builder::new();
+        tests.push_record([
+            "INV",
+            "STATUS",
+            "ELAPSED",
+            "TEST BODY",
+            "OVERHEAD",
+            "BODY %",
+            "IO.FULL",
+        ]);
+        for row in &report.test_overhead {
+            tests.push_record([
+                row.invocation_id.to_string(),
+                row.status.clone(),
+                format!("{:.1}s", row.duration_secs),
+                format!("{:.1}s", row.test_body_duration_secs),
+                format!("{:.1}s", row.non_test_overhead_secs),
+                format!("{:.1}%", row.test_body_ratio * 100.0),
+                fmt_opt_float(row.io_full),
+            ]);
+        }
+        let mut table = tests.build();
+        table.with(Style::rounded());
+        println!("{table}");
+    }
+
+    if !report.stage_totals.is_empty() {
+        println!("\nLargest recorded stage buckets:");
+        let mut stages = Builder::new();
+        stages.push_record(["CMD", "STAGE", "RUNS", "TOTAL", "AVG", "MAX"]);
+        for row in report.stage_totals.iter().take(10) {
+            stages.push_record([
+                row.command.clone(),
+                row.stage_name.clone(),
+                row.invocation_count.to_string(),
+                format!("{:.1}s", row.total_duration_secs),
+                fmt_opt_secs(row.avg_duration_secs),
+                fmt_opt_secs(row.max_duration_secs),
+            ]);
+        }
+        let mut table = stages.build();
+        table.with(Style::rounded());
+        println!("{table}");
+    }
+
+    println!("\nInterpretation:");
+    for line in &report.interpretation {
+        println!("- {line}");
+    }
+    println!("\nEvidence limits:");
+    for line in &report.evidence_limits {
+        println!("- {line}");
+    }
+    if !report.machine_followups.is_empty() {
+        println!("\nMachine attribution follow-ups:");
+        for line in &report.machine_followups {
+            println!("- {line}");
+        }
+    }
 }
 
 fn execute_resources(

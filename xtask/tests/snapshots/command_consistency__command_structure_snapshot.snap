@@ -2050,9 +2050,69 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Cargo package to time, e.g. xtask for checkout-wrapper rebuild attribution",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": "p",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Cargo profile to time: dev, release, or a custom profile name",
+              "long": "profile",
+              "name": "profile",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Run `cargo clean -p <package>` before timing; requires --package",
+              "long": "clean-package",
+              "name": "clean_package",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "timings",
+          "subcommands": []
+        },
+        {
+          "about": "Summarize static source/dependency surface that contributes to compile cost",
+          "args": [
+            {
+              "global": false,
+              "help": "Workspace package to summarize",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": "p",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Number of largest source files and module buckets to show",
+              "long": "top",
+              "name": "top",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "compile-surface",
           "subcommands": []
         },
         {
@@ -2525,6 +2585,66 @@ expression: json
             }
           ],
           "name": "compare-days",
+          "subcommands": []
+        },
+        {
+          "about": "Explain build/test runtime for a day using xtask history facts",
+          "args": [
+            {
+              "global": false,
+              "help": "Day to inspect, in YYYY-MM-DD. Defaults to today in UTC",
+              "long": "day",
+              "name": "day",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Baseline day, in YYYY-MM-DD. Defaults to the previous UTC day",
+              "long": "against",
+              "name": "against",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Commands to include. Defaults to check,test,build",
+              "long": "command",
+              "name": "commands",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Number of slowest invocations/test-overhead rows to include",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Include failed invocations in addition to successful invocations",
+              "long": "include-failures",
+              "name": "include_failures",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "explain",
           "subcommands": []
         },
         {
