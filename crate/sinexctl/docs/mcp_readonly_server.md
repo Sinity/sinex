@@ -5,12 +5,79 @@ Status: implemented read-only stdio surface for
 
 The **live tool inventory** is owned by `crate/sinexctl/src/mcp.rs` and
 validated by `crate/sinexctl/tests/validation_test.rs`. This record is the
-substrate-invariant contract; the tool list is intentionally not
-duplicated here (it drifts).
+substrate-invariant contract; the table below is a docs-facing mirror and is
+checked against the live tool list.
 
 Sinex exposes a local MCP server for coding agents and analysis tools.
 The first server is read-only: an evidence access surface, not a
 control plane and not an actuator.
+
+## Tools
+
+| Tool |
+| --- |
+| `sinex.assembly_stats` |
+| `sinex.audit_trail` |
+| `sinex.automata_status` |
+| `sinex.command_frequency` |
+| `sinex.context_pack` |
+| `sinex.coordination_instance_health` |
+| `sinex.coordination_instances` |
+| `sinex.coordination_leader` |
+| `sinex.curation_proposals` |
+| `sinex.current_device_state` |
+| `sinex.current_health` |
+| `sinex.dlq_peek` |
+| `sinex.dlq_stats` |
+| `sinex.documents_chunks` |
+| `sinex.documents_get` |
+| `sinex.documents_search` |
+| `sinex.event_engine_batch_stats` |
+| `sinex.event_engine_validation` |
+| `sinex.file_activity` |
+| `sinex.gateway_stats` |
+| `sinex.lifecycle_status` |
+| `sinex.llm_budget_report` |
+| `sinex.llm_prompts` |
+| `sinex.llm_route_explain` |
+| `sinex.metric_counters` |
+| `sinex.ops_get` |
+| `sinex.ops_list` |
+| `sinex.privacy_status` |
+| `sinex.recent_activity` |
+| `sinex.replay_operations` |
+| `sinex.replay_status` |
+| `sinex.search_events` |
+| `sinex.semantic_epochs` |
+| `sinex.semantic_lane_diffs` |
+| `sinex.semantic_lane_outputs` |
+| `sinex.semantic_lanes` |
+| `sinex.shadow_consumers` |
+| `sinex.source_bindings` |
+| `sinex.source_continuity` |
+| `sinex.source_coverage` |
+| `sinex.source_drift` |
+| `sinex.source_gap_explain` |
+| `sinex.source_health` |
+| `sinex.source_identifier_continuity` |
+| `sinex.source_material` |
+| `sinex.source_materials` |
+| `sinex.source_presets` |
+| `sinex.source_readiness` |
+| `sinex.source_stats` |
+| `sinex.sources_active` |
+| `sinex.sources_registry` |
+| `sinex.sources_status` |
+| `sinex.stream_stats` |
+| `sinex.system_health` |
+| `sinex.system_ping` |
+| `sinex.system_state` |
+| `sinex.system_version` |
+| `sinex.task_state` |
+| `sinex.tasks_list` |
+| `sinex.throughput` |
+| `sinex.trace_lineage` |
+| `sinex.window_focus` |
 
 ## Authority Boundary
 
@@ -69,8 +136,7 @@ explicit policy work, not a quiet addition to `crate/sinexctl/src/mcp.rs`:
 - no raw document chunk-text tool — `documents.get_chunks` returns
   raw text by design; MCP uses `documents.get_chunks_redacted`;
 - no workbench-inspect tool until its API read surface can enforce
-  the same redaction contract as the source-material detail tool;
-- no context-pack tools until `#1095` provides a stable read model.
+  the same redaction contract as the source-material detail tool.
 
 ## Common Response Shape
 

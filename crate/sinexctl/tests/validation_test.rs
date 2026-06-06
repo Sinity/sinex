@@ -142,7 +142,9 @@ async fn mcp_covers_or_explicitly_omits_safe_read_only_rpc_methods() -> TestResu
         .collect::<BTreeSet<_>>();
     let explicitly_omitted = BTreeSet::from([
         methods::CONTENT_RETRIEVE_BLOB,
+        methods::CURATION_DUPLICATE_CANDIDATES_LIST,
         methods::DOCUMENTS_GET_CHUNKS,
+        methods::PRIVACY_POLICY_LIST,
     ]);
 
     let missing = method_catalog()
@@ -891,12 +893,12 @@ async fn mcp_runtime_health_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinexd.source_health",
+        "sinex.source_health",
         json!({ "stale_after_secs": 120 }),
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinexd.source_health");
+    assert_eq!(response["tool"], "sinex.source_health");
     assert_eq!(response["query"]["stale_after_secs"], 120);
     assert_eq!(response["items"]["result"]["active_count"], 2);
     assert_eq!(response["items"]["result"]["inactive_count"], 1);
@@ -912,12 +914,12 @@ async fn mcp_runtime_active_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinexd.sources_active",
+        "sinex.sources_active",
         json!({ "stale_after_secs": 120 }),
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinexd.sources_active");
+    assert_eq!(response["tool"], "sinex.sources_active");
     assert_eq!(response["query"]["stale_after_secs"], 120);
     assert_eq!(
         response["items"]["result"]["modules"][0]["module_name"],
@@ -936,9 +938,9 @@ async fn mcp_runtime_registry_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinexd.sources_registry", json!({})).await?;
+    let response = call_tool(&client, "sinex.sources_registry", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinexd.sources_registry");
+    assert_eq!(response["tool"], "sinex.sources_registry");
     assert_eq!(
         response["items"]["result"]["modules"][0]["module_name"],
         "terminal.atuin-history"
@@ -2453,7 +2455,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "material_kind": "local_cas",
                             "source_identifier": "/realm/data/captures/fixture.jsonl",
                             "status": "completed",
-                            "timing_info_type": "point",
+                            "timing_info_type": "realtime",
                             "format": "jsonl",
                             "contract_version": 1,
                             "staged_at": "2026-05-19T12:00:00Z",
@@ -2469,7 +2471,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         "material_kind": "local_cas",
                         "source_identifier": "/realm/data/captures/fixture.jsonl",
                         "status": "completed",
-                        "timing_info_type": "point",
+                        "timing_info_type": "realtime",
                         "metadata": {
                             "secret_note": "secret_fixture_value should not leak"
                         },
