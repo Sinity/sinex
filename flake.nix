@@ -464,12 +464,14 @@
                   subcommand_name="$(_sinex_xtask_command_arg 1 "$@")"
 
                   case "$command_name" in
-                    docs)
-                      case "$subcommand_name" in
-                        sync|check)
-                          return 0
-                          ;;
-                      esac
+                    doctor)
+                      for _arg in "$@"; do
+                        case "$_arg" in
+                          --deployment-readiness)
+                            return 0
+                            ;;
+                        esac
+                      done
                       ;;
                   esac
 
