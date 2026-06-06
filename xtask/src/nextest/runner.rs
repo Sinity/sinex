@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use super::junit;
 use super::monitor::TestMonitor;
-use super::reporter::{TestReporter, TestStats};
+use super::reporter::{TestPhaseObserver, TestReporter, TestStats};
 use crate::command::{CommandContext, StageHandle};
 use crate::history::HistoryDb;
 use crate::process::ProcessBuilder;
@@ -208,6 +208,43 @@ fn finish_stage(
     }
 }
 
+struct NextestPhaseStages<'ctx, 'db> {
+    ctx: &'ctx CommandContext,
+    history: Option<(&'db HistoryDb, i64)>,
+    compile_stage: Option<StageHandle>,
+    run_stage: Option<StageHandle>,
+}
+
+impl<'ctx, 'db> NextestPhaseStages<'ctx, 'db> {
+    fn start(ctx: &'ctx CommandContext, history: Option<(&'db HistoryDb, i64)>) -> Self {
+        Self {
+            ctx,
+            history,
+            compile_stage: Some(start_stage(ctx, history, "nextest-compile")),
+            run_stage: None,
+        }
+    }
+
+    fn finish(mut self, success: bool) {
+        if let Some(run_stage) = self.run_stage.take() {
+            finish_stage(self.ctx, self.history, run_stage, success);
+        } else if let Some(compile_stage) = self.compile_stage.take() {
+            finish_stage(self.ctx, self.history, compile_stage, success);
+        }
+    }
+}
+
+impl TestPhaseObserver for NextestPhaseStages<'_, '_> {
+    fn suite_started(&mut self) {
+        if let Some(compile_stage) = self.compile_stage.take() {
+            finish_stage(self.ctx, self.history, compile_stage, true);
+        }
+        if self.run_stage.is_none() {
+            self.run_stage = Some(start_stage(self.ctx, self.history, "nextest-run"));
+        }
+    }
+}
+
 impl<'a> TestRunner<'a> {
     #[must_use]
     pub fn new(ctx: &'a CommandContext, profile: &'a str) -> Self {
@@ -306,9 +343,15 @@ impl<'a> TestRunner<'a> {
 
         // Run reporter (blocks until stdout closes)
         let reporter = TestReporter::new(self.ctx.is_human());
-        let stream_stage = start_stage(self.ctx, history, "nextest-stream");
-        let stats_result = reporter.run(stdout_reader, stderr_reader, history);
-        finish_stage(self.ctx, history, stream_stage, stats_result.is_ok());
+        let mut phase_stages = NextestPhaseStages::start(self.ctx, history);
+        let stats_result = reporter.run(
+            stdout_reader,
+            stderr_reader,
+            history,
+            Some(&mut phase_stages),
+        );
+        let stats_ok = stats_result.is_ok();
+        phase_stages.finish(stats_ok);
         let mut stats = stats_result?;
 
         // Wait for process to finish. The reporter already blocked on stdout,
