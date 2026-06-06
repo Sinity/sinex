@@ -378,6 +378,7 @@ pub struct InvocationResourceMetrics {
     pub process_tree: ProcessTreeMetrics,
     pub shared_build: SharedBuildMetrics,
     pub host_pressure: HostPressureMetrics,
+    pub host_block_io: HostBlockIoMetrics,
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -386,6 +387,7 @@ pub struct InvocationResourceMetrics {
     pub process_tree: ProcessTreeMetrics,
     pub shared_build: SharedBuildMetrics,
     pub host_pressure: HostPressureMetrics,
+    pub host_block_io: HostBlockIoMetrics,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -417,6 +419,35 @@ impl HostPressureMetrics {
             || self.memory_full_avg10_max.is_some()
             || self.shm_free_min_mb.is_some()
             || self.shm_used_max_mb.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(target_os = "linux", derive(Serialize, Deserialize))]
+pub struct HostBlockIoMetrics {
+    pub read_mib_delta: Option<f64>,
+    pub write_mib_delta: Option<f64>,
+    pub read_iops_avg: Option<f64>,
+    pub write_iops_avg: Option<f64>,
+    pub busiest_device: Option<String>,
+    pub busiest_device_total_mib_delta: Option<f64>,
+    pub busiest_device_read_iops_avg: Option<f64>,
+    pub busiest_device_write_iops_avg: Option<f64>,
+    pub busiest_device_weighted_io_ms_per_s: Option<f64>,
+}
+
+impl HostBlockIoMetrics {
+    #[must_use]
+    pub fn has_samples(&self) -> bool {
+        self.read_mib_delta.is_some()
+            || self.write_mib_delta.is_some()
+            || self.read_iops_avg.is_some()
+            || self.write_iops_avg.is_some()
+            || self.busiest_device.is_some()
+            || self.busiest_device_total_mib_delta.is_some()
+            || self.busiest_device_read_iops_avg.is_some()
+            || self.busiest_device_write_iops_avg.is_some()
+            || self.busiest_device_weighted_io_ms_per_s.is_some()
     }
 }
 
@@ -518,6 +549,34 @@ struct CgroupSample {
 }
 
 #[cfg(target_os = "linux")]
+#[derive(Debug, Clone)]
+struct BlockDeviceSample {
+    reads_completed: u64,
+    sectors_read: u64,
+    writes_completed: u64,
+    sectors_written: u64,
+    weighted_io_time_ms: u64,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone)]
+struct BlockDeviceInterval {
+    read_mib_delta: f64,
+    write_mib_delta: f64,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Default)]
+struct BlockDeviceTotals {
+    read_mib_delta: f64,
+    write_mib_delta: f64,
+    reads: u64,
+    writes: u64,
+    weighted_io_ms: u64,
+    elapsed_s: f64,
+}
+
+#[cfg(target_os = "linux")]
 fn default_cgroup_root() -> PathBuf {
     PathBuf::from(DEFAULT_CGROUP_ROOT)
 }
@@ -546,6 +605,50 @@ fn read_cgroup_sample_from_dir(path: &Path) -> Option<CgroupSample> {
         cpu_usage_usec,
         memory_bytes,
     })
+}
+
+#[cfg(target_os = "linux")]
+fn read_block_device_samples() -> HashMap<String, BlockDeviceSample> {
+    let mut samples = HashMap::new();
+    let Ok(contents) = std::fs::read_to_string("/proc/diskstats") else {
+        return samples;
+    };
+
+    for line in contents.lines() {
+        let parts = line.split_whitespace().collect::<Vec<_>>();
+        if parts.len() < 14 {
+            continue;
+        }
+        let name = parts[2].to_string();
+        if !is_whole_block_device(&name) {
+            continue;
+        }
+        let Some(sample) = parse_block_device_sample(&parts) else {
+            continue;
+        };
+        samples.insert(name, sample);
+    }
+    samples
+}
+
+#[cfg(target_os = "linux")]
+fn parse_block_device_sample(parts: &[&str]) -> Option<BlockDeviceSample> {
+    Some(BlockDeviceSample {
+        reads_completed: parts.get(3)?.parse().ok()?,
+        sectors_read: parts.get(5)?.parse().ok()?,
+        writes_completed: parts.get(7)?.parse().ok()?,
+        sectors_written: parts.get(9)?.parse().ok()?,
+        weighted_io_time_ms: parts.get(13)?.parse().ok()?,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn is_whole_block_device(name: &str) -> bool {
+    if name.starts_with("loop") || name.starts_with("ram") {
+        return false;
+    }
+    let sysfs = std::path::Path::new("/sys/class/block").join(name);
+    !sysfs.join("partition").exists() && sysfs.join("device").exists()
 }
 
 #[cfg(target_os = "linux")]
@@ -1387,6 +1490,139 @@ impl HostPressureAccumulator {
 }
 
 #[cfg(target_os = "linux")]
+#[derive(Debug, Default)]
+struct HostBlockIoAccumulator {
+    previous: Option<HashMap<String, BlockDeviceSample>>,
+    total_read_mib: f64,
+    total_write_mib: f64,
+    total_reads: u64,
+    total_writes: u64,
+    total_elapsed_s: f64,
+    by_device: HashMap<String, BlockDeviceTotals>,
+}
+
+#[cfg(target_os = "linux")]
+impl HostBlockIoAccumulator {
+    const SECTOR_BYTES: f64 = 512.0;
+    const MIB_BYTES: f64 = 1024.0 * 1024.0;
+
+    fn sample(&mut self, elapsed: Duration) {
+        let current = read_block_device_samples();
+        if let Some(previous) = self.previous.clone()
+            && elapsed.as_secs_f64() > 0.0
+        {
+            self.record_interval(&previous, &current, elapsed.as_secs_f64());
+        }
+        self.previous = Some(current);
+    }
+
+    fn record_interval(
+        &mut self,
+        previous: &HashMap<String, BlockDeviceSample>,
+        current: &HashMap<String, BlockDeviceSample>,
+        elapsed_s: f64,
+    ) {
+        self.total_elapsed_s += elapsed_s;
+        for (name, current_sample) in current {
+            let Some(previous_sample) = previous.get(name) else {
+                continue;
+            };
+            let Some(interval) = block_device_interval(previous_sample, current_sample, elapsed_s)
+            else {
+                continue;
+            };
+            self.total_read_mib += interval.read_mib_delta;
+            self.total_write_mib += interval.write_mib_delta;
+            self.total_reads = self.total_reads.saturating_add(
+                current_sample
+                    .reads_completed
+                    .saturating_sub(previous_sample.reads_completed),
+            );
+            self.total_writes = self.total_writes.saturating_add(
+                current_sample
+                    .writes_completed
+                    .saturating_sub(previous_sample.writes_completed),
+            );
+            let totals = self.by_device.entry(name.clone()).or_default();
+            totals.read_mib_delta += interval.read_mib_delta;
+            totals.write_mib_delta += interval.write_mib_delta;
+            totals.reads = totals.reads.saturating_add(
+                current_sample
+                    .reads_completed
+                    .saturating_sub(previous_sample.reads_completed),
+            );
+            totals.writes = totals.writes.saturating_add(
+                current_sample
+                    .writes_completed
+                    .saturating_sub(previous_sample.writes_completed),
+            );
+            totals.weighted_io_ms = totals.weighted_io_ms.saturating_add(
+                current_sample
+                    .weighted_io_time_ms
+                    .saturating_sub(previous_sample.weighted_io_time_ms),
+            );
+            totals.elapsed_s += elapsed_s;
+        }
+    }
+
+    fn finish(&self) -> HostBlockIoMetrics {
+        let busiest = self.by_device.iter().max_by(|left, right| {
+            let left_value = left.1.weighted_io_ms as f64 / left.1.elapsed_s.max(0.001);
+            let right_value = right.1.weighted_io_ms as f64 / right.1.elapsed_s.max(0.001);
+            left_value
+                .partial_cmp(&right_value)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        HostBlockIoMetrics {
+            read_mib_delta: (self.total_elapsed_s > 0.0).then_some(self.total_read_mib),
+            write_mib_delta: (self.total_elapsed_s > 0.0).then_some(self.total_write_mib),
+            read_iops_avg: (self.total_elapsed_s > 0.0)
+                .then_some(self.total_reads as f64 / self.total_elapsed_s),
+            write_iops_avg: (self.total_elapsed_s > 0.0)
+                .then_some(self.total_writes as f64 / self.total_elapsed_s),
+            busiest_device: busiest.map(|(name, _)| name.clone()),
+            busiest_device_total_mib_delta: busiest
+                .map(|(_, row)| row.read_mib_delta + row.write_mib_delta),
+            busiest_device_read_iops_avg: busiest
+                .filter(|(_, row)| row.elapsed_s > 0.0)
+                .map(|(_, row)| row.reads as f64 / row.elapsed_s),
+            busiest_device_write_iops_avg: busiest
+                .filter(|(_, row)| row.elapsed_s > 0.0)
+                .map(|(_, row)| row.writes as f64 / row.elapsed_s),
+            busiest_device_weighted_io_ms_per_s: busiest
+                .filter(|(_, row)| row.elapsed_s > 0.0)
+                .map(|(_, row)| row.weighted_io_ms as f64 / row.elapsed_s),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn block_device_interval(
+    previous: &BlockDeviceSample,
+    current: &BlockDeviceSample,
+    _elapsed_s: f64,
+) -> Option<BlockDeviceInterval> {
+    if current.reads_completed < previous.reads_completed
+        || current.writes_completed < previous.writes_completed
+        || current.sectors_read < previous.sectors_read
+        || current.sectors_written < previous.sectors_written
+        || current.weighted_io_time_ms < previous.weighted_io_time_ms
+    {
+        return None;
+    }
+    let read_mib = ((current.sectors_read - previous.sectors_read) as f64
+        * HostBlockIoAccumulator::SECTOR_BYTES)
+        / HostBlockIoAccumulator::MIB_BYTES;
+    let write_mib = ((current.sectors_written - previous.sectors_written) as f64
+        * HostBlockIoAccumulator::SECTOR_BYTES)
+        / HostBlockIoAccumulator::MIB_BYTES;
+    Some(BlockDeviceInterval {
+        read_mib_delta: read_mib,
+        write_mib_delta: write_mib,
+    })
+}
+
+#[cfg(target_os = "linux")]
 #[must_use]
 pub fn read_pressure_snapshot(resource: &str) -> PressureSnapshot {
     let path = format!("/proc/pressure/{resource}");
@@ -1521,6 +1757,8 @@ pub struct InvocationResourceMonitor {
     #[cfg(target_os = "linux")]
     host_pressure_metrics: Arc<Mutex<HostPressureAccumulator>>,
     #[cfg(target_os = "linux")]
+    host_block_io_metrics: Arc<Mutex<HostBlockIoAccumulator>>,
+    #[cfg(target_os = "linux")]
     root_pid: u32,
     #[cfg(target_os = "linux")]
     resolved_shared_cgroup_targets: ResolvedSharedCgroupTargets,
@@ -1543,6 +1781,7 @@ impl InvocationResourceMonitor {
             let metrics = Arc::new(Mutex::new(ResourceAccumulator::default()));
             let shared_build_metrics = Arc::new(Mutex::new(SharedBuildAccumulator::default()));
             let host_pressure_metrics = Arc::new(Mutex::new(HostPressureAccumulator::default()));
+            let host_block_io_metrics = Arc::new(Mutex::new(HostBlockIoAccumulator::default()));
             let running = Arc::new(AtomicBool::new(true));
             let cgroup_root = default_cgroup_root();
             let resolved_shared_cgroup_targets = resolve_shared_cgroup_targets(&cgroup_root);
@@ -1554,11 +1793,16 @@ impl InvocationResourceMonitor {
             let metrics_clone = metrics.clone();
             let shared_build_metrics_clone = shared_build_metrics.clone();
             let host_pressure_metrics_clone = host_pressure_metrics.clone();
+            let host_block_io_metrics_clone = host_block_io_metrics.clone();
             let running_clone = running.clone();
             let resolved_shared_cgroup_targets_clone = resolved_shared_cgroup_targets.clone();
 
             let handle = thread::spawn(move || {
+                let mut previous_sample_at = std::time::Instant::now();
                 while running_clone.load(Ordering::Relaxed) {
+                    let now = std::time::Instant::now();
+                    let elapsed = now.saturating_duration_since(previous_sample_at);
+                    previous_sample_at = now;
                     sample_current_process_tree(
                         root_pid,
                         metrics_clone.as_ref(),
@@ -1572,6 +1816,7 @@ impl InvocationResourceMonitor {
                         cpu_count,
                     );
                     host_pressure_metrics_clone.lock().sample();
+                    host_block_io_metrics_clone.lock().sample(elapsed);
                     thread::sleep(Duration::from_millis(
                         INVOCATION_RESOURCE_SAMPLE_INTERVAL_MS,
                     ));
@@ -1583,6 +1828,7 @@ impl InvocationResourceMonitor {
                 metrics,
                 shared_build_metrics,
                 host_pressure_metrics,
+                host_block_io_metrics,
                 root_pid,
                 resolved_shared_cgroup_targets,
                 page_size,
@@ -1614,6 +1860,11 @@ impl InvocationResourceMonitor {
                 self.cpu_count,
             );
             self.host_pressure_metrics.lock().sample();
+            self.host_block_io_metrics
+                .lock()
+                .sample(Duration::from_millis(
+                    INVOCATION_RESOURCE_SAMPLE_INTERVAL_MS,
+                ));
             self.running.store(false, Ordering::Relaxed);
             if let Some(handle) = self.handle.take() {
                 let _ = handle.join();
@@ -1622,6 +1873,7 @@ impl InvocationResourceMonitor {
                 process_tree: self.metrics.lock().finish(),
                 shared_build: self.shared_build_metrics.lock().finish(),
                 host_pressure: self.host_pressure_metrics.lock().finish(),
+                host_block_io: self.host_block_io_metrics.lock().finish(),
             };
         }
 

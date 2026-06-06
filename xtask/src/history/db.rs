@@ -1115,6 +1115,15 @@ impl HistoryDb {
                 host_io_pressure_full_avg10_max REAL,
                 host_memory_pressure_some_avg10_max REAL,
                 host_memory_pressure_full_avg10_max REAL,
+                host_block_read_mib_delta REAL,
+                host_block_write_mib_delta REAL,
+                host_block_read_iops_avg REAL,
+                host_block_write_iops_avg REAL,
+                host_block_busiest_device TEXT,
+                host_block_busiest_device_total_mib_delta REAL,
+                host_block_busiest_device_read_iops_avg REAL,
+                host_block_busiest_device_write_iops_avg REAL,
+                host_block_busiest_device_weighted_io_ms_per_s REAL,
                 shm_free_min_mb REAL,
                 shm_used_max_mb REAL,
                 process_count_max INTEGER,
@@ -1706,6 +1715,31 @@ impl HistoryDb {
         self.ensure_column_exists("invocations", "host_io_pressure_full_avg10_max", "REAL")?;
         self.ensure_column_exists("invocations", "host_memory_pressure_some_avg10_max", "REAL")?;
         self.ensure_column_exists("invocations", "host_memory_pressure_full_avg10_max", "REAL")?;
+        self.ensure_column_exists("invocations", "host_block_read_mib_delta", "REAL")?;
+        self.ensure_column_exists("invocations", "host_block_write_mib_delta", "REAL")?;
+        self.ensure_column_exists("invocations", "host_block_read_iops_avg", "REAL")?;
+        self.ensure_column_exists("invocations", "host_block_write_iops_avg", "REAL")?;
+        self.ensure_column_exists("invocations", "host_block_busiest_device", "TEXT")?;
+        self.ensure_column_exists(
+            "invocations",
+            "host_block_busiest_device_total_mib_delta",
+            "REAL",
+        )?;
+        self.ensure_column_exists(
+            "invocations",
+            "host_block_busiest_device_read_iops_avg",
+            "REAL",
+        )?;
+        self.ensure_column_exists(
+            "invocations",
+            "host_block_busiest_device_write_iops_avg",
+            "REAL",
+        )?;
+        self.ensure_column_exists(
+            "invocations",
+            "host_block_busiest_device_weighted_io_ms_per_s",
+            "REAL",
+        )?;
         self.ensure_column_exists("invocations", "cancel_reason", "TEXT")?;
         self.ensure_column_exists("invocations", "cancelled_by", "TEXT")?;
         self.ensure_column_exists("invocations", "shm_free_min_mb", "REAL")?;
@@ -3823,11 +3857,20 @@ impl HistoryDb {
                 host_io_pressure_full_avg10_max = ?13,
                 host_memory_pressure_some_avg10_max = ?14,
                 host_memory_pressure_full_avg10_max = ?15,
-                shm_free_min_mb = ?16,
-                shm_used_max_mb = ?17,
-                process_count_max = ?18,
-                resource_sample_count = ?19
-            WHERE id = ?20
+                host_block_read_mib_delta = ?16,
+                host_block_write_mib_delta = ?17,
+                host_block_read_iops_avg = ?18,
+                host_block_write_iops_avg = ?19,
+                host_block_busiest_device = ?20,
+                host_block_busiest_device_total_mib_delta = ?21,
+                host_block_busiest_device_read_iops_avg = ?22,
+                host_block_busiest_device_write_iops_avg = ?23,
+                host_block_busiest_device_weighted_io_ms_per_s = ?24,
+                shm_free_min_mb = ?25,
+                shm_used_max_mb = ?26,
+                process_count_max = ?27,
+                resource_sample_count = ?28
+            WHERE id = ?29
             ",
             params![
                 metrics.process_tree.cpu_usage_avg,
@@ -3849,6 +3892,15 @@ impl HistoryDb {
                 metrics.host_pressure.io_full_avg10_max,
                 metrics.host_pressure.memory_some_avg10_max,
                 metrics.host_pressure.memory_full_avg10_max,
+                metrics.host_block_io.read_mib_delta,
+                metrics.host_block_io.write_mib_delta,
+                metrics.host_block_io.read_iops_avg,
+                metrics.host_block_io.write_iops_avg,
+                metrics.host_block_io.busiest_device.clone(),
+                metrics.host_block_io.busiest_device_total_mib_delta,
+                metrics.host_block_io.busiest_device_read_iops_avg,
+                metrics.host_block_io.busiest_device_write_iops_avg,
+                metrics.host_block_io.busiest_device_weighted_io_ms_per_s,
                 metrics.host_pressure.shm_free_min_mb,
                 metrics.host_pressure.shm_used_max_mb,
                 metrics.process_tree.process_count_max.map(i64::from),
@@ -3981,6 +4033,55 @@ impl HistoryDb {
             } else {
                 "NULL"
             };
+        let host_block_read_mib_expr = if columns.contains("host_block_read_mib_delta") {
+            "host_block_read_mib_delta"
+        } else {
+            "NULL"
+        };
+        let host_block_write_mib_expr = if columns.contains("host_block_write_mib_delta") {
+            "host_block_write_mib_delta"
+        } else {
+            "NULL"
+        };
+        let host_block_read_iops_expr = if columns.contains("host_block_read_iops_avg") {
+            "host_block_read_iops_avg"
+        } else {
+            "NULL"
+        };
+        let host_block_write_iops_expr = if columns.contains("host_block_write_iops_avg") {
+            "host_block_write_iops_avg"
+        } else {
+            "NULL"
+        };
+        let host_block_busiest_device_expr = if columns.contains("host_block_busiest_device") {
+            "host_block_busiest_device"
+        } else {
+            "NULL"
+        };
+        let host_block_busiest_total_mib_expr =
+            if columns.contains("host_block_busiest_device_total_mib_delta") {
+                "host_block_busiest_device_total_mib_delta"
+            } else {
+                "NULL"
+            };
+        let host_block_busiest_read_iops_expr =
+            if columns.contains("host_block_busiest_device_read_iops_avg") {
+                "host_block_busiest_device_read_iops_avg"
+            } else {
+                "NULL"
+            };
+        let host_block_busiest_write_iops_expr =
+            if columns.contains("host_block_busiest_device_write_iops_avg") {
+                "host_block_busiest_device_write_iops_avg"
+            } else {
+                "NULL"
+            };
+        let host_block_busiest_weighted_expr =
+            if columns.contains("host_block_busiest_device_weighted_io_ms_per_s") {
+                "host_block_busiest_device_weighted_io_ms_per_s"
+            } else {
+                "NULL"
+            };
         let shm_free_expr = if columns.contains("shm_free_min_mb") {
             "shm_free_min_mb"
         } else {
@@ -4015,6 +4116,15 @@ impl HistoryDb {
                          {host_io_pressure_full_expr},
                          {host_memory_pressure_some_expr},
                          {host_memory_pressure_full_expr},
+                         {host_block_read_mib_expr},
+                         {host_block_write_mib_expr},
+                         {host_block_read_iops_expr},
+                         {host_block_write_iops_expr},
+                         {host_block_busiest_device_expr},
+                         {host_block_busiest_total_mib_expr},
+                         {host_block_busiest_read_iops_expr},
+                         {host_block_busiest_write_iops_expr},
+                         {host_block_busiest_weighted_expr},
                          {shm_free_expr},
                          {shm_used_expr}
               FROM invocations
@@ -4034,6 +4144,15 @@ impl HistoryDb {
                      OR {host_io_pressure_full_expr} IS NOT NULL
                      OR {host_memory_pressure_some_expr} IS NOT NULL
                      OR {host_memory_pressure_full_expr} IS NOT NULL
+                     OR {host_block_read_mib_expr} IS NOT NULL
+                     OR {host_block_write_mib_expr} IS NOT NULL
+                     OR {host_block_read_iops_expr} IS NOT NULL
+                     OR {host_block_write_iops_expr} IS NOT NULL
+                     OR {host_block_busiest_device_expr} IS NOT NULL
+                     OR {host_block_busiest_total_mib_expr} IS NOT NULL
+                     OR {host_block_busiest_read_iops_expr} IS NOT NULL
+                     OR {host_block_busiest_write_iops_expr} IS NOT NULL
+                     OR {host_block_busiest_weighted_expr} IS NOT NULL
                      OR {shm_free_expr} IS NOT NULL
                      OR {shm_used_expr} IS NOT NULL
                      OR cpu_usage_avg IS NOT NULL
@@ -4084,8 +4203,17 @@ impl HistoryDb {
                 host_io_pressure_full_avg10_max: row.get(20)?,
                 host_memory_pressure_some_avg10_max: row.get(21)?,
                 host_memory_pressure_full_avg10_max: row.get(22)?,
-                shm_free_min_mb: row.get(23)?,
-                shm_used_max_mb: row.get(24)?,
+                host_block_read_mib_delta: row.get(23)?,
+                host_block_write_mib_delta: row.get(24)?,
+                host_block_read_iops_avg: row.get(25)?,
+                host_block_write_iops_avg: row.get(26)?,
+                host_block_busiest_device: row.get(27)?,
+                host_block_busiest_device_total_mib_delta: row.get(28)?,
+                host_block_busiest_device_read_iops_avg: row.get(29)?,
+                host_block_busiest_device_write_iops_avg: row.get(30)?,
+                host_block_busiest_device_weighted_io_ms_per_s: row.get(31)?,
+                shm_free_min_mb: row.get(32)?,
+                shm_used_max_mb: row.get(33)?,
             })
         })?;
 
@@ -4194,6 +4322,55 @@ impl HistoryDb {
             } else {
                 "NULL"
             };
+        let host_block_read_mib_expr = if columns.contains("host_block_read_mib_delta") {
+            "host_block_read_mib_delta"
+        } else {
+            "NULL"
+        };
+        let host_block_write_mib_expr = if columns.contains("host_block_write_mib_delta") {
+            "host_block_write_mib_delta"
+        } else {
+            "NULL"
+        };
+        let host_block_read_iops_expr = if columns.contains("host_block_read_iops_avg") {
+            "host_block_read_iops_avg"
+        } else {
+            "NULL"
+        };
+        let host_block_write_iops_expr = if columns.contains("host_block_write_iops_avg") {
+            "host_block_write_iops_avg"
+        } else {
+            "NULL"
+        };
+        let host_block_busiest_device_expr = if columns.contains("host_block_busiest_device") {
+            "host_block_busiest_device"
+        } else {
+            "NULL"
+        };
+        let host_block_busiest_total_mib_expr =
+            if columns.contains("host_block_busiest_device_total_mib_delta") {
+                "host_block_busiest_device_total_mib_delta"
+            } else {
+                "NULL"
+            };
+        let host_block_busiest_read_iops_expr =
+            if columns.contains("host_block_busiest_device_read_iops_avg") {
+                "host_block_busiest_device_read_iops_avg"
+            } else {
+                "NULL"
+            };
+        let host_block_busiest_write_iops_expr =
+            if columns.contains("host_block_busiest_device_write_iops_avg") {
+                "host_block_busiest_device_write_iops_avg"
+            } else {
+                "NULL"
+            };
+        let host_block_busiest_weighted_expr =
+            if columns.contains("host_block_busiest_device_weighted_io_ms_per_s") {
+                "host_block_busiest_device_weighted_io_ms_per_s"
+            } else {
+                "NULL"
+            };
         let shm_free_expr = if columns.contains("shm_free_min_mb") {
             "shm_free_min_mb"
         } else {
@@ -4229,6 +4406,15 @@ impl HistoryDb {
                      {host_io_pressure_full_expr},
                      {host_memory_pressure_some_expr},
                      {host_memory_pressure_full_expr},
+                     {host_block_read_mib_expr},
+                     {host_block_write_mib_expr},
+                     {host_block_read_iops_expr},
+                     {host_block_write_iops_expr},
+                     {host_block_busiest_device_expr},
+                     {host_block_busiest_total_mib_expr},
+                     {host_block_busiest_read_iops_expr},
+                     {host_block_busiest_write_iops_expr},
+                     {host_block_busiest_weighted_expr},
                      {shm_free_expr},
                      {shm_used_expr}
               FROM invocations
@@ -4263,8 +4449,17 @@ impl HistoryDb {
                     host_io_pressure_full_avg10_max: row.get(20)?,
                     host_memory_pressure_some_avg10_max: row.get(21)?,
                     host_memory_pressure_full_avg10_max: row.get(22)?,
-                    shm_free_min_mb: row.get(23)?,
-                    shm_used_max_mb: row.get(24)?,
+                    host_block_read_mib_delta: row.get(23)?,
+                    host_block_write_mib_delta: row.get(24)?,
+                    host_block_read_iops_avg: row.get(25)?,
+                    host_block_write_iops_avg: row.get(26)?,
+                    host_block_busiest_device: row.get(27)?,
+                    host_block_busiest_device_total_mib_delta: row.get(28)?,
+                    host_block_busiest_device_read_iops_avg: row.get(29)?,
+                    host_block_busiest_device_write_iops_avg: row.get(30)?,
+                    host_block_busiest_device_weighted_io_ms_per_s: row.get(31)?,
+                    shm_free_min_mb: row.get(32)?,
+                    shm_used_max_mb: row.get(33)?,
                 })
             })
             .optional()
@@ -5517,6 +5712,15 @@ pub struct ResourceUsage {
     pub host_io_pressure_full_avg10_max: Option<f64>,
     pub host_memory_pressure_some_avg10_max: Option<f64>,
     pub host_memory_pressure_full_avg10_max: Option<f64>,
+    pub host_block_read_mib_delta: Option<f64>,
+    pub host_block_write_mib_delta: Option<f64>,
+    pub host_block_read_iops_avg: Option<f64>,
+    pub host_block_write_iops_avg: Option<f64>,
+    pub host_block_busiest_device: Option<String>,
+    pub host_block_busiest_device_total_mib_delta: Option<f64>,
+    pub host_block_busiest_device_read_iops_avg: Option<f64>,
+    pub host_block_busiest_device_write_iops_avg: Option<f64>,
+    pub host_block_busiest_device_weighted_io_ms_per_s: Option<f64>,
     pub shm_free_min_mb: Option<f64>,
     pub shm_used_max_mb: Option<f64>,
 }
@@ -5543,6 +5747,17 @@ impl ResourceUsage {
             || self.host_io_pressure_full_avg10_max.is_some()
             || self.host_memory_pressure_some_avg10_max.is_some()
             || self.host_memory_pressure_full_avg10_max.is_some()
+            || self.host_block_read_mib_delta.is_some()
+            || self.host_block_write_mib_delta.is_some()
+            || self.host_block_read_iops_avg.is_some()
+            || self.host_block_write_iops_avg.is_some()
+            || self.host_block_busiest_device.is_some()
+            || self.host_block_busiest_device_total_mib_delta.is_some()
+            || self.host_block_busiest_device_read_iops_avg.is_some()
+            || self.host_block_busiest_device_write_iops_avg.is_some()
+            || self
+                .host_block_busiest_device_weighted_io_ms_per_s
+                .is_some()
             || self.shm_free_min_mb.is_some()
             || self.shm_used_max_mb.is_some()
     }
@@ -8569,6 +8784,17 @@ mod tests {
                     shm_free_min_mb: Some(2048.0),
                     shm_used_max_mb: Some(512.0),
                 },
+                host_block_io: crate::process::HostBlockIoMetrics {
+                    read_mib_delta: Some(11.0),
+                    write_mib_delta: Some(22.0),
+                    read_iops_avg: Some(33.0),
+                    write_iops_avg: Some(44.0),
+                    busiest_device: Some("nvme0n1".to_string()),
+                    busiest_device_total_mib_delta: Some(55.0),
+                    busiest_device_read_iops_avg: Some(66.0),
+                    busiest_device_write_iops_avg: Some(77.0),
+                    busiest_device_weighted_io_ms_per_s: Some(88.0),
+                },
             },
         )?;
         db.finish_invocation(invocation_id, InvocationStatus::Success, Some(0), 1.0)?;
@@ -8594,6 +8820,18 @@ mod tests {
         );
         assert_eq!(usage.host_io_pressure_full_avg10_max, Some(3.0));
         assert_eq!(usage.host_memory_pressure_full_avg10_max, Some(5.0));
+        assert_eq!(usage.host_block_read_mib_delta, Some(11.0));
+        assert_eq!(usage.host_block_write_mib_delta, Some(22.0));
+        assert_eq!(usage.host_block_read_iops_avg, Some(33.0));
+        assert_eq!(usage.host_block_write_iops_avg, Some(44.0));
+        assert_eq!(usage.host_block_busiest_device.as_deref(), Some("nvme0n1"));
+        assert_eq!(usage.host_block_busiest_device_total_mib_delta, Some(55.0));
+        assert_eq!(usage.host_block_busiest_device_read_iops_avg, Some(66.0));
+        assert_eq!(usage.host_block_busiest_device_write_iops_avg, Some(77.0));
+        assert_eq!(
+            usage.host_block_busiest_device_weighted_io_ms_per_s,
+            Some(88.0)
+        );
         assert_eq!(usage.shm_free_min_mb, Some(2048.0));
         assert_eq!(usage.shm_used_max_mb, Some(512.0));
         assert_eq!(usage.process_count_max, Some(7));

@@ -244,7 +244,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                     "xtask history overlap inv:2000549 --limit 20",
                 ],
                 notes: &[
-                    "This reports recorded xtask overlap and shared CPU/memory slices; it cannot name arbitrary external I/O producers unless machine telemetry captured them elsewhere.",
+                    "This reports recorded xtask overlap, shared CPU/memory slices, PSI maxima, and aggregate block-device counters sampled during the xtask invocation. It does not partition unrelated service ownership.",
                 ],
             },
             GuideEntry {

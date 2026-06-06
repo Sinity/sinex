@@ -1266,6 +1266,15 @@ struct SharedResourceSummary {
     host_io_pressure_full_avg10_max: Option<f64>,
     host_memory_pressure_some_avg10_max: Option<f64>,
     host_memory_pressure_full_avg10_max: Option<f64>,
+    host_block_read_mib_delta: Option<f64>,
+    host_block_write_mib_delta: Option<f64>,
+    host_block_read_iops_avg: Option<f64>,
+    host_block_write_iops_avg: Option<f64>,
+    host_block_busiest_device: Option<String>,
+    host_block_busiest_device_total_mib_delta: Option<f64>,
+    host_block_busiest_device_read_iops_avg: Option<f64>,
+    host_block_busiest_device_write_iops_avg: Option<f64>,
+    host_block_busiest_device_weighted_io_ms_per_s: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1333,7 +1342,8 @@ fn execute_overlap(
         evidence_limits: vec![
             "History overlap is limited to xtask invocations and background jobs recorded in this checkout history database.".to_string(),
             "Shared nix/build/background slice columns are CPU and memory summaries, not per-process I/O byte attribution.".to_string(),
-            "Host pressure fields explain contention severity during the invocation, but not the external process name that caused pressure.".to_string(),
+            "Host pressure fields are PSI stall percentages observed during the invocation; they do not identify a causal process or I/O pattern by themselves.".to_string(),
+            "Host block fields are aggregate whole-device deltas sampled while this xtask invocation ran; they quantify device load shape but do not partition ownership across unrelated services.".to_string(),
         ],
     };
 
@@ -1557,7 +1567,16 @@ fn load_shared_resource_summary(
                host_io_pressure_some_avg10_max,
                host_io_pressure_full_avg10_max,
                host_memory_pressure_some_avg10_max,
-               host_memory_pressure_full_avg10_max
+               host_memory_pressure_full_avg10_max,
+               host_block_read_mib_delta,
+               host_block_write_mib_delta,
+               host_block_read_iops_avg,
+               host_block_write_iops_avg,
+               host_block_busiest_device,
+               host_block_busiest_device_total_mib_delta,
+               host_block_busiest_device_read_iops_avg,
+               host_block_busiest_device_write_iops_avg,
+               host_block_busiest_device_weighted_io_ms_per_s
         FROM invocations
         WHERE id = {}
         LIMIT 1
@@ -1611,6 +1630,27 @@ fn load_shared_resource_summary(
         host_memory_pressure_full_avg10_max: json_optional_f64(
             &row,
             "host_memory_pressure_full_avg10_max",
+        ),
+        host_block_read_mib_delta: json_optional_f64(&row, "host_block_read_mib_delta"),
+        host_block_write_mib_delta: json_optional_f64(&row, "host_block_write_mib_delta"),
+        host_block_read_iops_avg: json_optional_f64(&row, "host_block_read_iops_avg"),
+        host_block_write_iops_avg: json_optional_f64(&row, "host_block_write_iops_avg"),
+        host_block_busiest_device: json_optional_string(&row, "host_block_busiest_device"),
+        host_block_busiest_device_total_mib_delta: json_optional_f64(
+            &row,
+            "host_block_busiest_device_total_mib_delta",
+        ),
+        host_block_busiest_device_read_iops_avg: json_optional_f64(
+            &row,
+            "host_block_busiest_device_read_iops_avg",
+        ),
+        host_block_busiest_device_write_iops_avg: json_optional_f64(
+            &row,
+            "host_block_busiest_device_write_iops_avg",
+        ),
+        host_block_busiest_device_weighted_io_ms_per_s: json_optional_f64(
+            &row,
+            "host_block_busiest_device_weighted_io_ms_per_s",
         ),
     })
 }
@@ -1820,6 +1860,65 @@ fn print_overlap_report(report: &InvocationOverlapReport) {
         "host memory.full avg10 max",
         report.shared_resources.host_memory_pressure_full_avg10_max,
         "%",
+    );
+    push_optional_metric(
+        &mut resources,
+        "host block read",
+        report.shared_resources.host_block_read_mib_delta,
+        " MiB",
+    );
+    push_optional_metric(
+        &mut resources,
+        "host block write",
+        report.shared_resources.host_block_write_mib_delta,
+        " MiB",
+    );
+    push_optional_metric(
+        &mut resources,
+        "host block read iops avg",
+        report.shared_resources.host_block_read_iops_avg,
+        "",
+    );
+    push_optional_metric(
+        &mut resources,
+        "host block write iops avg",
+        report.shared_resources.host_block_write_iops_avg,
+        "",
+    );
+    if let Some(device) = &report.shared_resources.host_block_busiest_device {
+        resources.push_record(["host block busiest device".to_string(), device.clone()]);
+    }
+    push_optional_metric(
+        &mut resources,
+        "busiest device total",
+        report
+            .shared_resources
+            .host_block_busiest_device_total_mib_delta,
+        " MiB",
+    );
+    push_optional_metric(
+        &mut resources,
+        "busiest device read iops",
+        report
+            .shared_resources
+            .host_block_busiest_device_read_iops_avg,
+        "",
+    );
+    push_optional_metric(
+        &mut resources,
+        "busiest device write iops",
+        report
+            .shared_resources
+            .host_block_busiest_device_write_iops_avg,
+        "",
+    );
+    push_optional_metric(
+        &mut resources,
+        "busiest device weighted io",
+        report
+            .shared_resources
+            .host_block_busiest_device_weighted_io_ms_per_s,
+        " ms/s",
     );
     if let Some(samples) = report.shared_resources.resource_sample_count {
         resources.push_record(["resource samples".to_string(), samples.to_string()]);
@@ -4178,6 +4277,15 @@ fn live_resource_usage_for_invocation(
             host_io_pressure_full_avg10_max: None,
             host_memory_pressure_some_avg10_max: None,
             host_memory_pressure_full_avg10_max: None,
+            host_block_read_mib_delta: None,
+            host_block_write_mib_delta: None,
+            host_block_read_iops_avg: None,
+            host_block_write_iops_avg: None,
+            host_block_busiest_device: None,
+            host_block_busiest_device_total_mib_delta: None,
+            host_block_busiest_device_read_iops_avg: None,
+            host_block_busiest_device_write_iops_avg: None,
+            host_block_busiest_device_weighted_io_ms_per_s: None,
             shm_free_min_mb: None,
             shm_used_max_mb: None,
         }),
@@ -4212,6 +4320,15 @@ fn live_resource_usage_for_invocation(
             host_io_pressure_full_avg10_max: None,
             host_memory_pressure_some_avg10_max: None,
             host_memory_pressure_full_avg10_max: None,
+            host_block_read_mib_delta: None,
+            host_block_write_mib_delta: None,
+            host_block_read_iops_avg: None,
+            host_block_write_iops_avg: None,
+            host_block_busiest_device: None,
+            host_block_busiest_device_total_mib_delta: None,
+            host_block_busiest_device_read_iops_avg: None,
+            host_block_busiest_device_write_iops_avg: None,
+            host_block_busiest_device_weighted_io_ms_per_s: None,
             shm_free_min_mb: None,
             shm_used_max_mb: None,
         }),
