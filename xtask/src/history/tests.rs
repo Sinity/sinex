@@ -4,6 +4,7 @@ use super::db::{HistoryDb, InvocationStatus, ResourceUsage};
 use color_eyre::eyre::{Result, WrapErr};
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 /// Status of a test execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -790,6 +791,20 @@ fn classify_test_run_overhead(
     })
 }
 
+fn invocation_duration_for_analysis(
+    started_at: &str,
+    stored_duration_secs: Option<f64>,
+) -> Option<f64> {
+    if stored_duration_secs.is_some() {
+        return stored_duration_secs;
+    }
+
+    let started_at = OffsetDateTime::parse(started_at, &Rfc3339).ok()?;
+    let elapsed = OffsetDateTime::now_utc() - started_at;
+    let seconds = elapsed.as_seconds_f64();
+    (seconds.is_finite() && seconds > 0.0).then_some(seconds)
+}
+
 fn is_probable_timeout_duration(duration_secs: f64) -> bool {
     const TIMEOUT_CEILINGS: [f64; 7] = [10.0, 30.0, 60.0, 90.0, 120.0, 180.0, 300.0];
     TIMEOUT_CEILINGS
@@ -1095,6 +1110,8 @@ impl HistoryDb {
             Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
             Err(error) => return Err(error.into()),
         };
+        let invocation_duration_secs =
+            invocation_duration_for_analysis(&started_at, invocation_duration_secs);
 
         // Get all test results for this invocation
         let mut stmt = self.conn.prepare(
@@ -2467,6 +2484,44 @@ mod tests {
         assert_eq!(overhead.non_test_overhead_secs, 0.0);
         assert_eq!(overhead.test_body_ratio, 1.0);
         assert_eq!(overhead.classification, "parallel_test_bodies");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_analyze_test_run_estimates_overhead_for_in_flight_invocation() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test-history.db");
+        let db = HistoryDb::open(&db_path)?;
+        let inv_id = db.start_invocation("test", None, None, None)?;
+        let started_at = (OffsetDateTime::now_utc() - time::Duration::seconds(120))
+            .format(&Rfc3339)?;
+        db.conn.execute(
+            "UPDATE invocations SET started_at = ?1, duration_secs = NULL WHERE id = ?2",
+            rusqlite::params![started_at, inv_id],
+        )?;
+        db.store_test_results(
+            inv_id,
+            &[TestResult {
+                test_name: "tiny_test".into(),
+                package: "xtask".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.2),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let analysis = db
+            .analyze_test_run(inv_id)?
+            .expect("in-flight invocation with test results should analyze");
+        let overhead = analysis
+            .run_overhead
+            .as_ref()
+            .expect("started_at fallback should produce overhead summary");
+
+        assert!(overhead.invocation_duration_secs >= 119.0);
+        assert_eq!(overhead.test_body_duration_secs, 0.2);
+        assert_eq!(overhead.classification, "runner_setup_dominated");
         Ok(())
     }
 
