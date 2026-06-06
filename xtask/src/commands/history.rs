@@ -104,10 +104,10 @@ pub enum HistorySubcommand {
     },
     /// Compare command duration and pressure between two calendar days
     CompareDays {
-        /// Day to inspect, in YYYY-MM-DD. Defaults to today in UTC.
+        /// Day to inspect: YYYY-MM-DD, today, or yesterday. Defaults to today in UTC.
         #[arg(long)]
         day: Option<String>,
-        /// Baseline day, in YYYY-MM-DD. Defaults to the previous UTC day.
+        /// Baseline day: YYYY-MM-DD, today, or yesterday. Defaults to the previous UTC day.
         #[arg(long)]
         against: Option<String>,
         /// Commands to include. Can be repeated or comma-separated.
@@ -122,10 +122,10 @@ pub enum HistorySubcommand {
     },
     /// Explain build/test runtime for a day using xtask history facts.
     Explain {
-        /// Day to inspect, in YYYY-MM-DD. Defaults to today in UTC.
+        /// Day to inspect: YYYY-MM-DD, today, or yesterday. Defaults to today in UTC.
         #[arg(long)]
         day: Option<String>,
-        /// Baseline day, in YYYY-MM-DD. Defaults to the previous UTC day.
+        /// Baseline day: YYYY-MM-DD, today, or yesterday. Defaults to the previous UTC day.
         #[arg(long)]
         against: Option<String>,
         /// Commands to include. Defaults to check,test,build.
@@ -1975,13 +1975,8 @@ fn execute_compare_days(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let today = time::OffsetDateTime::now_utc().date();
-    let day = day.map_or_else(|| today.to_string(), |value| value.trim().to_string());
-    let against = against.map_or_else(
-        || (today - time::Duration::days(1)).to_string(),
-        |value| value.trim().to_string(),
-    );
-    validate_history_day(&day, "--day")?;
-    validate_history_day(&against, "--against")?;
+    let day = resolve_history_day(day, today, "--day")?;
+    let against = resolve_history_day(against, today - time::Duration::days(1), "--against")?;
 
     let commands = if commands.is_empty() {
         vec![
@@ -2123,13 +2118,8 @@ fn execute_explain(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let today = time::OffsetDateTime::now_utc().date();
-    let day = day.map_or_else(|| today.to_string(), |value| value.trim().to_string());
-    let against = against.map_or_else(
-        || (today - time::Duration::days(1)).to_string(),
-        |value| value.trim().to_string(),
-    );
-    validate_history_day(&day, "--day")?;
-    validate_history_day(&against, "--against")?;
+    let day = resolve_history_day(day, today, "--day")?;
+    let against = resolve_history_day(against, today - time::Duration::days(1), "--against")?;
     let commands = if commands.is_empty() {
         vec!["check".to_string(), "test".to_string(), "build".to_string()]
     } else {
@@ -2664,6 +2654,25 @@ fn execute_resources(
         result = result.with_data(serde_json::to_value(&report)?);
     }
     Ok(result)
+}
+
+fn resolve_history_day(
+    value: Option<&str>,
+    default: time::Date,
+    flag: &'static str,
+) -> Result<String> {
+    let Some(value) = value else {
+        return Ok(default.to_string());
+    };
+    let trimmed = value.trim();
+    if trimmed.eq_ignore_ascii_case("today") {
+        return Ok(time::OffsetDateTime::now_utc().date().to_string());
+    }
+    if trimmed.eq_ignore_ascii_case("yesterday") {
+        return Ok((time::OffsetDateTime::now_utc().date() - time::Duration::days(1)).to_string());
+    }
+    validate_history_day(trimmed, flag)?;
+    Ok(trimmed.to_string())
 }
 
 fn validate_history_day(value: &str, flag: &'static str) -> Result<()> {
@@ -6300,6 +6309,39 @@ mod tests {
             None,
             "history",
         )
+    }
+
+    #[sinex_test]
+    async fn test_resolve_history_day_accepts_relative_labels() -> ::xtask::sandbox::TestResult<()>
+    {
+        let today = time::Date::from_calendar_date(2026, time::Month::June, 6)?;
+
+        assert_eq!(resolve_history_day(None, today, "--day")?, "2026-06-06");
+        assert_eq!(
+            resolve_history_day(Some("2026-06-04"), today, "--day")?,
+            "2026-06-04"
+        );
+        assert_eq!(
+            resolve_history_day(Some("today"), today, "--day")?,
+            time::OffsetDateTime::now_utc().date().to_string()
+        );
+        assert_eq!(
+            resolve_history_day(Some(" yesterday "), today, "--against")?,
+            (time::OffsetDateTime::now_utc().date() - time::Duration::days(1)).to_string()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_history_day_rejects_unknown_relative_label()
+    -> ::xtask::sandbox::TestResult<()> {
+        let today = time::Date::from_calendar_date(2026, time::Month::June, 6)?;
+        let error = resolve_history_day(Some("tomorrow"), today, "--day")
+            .expect_err("unsupported label should be rejected");
+
+        assert!(error.to_string().contains("YYYY-MM-DD"));
+        assert!(error.to_string().contains("tomorrow"));
+        Ok(())
     }
 
     #[sinex_test]
