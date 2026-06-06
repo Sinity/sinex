@@ -1346,6 +1346,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         "test_tmp_dir": cfg.test_tmp_dir.as_ref().map(|p| p.display().to_string()),
         "toolchain": cfg.toolchain,
         "in_dev_shell": cfg.in_dev_shell,
+        "build_cache_policy": build_cache_policy_summary(),
     }));
 
     let report = DoctorReport {
@@ -1419,6 +1420,9 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
             print_env_field(env_data, "test_results_dir", "Test results:");
             print_env_field(env_data, "test_tmp_dir", "Test temp:");
             print_env_field(env_data, "toolchain", "Toolchain:");
+            if let Some(policy) = env_data.get("build_cache_policy") {
+                print_build_cache_policy(policy);
+            }
             if let Some(in_dev_shell) = env_data
                 .get("in_dev_shell")
                 .and_then(serde_json::Value::as_bool)
@@ -1574,6 +1578,54 @@ fn print_env_field(env_data: &serde_json::Value, key: &str, label: &str) {
         };
         println!("  {label:<20} {display}");
     }
+}
+
+fn build_cache_policy_summary() -> serde_json::Value {
+    let rustc_wrapper = std::env::var("RUSTC_WRAPPER").ok();
+    let cargo_incremental = std::env::var("CARGO_INCREMENTAL").ok();
+    let wrapper_is_sccache = rustc_wrapper
+        .as_deref()
+        .is_some_and(|wrapper| wrapper == "sccache" || wrapper.ends_with("/sccache"));
+    let xtask_cargo_incremental = if wrapper_is_sccache && cargo_incremental.is_none() {
+        "forced-off-for-sccache"
+    } else if cargo_incremental.as_deref() == Some("1") && !wrapper_is_sccache {
+        "explicit-incremental-edit-loop"
+    } else if cargo_incremental.is_some() {
+        "explicit-env"
+    } else {
+        "cargo-profile-default"
+    };
+
+    serde_json::json!({
+        "rustc_wrapper": rustc_wrapper,
+        "cargo_incremental": cargo_incremental,
+        "xtask_cargo_incremental": xtask_cargo_incremental,
+        "incremental_prune_keep_per_crate": crate::cache_hygiene::configured_incremental_keep_per_crate(),
+    })
+}
+
+fn print_build_cache_policy(policy: &serde_json::Value) {
+    let wrapper = policy
+        .get("rustc_wrapper")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unset");
+    let incremental = policy
+        .get("cargo_incremental")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unset");
+    let xtask_policy = policy
+        .get("xtask_cargo_incremental")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let keep = policy
+        .get("incremental_prune_keep_per_crate")
+        .and_then(serde_json::Value::as_u64)
+        .map_or_else(|| "unknown".to_string(), |value| value.to_string());
+
+    println!("  {:<20} {wrapper}", "RUSTC_WRAPPER:");
+    println!("  {:<20} {incremental}", "CARGO_INCREMENTAL:");
+    println!("  {:<20} {xtask_policy}", "Cargo policy:");
+    println!("  {:<20} keep-{keep}", "Incremental prune:");
 }
 
 fn print_check(name: &str, ok: bool, detail: Option<&str>) {
@@ -2082,6 +2134,50 @@ use deployment::{
     execute_deployment_readiness, redact_database_url_password,
     resolve_effective_database_probe_url,
 };
+
+#[cfg(test)]
+mod build_cache_policy_tests {
+    use super::*;
+    use crate::sandbox::{EnvGuard, sinex_test};
+
+    #[sinex_test]
+    async fn test_build_cache_policy_reports_sccache_forced_nonincremental()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::with_keys(&[
+            "RUSTC_WRAPPER",
+            "CARGO_INCREMENTAL",
+            "SINEX_INCREMENTAL_KEEP_PER_CRATE",
+        ]);
+        env.set("RUSTC_WRAPPER", "/nix/store/hash/bin/sccache");
+        env.clear("CARGO_INCREMENTAL");
+        env.set("SINEX_INCREMENTAL_KEEP_PER_CRATE", "2");
+
+        let policy = build_cache_policy_summary();
+
+        assert_eq!(
+            policy["xtask_cargo_incremental"].as_str(),
+            Some("forced-off-for-sccache")
+        );
+        assert_eq!(policy["incremental_prune_keep_per_crate"].as_u64(), Some(2));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_build_cache_policy_reports_explicit_incremental_edit_loop()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::with_keys(&["RUSTC_WRAPPER", "CARGO_INCREMENTAL"]);
+        env.clear("RUSTC_WRAPPER");
+        env.set("CARGO_INCREMENTAL", "1");
+
+        let policy = build_cache_policy_summary();
+
+        assert_eq!(
+            policy["xtask_cargo_incremental"].as_str(),
+            Some("explicit-incremental-edit-loop")
+        );
+        Ok(())
+    }
+}
 
 #[cfg(all(test, feature = "runtime-introspection"))]
 mod tests;
