@@ -354,9 +354,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 fallback_summary: "Check strict live-schema drift",
                 when: "you need to verify the database has no drift in categories the declarative apply engine does not reconcile",
                 examples: &["xtask schema strict-diff"],
-                notes: &[
-                    "Hosted CI has its own workflow wiring; local command guidance should use the schema command directly.",
-                ],
+                notes: &[],
             },
             GuideEntry {
                 path: "test vm",
@@ -366,7 +364,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                     "xtask test vm --category smoke",
                     "xtask test vm --category integration",
                 ],
-                notes: &["The default GitHub Actions gate does not run the full VM suite."],
+                notes: &[],
             },
         ],
     },
@@ -384,7 +382,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
             GuideEntry {
                 path: "docs check",
                 fallback_summary: "Verify generated repo-surface drift",
-                when: "you want CI-style drift detection for generated docs and the checked-in schema bundle without rewriting files",
+                when: "you want generated docs and the checked-in schema bundle checked for drift without rewriting files",
                 examples: &["xtask docs check"],
                 notes: &[],
             },

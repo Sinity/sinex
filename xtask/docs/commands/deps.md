@@ -164,7 +164,7 @@ xtask deps tree --package my-crate
 xtask deps list
 ```
 
-### CI integration
+### Baseline gate
 
 ```bash
 # Fail only on duplicates directly requested by workspace manifests
