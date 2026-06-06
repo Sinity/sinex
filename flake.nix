@@ -287,6 +287,7 @@
                 build_failure_stamp="$build_state_dir/xtask-build.failed"
                 build_failure_log="$build_state_dir/xtask-build.failed.log"
                 build_stage_metrics="$build_lock_dir/stages.json"
+                build_rebuild_trigger="$build_lock_dir/rebuild-trigger.json"
                 wrapper_event_log="$build_state_dir/xtask-wrapper-events.jsonl"
                 runtime_introspection_stamp="$cargo_target_dir/debug/xtask.runtime-introspection.built"
                 force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
@@ -303,6 +304,127 @@
                   esac
                 }
 
+                _sinex_xtask_json_file_or_null() {
+                  local path="$1"
+                  if [ -r "$path" ]; then
+                    ${pkgs.jq}/bin/jq -c . "$path" 2>/dev/null || printf 'null'
+                  else
+                    printf 'null'
+                  fi
+                }
+
+                _sinex_xtask_source_trigger_json() {
+                  local dep_path="$1"
+                  local kind="$2"
+                  local ref_path="$3"
+                  local rel_path status mtime
+
+                  rel_path="''${dep_path#"$root_dir/"}"
+                  if [ ! -e "$dep_path" ]; then
+                    status="missing"
+                    mtime="null"
+                  elif [ "$dep_path" -nt "$ref_path" ]; then
+                    status="newer"
+                    mtime="$(stat -c %Y "$dep_path" 2>/dev/null || printf null)"
+                  else
+                    return 1
+                  fi
+
+                  ${pkgs.jq}/bin/jq -cn \
+                    --arg path "$dep_path" \
+                    --arg rel_path "$rel_path" \
+                    --arg kind "$kind" \
+                    --arg status "$status" \
+                    --argjson mtime "$mtime" \
+                    '{path:$path, rel_path:$rel_path, kind:$kind, status:$status, mtime_epoch:$mtime}'
+                }
+
+                _sinex_xtask_collect_source_triggers() {
+                  local ref_path="$1"
+                  local depfile_path="$cargo_target_dir/debug/xtask.d"
+                  local extra_dep dep_path row first
+
+                  first=1
+                  printf '['
+                  for extra_dep in \
+                    "$root_dir/Cargo.toml" \
+                    "$root_dir/Cargo.lock" \
+                    "$root_dir/flake.nix" \
+                    "$root_dir/xtask/Cargo.toml" \
+                    "$root_dir/.cargo/config.toml"
+                  do
+                    row="$(_sinex_xtask_source_trigger_json "$extra_dep" "extra" "$ref_path" || true)"
+                    if [ -n "$row" ]; then
+                      [ "$first" -eq 1 ] || printf ','
+                      printf '%s' "$row"
+                      first=0
+                    fi
+                  done
+
+                  if [ ! -r "$depfile_path" ]; then
+                    row="$(${pkgs.jq}/bin/jq -cn \
+                      --arg path "$depfile_path" \
+                      --arg rel_path "''${depfile_path#"$root_dir/"}" \
+                      '{path:$path, rel_path:$rel_path, kind:"depfile", status:"missing", mtime_epoch:null}')"
+                    [ "$first" -eq 1 ] || printf ','
+                    printf '%s' "$row"
+                    printf ']'
+                    return 0
+                  fi
+
+                  while IFS= read -r dep_path; do
+                    [ -z "$dep_path" ] && continue
+                    row="$(_sinex_xtask_source_trigger_json "$dep_path" "depfile" "$ref_path" || true)"
+                    if [ -n "$row" ]; then
+                      [ "$first" -eq 1 ] || printf ','
+                      printf '%s' "$row"
+                      first=0
+                    fi
+                  done < <(
+                    sed -e 's/^[^:]*: //' -e 's/\\$//' "$depfile_path" \
+                      | tr ' ' '\n' \
+                      | sed '/^$/d'
+                  )
+
+                  printf ']'
+                }
+
+                _sinex_xtask_write_rebuild_trigger() {
+                  local reason="$1"
+                  local ref_path="''${2:-}"
+                  local inputs="[]"
+                  mkdir -p "$(dirname "$build_rebuild_trigger")" || return 0
+                  if [ -n "$ref_path" ]; then
+                    inputs="$(_sinex_xtask_collect_source_triggers "$ref_path" 2>/dev/null || printf '[]')"
+                  fi
+                  ${pkgs.jq}/bin/jq -cn \
+                    --arg reason "$reason" \
+                    --arg ref_path "$ref_path" \
+                    --argjson inputs "$inputs" \
+                    '{reason:$reason, ref_path:(if $ref_path == "" then null else $ref_path end), inputs:$inputs}' \
+                    > "$build_rebuild_trigger" 2>/dev/null || true
+                }
+
+                _sinex_xtask_write_current_rebuild_trigger() {
+                  local depfile_path="$cargo_target_dir/debug/xtask.d"
+
+                  if [ "$force_rebuild" = "1" ]; then
+                    _sinex_xtask_write_rebuild_trigger "forced" "$bin_path"
+                  elif [ ! -x "$bin_path" ]; then
+                    _sinex_xtask_write_rebuild_trigger "missing_binary" ""
+                  elif [ "$requires_runtime_introspection" = "1" ] && [ ! -e "$runtime_introspection_stamp" ]; then
+                    _sinex_xtask_write_rebuild_trigger "missing_runtime_introspection_stamp" ""
+                  elif [ "$requires_runtime_introspection" = "1" ] && [ "$bin_path" -nt "$runtime_introspection_stamp" ]; then
+                    _sinex_xtask_write_rebuild_trigger "stale_runtime_introspection_stamp" "$runtime_introspection_stamp"
+                  elif [ "$requires_runtime_introspection" = "1" ] && _sinex_xtask_sources_newer_than "$runtime_introspection_stamp"; then
+                    _sinex_xtask_write_rebuild_trigger "runtime_introspection_sources_newer" "$runtime_introspection_stamp"
+                  elif [ ! -r "$depfile_path" ]; then
+                    _sinex_xtask_write_rebuild_trigger "missing_depfile" "$bin_path"
+                  else
+                    _sinex_xtask_write_rebuild_trigger "sources_newer" "$bin_path"
+                  fi
+                }
+
                 _sinex_xtask_record_wrapper_event() {
                   local event_name="$1"
                   local status="$2"
@@ -310,7 +432,7 @@
                   local finished_at="$4"
                   local duration_ms="$5"
                   local log_path="$6"
-                  local command_name args_text log_value stage_value
+                  local command_name args_text log_value stage_value trigger_value
                   shift 6
 
                   mkdir -p "$build_state_dir" || return 0
@@ -326,6 +448,7 @@
                   else
                     stage_value="{}"
                   fi
+                  trigger_value="$(_sinex_xtask_json_file_or_null "$build_rebuild_trigger")"
 
                   {
                     printf '{'
@@ -340,6 +463,7 @@
                     printf ',"requires_runtime_introspection":%s' "$(_sinex_xtask_bool_json "$requires_runtime_introspection")"
                     printf ',"force_rebuild":%s' "$(_sinex_xtask_bool_json "$force_rebuild")"
                     printf ',"log_path":%s' "$log_value"
+                    printf ',"rebuild_trigger":%s' "$trigger_value"
                     printf ',"stage_durations_ms":%s' "$stage_value"
                     printf '}\n'
                   } >> "$wrapper_event_log" || true
@@ -616,7 +740,8 @@
                     local rebuild_started_at rebuild_started_ns rebuild_finished_at rebuild_finished_ns rebuild_duration_ms
                     rebuild_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
                     rebuild_started_ns="$(date +%s%N)"
-                    rm -f "$build_stage_metrics" "$build_stage_metrics.tmp"
+                    rm -f "$build_stage_metrics" "$build_stage_metrics.tmp" "$build_rebuild_trigger"
+                    _sinex_xtask_write_current_rebuild_trigger
                     echo "ℹ  Rebuilding checkout-local xtask..." >&2
                     if _sinex_xtask_build_checkout_binary >"$build_failure_log" 2>&1; then
                       rebuild_finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

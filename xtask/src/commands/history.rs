@@ -1245,7 +1245,29 @@ struct RawWrapperEvent {
     #[serde(default)]
     log_path: Option<String>,
     #[serde(default)]
+    rebuild_trigger: Option<WrapperRebuildTrigger>,
+    #[serde(default)]
     stage_durations_ms: BTreeMap<String, u64>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+struct WrapperRebuildTrigger {
+    reason: String,
+    #[serde(default)]
+    ref_path: Option<String>,
+    #[serde(default)]
+    inputs: Vec<WrapperRebuildTriggerInput>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+struct WrapperRebuildTriggerInput {
+    path: String,
+    #[serde(default)]
+    rel_path: Option<String>,
+    kind: String,
+    status: String,
+    #[serde(default)]
+    mtime_epoch: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1260,6 +1282,7 @@ struct WrapperEvent {
     requires_runtime_introspection: bool,
     force_rebuild: bool,
     log_path: Option<String>,
+    rebuild_trigger: Option<WrapperRebuildTrigger>,
     stage_durations_ms: BTreeMap<String, u64>,
     top_stage: Option<WrapperStageSummary>,
 }
@@ -1277,6 +1300,7 @@ struct WrapperEventsReport {
     event_count: usize,
     total_duration_secs: f64,
     stage_totals: Vec<WrapperStageTotal>,
+    trigger_totals: Vec<WrapperTriggerTotal>,
     events: Vec<WrapperEvent>,
     skipped_lines: usize,
 }
@@ -1286,6 +1310,13 @@ struct WrapperStageTotal {
     name: String,
     duration_secs: f64,
     pct_of_total: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WrapperTriggerTotal {
+    reason: String,
+    count: usize,
+    duration_secs: f64,
 }
 
 fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Result<CommandResult> {
@@ -1300,12 +1331,14 @@ fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Resu
         .filter_map(|event| event.duration_secs)
         .sum::<f64>();
     let stage_totals = wrapper_stage_totals(&events, total_duration_secs);
+    let trigger_totals = wrapper_trigger_totals(&events);
     let report = WrapperEventsReport {
         days,
         path: path.display().to_string(),
         event_count: events.len(),
         total_duration_secs,
         stage_totals,
+        trigger_totals,
         events,
         skipped_lines,
     };
@@ -1328,6 +1361,7 @@ fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Resu
                 "COMMAND",
                 "RT-INTROSPECT",
                 "FORCE",
+                "TRIGGER",
                 "TOP STAGE",
             ]);
             for event in &report.events {
@@ -1342,6 +1376,7 @@ fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Resu
                     event.command.clone().unwrap_or_else(|| "-".to_string()),
                     event.requires_runtime_introspection.to_string(),
                     event.force_rebuild.to_string(),
+                    wrapper_trigger_summary(event),
                     event
                         .top_stage
                         .as_ref()
@@ -1365,6 +1400,22 @@ fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Resu
                     ]);
                 }
                 let mut table = stages.build();
+                table.with(Style::rounded());
+                println!("{table}");
+            }
+
+            if !report.trigger_totals.is_empty() {
+                println!("\nTrigger totals:");
+                let mut triggers = Builder::new();
+                triggers.push_record(["TRIGGER", "EVENTS", "SECS"]);
+                for trigger in &report.trigger_totals {
+                    triggers.push_record([
+                        trigger.reason.clone(),
+                        trigger.count.to_string(),
+                        format!("{:.1}", trigger.duration_secs),
+                    ]);
+                }
+                let mut table = triggers.build();
                 table.with(Style::rounded());
                 println!("{table}");
             }
@@ -1462,9 +1513,30 @@ fn wrapper_event_from_raw(
         requires_runtime_introspection: raw.requires_runtime_introspection,
         force_rebuild: raw.force_rebuild,
         log_path: raw.log_path,
+        rebuild_trigger: raw.rebuild_trigger,
         top_stage: wrapper_top_stage(&raw.stage_durations_ms),
         stage_durations_ms: raw.stage_durations_ms,
     }))
+}
+
+fn wrapper_trigger_summary(event: &WrapperEvent) -> String {
+    let Some(trigger) = &event.rebuild_trigger else {
+        return "-".to_string();
+    };
+    let Some(first_input) = trigger.inputs.first() else {
+        return trigger.reason.clone();
+    };
+    let input = first_input
+        .rel_path
+        .as_deref()
+        .filter(|path| !path.is_empty())
+        .unwrap_or(first_input.path.as_str());
+    let remaining = trigger.inputs.len().saturating_sub(1);
+    if remaining == 0 {
+        format!("{}: {input}", trigger.reason)
+    } else {
+        format!("{}: {input} +{remaining}", trigger.reason)
+    }
 }
 
 fn wrapper_top_stage(stages: &BTreeMap<String, u64>) -> Option<WrapperStageSummary> {
@@ -1509,6 +1581,38 @@ fn wrapper_stage_totals(
             .partial_cmp(&left.duration_secs)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| left.name.cmp(&right.name))
+    });
+    rows
+}
+
+fn wrapper_trigger_totals(events: &[WrapperEvent]) -> Vec<WrapperTriggerTotal> {
+    let mut totals = BTreeMap::<String, (usize, f64)>::new();
+    for event in events {
+        let reason = event
+            .rebuild_trigger
+            .as_ref()
+            .map(|trigger| trigger.reason.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        let entry = totals.entry(reason).or_default();
+        entry.0 += 1;
+        entry.1 += event.duration_secs.unwrap_or_default();
+    }
+
+    let mut rows = totals
+        .into_iter()
+        .map(|(reason, (count, duration_secs))| WrapperTriggerTotal {
+            reason,
+            count,
+            duration_secs,
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        right
+            .duration_secs
+            .partial_cmp(&left.duration_secs)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| right.count.cmp(&left.count))
+            .then_with(|| left.reason.cmp(&right.reason))
     });
     rows
 }
@@ -5991,6 +6095,9 @@ mod tests {
                 "\"duration_ms\":2500,\"command\":\"docs\",",
                 "\"requires_runtime_introspection\":false,",
                 "\"force_rebuild\":true,",
+                "\"rebuild_trigger\":{\"reason\":\"forced\",\"ref_path\":\"/tmp/target/debug/xtask\",",
+                "\"inputs\":[{\"path\":\"/repo/flake.nix\",\"rel_path\":\"flake.nix\",",
+                "\"kind\":\"extra\",\"status\":\"newer\",\"mtime_epoch\":1770000000}]},",
                 "\"stage_durations_ms\":{\"initdb\":100,\"xtask_build\":2000}}\n",
                 "not-json\n",
                 "{\"event\":\"checkout-local-rebuild\",\"status\":\"success\",",
@@ -6012,6 +6119,14 @@ mod tests {
         assert_eq!(events[0].duration_secs, Some(2.5));
         assert_eq!(events[0].command.as_deref(), Some("docs"));
         assert!(events[0].force_rebuild);
+        assert_eq!(
+            events[0]
+                .rebuild_trigger
+                .as_ref()
+                .map(|trigger| trigger.reason.as_str()),
+            Some("forced")
+        );
+        assert_eq!(wrapper_trigger_summary(&events[0]), "forced: flake.nix");
         assert_eq!(
             events[0]
                 .top_stage
@@ -6055,6 +6170,39 @@ mod tests {
         Ok(())
     }
 
+    #[sinex_test]
+    async fn test_wrapper_trigger_totals_rank_by_duration() -> ::xtask::sandbox::TestResult<()> {
+        let mut first = cost_wrapper_event(10.0);
+        first.rebuild_trigger = Some(WrapperRebuildTrigger {
+            reason: "sources_newer".to_string(),
+            ref_path: Some("/tmp/target/debug/xtask".to_string()),
+            inputs: Vec::new(),
+        });
+        let mut second = cost_wrapper_event(5.0);
+        second.rebuild_trigger = Some(WrapperRebuildTrigger {
+            reason: "forced".to_string(),
+            ref_path: None,
+            inputs: Vec::new(),
+        });
+        let mut third = cost_wrapper_event(2.0);
+        third.rebuild_trigger = Some(WrapperRebuildTrigger {
+            reason: "sources_newer".to_string(),
+            ref_path: Some("/tmp/target/debug/xtask".to_string()),
+            inputs: Vec::new(),
+        });
+
+        let totals = wrapper_trigger_totals(&[first, second, third]);
+
+        assert_eq!(totals.len(), 2);
+        assert_eq!(totals[0].reason, "sources_newer");
+        assert_eq!(totals[0].count, 2);
+        assert_eq!(totals[0].duration_secs, 12.0);
+        assert_eq!(totals[1].reason, "forced");
+        assert_eq!(totals[1].count, 1);
+        assert_eq!(totals[1].duration_secs, 5.0);
+        Ok(())
+    }
+
     fn cost_wrapper_event(duration_secs: f64) -> WrapperEvent {
         WrapperEvent {
             event: "checkout-local-rebuild".to_string(),
@@ -6067,6 +6215,7 @@ mod tests {
             requires_runtime_introspection: false,
             force_rebuild: false,
             log_path: None,
+            rebuild_trigger: None,
             stage_durations_ms: BTreeMap::new(),
             top_stage: None,
         }
