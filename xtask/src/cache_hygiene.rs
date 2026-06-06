@@ -9,10 +9,10 @@
 //! 1. **cargo-sweep** (if available in PATH): removes unreferenced dep
 //!    artifacts. Cargo-aware, safe.
 //! 2. **incremental/ keep-N-newest-per-crate** (always): for each `<crate>-`
-//!    prefix in `incremental/`, keep the newest hash dir by default and delete
-//!    the rest. Mirrors what cargo-sweep does for incremental, but intentionally
-//!    more aggressively because incremental compilation is an opt-in local
-//!    edit-loop policy in this repo.
+//!    prefix in `incremental/`, keep the N most-recently-modified hash dirs,
+//!    delete the rest. Mirrors what cargo-sweep does for incremental while
+//!    avoiding the cold-rebuild churn caused by pruning the active set too
+//!    aggressively.
 //! 3. **Disk-usage report** before + after.
 //!
 //! See issue #1213 for the broader cancel-reason substrate, and issue (TBD)
@@ -27,10 +27,11 @@ use std::time::SystemTime;
 /// Default number of hash-variant dirs to keep per crate in `incremental/`.
 ///
 /// Cargo writes a new dir on each fingerprint change (feature set, rustc
-/// version, source modification). Keep only the newest variant by default:
-/// incremental is not the normal sccache-backed build policy, so stale variants
-/// should not accumulate across feature/config experiments.
-const DEFAULT_KEEP_PER_CRATE: usize = 1;
+/// version, source modification). Keeping the 3 most recent gives warm-cache
+/// hits for the active config + one recent config + one older config. A keep-1
+/// default was tested and rejected because it reclaimed space by forcing the
+/// next edit-loop run to rebuild the active incremental state.
+const DEFAULT_KEEP_PER_CRATE: usize = 3;
 
 /// Threshold above which doctor warns the user.
 pub const WARN_PERCENT: f64 = 70.0;

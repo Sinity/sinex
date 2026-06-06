@@ -34,6 +34,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "linux")]
 use std::collections::{HashMap, VecDeque};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 #[cfg(target_os = "linux")]
@@ -1715,6 +1716,7 @@ pub fn cargo_command() -> Command {
     prepare_cargo_build_helpers();
     let mut cmd = Command::new("cargo");
     configure_managed_child_std(&mut cmd);
+    apply_cargo_env_policy_std(&mut cmd);
     cmd
 }
 
@@ -1727,7 +1729,49 @@ pub fn cargo_tokio_command() -> tokio::process::Command {
     prepare_cargo_build_helpers();
     let mut cmd = tokio::process::Command::new("cargo");
     configure_managed_child_tokio(&mut cmd);
+    apply_cargo_env_policy_tokio(&mut cmd);
     cmd
+}
+
+fn apply_cargo_env_policy_std(command: &mut Command) {
+    if should_force_nonincremental_for_sccache(
+        effective_command_env_std(command, "RUSTC_WRAPPER"),
+        command_env_is_set_std(command, "CARGO_INCREMENTAL"),
+    ) {
+        command.env("CARGO_INCREMENTAL", "0");
+    }
+}
+
+fn apply_cargo_env_policy_tokio(command: &mut tokio::process::Command) {
+    if should_force_nonincremental_for_sccache(std::env::var_os("RUSTC_WRAPPER"), false) {
+        command.env("CARGO_INCREMENTAL", "0");
+    }
+}
+
+fn should_force_nonincremental_for_sccache(
+    rustc_wrapper: Option<OsString>,
+    cargo_incremental_overridden: bool,
+) -> bool {
+    if cargo_incremental_overridden || std::env::var_os("CARGO_INCREMENTAL").is_some() {
+        return false;
+    }
+    rustc_wrapper.is_some_and(|wrapper| {
+        let text = wrapper.to_string_lossy();
+        text == "sccache" || text.rsplit('/').next().is_some_and(|name| name == "sccache")
+    })
+}
+
+fn effective_command_env_std(command: &Command, key: &str) -> Option<OsString> {
+    for (env_key, env_value) in command.get_envs() {
+        if env_key == key {
+            return env_value.map(OsString::from);
+        }
+    }
+    std::env::var_os(key)
+}
+
+fn command_env_is_set_std(command: &Command, key: &str) -> bool {
+    command.get_envs().any(|(env_key, _)| env_key == key)
 }
 
 #[cfg(target_os = "linux")]
@@ -2001,6 +2045,10 @@ impl ProcessBuilder {
 
         for (key, val) in &self.env_vars {
             cmd.env(key, val);
+        }
+
+        if program_basename(&self.program) == "cargo" {
+            apply_cargo_env_policy_std(&mut cmd);
         }
 
         cmd
@@ -2400,8 +2448,14 @@ impl ProcessBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::sinex_test;
+    use crate::sandbox::{EnvGuard, sinex_test};
     use tempfile::tempdir;
+
+    fn command_env_value(command: &Command, key: &str) -> Option<String> {
+        command.get_envs().find_map(|(env_key, env_value)| {
+            (env_key == key).then(|| env_value.map(|value| value.to_string_lossy().into_owned()))?
+        })
+    }
 
     #[sinex_test]
     async fn test_process_builder_basic() -> TestResult<()> {
@@ -2465,6 +2519,42 @@ mod tests {
 
         assert!(output.success());
         assert!(output.stdout.contains("cargo"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_cargo_builder_forces_nonincremental_with_sccache() -> TestResult<()> {
+        let mut env = EnvGuard::with_keys(&["RUSTC_WRAPPER", "CARGO_INCREMENTAL"]);
+        env.set("RUSTC_WRAPPER", "/nix/store/hash/bin/sccache");
+        env.clear("CARGO_INCREMENTAL");
+
+        let command = ProcessBuilder::cargo().build_std_command();
+
+        assert_eq!(command_env_value(&command, "CARGO_INCREMENTAL").as_deref(), Some("0"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_cargo_builder_respects_explicit_incremental() -> TestResult<()> {
+        let mut env = EnvGuard::with_keys(&["RUSTC_WRAPPER", "CARGO_INCREMENTAL"]);
+        env.set("RUSTC_WRAPPER", "/nix/store/hash/bin/sccache");
+        env.set("CARGO_INCREMENTAL", "1");
+
+        let command = ProcessBuilder::cargo().build_std_command();
+
+        assert_eq!(command_env_value(&command, "CARGO_INCREMENTAL"), None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_cargo_builder_allows_incremental_without_sccache() -> TestResult<()> {
+        let mut env = EnvGuard::with_keys(&["RUSTC_WRAPPER", "CARGO_INCREMENTAL"]);
+        env.clear("RUSTC_WRAPPER");
+        env.clear("CARGO_INCREMENTAL");
+
+        let command = ProcessBuilder::cargo().build_std_command();
+
+        assert_eq!(command_env_value(&command, "CARGO_INCREMENTAL"), None);
         Ok(())
     }
 
