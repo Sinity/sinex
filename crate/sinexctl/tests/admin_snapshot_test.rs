@@ -18,6 +18,7 @@ use sinexctl::admin::manifest::ComponentExtras;
 use sinexctl::admin::snapshot::{
     AdminSnapshotCommand, AdminSnapshotInspectCommand, AdminSnapshotRestoreCommand, Component,
 };
+use sinex_primitives::source_contracts;
 
 /// Helper: build a fake state directory with recognizable fixture files.
 fn make_fake_state_dir() -> TestResult<TempDir> {
@@ -50,6 +51,15 @@ fn make_fake_state_dir() -> TestResult<TempDir> {
 
 fn sinexctl_bin() -> Command {
     Command::new(cargo::cargo_bin!("sinexctl"))
+}
+
+fn registered_fixture_source_ids() -> Vec<String> {
+    let mut ids: Vec<String> = source_contracts::all_source_contracts()
+        .map(|descriptor| descriptor.id.to_string())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
 }
 
 #[sinex_test]
@@ -103,7 +113,7 @@ fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
-        source_ids: vec!["terminal.atuin-history".to_string()],
+        source_ids: registered_fixture_source_ids(),
         components: vec![ComponentRecord {
             name: "state".to_string(),
             path: "state/".to_string(),
@@ -151,7 +161,7 @@ fn make_postgres_snapshot_archive() -> TestResult<(TempDir, PathBuf)> {
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
-        source_ids: vec![],
+        source_ids: registered_fixture_source_ids(),
         components: vec![ComponentRecord {
             name: "postgres".to_string(),
             path: "postgres/sinex_prod.dump".to_string(),
@@ -195,7 +205,7 @@ fn make_nats_snapshot_archive_with_summary() -> TestResult<(TempDir, PathBuf)> {
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
-        source_ids: vec![],
+        source_ids: registered_fixture_source_ids(),
         components: vec![ComponentRecord {
             name: "nats".to_string(),
             path: "nats/jetstream/".to_string(),
@@ -614,7 +624,7 @@ async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox
     let result = cmd.execute()?;
 
     assert_eq!(result.snapshot_id, "01970a7f-391b-7000-8000-000000000001");
-    assert_eq!(result.source_count, 1);
+    assert_eq!(result.source_count, registered_fixture_source_ids().len());
     assert_eq!(result.component_count, 1);
     assert!(
         result.missing_component_paths.is_empty(),
@@ -891,7 +901,7 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
         &tools,
         "psql",
         &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> {}\ncase \"$*\" in\n  *'count(*)'*) printf '7\\n' ;;\nesac\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> {}\ncase \"$*\" in\n  *'pg_stat_user_tables'*) printf 'core.events\\npg_temp_141.sinex_batch_staging\\n' ;;\n  *'count(*)'*) printf '7\\n' ;;\nesac\nexit 0\n",
             psql_log.display()
         ),
     )?;

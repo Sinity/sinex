@@ -27,7 +27,7 @@ async fn seed_event(
         INSERT INTO raw.source_material_registry
             (id, material_kind, source_identifier, status, timing_info_type,
              start_time, end_time, total_bytes)
-        VALUES ($1::uuid, 'annex', $2, 'completed', 'wall_clock',
+        VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime',
                 $3, $4, 1024)
         ",
     )

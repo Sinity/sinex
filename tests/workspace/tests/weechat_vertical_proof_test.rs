@@ -111,9 +111,9 @@ fn intents_to_events(
     intents
         .iter()
         .map(|intent| {
-            let anchor_byte: i64 = match &intent.anchor {
-                MaterialAnchor::Line { byte_start, .. } => *byte_start as i64,
-                _ => 0,
+            let (anchor_byte, line_offset): (i64, i64) = match &intent.anchor {
+                MaterialAnchor::Line { byte_start, line } => (*byte_start as i64, *line as i64),
+                _ => (0, 0),
             };
 
             Event::<serde_json::Value> {
@@ -128,8 +128,8 @@ fn intents_to_events(
                 provenance: Provenance::Material {
                     id: material_id,
                     anchor_byte,
-                    offset_start: Some(anchor_byte),
-                    offset_end: None,
+                    offset_start: Some(line_offset),
+                    offset_end: Some(line_offset),
                     offset_kind: OffsetKind::Line,
                 },
                 associated_blob_ids: None,
@@ -144,15 +144,6 @@ fn intents_to_events(
             }
         })
         .collect()
-}
-
-/// Build a raw events NATS subject for the given source + event type.
-fn raw_events_subject(ctx: &Sandbox, source: &str, event_type: &str) -> String {
-    ctx.env().nats_raw_event_subject_with_namespace(
-        Some(ctx.pipeline_namespace().prefix()),
-        source,
-        event_type,
-    )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -212,28 +203,8 @@ async fn weechat_full_pipeline_persists_correctly(ctx: TestContext) -> TestResul
     assert_eq!(admitted.event_count(), 5);
     admitted.validate().expect("admitted intent must be valid");
 
-    // ── Publish through NATS ─────────────────────────────────────────────
-    let payload = serde_json::to_vec(&admitted)?;
-    // Route all events under the first event's source/type — the JetStream
-    // stream captures `{ns}.sinex.events.raw.>` so the exact sub-topic
-    // doesn't matter for admission.
-    let subject = raw_events_subject(
-        stack.ctx(),
-        intents[0].event_source.as_str(),
-        intents[0].event_type.as_str(),
-    );
-    stack
-        .ctx()
-        .nats_client()
-        .publish(subject, payload.into())
-        .await
-        .map_err(|e| eyre!("NATS publish failed: {e}"))?;
-    stack
-        .ctx()
-        .nats_client()
-        .flush()
-        .await
-        .map_err(|e| eyre!("NATS flush failed: {e}"))?;
+    // ── Publish through JetStream ────────────────────────────────────────
+    stack.ctx().publish_prebuilt_events(&admitted.events).await?;
 
     // ── Wait for event_engine persistence ─────────────────────────────────────
     let count = stack.wait_for_event_count(5).await?;
