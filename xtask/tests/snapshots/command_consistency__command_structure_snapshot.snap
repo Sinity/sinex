@@ -1,6 +1,5 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 29
 expression: json
 ---
 {
@@ -2025,21 +2024,7 @@ expression: json
         },
         {
           "about": "Detect unused dependencies",
-          "args": [
-            {
-              "global": false,
-              "help": "Fail build if unused dependencies found (for CI)",
-              "long": "ci",
-              "name": "ci",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
+          "args": [],
           "name": "unused",
           "subcommands": []
         },

@@ -55,11 +55,7 @@ pub enum DepsCommand {
     },
 
     /// Detect unused dependencies
-    Unused {
-        /// Fail build if unused dependencies found (for CI)
-        #[arg(long)]
-        ci: bool,
-    },
+    Unused,
 
     /// Analyze build timings
     Timings {
@@ -276,21 +272,11 @@ impl DepsCommand {
                     .with_duration(ctx.elapsed()))
             }
 
-            Self::Unused { ci } => {
+            Self::Unused => {
                 use crate::deps::unused::UnusedDetector;
 
-                // Detect unused dependencies
                 let report =
                     UnusedDetector::detect().context("Failed to detect unused dependencies")?;
-
-                // In CI mode, fail if unused dependencies found
-                if *ci && !report.unused.is_empty() {
-                    return Ok(CommandResult::failure(crate::output::StructuredError::new(
-                        "UNUSED_DEPS",
-                        format!("Found {} unused dependencies", report.unused.len()),
-                    ))
-                    .with_data(serde_json::to_value(&report)?));
-                }
 
                 if ctx.is_json() {
                     // JSON output - return structured report

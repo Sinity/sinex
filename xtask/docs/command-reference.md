@@ -668,12 +668,6 @@ Find duplicate dependencies (multiple versions)
 
 Detect unused dependencies
 
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--ci` | no | no | Fail build if unused dependencies found (for CI) |
-
 
 ### `xtask deps timings`
 

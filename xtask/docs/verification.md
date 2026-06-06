@@ -30,7 +30,7 @@ xtask test bench --compare path/to/current.json path/to/previous.json
 
 Useful options:
 
-- `--profile fast|ci|...` selects the nextest profile.
+- `--profile <name>` selects the nextest profile.
 - `--runs N` controls repetitions per scenario.
 - `--threads 12,24` sweeps concurrency settings.
 - `--target <pkg|workspace>` narrows the benchmark scope.

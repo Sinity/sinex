@@ -201,12 +201,11 @@ Detect dependencies declared in Cargo.toml but not used in code.
 
 **Usage**:
 ```bash
-xtask deps unused [--format <format>] [--ci]
+xtask deps unused [--format <format>]
 ```
 
 **Options**:
 - `--format <format>` - Output format: `human` (default) or `json`
-- `--ci` - CI mode (fails if unused deps found)
 
 **Examples**:
 ```bash
@@ -215,9 +214,6 @@ xtask deps unused
 
 # JSON output
 xtask deps unused --format json
-
-# CI mode (fails if unused deps found)
-xtask deps unused --ci
 ```
 
 **Output Formats**:
@@ -258,16 +254,6 @@ pkgs.cargo-udeps
 # Or enter a temporary shell while investigating locally
 nix shell nixpkgs#cargo-machete
 ```
-
-**CI Integration**:
-
-```yaml
-# .github/workflows/ci.yml
-- name: Check for unused dependencies
-  run: xtask deps unused --ci
-```
-
----
 
 ### `deps timings`
 
@@ -324,7 +310,7 @@ HTML report: /realm/project/sinex/.sinex/cache/target/cargo-timings/cargo-timing
 ```bash
 # Check for issues before committing
 xtask deps duplicates
-xtask deps unused --ci
+xtask deps unused
 ```
 
 ### Performance Investigation
