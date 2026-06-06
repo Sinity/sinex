@@ -286,6 +286,7 @@
                 build_lock_dir="$build_state_dir/xtask-build.lock"
                 build_failure_stamp="$build_state_dir/xtask-build.failed"
                 build_failure_log="$build_state_dir/xtask-build.failed.log"
+                build_stage_metrics="$build_lock_dir/stages.json"
                 wrapper_event_log="$build_state_dir/xtask-wrapper-events.jsonl"
                 runtime_introspection_stamp="$cargo_target_dir/debug/xtask.runtime-introspection.built"
                 force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
@@ -309,7 +310,7 @@
                   local finished_at="$4"
                   local duration_ms="$5"
                   local log_path="$6"
-                  local command_name args_text log_value
+                  local command_name args_text log_value stage_value
                   shift 6
 
                   mkdir -p "$build_state_dir" || return 0
@@ -319,6 +320,11 @@
                     log_value="$(_sinex_xtask_json_string "$log_path")"
                   else
                     log_value="null"
+                  fi
+                  if [ -r "$build_stage_metrics" ]; then
+                    stage_value="$(${pkgs.jq}/bin/jq -c . "$build_stage_metrics" 2>/dev/null || printf '{}')"
+                  else
+                    stage_value="{}"
                   fi
 
                   {
@@ -334,8 +340,39 @@
                     printf ',"requires_runtime_introspection":%s' "$(_sinex_xtask_bool_json "$requires_runtime_introspection")"
                     printf ',"force_rebuild":%s' "$(_sinex_xtask_bool_json "$force_rebuild")"
                     printf ',"log_path":%s' "$log_value"
+                    printf ',"stage_durations_ms":%s' "$stage_value"
                     printf '}\n'
                   } >> "$wrapper_event_log" || true
+                }
+
+                _sinex_xtask_stage_start() {
+                  date +%s%N
+                }
+
+                _sinex_xtask_stage_record() {
+                  local stage_name="$1"
+                  local stage_started_ns="$2"
+                  local stage_finished_ns stage_duration_ms tmp_file
+
+                  stage_finished_ns="$(date +%s%N)"
+                  stage_duration_ms="$(( (stage_finished_ns - stage_started_ns) / 1000000 ))"
+                  mkdir -p "$(dirname "$build_stage_metrics")" || return 0
+                  tmp_file="$build_stage_metrics.tmp"
+                  if [ -r "$build_stage_metrics" ]; then
+                    ${pkgs.jq}/bin/jq \
+                      --arg stage "$stage_name" \
+                      --argjson duration "$stage_duration_ms" \
+                      '. + {($stage): $duration}' \
+                      "$build_stage_metrics" > "$tmp_file" 2>/dev/null \
+                      && mv "$tmp_file" "$build_stage_metrics" \
+                      || rm -f "$tmp_file"
+                  else
+                    ${pkgs.jq}/bin/jq -n \
+                      --arg stage "$stage_name" \
+                      --argjson duration "$stage_duration_ms" \
+                      '{($stage): $duration}' > "$build_stage_metrics" 2>/dev/null \
+                      || true
+                  fi
                 }
 
                 _sinex_xtask_normalize_global_args() {
@@ -579,6 +616,7 @@
                     local rebuild_started_at rebuild_started_ns rebuild_finished_at rebuild_finished_ns rebuild_duration_ms
                     rebuild_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
                     rebuild_started_ns="$(date +%s%N)"
+                    rm -f "$build_stage_metrics" "$build_stage_metrics.tmp"
                     echo "ℹ  Rebuilding checkout-local xtask..." >&2
                     if _sinex_xtask_build_checkout_binary >"$build_failure_log" 2>&1; then
                       rebuild_finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -619,36 +657,56 @@
                     export PGHOST="$sqlx_tmp"
                     export PGPORT="$((55433 + ($$ % 1000)))"
 
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
                     if ! ${postgresForSqlx}/bin/initdb -D "$PGDATA" --locale=C --encoding=UTF8 --auth=trust --username=postgres; then
+                      _sinex_xtask_stage_record "initdb" "$_stage_started_ns"
                       rm -rf "$sqlx_tmp"
                       return 1
                     fi
+                    _sinex_xtask_stage_record "initdb" "$_stage_started_ns"
 
                     echo "unix_socket_directories = '$PGHOST'" >> "$PGDATA/postgresql.conf"
                     echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
                     echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
 
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
                     if ! ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -l "$pglog" -w -t 180 start; then
+                      _sinex_xtask_stage_record "pg_start" "$_stage_started_ns"
                       cat "$pglog" >&2 || true
                       rm -rf "$sqlx_tmp"
                       return 1
                     fi
+                    _sinex_xtask_stage_record "pg_start" "$_stage_started_ns"
 
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
                     if ! ${postgresForSqlx}/bin/createdb -h "$PGHOST" -p "$PGPORT" -U postgres sinex_dev; then
+                      _sinex_xtask_stage_record "createdb" "$_stage_started_ns"
                       ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
                       rm -rf "$sqlx_tmp"
                       return 1
                     fi
+                    _sinex_xtask_stage_record "createdb" "$_stage_started_ns"
 
                     export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&user=postgres"
 
-                    cargo build --quiet -p sinex-schema --bin schema-apply-bootstrap
-                    if ! "$cargo_target_dir/debug/schema-apply-bootstrap"; then
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
+                    if ! cargo build --quiet -p sinex-schema --bin schema-apply-bootstrap; then
+                      _sinex_xtask_stage_record "schema_bootstrap_build" "$_stage_started_ns"
                       ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
                       rm -rf "$sqlx_tmp"
                       return 1
                     fi
+                    _sinex_xtask_stage_record "schema_bootstrap_build" "$_stage_started_ns"
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
+                    if ! "$cargo_target_dir/debug/schema-apply-bootstrap"; then
+                      _sinex_xtask_stage_record "schema_apply" "$_stage_started_ns"
+                      ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
+                      rm -rf "$sqlx_tmp"
+                      return 1
+                    fi
+                    _sinex_xtask_stage_record "schema_apply" "$_stage_started_ns"
 
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
                     if [ "$requires_runtime_introspection" = "1" ]; then
                       cargo build --quiet -p xtask --features runtime-introspection || build_rc=$?
                       if [ "$build_rc" -eq 0 ]; then
@@ -658,7 +716,10 @@
                       cargo build --quiet -p xtask || build_rc=$?
                       rm -f "$runtime_introspection_stamp"
                     fi
+                    _sinex_xtask_stage_record "xtask_build" "$_stage_started_ns"
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
                     ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
+                    _sinex_xtask_stage_record "pg_stop" "$_stage_started_ns"
                     rm -rf "$sqlx_tmp"
                     return "$build_rc"
                   )

@@ -1244,6 +1244,8 @@ struct RawWrapperEvent {
     force_rebuild: bool,
     #[serde(default)]
     log_path: Option<String>,
+    #[serde(default)]
+    stage_durations_ms: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1258,6 +1260,14 @@ struct WrapperEvent {
     requires_runtime_introspection: bool,
     force_rebuild: bool,
     log_path: Option<String>,
+    stage_durations_ms: BTreeMap<String, u64>,
+    top_stage: Option<WrapperStageSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WrapperStageSummary {
+    name: String,
+    duration_secs: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1308,6 +1318,7 @@ fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Resu
                 "COMMAND",
                 "RT-INTROSPECT",
                 "FORCE",
+                "TOP STAGE",
             ]);
             for event in &report.events {
                 builder.push_record([
@@ -1321,6 +1332,11 @@ fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Resu
                     event.command.clone().unwrap_or_else(|| "-".to_string()),
                     event.requires_runtime_introspection.to_string(),
                     event.force_rebuild.to_string(),
+                    event
+                        .top_stage
+                        .as_ref()
+                        .map(|stage| format!("{} {:.1}s", stage.name, stage.duration_secs))
+                        .unwrap_or_else(|| "-".to_string()),
                 ]);
             }
             let mut table = builder.build();
@@ -1360,33 +1376,79 @@ fn read_wrapper_events(
     let mut events = Vec::new();
     let mut skipped_lines = 0;
 
+    if !content.trim().is_empty() {
+        let mut parsed_all = true;
+        for item in serde_json::Deserializer::from_str(&content).into_iter::<RawWrapperEvent>() {
+            match item {
+                Ok(raw) => {
+                    if let Ok(Some(event)) = wrapper_event_from_raw(raw, cutoff) {
+                        events.push(event);
+                    }
+                }
+                Err(_) => {
+                    parsed_all = false;
+                    break;
+                }
+            }
+        }
+        if parsed_all {
+            return Ok((events, 0));
+        }
+    }
+    events.clear();
+
     for line in content.lines().filter(|line| !line.trim().is_empty()) {
         let Ok(raw) = serde_json::from_str::<RawWrapperEvent>(line) else {
             skipped_lines += 1;
             continue;
         };
-        let Ok(started_at) = parse_history_time(&raw.started_at, "wrapper event started_at") else {
-            skipped_lines += 1;
-            continue;
-        };
-        if started_at < cutoff {
-            continue;
+        match wrapper_event_from_raw(raw, cutoff) {
+            Ok(Some(event)) => events.push(event),
+            Ok(None) => {}
+            Err(()) => {
+                skipped_lines += 1;
+                continue;
+            }
         }
-        events.push(WrapperEvent {
-            event: raw.event,
-            status: raw.status,
-            started_at: raw.started_at,
-            finished_at: raw.finished_at,
-            duration_secs: raw.duration_ms.map(|ms| ms as f64 / 1000.0),
-            command: raw.command.filter(|command| !command.is_empty()),
-            args: raw.args,
-            requires_runtime_introspection: raw.requires_runtime_introspection,
-            force_rebuild: raw.force_rebuild,
-            log_path: raw.log_path,
-        });
     }
 
     Ok((events, skipped_lines))
+}
+
+fn wrapper_event_from_raw(
+    raw: RawWrapperEvent,
+    cutoff: time::OffsetDateTime,
+) -> Result<Option<WrapperEvent>, ()> {
+    let Ok(started_at) = parse_history_time(&raw.started_at, "wrapper event started_at") else {
+        return Err(());
+    };
+    if started_at < cutoff {
+        return Ok(None);
+    }
+    Ok(Some(WrapperEvent {
+        event: raw.event,
+        status: raw.status,
+        started_at: raw.started_at,
+        finished_at: raw.finished_at,
+        duration_secs: raw.duration_ms.map(|ms| ms as f64 / 1000.0),
+        command: raw.command.filter(|command| !command.is_empty()),
+        args: raw.args,
+        requires_runtime_introspection: raw.requires_runtime_introspection,
+        force_rebuild: raw.force_rebuild,
+        log_path: raw.log_path,
+        top_stage: wrapper_top_stage(&raw.stage_durations_ms),
+        stage_durations_ms: raw.stage_durations_ms,
+    }))
+}
+
+fn wrapper_top_stage(stages: &BTreeMap<String, u64>) -> Option<WrapperStageSummary> {
+    stages
+        .iter()
+        .max_by_key(|(_, duration_ms)| *duration_ms)
+        .map(|(name, duration_ms)| WrapperStageSummary {
+            name: name.clone(),
+            duration_secs: *duration_ms as f64 / 1000.0,
+        })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -5866,7 +5928,8 @@ mod tests {
                 "\"finished_at\":\"2026-06-06T10:00:02Z\",",
                 "\"duration_ms\":2500,\"command\":\"docs\",",
                 "\"requires_runtime_introspection\":false,",
-                "\"force_rebuild\":true}\n",
+                "\"force_rebuild\":true,",
+                "\"stage_durations_ms\":{\"initdb\":100,\"xtask_build\":2000}}\n",
                 "not-json\n",
                 "{\"event\":\"checkout-local-rebuild\",\"status\":\"success\",",
                 "\"started_at\":\"2026-06-05T10:00:00Z\",",
@@ -5887,6 +5950,20 @@ mod tests {
         assert_eq!(events[0].duration_secs, Some(2.5));
         assert_eq!(events[0].command.as_deref(), Some("docs"));
         assert!(events[0].force_rebuild);
+        assert_eq!(
+            events[0]
+                .top_stage
+                .as_ref()
+                .map(|stage| stage.name.as_str()),
+            Some("xtask_build")
+        );
+        assert_eq!(
+            events[0]
+                .top_stage
+                .as_ref()
+                .map(|stage| stage.duration_secs),
+            Some(2.0)
+        );
         Ok(())
     }
 
