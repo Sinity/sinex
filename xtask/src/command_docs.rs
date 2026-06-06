@@ -236,6 +236,19 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 notes: &[],
             },
             GuideEntry {
+                path: "history resources",
+                fallback_summary: "Summarize recorded resource pressure and block I/O",
+                when: "a day or recent window feels slow and you need command-level PSI, process fanout, and xtask-sampled block I/O without raw SQLite",
+                examples: &[
+                    "xtask history resources --day 2026-06-06",
+                    "xtask history resources --days 2 --command test --command check",
+                    "xtask history resources --success-only",
+                ],
+                notes: &[
+                    "This summarizes xtask's own invocation history only; use Lynchpin machine telemetry for service/process ownership outside xtask.",
+                ],
+            },
+            GuideEntry {
                 path: "history overlap",
                 fallback_summary: "Explain invocation overlap and recorded shared resources",
                 when: "a run was slow under pressure and you need to see concurrent xtask work, background jobs, and shared build slices",

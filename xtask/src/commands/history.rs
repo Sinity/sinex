@@ -109,6 +109,27 @@ pub enum HistorySubcommand {
         #[arg(long)]
         include_failures: bool,
     },
+    /// Aggregate recorded resource pressure and block I/O by command/window.
+    Resources {
+        /// Exact UTC calendar day to inspect, in YYYY-MM-DD.
+        #[arg(long, conflicts_with = "days")]
+        day: Option<String>,
+        /// Rolling window in days when --day is omitted.
+        #[arg(long, default_value = "1")]
+        days: u32,
+        /// Commands to include. Can be repeated or comma-separated.
+        #[arg(long = "command", value_delimiter = ',')]
+        commands: Vec<String>,
+        /// Number of slowest/high-pressure invocations to include.
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Include background invocations in addition to foreground work.
+        #[arg(long)]
+        include_background: bool,
+        /// Restrict to successful invocations only.
+        #[arg(long)]
+        success_only: bool,
+    },
     /// Explain what overlapped an invocation and what shared resources were recorded.
     Overlap {
         /// Invocation selector: `latest`, `previous`, `current`, invocation ID,
@@ -424,6 +445,23 @@ impl XtaskCommand for HistoryCommand {
                     commands,
                     *limit,
                     *include_failures,
+                    ctx,
+                ),
+                HistorySubcommand::Resources {
+                    day,
+                    days,
+                    commands,
+                    limit,
+                    include_background,
+                    success_only,
+                } => execute_resources(
+                    db,
+                    day.as_deref(),
+                    *days,
+                    commands,
+                    *limit,
+                    *include_background,
+                    *success_only,
                     ctx,
                 ),
                 HistorySubcommand::Overlap {
@@ -1239,6 +1277,92 @@ struct CompareInvocationRow {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct ResourceWindowReport {
+    window: String,
+    commands: Vec<String>,
+    include_background: bool,
+    success_only: bool,
+    invocation_count: usize,
+    rows: Vec<ResourceCommandSummary>,
+    top_devices: Vec<ResourceDeviceSummary>,
+    slowest: Vec<ResourceInvocationSummary>,
+    evidence_limits: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct ResourceCommandSummary {
+    command: String,
+    invocation_count: usize,
+    failed_count: usize,
+    cancelled_count: usize,
+    background_count: usize,
+    total_duration_hours: f64,
+    avg_duration_secs: Option<f64>,
+    max_duration_secs: Option<f64>,
+    avg_io_full: Option<f64>,
+    max_io_full: Option<f64>,
+    high_io_full_count: usize,
+    avg_memory_full: Option<f64>,
+    max_memory_full: Option<f64>,
+    avg_process_count_max: Option<f64>,
+    max_process_count_max: Option<i64>,
+    host_block_read_mib: f64,
+    host_block_write_mib: f64,
+    avg_host_block_read_iops: Option<f64>,
+    avg_host_block_write_iops: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct ResourceDeviceSummary {
+    device: String,
+    invocation_count: usize,
+    total_mib: f64,
+    avg_read_iops: Option<f64>,
+    avg_write_iops: Option<f64>,
+    max_weighted_io_ms_per_s: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ResourceInvocationSummary {
+    id: i64,
+    command: String,
+    status: String,
+    started_at: String,
+    duration_secs: f64,
+    io_full: Option<f64>,
+    memory_full: Option<f64>,
+    process_count_max: Option<i64>,
+    host_block_read_mib: Option<f64>,
+    host_block_write_mib: Option<f64>,
+    host_block_busiest_device: Option<String>,
+    host_block_busiest_device_total_mib: Option<f64>,
+    args_json: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ResourceInvocationRow {
+    id: i64,
+    command: String,
+    status: String,
+    started_at: String,
+    duration_secs: f64,
+    is_background: bool,
+    io_full: Option<f64>,
+    memory_full: Option<f64>,
+    process_count_max: Option<i64>,
+    host_block_read_mib: Option<f64>,
+    host_block_write_mib: Option<f64>,
+    host_block_read_iops: Option<f64>,
+    host_block_write_iops: Option<f64>,
+    host_block_busiest_device: Option<String>,
+    host_block_busiest_device_total_mib: Option<f64>,
+    host_block_busiest_device_read_iops: Option<f64>,
+    host_block_busiest_device_write_iops: Option<f64>,
+    host_block_busiest_device_weighted_io_ms_per_s: Option<f64>,
+    args_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct InvocationOverlapReport {
     target: OverlapInvocation,
     shared_resources: SharedResourceSummary,
@@ -1506,6 +1630,132 @@ fn execute_compare_days(
         result = result.with_data(serde_json::to_value(report)?);
     }
 
+    Ok(result)
+}
+
+fn execute_resources(
+    db: &HistoryDb,
+    day: Option<&str>,
+    days: u32,
+    commands: &[String],
+    limit: usize,
+    include_background: bool,
+    success_only: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let (window_label, window_filter) = match day {
+        Some(day) => {
+            validate_history_day(day, "--day")?;
+            (
+                format!("UTC day {day}"),
+                format!("date(started_at) = {}", sql_string_literal(day)),
+            )
+        }
+        None => {
+            let since = format_history_cutoff_timestamp(
+                time::OffsetDateTime::now_utc() - time::Duration::days(i64::from(days)),
+                "history resources cutoff",
+            )?;
+            (
+                format!("last {days} day(s)"),
+                format!("started_at >= {}", sql_string_literal(&since)),
+            )
+        }
+    };
+    let command_filter = if commands.is_empty() {
+        String::new()
+    } else {
+        let command_list = commands
+            .iter()
+            .map(|command| sql_string_literal(command))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("AND command IN ({command_list})")
+    };
+    let background_filter = if include_background {
+        String::new()
+    } else {
+        "AND NOT COALESCE(is_background, 0)".to_string()
+    };
+    let status_filter = if success_only {
+        "AND status = 'success'"
+    } else {
+        "AND status IN ('success', 'failed', 'cancelled')"
+    };
+
+    let rows_sql = format!(
+        r"
+        SELECT id, command, status, started_at, duration_secs,
+               COALESCE(is_background, 0) AS is_background,
+               host_io_pressure_full_avg10_max AS io_full,
+               host_memory_pressure_full_avg10_max AS memory_full,
+               process_count_max,
+               host_block_read_mib_delta,
+               host_block_write_mib_delta,
+               host_block_read_iops_avg,
+               host_block_write_iops_avg,
+               host_block_busiest_device,
+               host_block_busiest_device_total_mib_delta,
+               host_block_busiest_device_read_iops_avg,
+               host_block_busiest_device_write_iops_avg,
+               host_block_busiest_device_weighted_io_ms_per_s,
+               args_json
+        FROM invocations
+        WHERE {window_filter}
+          AND duration_secs IS NOT NULL
+          AND NOT COALESCE(
+              cancel_reason = 'stale_pid' AND cancelled_by = 'open_time_sweep',
+              0
+          )
+          {status_filter}
+          {background_filter}
+          {command_filter}
+        ORDER BY started_at ASC
+        "
+    );
+    let mut rows = db
+        .run_readonly_query(&rows_sql)?
+        .into_iter()
+        .map(|row| resource_row_from_json(&row))
+        .collect::<Result<Vec<_>>>()?;
+    rows.sort_by_key(|row| row.started_at.clone());
+
+    let commands_for_report = if commands.is_empty() {
+        unique_resource_commands(&rows)
+    } else {
+        commands.to_vec()
+    };
+    let summaries = summarize_resource_commands(&rows, &commands_for_report);
+    let top_devices = summarize_resource_devices(&rows);
+    let slowest = slowest_resource_invocations(&rows, limit);
+    let report = ResourceWindowReport {
+        window: window_label,
+        commands: commands_for_report,
+        include_background,
+        success_only,
+        invocation_count: rows.len(),
+        rows: summaries,
+        top_devices,
+        slowest,
+        evidence_limits: vec![
+            "This report uses only xtask invocation history columns from this checkout.".to_string(),
+            "PSI fields are stall percentages sampled during invocations; they do not identify a causal process by themselves.".to_string(),
+            "Host block fields are aggregate whole-device deltas sampled during xtask invocations; they quantify device load shape but do not partition service/process ownership.".to_string(),
+            "Use Lynchpin machine telemetry for cgroup, process, and block-device attribution outside xtask's own invocation record.".to_string(),
+        ],
+    };
+
+    let mut result = CommandResult::success()
+        .with_message(format!(
+            "Summarized {} invocation resource row(s)",
+            report.invocation_count
+        ))
+        .with_duration(ctx.elapsed());
+    if ctx.is_human() {
+        print_resources_report(&report);
+    } else {
+        result = result.with_data(serde_json::to_value(&report)?);
+    }
     Ok(result)
 }
 
@@ -2192,6 +2442,353 @@ fn print_compare_days_report(report: &DayComparisonReport) {
         let mut table = builder.build();
         table.with(Style::rounded());
         println!("{table}");
+    }
+}
+
+fn resource_row_from_json(
+    row: &serde_json::Map<String, serde_json::Value>,
+) -> Result<ResourceInvocationRow> {
+    Ok(ResourceInvocationRow {
+        id: json_i64(row, "id")?,
+        command: json_string(row, "command")?,
+        status: json_string(row, "status")?,
+        started_at: json_string(row, "started_at")?,
+        duration_secs: row
+            .get("duration_secs")
+            .and_then(serde_json::Value::as_f64)
+            .ok_or_else(|| color_eyre::eyre::eyre!("history resource row missing duration_secs"))?,
+        is_background: row
+            .get("is_background")
+            .and_then(serde_json::Value::as_i64)
+            .is_some_and(|value| value != 0),
+        io_full: json_optional_f64(row, "io_full"),
+        memory_full: json_optional_f64(row, "memory_full"),
+        process_count_max: json_optional_i64(row, "process_count_max"),
+        host_block_read_mib: json_optional_f64(row, "host_block_read_mib_delta"),
+        host_block_write_mib: json_optional_f64(row, "host_block_write_mib_delta"),
+        host_block_read_iops: json_optional_f64(row, "host_block_read_iops_avg"),
+        host_block_write_iops: json_optional_f64(row, "host_block_write_iops_avg"),
+        host_block_busiest_device: json_optional_string(row, "host_block_busiest_device"),
+        host_block_busiest_device_total_mib: json_optional_f64(
+            row,
+            "host_block_busiest_device_total_mib_delta",
+        ),
+        host_block_busiest_device_read_iops: json_optional_f64(
+            row,
+            "host_block_busiest_device_read_iops_avg",
+        ),
+        host_block_busiest_device_write_iops: json_optional_f64(
+            row,
+            "host_block_busiest_device_write_iops_avg",
+        ),
+        host_block_busiest_device_weighted_io_ms_per_s: json_optional_f64(
+            row,
+            "host_block_busiest_device_weighted_io_ms_per_s",
+        ),
+        args_json: json_optional_string(row, "args_json"),
+    })
+}
+
+fn unique_resource_commands(rows: &[ResourceInvocationRow]) -> Vec<String> {
+    let mut commands = rows
+        .iter()
+        .map(|row| row.command.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    commands.sort();
+    commands
+}
+
+fn summarize_resource_commands(
+    rows: &[ResourceInvocationRow],
+    commands: &[String],
+) -> Vec<ResourceCommandSummary> {
+    let mut summaries = commands
+        .iter()
+        .map(|command| {
+            let command_rows = rows
+                .iter()
+                .filter(|row| row.command == *command)
+                .collect::<Vec<_>>();
+            summarize_resource_command(command, &command_rows)
+        })
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .total_duration_hours
+            .total_cmp(&left.total_duration_hours)
+            .then_with(|| left.command.cmp(&right.command))
+    });
+    summaries
+}
+
+fn summarize_resource_command(
+    command: &str,
+    rows: &[&ResourceInvocationRow],
+) -> ResourceCommandSummary {
+    let durations = rows.iter().map(|row| row.duration_secs).collect::<Vec<_>>();
+    let process_counts = rows
+        .iter()
+        .filter_map(|row| row.process_count_max)
+        .collect::<Vec<_>>();
+    ResourceCommandSummary {
+        command: command.to_string(),
+        invocation_count: rows.len(),
+        failed_count: rows.iter().filter(|row| row.status == "failed").count(),
+        cancelled_count: rows.iter().filter(|row| row.status == "cancelled").count(),
+        background_count: rows.iter().filter(|row| row.is_background).count(),
+        total_duration_hours: secs_to_hours(durations.iter().sum::<f64>()),
+        avg_duration_secs: average(durations.iter().copied()),
+        max_duration_secs: max_option(durations.iter().copied()),
+        avg_io_full: average(rows.iter().filter_map(|row| row.io_full)),
+        max_io_full: max_option(rows.iter().filter_map(|row| row.io_full)),
+        high_io_full_count: rows
+            .iter()
+            .filter(|row| {
+                row.io_full
+                    .is_some_and(|value| value >= crate::resources::thresholds::PSI_IO_FULL_WARN)
+            })
+            .count(),
+        avg_memory_full: average(rows.iter().filter_map(|row| row.memory_full)),
+        max_memory_full: max_option(rows.iter().filter_map(|row| row.memory_full)),
+        avg_process_count_max: average(process_counts.iter().map(|value| *value as f64)),
+        max_process_count_max: process_counts.into_iter().max(),
+        host_block_read_mib: rows
+            .iter()
+            .filter_map(|row| row.host_block_read_mib)
+            .sum::<f64>(),
+        host_block_write_mib: rows
+            .iter()
+            .filter_map(|row| row.host_block_write_mib)
+            .sum::<f64>(),
+        avg_host_block_read_iops: average(rows.iter().filter_map(|row| row.host_block_read_iops)),
+        avg_host_block_write_iops: average(rows.iter().filter_map(|row| row.host_block_write_iops)),
+    }
+}
+
+fn summarize_resource_devices(rows: &[ResourceInvocationRow]) -> Vec<ResourceDeviceSummary> {
+    let mut by_device: BTreeMap<String, Vec<&ResourceInvocationRow>> = BTreeMap::new();
+    for row in rows {
+        if let Some(device) = row.host_block_busiest_device.as_deref() {
+            by_device.entry(device.to_string()).or_default().push(row);
+        }
+    }
+    let mut devices = by_device
+        .into_iter()
+        .map(|(device, device_rows)| ResourceDeviceSummary {
+            device,
+            invocation_count: device_rows.len(),
+            total_mib: device_rows
+                .iter()
+                .filter_map(|row| row.host_block_busiest_device_total_mib)
+                .sum(),
+            avg_read_iops: average(
+                device_rows
+                    .iter()
+                    .filter_map(|row| row.host_block_busiest_device_read_iops),
+            ),
+            avg_write_iops: average(
+                device_rows
+                    .iter()
+                    .filter_map(|row| row.host_block_busiest_device_write_iops),
+            ),
+            max_weighted_io_ms_per_s: max_option(
+                device_rows
+                    .iter()
+                    .filter_map(|row| row.host_block_busiest_device_weighted_io_ms_per_s),
+            ),
+        })
+        .collect::<Vec<_>>();
+    devices.sort_by(|left, right| {
+        right
+            .total_mib
+            .total_cmp(&left.total_mib)
+            .then_with(|| right.invocation_count.cmp(&left.invocation_count))
+            .then_with(|| left.device.cmp(&right.device))
+    });
+    devices
+}
+
+fn slowest_resource_invocations(
+    rows: &[ResourceInvocationRow],
+    limit: usize,
+) -> Vec<ResourceInvocationSummary> {
+    let mut rows = rows.iter().collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        right
+            .duration_secs
+            .total_cmp(&left.duration_secs)
+            .then_with(|| {
+                right
+                    .io_full
+                    .unwrap_or(0.0)
+                    .total_cmp(&left.io_full.unwrap_or(0.0))
+            })
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    rows.into_iter()
+        .take(limit)
+        .map(|row| ResourceInvocationSummary {
+            id: row.id,
+            command: row.command.clone(),
+            status: row.status.clone(),
+            started_at: row.started_at.clone(),
+            duration_secs: row.duration_secs,
+            io_full: row.io_full,
+            memory_full: row.memory_full,
+            process_count_max: row.process_count_max,
+            host_block_read_mib: row.host_block_read_mib,
+            host_block_write_mib: row.host_block_write_mib,
+            host_block_busiest_device: row.host_block_busiest_device.clone(),
+            host_block_busiest_device_total_mib: row.host_block_busiest_device_total_mib,
+            args_json: row.args_json.clone(),
+        })
+        .collect()
+}
+
+fn print_resources_report(report: &ResourceWindowReport) {
+    println!(
+        "Recorded xtask resources for {}{}{}:",
+        report.window,
+        if report.include_background {
+            " (foreground + background)"
+        } else {
+            " (foreground only)"
+        },
+        if report.success_only {
+            ", success only"
+        } else {
+            ", success/failed/cancelled"
+        }
+    );
+    if report.rows.is_empty() {
+        println!("No invocation resource rows found.");
+        return;
+    }
+
+    let mut builder = Builder::new();
+    builder.push_record([
+        "COMMAND",
+        "N",
+        "FAIL",
+        "CANCEL",
+        "HOURS",
+        "AVG",
+        "MAX",
+        "IO AVG/MAX",
+        "MEM AVG/MAX",
+        "PROC AVG/MAX",
+        "BLK R/W MiB",
+        "BLK R/W IOPS",
+    ]);
+    for row in &report.rows {
+        builder.push_record([
+            row.command.clone(),
+            row.invocation_count.to_string(),
+            row.failed_count.to_string(),
+            row.cancelled_count.to_string(),
+            format!("{:.2}", row.total_duration_hours),
+            fmt_opt_secs(row.avg_duration_secs),
+            fmt_opt_secs(row.max_duration_secs),
+            format!(
+                "{}/{}",
+                fmt_opt_float(row.avg_io_full),
+                fmt_opt_float(row.max_io_full)
+            ),
+            format!(
+                "{}/{}",
+                fmt_opt_float(row.avg_memory_full),
+                fmt_opt_float(row.max_memory_full)
+            ),
+            format!(
+                "{}/{}",
+                fmt_opt_float(row.avg_process_count_max),
+                row.max_process_count_max
+                    .map_or_else(|| "-".to_string(), |value| value.to_string())
+            ),
+            format!(
+                "{:.1}/{:.1}",
+                row.host_block_read_mib, row.host_block_write_mib
+            ),
+            format!(
+                "{}/{}",
+                fmt_opt_float(row.avg_host_block_read_iops),
+                fmt_opt_float(row.avg_host_block_write_iops)
+            ),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    println!("{table}");
+
+    if !report.top_devices.is_empty() {
+        println!("\nBusiest xtask-sampled devices:");
+        let mut builder = Builder::new();
+        builder.push_record([
+            "DEVICE",
+            "N",
+            "TOTAL MiB",
+            "R IOPS",
+            "W IOPS",
+            "MAX WIO ms/s",
+        ]);
+        for device in report.top_devices.iter().take(8) {
+            builder.push_record([
+                device.device.clone(),
+                device.invocation_count.to_string(),
+                format!("{:.1}", device.total_mib),
+                fmt_opt_float(device.avg_read_iops),
+                fmt_opt_float(device.avg_write_iops),
+                fmt_opt_float(device.max_weighted_io_ms_per_s),
+            ]);
+        }
+        let mut table = builder.build();
+        table.with(Style::rounded());
+        println!("{table}");
+    }
+
+    if !report.slowest.is_empty() {
+        println!("\nSlowest/high-pressure invocations:");
+        let mut builder = Builder::new();
+        builder.push_record([
+            "ID", "COMMAND", "STATUS", "DURATION", "IO.FULL", "MEM.FULL", "PROCS", "DEVICE",
+            "BLK MiB", "STARTED",
+        ]);
+        for row in &report.slowest {
+            let total_block_mib = row.host_block_busiest_device_total_mib.or_else(|| {
+                match (row.host_block_read_mib, row.host_block_write_mib) {
+                    (Some(read), Some(write)) => Some(read + write),
+                    (Some(read), None) => Some(read),
+                    (None, Some(write)) => Some(write),
+                    (None, None) => None,
+                }
+            });
+            builder.push_record([
+                row.id.to_string(),
+                row.command.clone(),
+                row.status.clone(),
+                format!("{:.1}s", row.duration_secs),
+                fmt_opt_float(row.io_full),
+                fmt_opt_float(row.memory_full),
+                row.process_count_max
+                    .map_or_else(|| "-".to_string(), |value| value.to_string()),
+                row.host_block_busiest_device
+                    .as_deref()
+                    .unwrap_or("-")
+                    .to_string(),
+                fmt_opt_float(total_block_mib),
+                row.started_at.clone(),
+            ]);
+        }
+        let mut table = builder.build();
+        table.with(Style::rounded());
+        println!("{table}");
+    }
+
+    println!("\n{}", style("Evidence limits:").yellow().bold());
+    for limit in &report.evidence_limits {
+        println!("  - {limit}");
     }
 }
 
@@ -5062,6 +5659,110 @@ mod tests {
         assert_eq!(candidate.repeated_invocation_count, 2);
         assert_eq!(candidate.invocation_ids, vec![1, 2, 3]);
         assert_eq!(candidate.repeated_hours, 50.0 / 3600.0);
+        Ok(())
+    }
+
+    fn invocation_resource_metrics(
+        io_full: f64,
+        memory_full: f64,
+        read_mib: f64,
+        write_mib: f64,
+        device: &str,
+        device_total_mib: f64,
+        process_count: u32,
+    ) -> crate::process::InvocationResourceMetrics {
+        crate::process::InvocationResourceMetrics {
+            process_tree: crate::process::ProcessTreeMetrics {
+                cpu_usage_avg: Some(10.0),
+                memory_usage_max_mb: Some(512.0),
+                root_cpu_usage_avg: Some(2.0),
+                root_memory_usage_max_mb: Some(128.0),
+                process_count_max: Some(process_count),
+                sample_count: 4,
+            },
+            shared_build: crate::process::SharedBuildMetrics::default(),
+            host_pressure: crate::process::HostPressureMetrics {
+                io_full_avg10_max: Some(io_full),
+                memory_full_avg10_max: Some(memory_full),
+                ..Default::default()
+            },
+            host_block_io: crate::process::HostBlockIoMetrics {
+                read_mib_delta: Some(read_mib),
+                write_mib_delta: Some(write_mib),
+                read_iops_avg: Some(30.0),
+                write_iops_avg: Some(12.0),
+                busiest_device: Some(device.to_string()),
+                busiest_device_total_mib_delta: Some(device_total_mib),
+                busiest_device_read_iops_avg: Some(20.0),
+                busiest_device_write_iops_avg: Some(8.0),
+                busiest_device_weighted_io_ms_per_s: Some(100.0),
+            },
+        }
+    }
+
+    #[sinex_test]
+    async fn test_execute_resources_summarizes_commands_and_devices()
+    -> ::xtask::sandbox::TestResult<()> {
+        let db = seeded_history_db("resources-summary.db")?;
+        let ctx = silent_ctx();
+
+        let check_id = db.start_invocation("check", None, None, None)?;
+        db.record_resource_metrics(
+            check_id,
+            &invocation_resource_metrics(12.0, 3.0, 100.0, 20.0, "nvme0n1", 120.0, 9),
+        )?;
+        db.finish_invocation(check_id, InvocationStatus::Success, Some(0), 10.0)?;
+
+        let test_id = db.start_invocation("test", None, None, None)?;
+        db.record_resource_metrics(
+            test_id,
+            &invocation_resource_metrics(64.0, 20.0, 200.0, 30.0, "nvme0n1", 230.0, 28),
+        )?;
+        db.finish_invocation(test_id, InvocationStatus::Failed, Some(1), 20.0)?;
+
+        let result = execute_resources(&db, None, 1, &[], 10, false, false, &ctx)?;
+        let data = result.data.expect("resource report data should be present");
+        let rows = data
+            .get("rows")
+            .and_then(serde_json::Value::as_array)
+            .expect("resource command summaries should be present");
+        let test_summary = rows
+            .iter()
+            .find(|row| row.get("command").and_then(serde_json::Value::as_str) == Some("test"))
+            .expect("test command summary should exist");
+
+        assert_eq!(
+            data.get("invocation_count")
+                .and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            test_summary
+                .get("failed_count")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            test_summary
+                .get("host_block_read_mib")
+                .and_then(serde_json::Value::as_f64),
+            Some(200.0)
+        );
+
+        let devices = data
+            .get("top_devices")
+            .and_then(serde_json::Value::as_array)
+            .expect("top devices should be present");
+        assert_eq!(
+            devices[0].get("device").and_then(serde_json::Value::as_str),
+            Some("nvme0n1")
+        );
+        assert_eq!(
+            devices[0]
+                .get("total_mib")
+                .and_then(serde_json::Value::as_f64),
+            Some(350.0)
+        );
         Ok(())
     }
 

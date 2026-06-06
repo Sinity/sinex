@@ -1,5 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
+assertion_line: 29
 expression: json
 ---
 {
@@ -2512,6 +2513,79 @@ expression: json
             }
           ],
           "name": "compare-days",
+          "subcommands": []
+        },
+        {
+          "about": "Aggregate recorded resource pressure and block I/O by command/window",
+          "args": [
+            {
+              "global": false,
+              "help": "Exact UTC calendar day to inspect, in YYYY-MM-DD",
+              "long": "day",
+              "name": "day",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Rolling window in days when --day is omitted",
+              "long": "days",
+              "name": "days",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Commands to include. Can be repeated or comma-separated",
+              "long": "command",
+              "name": "commands",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Number of slowest/high-pressure invocations to include",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Include background invocations in addition to foreground work",
+              "long": "include-background",
+              "name": "include_background",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Restrict to successful invocations only",
+              "long": "success-only",
+              "name": "success_only",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "resources",
           "subcommands": []
         },
         {

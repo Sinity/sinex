@@ -805,6 +805,22 @@ Summarise dev-loop wallclock cost without double-counting wrappers
 | `--days` | yes | no | How many days back to analyse |
 
 
+### `xtask history resources`
+
+Aggregate recorded resource pressure and block I/O by command/window
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--day` | yes | no | Exact UTC calendar day to inspect, in YYYY-MM-DD |
+| `--days` | yes | no | Rolling window in days when --day is omitted |
+| `--command` | yes | no | Commands to include. Can be repeated or comma-separated |
+| `--limit` | yes | no | Number of slowest/high-pressure invocations to include |
+| `--include-background` | no | no | Include background invocations in addition to foreground work |
+| `--success-only` | no | no | Restrict to successful invocations only |
+
+
 ### `xtask history overlap`
 
 Explain what overlapped an invocation and what shared resources were recorded
