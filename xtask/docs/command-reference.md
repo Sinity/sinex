@@ -112,8 +112,6 @@ Run the repo's primary nextest-backed test workflows
 | `--features` | yes | no | Cargo features to enable for the selected test packages |
 | `--dry-run` | no | no | Print what would happen |
 | `--skip-preflight` | no | no | Skip automatic infrastructure setup (preflight is ON by default) |
-| `--ephemeral-postgres` | no | no | Run DB-backed tests inside a fresh throwaway Postgres cluster |
-| `--no-ephemeral-postgres` | no | no | Disable SINEX_TEST_POSTGRES=ephemeral auto-wrapping for this invocation |
 | `--include-ignored` | no | no | Include tests marked `#[ignore]` |
 | `--heavy` | no | no | Run heavy/ignored tests |
 | `-a, --all` | no | no | Run ALL packages (disables affected mode default) |
