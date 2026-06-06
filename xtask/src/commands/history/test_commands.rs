@@ -799,6 +799,31 @@ pub(super) fn execute_tests_analyze(
                         overhead.non_test_overhead_secs,
                         overhead.classification
                     );
+                    if let Some(unaccounted) = analysis.unaccounted_overhead_secs {
+                        println!(
+                            "  Unaccounted after recorded stages + test bodies: {:.1}s",
+                            unaccounted
+                        );
+                    }
+                }
+
+                if !analysis.stage_breakdown.is_empty() {
+                    println!("\n{}", style("Recorded Stage Breakdown:").cyan().bold());
+                    let mut builder = Builder::new();
+                    builder.push_record(["STAGE", "RUNS", "TOTAL", "AVG", "MAX", "OK"]);
+                    for stage in &analysis.stage_breakdown {
+                        builder.push_record([
+                            stage.stage_name.clone(),
+                            stage.runs.to_string(),
+                            format!("{:.3}s", stage.total_duration_secs),
+                            format!("{:.3}s", stage.avg_duration_secs),
+                            format!("{:.3}s", stage.max_duration_secs),
+                            if stage.success { "yes" } else { "no" }.to_string(),
+                        ]);
+                    }
+                    let mut table = builder.build();
+                    table.with(Style::rounded());
+                    println!("{table}");
                 }
 
                 // Duration distribution
