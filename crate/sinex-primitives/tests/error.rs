@@ -1,5 +1,5 @@
 use camino::Utf8Path;
-use sinex_primitives::error::{ErrorDetails, Result, ResultExt, SinexError};
+use sinex_primitives::error::{ErrorDetails, Result, ResultExt, SinexError, SinexErrorKind};
 use sqlx::error::{DatabaseError, ErrorKind};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -67,6 +67,32 @@ impl DatabaseError for MockDatabaseError {
     }
 }
 
+#[derive(Debug)]
+struct InnerTestError;
+
+impl std::fmt::Display for InnerTestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("inner source secret=ghp_inner")
+    }
+}
+
+impl std::error::Error for InnerTestError {}
+
+#[derive(Debug)]
+struct OuterTestError;
+
+impl std::fmt::Display for OuterTestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("outer source failed")
+    }
+}
+
+impl std::error::Error for OuterTestError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&InnerTestError)
+    }
+}
+
 #[sinex_test]
 async fn error_display_matches_variants() -> TestResult<()> {
     let error = SinexError::database("Connection failed");
@@ -128,6 +154,86 @@ async fn status_code_mapping_matches_expectations() -> TestResult<()> {
     assert_eq!(SinexError::already_exists("test").status_code(), 409);
     assert_eq!(SinexError::resource_exhausted("test").status_code(), 429);
     assert_eq!(SinexError::database("test").status_code(), 500);
+    Ok(())
+}
+
+#[sinex_test]
+async fn error_kind_is_stable_and_machine_readable() -> TestResult<()> {
+    let error = SinexError::database("Connection failed");
+    assert_eq!(error.kind(), SinexErrorKind::Database);
+    assert_eq!(error.kind().as_str(), "database");
+
+    let error = SinexError::permission_denied("No write token");
+    assert_eq!(error.kind(), SinexErrorKind::PermissionDenied);
+    assert_eq!(error.public_payload().kind_name, "permission_denied");
+    Ok(())
+}
+
+#[sinex_test]
+async fn typed_source_chain_is_structured_and_std_compatible() -> TestResult<()> {
+    let error = SinexError::service("processing failed").with_error_source(&OuterTestError);
+
+    assert_eq!(error.kind(), SinexErrorKind::Service);
+    assert_eq!(error.source_chain().len(), 1);
+    let source = &error.source_chain()[0];
+    assert!(source.type_name().ends_with("OuterTestError"));
+    assert_eq!(source.message(), "outer source failed");
+
+    let child = source.child().expect("inner source should be captured");
+    assert!(child.type_name().contains("Error"));
+    assert_eq!(child.message(), "inner source secret=ghp_inner");
+
+    let std_source = std::error::Error::source(&error).expect("SinexError should expose source()");
+    assert_eq!(std_source.to_string(), "outer source failed");
+    assert!(
+        error
+            .sources()
+            .iter()
+            .any(|msg| msg == "outer source failed")
+    );
+    assert!(
+        error
+            .sources()
+            .iter()
+            .any(|msg| msg == "inner source secret=ghp_inner")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn ordinary_construction_does_not_capture_backtrace() -> TestResult<()> {
+    let error = SinexError::service("plain construction");
+    assert!(error.backtrace().is_none());
+    Ok(())
+}
+
+#[sinex_test]
+async fn public_payload_keeps_safe_fields_and_drops_sensitive_context() -> TestResult<()> {
+    let error = SinexError::database("SELECT secret FROM auth_tokens")
+        .with_context("operation", "event.lookup")
+        .with_context("path", "/home/sinity/.ssh/id_ed25519")
+        .with_context("nats_url", "nats://token@localhost:4222")
+        .with_context("sqlstate", "23505")
+        .with_error_source(&OuterTestError);
+
+    let public = error.public_payload();
+    assert_eq!(public.kind, SinexErrorKind::Database);
+    assert_eq!(public.kind_name, "database");
+    assert_eq!(public.message, "A database error occurred");
+    assert_eq!(public.status_code, 500);
+    assert_eq!(
+        public.context.get("operation"),
+        Some(&"event.lookup".to_string())
+    );
+    assert_eq!(public.context.get("sqlstate"), Some(&"23505".to_string()));
+    assert!(!public.context.contains_key("path"));
+    assert!(!public.context.contains_key("nats_url"));
+
+    let json = serde_json::to_string(&public).unwrap();
+    assert!(!json.contains("SELECT secret"));
+    assert!(!json.contains("id_ed25519"));
+    assert!(!json.contains("nats://"));
+    assert!(!json.contains("ghp_inner"));
     Ok(())
 }
 

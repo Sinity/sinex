@@ -1,6 +1,7 @@
 use displaydoc::Display;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use std::backtrace::Backtrace;
 use std::fmt;
 
 /// Core error type for the Sinex system.
@@ -84,7 +85,93 @@ pub enum SinexError {
     Coordination(ErrorDetails),
 }
 
-impl std::error::Error for SinexError {}
+impl std::error::Error for SinexError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.details().source()
+    }
+}
+
+/// Stable, machine-readable error kind.
+///
+/// `SinexError` keeps its enum variants for existing pattern matches, while
+/// this kind is the public/programmatic classification used by APIs, tests,
+/// logs, and future structural error handling. Callers should prefer
+/// [`SinexError::kind`] over parsing display strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SinexErrorKind {
+    Database,
+    Validation,
+    Service,
+    Io,
+    Configuration,
+    Serialization,
+    Parse,
+    NotFound,
+    AlreadyExists,
+    InvalidState,
+    PermissionDenied,
+    Network,
+    ChannelSend,
+    ChannelReceive,
+    Timeout,
+    Cancelled,
+    MaxRetriesExceeded,
+    ResourceExhausted,
+    Unknown,
+    Kv,
+    Automaton,
+    Checkpoint,
+    Lifecycle,
+    Processing,
+    Nats,
+    NatsAckFailed,
+    DbPersistenceFailed,
+    NatsPublish,
+    NatsSubscribe,
+    BlobStorage,
+    Coordination,
+}
+
+impl SinexErrorKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Database => "database",
+            Self::Validation => "validation",
+            Self::Service => "service",
+            Self::Io => "io",
+            Self::Configuration => "configuration",
+            Self::Serialization => "serialization",
+            Self::Parse => "parse",
+            Self::NotFound => "not_found",
+            Self::AlreadyExists => "already_exists",
+            Self::InvalidState => "invalid_state",
+            Self::PermissionDenied => "permission_denied",
+            Self::Network => "network",
+            Self::ChannelSend => "channel_send",
+            Self::ChannelReceive => "channel_receive",
+            Self::Timeout => "timeout",
+            Self::Cancelled => "cancelled",
+            Self::MaxRetriesExceeded => "max_retries_exceeded",
+            Self::ResourceExhausted => "resource_exhausted",
+            Self::Unknown => "unknown",
+            Self::Kv => "kv",
+            Self::Automaton => "automaton",
+            Self::Checkpoint => "checkpoint",
+            Self::Lifecycle => "lifecycle",
+            Self::Processing => "processing",
+            Self::Nats => "nats",
+            Self::NatsAckFailed => "nats_ack_failed",
+            Self::DbPersistenceFailed => "db_persistence_failed",
+            Self::NatsPublish => "nats_publish",
+            Self::NatsSubscribe => "nats_subscribe",
+            Self::BlobStorage => "blob_storage",
+            Self::Coordination => "coordination",
+        }
+    }
+}
 
 /// Classification of a `SinexError` by its inherent semantics.
 ///
@@ -108,6 +195,91 @@ pub enum ErrorClass {
     /// DLQ stream unavailable, confirmation stream unavailable,
     /// `JetStream` publish failing beyond retry budget.
     TransportDegraded,
+}
+
+/// Captured causal error node.
+///
+/// This preserves source chains structurally instead of keeping only one
+/// flattened string. The original concrete error value is not retained because
+/// `SinexError` must remain cloneable and serializable across API/logging
+/// boundaries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorSource {
+    type_name: String,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    source: Option<Box<ErrorSource>>,
+}
+
+impl ErrorSource {
+    fn from_error(err: &(dyn std::error::Error + 'static)) -> Self {
+        let source = err.source().map(Self::from_error).map(Box::new);
+        Self {
+            type_name: std::any::type_name_of_val(err).to_string(),
+            message: err.to_string(),
+            source,
+        }
+    }
+
+    fn from_typed_error<E>(err: &E) -> Self
+    where
+        E: std::error::Error + 'static,
+    {
+        let source = err.source().map(Self::from_error).map(Box::new);
+        Self {
+            type_name: std::any::type_name::<E>().to_string(),
+            message: err.to_string(),
+            source,
+        }
+    }
+
+    #[must_use]
+    pub fn type_name(&self) -> &str {
+        &self.type_name
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    #[must_use]
+    pub fn child(&self) -> Option<&ErrorSource> {
+        self.source.as_deref()
+    }
+
+    fn push_messages(&self, out: &mut Vec<String>) {
+        out.push(self.message.clone());
+        if let Some(source) = &self.source {
+            source.push_messages(out);
+        }
+    }
+}
+
+impl fmt::Display for ErrorSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for ErrorSource {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source
+            .as_deref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
+    }
+}
+
+/// Public, sanitized error payload suitable for API responses and user-facing
+/// CLI output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicError {
+    pub kind: SinexErrorKind,
+    pub kind_name: String,
+    pub message: String,
+    pub status_code: u16,
+    #[serde(skip_serializing_if = "IndexMap::is_empty", default)]
+    pub context: IndexMap<String, String>,
 }
 
 impl ErrorClass {
@@ -179,6 +351,14 @@ pub struct ErrorDetails {
     /// Chain of source errors that led to this error
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     sources: Vec<String>,
+    /// Structured causal chain captured from `std::error::Error::source`.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    source_chain: Vec<ErrorSource>,
+    /// Optional captured backtrace text. Captured by explicit
+    /// `with_backtrace()` calls, or by typed source capture when
+    /// `SINEX_ERROR_BACKTRACE=1` or `RUST_BACKTRACE=1/full` is set.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    backtrace: Option<String>,
 }
 
 impl ErrorDetails {
@@ -187,6 +367,8 @@ impl ErrorDetails {
             message: message.into(),
             context: IndexMap::new(),
             sources: Vec::new(),
+            source_chain: Vec::new(),
+            backtrace: None,
         }
     }
 
@@ -208,6 +390,21 @@ impl ErrorDetails {
         self
     }
 
+    pub fn with_error_source<E>(mut self, source: &E) -> Self
+    where
+        E: std::error::Error + 'static,
+    {
+        let captured = ErrorSource::from_typed_error(source);
+        captured.push_messages(&mut self.sources);
+        self.source_chain.push(captured);
+        self
+    }
+
+    pub fn with_backtrace(mut self) -> Self {
+        self.backtrace = Some(Backtrace::capture().to_string());
+        self
+    }
+
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
@@ -221,6 +418,22 @@ impl ErrorDetails {
     #[must_use]
     pub fn sources(&self) -> &[String] {
         &self.sources
+    }
+
+    #[must_use]
+    pub fn source_chain(&self) -> &[ErrorSource] {
+        &self.source_chain
+    }
+
+    #[must_use]
+    pub fn backtrace(&self) -> Option<&str> {
+        self.backtrace.as_deref()
+    }
+
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source_chain
+            .first()
+            .map(|source| source as &(dyn std::error::Error + 'static))
     }
 }
 
@@ -244,6 +457,10 @@ impl fmt::Display for ErrorDetails {
             for (i, source) in self.sources.iter().enumerate() {
                 write!(f, "\n  {}: {}", i + 1, source)?;
             }
+        }
+
+        if let Some(backtrace) = &self.backtrace {
+            write!(f, "\nBacktrace:\n{backtrace}")?;
         }
 
         Ok(())
@@ -450,12 +667,34 @@ impl SinexError {
     /// Captures the full error chain from a standard error trait object.
     #[must_use]
     pub fn with_std_error(mut self, err: &(dyn std::error::Error + 'static)) -> Self {
-        self = self.with_source(err); // Adds the error itself as a source description
-        let mut current = err.source();
-        while let Some(cause) = current {
-            self = self.with_source(cause);
-            current = cause.source();
+        let captured = ErrorSource::from_error(err);
+        captured.push_messages(&mut self.details_mut().sources);
+        self.details_mut().source_chain.push(captured);
+        if should_capture_backtrace() {
+            self = self.with_backtrace();
         }
+        self
+    }
+
+    /// Captures a typed source error while preserving its concrete type name.
+    #[must_use]
+    pub fn with_error_source<E>(mut self, err: &E) -> Self
+    where
+        E: std::error::Error + 'static,
+    {
+        let captured = ErrorSource::from_typed_error(err);
+        captured.push_messages(&mut self.details_mut().sources);
+        self.details_mut().source_chain.push(captured);
+        if should_capture_backtrace() {
+            self = self.with_backtrace();
+        }
+        self
+    }
+
+    /// Explicitly attach a backtrace. Ordinary constructors do not capture one.
+    #[must_use]
+    pub fn with_backtrace(mut self) -> Self {
+        self.details_mut().backtrace = Some(Backtrace::capture().to_string());
         self
     }
 
@@ -509,6 +748,57 @@ impl SinexError {
     #[must_use]
     pub fn sources(&self) -> &[String] {
         self.details().sources()
+    }
+
+    #[must_use]
+    pub fn source_chain(&self) -> &[ErrorSource] {
+        self.details().source_chain()
+    }
+
+    #[must_use]
+    pub fn backtrace(&self) -> Option<&str> {
+        self.details().backtrace()
+    }
+
+    #[must_use]
+    pub fn kind(&self) -> SinexErrorKind {
+        match self {
+            SinexError::Database(_) => SinexErrorKind::Database,
+            SinexError::Validation(_) => SinexErrorKind::Validation,
+            SinexError::Service(_) => SinexErrorKind::Service,
+            SinexError::Io(_) => SinexErrorKind::Io,
+            SinexError::Configuration(_) => SinexErrorKind::Configuration,
+            SinexError::Serialization(_) => SinexErrorKind::Serialization,
+            SinexError::Parse(_) => SinexErrorKind::Parse,
+            SinexError::NotFound(_) => SinexErrorKind::NotFound,
+            SinexError::AlreadyExists(_) => SinexErrorKind::AlreadyExists,
+            SinexError::InvalidState(_) => SinexErrorKind::InvalidState,
+            SinexError::PermissionDenied(_) => SinexErrorKind::PermissionDenied,
+            SinexError::Network(_) => SinexErrorKind::Network,
+            SinexError::ChannelSend(_) => SinexErrorKind::ChannelSend,
+            SinexError::ChannelReceive(_) => SinexErrorKind::ChannelReceive,
+            SinexError::Timeout(_) => SinexErrorKind::Timeout,
+            SinexError::Cancelled(_) => SinexErrorKind::Cancelled,
+            SinexError::MaxRetriesExceeded(_) => SinexErrorKind::MaxRetriesExceeded,
+            SinexError::ResourceExhausted(_) => SinexErrorKind::ResourceExhausted,
+            SinexError::Unknown(_) => SinexErrorKind::Unknown,
+            SinexError::Kv(_) => SinexErrorKind::Kv,
+            SinexError::Automaton(_) => SinexErrorKind::Automaton,
+            SinexError::Checkpoint(_) => SinexErrorKind::Checkpoint,
+            SinexError::Lifecycle(_) => SinexErrorKind::Lifecycle,
+            SinexError::Processing(_) => SinexErrorKind::Processing,
+            #[cfg(feature = "nats")]
+            SinexError::Nats(_) => SinexErrorKind::Nats,
+            #[cfg(feature = "nats")]
+            SinexError::NatsAckFailed(_) => SinexErrorKind::NatsAckFailed,
+            SinexError::DbPersistenceFailed(_) => SinexErrorKind::DbPersistenceFailed,
+            #[cfg(feature = "nats")]
+            SinexError::NatsPublish(_) => SinexErrorKind::NatsPublish,
+            #[cfg(feature = "nats")]
+            SinexError::NatsSubscribe(_) => SinexErrorKind::NatsSubscribe,
+            SinexError::BlobStorage(_) => SinexErrorKind::BlobStorage,
+            SinexError::Coordination(_) => SinexErrorKind::Coordination,
+        }
     }
 
     // Helper methods for error categorization (used in tests)
@@ -595,17 +885,75 @@ impl SinexError {
             _ => 500,
         }
     }
+
+    #[must_use]
+    pub fn public_context(&self) -> IndexMap<String, String> {
+        const SAFE_KEYS: &[&str] = &[
+            "code",
+            "constraint",
+            "count",
+            "database_error_kind",
+            "duration_ms",
+            "error_type",
+            "field",
+            "found",
+            "kind",
+            "operation",
+            "reason",
+            "requested",
+            "retry_after",
+            "retry_count",
+            "sqlstate",
+            "status",
+            "timeout_reason",
+            "validation_type",
+        ];
+
+        self.context_map()
+            .iter()
+            .filter(|(key, _)| SAFE_KEYS.contains(&key.as_str()))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
+    }
+
+    #[must_use]
+    pub fn public_payload(&self) -> PublicError {
+        let kind = self.kind();
+        PublicError {
+            kind,
+            kind_name: kind.as_str().to_string(),
+            message: self.client_message().to_string(),
+            status_code: self.status_code(),
+            context: self.public_context(),
+        }
+    }
+}
+
+fn should_capture_backtrace() -> bool {
+    fn enabled(value: &str) -> bool {
+        let trimmed = value.trim();
+        !trimmed.is_empty() && trimmed != "0"
+    }
+
+    std::env::var("SINEX_ERROR_BACKTRACE")
+        .ok()
+        .as_deref()
+        .is_some_and(enabled)
+        || std::env::var("RUST_BACKTRACE")
+            .ok()
+            .as_deref()
+            .is_some_and(enabled)
 }
 
 impl From<std::io::Error> for SinexError {
     fn from(e: std::io::Error) -> Self {
-        SinexError::Io(ErrorDetails::new(e.to_string())).with_std_error(&e)
+        SinexError::Io(ErrorDetails::new(e.to_string())).with_error_source(&e)
     }
 }
 
 impl From<serde_json::Error> for SinexError {
     fn from(e: serde_json::Error) -> Self {
-        SinexError::Serialization(ErrorDetails::new(e.to_string())).with_std_error(&e)
+        SinexError::Serialization(ErrorDetails::new(e.to_string())).with_error_source(&e)
     }
 }
 
@@ -643,7 +991,7 @@ fn classify_sqlx_error(error: &sqlx::Error, message: impl Into<String>) -> Sinex
         _ => SinexError::database(message),
     };
 
-    sinex_error = sinex_error.with_std_error(error);
+    sinex_error = sinex_error.with_error_source(error);
     sinex_error
 }
 

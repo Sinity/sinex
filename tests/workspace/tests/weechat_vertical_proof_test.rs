@@ -204,7 +204,10 @@ async fn weechat_full_pipeline_persists_correctly(ctx: TestContext) -> TestResul
     admitted.validate().expect("admitted intent must be valid");
 
     // ── Publish through JetStream ────────────────────────────────────────
-    stack.ctx().publish_prebuilt_events(&admitted.events).await?;
+    stack
+        .ctx()
+        .publish_prebuilt_events(&admitted.events)
+        .await?;
 
     // ── Wait for event_engine persistence ─────────────────────────────────────
     let count = stack.wait_for_event_count(5).await?;

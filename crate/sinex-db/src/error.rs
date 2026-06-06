@@ -2,11 +2,11 @@ use sinex_primitives::SinexError;
 
 pub type DbResult<T> = Result<T, SinexError>;
 
-/// Convert a `SQLx` error into a `SinexError` with full error chain preserved
+/// Convert a `SQLx` error into a typed `SinexError` with the full source chain preserved.
 #[must_use]
 #[allow(
     clippy::needless_pass_by_value,
-    reason = "sqlx::Error needs to be owned for with_std_error"
+    reason = "sqlx::Error ownership matches the repository call-site error boundary"
 )]
 pub fn db_error(e: sqlx::Error, context_msg: impl ToString) -> SinexError {
     let context_msg = context_msg.to_string();
@@ -41,7 +41,9 @@ pub fn db_error(e: sqlx::Error, context_msg: impl ToString) -> SinexError {
         _ => SinexError::database(&context_msg),
     };
 
-    err = err.with_std_error(&e).with_context("operation", "database");
+    err = err
+        .with_error_source(&e)
+        .with_context("operation", "database");
     err
 }
 
@@ -62,6 +64,11 @@ mod tests {
             error.context_map().get("operation"),
             Some(&"database".to_string())
         );
+        assert_eq!(
+            error.kind(),
+            sinex_primitives::error::SinexErrorKind::NotFound
+        );
+        assert!(!error.source_chain().is_empty());
         Ok(())
     }
 
