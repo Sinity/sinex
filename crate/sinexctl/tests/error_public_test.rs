@@ -1,5 +1,5 @@
 use color_eyre::eyre::eyre;
-use sinexctl::error::{enhance_rpc_error, is_not_found_error};
+use sinexctl::error::{enhance_rpc_error, format_public_rpc_error_details, is_not_found_error};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -58,5 +58,24 @@ async fn test_enhance_operation_not_found() -> TestResult<()> {
         enhanced_str.contains("sinexctl ops list"),
         "Enhanced error does not contain expected text. Got: {enhanced_str}"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_format_public_rpc_error_details_uses_stable_category() -> TestResult<()> {
+    let details = format_public_rpc_error_details(&serde_json::json!({
+        "error_id": "018f0000-0000-7000-8000-000000000000",
+        "kind": "database",
+        "kind_name": "database",
+        "status_code": 500,
+        "context": {
+            "operation": "events.query"
+        }
+    }));
+
+    assert!(details.contains("kind=database"));
+    assert!(details.contains("status=500"));
+    assert!(details.contains("error_id=018f0000-0000-7000-8000-000000000000"));
+    assert!(!details.contains("operation"));
     Ok(())
 }

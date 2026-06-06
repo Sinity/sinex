@@ -1,6 +1,7 @@
 use color_eyre::Report;
 use color_eyre::eyre::eyre;
 use reqwest::StatusCode;
+use serde_json::Value;
 use sinex_primitives::rpc::methods;
 
 use crate::client::gateway::GatewayRpcError;
@@ -30,6 +31,41 @@ pub fn enhance_rpc_error(method: &str, err: Report) -> Report {
 
     // Return original error if no enhancement applies
     err
+}
+
+/// Format sanitized JSON-RPC error metadata returned by the gateway.
+///
+/// The gateway includes stable machine-readable `kind_name`/`status_code`
+/// fields in production error data. Keep this helper tolerant so older or
+/// hand-written JSON-RPC responses still display their raw data.
+#[must_use]
+pub fn format_public_rpc_error_details(data: &Value) -> String {
+    let Some(object) = data.as_object() else {
+        return format!("\nDetails: {data}");
+    };
+
+    let kind = object
+        .get("kind_name")
+        .and_then(Value::as_str)
+        .or_else(|| object.get("kind").and_then(Value::as_str));
+    let status = object.get("status_code").and_then(Value::as_u64);
+    let error_id = object.get("error_id").and_then(Value::as_str);
+
+    if kind.is_none() && status.is_none() && error_id.is_none() {
+        return format!("\nDetails: {data}");
+    }
+
+    let mut details = String::from("\nDetails:");
+    if let Some(kind) = kind {
+        details.push_str(&format!(" kind={kind}"));
+    }
+    if let Some(status) = status {
+        details.push_str(&format!(" status={status}"));
+    }
+    if let Some(error_id) = error_id {
+        details.push_str(&format!(" error_id={error_id}"));
+    }
+    details
 }
 
 /// Check if error is a connection error

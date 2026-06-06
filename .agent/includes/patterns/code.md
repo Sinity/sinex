@@ -36,9 +36,19 @@ SinexError::validation("Invalid input")
 do_work(input).map_err(|e| {
     SinexError::processing("failed to process data")
         .with_context("input_len", input.len().to_string())
-        .with_std_error(&e)
+        .with_error_source(&e)
 })
 ```
+
+Use `SinexError::kind()` / `SinexErrorKind::as_str()` for machine-readable
+classification. Use `public_payload()` for API/CLI surfaces; it keeps stable
+kind/status fields and only whitelisted context. `Display`, `Debug`, full serde
+serialization, and `ErrorDetails` are internal diagnostic surfaces and may
+contain SQL, paths, URLs, source messages, or other private context.
+
+Prefer `with_error_source(&error)` at typed conversion boundaries. Use
+`with_std_error(&dyn_error)` only when the concrete type is unavailable, and
+`with_source("...")` only for string-only context with no typed error value.
 
 ### Database Access — Repository Pattern
 

@@ -124,51 +124,53 @@ struct JsonRpcResponse {
 /// Messages are produced via `SinexError::client_message()` — client errors surface
 /// their authored primary message; server-internal errors return generic category strings.
 /// Context, source chains, and infrastructure details never reach the caller.
-fn sinex_error_to_rpc_code(err: &sinex_primitives::error::SinexError) -> (i32, String) {
+fn sinex_error_to_rpc_code(
+    err: &sinex_primitives::error::SinexError,
+) -> (i32, sinex_primitives::error::PublicError) {
     use sinex_primitives::error::SinexError;
 
-    let msg = err.client_message().to_string();
-    match err {
+    let public = err.public_payload();
+    let code = match err {
         // ── Client errors ──
-        SinexError::Validation(_) => (-32800, msg),
-        SinexError::NotFound(_) => (-32801, msg),
-        SinexError::AlreadyExists(_) => (-32802, msg),
-        SinexError::InvalidState(_) => (-32803, msg),
-        SinexError::PermissionDenied(_) => (-32804, msg),
-        SinexError::Parse(_) => (-32805, msg),
+        SinexError::Validation(_) => -32800,
+        SinexError::NotFound(_) => -32801,
+        SinexError::AlreadyExists(_) => -32802,
+        SinexError::InvalidState(_) => -32803,
+        SinexError::PermissionDenied(_) => -32804,
+        SinexError::Parse(_) => -32805,
 
         // ── Server-internal errors ──
-        SinexError::Database(_) | SinexError::DbPersistenceFailed(_) => (-32810, msg),
-        SinexError::Network(_) => (-32811, msg),
-        SinexError::Timeout(_) => (-32812, msg),
-        SinexError::ResourceExhausted(_) => (-32813, msg),
+        SinexError::Database(_) | SinexError::DbPersistenceFailed(_) => -32810,
+        SinexError::Network(_) => -32811,
+        SinexError::Timeout(_) => -32812,
+        SinexError::ResourceExhausted(_) => -32813,
 
-        SinexError::Service(_) => (-32820, msg),
-        SinexError::Io(_) => (-32821, msg),
-        SinexError::Configuration(_) => (-32822, msg),
-        SinexError::Serialization(_) => (-32823, msg),
+        SinexError::Service(_) => -32820,
+        SinexError::Io(_) => -32821,
+        SinexError::Configuration(_) => -32822,
+        SinexError::Serialization(_) => -32823,
 
-        SinexError::Cancelled(_) => (-32830, msg),
-        SinexError::MaxRetriesExceeded(_) => (-32831, msg),
+        SinexError::Cancelled(_) => -32830,
+        SinexError::MaxRetriesExceeded(_) => -32831,
 
-        SinexError::ChannelSend(_) | SinexError::ChannelReceive(_) => (-32840, msg),
+        SinexError::ChannelSend(_) | SinexError::ChannelReceive(_) => -32840,
 
         SinexError::Kv(_)
         | SinexError::Automaton(_)
         | SinexError::Checkpoint(_)
         | SinexError::Lifecycle(_)
-        | SinexError::Processing(_) => (-32850, msg),
+        | SinexError::Processing(_) => -32850,
 
-        SinexError::BlobStorage(_) => (-32860, msg),
-        SinexError::Coordination(_) => (-32861, msg),
+        SinexError::BlobStorage(_) => -32860,
+        SinexError::Coordination(_) => -32861,
 
         // NATS-specific variants from sinex-primitives.
         SinexError::Nats(_)
         | SinexError::NatsAckFailed(_)
         | SinexError::NatsPublish(_)
-        | SinexError::NatsSubscribe(_) => (-32870, msg),
+        | SinexError::NatsSubscribe(_) => -32870,
 
-        SinexError::Unknown(_) => (-32899, msg),
+        SinexError::Unknown(_) => -32899,
 
         // Required by #[non_exhaustive]. If you added a new SinexError variant and
         // reached this arm, add an explicit mapping above with a dedicated error code.
@@ -177,8 +179,36 @@ fn sinex_error_to_rpc_code(err: &sinex_primitives::error::SinexError) -> (i32, S
                 variant = err.variant_name(),
                 "Unmapped SinexError variant in RPC error code mapping"
             );
-            (-32603, msg)
+            -32603
         }
+    };
+
+    (code, public)
+}
+
+fn rpc_error_data(
+    error_id: Uuid,
+    public: &sinex_primitives::error::PublicError,
+    _err: &sinex_primitives::error::SinexError,
+) -> Value {
+    #[cfg(feature = "dev-errors")]
+    {
+        serde_json::json!({
+            "error_id": error_id.to_string(),
+            "public": public,
+            "error": _err,
+        })
+    }
+
+    #[cfg(not(feature = "dev-errors"))]
+    {
+        serde_json::json!({
+            "error_id": error_id.to_string(),
+            "kind": public.kind,
+            "kind_name": public.kind_name.as_str(),
+            "status_code": public.status_code,
+            "context": public.context.clone(),
+        })
     }
 }
 
@@ -1111,22 +1141,9 @@ async fn handle_rpc(
                 "RPC method failed"
             );
 
-            let (code, message) = sinex_error_to_rpc_code(&err);
-
-            // Feature-gated error detail serialization (OPP-002)
-            // In dev mode, include full error for debugging.
-            // In production, only return error_id for log correlation.
-            #[cfg(feature = "dev-errors")]
-            let data = serde_json::json!({
-                "error_id": error_id.to_string(),
-                "error": err,  // Full error details in dev mode
-            });
-
-            #[cfg(not(feature = "dev-errors"))]
-            let data = serde_json::json!({
-                "error_id": error_id.to_string(),
-                // No internal error details - check server logs with error_id
-            });
+            let (code, public) = sinex_error_to_rpc_code(&err);
+            let message = public.message.clone();
+            let data = rpc_error_data(error_id, &public, &err);
 
             (
                 JsonRpcResponse::error_with_data(request.id, code, message, data),
@@ -1370,18 +1387,9 @@ async fn handle_rpc_batch(
                     "RPC method failed (batch)"
                 );
 
-                let (code, message) = sinex_error_to_rpc_code(&err);
-
-                #[cfg(feature = "dev-errors")]
-                let data = serde_json::json!({
-                    "error_id": error_id.to_string(),
-                    "error": err,
-                });
-
-                #[cfg(not(feature = "dev-errors"))]
-                let data = serde_json::json!({
-                    "error_id": error_id.to_string(),
-                });
+                let (code, public) = sinex_error_to_rpc_code(&err);
+                let message = public.message.clone();
+                let data = rpc_error_data(error_id, &public, &err);
 
                 (
                     JsonRpcResponse::error_with_data(request.id, code, message, data),
@@ -2351,6 +2359,39 @@ mod tests {
                     .into_inner(),
             );
         apply_rpc_layers(base, &limits, &[])
+    }
+
+    #[sinex_test]
+    async fn rpc_error_projection_preserves_kind_without_private_context() -> TestResult<()> {
+        let err = SinexError::database("SELECT token FROM auth")
+            .with_context("operation", "events.query")
+            .with_context("path", "/home/sinity/.ssh/id_ed25519")
+            .with_source("postgresql://user:pass@localhost failed");
+
+        let (code, public) = sinex_error_to_rpc_code(&err);
+        assert_eq!(code, -32810);
+        assert_eq!(
+            public.kind,
+            sinex_primitives::error::SinexErrorKind::Database
+        );
+        assert_eq!(public.kind_name, "database");
+        assert_eq!(public.message, "A database error occurred");
+        assert_eq!(
+            public.context.get("operation"),
+            Some(&"events.query".to_string())
+        );
+        assert!(!public.context.contains_key("path"));
+
+        let data = rpc_error_data(Uuid::now_v7(), &public, &err);
+        let rendered = data.to_string();
+        assert!(rendered.contains("database"));
+        #[cfg(not(feature = "dev-errors"))]
+        {
+            assert!(!rendered.contains("id_ed25519"));
+            assert!(!rendered.contains("postgresql://"));
+            assert!(!rendered.contains("SELECT token"));
+        }
+        Ok(())
     }
 
     #[sinex_test]
