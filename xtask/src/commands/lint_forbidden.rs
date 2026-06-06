@@ -96,7 +96,9 @@ impl XtaskCommand for LintForbiddenCommand {
             // that bootstrap surface includes the table.
             "crate/sinex-db/src/repositories/model_effects.rs",
             "crate/sinex-db/src/repositories/schema_management.rs",
-            // Gateway/api dynamic + analytical SQL (cascade analysis, curation CTEs).
+            // Gateway/api dynamic + analytical SQL (cascade analysis, curation
+            // CTEs). #1619 classified curation duplicate-candidate CTEs as
+            // analytical runtime SQL over JSON expressions and optional filters.
             "crate/sinexd/src/api/cascade_analyzer.rs",
             "crate/sinexd/src/api/handlers/curation.rs",
             "crate/sinexd/src/api/service_container.rs",
@@ -104,9 +106,6 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/sinexd/src/runtime/preflight/mod.rs",
             "crate/sinexd/src/runtime/preflight/database.rs",
             "crate/sinexd/src/runtime/preflight/verification.rs",
-            // CLI direct operations-log writes (audit trail for cascade ops).
-            // Tracked for repository routing / macro promotion: #1619.
-            "crate/sinexctl/src/commands/blob.rs",
         ];
         let sqlx_query_as_allow = [
             // Dynamic ranking/filter SQL where the query string is assembled at runtime.

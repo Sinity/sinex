@@ -360,6 +360,40 @@ impl StateRepository<'_> {
         Self::insert_operation_with_executor(executor, operation).await
     }
 
+    /// Update an operation's terminal/result status and message.
+    pub async fn update_operation_result(
+        &self,
+        id: &Id<Operation>,
+        status: OperationStatus,
+        result_message: Option<String>,
+    ) -> DbResult<OperationRecord> {
+        Self::validate_operation_id(id)?;
+        sqlx::query_as!(
+            OperationRecord,
+            r#"
+            UPDATE core.operations_log
+            SET result_status = $2,
+                result_message = $3
+            WHERE id = $1::uuid
+            RETURNING
+                id as "id!: Id<Operation>",
+                operation_type,
+                operator,
+                scope,
+                result_status,
+                result_message,
+                preview_summary,
+                duration_ms
+            "#,
+            id.to_uuid(),
+            status.to_string(),
+            result_message
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "update operation result"))
+    }
+
     fn validate_log_operation(operation: &Operation) -> DbResult<()> {
         Self::validate_audit_operation_type(&operation.operation_type)?;
         if operation.operation_type == "replay"
