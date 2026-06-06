@@ -79,3 +79,28 @@ async fn test_format_public_rpc_error_details_uses_stable_category() -> TestResu
     assert!(!details.contains("operation"));
     Ok(())
 }
+
+#[sinex_test]
+async fn test_format_public_rpc_error_details_preserves_dev_error_payload() -> TestResult<()> {
+    let data = serde_json::json!({
+        "error_id": "018f0000-0000-7000-8000-000000000000",
+        "public": {
+            "kind": "database",
+            "kind_name": "database",
+            "status_code": 500,
+            "message": "A database error occurred"
+        },
+        "error": {
+            "type": "Database",
+            "details": {
+                "message": "SELECT token FROM auth"
+            }
+        }
+    });
+
+    let details = format_public_rpc_error_details(&data);
+    assert!(details.contains("\"error\""));
+    assert!(details.contains("SELECT token FROM auth"));
+    assert!(details.contains("018f0000-0000-7000-8000-000000000000"));
+    Ok(())
+}

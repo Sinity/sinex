@@ -44,6 +44,10 @@ pub fn format_public_rpc_error_details(data: &Value) -> String {
         return format!("\nDetails: {data}");
     };
 
+    if object.contains_key("error") {
+        return format!("\nDetails: {data}");
+    }
+
     let kind = object
         .get("kind_name")
         .and_then(Value::as_str)

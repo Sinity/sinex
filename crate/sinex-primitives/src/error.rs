@@ -354,8 +354,9 @@ pub struct ErrorDetails {
     /// Structured causal chain captured from `std::error::Error::source`.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     source_chain: Vec<ErrorSource>,
-    /// Optional captured backtrace text. Captured only when explicitly enabled
-    /// through `SINEX_ERROR_BACKTRACE=1` or `RUST_BACKTRACE=1/full`.
+    /// Optional captured backtrace text. Captured by explicit
+    /// `with_backtrace()` calls, or by typed source capture when
+    /// `SINEX_ERROR_BACKTRACE=1` or `RUST_BACKTRACE=1/full` is set.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     backtrace: Option<String>,
 }
