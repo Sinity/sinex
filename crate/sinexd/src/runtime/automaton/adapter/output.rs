@@ -233,10 +233,12 @@ where
                 }
             }
         };
-        let provenance = Provenance::Derived {
-            source_event_ids,
-            operation_id: context.operation_id(),
-        };
+        let mut provenance = Provenance::from_derived(source_event_ids).ok_or_else(|| {
+            SinexError::validation("derived invalidation output missing source event ids")
+        })?;
+        if let Some(operation_id) = context.operation_id() {
+            provenance = provenance.with_operation(operation_id);
+        }
         // Extract before moving provenance into the event struct.
         let created_by_operation_id = provenance.operation_uuid();
 

@@ -7,7 +7,7 @@ use camino::Utf8PathBuf;
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
 use sinex_primitives::domain::ServiceName;
-use sinex_primitives::events::Event;
+use sinex_primitives::events::{Event, builder::Provenance};
 use sinex_primitives::{HostName, Id, JsonValue, Uuid};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -436,13 +436,7 @@ mod tests {
             host: HostName::from_static("runtime-test-host"),
             module_run_id: None,
             payload_schema_id: None,
-            provenance: Provenance::Material {
-                id: Id::from_uuid(Uuid::now_v7()),
-                anchor_byte: 0,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: OffsetKind::Byte,
-            },
+            provenance: Provenance::from_material(Id::from_uuid(Uuid::now_v7()), 0, None, None),
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
@@ -495,13 +489,7 @@ mod tests {
             host: HostName::from_static("runtime-test-host"),
             module_run_id: None,
             payload_schema_id: Some(explicit_schema_id),
-            provenance: Provenance::Material {
-                id: Id::from_uuid(Uuid::now_v7()),
-                anchor_byte: 0,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: OffsetKind::Byte,
-            },
+            provenance: Provenance::from_material(Id::from_uuid(Uuid::now_v7()), 0, None, None),
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
@@ -536,13 +524,7 @@ mod tests {
             host: HostName::from_static("runtime-test-host"),
             module_run_id: None,
             payload_schema_id: None,
-            provenance: Provenance::Material {
-                id: Id::from_uuid(Uuid::now_v7()),
-                anchor_byte: 0,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: OffsetKind::Byte,
-            },
+            provenance: Provenance::from_material(Id::from_uuid(Uuid::now_v7()), 0, None, None),
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
@@ -579,13 +561,7 @@ mod tests {
             host: HostName::from_static("runtime-test-host"),
             module_run_id: None,
             payload_schema_id: None,
-            provenance: Provenance::Material {
-                id: Id::from_uuid(Uuid::now_v7()),
-                anchor_byte: 0,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: OffsetKind::Byte,
-            },
+            provenance: Provenance::from_material(Id::from_uuid(Uuid::now_v7()), 0, None, None),
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,

@@ -86,13 +86,16 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                     SinexError::processing("Material provenance missing anchor_byte".to_string())
                 })?;
                 let material_uuid = Self::parse_uuid(&material_id, "source_material_id")?;
-                Provenance::Material {
-                    id: Id::<SourceMaterial>::from_uuid(material_uuid),
+                let mut provenance = Provenance::from_material(
+                    Id::<SourceMaterial>::from_uuid(material_uuid),
                     anchor_byte,
-                    offset_start: published.offset_start,
-                    offset_end: published.offset_end,
-                    offset_kind: Self::parse_offset_kind(published.offset_kind.as_deref())?,
-                }
+                    published.offset_start,
+                    published.offset_end,
+                );
+                provenance = provenance.with_offset_kind(Self::parse_offset_kind(
+                    published.offset_kind.as_deref(),
+                )?);
+                provenance
             }
             (None, Some(source_ids)) => {
                 let mut ids = Vec::new();
@@ -105,10 +108,11 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                         "Derived provenance missing source_event_ids".to_string(),
                     )
                 })?;
-                Provenance::Derived {
-                    source_event_ids,
-                    operation_id: None,
-                }
+                Provenance::from_derived(source_event_ids).ok_or_else(|| {
+                    SinexError::processing(
+                        "Derived provenance missing source_event_ids".to_string(),
+                    )
+                })?
             }
             (Some(_), Some(_)) => {
                 return Err(SinexError::processing(

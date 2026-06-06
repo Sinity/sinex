@@ -546,6 +546,20 @@ impl Provenance {
         }
     }
 
+    /// Set the offset coordinate system on Material provenance.
+    /// No-op on Derived provenance.
+    #[must_use]
+    pub fn with_offset_kind(mut self, kind: OffsetKind) -> Self {
+        if let Provenance::Material {
+            ref mut offset_kind,
+            ..
+        } = self
+        {
+            *offset_kind = kind;
+        }
+        self
+    }
+
     pub fn from_derived<I: IntoIterator<Item = EventId>>(ids: I) -> Option<Self> {
         canonicalize_source_event_ids(ids).map(|source_event_ids| Provenance::Derived {
             source_event_ids,

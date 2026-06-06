@@ -91,6 +91,9 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/sinex-db/src/repositories/document_search.rs",
             "crate/sinex-db/src/repositories/events/persistence.rs",
             "crate/sinex-db/src/repositories/knowledge_graph.rs",
+            // #1619 classified: static SQL, but core.model_effects is not in
+            // the xtask SQLx compile database; macro promotion fails until
+            // that bootstrap surface includes the table.
             "crate/sinex-db/src/repositories/model_effects.rs",
             "crate/sinex-db/src/repositories/schema_management.rs",
             // Gateway/api dynamic + analytical SQL (cascade analysis, curation CTEs).
@@ -111,6 +114,7 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/sinex-db/src/repositories/common.rs",
             "crate/sinex-db/src/repositories/events/composable_query.rs",
             "crate/sinex-db/src/repositories/events/persistence.rs",
+            // #1619 classified: see sqlx_query_allow entry above.
             "crate/sinex-db/src/repositories/model_effects.rs",
             "crate/sinexd/src/api/handlers/audit.rs",
             "crate/sinexd/src/runtime/preflight/database.rs",
