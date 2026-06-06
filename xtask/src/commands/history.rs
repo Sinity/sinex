@@ -2238,7 +2238,7 @@ fn execute_explain(
         .take(3)
         .map(|row| {
             format!(
-                "lynchpin MCP machine_service_io_for_xtask_invocation invocation_id={}",
+                "Lynchpin: python -m lynchpin.analysis.machine.service_io --xtask-invocation {} --limit 8 --min-total-mib 0.1",
                 row.id
             )
         })
