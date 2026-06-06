@@ -1812,7 +1812,6 @@ impl XtaskCommand for TestCommand {
 
         // --- PREPARE EXECUTION via Runner ---
 
-        let test_stage = ctx.start_stage("test");
         let mut runner = TestRunner::new(ctx, profile);
 
         if self.update_snapshots {
@@ -1885,8 +1884,6 @@ impl XtaskCommand for TestCommand {
             Some(result) => result?,
             None => runner.execute(None)?,
         };
-
-        ctx.finish_stage(test_stage, stats.failed == 0);
 
         if stats.failed > 0 {
             // Query per-test failure details from history DB for structured output
