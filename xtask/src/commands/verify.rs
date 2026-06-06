@@ -1313,16 +1313,20 @@ fn extract_closure_command_entries(body: &str, source: &str) -> Vec<ClosureComma
                 // `git push pre-push drift guard` or bare `xtask` get treated
                 // as commands and always fail, producing false-positive
                 // closure regressions (#1552).
-                if looks_like_runnable_command(cmd) {
+                if looks_like_runnable_command(cmd) && !is_closure_verifier_self_command(cmd) {
                     commands.push(cmd.to_string());
                 }
             }
         } else if !in_code_block && in_verify_section {
             // Bare `$ command` lines outside code blocks in a verify section.
             if let Some(cmd) = trimmed.strip_prefix("$ ") {
-                commands.push(cmd.to_string());
+                if !is_closure_verifier_self_command(cmd) {
+                    commands.push(cmd.to_string());
+                }
             } else if let Some(cmd) = extract_inline_backtick_command(trimmed) {
-                commands.push(cmd);
+                if !is_closure_verifier_self_command(&cmd) {
+                    commands.push(cmd);
+                }
             }
         }
     }
@@ -1435,6 +1439,17 @@ fn looks_like_runnable_command(candidate: &str) -> bool {
         "xtask" | "sinexctl" | "git" | "gh" | "rg" | "nix" | "psql" | "nats" => true,
         _ => looks_like_shell_command(head),
     }
+}
+
+fn is_closure_verifier_self_command(candidate: &str) -> bool {
+    let parts: Vec<&str> = candidate.split_whitespace().collect();
+    let Some(cmd_idx) = parts.iter().position(|tok| !tok.contains('=')) else {
+        return false;
+    };
+    matches!(
+        parts.get(cmd_idx..cmd_idx + 3),
+        Some(["xtask", "verify", "closure"])
+    )
 }
 
 fn parse_closure_matrix_line(line: &str) -> Option<(String, String)> {
@@ -1661,7 +1676,7 @@ mod tests {
         let cmds = extract_closure_command_entries(body, "body");
         assert_eq!(cmds.len(), 2, "expected 2 commands, got: {cmds:?}");
         assert!(cmds[0].command.contains("git log"));
-        assert!(cmds[1].command.contains("xtask verify"));
+        assert!(cmds[1].command.contains("xtask check"));
         Ok(())
     }
 
@@ -1717,6 +1732,30 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn extract_closure_commands_skips_verifier_self_rerun_instructions()
+    -> ::xtask::sandbox::TestResult<()> {
+        let body = "\
+## Closure verification failed
+
+`xtask verify closure 1576` returned a non-zero status when this issue was closed.
+
+Re-run locally with:
+
+```bash
+xtask verify closure 1576
+```
+
+Either add the missing verification commands to the closing comment / issue body, or re-open the issue if the closure was premature.
+";
+        let cmds = extract_closure_command_entries(body, "comment[0]@2026-06-06T03:11:40Z");
+        assert!(
+            cmds.is_empty(),
+            "verifier rerun instructions must not become recursive closure evidence: {cmds:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn looks_like_runnable_command_filters_prose_and_bare_commands()
     -> ::xtask::sandbox::TestResult<()> {
         assert!(!looks_like_runnable_command(""));
@@ -1732,6 +1771,18 @@ mod tests {
         assert!(looks_like_runnable_command(
             "SINEX_FOO=bar xtask test -p xtask"
         ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn closure_verifier_self_command_detects_env_prefixed_forms()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert!(is_closure_verifier_self_command("xtask verify closure 1576"));
+        assert!(is_closure_verifier_self_command(
+            "RUST_LOG=debug xtask verify closure 1576 --json"
+        ));
+        assert!(!is_closure_verifier_self_command("xtask verify source-worker"));
+        assert!(!is_closure_verifier_self_command("xtask check --full"));
         Ok(())
     }
 
