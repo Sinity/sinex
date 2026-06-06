@@ -614,6 +614,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert("context", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("explain", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("verify", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "verify baseline",
         FormatCapability::single_shot(TABLE_JSON_YAML),
@@ -814,6 +815,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "privacy policy backend add",
         "privacy policy dictionary add",
         "privacy policy rule add",
+        "privacy policy seed builtin",
         "privacy policy scope bind",
         "replay approve",
         "replay cancel",
@@ -839,6 +841,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "sources stage",
         "state restore",
         "state snapshot",
+        "tasks import",
         "tasks cancel",
         "tasks complete",
         "tasks status",
@@ -885,6 +888,7 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "privacy policy backend add"
         | "privacy policy dictionary add"
         | "privacy policy rule add"
+        | "privacy policy seed builtin"
         | "privacy policy scope bind"
         | "replay approve"
         | "replay cancel"
@@ -903,6 +907,7 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "sources bindings create"
         | "sources bindings update"
         | "sources stage"
+        | "tasks import"
         | "tasks cancel"
         | "tasks complete"
         | "tasks status"
@@ -968,7 +973,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "privacy policy backend add" => &[methods::PRIVACY_POLICY_BACKEND_ADD],
         "privacy policy dictionary add" => &[methods::PRIVACY_POLICY_DICTIONARY_ADD],
         "privacy policy rule add" => &[methods::PRIVACY_POLICY_RULE_ADD],
-        "privacy policy seed builtin" => &[],
+        "privacy policy seed builtin" => &[methods::PRIVACY_POLICY_SEED_BUILTIN],
         "privacy policy scope bind" => &[methods::PRIVACY_POLICY_SCOPE_BIND],
         "privacy audit" => &[
             methods::PRIVACY_PRIVATE_MODE_STATUS,
@@ -1006,7 +1011,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "tasks state" => &[methods::TASKS_STATE_GET],
         "tasks status" => &[methods::TASKS_STATUS_SET],
         "tasks update" => &[methods::TASKS_UPDATE],
-        "tasks import" => &[],
+        "tasks import" => &[methods::TASKS_CREATE],
         "curation duplicates" => &[methods::CURATION_DUPLICATE_CANDIDATES_LIST],
         "curation duplicate-judge" => &[methods::CURATION_DUPLICATE_JUDGMENTS_RECORD],
         "curation proposals" => &[methods::CURATION_PROPOSALS_LIST],

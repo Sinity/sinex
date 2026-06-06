@@ -6,6 +6,7 @@ use serde_json::Value as JsonValue;
 use sinex_db::DbPool;
 use sinex_db::DbPoolExt;
 use sinex_primitives::events::{Publishable, admission::EventIntent};
+use sinex_primitives::transport;
 use sinex_primitives::{Event, Id, OffsetKind, Provenance, SourceMaterial, Timestamp};
 use sinex_primitives::{EventSource, EventType, Uuid};
 use std::collections::HashSet;
@@ -233,7 +234,8 @@ impl EventPublisher for Sandbox {
             }
         }
 
-        let jetstream = async_nats::jetstream::new(self.nats_client());
+        let client = self.ensure_nats().await?;
+        let jetstream = async_nats::jetstream::new(client);
         for (source, event_type, envelope_events) in grouped_events {
             // Publish the same admission envelope shape production producers use.
             // Raw event subjects carry source/type routing, so mixed batches must
@@ -252,7 +254,23 @@ impl EventPublisher for Sandbox {
             );
             let payload = serde_json::to_vec(&intent)?;
 
-            let ack = jetstream.publish(subject, payload.into()).await?;
+            let first_event = intent
+                .events
+                .first()
+                .ok_or_else(|| eyre!("sandbox event intent unexpectedly had no events"))?;
+            let msg_id = if let Some(first_id) = first_event.id.as_ref() {
+                format!("intent-{}-{}", first_id, intent.events.len())
+            } else {
+                format!("intent-{}-{}", Uuid::now_v7(), intent.events.len())
+            };
+            let mut headers = async_nats::HeaderMap::new();
+            headers.insert("Nats-Msg-Id", msg_id.as_str());
+            headers.insert("Sinex-Envelope-Version", intent.envelope_version.as_str());
+            transport::insert_transport_class_headers(&mut headers, transport::Class::Critical);
+
+            let ack = jetstream
+                .publish_with_headers(subject, headers, payload.into())
+                .await?;
             ack.await
                 .map_err(|e| eyre!("JetStream publish ack failed: {e}"))?;
         }

@@ -232,6 +232,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         privacy::PRIVACY_POLICY_DICTIONARY_ADD_METHOD.info(),
         privacy::PRIVACY_POLICY_LIST_METHOD.info(),
         privacy::PRIVACY_POLICY_RULE_ADD_METHOD.info(),
+        privacy::PRIVACY_POLICY_SEED_BUILTIN_METHOD.info(),
         privacy::PRIVACY_POLICY_SCOPE_BIND_METHOD.info(),
         privacy::PRIVACY_PRIVATE_MODE_DISABLE_METHOD.info(),
         privacy::PRIVACY_PRIVATE_MODE_ENABLE_METHOD.info(),
