@@ -1,75 +1,84 @@
-# sinex-error
+# SinexError
 
-Comprehensive error handling for the Sinex ecosystem.
+`SinexError` is the typed error boundary for Sinex library code. It preserves:
 
-This crate provides a unified error type ([`SinexError`]) that is used throughout
-the Sinex system. It offers rich error context, categorization, serialization,
-and seamless integration with both standard Rust error handling and the `anyhow` crate.
+- a stable `SinexErrorKind` for machine-readable classification
+- ordered key/value context for internal diagnostics
+- structured source chains captured from `std::error::Error`
+- optional backtrace text when explicitly requested
+- a sanitized `PublicError` projection for API and CLI output
 
-## Features
+## Construction
 
-- **Rich Context**: Attach key-value pairs and source errors to provide detailed diagnostics
-- **Categorization**: Errors are categorized by type (database, validation, network, etc.)
-- **Serialization**: Full serde support for API responses and logging
-- **Status Codes**: Automatic HTTP status code mapping for web services
-- **Retryability**: Built-in classification of retryable vs permanent errors
-- **Performance**: Zero-allocation error creation for common cases
-- **Integration**: Seamless conversion from common error types (io, serde, sqlx, etc.)
-
-## Examples
-
-### Basic Usage
+Use the variant constructor that matches the failure domain, then attach
+structured context:
 
 ```rust
-use crate::error::{SinexError, Result};
+use sinex_primitives::error::{Result, SinexError};
 
-fn validate_email(email: &str) -> Result<()> {
-if !email.contains('@') {
-return Err(SinexError::validation("Invalid email format")
-.wrap_err_with("email", email)
-.wrap_err_with("reason", "missing @ symbol"));
-}
-Ok(())
+fn validate_event_type(event_type: &str) -> Result<()> {
+    if event_type.trim().is_empty() {
+        return Err(SinexError::validation("event_type must not be empty")
+            .with_context("field", "event_type")
+            .with_context("reason", "blank"));
+    }
+    Ok(())
 }
 ```
 
-### With Source Chain
+Prefer typed source capture at conversion boundaries:
 
 ```rust
-use crate::error::SinexError;
-
-let error = SinexError::service("Request processing failed")
-.with_source("Database connection lost")
-.with_source("Network timeout after 30s")
-.wrap_err_with("request_id", "abc-123")
-.wrap_err_with("retry_count", 3);
-
-// Error display includes full context and source chain
-println!("{}", error);
+# use sinex_primitives::error::SinexError;
+# fn db_call() -> std::result::Result<(), sqlx::Error> { Err(sqlx::Error::RowNotFound) }
+let result = db_call().map_err(|error| {
+    SinexError::database("failed to fetch event")
+        .with_context("operation", "events.get")
+        .with_error_source(&error)
+});
 ```
 
-### Error Categorization
+`with_source("...")` remains available for string-only context when no typed
+error exists, but new conversion code should use `with_error_source` or
+`with_std_error` so `source_chain()` and `std::error::Error::source()` remain
+usable.
+
+## Classification
+
+Use `kind()` for programmatic classification and `status_code()` for HTTP-like
+status mapping:
 
 ```rust
-use crate::error::SinexError;
-
-let network_error = SinexError::network("Connection refused");
-assert!(network_error.is_retryable());
-assert_eq!(network_error.status_code(), 500);
-
-let validation_error = SinexError::validation("Invalid input");
-assert!(validation_error.is_client_error());
-assert_eq!(validation_error.status_code(), 400);
+# use sinex_primitives::error::{SinexError, SinexErrorKind};
+let error = SinexError::permission_denied("token lacks write access");
+assert_eq!(error.kind(), SinexErrorKind::PermissionDenied);
+assert_eq!(error.kind().as_str(), "permission_denied");
+assert_eq!(error.status_code(), 403);
 ```
 
-### Integration with anyhow
+Avoid parsing `Display` text. Display is full-fidelity diagnostic output and may
+include private context and source details.
+
+## Public Projection
+
+External responses must use `client_message()` or `public_payload()`.
+`public_payload()` contains the stable kind, safe message, status code, and a
+whitelisted subset of context keys. It never includes source chains, backtraces,
+paths, SQL text, tokens, URLs, or arbitrary private context.
 
 ```rust
-use crate::error::SinexError;
-use color_eyre::eyre::Result;
+# use sinex_primitives::error::SinexError;
+let error = SinexError::database("SELECT secret FROM auth_tokens")
+    .with_context("operation", "events.query")
+    .with_context("path", "/home/sinity/.ssh/id_ed25519");
 
-fn process_data() -> Result<String> {
-// SinexError automatically converts to color_eyre::eyre::Error
-Err(SinexError::not_found("Data not found"))?
-}
+let public = error.public_payload();
+assert_eq!(public.kind_name, "database");
+assert_eq!(public.message, "A database error occurred");
+assert!(public.context.contains_key("operation"));
+assert!(!public.context.contains_key("path"));
 ```
+
+Internal serde serialization of `SinexError` and `ErrorDetails` is intentionally
+full fidelity for logs, tests, and durable diagnostics. It is not the public API
+format.

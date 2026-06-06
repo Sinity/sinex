@@ -1777,11 +1777,15 @@ Either add the missing verification commands to the closing comment / issue body
     #[sinex_test]
     async fn closure_verifier_self_command_detects_env_prefixed_forms()
     -> ::xtask::sandbox::TestResult<()> {
-        assert!(is_closure_verifier_self_command("xtask verify closure 1576"));
+        assert!(is_closure_verifier_self_command(
+            "xtask verify closure 1576"
+        ));
         assert!(is_closure_verifier_self_command(
             "RUST_LOG=debug xtask verify closure 1576 --json"
         ));
-        assert!(!is_closure_verifier_self_command("xtask verify source-worker"));
+        assert!(!is_closure_verifier_self_command(
+            "xtask verify source-worker"
+        ));
         assert!(!is_closure_verifier_self_command("xtask check --full"));
         Ok(())
     }

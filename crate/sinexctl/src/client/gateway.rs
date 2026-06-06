@@ -443,7 +443,7 @@ impl GatewayClient {
         if let Some(error) = rpc_response.error {
             let details = error
                 .data
-                .map(|d| format!("\nDetails: {d}"))
+                .map(|d| crate::error::format_public_rpc_error_details(&d))
                 .unwrap_or_default();
             return Err(GatewayRpcError::JsonRpc {
                 code: error.code,

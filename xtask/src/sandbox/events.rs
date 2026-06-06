@@ -218,9 +218,8 @@ impl EventPublisher for Sandbox {
             };
 
             published.push(event_id);
-            if let Some((_, _, group)) = grouped_events
-                .iter_mut()
-                .find(|(source, event_type, _)| {
+            if let Some((_, _, group)) =
+                grouped_events.iter_mut().find(|(source, event_type, _)| {
                     source == &envelope.source && event_type == &envelope.event_type
                 })
             {

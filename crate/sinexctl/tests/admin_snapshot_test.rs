@@ -13,12 +13,12 @@ use std::process::Command;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
+use sinex_primitives::source_contracts;
 use sinexctl::admin::exec;
 use sinexctl::admin::manifest::ComponentExtras;
 use sinexctl::admin::snapshot::{
     AdminSnapshotCommand, AdminSnapshotInspectCommand, AdminSnapshotRestoreCommand, Component,
 };
-use sinex_primitives::source_contracts;
 
 /// Helper: build a fake state directory with recognizable fixture files.
 fn make_fake_state_dir() -> TestResult<TempDir> {

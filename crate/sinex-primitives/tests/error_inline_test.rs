@@ -67,3 +67,25 @@ async fn test_client_message_server_errors_are_generic() -> TestResult<()> {
     assert_eq!(err.client_message(), "A connectivity error occurred");
     Ok(())
 }
+
+#[sinex_test]
+async fn test_public_payload_does_not_serialize_private_diagnostics() -> TestResult<()> {
+    let err = SinexError::database("SELECT * FROM core.events WHERE token = 'ghp_secret'")
+        .with_context("operation", "events.query")
+        .with_context("path", "/home/sinity/.ssh/id_ed25519")
+        .with_context("nats_url", "nats://secret@localhost:4222")
+        .with_source("connection to postgresql://user:pass@localhost failed");
+
+    let json = serde_json::to_value(err.public_payload()).unwrap();
+    assert_eq!(json["kind"], "database");
+    assert_eq!(json["kind_name"], "database");
+    assert_eq!(json["message"], "A database error occurred");
+    assert_eq!(json["context"]["operation"], "events.query");
+
+    let rendered = json.to_string();
+    assert!(!rendered.contains("ghp_secret"));
+    assert!(!rendered.contains("id_ed25519"));
+    assert!(!rendered.contains("nats://"));
+    assert!(!rendered.contains("postgresql://"));
+    Ok(())
+}
