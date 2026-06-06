@@ -143,7 +143,7 @@ Run benchmarks with optional contract enforcement
 | `--profile` | yes | no | Nextest profile to use |
 | `--runs` | yes | no | Number of runs per configuration |
 | `--threads` | yes | no | Thread counts to test (comma-separated) |
-| `--db-pool-sizes` | yes | no | Test database pool sizes to sweep (comma-separated). Enables ephemeral Postgres mode |
+| `--db-pool-sizes` | yes | no | Test database pool sizes to sweep (comma-separated) |
 | `--system-impact` | no | no | Use the system-impact preset for measured test concurrency calibration |
 | `--system-impact-extended` | no | no | Include aggressive over-subscription points in the system-impact preset |
 | `--target` | yes | no | Target package(s) or "workspace" |
@@ -738,6 +738,9 @@ Query build, test, and runtime history recorded by xtask
 | `list` | List recent invocations |
 | `stats` | Show statistics for a command (or all commands / all packages) |
 | `cost` | Summarise dev-loop wallclock cost without double-counting wrappers |
+| `compare-days` | Compare command duration and pressure between two calendar days |
+| `resources` | Aggregate recorded resource pressure and block I/O by command/window |
+| `overlap` | Explain what overlapped an invocation and what shared resources were recorded |
 | `tests` | Query test result history |
 | `diagnostics` | Query build diagnostics (warnings/errors) |
 | `stages` | Query pipeline stage timing data (G2) |
@@ -803,6 +806,21 @@ Summarise dev-loop wallclock cost without double-counting wrappers
 |---|---|---|---|
 | `--command` | yes | no | Commands to include. Defaults to check+test |
 | `--days` | yes | no | How many days back to analyse |
+
+
+### `xtask history compare-days`
+
+Compare command duration and pressure between two calendar days
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--day` | yes | no | Day to inspect, in YYYY-MM-DD. Defaults to today in UTC |
+| `--against` | yes | no | Baseline day, in YYYY-MM-DD. Defaults to the previous UTC day |
+| `--command` | yes | no | Commands to include. Can be repeated or comma-separated |
+| `--limit` | yes | no | Number of slowest invocations from the inspected day to include |
+| `--include-failures` | no | no | Include failed invocations in addition to successful invocations |
 
 
 ### `xtask history resources`

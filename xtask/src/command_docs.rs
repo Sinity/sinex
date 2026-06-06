@@ -353,12 +353,9 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 path: "schema strict-diff",
                 fallback_summary: "Check strict live-schema drift",
                 when: "you need to verify the database has no drift in categories the declarative apply engine does not reconcile",
-                examples: &[
-                    "xtask schema strict-diff",
-                    "xtask ci postgres -- xtask ci schema-only",
-                ],
+                examples: &["xtask schema strict-diff"],
                 notes: &[
-                    "The CI schema-only lane applies schema, checks readiness, then runs this strict drift gate.",
+                    "Hosted CI has its own workflow wiring; local command guidance should use the schema command directly.",
                 ],
             },
             GuideEntry {
