@@ -261,11 +261,14 @@ Analyze build times to identify slow compilation units.
 
 **Usage**:
 ```bash
-xtask deps timings [--top <n>]
+xtask deps timings [--top <n>] [--package <pkg>] [--profile <profile>] [--clean-package]
 ```
 
 **Options**:
 - `--top <n>` - Show top N slowest crates (default: 10)
+- `--package <pkg>` - Time a specific package instead of the default workspace build
+- `--profile <profile>` - Time `dev`, `release`, or a custom Cargo profile (default: `dev`)
+- `--clean-package` - Run `cargo clean -p <pkg>` before timing so a warm target dir still produces package compile units; requires `--package`
 
 **Examples**:
 ```bash
@@ -274,12 +277,17 @@ xtask deps timings
 
 # Show top 5 slowest crates
 xtask deps timings --top 5
+
+# Attribute the checkout-local xtask wrapper build shape
+xtask deps timings --package xtask --profile dev --clean-package --top 20
 ```
 
 **Output**:
 
 ```
 Build Timing Analysis
+Command: cargo build --timings
+Profile: dev
 Total build time: 127.45s
 
 Top 10 slowest crates:
@@ -297,7 +305,9 @@ HTML report: /realm/project/sinex/.sinex/cache/target/cargo-timings/cargo-timing
 
 **Notes**:
 
-- First run executes `cargo build --release --timings` which may take time
+- By default this executes `cargo build --timings`, matching the normal local dev build profile
+- Use `--package xtask --clean-package` to approximate the checkout-local wrapper's debug xtask build
+- Use `--profile release` when you specifically need release-build attribution
 - Generates an HTML report with detailed timing breakdown under the resolved Cargo target directory, for example `.sinex/cache/target/cargo-timings/cargo-timing.html`
 - Compare parameter (--compare) reserved for future enhancement
 - Run periodically to track build performance trends

@@ -679,6 +679,9 @@ Analyze build timings
 |---|---|---|---|
 | `--compare` | yes | no | Compare with previous build |
 | `--top` | yes | no | Number of slowest crates to show |
+| `-p, --package` | yes | no | Cargo package to time, e.g. xtask for checkout-wrapper rebuild attribution |
+| `--profile` | yes | no | Cargo profile to time: dev, release, or a custom profile name |
+| `--clean-package` | no | no | Run `cargo clean -p <package>` before timing; requires --package |
 
 
 ### `xtask deps impact`

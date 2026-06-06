@@ -66,6 +66,18 @@ pub enum DepsCommand {
         /// Number of slowest crates to show
         #[arg(long, default_value = "10")]
         top: usize,
+
+        /// Cargo package to time, e.g. xtask for checkout-wrapper rebuild attribution
+        #[arg(short = 'p', long = "package")]
+        package: Option<String>,
+
+        /// Cargo profile to time: dev, release, or a custom profile name
+        #[arg(long, default_value = "dev")]
+        profile: String,
+
+        /// Run `cargo clean -p <package>` before timing; requires --package
+        #[arg(long, requires = "package")]
+        clean_package: bool,
     },
 
     /// Analyze rebuild impact of package changes
@@ -301,8 +313,19 @@ impl DepsCommand {
                 }
             }
 
-            Self::Timings { compare: _, top } => {
-                let report = TimingAnalyzer::analyze()?;
+            Self::Timings {
+                compare: _,
+                top,
+                package,
+                profile,
+                clean_package,
+            } => {
+                let report =
+                    TimingAnalyzer::analyze_with_options(&crate::deps::timing::TimingOptions {
+                        package: package.clone(),
+                        profile: profile.clone(),
+                        clean_package: *clean_package,
+                    })?;
 
                 if ctx.is_json() {
                     // JSON output - return the structured report

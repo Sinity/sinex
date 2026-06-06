@@ -257,6 +257,20 @@ pub fn write_timing_report_to_buffer<W: Write>(
     top: usize,
 ) -> Result<()> {
     writeln!(writer, "Build Timing Analysis")?;
+    if !report.cargo_args.is_empty() {
+        writeln!(writer, "Command: cargo {}", report.cargo_args.join(" "))?;
+    }
+    writeln!(writer, "Profile: {}", report.profile)?;
+    if let Some(package) = &report.package {
+        writeln!(writer, "Package: {package}")?;
+    }
+    if report.cleaned_package {
+        writeln!(
+            writer,
+            "Pre-clean: cargo clean -p {}",
+            report.package.as_deref().unwrap_or("-")
+        )?;
+    }
     writeln!(writer, "Total build time: {:.2}s\n", report.total_time_secs)?;
 
     writeln!(writer, "Top {top} slowest crates:")?;
