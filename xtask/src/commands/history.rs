@@ -1276,8 +1276,16 @@ struct WrapperEventsReport {
     path: String,
     event_count: usize,
     total_duration_secs: f64,
+    stage_totals: Vec<WrapperStageTotal>,
     events: Vec<WrapperEvent>,
     skipped_lines: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WrapperStageTotal {
+    name: String,
+    duration_secs: f64,
+    pct_of_total: f64,
 }
 
 fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Result<CommandResult> {
@@ -1291,11 +1299,13 @@ fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Resu
         .iter()
         .filter_map(|event| event.duration_secs)
         .sum::<f64>();
+    let stage_totals = wrapper_stage_totals(&events, total_duration_secs);
     let report = WrapperEventsReport {
         days,
         path: path.display().to_string(),
         event_count: events.len(),
         total_duration_secs,
+        stage_totals,
         events,
         skipped_lines,
     };
@@ -1342,6 +1352,22 @@ fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Resu
             let mut table = builder.build();
             table.with(Style::rounded());
             println!("{table}");
+
+            if !report.stage_totals.is_empty() {
+                println!("\nStage totals:");
+                let mut stages = Builder::new();
+                stages.push_record(["STAGE", "SECS", "% WALL"]);
+                for stage in &report.stage_totals {
+                    stages.push_record([
+                        stage.name.clone(),
+                        format!("{:.1}", stage.duration_secs),
+                        format!("{:.1}%", stage.pct_of_total),
+                    ]);
+                }
+                let mut table = stages.build();
+                table.with(Style::rounded());
+                println!("{table}");
+            }
         }
         if report.skipped_lines > 0 {
             println!(
@@ -1449,6 +1475,42 @@ fn wrapper_top_stage(stages: &BTreeMap<String, u64>) -> Option<WrapperStageSumma
             name: name.clone(),
             duration_secs: *duration_ms as f64 / 1000.0,
         })
+}
+
+fn wrapper_stage_totals(
+    events: &[WrapperEvent],
+    total_duration_secs: f64,
+) -> Vec<WrapperStageTotal> {
+    let mut totals = BTreeMap::<String, u64>::new();
+    for event in events {
+        for (stage, duration_ms) in &event.stage_durations_ms {
+            *totals.entry(stage.clone()).or_default() += *duration_ms;
+        }
+    }
+
+    let mut rows = totals
+        .into_iter()
+        .map(|(name, duration_ms)| {
+            let duration_secs = duration_ms as f64 / 1000.0;
+            WrapperStageTotal {
+                name,
+                duration_secs,
+                pct_of_total: if total_duration_secs > 0.0 {
+                    duration_secs / total_duration_secs * 100.0
+                } else {
+                    0.0
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        right
+            .duration_secs
+            .partial_cmp(&left.duration_secs)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    rows
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -5965,6 +6027,49 @@ mod tests {
             Some(2.0)
         );
         Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_wrapper_stage_totals_rank_by_duration() -> ::xtask::sandbox::TestResult<()> {
+        let mut first = cost_wrapper_event(10.0);
+        first.stage_durations_ms = BTreeMap::from([
+            ("xtask_build".to_string(), 8_000),
+            ("initdb".to_string(), 500),
+        ]);
+        let mut second = cost_wrapper_event(5.0);
+        second.stage_durations_ms = BTreeMap::from([
+            ("xtask_build".to_string(), 4_000),
+            ("schema_apply".to_string(), 1_000),
+        ]);
+
+        let totals = wrapper_stage_totals(&[first, second], 15.0);
+
+        assert_eq!(totals.len(), 3);
+        assert_eq!(totals[0].name, "xtask_build");
+        assert_eq!(totals[0].duration_secs, 12.0);
+        assert_eq!(totals[0].pct_of_total, 80.0);
+        assert_eq!(totals[1].name, "schema_apply");
+        assert_eq!(totals[1].duration_secs, 1.0);
+        assert_eq!(totals[2].name, "initdb");
+        assert_eq!(totals[2].duration_secs, 0.5);
+        Ok(())
+    }
+
+    fn cost_wrapper_event(duration_secs: f64) -> WrapperEvent {
+        WrapperEvent {
+            event: "checkout-local-rebuild".to_string(),
+            status: "success".to_string(),
+            started_at: "2026-06-06T10:00:00Z".to_string(),
+            finished_at: Some("2026-06-06T10:00:10Z".to_string()),
+            duration_secs: Some(duration_secs),
+            command: Some("history".to_string()),
+            args: None,
+            requires_runtime_introspection: false,
+            force_rebuild: false,
+            log_path: None,
+            stage_durations_ms: BTreeMap::new(),
+            top_stage: None,
+        }
     }
 
     fn invocation_resource_metrics(
