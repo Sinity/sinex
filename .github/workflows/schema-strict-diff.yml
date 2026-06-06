@@ -28,19 +28,6 @@ jobs:
     name: xtask schema strict-diff
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    services:
-      postgres:
-        image: timescale/timescaledb:latest-pg16
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: sinex
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     steps:
       - uses: actions/checkout@v5
@@ -49,12 +36,9 @@ jobs:
         uses: cachix/install-nix-action@v27
 
       - name: Run schema-only drift gate
-        env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/sinex
-          PGDATABASE: sinex
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          SUPERUSER: postgres
-        run: nix develop --command xtask ci schema-only
+        shell: bash
+        run: |
+          nix develop --accept-flake-config --no-pure-eval --command bash -lc '
+            set -euo pipefail
+            xtask ci postgres -- xtask ci schema-only
+          '
