@@ -141,6 +141,7 @@ impl ReplayState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayScope {
     /// Source runtime to replay
+    #[serde(alias = "module_name")]
     pub source_name: String,
     /// Optional time window as (start, end) ISO8601 timestamps
     #[serde(default, skip_serializing_if = "Option::is_none")]

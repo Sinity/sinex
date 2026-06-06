@@ -1193,7 +1193,6 @@ pub async fn start_test_event_engine_with_config(
         // Tests that create their own EphemeralNats pass ctx for the DB pool
         // but don't initialize NATS on the sandbox.
         if let Ok(nats) = sandbox.nats_handle() {
-            let _ = nats;
             if let Err(error) = wait_for_ready_notify(
                 "sinexd",
                 &notify_listener,
@@ -1207,6 +1206,17 @@ pub async fn start_test_event_engine_with_config(
                 return Err(error)
                     .wrap_err(format_event_engine_debug_context(&debug_log))
                     .wrap_err("event_engine did not reach systemd READY state");
+            }
+            let js = async_nats::jetstream::new(sandbox.nats_client());
+            if let Err(error) = nats
+                .wait_for_stream(&js, &stream_name, Duration::from_secs(Timeouts::STANDARD))
+                .await
+            {
+                let _ = std::fs::remove_file(&notify_socket_path);
+                let _ = child.start_kill();
+                return Err(error)
+                    .wrap_err(format_event_engine_debug_context(&debug_log))
+                    .wrap_err(format!("event_engine did not create stream {stream_name}"));
             }
         }
     }

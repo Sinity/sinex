@@ -761,6 +761,9 @@ mod tests {
         let command = Cli::command();
         let mut paths = BTreeSet::new();
         collect(&mut Vec::new(), &command, &mut paths);
+        // `verify` has an optional `baseline` subcommand; the parent command
+        // itself remains executable and needs a format-capability entry.
+        paths.insert("verify".to_string());
         paths
     }
 
