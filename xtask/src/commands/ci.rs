@@ -1,4 +1,4 @@
-//! CI infrastructure commands for running tests with ephemeral environments
+//! Hidden automation commands for running validation with ephemeral environments.
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 use std::env;
@@ -17,7 +17,7 @@ pub struct CiCommand {
     pub subcommand: CiSubcommand,
 }
 
-/// Parameters for the `ci postgres` ephemeral environment.
+/// Parameters for the hidden ephemeral Postgres helper.
 #[derive(Debug, Clone)]
 pub struct EphemeralPostgresArgs {
     pub port: u16,
@@ -149,7 +149,7 @@ async fn execute_postgres(
     args: &EphemeralPostgresArgs,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    ctx.heading("ci postgres");
+    ctx.heading("ephemeral postgres");
 
     let config = PostgresConfig {
         port: args.port,
@@ -157,8 +157,8 @@ async fn execute_postgres(
             .data_dir
             .clone()
             .or_else(|| env::var_os("SINEX_TEST_PGDATA_DIR").map(PathBuf::from))
-            .or_else(|| crate::config::workspace_tmpfs_dir("sinex-ci-pgdata", 1024.0))
-            .unwrap_or_else(|| PathBuf::from(".sinex/ci-pgdata")),
+            .or_else(|| crate::config::workspace_tmpfs_dir("sinex-test-pgdata", 1024.0))
+            .unwrap_or_else(|| PathBuf::from(".sinex/test-pgdata")),
         socket_dir: resolve_socket_dir(args.socket_dir.clone(), env::current_dir())?,
         keep_data: args.keep_data,
         app_user: args.app_user.clone(),
@@ -193,7 +193,7 @@ async fn execute_postgres(
     }
 
     let Some(program) = args.command.first() else {
-        bail!("ci postgres requires a command to run");
+        bail!("ephemeral postgres requires a command to run");
     };
 
     if ctx.is_human() {
@@ -227,7 +227,7 @@ async fn execute_postgres(
         Err(e) => Ok(CommandResult::failure(crate::output::StructuredError {
             code: "COMMAND_FAILED".to_string(),
             message: format!("Command {:?} failed", args.command),
-            location: Some("ci::postgres".to_string()),
+            location: Some("ephemeral-postgres".to_string()),
             suggestion: Some("Check DATABASE_URL and ensure Postgres is accessible".to_string()),
         })
         .with_detail(e.to_string())
