@@ -765,7 +765,6 @@
                 export SINEX_CACHE_DIR="$SINEX_DEV_CACHE_ROOT"
                 export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
                 export SINEX_NATS_DIR="$SINEX_STATE_DIR/nats"
-                export SINEX_TEST_POSTGRES="''${SINEX_TEST_POSTGRES:-ephemeral}"
                 export SINEX_DEV_PG_PORT="${toString pgPort}"
                 export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run"
                 export PGHOST="$SINEX_DEV_STATE_DIR/run"

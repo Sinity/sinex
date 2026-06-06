@@ -13,7 +13,6 @@ use std::path::PathBuf;
 use crate::affected;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, WorkloadScope, XtaskCommand};
 use crate::nextest::runner::TestRunner;
-use crate::process::ProcessBuilder;
 use modes::{
     DiskSpaceStatus, check_disk_space_gb, execute_bench, execute_coverage, execute_fuzz,
     execute_mutants, execute_vm,
@@ -21,7 +20,7 @@ use modes::{
 use plan::{
     HEAVY_TEST_THREAD_CAP, NextestExecutionPlan, default_heavy_test_threads, normalize_packages,
     prepare_runtime_binaries_for_plan, resolve_nextest_execution_plan,
-    runtime_binary_requirements_for_target, test_database_required_for_plan,
+    runtime_binary_requirements_for_target,
 };
 
 // UI & System monitoring
@@ -240,14 +239,6 @@ pub struct TestCommand {
     #[arg(long)]
     pub skip_preflight: bool,
 
-    /// Run DB-backed tests inside a fresh throwaway Postgres cluster.
-    #[arg(long)]
-    pub ephemeral_postgres: bool,
-
-    /// Disable SINEX_TEST_POSTGRES=ephemeral auto-wrapping for this invocation.
-    #[arg(long)]
-    pub no_ephemeral_postgres: bool,
-
     /// Include tests marked `#[ignore]`
     #[arg(long)]
     pub include_ignored: bool,
@@ -330,7 +321,7 @@ pub struct BenchArgs {
     #[arg(long, value_delimiter = ',', default_values_t = vec![12, 24])]
     pub threads: Vec<u32>,
 
-    /// Test database pool sizes to sweep (comma-separated). Enables ephemeral Postgres mode.
+    /// Test database pool sizes to sweep (comma-separated).
     #[arg(long, value_delimiter = ',')]
     pub db_pool_sizes: Vec<u32>,
 
@@ -682,11 +673,7 @@ impl TestCommand {
     }
 
     fn can_consume_exact_test_proof(&self) -> bool {
-        !self.no_reuse
-            && !self.list
-            && !self.prime
-            && !self.ephemeral_postgres
-            && !self.no_ephemeral_postgres
+        !self.no_reuse && !self.list && !self.prime
     }
 
     fn guard_broad_start_pressure(
@@ -896,12 +883,6 @@ impl TestCommand {
                 requirement.package, requirement.binary
             ));
         }
-        if self.ephemeral_postgres {
-            args.push("--ephemeral-postgres".to_string());
-        }
-        if self.no_ephemeral_postgres {
-            args.push("--no-ephemeral-postgres".to_string());
-        }
         if self.prime {
             args.push("--prime".to_string());
         }
@@ -1099,12 +1080,6 @@ impl TestCommand {
             self.skip_preflight || force_skip_preflight,
             "--skip-preflight",
         );
-        push_flag(&mut args, self.ephemeral_postgres, "--ephemeral-postgres");
-        push_flag(
-            &mut args,
-            self.no_ephemeral_postgres,
-            "--no-ephemeral-postgres",
-        );
         push_flag(&mut args, self.prime, "--prime");
         push_flag(&mut args, self.dry_run, "--dry-run");
         push_flag(&mut args, self.update_snapshots, "--update-snapshots");
@@ -1150,168 +1125,6 @@ impl TestCommand {
         if !self.args.is_empty() {
             args.push("--".to_string());
             args.extend(self.args.clone());
-        }
-        args
-    }
-
-    fn test_postgres_auto_requested(&self) -> bool {
-        std::env::var("SINEX_TEST_POSTGRES").is_ok_and(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "ephemeral" | "tmpfs" | "auto"
-            )
-        })
-    }
-
-    fn should_use_ephemeral_postgres(
-        &self,
-        ctx: &CommandContext,
-    ) -> Result<Option<NextestExecutionPlan>> {
-        if self.no_ephemeral_postgres
-            || self.skip_preflight
-            || self.dry_run
-            || self.list
-            || self.subcommand.is_some()
-            || std::env::var("SINEX_EPHEMERAL_POSTGRES_ACTIVE").is_ok()
-            || std::env::var("NEXTEST_RUN_ID").is_ok()
-        {
-            return Ok(None);
-        }
-
-        let auto_requested = self.test_postgres_auto_requested();
-        let requested = self.ephemeral_postgres || auto_requested;
-        if !requested {
-            return Ok(None);
-        }
-
-        let effective_filter = self.filter.clone();
-        let effective_test_binaries = self.effective_test_binaries(effective_filter.as_deref())?;
-        let effective_lib_target =
-            self.effective_lib_target(effective_filter.as_deref(), &effective_test_binaries)?;
-        let execution_plan =
-            self.resolve_execution_plan(Some(ctx), effective_filter.as_deref(), None)?;
-
-        if self.should_skip_auto_ephemeral_postgres_for_exact_target(
-            auto_requested,
-            &execution_plan,
-            effective_filter.as_deref(),
-            &effective_test_binaries,
-            effective_lib_target,
-        ) {
-            return Ok(None);
-        }
-
-        if self.ephemeral_postgres || test_database_required_for_plan(&execution_plan) {
-            Ok(Some(execution_plan))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn should_skip_auto_ephemeral_postgres_for_exact_target(
-        &self,
-        auto_requested: bool,
-        execution_plan: &NextestExecutionPlan,
-        effective_filter: Option<&str>,
-        effective_test_binaries: &[String],
-        effective_lib_target: bool,
-    ) -> bool {
-        auto_requested
-            && !self.ephemeral_postgres
-            && self.is_exact_targeted_test(
-                execution_plan,
-                effective_filter,
-                effective_test_binaries,
-                effective_lib_target,
-            )
-    }
-
-    fn is_exact_targeted_test(
-        &self,
-        execution_plan: &NextestExecutionPlan,
-        effective_filter: Option<&str>,
-        effective_test_binaries: &[String],
-        effective_lib_target: bool,
-    ) -> bool {
-        if execution_plan.runner_packages.len() != 1 {
-            return false;
-        }
-        if !effective_lib_target && effective_test_binaries.is_empty() {
-            return false;
-        }
-        effective_filter
-            .and_then(affected::simple_test_name_term_count)
-            .is_some()
-    }
-
-    fn execute_with_ephemeral_postgres(
-        &self,
-        ctx: &CommandContext,
-        execution_plan: &NextestExecutionPlan,
-    ) -> Result<CommandResult> {
-        let base_dir = std::env::var_os("SINEX_TEST_PGDATA_DIR")
-            .map(PathBuf::from)
-            .or_else(|| crate::config::workspace_tmpfs_dir("sinex-ci-pgdata", 1024.0))
-            .unwrap_or_else(|| PathBuf::from(".sinex/ci-pgdata"));
-        let data_dir = base_dir.join("current");
-        let socket_dir = base_dir.join("run");
-        let port = Self::allocate_ephemeral_postgres_port()?;
-
-        if ctx.is_human() {
-            println!(
-                "Using throwaway Postgres for DB-backed tests: {}",
-                data_dir.display()
-            );
-        }
-
-        let nested_test_args = self.ephemeral_postgres_nested_test_args();
-
-        let xtask_exe = std::env::current_exe()
-            .map_err(|e| color_eyre::eyre::eyre!("failed to resolve current xtask binary: {e}"))?;
-        let xtask_program = xtask_exe.to_string_lossy().into_owned();
-
-        let mut args = vec![
-            "ci".to_string(),
-            "postgres".to_string(),
-            "--schema".to_string(),
-            format!("--port={port}"),
-            format!("--data-dir={}", data_dir.display()),
-            format!("--socket-dir={}", socket_dir.display()),
-            "--".to_string(),
-            xtask_program.clone(),
-            "test".to_string(),
-        ];
-        args.extend(nested_test_args);
-
-        let result = ProcessBuilder::new(&xtask_program)
-            .args(&args)
-            .inherit_output()
-            .without_timeout()
-            .run();
-
-        match result {
-            Ok(_) => Ok(CommandResult::success()
-                .with_message("tests passed with ephemeral Postgres")
-                .with_detail(format!(
-                    "scope={}",
-                    execution_plan.workload_scope.encode_marker()
-                ))
-                .with_detail(format!("pgdata={}", data_dir.display()))
-                .with_duration(ctx.elapsed())),
-            Err(error) => Err(error),
-        }
-    }
-
-    fn allocate_ephemeral_postgres_port() -> Result<u16> {
-        Ok(crate::sandbox::orchestrator::allocate_free_port()?.port())
-    }
-
-    fn ephemeral_postgres_nested_test_args(&self) -> Vec<String> {
-        let mut args = self.nextest_invocation_args(true);
-        args.retain(|arg| arg != "--ephemeral-postgres");
-        args.push("--no-ephemeral-postgres".to_string());
-        if !args.iter().any(|arg| arg == "--allow-contended-host") {
-            args.push("--allow-contended-host".to_string());
         }
         args
     }
@@ -1778,10 +1591,6 @@ impl XtaskCommand for TestCommand {
                 TestSubcommand::Mutants(m) => execute_mutants(m, ctx),
                 TestSubcommand::Vm(vm) => execute_vm(vm, ctx).await,
             };
-        }
-
-        if let Some(execution_plan) = self.should_use_ephemeral_postgres(ctx)? {
-            return self.execute_with_ephemeral_postgres(ctx, &execution_plan);
         }
 
         if self.dry_run {
@@ -2696,105 +2505,6 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_postgres_auto_skips_exact_targeted_runs() -> ::xtask::sandbox::TestResult<()> {
-        let command = TestCommand {
-            packages: vec!["sinexd".to_string()],
-            filter: Some(
-                "test(sqlite_harness_records_snapshot_success_and_failure_evidence)".to_string(),
-            ),
-            ..Default::default()
-        };
-        let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinexd".to_string()],
-            excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinexd".to_string()]),
-        };
-
-        assert!(
-            command.should_skip_auto_ephemeral_postgres_for_exact_target(
-                true,
-                &plan,
-                command.filter.as_deref(),
-                &[],
-                true,
-            ),
-            "auto ephemeral Postgres should not wrap exact targeted lib tests"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_explicit_ephemeral_postgres_keeps_exact_targeted_runs()
-    -> ::xtask::sandbox::TestResult<()> {
-        let command = TestCommand {
-            ephemeral_postgres: true,
-            packages: vec!["sinexd".to_string()],
-            filter: Some(
-                "test(sqlite_harness_records_snapshot_success_and_failure_evidence)".to_string(),
-            ),
-            ..Default::default()
-        };
-        let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinexd".to_string()],
-            excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinexd".to_string()]),
-        };
-
-        assert!(
-            !command.should_skip_auto_ephemeral_postgres_for_exact_target(
-                true,
-                &plan,
-                command.filter.as_deref(),
-                &[],
-                true,
-            ),
-            "explicit --ephemeral-postgres must still force the wrapper"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_ephemeral_postgres_port_avoids_fixed_ci_default()
-    -> ::xtask::sandbox::TestResult<()> {
-        let reserved = std::net::TcpListener::bind("127.0.0.1:5433").ok();
-
-        let port = TestCommand::allocate_ephemeral_postgres_port()?;
-
-        assert_ne!(port, 0);
-        if reserved.is_some() {
-            assert_ne!(
-                port, 5433,
-                "ephemeral test Postgres must not hard-code the ci postgres default port"
-            );
-        }
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_ephemeral_postgres_nested_args_deduplicate_contention_flag()
-    -> ::xtask::sandbox::TestResult<()> {
-        let command = TestCommand {
-            ephemeral_postgres: true,
-            allow_contended_host: true,
-            packages: vec!["sinex-e2e-tests".to_string()],
-            ..Default::default()
-        };
-
-        let args = command.ephemeral_postgres_nested_test_args();
-
-        assert!(!args.contains(&"--ephemeral-postgres".to_string()));
-        assert!(args.contains(&"--no-ephemeral-postgres".to_string()));
-        assert_eq!(
-            args.iter()
-                .filter(|arg| arg.as_str() == "--allow-contended-host")
-                .count(),
-            1,
-            "nested test command must not pass duplicate Clap singleton flags: {args:?}"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
     async fn test_semantic_invocation_args_include_package_excludes()
     -> ::xtask::sandbox::TestResult<()> {
         let command = TestCommand {
@@ -3083,34 +2793,15 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_runtime_shape_flags_disable_exact_test_proof_reuse()
-    -> ::xtask::sandbox::TestResult<()> {
-        for (flag, command) in [
-            (
-                "--prime",
-                TestCommand {
-                    prime: true,
-                    packages: vec!["xtask".to_string()],
-                    ..Default::default()
-                },
-            ),
-            (
-                "--ephemeral-postgres",
-                TestCommand {
-                    ephemeral_postgres: true,
-                    packages: vec!["xtask".to_string()],
-                    ..Default::default()
-                },
-            ),
-            (
-                "--no-ephemeral-postgres",
-                TestCommand {
-                    no_ephemeral_postgres: true,
-                    packages: vec!["xtask".to_string()],
-                    ..Default::default()
-                },
-            ),
-        ] {
+    async fn test_prime_disables_exact_test_proof_reuse() -> ::xtask::sandbox::TestResult<()> {
+        for (flag, command) in [(
+            "--prime",
+            TestCommand {
+                prime: true,
+                packages: vec!["xtask".to_string()],
+                ..Default::default()
+            },
+        )] {
             let args = command.semantic_invocation_args(
                 &WorkloadScope::Packages(vec!["xtask".to_string()]),
                 None,
