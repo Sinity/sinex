@@ -328,6 +328,12 @@ xtask deps unused
 # Identify slow build targets
 xtask deps timings --top 15
 
+# Explain why a package is expensive to compile
+xtask deps compile-surface --package xtask --top 20
+
+# Pair the static surface with a scoped cold package timing
+xtask deps timings --package xtask --clean-package --top 20
+
 # Check rebuild impact of changes
 xtask deps impact --package sinexd
 ```
@@ -351,6 +357,7 @@ xtask deps unused
 | `deps duplicates` | ✅ Complete | None | Finds version conflicts |
 | `deps unused` | ✅ Complete | cargo-machete OR cargo-udeps | Detects unused deps |
 | `deps timings` | ✅ Complete | None (uses cargo --timings) | Build performance |
+| `deps compile-surface` | ✅ Complete | None (static manifest/source scan) | Compile surface attribution |
 
 ---
 

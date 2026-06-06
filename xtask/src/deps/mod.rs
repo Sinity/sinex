@@ -11,6 +11,7 @@ use std::time::Duration;
 // Submodules
 pub(crate) mod active;
 pub mod analyzer; // Created in P1.W3.T2
+pub mod compile_surface;
 pub mod reports; // Created in P1.W3.T3
 pub mod timing;
 pub mod unused; // Created in P2.W3.T1 // Created in P2.W3.T4
@@ -78,6 +79,17 @@ pub enum DepsCommand {
         /// Run `cargo clean -p <package>` before timing; requires --package
         #[arg(long, requires = "package")]
         clean_package: bool,
+    },
+
+    /// Summarize static source/dependency surface that contributes to compile cost
+    CompileSurface {
+        /// Workspace package to summarize
+        #[arg(short = 'p', long = "package", default_value = "xtask")]
+        package: String,
+
+        /// Number of largest source files and module buckets to show
+        #[arg(long, default_value = "20")]
+        top: usize,
     },
 
     /// Analyze rebuild impact of package changes
@@ -343,6 +355,22 @@ impl DepsCommand {
                     )?;
                     let rendered = String::from_utf8(buffer)?;
 
+                    Ok(CommandResult::success()
+                        .with_data(serde_json::Value::String(rendered))
+                        .with_silent()
+                        .with_duration(ctx.elapsed()))
+                }
+            }
+
+            Self::CompileSurface { package, top } => {
+                let report = crate::deps::compile_surface::analyze(package, *top)?;
+                if ctx.is_json() {
+                    Ok(CommandResult::success()
+                        .with_data(serde_json::to_value(&report)?)
+                        .with_silent()
+                        .with_duration(ctx.elapsed()))
+                } else {
+                    let rendered = crate::deps::compile_surface::render_human(&report);
                     Ok(CommandResult::success()
                         .with_data(serde_json::Value::String(rendered))
                         .with_silent()

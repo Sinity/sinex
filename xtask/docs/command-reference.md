@@ -624,6 +624,7 @@ Analyze workspace dependency structure and impact
 | `duplicates` | Find duplicate dependencies (multiple versions) |
 | `unused` | Detect unused dependencies |
 | `timings` | Analyze build timings |
+| `compile-surface` | Summarize static source/dependency surface that contributes to compile cost |
 | `impact` | Analyze rebuild impact of package changes |
 | `update` | Update Cargo.lock through the xtask dependency surface |
 | `graph` | Visualize dependency graph |
@@ -682,6 +683,18 @@ Analyze build timings
 | `-p, --package` | yes | no | Cargo package to time, e.g. xtask for checkout-wrapper rebuild attribution |
 | `--profile` | yes | no | Cargo profile to time: dev, release, or a custom profile name |
 | `--clean-package` | no | no | Run `cargo clean -p <package>` before timing; requires --package |
+
+
+### `xtask deps compile-surface`
+
+Summarize static source/dependency surface that contributes to compile cost
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `-p, --package` | yes | no | Workspace package to summarize |
+| `--top` | yes | no | Number of largest source files and module buckets to show |
 
 
 ### `xtask deps impact`
