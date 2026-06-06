@@ -1036,11 +1036,11 @@
                   export SINEX_TEST_TMPDIR="$_sinex_test_tmp_root"
                 fi
                 if [ -z "''${SINEX_TEST_PGDATA_DIR:-}" ]; then
-                  _sinex_test_pgdata_root="$SINEX_DEV_ROOT/.sinex/ci-pgdata"
+                  _sinex_test_pgdata_root="$SINEX_DEV_ROOT/.sinex/test-pgdata"
                   if [ -d /dev/shm ] && [ -w /dev/shm ] && [ -k /dev/shm ]; then
                     _sinex_shm_available_kb="$(df -Pk /dev/shm 2>/dev/null | awk 'NR == 2 { print $4 }')"
                     if [ "''${_sinex_shm_available_kb:-0}" -ge 1048576 ]; then
-                      _sinex_test_pgdata_root="/dev/shm/sinex-ci-pgdata-''${USER:-user}-$_sinex_checkout_hash"
+                      _sinex_test_pgdata_root="/dev/shm/sinex-test-pgdata-''${USER:-user}-$_sinex_checkout_hash"
                     fi
                   fi
                   export SINEX_TEST_PGDATA_DIR="$_sinex_test_pgdata_root"
@@ -1073,6 +1073,52 @@
                   fi
                 fi
                 if [ -t 1 ]; then
+                  _sinex_tcp_ready() {
+                    timeout 0.2 bash -c ">/dev/tcp/127.0.0.1/$1" 2>/dev/null
+                  }
+
+                  _sinex_recent_history_line() {
+                    local db="$SINEX_STATE_DIR/xtask-history.db"
+                    local query
+
+                    [ -f "$db" ] || return 0
+                    command -v sqlite3 >/dev/null 2>&1 || return 0
+
+                    query="
+                      SELECT command || ' ' || status || ' ' || printf('%.1fs', duration_secs) || ' ' || started_at
+                      FROM invocations
+                      WHERE command IN ('check','test','build','fix')
+                        AND status IN ('success','failed','cancelled')
+                      ORDER BY started_at DESC
+                      LIMIT 1;
+                    "
+
+                    timeout 0.25 sqlite3 "file:$db?mode=ro&immutable=1" "$query" 2>/dev/null || true
+                  }
+
+                  _sinex_print_motd() {
+                    local pg_state="down"
+                    local nats_state="down"
+                    local history_line
+                    local test_tmp="$SINEX_TEST_TMPDIR"
+                    local test_pgdata="''${SINEX_TEST_PGDATA_DIR:-unset}"
+
+                    pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && pg_state="up"
+                    _sinex_tcp_ready "$SINEX_DEV_NATS_PORT" && nats_state="up"
+                    history_line="$(_sinex_recent_history_line)"
+
+                    {
+                      printf 'sinex devshell: pg:%s nats:%s target:%s\n' "$pg_state" "$nats_state" "$CARGO_TARGET_DIR"
+                      printf '  test tmp: %s\n' "$test_tmp"
+                      printf '  test pgdata: %s\n' "$test_pgdata"
+                      if [ -n "$history_line" ]; then
+                        printf '  last xtask: %s\n' "$history_line"
+                      fi
+                      printf '  inspect: xtask status --summary | xtask history explain --day today --against yesterday\n'
+                      printf '  controls: SINEX_AUTO_INFRA=1 starts infra; SINEX_AUTO_STATUS=1 runs full status; SINEX_MOTD=0 hides this\n'
+                    } >&2
+                  }
+
                   # Keep shell entry cheap by default. Heavy dev conveniences are
                   # opt-in so direnv, one-shot commands, and fresh shells do not
                   # silently compile xtask or launch infra.
@@ -1134,8 +1180,8 @@
                       done
                     fi
                     xtask status --summary || true
-                  elif [ "''${SINEX_SHELL_BANNER:-1}" = 1 ]; then
-                    echo "sinex devshell ready; live status: xtask status --summary; auto status: SINEX_AUTO_STATUS=1" >&2
+                  elif [ "''${SINEX_MOTD:-1}" = 1 ] && [ "''${SINEX_SHELL_BANNER:-1}" = 1 ]; then
+                    _sinex_print_motd
                   fi
                 fi
               '';
