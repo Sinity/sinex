@@ -1757,7 +1757,11 @@ fn should_force_nonincremental_for_sccache(
     }
     rustc_wrapper.is_some_and(|wrapper| {
         let text = wrapper.to_string_lossy();
-        text == "sccache" || text.rsplit('/').next().is_some_and(|name| name == "sccache")
+        text == "sccache"
+            || text
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| name == "sccache")
     })
 }
 
@@ -2530,7 +2534,10 @@ mod tests {
 
         let command = ProcessBuilder::cargo().build_std_command();
 
-        assert_eq!(command_env_value(&command, "CARGO_INCREMENTAL").as_deref(), Some("0"));
+        assert_eq!(
+            command_env_value(&command, "CARGO_INCREMENTAL").as_deref(),
+            Some("0")
+        );
         Ok(())
     }
 

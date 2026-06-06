@@ -2493,8 +2493,8 @@ mod tests {
         let db_path = dir.path().join("test-history.db");
         let db = HistoryDb::open(&db_path)?;
         let inv_id = db.start_invocation("test", None, None, None)?;
-        let started_at = (OffsetDateTime::now_utc() - time::Duration::seconds(120))
-            .format(&Rfc3339)?;
+        let started_at =
+            (OffsetDateTime::now_utc() - time::Duration::seconds(120)).format(&Rfc3339)?;
         db.conn.execute(
             "UPDATE invocations SET started_at = ?1, duration_secs = NULL WHERE id = ?2",
             rusqlite::params![started_at, inv_id],

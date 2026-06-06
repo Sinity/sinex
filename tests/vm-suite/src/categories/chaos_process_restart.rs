@@ -93,7 +93,10 @@ async fn test_event_engine_restarts_after_sigkill(runner: &mut TestRunner, _pool
             return;
         }
         if Instant::now() >= deadline {
-            runner.fail(name, "event_engine did not restart within 30s after SIGKILL");
+            runner.fail(
+                name,
+                "event_engine did not restart within 30s after SIGKILL",
+            );
             return;
         }
     }

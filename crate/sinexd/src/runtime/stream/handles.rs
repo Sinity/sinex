@@ -402,7 +402,7 @@ mod tests {
     use super::EventEmitter;
     use crate::runtime::SinexError;
     use sinex_primitives::events::{Event, Provenance};
-    use sinex_primitives::{EventSource, EventType, HostName, Id, OffsetKind, Timestamp, Uuid};
+    use sinex_primitives::{EventSource, EventType, HostName, Id, Timestamp, Uuid};
     use xtask::sandbox::sinex_test;
 
     #[cfg(feature = "messaging")]

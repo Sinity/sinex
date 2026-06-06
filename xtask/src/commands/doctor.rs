@@ -580,7 +580,8 @@ fn execute_reclaim(ctx: &CommandContext, result: &mut CommandResult) {
         Ok(report) => {
             if ctx.is_human() {
                 let total = report.cargo_sweep_reclaimed_bytes + report.incremental_bytes_reclaimed;
-                let incremental_keep = crate::cache_hygiene::configured_incremental_keep_per_crate();
+                let incremental_keep =
+                    crate::cache_hygiene::configured_incremental_keep_per_crate();
                 println!(
                     "Reclaimed {:.2} GB (cargo-sweep: {:.2} GB; incremental keep-{incremental_keep}: {} dirs / {:.2} GB).",
                     total as f64 / 1e9,

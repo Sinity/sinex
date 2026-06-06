@@ -794,8 +794,8 @@ fn is_test_attr_line(line: &str) -> bool {
 
 fn function_name_from_line(line: &str) -> Option<&str> {
     let (_, after_fn) = line.split_once("fn ")?;
-    let name_end = after_fn
-        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))?;
+    let name_end =
+        after_fn.find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))?;
     Some(&after_fn[..name_end])
 }
 

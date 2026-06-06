@@ -92,9 +92,8 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                     published.offset_start,
                     published.offset_end,
                 );
-                provenance = provenance.with_offset_kind(Self::parse_offset_kind(
-                    published.offset_kind.as_deref(),
-                )?);
+                provenance = provenance
+                    .with_offset_kind(Self::parse_offset_kind(published.offset_kind.as_deref())?);
                 provenance
             }
             (None, Some(source_ids)) => {

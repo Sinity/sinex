@@ -145,10 +145,10 @@ async fn spawn_presidio_context_capture_fixture(
             })
             .unwrap_or_default();
         let has_required = context.iter().any(|word| word == required);
-        captured
-            .lock()
-            .expect("capture lock poisoned")
-            .push(context);
+        match captured.lock() {
+            Ok(mut captured_contexts) => captured_contexts.push(context),
+            Err(poisoned) => poisoned.into_inner().push(context),
+        }
         let matches = match (has_required, text.find("SECRET_PERSON")) {
             (true, Some(start)) => json!([{
                 "start": text[..start].chars().count(),

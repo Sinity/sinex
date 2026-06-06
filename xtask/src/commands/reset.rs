@@ -1059,8 +1059,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_stale_test_postgres_classifier_accepts_orphaned_test_cluster() -> TestResult<()>
-    {
+    async fn test_stale_test_postgres_classifier_accepts_orphaned_test_cluster() -> TestResult<()> {
         let probe = BuildProcessProbe {
             pid: 42,
             ppid: 99,
@@ -1088,8 +1087,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_stale_test_postgres_classifier_rejects_checkout_dev_postgres() -> TestResult<()>
-    {
+    async fn test_stale_test_postgres_classifier_rejects_checkout_dev_postgres() -> TestResult<()> {
         let probe = BuildProcessProbe {
             pid: 42,
             ppid: 99,

@@ -51,9 +51,9 @@ fn line_record(line: &str, logical_path: &str) -> SourceRecord {
     }
 }
 
-fn json_record(value: serde_json::Value, logical_path: &str) -> SourceRecord {
-    let bytes = serde_json::to_vec(&value).expect("test JSON serializes");
-    SourceRecord {
+fn json_record(value: serde_json::Value, logical_path: &str) -> serde_json::Result<SourceRecord> {
+    let bytes = serde_json::to_vec(&value)?;
+    Ok(SourceRecord {
         material_id: Id::new(),
         anchor: MaterialAnchor::ByteRange {
             start: 0,
@@ -63,7 +63,7 @@ fn json_record(value: serde_json::Value, logical_path: &str) -> SourceRecord {
         logical_path: Some(Utf8PathBuf::from(logical_path)),
         source_ts_hint: None,
         metadata: serde_json::Value::Null,
-    }
+    })
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -116,7 +116,7 @@ async fn text_history_command_is_not_parser_redacted() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fish_history_command_is_not_parser_redacted() {
+async fn fish_history_command_is_not_parser_redacted() -> Result<(), Box<dyn std::error::Error>> {
     let mut parser = FishHistoryParser;
     let record = json_record(
         serde_json::json!({
@@ -125,7 +125,7 @@ async fn fish_history_command_is_not_parser_redacted() {
             "when": 1700000000
         }),
         ".local/share/fish/fish_history",
-    );
+    )?;
     let intents = parser
         .parse_record(record, &test_ctx("terminal.fish-history"))
         .await
@@ -134,10 +134,12 @@ async fn fish_history_command_is_not_parser_redacted() {
     assert_eq!(intents.len(), 1);
     assert_eq!(intents[0].payload["command"], SECRET_COMMAND);
     assert_eq!(intents[0].privacy_context, ProcessingContext::Command);
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn atuin_history_command_and_cwd_are_not_parser_redacted() {
+async fn atuin_history_command_and_cwd_are_not_parser_redacted()
+-> Result<(), Box<dyn std::error::Error>> {
     let mut parser = AtuinHistoryParser;
     let record = json_record(
         serde_json::json!({
@@ -151,7 +153,7 @@ async fn atuin_history_command_and_cwd_are_not_parser_redacted() {
             "command": SECRET_COMMAND
         }),
         ".local/share/atuin/history.db",
-    );
+    )?;
     let intents = parser
         .parse_record(record, &test_ctx("terminal.atuin-history"))
         .await
@@ -161,4 +163,5 @@ async fn atuin_history_command_and_cwd_are_not_parser_redacted() {
     assert_eq!(intents[0].payload["command_string"], SECRET_COMMAND);
     assert_eq!(intents[0].payload["cwd"], SECRET_CWD);
     assert_eq!(intents[0].privacy_context, ProcessingContext::Command);
+    Ok(())
 }
