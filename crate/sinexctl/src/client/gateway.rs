@@ -6,7 +6,7 @@ use reqwest::{ClientBuilder, StatusCode};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sinex_primitives::constants::env_vars;
-use sinex_primitives::domain::{EventSource, InstanceId, NodeType};
+use sinex_primitives::domain::{EventSource, InstanceId, ModuleKind};
 use sinex_primitives::rpc::{
     JsonRpcError, RpcMethod,
     automata::{AUTOMATA_STATUS_METHOD, AutomataStatusRequest, AutomataStatusResponse},
@@ -39,19 +39,10 @@ use sinex_primitives::rpc::{
         EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD, EventsAnnotateRequest,
         EventsAnnotateResponse,
     },
-    gitops::{
-        DEFAULT_GITOPS_BRANCH, DEFAULT_GITOPS_PATH_PATTERN, DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES,
-        GITOPS_CREATE_SOURCE_METHOD, GITOPS_DELETE_SOURCE_METHOD, GITOPS_LIST_SOURCES_METHOD,
-        GITOPS_TRIGGER_SYNC_METHOD, GitOpsCreateSourceRequest, GitOpsCreateSourceResponse,
-        GitOpsDeleteSourceRequest, GitOpsDeleteSourceResponse, GitOpsListSourcesRequest,
-        GitOpsListSourcesResponse, GitOpsSourceInfo, GitOpsTriggerSyncRequest,
-        GitOpsTriggerSyncResponse,
-    },
     health::{
         HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD, HealthEffectRecordRequest,
         HealthEffectRecordResponse, HealthIntakeRecordRequest, HealthIntakeRecordResponse,
     },
-    ingestors::{INGESTORS_STATUS_METHOD, IngestorsStatusRequest, IngestorsStatusResponse},
     instructions::{
         HyprlandWorkspaceSwitchRequest, HyprlandWorkspaceSwitchResponse,
         INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
@@ -73,15 +64,6 @@ use sinex_primitives::rpc::{
         LLM_BUDGET_REPORT_METHOD, LLM_PROMPTS_LIST_METHOD, LLM_ROUTE_EXPLAIN_METHOD,
         LlmBudgetReportRequest, LlmBudgetReportResponse, LlmPromptsListRequest,
         LlmRouteExplainRequest, LlmRouteExplainResponse,
-    },
-    nodes::{
-        NODES_DRAIN_METHOD, NODES_HEALTH_METHOD, NODES_LIST_ACTIVE_METHOD, NODES_LIST_METHOD,
-        NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD,
-    },
-    nodes::{
-        NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest, NodesHealthRequest,
-        NodesHealthResponse, NodesListActiveRequest, NodesListActiveResponse, NodesListRequest,
-        NodesListResponse,
     },
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     privacy::{
@@ -107,6 +89,15 @@ use sinex_primitives::rpc::{
         ReplayPreviewResponse, ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse,
         ReplaySubmitRequest, ReplaySubmitResponse,
     },
+    runtime::{
+        RUNTIME_DRAIN_METHOD, RUNTIME_HEALTH_METHOD, RUNTIME_LIST_ACTIVE_METHOD,
+        RUNTIME_LIST_METHOD, RUNTIME_RESUME_METHOD, RUNTIME_SET_HORIZON_METHOD,
+    },
+    runtime::{
+        RuntimeDrainRequest, RuntimeHealthRequest, RuntimeHealthResponse, RuntimeListActiveRequest,
+        RuntimeListActiveResponse, RuntimeListRequest, RuntimeListResponse, RuntimeResumeRequest,
+        RuntimeSetHorizonRequest,
+    },
     semantic::{
         SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
         SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD,
@@ -125,6 +116,7 @@ use sinex_primitives::rpc::{
         SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
     },
     shadow::{SHADOW_LIST_METHOD, ShadowListRequest, ShadowListResponse},
+    source_status::{SOURCES_STATUS_METHOD, SourcesStatusRequest, SourcesStatusResponse},
     sources::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_LIST_METHOD,
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
@@ -154,29 +146,29 @@ use sinex_primitives::rpc::{
     },
     telemetry::{
         AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
-        FileActivityEntry, GatewayStatsBucket, IngestdBatchStatsBucket, IngestdValidationSnapshot,
-        MetricCounterBucket, NodeStatsBucket, RecentActivityEntry, StreamStatsBucket,
-        SystemStateBucket, TELEMETRY_ASSEMBLY_STATS_METHOD, TELEMETRY_COMMAND_FREQUENCY_METHOD,
-        TELEMETRY_CURRENT_DEVICE_STATE_METHOD, TELEMETRY_CURRENT_HEALTH_METHOD,
-        TELEMETRY_FILE_ACTIVITY_METHOD, TELEMETRY_GATEWAY_STATS_METHOD,
-        TELEMETRY_INGESTD_BATCH_STATS_METHOD, TELEMETRY_INGESTD_VALIDATION_METHOD,
-        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_NODE_STATS_METHOD,
-        TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_STREAM_STATS_METHOD,
-        TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD, TELEMETRY_WINDOW_FOCUS_METHOD,
-        TelemetryAssemblyStatsRequest, TelemetryAssemblyStatsResponse,
-        TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
-        TelemetryCurrentDeviceStateRequest, TelemetryCurrentDeviceStateResponse,
-        TelemetryCurrentHealthRequest, TelemetryCurrentHealthResponse,
-        TelemetryFileActivityRequest, TelemetryFileActivityResponse, TelemetryGatewayStatsRequest,
-        TelemetryGatewayStatsResponse, TelemetryIngestdBatchStatsRequest,
-        TelemetryIngestdBatchStatsResponse, TelemetryIngestdValidationRequest,
-        TelemetryIngestdValidationResponse, TelemetryMetricCountersRequest,
-        TelemetryMetricCountersResponse, TelemetryNodeStatsRequest, TelemetryNodeStatsResponse,
+        EventEngineBatchStatsBucket, EventEngineValidationSnapshot, FileActivityEntry,
+        GatewayStatsBucket, MetricCounterBucket, RecentActivityEntry, SourceStatsBucket,
+        StreamStatsBucket, SystemStateBucket, TELEMETRY_ASSEMBLY_STATS_METHOD,
+        TELEMETRY_COMMAND_FREQUENCY_METHOD, TELEMETRY_CURRENT_DEVICE_STATE_METHOD,
+        TELEMETRY_CURRENT_HEALTH_METHOD, TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD,
+        TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD, TELEMETRY_FILE_ACTIVITY_METHOD,
+        TELEMETRY_GATEWAY_STATS_METHOD, TELEMETRY_METRIC_COUNTERS_METHOD,
+        TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_SOURCE_STATS_METHOD,
+        TELEMETRY_STREAM_STATS_METHOD, TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD,
+        TELEMETRY_WINDOW_FOCUS_METHOD, TelemetryAssemblyStatsRequest,
+        TelemetryAssemblyStatsResponse, TelemetryCommandFrequencyRequest,
+        TelemetryCommandFrequencyResponse, TelemetryCurrentDeviceStateRequest,
+        TelemetryCurrentDeviceStateResponse, TelemetryCurrentHealthRequest,
+        TelemetryCurrentHealthResponse, TelemetryEventEngineBatchStatsRequest,
+        TelemetryEventEngineBatchStatsResponse, TelemetryEventEngineValidationRequest,
+        TelemetryEventEngineValidationResponse, TelemetryFileActivityRequest,
+        TelemetryFileActivityResponse, TelemetryGatewayStatsRequest, TelemetryGatewayStatsResponse,
+        TelemetryMetricCountersRequest, TelemetryMetricCountersResponse,
         TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
-        TelemetryStreamStatsRequest, TelemetryStreamStatsResponse, TelemetrySystemStateRequest,
-        TelemetrySystemStateResponse, TelemetryThroughputRequest, TelemetryThroughputResponse,
-        TelemetryTimeRange, TelemetryWindowFocusRequest, TelemetryWindowFocusResponse,
-        WindowFocusBucket,
+        TelemetrySourceStatsRequest, TelemetrySourceStatsResponse, TelemetryStreamStatsRequest,
+        TelemetryStreamStatsResponse, TelemetrySystemStateRequest, TelemetrySystemStateResponse,
+        TelemetryThroughputRequest, TelemetryThroughputResponse, TelemetryTimeRange,
+        TelemetryWindowFocusRequest, TelemetryWindowFocusResponse, WindowFocusBucket,
     },
 };
 use sinex_primitives::sources::continuity::{
@@ -188,7 +180,7 @@ use sinex_primitives::temporal::Timestamp;
 use crate::Result;
 use crate::auth::load_token;
 use crate::client::RetryConfig;
-use crate::model::NodeRole;
+use crate::model::RuntimeModuleRole;
 use crate::validation::{parse_time_input, parse_time_input_with_now, validate_time_range};
 use sinex_primitives::RuntimeTargetGatewayTokenRole;
 use sinex_primitives::query::{
@@ -524,21 +516,13 @@ impl GatewayClient {
         false
     }
 
-    /// List configured gitops sources
-    pub async fn gitops_list(&self, include_disabled: bool) -> Result<Vec<GitOpsSourceInfo>> {
-        let req = GitOpsListSourcesRequest { include_disabled };
-        let response: GitOpsListSourcesResponse =
-            self.call_typed(GITOPS_LIST_SOURCES_METHOD, &req).await?;
-        Ok(response.sources)
-    }
-
     /// List coordination instances.
     pub async fn coordination_list_instances(
         &self,
-        node_type: Option<String>,
+        module_kind: Option<String>,
     ) -> Result<ListInstancesResponse> {
         let request = ListInstancesRequest {
-            node_type: node_type
+            module_kind: module_kind
                 .map(|value| serde_json::from_value(Value::String(value)))
                 .transpose()?,
         };
@@ -546,10 +530,10 @@ impl GatewayClient {
             .await
     }
 
-    /// Get the current coordination leader for a node type.
-    pub async fn coordination_get_leader(&self, node_type: String) -> Result<GetLeaderResponse> {
+    /// Get the current coordination leader for a module kind.
+    pub async fn coordination_get_leader(&self, module_kind: String) -> Result<GetLeaderResponse> {
         let request = GetLeaderRequest {
-            node_type: serde_json::from_value(Value::String(node_type))?,
+            module_kind: serde_json::from_value(Value::String(module_kind))?,
         };
         self.call_typed(COORDINATION_GET_LEADER_METHOD, &request)
             .await
@@ -585,46 +569,6 @@ impl GatewayClient {
             .await
     }
 
-    /// Create a new gitops source
-    pub async fn gitops_create(
-        &self,
-        repository_url: String,
-        branch: Option<String>,
-        path_pattern: Option<String>,
-        sync_frequency_minutes: Option<i32>,
-    ) -> Result<GitOpsCreateSourceResponse> {
-        let req = GitOpsCreateSourceRequest {
-            repository_url,
-            branch: branch.unwrap_or_else(|| DEFAULT_GITOPS_BRANCH.to_string()),
-            path_pattern: path_pattern.unwrap_or_else(|| DEFAULT_GITOPS_PATH_PATTERN.to_string()),
-            sync_frequency_minutes: sync_frequency_minutes
-                .unwrap_or(DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES),
-        };
-        self.call_typed(GITOPS_CREATE_SOURCE_METHOD, &req).await
-    }
-
-    /// Delete a gitops source
-    pub async fn gitops_delete(&self, id: String) -> Result<bool> {
-        let req = GitOpsDeleteSourceRequest {
-            id: id
-                .parse()
-                .map_err(|e| color_eyre::eyre::eyre!("Invalid UUID: {}", e))?,
-        };
-        let response: GitOpsDeleteSourceResponse =
-            self.call_typed(GITOPS_DELETE_SOURCE_METHOD, &req).await?;
-        Ok(response.deleted)
-    }
-
-    /// Trigger manual sync for a gitops source
-    pub async fn gitops_sync(&self, id: String) -> Result<GitOpsTriggerSyncResponse> {
-        let req = GitOpsTriggerSyncRequest {
-            id: id
-                .parse()
-                .map_err(|e| color_eyre::eyre::eyre!("Invalid UUID: {}", e))?,
-        };
-        self.call_typed(GITOPS_TRIGGER_SYNC_METHOD, &req).await
-    }
-
     // ==================== Gateway Commands ====================
 
     /// Ping the gateway
@@ -647,9 +591,9 @@ impl GatewayClient {
         self.call_typed(SYSTEM_HEALTH_METHOD, &req).await
     }
 
-    // ==================== Node Commands ====================
+    // ==================== RuntimeModule Commands ====================
 
-    /// List derived-node/automata status.
+    /// List automata status.
     pub async fn automata_status(
         &self,
         stale_after_secs: u64,
@@ -662,27 +606,27 @@ impl GatewayClient {
         self.call_typed(AUTOMATA_STATUS_METHOD, &req).await
     }
 
-    /// List ingestor status (manifest, run, latest health.status, recent emissions).
-    pub async fn ingestors_status(
+    /// List source status (manifest, run, latest health.status, recent emissions).
+    pub async fn sources_status(
         &self,
         stale_after_secs: u64,
         recent_window_secs: u64,
-    ) -> Result<IngestorsStatusResponse> {
-        let req = IngestorsStatusRequest {
+    ) -> Result<SourcesStatusResponse> {
+        let req = SourcesStatusRequest {
             stale_after_secs,
             recent_window_secs,
         };
-        self.call_typed(INGESTORS_STATUS_METHOD, &req).await
+        self.call_typed(SOURCES_STATUS_METHOD, &req).await
     }
 
-    /// List all nodes, optionally filtered by role.
-    pub async fn list_nodes(&self, role: Option<NodeRole>) -> Result<Vec<InstanceInfo>> {
+    /// List all modules, optionally filtered by role.
+    pub async fn list_runtime(&self, role: Option<RuntimeModuleRole>) -> Result<Vec<InstanceInfo>> {
         let req = ListInstancesRequest {
-            node_type: role.map(|r| match r {
-                NodeRole::Capture => NodeType::Ingestor,
-                NodeRole::Derived => NodeType::Automaton,
-                NodeRole::Core => NodeType::Service,
-                NodeRole::Gateway => NodeType::Service,
+            module_kind: role.map(|r| match r {
+                RuntimeModuleRole::Capture => ModuleKind::Source,
+                RuntimeModuleRole::Derived => ModuleKind::Automaton,
+                RuntimeModuleRole::Core => ModuleKind::Service,
+                RuntimeModuleRole::Gateway => ModuleKind::Service,
             }),
         };
         let response: ListInstancesResponse = self
@@ -691,64 +635,64 @@ impl GatewayClient {
         Ok(response.instances)
     }
 
-    /// List active node presence from runtime registry state.
-    pub async fn nodes_list_active(
+    /// List active runtime-module presence from runtime registry state.
+    pub async fn runtime_list_active(
         &self,
         stale_after_secs: u64,
-    ) -> Result<NodesListActiveResponse> {
-        let req = NodesListActiveRequest { stale_after_secs };
-        self.call_typed(NODES_LIST_ACTIVE_METHOD, &req).await
+    ) -> Result<RuntimeListActiveResponse> {
+        let req = RuntimeListActiveRequest { stale_after_secs };
+        self.call_typed(RUNTIME_LIST_ACTIVE_METHOD, &req).await
     }
 
-    /// List persisted node states from coordination KV state.
-    pub async fn nodes_list(&self) -> Result<NodesListResponse> {
-        self.call_typed(NODES_LIST_METHOD, &NodesListRequest {})
+    /// List persisted runtime module states from coordination KV state.
+    pub async fn runtime_list(&self) -> Result<RuntimeListResponse> {
+        self.call_typed(RUNTIME_LIST_METHOD, &RuntimeListRequest {})
             .await
     }
 
-    /// Get aggregate node health from runtime registry state.
-    pub async fn nodes_health(&self, stale_after_secs: u64) -> Result<NodesHealthResponse> {
-        let req = NodesHealthRequest { stale_after_secs };
-        self.call_typed(NODES_HEALTH_METHOD, &req).await
+    /// Get aggregate runtime module health from runtime registry state.
+    pub async fn runtime_health(&self, stale_after_secs: u64) -> Result<RuntimeHealthResponse> {
+        let req = RuntimeHealthRequest { stale_after_secs };
+        self.call_typed(RUNTIME_HEALTH_METHOD, &req).await
     }
 
-    /// Get node status
-    pub async fn node_status(&self, node_id: &str) -> Result<InstanceHealthResponse> {
+    /// Get runtime module status
+    pub async fn runtime_status(&self, module_name: &str) -> Result<InstanceHealthResponse> {
         let req = InstanceHealthRequest {
-            instance_id: node_id.into(),
+            instance_id: module_name.into(),
         };
         self.call_typed(COORDINATION_INSTANCE_HEALTH_METHOD, &req)
             .await
     }
 
-    /// Drain a node for maintenance
-    pub async fn drain_node(&self, node_id: &str, reason: Option<&str>) -> Result<()> {
-        let req = NodeDrainRequest {
-            node_id: node_id.into(),
+    /// Drain a runtime module for maintenance
+    pub async fn drain_runtime(&self, module_name: &str, reason: Option<&str>) -> Result<()> {
+        let req = RuntimeDrainRequest {
+            module_name: module_name.into(),
             reason: reason.map(String::from),
         };
-        self.call_typed(NODES_DRAIN_METHOD, &req).await?;
+        self.call_typed(RUNTIME_DRAIN_METHOD, &req).await?;
         Ok(())
     }
 
-    /// Resume a drained node
-    pub async fn resume_node(&self, node_id: &str) -> Result<()> {
-        let req = NodeResumeRequest {
-            node_id: node_id.into(),
+    /// Resume a drained runtime module
+    pub async fn resume_runtime(&self, module_name: &str) -> Result<()> {
+        let req = RuntimeResumeRequest {
+            module_name: module_name.into(),
         };
-        self.call_typed(NODES_RESUME_METHOD, &req).await?;
+        self.call_typed(RUNTIME_RESUME_METHOD, &req).await?;
         Ok(())
     }
 
-    /// Set node horizon (cutoff time for event processing)
-    pub async fn set_node_horizon(&self, node_id: &str, horizon: &str) -> Result<()> {
+    /// Set runtime module horizon (cutoff time for event processing)
+    pub async fn set_runtime_horizon(&self, module_name: &str, horizon: &str) -> Result<()> {
         let horizon_ts = parse_time_input(horizon)?;
 
-        let req = NodeSetHorizonRequest {
-            node_id: node_id.into(),
+        let req = RuntimeSetHorizonRequest {
+            module_name: module_name.into(),
             horizon: horizon_ts,
         };
-        self.call_typed(NODES_SET_HORIZON_METHOD, &req).await?;
+        self.call_typed(RUNTIME_SET_HORIZON_METHOD, &req).await?;
         Ok(())
     }
 
@@ -757,7 +701,7 @@ impl GatewayClient {
     /// Create a replay plan
     pub async fn replay_plan(
         &self,
-        node_id: &str,
+        source_name: &str,
         since: Option<&str>,
         until: Option<&str>,
         materials: &[String],
@@ -787,11 +731,11 @@ impl GatewayClient {
 
         let req = ReplayCreateRequest {
             scope: ReplayScope {
-                node_id: node_id.to_string(),
+                source_name: source_name.to_string(),
                 time_window,
                 material_filter,
                 filters,
-                source_unit_id: None,
+                source_id: None,
                 source_material_id: None,
                 parser_id: None,
                 parser_version: None,
@@ -892,12 +836,12 @@ impl GatewayClient {
     pub async fn replay_list_filtered(
         &self,
         state: Option<ReplayState>,
-        node: Option<&str>,
+        module: Option<&str>,
         limit: Option<i64>,
     ) -> Result<Vec<ReplayOperation>> {
         let req = ReplayListRequest {
             state,
-            node: node.map(String::from),
+            module: module.map(String::from),
             limit,
         };
         let response: ReplayListResponse =
@@ -1833,19 +1777,19 @@ impl GatewayClient {
         Ok(response.buckets)
     }
 
-    /// Query node hourly operator telemetry.
-    pub async fn telemetry_node_stats(
+    /// Query source/runtime hourly operator telemetry.
+    pub async fn telemetry_source_stats(
         &self,
         from: Option<String>,
         to: Option<String>,
         limit: Option<i64>,
-    ) -> Result<Vec<NodeStatsBucket>> {
-        let req = TelemetryNodeStatsRequest {
+    ) -> Result<Vec<SourceStatsBucket>> {
+        let req = TelemetrySourceStatsRequest {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let response: TelemetryNodeStatsResponse =
-            self.call_typed(TELEMETRY_NODE_STATS_METHOD, &req).await?;
+        let response: TelemetrySourceStatsResponse =
+            self.call_typed(TELEMETRY_SOURCE_STATS_METHOD, &req).await?;
         Ok(response.buckets)
     }
 
@@ -1866,28 +1810,30 @@ impl GatewayClient {
         Ok(response.buckets)
     }
 
-    /// Query ingestd hourly batch-stat telemetry.
-    pub async fn telemetry_ingestd_batch_stats(
+    /// Query event_engine hourly batch-stat telemetry.
+    pub async fn telemetry_event_engine_batch_stats(
         &self,
         from: Option<String>,
         to: Option<String>,
         limit: Option<i64>,
-    ) -> Result<Vec<IngestdBatchStatsBucket>> {
-        let req = TelemetryIngestdBatchStatsRequest {
+    ) -> Result<Vec<EventEngineBatchStatsBucket>> {
+        let req = TelemetryEventEngineBatchStatsRequest {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let response: TelemetryIngestdBatchStatsResponse = self
-            .call_typed(TELEMETRY_INGESTD_BATCH_STATS_METHOD, &req)
+        let response: TelemetryEventEngineBatchStatsResponse = self
+            .call_typed(TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD, &req)
             .await?;
         Ok(response.buckets)
     }
 
-    /// Query the latest ingestd validation snapshot.
-    pub async fn telemetry_ingestd_validation(&self) -> Result<Option<IngestdValidationSnapshot>> {
-        let req = TelemetryIngestdValidationRequest::default();
-        let response: TelemetryIngestdValidationResponse = self
-            .call_typed(TELEMETRY_INGESTD_VALIDATION_METHOD, &req)
+    /// Query the latest event_engine validation snapshot.
+    pub async fn telemetry_event_engine_validation(
+        &self,
+    ) -> Result<Option<EventEngineValidationSnapshot>> {
+        let req = TelemetryEventEngineValidationRequest::default();
+        let response: TelemetryEventEngineValidationResponse = self
+            .call_typed(TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD, &req)
             .await?;
         Ok(response.snapshot)
     }

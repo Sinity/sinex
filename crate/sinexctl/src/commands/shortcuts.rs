@@ -11,7 +11,7 @@ use sinex_primitives::privacy::{load_private_mode_state, resolve_private_mode_st
 use sinex_primitives::query::{
     EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange,
 };
-use sinex_primitives::rpc::ingestors::EmitStallThresholds;
+use sinex_primitives::rpc::source_status::EmitStallThresholds;
 use sinex_primitives::rpc::sources::{
     SourceReadiness, SourceReadinessStatus, SourcesReadinessListRequest,
 };
@@ -33,7 +33,7 @@ EXAMPLES:
     sinexctl status
 
     # Pipe to jq for scripting
-    sinexctl status -f json | jq '.nodes.active'
+    sinexctl status -f json | jq '.modules.active'
 ")]
 pub struct StatusCommand;
 
@@ -58,7 +58,7 @@ impl StatusCommand {
         let mut warnings = Vec::new();
 
         collect_gateway_and_health_signals(client, &target, &mut signals, &mut warnings).await;
-        collect_node_and_dlq_signals(client, &mut signals, &mut warnings).await;
+        collect_runtime_and_dlq_signals(client, &mut signals, &mut warnings).await;
         let stalled_units =
             collect_source_and_stall_signals(client, &mut signals, &mut warnings).await;
 
@@ -220,16 +220,16 @@ fn component_latency_message(latency_ms: Option<f64>, detail: Option<&str>) -> O
     }
 }
 
-async fn collect_node_and_dlq_signals(
+async fn collect_runtime_and_dlq_signals(
     client: &GatewayClient,
     signals: &mut Vec<RuntimeStatusSignal>,
     warnings: &mut Vec<RuntimeStatusWarning>,
 ) {
-    match client.list_nodes(None).await {
-        Ok(nodes) => {
-            let total = nodes.len();
+    match client.list_runtime(None).await {
+        Ok(modules) => {
+            let total = modules.len();
             let now = Timestamp::now();
-            let healthy = nodes
+            let healthy = modules
                 .iter()
                 .filter(|n| {
                     n.last_heartbeat
@@ -244,21 +244,21 @@ async fn collect_node_and_dlq_signals(
                 RuntimeStatusSignalStatus::Unhealthy
             };
             signals.push(RuntimeStatusSignal {
-                name: "nodes".to_string(),
+                name: "modules".to_string(),
                 status,
-                source: "gateway nodes probe".to_string(),
+                source: "gateway modules probe".to_string(),
                 message: Some(format!("{healthy}/{total} healthy")),
             });
         }
         Err(e) => {
             warnings.push(RuntimeStatusWarning {
-                source: "nodes".to_string(),
+                source: "modules".to_string(),
                 message: format!("error: {e}"),
             });
             signals.push(RuntimeStatusSignal {
-                name: "nodes".to_string(),
+                name: "modules".to_string(),
                 status: RuntimeStatusSignalStatus::Unknown,
-                source: "gateway nodes probe".to_string(),
+                source: "gateway modules probe".to_string(),
                 message: Some(e.to_string()),
             });
         }
@@ -316,8 +316,8 @@ async fn collect_source_and_stall_signals(
     signals: &mut Vec<RuntimeStatusSignal>,
     warnings: &mut Vec<RuntimeStatusWarning>,
 ) -> Vec<(
-    sinex_primitives::rpc::ingestors::IngestorStatus,
-    sinex_primitives::rpc::ingestors::EmitStallVerdict,
+    sinex_primitives::rpc::source_status::SourceStatus,
+    sinex_primitives::rpc::source_status::EmitStallVerdict,
 )> {
     match client
         .sources_readiness_list(SourcesReadinessListRequest::default())
@@ -344,16 +344,16 @@ async fn collect_source_and_stall_signals(
         }
     }
 
-    // Emit-rate stall detection for source units (issue #992).
+    // Emit-rate stall detection for source contracts (issue #992).
     //
     // Heartbeats prove liveness, not productivity. Surface units that are
     // alive and past the uptime gate but have not emitted in `quiet_secs`.
     let thresholds = EmitStallThresholds::from_env_or_default();
     let window_secs = thresholds.quiet_secs.max(60);
-    let stalled_units = match client.ingestors_status(window_secs, window_secs).await {
+    let stalled_units = match client.sources_status(window_secs, window_secs).await {
         Ok(resp) => {
             let now = resp.generated_at;
-            resp.ingestors
+            resp.sources
                 .into_iter()
                 .filter_map(|ing| {
                     let verdict = ing.classify_emit_stall(thresholds, now);
@@ -363,7 +363,7 @@ async fn collect_source_and_stall_signals(
         }
         Err(e) => {
             warnings.push(RuntimeStatusWarning {
-                source: "ingestors.status".to_string(),
+                source: "sources.status".to_string(),
                 message: format!("emit-rate stall check unavailable: {e}"),
             });
             Vec::new()
@@ -374,9 +374,9 @@ async fn collect_source_and_stall_signals(
         signals.push(RuntimeStatusSignal {
             name: "emit-rate".to_string(),
             status: RuntimeStatusSignalStatus::Degraded,
-            source: "ingestors.status emit-stall classifier".to_string(),
+            source: "sources.status emit-stall classifier".to_string(),
             message: Some(format!(
-                "{} stalled source unit(s) (quiet ≥ {}s, uptime ≥ {}s)",
+                "{} stalled source(s) (quiet ≥ {}s, uptime ≥ {}s)",
                 stalled_units.len(),
                 thresholds.quiet_secs,
                 thresholds.uptime_gate_secs,
@@ -390,8 +390,8 @@ async fn collect_source_and_stall_signals(
 fn render_status_table(
     snapshot: &sinex_primitives::RuntimeStatusSnapshot,
     stalled_units: &[(
-        sinex_primitives::rpc::ingestors::IngestorStatus,
-        sinex_primitives::rpc::ingestors::EmitStallVerdict,
+        sinex_primitives::rpc::source_status::SourceStatus,
+        sinex_primitives::rpc::source_status::EmitStallVerdict,
     )],
 ) {
     println!("{}", style("System Status").bold().cyan());
@@ -438,7 +438,7 @@ fn render_status_table(
 
     if !stalled_units.is_empty() {
         println!();
-        println!("{}", style("Stalled source units").bold().yellow());
+        println!("{}", style("Stalled source contracts").bold().yellow());
         println!("{}", style("─".repeat(50)).dim());
         for (ing, verdict) in stalled_units {
             let last = ing
@@ -451,7 +451,7 @@ fn render_status_table(
             println!(
                 "  {} {}  ({}, uptime {}, last_output {})",
                 style("●").yellow(),
-                ing.node_name,
+                ing.module_name,
                 verdict.label(),
                 uptime,
                 last,
@@ -649,7 +649,7 @@ mod status_tests {
         SourceReadiness {
             binding_id: None,
             source_family: "test".to_string(),
-            source_unit_id: None,
+            source_id: None,
             parser_id: None,
             source_identifier: format!("test.{status:?}"),
             status,
@@ -1051,7 +1051,7 @@ EXAMPLES:
     # Watch all events
     sinexctl watch
 
-    # Watch events from terminal ingestor
+    # Watch events from terminal source
     sinexctl watch --source shell.atuin
 
     # Watch process execution events

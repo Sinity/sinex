@@ -94,22 +94,22 @@ fn build_filter_query<'a>(
 impl ReplayRepository<'_> {
     // ── Advisory lock ────────────────────────────────────────────────────
 
-    /// Acquire the per-node advisory lock for replay operation creation.
+    /// Acquire the per-source advisory lock for replay operation creation.
     pub async fn acquire_creation_guard(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        node_id: &str,
+        source_name: &str,
     ) -> Result<()> {
         sqlx::query_scalar!(
             r#"SELECT pg_advisory_xact_lock(hashtext($1)::bigint) as "lock!""#,
-            node_id
+            source_name
         )
         .fetch_one(tx.as_mut())
         .await
         .map_err(|e| {
             SinexError::database("Failed to acquire replay creation guard")
                 .with_source(e.to_string())
-                .with_context("node_id", node_id)
+                .with_context("source_name", source_name)
                 .with_operation("create_replay_operation")
         })?;
         Ok(())
@@ -127,22 +127,22 @@ impl ReplayRepository<'_> {
     // ── Operation CRUD ───────────────────────────────────────────────────
 
     /// Check whether an active (non-terminal) replay operation already exists
-    /// for the given node. Returns the existing operation ID if found.
+    /// for the given source. Returns the existing operation ID if found.
     pub async fn check_active_operation(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        node_id: &str,
+        source_name: &str,
     ) -> Result<Option<Uuid>> {
         let row = sqlx::query!(
             r#"
             SELECT id::uuid AS "id!"
             FROM core.operations_log
             WHERE operation_type = 'replay'
-              AND scope->>'node_id' = $1
+              AND scope->>'source_name' = $1
               AND result_status = 'running'
             LIMIT 1
             "#,
-            node_id
+            source_name
         )
         .fetch_optional(tx.as_mut())
         .await
@@ -455,7 +455,7 @@ impl ReplayRepository<'_> {
     // ── Cascade query helpers ────────────────────────────────────────────
 
     /// Load distinct source names for derived events.
-    pub async fn load_cascade_affected_nodes(
+    pub async fn load_cascade_affected_modules(
         tx: &mut Transaction<'_, Postgres>,
         derived_ids: &[Uuid],
     ) -> Result<Vec<String>> {
@@ -470,7 +470,7 @@ impl ReplayRepository<'_> {
         .fetch_all(tx.as_mut())
         .await
         .map_err(|error| {
-            SinexError::database("Failed to load cascade affected nodes")
+            SinexError::database("Failed to load cascade affected modules")
                 .with_source(error.to_string())
                 .with_context("derived_event_count", derived_ids.len().to_string())
                 .with_operation("preview_cascade_impact")
@@ -540,7 +540,7 @@ impl ReplayRepository<'_> {
     pub async fn list_operations(
         &self,
         filter_state: Option<ReplayState>,
-        filter_node: Option<&str>,
+        filter_source_name: Option<&str>,
         limit: Option<i64>,
     ) -> Result<Vec<(Uuid, String, JsonValue, Option<JsonValue>)>> {
         let mut qb: QueryBuilder<'_, Postgres> = QueryBuilder::new(
@@ -548,9 +548,9 @@ impl ReplayRepository<'_> {
              FROM core.operations_log WHERE operation_type = 'replay'",
         );
 
-        if let Some(node) = filter_node {
-            qb.push(" AND scope->>'node_id' = ");
-            qb.push_bind(node.to_string());
+        if let Some(source_name) = filter_source_name {
+            qb.push(" AND scope->>'source_name' = ");
+            qb.push_bind(source_name.to_string());
         }
 
         if let Some(state) = filter_state {

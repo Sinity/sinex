@@ -34,7 +34,7 @@ pub enum ModelEffects {
     ReplayPolicy,
     RecordedAt,
     RecordedBy,
-    SourceNodeId,
+    SourceModuleName,
     SourceEventId,
 }
 
@@ -72,7 +72,7 @@ impl ModelEffects {
                     .not_null(),
             )
             .col(ColumnDef::new(Self::RecordedBy).string().not_null())
-            .col(ColumnDef::new(Self::SourceNodeId).string())
+            .col(ColumnDef::new(Self::SourceModuleName).string())
             .col(ColumnDef::new(Self::SourceEventId).uuid())
             .col(
                 ColumnDef::new(Alias::new("ts_coided"))
@@ -108,6 +108,6 @@ pub struct ModelEffectRow {
     pub replay_policy: String,
     pub recorded_at: time::OffsetDateTime,
     pub recorded_by: String,
-    pub source_node_id: Option<String>,
+    pub source_module_name: Option<String>,
     pub source_event_id: Option<Uuid>,
 }

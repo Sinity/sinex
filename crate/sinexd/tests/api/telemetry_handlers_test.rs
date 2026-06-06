@@ -3,18 +3,18 @@
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use sinex_db::DbPoolExt;
-use sinexd::api::handlers::{
-    handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
-    handle_telemetry_current_device_state, handle_telemetry_current_health,
-    handle_telemetry_file_activity, handle_telemetry_gateway_stats,
-    handle_telemetry_ingestd_batch_stats, handle_telemetry_ingestd_validation,
-    handle_telemetry_metric_counters, handle_telemetry_node_stats,
-    handle_telemetry_recent_activity, handle_telemetry_stream_stats, handle_telemetry_system_state,
-    handle_telemetry_window_focus,
-};
 use sinex_primitives::error::ErrorClass;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::telemetry::*;
+use sinexd::api::handlers::{
+    handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
+    handle_telemetry_current_device_state, handle_telemetry_current_health,
+    handle_telemetry_event_engine_batch_stats, handle_telemetry_event_engine_validation,
+    handle_telemetry_file_activity, handle_telemetry_gateway_stats,
+    handle_telemetry_metric_counters, handle_telemetry_recent_activity,
+    handle_telemetry_source_stats, handle_telemetry_stream_stats, handle_telemetry_system_state,
+    handle_telemetry_window_focus,
+};
 use time::format_description::well_known::Rfc3339;
 use xtask::sandbox::prelude::*;
 
@@ -46,9 +46,9 @@ async fn refresh_telemetry_read_models(ctx: &TestContext) -> TestResult<()> {
         "sinex_telemetry.gateway_stats_1h",
         "sinex_telemetry.stream_stats_1h",
         "sinex_telemetry.assembly_stats_1h",
-        "sinex_telemetry.node_stats_1h",
+        "sinex_telemetry.source_stats_1h",
         "sinex_telemetry.metric_counters_1h",
-        "sinex_telemetry.ingestd_batch_stats_1h",
+        "sinex_telemetry.event_engine_batch_stats_1h",
     ] {
         sqlx::query("CALL refresh_continuous_aggregate($1::regclass, NULL, NULL)")
             .bind(relation)
@@ -118,7 +118,7 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
     .await?;
     insert_event(
         &ctx,
-        "system-ingestor",
+        "system.monitor",
         "system.resources",
         json!({
             "cpu_percent": 17.5,
@@ -130,7 +130,7 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
     .await?;
     insert_event(
         &ctx,
-        "system-ingestor",
+        "system.systemd",
         "systemd.units_summary",
         json!({
             "active_units": 42,
@@ -277,7 +277,7 @@ async fn telemetry_handlers_bucket_by_interpretation_time_not_event_time(
     .await?;
     insert_event(
         &ctx,
-        "system-ingestor",
+        "system.monitor",
         "system.resources",
         json!({
             "cpu_percent": 11.0,
@@ -289,7 +289,7 @@ async fn telemetry_handlers_bucket_by_interpretation_time_not_event_time(
     .await?;
     insert_event(
         &ctx,
-        "system-ingestor",
+        "system.systemd",
         "systemd.units_summary",
         json!({
             "active_units": 7,
@@ -414,7 +414,7 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
         "systemd",
         "systemd.unit.state_changed",
         json!({
-            "unit_name": "sinex-gateway.service",
+            "unit_name": "sinexd.service",
             "unit_type": "service",
             "active_state": "active",
             "sub_state": "running"
@@ -472,10 +472,10 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     .await?;
     insert_event(
         &ctx,
-        "sinex.node",
+        "sinexd.source",
         "processing.stats",
         json!({
-            "node_type": "terminal-ingestor",
+            "module_kind": "terminal-source",
             "events_processed": 40,
             "events_dropped": 2,
             "avg_latency_ms": 5.5,
@@ -490,7 +490,7 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
         "sinex",
         "metric.counter",
         json!({
-            "component": "sinex-gateway",
+            "component": "sinexd",
             "name": "requests.total",
             "value": 120,
             "labels": {}
@@ -539,12 +539,12 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
         handle_telemetry_stream_stats(ctx.pool(), telemetry_request(params.clone())?).await?;
     let assembly_stats: TelemetryAssemblyStatsResponse =
         handle_telemetry_assembly_stats(ctx.pool(), telemetry_request(params.clone())?).await?;
-    let node_stats: TelemetryNodeStatsResponse =
-        handle_telemetry_node_stats(ctx.pool(), telemetry_request(params.clone())?).await?;
+    let source_stats: TelemetrySourceStatsResponse =
+        handle_telemetry_source_stats(ctx.pool(), telemetry_request(params.clone())?).await?;
     let metric_counters: TelemetryMetricCountersResponse =
         handle_telemetry_metric_counters(ctx.pool(), telemetry_request(params.clone())?).await?;
-    let ingestd_batch_stats: TelemetryIngestdBatchStatsResponse =
-        handle_telemetry_ingestd_batch_stats(ctx.pool(), telemetry_request(params)?).await?;
+    let event_engine_batch_stats: TelemetryEventEngineBatchStatsResponse =
+        handle_telemetry_event_engine_batch_stats(ctx.pool(), telemetry_request(params)?).await?;
 
     assert_eq!(current_health.entries.len(), 1);
     assert_eq!(current_health.entries[0].source, "sinex");
@@ -557,7 +557,7 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     assert_eq!(current_device_state.entries.len(), 1);
     assert_eq!(
         current_device_state.entries[0].unit_name.as_deref(),
-        Some("sinex-gateway.service")
+        Some("sinexd.service")
     );
     assert_eq!(
         current_device_state.entries[0].state.as_deref(),
@@ -583,18 +583,18 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     assert_eq!(assembly_stats.buckets[0].total_completed, Some(2));
     assert_eq!(assembly_stats.buckets[0].avg_duration_ms, Some(18.0));
 
-    assert_eq!(node_stats.buckets.len(), 1);
+    assert_eq!(source_stats.buckets.len(), 1);
     assert_eq!(
-        node_stats.buckets[0].node_type.as_deref(),
-        Some("terminal-ingestor")
+        source_stats.buckets[0].module_kind.as_deref(),
+        Some("terminal-source")
     );
-    assert_eq!(node_stats.buckets[0].total_events_processed, Some(40));
-    assert_eq!(node_stats.buckets[0].max_queue_depth, Some(4));
+    assert_eq!(source_stats.buckets[0].total_events_processed, Some(40));
+    assert_eq!(source_stats.buckets[0].max_queue_depth, Some(4));
 
     assert_eq!(metric_counters.buckets.len(), 1);
     assert_eq!(
         metric_counters.buckets[0].component.as_deref(),
-        Some("sinex-gateway")
+        Some("sinexd")
     );
     assert_eq!(
         metric_counters.buckets[0].metric_name.as_deref(),
@@ -602,11 +602,17 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     );
     assert_eq!(metric_counters.buckets[0].total_value, Some(120));
 
-    assert_eq!(ingestd_batch_stats.buckets.len(), 1);
-    assert_eq!(ingestd_batch_stats.buckets[0].avg_batch_size, Some(16.0));
-    assert_eq!(ingestd_batch_stats.buckets[0].max_latency_ms, Some(48.0));
-    assert_eq!(ingestd_batch_stats.buckets[0].total_failed, Some(1));
-    assert_eq!(ingestd_batch_stats.buckets[0].batch_count, 1);
+    assert_eq!(event_engine_batch_stats.buckets.len(), 1);
+    assert_eq!(
+        event_engine_batch_stats.buckets[0].avg_batch_size,
+        Some(16.0)
+    );
+    assert_eq!(
+        event_engine_batch_stats.buckets[0].max_latency_ms,
+        Some(48.0)
+    );
+    assert_eq!(event_engine_batch_stats.buckets[0].total_failed, Some(1));
+    assert_eq!(event_engine_batch_stats.buckets[0].batch_count, 1);
 
     Ok(())
 }
@@ -660,7 +666,9 @@ async fn telemetry_handlers_reject_invalid_timestamps(ctx: TestContext) -> TestR
 }
 
 #[sinex_test]
-async fn telemetry_ingestd_validation_returns_latest_snapshot(ctx: TestContext) -> TestResult<()> {
+async fn telemetry_event_engine_validation_returns_latest_snapshot(
+    ctx: TestContext,
+) -> TestResult<()> {
     let now = time::OffsetDateTime::parse("2026-03-28T03:45:00Z", &Rfc3339)?;
     insert_event(
         &ctx,
@@ -685,9 +693,12 @@ async fn telemetry_ingestd_validation_returns_latest_snapshot(ctx: TestContext) 
     )
     .await?;
 
-    let response: TelemetryIngestdValidationResponse =
-        handle_telemetry_ingestd_validation(ctx.pool(), TelemetryIngestdValidationRequest {})
-            .await?;
+    let response: TelemetryEventEngineValidationResponse =
+        handle_telemetry_event_engine_validation(
+            ctx.pool(),
+            TelemetryEventEngineValidationRequest {},
+        )
+        .await?;
     let snapshot = response
         .snapshot
         .expect("expected latest validation snapshot");

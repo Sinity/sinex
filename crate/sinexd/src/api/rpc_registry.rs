@@ -33,7 +33,6 @@ use sinex_primitives::rpc::{
         EVENTS_ANNOTATE_METHOD, EVENTS_CARDS_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD,
     },
     health::{HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD},
-    ingestors::INGESTORS_STATUS_METHOD,
     instructions::INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
     lifecycle::{
         LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
@@ -42,10 +41,6 @@ use sinex_primitives::rpc::{
         LIFECYCLE_TOMBSTONE_PREVIEW_METHOD, LIFECYCLE_TOMBSTONE_STATUS_METHOD,
     },
     llm::{LLM_BUDGET_REPORT_METHOD, LLM_PROMPTS_LIST_METHOD, LLM_ROUTE_EXPLAIN_METHOD},
-    nodes::{
-        NODES_DRAIN_METHOD, NODES_HEALTH_METHOD, NODES_LIST_ACTIVE_METHOD, NODES_LIST_METHOD,
-        NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD,
-    },
     ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
     pkm::{PKM_CREATE_ENTITIES_METHOD, PKM_CREATE_NOTE_METHOD, PKM_LINK_ENTITIES_METHOD},
     privacy::{
@@ -61,6 +56,10 @@ use sinex_primitives::rpc::{
         REPLAY_LIST_OPERATIONS_METHOD, REPLAY_OPERATION_STATUS_METHOD,
         REPLAY_PREVIEW_OPERATION_METHOD, REPLAY_SUBMIT_OPERATION_METHOD,
     },
+    runtime::{
+        RUNTIME_DRAIN_METHOD, RUNTIME_HEALTH_METHOD, RUNTIME_LIST_ACTIVE_METHOD,
+        RUNTIME_LIST_METHOD, RUNTIME_RESUME_METHOD, RUNTIME_SET_HORIZON_METHOD,
+    },
     semantic::{
         SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
         SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD,
@@ -70,6 +69,7 @@ use sinex_primitives::rpc::{
         SEMANTIC_LANES_SET_STATUS_METHOD,
     },
     shadow::{SHADOW_CREATE_METHOD, SHADOW_DELETE_METHOD, SHADOW_LIST_METHOD},
+    source_status::SOURCES_STATUS_METHOD,
     sources::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_CREATE_METHOD,
         SOURCES_BINDINGS_LIST_METHOD, SOURCES_BINDINGS_RESOLVE_METHOD,
@@ -87,10 +87,10 @@ use sinex_primitives::rpc::{
     telemetry::{
         TELEMETRY_ASSEMBLY_STATS_METHOD, TELEMETRY_COMMAND_FREQUENCY_METHOD,
         TELEMETRY_CURRENT_DEVICE_STATE_METHOD, TELEMETRY_CURRENT_HEALTH_METHOD,
+        TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD, TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD,
         TELEMETRY_FILE_ACTIVITY_METHOD, TELEMETRY_GATEWAY_STATS_METHOD,
-        TELEMETRY_INGESTD_BATCH_STATS_METHOD, TELEMETRY_INGESTD_VALIDATION_METHOD,
-        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_NODE_STATS_METHOD,
-        TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_STREAM_STATS_METHOD,
+        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_RECENT_ACTIVITY_METHOD,
+        TELEMETRY_SOURCE_STATS_METHOD, TELEMETRY_STREAM_STATS_METHOD,
         TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD, TELEMETRY_WINDOW_FOCUS_METHOD,
     },
 };
@@ -608,21 +608,22 @@ fn build_registry_impl() -> RpcRegistry {
         handle_documents_get, handle_documents_get_chunks, handle_documents_get_chunks_redacted,
         handle_documents_search, handle_events_annotate, handle_events_cards,
         handle_events_lineage, handle_events_query, handle_health_effect_record,
-        handle_health_intake_record, handle_hyprland_workspace_switch, handle_ingestors_status,
-        handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
-        handle_link_entities, handle_llm_budget_report, handle_llm_prompts_list,
-        handle_llm_route_explain, handle_nodes_drain, handle_nodes_health, handle_nodes_list,
-        handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel,
-        handle_ops_get, handle_ops_list, handle_ops_start, handle_privacy_policy_backend_add,
-        handle_privacy_policy_dictionary_add, handle_privacy_policy_list,
-        handle_privacy_policy_rule_add, handle_privacy_policy_scope_bind,
-        handle_privacy_policy_seed_builtin, handle_private_mode_disable_service,
-        handle_private_mode_enable_service, handle_private_mode_status_service,
-        handle_replay_approve_operation, handle_replay_cancel_operation,
-        handle_replay_create_operation, handle_replay_execute_operation,
-        handle_replay_list_operations, handle_replay_operation_status,
-        handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
-        handle_semantic_epoch_create, handle_semantic_epoch_list, handle_semantic_lane_create,
+        handle_health_intake_record, handle_hyprland_workspace_switch, handle_lifecycle_archive,
+        handle_lifecycle_restore, handle_lifecycle_status, handle_link_entities,
+        handle_llm_budget_report, handle_llm_prompts_list, handle_llm_route_explain,
+        handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
+        handle_privacy_policy_backend_add, handle_privacy_policy_dictionary_add,
+        handle_privacy_policy_list, handle_privacy_policy_rule_add,
+        handle_privacy_policy_scope_bind, handle_privacy_policy_seed_builtin,
+        handle_private_mode_disable_service, handle_private_mode_enable_service,
+        handle_private_mode_status_service, handle_replay_approve_operation,
+        handle_replay_cancel_operation, handle_replay_create_operation,
+        handle_replay_execute_operation, handle_replay_list_operations,
+        handle_replay_operation_status, handle_replay_preview_operation,
+        handle_replay_submit_operation, handle_retrieve_blob, handle_runtime_drain,
+        handle_runtime_health, handle_runtime_list, handle_runtime_list_active,
+        handle_runtime_resume, handle_runtime_set_horizon, handle_semantic_epoch_create,
+        handle_semantic_epoch_list, handle_semantic_lane_create,
         handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_diffs_list,
         handle_semantic_lane_discard, handle_semantic_lane_outputs_list,
         handle_semantic_lane_outputs_seed_canonical_graph,
@@ -635,15 +636,15 @@ fn build_registry_impl() -> RpcRegistry {
         handle_sources_continuity_list, handle_sources_coverage, handle_sources_drift_list,
         handle_sources_list, handle_sources_presets_list, handle_sources_readiness_get,
         handle_sources_readiness_list, handle_sources_show, handle_sources_stage,
-        handle_store_blob, handle_system_health, handle_system_ping, handle_system_version,
-        handle_tasks_cancel, handle_tasks_complete, handle_tasks_create, handle_tasks_list,
-        handle_tasks_state_get, handle_tasks_status_set, handle_tasks_update,
+        handle_sources_status, handle_store_blob, handle_system_health, handle_system_ping,
+        handle_system_version, handle_tasks_cancel, handle_tasks_complete, handle_tasks_create,
+        handle_tasks_list, handle_tasks_state_get, handle_tasks_status_set, handle_tasks_update,
         handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
         handle_telemetry_current_device_state, handle_telemetry_current_health,
+        handle_telemetry_event_engine_batch_stats, handle_telemetry_event_engine_validation,
         handle_telemetry_file_activity, handle_telemetry_gateway_stats,
-        handle_telemetry_ingestd_batch_stats, handle_telemetry_ingestd_validation,
-        handle_telemetry_metric_counters, handle_telemetry_node_stats,
-        handle_telemetry_recent_activity, handle_telemetry_stream_stats,
+        handle_telemetry_metric_counters, handle_telemetry_recent_activity,
+        handle_telemetry_source_stats, handle_telemetry_stream_stats,
         handle_telemetry_system_state, handle_telemetry_throughput, handle_telemetry_window_focus,
         handle_tombstone_approve, handle_tombstone_cancel, handle_tombstone_create,
         handle_tombstone_list, handle_tombstone_preview, handle_tombstone_status,
@@ -730,8 +731,8 @@ fn build_registry_impl() -> RpcRegistry {
         // DLQ read methods (ReadOnly)
         .service_typed_rpc(DLQ_LIST_METHOD, boxed!(handle_dlq_list))
         .service_typed_rpc(DLQ_PEEK_METHOD, boxed!(handle_dlq_peek))
-        // Node listing (ReadOnly)
-        .nats_typed_rpc(NODES_LIST_METHOD, boxed!(handle_nodes_list, 3))
+        // RuntimeModule listing (ReadOnly)
+        .nats_typed_rpc(RUNTIME_LIST_METHOD, boxed!(handle_runtime_list, 3))
         // Replay status/list (ReadOnly)
         .replay_typed_rpc(
             REPLAY_OPERATION_STATUS_METHOD,
@@ -741,11 +742,14 @@ fn build_registry_impl() -> RpcRegistry {
             REPLAY_LIST_OPERATIONS_METHOD,
             boxed!(handle_replay_list_operations, 3),
         )
-        // Node registry status methods (ReadOnly)
-        .pool_typed_rpc(NODES_LIST_ACTIVE_METHOD, boxed!(handle_nodes_list_active))
-        .pool_typed_rpc(NODES_HEALTH_METHOD, boxed!(handle_nodes_health))
+        // RuntimeModule registry status methods (ReadOnly)
+        .pool_typed_rpc(
+            RUNTIME_LIST_ACTIVE_METHOD,
+            boxed!(handle_runtime_list_active),
+        )
+        .pool_typed_rpc(RUNTIME_HEALTH_METHOD, boxed!(handle_runtime_health))
         .pool_typed_rpc(AUTOMATA_STATUS_METHOD, boxed!(handle_automata_status))
-        .pool_typed_rpc(INGESTORS_STATUS_METHOD, boxed!(handle_ingestors_status))
+        .pool_typed_rpc(SOURCES_STATUS_METHOD, boxed!(handle_sources_status))
         // Source material inventory (ReadOnly)
         .pool_typed_rpc(SOURCES_LIST_METHOD, boxed!(handle_sources_list))
         .pool_typed_rpc(SOURCES_SHOW_METHOD, boxed!(handle_sources_show))
@@ -823,20 +827,20 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_telemetry_assembly_stats),
         )
         .pool_typed_rpc(
-            TELEMETRY_NODE_STATS_METHOD,
-            boxed!(handle_telemetry_node_stats),
+            TELEMETRY_SOURCE_STATS_METHOD,
+            boxed!(handle_telemetry_source_stats),
         )
         .pool_typed_rpc(
             TELEMETRY_METRIC_COUNTERS_METHOD,
             boxed!(handle_telemetry_metric_counters),
         )
         .pool_typed_rpc(
-            TELEMETRY_INGESTD_BATCH_STATS_METHOD,
-            boxed!(handle_telemetry_ingestd_batch_stats),
+            TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD,
+            boxed!(handle_telemetry_event_engine_batch_stats),
         )
         .pool_typed_rpc(
-            TELEMETRY_INGESTD_VALIDATION_METHOD,
-            boxed!(handle_telemetry_ingestd_validation),
+            TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD,
+            boxed!(handle_telemetry_event_engine_validation),
         )
         .pool_typed_rpc(
             TELEMETRY_THROUGHPUT_METHOD,
@@ -928,12 +932,12 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // Source annotation (Write — modifies metadata)
         .pool_typed_rpc(SOURCES_ANNOTATE_METHOD, boxed!(handle_sources_annotate))
-        // Node operations (Write - affects system but not destructive)
-        .nats_auth_typed_rpc(NODES_DRAIN_METHOD, boxed!(handle_nodes_drain, 4))
-        .nats_auth_typed_rpc(NODES_RESUME_METHOD, boxed!(handle_nodes_resume, 4))
+        // RuntimeModule operations (Write - affects system but not destructive)
+        .nats_auth_typed_rpc(RUNTIME_DRAIN_METHOD, boxed!(handle_runtime_drain, 4))
+        .nats_auth_typed_rpc(RUNTIME_RESUME_METHOD, boxed!(handle_runtime_resume, 4))
         .nats_auth_typed_rpc(
-            NODES_SET_HORIZON_METHOD,
-            boxed!(handle_nodes_set_horizon, 4),
+            RUNTIME_SET_HORIZON_METHOD,
+            boxed!(handle_runtime_set_horizon, 4),
         )
         // Operations log write (Write)
         .pool_auth_typed_rpc(OPS_START_METHOD, boxed!(handle_ops_start, 3))

@@ -2110,7 +2110,7 @@ mod tests {
             "perf(xtask): trust fresh template clones",
         )?;
         repo.commit_file(
-            "crate/core/sinex-gateway/tests/sse_stream_test.rs",
+            "crate/sinexd/tests/sse_stream_test.rs",
             "gateway tests\n",
             "test(gateway): isolate sse stream bus tests",
         )?;
@@ -2125,7 +2125,7 @@ mod tests {
                 .iter()
                 .any(|file| file.contains("xtask/src/sandbox/db/pool"))
         );
-        assert_eq!(plan.slices[1].packages, vec!["sinex-gateway".to_string()]);
+        assert_eq!(plan.slices[1].packages, vec!["sinexd".to_string()]);
         assert_eq!(plan.slices[0].pr_base, "master");
         assert_eq!(
             plan.slices[1].depends_on.as_deref(),
@@ -2213,7 +2213,7 @@ mod tests {
         let schema_files = (0..45)
             .map(|index| {
                 (
-                    format!("crate/lib/sinex-schema/src/generated/schema_{index}.rs"),
+                    format!("crate/sinex-schema/src/generated/schema_{index}.rs"),
                     format!("schema {index}\n"),
                 )
             })
@@ -2273,7 +2273,7 @@ mod tests {
             "perf(xtask): split shared template families",
         )?;
         repo.commit_file(
-            "crate/core/sinex-gateway/tests/sse_stream_test.rs",
+            "crate/sinexd/tests/sse_stream_test.rs",
             "gateway tests\n",
             "test(gateway): isolate sse stream bus tests",
         )?;

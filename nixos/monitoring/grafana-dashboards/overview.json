@@ -260,7 +260,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COALESCE((payload->>'validation_coverage_pct')::double precision, 0) AS value FROM core.events WHERE source = 'sinex.ingestd' AND event_type = 'batch.stats' ORDER BY id DESC LIMIT 1",
+          "rawSql": "SELECT COALESCE((payload->>'validation_coverage_pct')::double precision, 0) AS value FROM core.events WHERE source = 'sinex.event_engine' AND event_type = 'batch.stats' ORDER BY id DESC LIMIT 1",
           "refId": "A"
         }
       ],

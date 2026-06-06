@@ -1,7 +1,7 @@
-//! The canonical database schema for node operations and coordination.
+//! The canonical database schema for runtime operations and coordination.
 //!
 //! This module defines the tables that manage the state and lifecycle of the
-//! system's distributed agents (nodes). It includes schemas for:
+//! system's runtime modules. It includes schemas for:
 //! - Auditing high-level system operations (`operations_log`).
 //! - Coordinating leadership and instance discovery (`node_instances`, etc.).
 

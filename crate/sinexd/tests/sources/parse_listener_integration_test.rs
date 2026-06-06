@@ -1,7 +1,7 @@
-//! Production-shaped replay proof: source-worker parse listener receives
+//! Production-shaped replay proof: source parse listener receives
 //! parse commands via NATS, dispatches to parser, returns acks with event counts.
 //!
-//! Replaces the fake-DB-write scan-node tests referenced in #1132.
+//! Replaces the fake-DB-write scan-runtime tests referenced in #1132.
 
 use color_eyre::eyre::eyre;
 use sinex_primitives::Uuid;
@@ -23,7 +23,7 @@ async fn request_parse_ack(
     Ok(serde_json::from_slice(&response.payload)?)
 }
 
-/// Prove that parse commands published over NATS reach the source-worker parse
+/// Prove that parse commands published over NATS reach the source parse
 /// listener, dispatch matching sources, reject mismatches, and handle
 /// concurrent requests independently.
 #[sinex_test]

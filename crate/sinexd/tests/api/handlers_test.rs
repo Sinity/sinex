@@ -1,7 +1,7 @@
 //! Unit tests for gateway RPC handlers
 
-use sinexd::api::handlers;
 use sinex_primitives::query::{EventQuery, EventQueryResult};
+use sinexd::api::handlers;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]

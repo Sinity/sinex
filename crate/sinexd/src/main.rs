@@ -1,10 +1,10 @@
 //! `sinexd` — the Sinex local daemon.
 //!
 //! Single binary hosting the event engine, the operator API, the enabled
-//! derived-node automata, and the configured source-worker bindings. The
+//! automata, and the configured source bindings. The
 //! default subcommand (`serve`, also the no-subcommand path) starts the
 //! supervisor; auxiliary subcommands run one-off scans against a single
-//! source unit (used by oneshot units like the document snapshot scan).
+//! source (used by oneshot units like the document snapshot scan).
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
@@ -17,8 +17,8 @@ use clap::{Parser, Subcommand};
 use sinexd::api::config::GatewayConfig;
 use sinexd::api::rpc_server;
 use sinexd::api::service_container::ServiceContainer;
-use sinexd::event_engine::IngestdConfig;
-use sinexd::node_sdk::service_runtime::{TracingFormat, install_tracing, spawn_shutdown_task};
+use sinexd::event_engine::EventEngineConfig;
+use sinexd::runtime::service_runtime::{TracingFormat, install_tracing, spawn_shutdown_task};
 use sinexd::sources::bindings::{self as source_bindings, SourceBinding};
 use sinexd::supervisor::Supervisor;
 use std::collections::HashMap;
@@ -69,7 +69,7 @@ enum Command {
     /// Run only the operator API / RPC gateway (no event engine, automata, or
     /// source bindings).
     ///
-    /// The post-fold equivalent of the deleted `sinex-gateway rpc-server`.
+    /// API-only entrypoint used by sandbox fixtures and manual diagnostics.
     /// Used by the sandbox `TestCoreStack` fixture to run the gateway as a
     /// standalone TLS subprocess on a known port.
     RpcServer {
@@ -83,29 +83,29 @@ enum Command {
         cors_origins: Option<String>,
     },
 
-    /// Run a single source unit to completion against the given subcommand.
+    /// Run a single source to completion against the given subcommand.
     ///
-    /// Mirrors the deleted `sinex-source-worker` trampoline for one-off uses
+    /// Runs a source through the `sinexd scan-source` entrypoint
     /// like the document snapshot scan. Reuses the source-binding manifest
     /// shape so operator-facing tooling matches the supervisor's catalog.
-    ScanSourceUnit {
-        /// Source-unit id (must match a registered descriptor).
+    ScanSourceDriver {
+        /// Source id (must match a registered descriptor).
         #[arg(long)]
-        source_unit: String,
+        source: String,
 
-        /// Service name reported by systemd / heartbeats. Defaults to
-        /// `sinex-source-unit-<id>` when absent.
+        /// Runtime label reported by heartbeats. Defaults to the source id
+        /// when absent.
         #[arg(long)]
         service_name: Option<String>,
 
-        /// JSON object passed verbatim as `--node-config`.
+        /// JSON object passed verbatim as `--runtime-config`.
         #[arg(long)]
-        node_config: Option<String>,
+        runtime_config: Option<String>,
 
-        /// Extra CLI arguments inserted before the SDK subcommand
+        /// Extra CLI arguments inserted before the runtime subcommand
         /// (e.g. `scan --until snapshot`).
         ///
-        /// `allow_hyphen_values` is required because forwarded SDK flags are
+        /// `allow_hyphen_values` is required because forwarded runtime flags are
         /// themselves hyphen-prefixed (`--until`, `--targets`); without it clap
         /// rejects `--extra-arg --until` as an unknown top-level flag.
         #[arg(
@@ -115,7 +115,7 @@ enum Command {
         )]
         extra_args: Vec<String>,
 
-        /// Extra environment variables to set in the source-worker process
+        /// Extra environment variables to set in the source host process
         /// (repeatable, format `KEY=VAL`). Used to reproduce operator-side
         /// issues that need session-specific env like `DISPLAY` or
         /// `XAUTHORITY` for desktop.clipboard.
@@ -164,27 +164,18 @@ async fn main() -> color_eyre::Result<()> {
             tcp_listen,
             cors_origins,
         } => rpc_server_serve(&cli, tcp_listen, cors_origins).await,
-        Command::ScanSourceUnit {
-            source_unit,
+        Command::ScanSourceDriver {
+            source,
             service_name,
-            node_config,
+            runtime_config,
             extra_args,
             extra_env,
-        } => {
-            scan_source_unit(
-                source_unit,
-                service_name,
-                node_config,
-                extra_args,
-                extra_env,
-            )
-            .await
-        }
+        } => scan_source(source, service_name, runtime_config, extra_args, extra_env).await,
     }
 }
 
 async fn serve(cli: &Cli) -> color_eyre::Result<()> {
-    let event_engine_config = IngestdConfig::from_args(
+    let event_engine_config = EventEngineConfig::from_args(
         cli.database_url.clone(),
         cli.nats_url.clone(),
         cli.nats_require_tls,
@@ -199,6 +190,11 @@ async fn serve(cli: &Cli) -> color_eyre::Result<()> {
         cli.namespace.clone(),
     )?;
 
+    if schema_apply_on_startup_from_env() {
+        tracing::info!("applying database schema before starting sinexd modules");
+        sinex_db::apply_schema_for_url(&event_engine_config.database_url).await?;
+    }
+
     event_engine_config.validate().await?;
 
     let api_config = match cli.database_url.as_ref() {
@@ -207,7 +203,7 @@ async fn serve(cli: &Cli) -> color_eyre::Result<()> {
     }?;
 
     // The API is enabled by default. Engine-only deployments (e.g. the sandbox
-    // ingestd fixture, which runs the gateway as a separate TLS subprocess)
+    // event_engine fixture, which runs the gateway as a separate TLS subprocess)
     // opt out via `SINEX_API_ENABLED=false` so the supervisor does not try to
     // bind the TLS-required gateway and tear the daemon down.
     let supervisor = Supervisor {
@@ -224,6 +220,14 @@ fn api_enabled_from_env() -> bool {
     match std::env::var("SINEX_API_ENABLED") {
         Ok(value) => !matches!(value.trim(), "0" | "false" | "no" | "off"),
         Err(_) => true,
+    }
+}
+
+/// Read the `SINEX_SCHEMA_APPLY_ON_STARTUP` toggle (default `false`).
+fn schema_apply_on_startup_from_env() -> bool {
+    match std::env::var("SINEX_SCHEMA_APPLY_ON_STARTUP") {
+        Ok(value) => matches!(value.trim(), "1" | "true" | "yes" | "on"),
+        Err(_) => false,
     }
 }
 
@@ -246,14 +250,14 @@ async fn rpc_server_serve(
     Ok(())
 }
 
-async fn scan_source_unit(
-    source_unit: String,
+async fn scan_source(
+    source: String,
     service_name: Option<String>,
-    node_config: Option<String>,
+    runtime_config: Option<String>,
     extra_args: Vec<String>,
     extra_env: Vec<(String, String)>,
 ) -> color_eyre::Result<()> {
-    let node_config_value = match node_config {
+    let runtime_config_value = match runtime_config {
         Some(s) if !s.trim().is_empty() => Some(serde_json::from_str(&s)?),
         _ => None,
     };
@@ -261,10 +265,10 @@ async fn scan_source_unit(
     let extra_env: HashMap<String, String> = extra_env.into_iter().collect();
 
     let binding = SourceBinding {
-        source_unit_id: source_unit,
+        source_id: source,
         instance_idx: 1,
         service_name,
-        node_config: node_config_value,
+        runtime_config: runtime_config_value,
         extra_args,
         extra_env,
     };

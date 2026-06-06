@@ -75,11 +75,11 @@ if result.suppressed { /* drop the field */ }
 // Strategies: Redact, Encrypt (XChaCha20-Poly1305), Hash (BLAKE3 MAC), Suppress
 ```
 
-**Coverage:** Source units are expected to call `privacy::engine()` on
-sensitive fields. Path-bearing source units use `redact_metadata()` with
+**Coverage:** Source contracts are expected to call `privacy::engine()` on
+sensitive fields. Path-bearing source contracts use `redact_metadata()` with
 `ProcessingContext::Metadata`; check the concrete implementation under
-`crate/sinexd/src/sources/source_units/` before making a coverage claim.
-The old per-domain ingestor crate paths (and the `sinex-source-worker` crate)
+`crate/sinexd/src/sources/source_contracts/` before making a coverage claim.
+The old per-domain ingestor crate paths (and the `sinex-source` crate)
 no longer exist after the Wave-B fold.
 
 **Open privacy question:** The `Metadata` context only fires the home-prefix collapse rule.
@@ -122,6 +122,14 @@ ingestor boundary persists into derived events.
 | NATS in tests | `ctx.with_nats().shared()` | Manual NATS setup |
 | Cargo commands | `xtask` (always) | Bare `cargo` (bypasses history, preflight, JSON) |
 | Snapshot updates | `xtask test --update-snapshots` | `INSTA_UPDATE=always cargo nextest ..` |
+
+### Test Sandbox Boundary
+
+`xtask::sandbox` is the intentional shared test substrate. Do not split
+lightweight test macros or support crates away from the heavy sandbox surface
+as a performance shortcut unless the user explicitly asks for that design.
+Performance work should improve target inference, cache policy, pruning, and
+test selection around the sandbox rather than dissolving the shared harness.
 
 ### Anti-Patterns That Are Enforced
 

@@ -307,11 +307,15 @@ impl ReplayControlClient {
     pub async fn list(
         &self,
         state: Option<ReplayState>,
-        node: Option<String>,
+        module: Option<String>,
         limit: Option<i64>,
     ) -> Result<Vec<ReplayOperation>> {
         let response = self
-            .send(ReplayControlRequest::List { state, node, limit })
+            .send(ReplayControlRequest::List {
+                state,
+                module,
+                limit,
+            })
             .await?;
         Self::require_operations(response)
     }

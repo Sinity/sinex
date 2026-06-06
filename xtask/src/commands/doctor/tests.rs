@@ -9,7 +9,7 @@ use sinex_primitives::{
     privacy::{RuntimePrivateModeState, private_mode_state_path, save_private_mode_state},
     temporal::Timestamp,
 };
-use sinexd::node_sdk::preflight::services::SystemdServiceDetails;
+use sinexd::runtime::preflight::services::SystemdServiceDetails;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
@@ -40,15 +40,9 @@ fn sample_nixos_descriptor() -> DeploymentReadinessDescriptor {
     DeploymentReadinessDescriptor {
         source: Some("nixos".to_string()),
         managed_units: vec![
-            "sinex-ingestd.service".to_string(),
-            "sinex-gateway.service".to_string(),
-            "sinex-filesystem-1.service".to_string(),
-            "sinex-source@terminal.atuin-history.service".to_string(),
-            "sinex-source@terminal.bash-history.service".to_string(),
-            "sinex-source@terminal.fish-history.service".to_string(),
-            "sinex-source@terminal.zsh-history.service".to_string(),
-            "sinex-system-1.service".to_string(),
-            "sinex-health-automaton.service".to_string(),
+            "sinexd.service".to_string(),
+            "sinex-blob-init.service".to_string(),
+            "sinex-terminal-target-access.service".to_string(),
         ],
         ..Default::default()
     }
@@ -205,7 +199,7 @@ async fn test_pipeline_smoke_invocation_uses_xtask_test_harness() -> ::xtask::sa
 {
     let (program, args, filter) = pipeline_smoke_invocation("/tmp/fake-xtask");
     assert_eq!(program, "/tmp/fake-xtask");
-    assert_eq!(args, ["test", "--debug", "-p", "sinex-ingestd", "-E"]);
+    assert_eq!(args, ["test", "--debug", "-p", "sinexd", "-E"]);
     assert_eq!(filter, "test(test_pipeline_smoke)");
     Ok(())
 }
@@ -554,7 +548,7 @@ async fn test_check_realm_accessible_marks_principal_mismatch_as_blocking_skip()
 #[sinex_test]
 async fn test_runtime_assessment_capture_degraded_signals() -> ::xtask::sandbox::TestResult<()> {
     let metrics = crate::runtime_metrics::RuntimeMetrics {
-        ingestd_status: crate::runtime_metrics::IngestdStatus::Stale,
+        event_engine_status: crate::runtime_metrics::EventEngineStatus::Stale,
         last_heartbeat_age_secs: Some(300),
         consumer_lag_pending: Some(1500.0),
         consumer_lag_age_secs: Some(10),
@@ -567,7 +561,7 @@ async fn test_runtime_assessment_capture_degraded_signals() -> ::xtask::sandbox:
     assert!(
         warnings
             .iter()
-            .any(|warning| warning.contains("ingestd heartbeat is stale"))
+            .any(|warning| warning.contains("event_engine heartbeat is stale"))
     );
     assert!(
         warnings
@@ -585,7 +579,7 @@ async fn test_runtime_assessment_capture_degraded_signals() -> ::xtask::sandbox:
 #[sinex_test]
 async fn test_runtime_assessment_capture_stale_telemetry() -> ::xtask::sandbox::TestResult<()> {
     let metrics = crate::runtime_metrics::RuntimeMetrics {
-        ingestd_status: crate::runtime_metrics::IngestdStatus::Healthy,
+        event_engine_status: crate::runtime_metrics::EventEngineStatus::Healthy,
         last_heartbeat_age_secs: Some(5),
         consumer_lag_pending: Some(42.0),
         consumer_lag_age_secs: Some(600),
@@ -1379,9 +1373,9 @@ async fn test_check_hyprland_socket_ignores_ambient_env_when_descriptor_present(
 async fn test_build_gateway_probe_client_allows_http_without_ca() -> ::xtask::sandbox::TestResult<()>
 {
     let mut env = EnvGuard::new();
-    env.clear("SINEX_RPC_CA_CERT");
-    env.clear("SINEX_RPC_CLIENT_CERT");
-    env.clear("SINEX_RPC_CLIENT_KEY");
+    env.clear("SINEX_API_CA_CERT");
+    env.clear("SINEX_API_CLIENT_CERT");
+    env.clear("SINEX_API_CLIENT_KEY");
 
     let _client = build_gateway_probe_client("http://127.0.0.1:9999", None).await?;
     Ok(())
@@ -1394,9 +1388,9 @@ async fn test_build_gateway_probe_client_requires_readable_ca_for_https()
     let missing_ca = temp.path().join("missing-ca.pem");
 
     let mut env = EnvGuard::new();
-    env.set("SINEX_RPC_CA_CERT", missing_ca.display().to_string());
-    env.clear("SINEX_RPC_CLIENT_CERT");
-    env.clear("SINEX_RPC_CLIENT_KEY");
+    env.set("SINEX_API_CA_CERT", missing_ca.display().to_string());
+    env.clear("SINEX_API_CLIENT_CERT");
+    env.clear("SINEX_API_CLIENT_KEY");
 
     let error = build_gateway_probe_client("https://127.0.0.1:9999", None)
         .await
@@ -1422,9 +1416,9 @@ async fn test_build_gateway_probe_client_uses_descriptor_trust_anchor()
     })?;
 
     let mut env = EnvGuard::new();
-    env.clear("SINEX_RPC_CA_CERT");
-    env.clear("SINEX_RPC_CLIENT_CERT");
-    env.clear("SINEX_RPC_CLIENT_KEY");
+    env.clear("SINEX_API_CA_CERT");
+    env.clear("SINEX_API_CLIENT_CERT");
+    env.clear("SINEX_API_CLIENT_KEY");
 
     let descriptor = DeploymentReadinessDescriptor {
         secrets: sinex_primitives::DeploymentSecrets {
@@ -1448,7 +1442,7 @@ async fn test_resolve_gateway_probe_tls_paths_prefers_descriptor_trust_anchor()
     std::fs::write(&env_ca, "env")?;
 
     let mut env = EnvGuard::new();
-    env.set("SINEX_RPC_CA_CERT", env_ca.display().to_string());
+    env.set("SINEX_API_CA_CERT", env_ca.display().to_string());
 
     let descriptor = DeploymentReadinessDescriptor {
         secrets: sinex_primitives::DeploymentSecrets {
@@ -1471,7 +1465,7 @@ async fn test_resolve_gateway_probe_tls_paths_falls_back_when_descriptor_omits_t
     std::fs::write(&env_ca, "env")?;
 
     let mut env = EnvGuard::new();
-    env.set("SINEX_RPC_CA_CERT", env_ca.display().to_string());
+    env.set("SINEX_API_CA_CERT", env_ca.display().to_string());
 
     let descriptor = DeploymentReadinessDescriptor::default();
 
@@ -1499,7 +1493,7 @@ async fn test_check_secret_materials_requires_gateway_admin_token()
     let cert = temp.path().join("server.pem");
     let key = temp.path().join("server-key.pem");
     let db = temp.path().join("db-password");
-    let missing_admin = temp.path().join("missing-gateway-admin-token");
+    let missing_admin = temp.path().join("missing-api-admin-token");
     std::fs::write(&cert, "cert")?;
     std::fs::write(&key, "key")?;
     std::fs::write(&db, "password")?;
@@ -1515,7 +1509,7 @@ async fn test_check_secret_materials_requires_gateway_admin_token()
 
     let item = check_secret_materials(None);
     assert_eq!(item.status, "fail");
-    assert!(item.description.contains("gateway-admin-token"));
+    assert!(item.description.contains("api-admin-token"));
     Ok(())
 }
 
@@ -1539,7 +1533,7 @@ async fn test_check_secret_materials_respects_descriptor_declared_paths_only()
     let descriptor = DeploymentReadinessDescriptor {
         secrets: sinex_primitives::DeploymentSecrets {
             database_password_file: Some(db),
-            gateway_admin_token_file: None,
+            api_admin_token_file: None,
             gateway_tls_cert_file: None,
             gateway_tls_key_file: None,
             gateway_tls_trust_anchor_file: None,
@@ -1794,9 +1788,9 @@ async fn test_evaluate_document_scan_units_accepts_loaded_service_and_active_tim
 }
 
 #[sinex_test]
-async fn test_check_node_entrypoints_skips_empty_prepared_descriptor_units()
+async fn test_check_runtime_entrypoints_skips_empty_prepared_descriptor_units()
 -> ::xtask::sandbox::TestResult<()> {
-    let item = check_node_entrypoints(Some(&DeploymentReadinessDescriptor {
+    let item = check_runtime_entrypoints(Some(&DeploymentReadinessDescriptor {
         mode: DeploymentReadinessMode::Prepared,
         managed_units: Vec::new(),
         ..Default::default()
@@ -1808,8 +1802,8 @@ async fn test_check_node_entrypoints_skips_empty_prepared_descriptor_units()
 }
 
 #[sinex_test]
-async fn test_check_node_entrypoints_requires_watchdog_contract() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_check_runtime_entrypoints_requires_watchdog_contract()
+-> ::xtask::sandbox::TestResult<()> {
     let temp = tempfile::tempdir()?;
     let bin_dir = temp.path().join("bin");
     fs::create_dir_all(&bin_dir)?;
@@ -1817,7 +1811,7 @@ async fn test_check_node_entrypoints_requires_watchdog_contract() -> ::xtask::sa
     write_executable_script(
         &bin_dir.join("systemctl"),
         r#"#!/bin/sh
-if [ "$1" = "show" ] && [ "$2" = "sinex-ingestd.service" ]; then
+if [ "$1" = "show" ] && [ "$2" = "sinexd.service" ]; then
   printf 'ActiveState=active\nSubState=running\nLoadState=loaded\nType=notify\nNotifyAccess=main\nWatchdogUSec=0\n'
   exit 0
 fi
@@ -1830,9 +1824,9 @@ exit 1
     let mut env = EnvGuard::new();
     env.set("PATH", bin_dir.display().to_string());
 
-    let item = check_node_entrypoints(Some(&DeploymentReadinessDescriptor {
+    let item = check_runtime_entrypoints(Some(&DeploymentReadinessDescriptor {
         mode: DeploymentReadinessMode::Prepared,
-        managed_units: vec!["sinex-ingestd.service".to_string()],
+        managed_units: vec!["sinexd.service".to_string()],
         ..Default::default()
     }))
     .await;
@@ -1893,15 +1887,10 @@ async fn test_check_singleton_workstation_topology_skips_prepared_descriptor_wit
 async fn test_nixos_descriptor_managed_units_are_consumed_directly()
 -> ::xtask::sandbox::TestResult<()> {
     let units = sample_nixos_descriptor().managed_units;
-    assert!(units.contains(&"sinex-ingestd.service".to_string()));
-    assert!(units.contains(&"sinex-gateway.service".to_string()));
-    assert!(units.contains(&"sinex-filesystem-1.service".to_string()));
-    assert!(units.contains(&"sinex-source@terminal.atuin-history.service".to_string()));
-    assert!(units.contains(&"sinex-source@terminal.bash-history.service".to_string()));
-    assert!(units.contains(&"sinex-source@terminal.fish-history.service".to_string()));
-    assert!(units.contains(&"sinex-source@terminal.zsh-history.service".to_string()));
-    assert!(units.contains(&"sinex-system-1.service".to_string()));
-    assert!(units.contains(&"sinex-health-automaton.service".to_string()));
+    assert!(units.contains(&"sinexd.service".to_string()));
+    assert!(units.contains(&"sinex-blob-init.service".to_string()));
+    assert!(units.contains(&"sinex-terminal-target-access.service".to_string()));
+    assert!(!units.iter().any(|unit| unit.starts_with("sinex-source@")));
     assert!(!units.iter().any(|unit| unit == "sinex-desktop-1.service"));
     Ok(())
 }
@@ -1937,22 +1926,23 @@ async fn test_rust_analyzer_report_is_explicitly_advisory() -> ::xtask::sandbox:
 async fn test_rust_analyzer_workspace_contract_lists_xtask_dev_deps()
 -> ::xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir()?;
-    fs::create_dir_all(dir.path().join("crate/lib/uses-xtask"))?;
-    fs::create_dir_all(dir.path().join("crate/lib/no-xtask"))?;
+    fs::create_dir_all(dir.path().join("crate/uses-xtask"))?;
+    fs::create_dir_all(dir.path().join("crate/no-xtask"))?;
+    fs::create_dir_all(dir.path().join(".claude/worktrees/stale/crate/old-runtime"))?;
     fs::create_dir_all(dir.path().join("target/ignored"))?;
     fs::write(
-        dir.path().join("crate/lib/uses-xtask/Cargo.toml"),
+        dir.path().join("crate/uses-xtask/Cargo.toml"),
         r#"
 [package]
 name = "uses-xtask"
 version = "0.1.0"
 
 [dev-dependencies]
-xtask = { path = "../../../xtask" }
+xtask = { path = "../../xtask" }
 "#,
     )?;
     fs::write(
-        dir.path().join("crate/lib/no-xtask/Cargo.toml"),
+        dir.path().join("crate/no-xtask/Cargo.toml"),
         r#"
 [package]
 name = "no-xtask"
@@ -1960,6 +1950,18 @@ version = "0.1.0"
 
 [dev-dependencies]
 serde = "1"
+"#,
+    )?;
+    fs::write(
+        dir.path()
+            .join(".claude/worktrees/stale/crate/old-runtime/Cargo.toml"),
+        r#"
+[package]
+name = "ignored-stale-worktree"
+version = "0.1.0"
+
+[dev-dependencies]
+xtask = { path = "../../../../xtask" }
 "#,
     )?;
     fs::write(
@@ -2135,14 +2137,17 @@ disabled = []
 #[sinex_test]
 async fn test_rust_analyzer_cli_diagnostic_parser_reads_batch_output()
 -> ::xtask::sandbox::TestResult<()> {
-    let output = r#"at crate sinexctl, file /realm/project/sinex/crate/cli/src/lib.rs: Warning RustcLint("unused_variables") from LineCol { line: 12, col: 4 } to LineCol { line: 12, col: 10 }: unused variable"#;
+    let output = r#"at crate sinexctl, file /realm/project/sinex/crate/sinexctl/src/lib.rs: Warning RustcLint("unused_variables") from LineCol { line: 12, col: 4 } to LineCol { line: 12, col: 10 }: unused variable"#;
 
     let diagnostics = parse_rust_analyzer_cli_diagnostics(output);
 
     assert_eq!(diagnostics.len(), 1);
     let diagnostic = &diagnostics[0];
     assert_eq!(diagnostic.crate_name, "sinexctl");
-    assert_eq!(diagnostic.file, "/realm/project/sinex/crate/cli/src/lib.rs");
+    assert_eq!(
+        diagnostic.file,
+        "/realm/project/sinex/crate/sinexctl/src/lib.rs"
+    );
     assert_eq!(diagnostic.severity, "Warning");
     assert_eq!(
         diagnostic.diagnostic_kind,
@@ -2161,7 +2166,7 @@ async fn test_rust_analyzer_cli_diagnostic_maps_to_history_shape()
 -> ::xtask::sandbox::TestResult<()> {
     let diagnostic = RustAnalyzerCliDiagnostic {
         crate_name: "sinexctl".to_string(),
-        file: "/realm/project/sinex/crate/cli/src/lib.rs".to_string(),
+        file: "/realm/project/sinex/crate/sinexctl/src/lib.rs".to_string(),
         severity: "Warning".to_string(),
         diagnostic_kind: "RustcLint(\"unused_variables\")".to_string(),
         line: 12,
@@ -2181,7 +2186,7 @@ async fn test_rust_analyzer_cli_diagnostic_maps_to_history_shape()
     assert_eq!(stored.message, "unused variable");
     assert_eq!(
         stored.file_path.as_deref(),
-        Some("/realm/project/sinex/crate/cli/src/lib.rs")
+        Some("/realm/project/sinex/crate/sinexctl/src/lib.rs")
     );
     assert_eq!(stored.line, Some(13));
     assert_eq!(stored.column, Some(5));
@@ -2211,8 +2216,8 @@ async fn test_rust_analyzer_cli_scan_status_classifies_partial_results()
 async fn test_rust_analyzer_cli_stderr_summary_buckets_failures() -> ::xtask::sandbox::TestResult<()>
 {
     let stderr = r"
-2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_gateway(Idx::<CrateBuilder>(38)) -> sinex_gateway(Idx::<CrateBuilder>(38))
-2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_node_sdk(Idx::<CrateBuilder>(176)) -> xtask(Idx::<CrateBuilder>(346)), alternative path: xtask(Idx::<CrateBuilder>(346)) -> sinex_node_sdk(Idx::<CrateBuilder>(176))
+2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_api(Idx::<CrateBuilder>(38)) -> sinex_api(Idx::<CrateBuilder>(38))
+2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinexd::runtime(Idx::<CrateBuilder>(176)) -> xtask(Idx::<CrateBuilder>(346)), alternative path: xtask(Idx::<CrateBuilder>(346)) -> sinexd::runtime(Idx::<CrateBuilder>(176))
 2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_macros(Idx::<CrateBuilder>(172)) -> sinex_primitives(Idx::<CrateBuilder>(242)), alternative path: sinex_primitives(Idx::<CrateBuilder>(242)) -> sinex_macros(Idx::<CrateBuilder>(172))
 2026-05-22T06:29:47.951700288+02:00 ERROR pattern has unexpected type: pat: Pat { ty: str }
 2026-05-22T06:29:49.34967273+02:00 ERROR Overloaded deref on type str is not a projection
@@ -2246,15 +2251,12 @@ async fn test_rust_analyzer_cli_stderr_summary_buckets_failures() -> ::xtask::sa
     assert_eq!(
         summary.cyclic_dependency_edges,
         vec![
-            "sinex_gateway->sinex_gateway",
+            "sinex_api->sinex_api",
             "sinex_macros->sinex_primitives",
             "sinexd->xtask",
         ]
     );
-    assert_eq!(
-        summary.self_cycle_edges,
-        vec!["sinex_gateway->sinex_gateway"]
-    );
+    assert_eq!(summary.self_cycle_edges, vec!["sinex_api->sinex_api"]);
     assert_eq!(summary.xtask_cycle_edges, vec!["sinexd->xtask"]);
     assert_eq!(
         summary.workspace_cycle_edges,
@@ -2331,7 +2333,7 @@ async fn test_rust_analyzer_remediation_actions_are_bucket_specific()
     );
     assert_eq!(
         rust_analyzer_remediation_actions(
-            &["sinex_gateway->sinex_gateway".to_string()],
+            &["sinex_api->sinex_api".to_string()],
             &[],
             &["sinex_macros->sinex_primitives".to_string()],
             1,

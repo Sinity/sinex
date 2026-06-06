@@ -235,7 +235,7 @@
       "$ref": "#/$defs/HealthAggregatedComponentReportPayload"
     }
   ],
-  "description": "Reports emitted by `sinex-health-automaton`.",
+  "description": "Reports emitted by the health automaton.",
   "title": "HealthAggregatedReportPayload",
   "x-sinex-event-type": "health.aggregated_report",
   "x-sinex-source": "health-aggregator",

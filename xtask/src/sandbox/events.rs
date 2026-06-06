@@ -138,7 +138,7 @@ impl EventPublisher for Sandbox {
             payload: sanitized_payload,
             ts_orig: Some(timestamp_override.unwrap_or_else(sinex_primitives::Timestamp::now)),
             host: crate::sandbox::local_test_host(),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             anchor_payload_hash: None,
             provenance: Provenance::Material {
@@ -154,7 +154,7 @@ impl EventPublisher for Sandbox {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             ts_quality: None,
         };
 
@@ -186,7 +186,7 @@ impl EventPublisher for Sandbox {
     }
 
     async fn publish_prebuilt_event(&self, event: &Event<JsonValue>) -> TestResult<Uuid> {
-        // Just publish to NATS - caller (PipelineScope) is responsible for ingestd
+        // Just publish to NATS - caller (PipelineScope) is responsible for event_engine
         let mut event_ids = self
             .publish_prebuilt_events(std::slice::from_ref(event))
             .await?;
@@ -200,7 +200,7 @@ impl EventPublisher for Sandbox {
             return Ok(Vec::new());
         }
 
-        // Just publish to NATS - caller (PipelineScope) is responsible for ingestd
+        // Just publish to NATS - caller (PipelineScope) is responsible for event_engine
         let client = self.nats_client();
         let mut published = Vec::with_capacity(events.len());
 
@@ -241,7 +241,7 @@ impl Sandbox {
     ///
     /// This is the fast path for property tests that only need to verify event
     /// construction properties (ordering, batching, counts) without requiring
-    /// DB persistence or pipeline processing. No NATS or ingestd needed.
+    /// DB persistence or pipeline processing. No NATS or event_engine needed.
     pub fn build_test_events<P: Publishable>(
         &self,
         payloads: impl IntoIterator<Item = P>,
@@ -262,7 +262,7 @@ impl Sandbox {
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
                 host: crate::sandbox::local_test_host(),
-                source_run_id: None,
+                module_run_id: None,
                 payload_schema_id: None,
                 anchor_payload_hash: None,
                 provenance: Provenance::Material {
@@ -278,7 +278,7 @@ impl Sandbox {
                 scope_key: None,
                 equivalence_key: None,
                 created_by_operation_id: None,
-                node_model: None,
+                automaton_model: None,
                 ts_quality: None,
             };
             events.push(event);
@@ -322,7 +322,7 @@ impl Sandbox {
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
                 host: crate::sandbox::local_test_host(),
-                source_run_id: None,
+                module_run_id: None,
                 payload_schema_id: None,
                 anchor_payload_hash: None,
                 provenance: Provenance::Material {
@@ -338,7 +338,7 @@ impl Sandbox {
                 scope_key: None,
                 equivalence_key: None,
                 created_by_operation_id: None,
-                node_model: None,
+                automaton_model: None,
                 ts_quality: None,
             };
 
@@ -368,7 +368,7 @@ impl Sandbox {
         }
 
         // Phase 4: Wait for the last event to be persisted.
-        // Since ingestd processes events in JetStream order (single consumer),
+        // Since event_engine processes events in JetStream order (single consumer),
         // once the last event is in DB, all preceding events are guaranteed to be there.
         // Safety: `published_ids` is non-empty because we checked `events.is_empty()` above.
         let last_event_uuid = published_ids

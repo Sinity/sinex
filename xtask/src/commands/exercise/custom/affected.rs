@@ -44,8 +44,8 @@ pub fn custom_affected_leaf(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     run_affected_exercise(
         dir,
         verbose,
-        "crate/nodes/sinex-fs-ingestor/src/lib.rs",
-        &["sinex-fs-ingestor"],
+        "crate/sinexd/src/sources/source_contracts/fs/mod.rs",
+        &["sinexd"],
         &[], // Don't assert absence — transitive deps are implementation-dependent
     )
 }
@@ -55,7 +55,7 @@ pub fn custom_affected_foundation(dir: &Path, verbose: bool) -> Vec<StepOutcome>
     run_affected_exercise(
         dir,
         verbose,
-        "crate/lib/sinex-primitives/src/lib.rs",
+        "crate/sinex-primitives/src/lib.rs",
         &["sinex-primitives"], // Foundation change should at least include itself
         &[],
     )
@@ -73,16 +73,16 @@ pub fn custom_affected_workspace(dir: &Path, verbose: bool) -> Vec<StepOutcome> 
 }
 
 /// Affected transitive: touch sinex-db (a mid-level library), verify that
-/// transitive dependents like sinex-gateway appear.
+/// transitive dependents like sinexd appear.
 #[must_use]
 pub fn custom_affected_transitive(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     run_affected_exercise(
         dir,
         verbose,
-        "crate/lib/sinex-db/src/lib.rs",
+        "crate/sinex-db/src/lib.rs",
         &[
-            "sinex-db",      // Direct change
-            "sinex-gateway", // Depends on sinex-db
+            "sinex-db", // Direct change
+            "sinexd",   // Depends on sinex-db
         ],
         &[], // Don't assert absence — other transitive deps may or may not appear
     )

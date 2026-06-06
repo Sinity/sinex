@@ -27,14 +27,11 @@
       "issues": [1058, 1059, 1064, 1065, 1082, 1097, 1098],
       "required_checks": [
         "xtask check -p sinex-primitives",
-        "xtask check -p sinex-node-sdk",
-        "xtask check -p sinex-ingestd",
+        "xtask check -p sinexd",
         "xtask check -p sinex-schema",
         "xtask check -p sinex-db",
-        "xtask check -p sinex-gateway",
         "xtask test -p sinex-primitives",
-        "xtask test -p sinex-node-sdk",
-        "xtask test -p sinex-ingestd"
+        "xtask test -p sinexd"
       ],
       "boundary_checks": [
         "xtask verify plan --check",
@@ -58,14 +55,13 @@
     },
     {
       "id": "2",
-      "title": "Implement acquisition and the source-worker host",
+      "title": "Implement acquisition and the sinexd source host",
       "issues": [1055, 1061, 1067, 1081, 1083, 1084, 1125],
       "required_checks": [
-        "xtask check -p sinex-node-sdk",
+        "xtask check -p sinexd",
         "xtask check -p sinex-db",
-        "xtask test -p sinex-node-sdk",
         "xtask test -p sinex-db",
-        "xtask test -p sinex-node-sdk"
+        "xtask test -p sinexd"
       ],
       "boundary_checks": [
         "xtask docs check",
@@ -93,13 +89,11 @@
       "issues": [1057, 1060, 1069, 1085, 1099, 1124],
       "required_checks": [
         "xtask check -p sinexctl",
-        "xtask check -p sinex-gateway",
+        "xtask check -p sinexd",
         "xtask check -p sinex-db",
-        "xtask check -p sinex-ingestd",
         "xtask test -p sinexctl",
-        "xtask test -p sinex-gateway",
-        "xtask test -p sinex-db",
-        "xtask test -p sinex-ingestd"
+        "xtask test -p sinexd",
+        "xtask test -p sinex-db"
       ],
       "boundary_checks": [
         "xtask ci postgres -- xtask ci workspace"
@@ -118,9 +112,7 @@
       "title": "Prove the vertical staged-source slice",
       "issues": [1051, 1130, 1131, 1132, 1136, 1137],
       "required_checks": [
-        "xtask test -p sinex-node-sdk",
-        "xtask test -p sinex-ingestd",
-        "xtask test -p sinex-gateway",
+        "xtask test -p sinexd",
         "xtask test -p sinexctl"
       ],
       "boundary_checks": [
@@ -133,7 +125,7 @@
         {
           "impact": "new parser fixture corpus",
           "commands": [
-            "xtask test -p sinex-node-sdk"
+            "xtask test -p sinexd"
           ]
         }
       ]
@@ -143,10 +135,8 @@
       "title": "Prove external and transitional integrations",
       "issues": [1062, 1119, 1122, 1123],
       "required_checks": [
-        "xtask check -p sinex-ingestd",
-        "xtask check -p sinex-gateway",
-        "xtask test -p sinex-ingestd",
-        "xtask test -p sinex-gateway"
+        "xtask check -p sinexd",
+        "xtask test -p sinexd"
       ],
       "boundary_checks": [
         "xtask docs check"
@@ -167,7 +157,7 @@
       "issues": [1052, 1053, 1068, 1070, 1074, 1075, 1088, 1089, 1090, 1091, 1092],
       "required_checks": [
         "xtask check -p sinex-primitives",
-        "xtask test -p sinex-node-sdk"
+        "xtask test -p sinexd"
       ],
       "boundary_checks": [
         "xtask docs check"

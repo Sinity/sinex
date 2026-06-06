@@ -2,10 +2,10 @@
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinexd::api::handlers::automata::handle_automata_status;
-use sinex_primitives::domain::{NodeName, NodeType};
+use sinex_primitives::domain::{ModuleKind, ModuleName};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::automata::AutomataStatusRequest;
+use sinexd::api::handlers::automata::handle_automata_status;
 use xtask::sandbox::prelude::*;
 
 async fn insert_material_event(
@@ -23,18 +23,18 @@ async fn insert_material_event(
 
 async fn insert_metric_gauge(
     ctx: &TestContext,
-    node_name: &str,
-    source_run_id: sinex_primitives::Uuid,
+    module_name: &str,
+    module_run_id: sinex_primitives::Uuid,
     name: &str,
     value: f64,
     labels: serde_json::Value,
 ) -> TestResult<()> {
     let mut labels = labels.as_object().cloned().unwrap_or_default();
-    labels.insert("node".to_string(), json!(node_name));
-    labels.insert("node_model".to_string(), json!("transducer"));
+    labels.insert("module".to_string(), json!(module_name));
+    labels.insert("automaton_model".to_string(), json!("transducer"));
     labels.insert(
-        "source_run_id".to_string(),
-        json!(source_run_id.to_string()),
+        "module_run_id".to_string(),
+        json!(module_run_id.to_string()),
     );
 
     insert_material_event(
@@ -45,7 +45,7 @@ async fn insert_metric_gauge(
             "name": name,
             "value": value,
             "labels": labels,
-            "component": node_name,
+            "component": module_name,
         }),
     )
     .await?;
@@ -57,19 +57,19 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
     ctx: TestContext,
 ) -> TestResult<()> {
     let pool = ctx.pool();
-    let node_name = NodeName::new("canonicalizer-test");
+    let module_name = ModuleName::new("canonicalizer-test");
     let manifest = pool
         .state()
-        .register_node(
-            &node_name,
-            NodeType::Automaton,
+        .register_module(
+            &module_name,
+            ModuleKind::Automaton,
             "1.0.0-test",
             Some("canonicalizes test commands"),
         )
         .await?;
     let run = pool
         .state()
-        .start_node_run(
+        .start_module_run(
             manifest.id,
             "sinex-canonicalizer-test",
             "instance-a",
@@ -123,7 +123,7 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
         insert_material_event(&ctx, "test.input", "test.input", json!({ "command": "ls" })).await?;
     let parent_id = parent.id.expect("inserted parent must have id");
     let output = DynamicPayload::new("test.output", "test.output", json!({ "canonical": "ls" }))
-        .source_run_id(run.id.to_uuid())
+        .module_run_id(run.id.to_uuid())
         .from_parents(vec![parent_id])?
         .build()?;
     pool.events().insert(output).await?;
@@ -140,10 +140,10 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
     assert_eq!(automata.len(), 1);
     let status = &automata[0];
 
-    assert_eq!(status.node_name, NodeName::new("canonicalizer-test"));
+    assert_eq!(status.module_name, ModuleName::new("canonicalizer-test"));
     assert_eq!(status.version, "1.0.0-test");
     assert!(status.live);
-    assert_eq!(status.source_run_id, Some(run.id.to_uuid()));
+    assert_eq!(status.module_run_id, Some(run.id.to_uuid()));
     assert_eq!(status.events_processed_current_run, Some(42));
     assert_eq!(status.pending_invalidation_count, Some(3));
     assert_eq!(status.checkpoint_kind.as_deref(), Some("internal"));
@@ -161,19 +161,19 @@ async fn automata_status_handles_live_run_without_metric_events(
     ctx: TestContext,
 ) -> TestResult<()> {
     let pool = ctx.pool();
-    let node_name = NodeName::new("session-detector-test");
+    let module_name = ModuleName::new("session-detector-test");
     let manifest = pool
         .state()
-        .register_node(
-            &node_name,
-            NodeType::Automaton,
+        .register_module(
+            &module_name,
+            ModuleKind::Automaton,
             "1.0.0-test",
             Some("detects activity sessions"),
         )
         .await?;
     let run = pool
         .state()
-        .start_node_run(
+        .start_module_run(
             manifest.id,
             "sinex-session-detector-test",
             "instance-a",
@@ -195,9 +195,9 @@ async fn automata_status_handles_live_run_without_metric_events(
     assert_eq!(automata.len(), 1);
     let status = &automata[0];
 
-    assert_eq!(status.node_name, NodeName::new("session-detector-test"));
+    assert_eq!(status.module_name, ModuleName::new("session-detector-test"));
     assert!(status.live);
-    assert_eq!(status.source_run_id, Some(run.id.to_uuid()));
+    assert_eq!(status.module_run_id, Some(run.id.to_uuid()));
     assert!(status.events_processed_current_run.is_none());
     assert!(status.pending_invalidation_count.is_none());
     assert!(status.checkpoint_kind.is_none());

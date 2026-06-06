@@ -4,7 +4,7 @@ use crate::api::config::GatewayConfig;
 use crate::api::content_service::ContentService;
 use crate::api::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
 use crate::event_engine::policy::PolicyEngine;
-use crate::node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
+use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
 use sinex_db::create_pool_with_config;
 use sinex_db::pkm::PkmService;
 use sinex_db::replay::state_machine::ReplayStateMachine;
@@ -174,7 +174,7 @@ impl ServiceContainer {
         let js = async_nats::jetstream::new(coordination_nats.clone());
         let coordination_client = Some(Arc::new(CoordinationKvClient::new(
             js,
-            "sinex-gateway".to_string(),
+            "sinexd".to_string(),
         )));
         let nats_client = Some(coordination_nats);
 

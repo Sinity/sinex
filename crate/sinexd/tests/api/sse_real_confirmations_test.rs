@@ -1,7 +1,7 @@
 //! Full-stack SSE confirmation test (#1136).
 //!
 //! Proves the SSE HTTP endpoint receives events that flowed through the real
-//! production path: NATS publish → ingestd admission → DB persist → confirmation
+//! production path: NATS publish → event_engine admission → DB persist → confirmation
 //! → `SubscriptionBus` → SSE frame.
 //!
 //! This complements `sse_stream_test.rs` (which exercises `SubscriptionBus`
@@ -100,11 +100,11 @@ fn insecure_https_client() -> TestResult<reqwest::Client> {
         .map_err(|e| eyre!("reqwest build: {e}"))
 }
 
-/// End-to-end: real publish → real ingestd → real confirmation → SSE delivery.
+/// End-to-end: real publish → real event_engine → real confirmation → SSE delivery.
 ///
 /// Replaces the gap that #1136 documented: previous SSE coverage used direct
 /// DB inserts and synthetic confirmation messages, which validated the bus
-/// but not the full HTTP-fed-by-real-ingestd path.
+/// but not the full HTTP-fed-by-real-event-engine path.
 ///
 /// Previously `#[ignore]`d (#1626). The delivery path is core-NATS pub/sub
 /// (`SubscriptionBus` subscribes to `events.confirmations.>`), independent of
@@ -113,14 +113,14 @@ fn insecure_https_client() -> TestResult<reqwest::Client> {
 ///   - `#1631` threaded the pipeline namespace into the gateway *process*
 ///     (`SINEX_NAMESPACE`), but the `SubscriptionBus` ignored it and subscribed
 ///     to the un-namespaced `{env}.events.confirmations.>`, while a namespaced
-///     ingestd publishes to `{env}.{namespace}.events.confirmations.*`.
+///     event_engine publishes to `{env}.{namespace}.events.confirmations.*`.
 ///   - Fixed here: `GatewayConfig::namespace` is now consumed by the bus, which
 ///     subscribes via `nats_subject_with_namespace`, matching the publisher.
-///   - Separately, the node preflight stream-existence check was made
+///   - Separately, the source preflight stream-existence check was made
 ///     namespace-aware so it stops 404-ing on `..._CONFIRMATIONS` under a
 ///     per-test namespace.
 #[sinex_test(timeout = 90)]
-async fn test_sse_delivers_event_after_real_ingestd_confirmation(
+async fn test_sse_delivers_event_after_real_event_engine_confirmation(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -150,7 +150,7 @@ async fn test_sse_delivers_event_after_real_ingestd_confirmation(
     // the SSE handler's local timer.
     //
     // The only signal observable from a black-box test is: an event we publish
-    // actually traverses ingestd → bus → SSE. So we publish a warmup event in
+    // actually traverses event_engine → bus → SSE. So we publish a warmup event in
     // a retry loop until SSE delivers it. After that, the bus's NATS
     // subscription is provably active and we can run the real assertion.
     let warmup_event_type = "test.sse_warmup";
@@ -188,7 +188,7 @@ async fn test_sse_delivers_event_after_real_ingestd_confirmation(
         "SSE never delivered warmup event after 45s — bus NATS subscription likely never came up"
     );
 
-    // Publish through the real pipeline: NATS → ingestd → DB → confirmation
+    // Publish through the real pipeline: NATS → event_engine → DB → confirmation
     // → SubscriptionBus → SSE.
     let payload = DynamicPayload::new(
         unique_source.as_str(),
@@ -225,8 +225,8 @@ async fn test_sse_delivers_event_after_real_ingestd_confirmation(
 
     assert!(
         saw_event,
-        "SSE never delivered event {event_id_str} after real ingestd confirmation; \
-         check ingestd→confirmation→bus path"
+        "SSE never delivered event {event_id_str} after real event_engine confirmation; \
+         check event_engine→confirmation→bus path"
     );
 
     stack.shutdown().await?;

@@ -625,7 +625,7 @@ impl Sandbox {
         &self.pipeline_namespace
     }
 
-    /// Create a pipeline scope that resets the DB slot and starts ingestd.
+    /// Create a pipeline scope that resets the DB slot and starts event_engine.
     pub async fn pipeline(&self) -> TestResult<PipelineScope<'_>> {
         PipelineScope::new(self).await
     }

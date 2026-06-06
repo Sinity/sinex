@@ -846,7 +846,7 @@ pub struct ControlSubject;
 impl ControlSubject {
     /// `sinex.control.replay.progress.<operation_id>`
     ///
-    /// Published by the executing node as it progresses through a scan;
+    /// Published by the executing source runtime as it progresses through a scan;
     /// subscribed by the gateway to track operation completion.
     #[must_use]
     pub fn replay_progress(operation_id: impl fmt::Display) -> String {
@@ -856,19 +856,19 @@ impl ControlSubject {
     /// `sinex.control.sources.<source_id>.parse`
     ///
     /// Published by the gateway to request a staged-source parse;
-    /// subscribed by the source unit's parse listener.
+    /// subscribed by the source's parse listener.
     #[must_use]
     pub fn source_parse(source_id: impl fmt::Display) -> String {
         format!("sinex.control.sources.{source_id}.parse")
     }
 
-    /// `sinex.control.nodes.<node_id>.scan`
+    /// `sinex.control.sources.<source_name>.scan`
     ///
     /// Request-reply subject used by the gateway to dispatch a scan command
-    /// to a specific node; the node replies with a `NodeScanAck`.
+    /// to a specific source runtime; the source replies with a `SourceScanAck`.
     #[must_use]
-    pub fn node_scan(node_id: impl fmt::Display) -> String {
-        format!("sinex.control.nodes.{node_id}.scan")
+    pub fn source_scan(source_name: impl fmt::Display) -> String {
+        format!("sinex.control.sources.{source_name}.scan")
     }
 }
 
@@ -1075,8 +1075,8 @@ impl fmt::Display for HostName {
 }
 
 define_string_type!(
-    #[doc = "The name of a node (ingestor, automaton, service)"]
-    NodeName
+    #[doc = "The name of a runtime module (source, automaton, service)"]
+    ModuleName
 );
 
 define_string_type!(
@@ -1133,7 +1133,7 @@ define_string_type!(
     RegexPattern
 );
 
-// Consumer group types for nodes
+// Consumer group types for runtime modules
 define_string_type!(
     #[doc = "A consumer group name for distributed processing"]
     ConsumerGroup
@@ -1686,7 +1686,7 @@ impl FromStr for SourceMaterialFormat {
 /// How the capture timestamp was determined for a material slice.
 ///
 /// Stored as `source_type` in `raw.temporal_ledger`. Shared between schema
-/// CHECK constraints, DB repositories, and SDK-side `LedgerReader`.
+/// CHECK constraints, DB repositories, and runtime-side `LedgerReader`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TemporalSourceType {
@@ -1801,7 +1801,7 @@ impl std::str::FromStr for TemporalClock {
 
 /// How a synthetic event's `ts_orig` was determined.
 ///
-/// Declared per-output by derived nodes. Persisted as `temporal_policy`
+/// Declared per-output by automatons. Persisted as `temporal_policy`
 /// on `core.events` for synthetic rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1841,22 +1841,22 @@ impl std::str::FromStr for SyntheticTemporalPolicy {
     }
 }
 
-/// Classification of a derived node's computation model.
+/// Classification of a automaton's computation model.
 ///
-/// Each derived node must declare which model it uses, which determines
-/// how the SDK prepares inputs and manages scope/window state.
+/// Each automaton must declare which model it uses, which determines
+/// how the runtime prepares inputs and manages scope/window state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum DerivedNodeModel {
+pub enum AutomatonModel {
     /// Processes one triggering event at a time; deterministic fallback order is `id ASC`
     Transducer,
-    /// Declares window identity and completion logic; SDK prepares completed windows
+    /// Declares window identity and completion logic; runtime prepares completed windows
     Windowed,
     /// Declares `trigger→scope_key` mapping; loads persisted working set for deterministic recomputation
     ScopeReconciler,
 }
 
-impl std::fmt::Display for DerivedNodeModel {
+impl std::fmt::Display for AutomatonModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Transducer => write!(f, "transducer"),
@@ -1866,7 +1866,7 @@ impl std::fmt::Display for DerivedNodeModel {
     }
 }
 
-impl std::str::FromStr for DerivedNodeModel {
+impl std::str::FromStr for AutomatonModel {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -1874,14 +1874,14 @@ impl std::str::FromStr for DerivedNodeModel {
             "transducer" => Ok(Self::Transducer),
             "windowed" => Ok(Self::Windowed),
             "scope_reconciler" => Ok(Self::ScopeReconciler),
-            _ => Err(format!("unknown derived node model: {s}")),
+            _ => Err(format!("unknown automaton model: {s}")),
         }
     }
 }
 
-/// The mode in which a node is currently processing events.
+/// The mode in which a runtime module is currently processing events.
 ///
-/// Provided via trigger context so node logic can distinguish live arrival
+/// Provided via trigger context so module logic can distinguish live arrival
 /// from historical scan, replay recomputation, etc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1921,9 +1921,9 @@ impl std::str::FromStr for ProcessingMode {
     }
 }
 
-/// What caused a derived node to be triggered.
+/// What caused a automaton to be triggered.
 ///
-/// Provided in the trigger context so nodes can distinguish between
+/// Provided in the trigger context so modules can distinguish between
 /// new evidence, late backfill, scope invalidation, etc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1965,7 +1965,7 @@ impl std::str::FromStr for TriggerKind {
 
 /// What happened to a persisted fact that triggered scope invalidation.
 ///
-/// Carried by `DerivedScopeInvalidation` so derived nodes know whether
+/// Carried by `DerivedScopeInvalidation` so automatons know whether
 /// to recompute, archive their outputs, or both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -2002,13 +2002,8 @@ impl std::str::FromStr for InvalidationAction {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Coordination and Node Types
+// Coordination and RuntimeModule Types
 // ─────────────────────────────────────────────────────────────
-
-define_string_type!(
-    #[doc = "A unique identifier for a node instance"]
-    NodeId
-);
 
 define_string_type!(
     #[doc = "A unique identifier for a distributed instance (used in leader election)"]
@@ -2030,27 +2025,27 @@ define_string_type!(
     UserId
 );
 
-/// State of a processing node
+/// State of a processing runtime module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
-pub enum NodeState {
-    /// Node is actively processing events
+pub enum ModuleState {
+    /// RuntimeModule is actively processing events
     Running,
-    /// Node is gracefully stopping (finishing current work)
+    /// RuntimeModule is gracefully stopping (finishing current work)
     Draining,
-    /// Node is paused and not processing
+    /// RuntimeModule is paused and not processing
     Paused,
-    /// Node has encountered a fatal error
+    /// RuntimeModule has encountered a fatal error
     Failed,
-    /// Node has stopped after completing its run
+    /// RuntimeModule has stopped after completing its run
     Stopped,
-    /// Node state is unknown
+    /// RuntimeModule state is unknown
     #[default]
     Unknown,
 }
 
-impl std::fmt::Display for NodeState {
+impl std::fmt::Display for ModuleState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Running => write!(f, "running"),
@@ -2063,7 +2058,7 @@ impl std::fmt::Display for NodeState {
     }
 }
 
-impl std::str::FromStr for NodeState {
+impl std::str::FromStr for ModuleState {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -2074,7 +2069,7 @@ impl std::str::FromStr for NodeState {
             "failed" => Ok(Self::Failed),
             "stopped" => Ok(Self::Stopped),
             "unknown" => Ok(Self::Unknown),
-            _ => Err(format!("unknown node state: {s}")),
+            _ => Err(format!("unknown module state: {s}")),
         }
     }
 }
@@ -2384,7 +2379,7 @@ impl std::str::FromStr for HealthStatus {
     }
 }
 
-/// Type of node in the system
+/// Type of runtime module in the system.
 ///
 /// `Display` rendering maps to `core.manifests.manifest_type`. The
 /// `#[derive(DbCheck)]` declaration below is the source of truth for the
@@ -2409,34 +2404,34 @@ impl std::str::FromStr for HealthStatus {
     column = "manifest_type",
     version = 1
 )]
-pub enum NodeType {
-    /// Ingestor node (captures events from external sources)
-    Ingestor,
-    /// Automaton node (processes events and generates derived data)
+pub enum ModuleKind {
+    /// Source module (captures events from external systems or files)
+    Source,
+    /// Automaton module (processes events and generates derived data)
     Automaton,
-    /// Service node (provides API endpoints)
+    /// Service module (provides APIs or internal daemon services)
     Service,
 }
 
-impl std::fmt::Display for NodeType {
+impl std::fmt::Display for ModuleKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Ingestor => write!(f, "ingestor"),
+            Self::Source => write!(f, "source"),
             Self::Automaton => write!(f, "automaton"),
             Self::Service => write!(f, "service"),
         }
     }
 }
 
-impl std::str::FromStr for NodeType {
+impl std::str::FromStr for ModuleKind {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "ingestor" => Ok(Self::Ingestor),
+            "source" => Ok(Self::Source),
             "automaton" => Ok(Self::Automaton),
             "service" => Ok(Self::Service),
-            _ => Err(format!("unknown node type: {s}")),
+            _ => Err(format!("unknown runtime module kind: {s}")),
         }
     }
 }
@@ -2683,11 +2678,11 @@ impl From<String> for RecordedPath {
 #[cfg(feature = "sqlx")]
 mod sqlx_impls {
     use super::{
-        AcquisitionJobStatus, AcquisitionMode, BlobVerificationStatus, BranchName, CommandText,
-        CommitHash, ConsumerGroup, ConsumerName, ContentKey, DataTier, DerivedNodeModel,
-        EntityTypeName, EventSource, EventType, GlobPattern, HealthStatus, HostName, InstanceId,
-        InvalidationAction, IpAddress, JobId, MaterialStatus, NatsSubject, NodeId, NodeName,
-        NodeState, NodeType, OperationRunStatus, OperationStatus, ProcessingMode, RecordedPath,
+        AcquisitionJobStatus, AcquisitionMode, AutomatonModel, BlobVerificationStatus, BranchName,
+        CommandText, CommitHash, ConsumerGroup, ConsumerName, ContentKey, DataTier, EntityTypeName,
+        EventSource, EventType, GlobPattern, HealthStatus, HostName, InstanceId,
+        InvalidationAction, IpAddress, JobId, MaterialStatus, ModuleKind, ModuleName, ModuleState,
+        NatsSubject, OperationRunStatus, OperationStatus, ProcessingMode, RecordedPath,
         RegexPattern, RelationType, RemoteName, SanitizedPath, SchemaName, SchemaVersion,
         ServiceName, ShellName, SourceIdentifier, SourceMaterialTimingInfoType,
         SyntheticTemporalPolicy, TemporalClock, TemporalPrecision, TemporalSourceType, TriggerKind,
@@ -2700,7 +2695,7 @@ mod sqlx_impls {
 
     // Register string types without validation
     impl_sqlx_for_validated_string_type!(HostName);
-    impl_sqlx_for_string_type!(NodeName);
+    impl_sqlx_for_string_type!(ModuleName);
     impl_sqlx_for_string_type!(SchemaVersion);
     impl_sqlx_for_string_type!(SchemaName);
     impl_sqlx_for_string_type!(CommandText);
@@ -2715,7 +2710,6 @@ mod sqlx_impls {
     impl_sqlx_for_string_type!(ConsumerName);
     impl_sqlx_for_string_type!(ServiceName);
     impl_sqlx_for_string_type!(JobId);
-    impl_sqlx_for_string_type!(NodeId);
     impl_sqlx_for_string_type!(InstanceId);
     impl_sqlx_for_string_type!(RelationType);
     impl_sqlx_for_string_type!(EntityTypeName);
@@ -2732,8 +2726,8 @@ mod sqlx_impls {
 
     // Register enum types (use Display for encoding, FromStr for decoding)
     impl_sqlx_for_enum_type!(OperationStatus);
-    impl_sqlx_for_enum_type!(NodeState);
-    impl_sqlx_for_enum_type!(NodeType);
+    impl_sqlx_for_enum_type!(ModuleState);
+    impl_sqlx_for_enum_type!(ModuleKind);
     impl_sqlx_for_enum_type!(DataTier);
     impl_sqlx_for_enum_type!(HealthStatus);
     impl_sqlx_for_enum_type!(BlobVerificationStatus);
@@ -2743,7 +2737,7 @@ mod sqlx_impls {
     impl_sqlx_for_enum_type!(TemporalPrecision);
     impl_sqlx_for_enum_type!(TemporalClock);
     impl_sqlx_for_enum_type!(SyntheticTemporalPolicy);
-    impl_sqlx_for_enum_type!(DerivedNodeModel);
+    impl_sqlx_for_enum_type!(AutomatonModel);
     impl_sqlx_for_enum_type!(ProcessingMode);
     impl_sqlx_for_enum_type!(TriggerKind);
     impl_sqlx_for_enum_type!(InvalidationAction);
@@ -2855,13 +2849,13 @@ pub struct EntityRelation;
 /// Service metadata for registration and discovery.
 ///
 /// This is the wire/registration metadata carried by the gateway and
-/// discovery layer. It is distinct from `sinex_node_sdk::ServiceInfo`,
+/// discovery layer. It is distinct from `sinexd::runtime::ServiceInfo`,
 /// which describes the *runtime* service (process-local, carries
 /// `runner_pack`). Named `ServiceRegistrationInfo` to avoid the
 /// collision — see issue #746 (A6).
 ///
 /// The `runner_pack` field was added per #744 (A6) to converge the
-/// vocabulary: both the SDK runtime `ServiceInfo` and this registration
+/// vocabulary: both the runtime runtime `ServiceInfo` and this registration
 /// shape now carry the runner-pack identifier.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ServiceRegistrationInfo {
@@ -2876,11 +2870,11 @@ pub struct ServiceRegistrationInfo {
     pub metadata: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// Types of services in the Sinex ecosystem
+/// Types of services in the Sinex ecosystem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceKind {
-    Ingestor,
+    Source,
     Automaton,
     Gateway,
     Collector,
@@ -2889,7 +2883,7 @@ pub enum ServiceKind {
 impl std::fmt::Display for ServiceKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Ingestor => write!(f, "ingestor"),
+            Self::Source => write!(f, "source"),
             Self::Automaton => write!(f, "automaton"),
             Self::Gateway => write!(f, "gateway"),
             Self::Collector => write!(f, "collector"),

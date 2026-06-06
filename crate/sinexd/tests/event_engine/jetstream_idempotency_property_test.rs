@@ -59,7 +59,7 @@ async fn start_consumer(
 ) -> color_eyre::Result<(
     jetstream::Context,
     JetStreamTopology,
-    tokio::task::JoinHandle<sinexd::event_engine::IngestdResult<()>>,
+    tokio::task::JoinHandle<sinexd::event_engine::EventEngineResult<()>>,
 )> {
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
@@ -83,7 +83,7 @@ async fn start_consumer(
     let topology = JetStreamTopology::new(
         env,
         base_stream.clone(),
-        ctx.pipeline_namespace().consumer_name("ingestd"),
+        ctx.pipeline_namespace().consumer_name("event_engine"),
         Some(&namespace),
     );
     let consumer = JetStreamConsumer::with_ack_wait(

@@ -1,18 +1,18 @@
 //! Prelude module for convenient imports
 //!
 //! This module re-exports the most commonly used types and traits from the
-//! sinex-ingestd crate for more ergonomic imports:
+//! sinexd crate for more ergonomic imports:
 //!
 //! ```rust
-//! use sinex_ingestd::prelude::*;
+//! use sinexd::event_engine::prelude::*;
 //!
 //! // Instead of:
-//! // use sinex_ingestd::{IngestService, IngestdConfig, EventValidator};
-//! // use sinex_ingestd::{ValidationResult, SchemaInfo, SchemaSyncResult};
+//! // use sinexd::event_engine::{IngestService, EventEngineConfig, EventValidator};
+//! // use sinexd::event_engine::{ValidationResult, SchemaInfo, SchemaSyncResult};
 //! ```
 
 // Core service
-pub use crate::event_engine::{IngestService, IngestdConfig};
+pub use crate::event_engine::{EventEngineConfig, IngestService};
 
 // Validation
 pub use crate::event_engine::{IngestEventValidator, ValidationResult};
@@ -22,4 +22,4 @@ pub use sinex_db::validation::SchemaInfo;
 pub use crate::event_engine::SchemaSyncResult;
 
 // Error handling
-pub use crate::event_engine::{IngestdResult, SinexError};
+pub use crate::event_engine::{EventEngineResult, SinexError};

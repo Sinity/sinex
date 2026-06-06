@@ -1,9 +1,9 @@
 use sinex_db::{DbPoolExt, SourceMaterialRecord};
-use sinexd::api::handlers::{handle_health_effect_record, handle_health_intake_record};
-use sinexd::api::rpc_server::RpcAuthContext;
 use sinex_primitives::events::payloads::{HealthQuantity, HealthTimingQuality};
 use sinex_primitives::rpc::health::{HealthEffectRecordRequest, HealthIntakeRecordRequest};
 use sinex_primitives::{Id, Timestamp};
+use sinexd::api::handlers::{handle_health_effect_record, handle_health_intake_record};
+use sinexd::api::rpc_server::RpcAuthContext;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]

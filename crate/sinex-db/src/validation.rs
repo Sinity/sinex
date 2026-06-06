@@ -1,4 +1,4 @@
-//! Event validation utilities shared by ingestd and the sinex-db test suites.
+//! Event validation utilities shared by event_engine and the sinex-db test suites.
 //!
 //! The real-time ingestion path relies on the same validator that powers the
 //! integration and adversarial tests, ensuring that schema enforcement,
@@ -127,7 +127,7 @@ impl From<ValidationError> for sinex_primitives::error::SinexError {
         }
     }
 }
-/// Outcome of schema validation used by ingestd for streaming pipelines.
+/// Outcome of schema validation used by event_engine for streaming pipelines.
 #[derive(Debug, Clone)]
 pub enum SchemaValidationOutcome {
     /// Payload passed validation; carries the schema UUID that matched.
@@ -351,7 +351,7 @@ impl EventValidator {
             ts_orig: Some(Timestamp::now()),
             ts_quality: None,
             host: HostName::from_static("validator"),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
             anchor_payload_hash: None,
@@ -361,7 +361,7 @@ impl EventValidator {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
         };
         self.validate(&event)
     }

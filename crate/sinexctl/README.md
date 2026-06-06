@@ -1,44 +1,43 @@
 # sinexctl
 
-`sinexctl` is the Rust CLI for operating Sinex through `sinex-gateway`.
+`sinexctl` is the Rust CLI for operating Sinex through the `sinexd` API.
 
 ## Quick Start
 
 ```bash
-# Check gateway reachability
-sinexctl gateway ping --token "$SINEX_RPC_TOKEN"
+# Check API reachability
+sinexctl gateway ping --token "$SINEX_API_TOKEN"
 
 # Query recent events
-sinexctl query -s 1h --token "$SINEX_RPC_TOKEN"
+sinexctl query -s 1h --token "$SINEX_API_TOKEN"
 
-# List nodes and replay operations
-sinexctl node list --token "$SINEX_RPC_TOKEN"
-sinexctl replay list --token "$SINEX_RPC_TOKEN"
+# List runtime modules and replay operations
+sinexctl runtime list --token "$SINEX_API_TOKEN"
+sinexctl replay list --token "$SINEX_API_TOKEN"
 
-# Inspect derived-node/automata runtime health and checkpoint position
-sinexctl automata --token "$SINEX_RPC_TOKEN"
+# Inspect automata runtime health and checkpoint position
+sinexctl automata --token "$SINEX_API_TOKEN"
 
 # Run runtime evidence checks, including passive derived-signal checks, managed
 # document-scan smoke, collector-surface evidence, and historical-backfill evidence
-sinexctl verify --document-smoke --source-evidence --historical-evidence --token "$SINEX_RPC_TOKEN"
+sinexctl verify --document-smoke --source-evidence --historical-evidence --token "$SINEX_API_TOKEN"
 
 # Inspect DLQ state
-sinexctl dlq list --token "$SINEX_RPC_TOKEN"
+sinexctl dlq list --token "$SINEX_API_TOKEN"
 ```
 
 ## Command Groups
 
-- `gateway`: connectivity/version checks
+- `gateway`: API connectivity/version checks
 - `core`: system health
 - `query`: event search and filtering
 - `verify`: bounded runtime evidence checks for pipeline activity, gateway reachability, passive derived outputs, managed document-scan smoke, enabled long-running collector surfaces, locally declared deployment surfaces, and historical backfill
-- `node`: list/status/drain/resume/horizon
-- `automata`: derived-node runtime health, checkpoints, replay/output recency, and SDK telemetry
+- `runtime`: list/status/drain/resume/horizon
+- `automata`: automaton runtime health, checkpoints, replay/output recency, and SDK telemetry
 - `replay`: plan/submit/watch/list
 - `dlq`: list/peek/requeue/purge
 - `ops`, `audit`: operation lifecycle and audit trail
 - `lifecycle`: archive/restore/tombstone workflows
-- `gitops`: schema source management
 - `status`, `recent`, `errors`, `watch`, `tui`: operator shortcuts
 - `demo`: deterministic dev data seeding
 - `config`, `completions`: local CLI management
@@ -58,12 +57,12 @@ Global flags (available on most commands):
 
 Environment variables (directly supported by CLI flags/token loader):
 
-- `SINEX_RPC_URL`
-- `SINEX_RPC_TOKEN`
+- `SINEX_API_URL`
+- `SINEX_API_TOKEN`
 - `SINEX_RUNTIME_TARGET_CONFIG`
 
 When `--runtime-target` or `SINEX_RUNTIME_TARGET_CONFIG` is set, descriptor
-values populate the gateway URL, token file, and TLS material before explicit
+values populate the API URL, token file, and TLS material before explicit
 CLI flags are applied. `sinexctl status` prints the loaded target so live
 runtime health is tied to the descriptor that supplied the connection settings.
 
@@ -95,4 +94,4 @@ The file stores local preferences only:
 - `aliases`
 - `theme`
 
-Gateway URL, auth token, TLS paths, and timeouts come from CLI flags or env vars.
+API URL, auth token, TLS paths, and timeouts come from CLI flags or env vars.

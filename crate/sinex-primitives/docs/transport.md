@@ -12,11 +12,11 @@ Closes: #326, #327, #338, #693.
 
 | Class | Use | Subject pattern | QoS | On local failure | Drain on SIGTERM |
 |---|---|---|---|---|---|
-| `Critical` | Provenance-bearing raw event payloads from ingestors | `{env}.sinex.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | local recovery spool | wait for in-flight ACKs |
+| `Critical` | Provenance-bearing raw event payloads from source contracts | `{env}.sinex.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | local recovery spool | wait for in-flight ACKs |
 | `Derived` | Derived events from automata | `{env}.sinex.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | processing-failure stream | wait for ACKs + save checkpoint |
 | `SourceMaterial` | Ordered material begin/slice/end frames | `{env}.source_material.frames.*` | JetStream, ordered stream, ACK required | material acquisition fails before event publish | wait for ACKs before anchor use |
-| `Confirmation` | Persistence ACK signals from ingestd | `{env}.events.confirmations.{event_id}` | JetStream, best-effort | retry queue → durability-gap warn | best-effort flush |
-| `Invalidation` | Scope fan-out to derived nodes | `{env}.sinex.derived.invalidation` | JetStream, durable consumers | error propagated to caller | no special drain (JetStream holds) |
+| `Confirmation` | Persistence ACK signals from the event engine | `{env}.events.confirmations.{event_id}` | JetStream, best-effort | retry queue -> durability-gap warn | best-effort flush |
+| `Invalidation` | Scope fan-out to automatons | `{env}.sinex.derived.invalidation` | JetStream, durable consumers | error propagated to caller | no special drain (JetStream holds) |
 | `Control` | Lifecycle and coordination traffic | `{env}.sinex.control.>` / request-reply | Core NATS, request-reply + timeout | error returned (`SinexError::network`) | drop pending |
 | `Telemetry` | Self-observation metrics and health | `{env}.sinex.events.raw.sinex.*` | JetStream, semaphore 16 | drop with warn log | best-effort flush |
 
@@ -39,7 +39,7 @@ as `Sinex-Transport-Class`.
 | `Telemetry` | `telemetry` |
 
 `Critical` and `Derived` share the `raw_event` wire class because they share
-the same subject plane and storage path through ingestd. They are
+the same subject plane and storage path through the event engine. They are
 distinguishable by the `Sinex-Transport-Class` header and by the
 `source_event_ids` / `source_material_id` provenance XOR.
 
@@ -53,21 +53,21 @@ call in the source.
 
 | File | Method | Class |
 |---|---|---|
-| `crate/lib/sinex-node-sdk/src/nats_publisher.rs` | `NatsPublisher::publish` | `Critical` |
-| `crate/lib/sinex-node-sdk/src/nats_publisher.rs` | `NatsPublisher::publish_telemetry` | `Telemetry` |
-| `crate/lib/sinex-node-sdk/src/nats_publisher.rs` | `NatsPublisher::publish_to_raw_ingest_dlq` | `Critical` (DLQ routing of raw events) |
-| `crate/lib/sinex-node-sdk/src/nats_publisher.rs` | `NatsPublisher::publish_processing_failure` | `Derived` (failure envelope) |
-| `crate/lib/sinex-node-sdk/src/acquisition_manager.rs` | material begin/slice/end publishers | `SourceMaterial` |
-| `crate/lib/sinex-node-sdk/src/dlq_retry.rs` | raw-ingest DLQ retry re-publish | `Critical` |
-| `crate/lib/sinex-node-sdk/src/coordination.rs` | `send_handoff_ready` / `send_handoff_request` / `publish_failure_signal` | `Control` |
-| `crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs` | scan ack / scan progress / node status | `Control` |
-| `crate/core/sinex-ingestd/src/jetstream_consumer.rs` | `publish_confirmation` | `Confirmation` |
-| `crate/core/sinex-ingestd/src/jetstream_consumer.rs` | DLQ re-publish (`publish_dlq_entry`) | `Critical` |
-| `crate/core/sinex-ingestd/src/material_assembler/finalize.rs` | material DLQ routing | `SourceMaterial` |
-| `crate/core/sinex-ingestd/src/service.rs` | active schema broadcast | `Control` |
-| `crate/core/sinex-gateway/src/handlers/nodes.rs` | drain/resume/horizon command publish | `Control` |
-| `crate/core/sinex-gateway/src/replay_control.rs` | replay control response | `Control` |
-| `crate/core/sinex-gateway/src/replay_control.rs` | `publish_scope_invalidations` | `Invalidation` |
+| `crate/sinexd/src/runtime/nats_publisher.rs` | `NatsPublisher::publish` | `Critical` |
+| `crate/sinexd/src/runtime/nats_publisher.rs` | `NatsPublisher::publish_telemetry` | `Telemetry` |
+| `crate/sinexd/src/runtime/nats_publisher.rs` | `NatsPublisher::publish_to_raw_ingest_dlq` | `Critical` (DLQ routing of raw events) |
+| `crate/sinexd/src/runtime/nats_publisher.rs` | `NatsPublisher::publish_processing_failure` | `Derived` (failure envelope) |
+| `crate/sinexd/src/runtime/acquisition_manager.rs` | material begin/slice/end publishers | `SourceMaterial` |
+| `crate/sinexd/src/runtime/dlq_retry.rs` | raw-ingest DLQ retry re-publish | `Critical` |
+| `crate/sinexd/src/runtime/coordination.rs` | `send_handoff_ready` / `send_handoff_request` / `publish_failure_signal` | `Control` |
+| `crate/sinexd/src/runtime/stream/mod.rs` | scan ack / scan progress / module status | `Control` |
+| `crate/sinexd/src/event_engine/jetstream_consumer.rs` | `publish_confirmation` | `Confirmation` |
+| `crate/sinexd/src/event_engine/jetstream_consumer.rs` | DLQ re-publish (`publish_dlq_entry`) | `Critical` |
+| `crate/sinexd/src/event_engine/material_assembler/finalize.rs` | material DLQ routing | `SourceMaterial` |
+| `crate/sinexd/src/event_engine/service.rs` | active schema broadcast | `Control` |
+| `crate/sinexd/src/api/handlers/modules.rs` | drain/resume/horizon command publish | `Control` |
+| `crate/sinexd/src/api/replay_control/` | replay control response | `Control` |
+| `crate/sinexd/src/api/replay_control/` | `publish_scope_invalidations` | `Invalidation` |
 
 ---
 
@@ -78,48 +78,49 @@ confusion; the boundaries below are authoritative.
 
 ### Raw-ingest DLQ (`events.dlq.*`)
 
-- **What goes here**: raw event batches from ingestors that ingestd cannot
+- **What goes here**: raw event batches from source contracts that the event engine cannot
   persist after all retries. The event bytes are still syntactically valid NATS
   messages; the failure is at the DB or schema layer.
-- **Who writes**: ingestd's `JetStreamConsumer` after exceeding retry budget.
-- **Who reads**: operator tooling (`sinexctl`, gateway CLI), human review.
+- **Who writes**: the event engine's `JetStreamConsumer` after exceeding retry budget.
+- **Who reads**: operator tooling (`sinexctl`), human review.
 - **Retry tooling**: `sinexctl dlq retry` re-submits messages into the normal
   ingest pipeline.
-- **Subject**: `{env}.events.dlq.{node}` (stream: `{BASE}_DLQ`).
+- **Subject**: `{env}.events.dlq.{component}` (stream: `{BASE}_DLQ`).
 - **Traffic class**: `NatsTrafficClass::RawIngestDlq`.
 
 ### Processing-failure stream (`events.processing_failures.*`)
 
 - **What goes here**: derived/runtime processing failures — an automaton could
-  not transform its input, a windowed node emitted an invalid output, a
+  not transform its input, a windowed automaton emitted an invalid output, a
   transducer panicked.
 - **Who writes**: `NatsPublisher::publish_processing_failure` (called from
-  derived-node adapter).
+  automaton adapter).
 - **Who reads**: operator tooling; not automatically retried (retry = re-run
   the automaton via replay).
-- **Subject**: `{env}.events.processing_failures.{node}.{event_id}` (stream:
+- **Subject**: `{env}.events.processing_failures.{component}.{event_id}` (stream:
   `{BASE}_PROCESSING_FAILURES`).
 - **Traffic class**: `NatsTrafficClass::ProcessingFailure`.
 
 ### Local recovery spool (`sinex_event_recovery_spool.jsonl`)
 
-- **What goes here**: events that a node batcher could not publish to NATS at
+- **What goes here**: events that a runtime module batcher could not publish to NATS at
   all — NATS was down, the semaphore was closed, or the connection was lost
   before the ACK arrived.
-- **Who writes**: `EventBatcher` in `sinex-node-sdk/src/event_node.rs`.
-- **Who reads**: the same node on next startup; it replays the spool into the
+- **Who writes**: event batching in the inline runtime under
+  `crate/sinexd/src/runtime/`.
+- **Who reads**: the same runtime module on next startup; it replays the spool into the
   normal publish path before beginning new captures.
 - **Subject**: none — file-local until NATS is available.
-- **Location**: `{node_work_dir}/sinex_event_recovery_spool.jsonl`.
+- **Location**: `{module_work_dir}/sinex_event_recovery_spool.jsonl`.
 - **Traffic class**: not applicable (not on NATS yet).
 
 ### Decision rule
 
 | Situation | Route |
 |---|---|
-| ingestd could not persist a raw event | Raw-ingest DLQ |
+| Event engine could not persist a raw event | Raw-ingest DLQ |
 | Automaton could not process a derived event | Processing-failure stream |
-| Node could not reach NATS to publish | Local recovery spool |
+| RuntimeModule could not reach NATS to publish | Local recovery spool |
 | Confirmation could not be published | Retry queue → durability-gap warn |
 
 ---
@@ -129,13 +130,13 @@ confusion; the boundaries below are authoritative.
 Drain = stop accepting new work, finish in-flight, save state, exit cleanly.
 The protocol per class:
 
-### `Critical` — ingestor event batches
+### `Critical` — source event batches
 
 1. Batch accumulator stops accepting new events (controlled by `shutdown_rx`).
 2. All accumulated events are flushed to NATS.
 3. Each publish awaits a JetStream ACK (bounded by `DEFAULT_PUBLISH_ACK_TIMEOUT`
    = 10 s).
-4. On ACK timeout: events go to local recovery spool; node exits with a warning.
+4. On ACK timeout: events go to local recovery spool; the module exits with a warning.
 5. On clean flush: checkpoint is saved; sd_notify sends `STOPPING=1`.
 
 ### `Derived` — automaton derived outputs
@@ -144,14 +145,14 @@ The protocol per class:
 2. In-flight event processing completes.
 3. Derived events are published and ACKed.
 4. Checkpoint is saved (NATS KV + optional local backup).
-5. Node exits cleanly.
+5. RuntimeModule exits cleanly.
 
 On crash (no SIGTERM): JetStream NAK timeout causes redelivery; automaton
 deduplicates via equivalence key or scope reconciliation.
 
-### `Confirmation` — ingestd ACK signals
+### `Confirmation` — event-engine ACK signals
 
-1. ingestd flushes the confirmation queue concurrently with the batch ACK.
+1. The event engine flushes the confirmation queue concurrently with the batch ACK.
 2. Remaining confirmation failures go to the durable retry consumer
    (`events.confirmation_retries.*`).
 3. If the retry stream is also unreachable: durability-gap counter and warn log.
@@ -160,7 +161,7 @@ deduplicates via equivalence key or scope reconciliation.
 ### `Invalidation` — scope fan-out
 
 No special drain needed. JetStream holds undelivered invalidations for all
-durable consumers. Derived nodes that restart will receive queued
+durable consumers. Automata that restart will receive queued
 invalidations and recompute affected scopes.
 
 ### `Control` — coordination traffic
@@ -170,7 +171,7 @@ Drop pending. Control messages are either:
 - Fire-and-forget heartbeat / ready-signals: loss is non-fatal; the next
   heartbeat interval will resend.
 
-Nodes do not need to flush control messages on SIGTERM.
+Runtime modules do not need to flush control messages on SIGTERM.
 
 ### `Telemetry` — self-observation
 
@@ -198,7 +199,7 @@ A `TimeoutStopSec = 30s` is sufficient for all current components.
 
 ## Test shutdown behavior
 
-In the sandbox (`xtask::sandbox`), nodes receive a controlled shutdown via
+In the sandbox (`xtask::sandbox`), modules receive a controlled shutdown via
 `shutdown_rx`. The drain sequence is identical to SIGTERM. Tests that assert on
 event counts must call `ctx.timing().wait_for_event_count(N)` before triggering
 shutdown; otherwise in-flight events may not yet be confirmed.

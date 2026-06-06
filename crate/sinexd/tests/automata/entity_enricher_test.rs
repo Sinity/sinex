@@ -12,8 +12,8 @@ use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::entity_enricher::{EnricherConfig, EnricherState, EntityEnricher};
-use sinexd::node_sdk::ScopeReconciler;
-use sinexd::node_sdk::derived_node::AutomatonContext;
+use sinexd::runtime::ScopeReconciler;
+use sinexd::runtime::automaton::AutomatonContext;
 use xtask::sandbox::prelude::*;
 
 fn make_context(ts: Timestamp) -> AutomatonContext {

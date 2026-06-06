@@ -1,12 +1,13 @@
-# sinex-ingestd Documentation
+# sinexd Event Engine Documentation
 
 ## Overview
 
-`sinex-ingestd` is the ingestion daemon that receives events from nodes, validates them, writes them to `PostgreSQL`, and relays them to streaming sinks.
+`sinexd::event_engine` receives events from source contracts and automata, validates
+them, writes them to PostgreSQL, and relays confirmations to streaming sinks.
 
 ## Key Responsibilities
 
-- Consume `JetStream` events/materials from nodes and enforce schema validation
+- Consume `JetStream` events/materials from sources and enforce schema validation
 - Persist events and source material through the repositories in `sinex-db`
 - Publish derived data to `JetStream` so downstream services receive updates
 - Coordinate schema migrations by integrating with `sinex-schema`
@@ -22,10 +23,9 @@
 
 - `config.md` – Configuration options and defaults
 - `validator.md` – Event schema validation rules
-- `environment.md` – Ingestd-specific environment variables
+- `environment.md` – event-engine-specific environment variables
 - `transport_security.md` – NATS TLS and authentication requirements
 - `schema_sync.md` – Schema synchronization details
-- `schema_gitops.md` – Repo-driven schema sync and source management
 
 ## Reference
 

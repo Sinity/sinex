@@ -4,14 +4,14 @@
 //! content-store reconciliation, blob registration, source-material finalization,
 //! and precise temporal-ledger coverage.
 
-use crate::node_sdk::content_store::ContentStoreKey;
+use crate::runtime::content_store::ContentStoreKey;
 use serde_json::json;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_db::{models::blob::Blob, repositories::DbPoolExt};
 use sinex_primitives::{Id, JsonValue, MaterialStatus, Uuid};
 use tracing::{error, info, warn};
 
-use crate::event_engine::{IngestdResult, SinexError};
+use crate::event_engine::{EventEngineResult, SinexError};
 
 use super::{FinalizationState, MaterialAssembler};
 
@@ -291,7 +291,7 @@ impl<'a> FinalizationTransaction<'a> {
         state: &FinalizationState,
         content_key: &ContentStoreKey,
         content_hash: &str,
-    ) -> IngestdResult<Id<Blob>> {
+    ) -> EventEngineResult<Id<Blob>> {
         let repo = self.assembler.pool.blobs();
 
         let metadata = json!({
@@ -316,7 +316,7 @@ impl<'a> FinalizationTransaction<'a> {
             .map_err(|e| {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.material_finalization_failures_total",
+                    metric = "event_engine.material_finalization_failures_total",
                     material_id = %state.material_id,
                     backend = %content_key.storage_backend(),
                     digest = %content_key.digest,
@@ -339,7 +339,7 @@ impl<'a> FinalizationTransaction<'a> {
         blob_id: Id<Blob>,
         total_size_bytes: i64,
         metadata: JsonValue,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         let repo = self.assembler.pool.source_materials();
         let id: Id<SourceMaterialRecord> = Id::from_uuid(state.material_id);
 
@@ -415,7 +415,7 @@ impl<'a> FinalizationTransaction<'a> {
         final_state: &FinalizationState,
         content_key: &ContentStoreKey,
         final_status: MaterialStatus,
-    ) -> IngestdResult<Option<FinalizedHandle>> {
+    ) -> EventEngineResult<Option<FinalizedHandle>> {
         let material = self
             .assembler
             .pool
@@ -486,7 +486,7 @@ impl<'a> FinalizationTransaction<'a> {
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         final_state: &FinalizationState,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         let repo = self.assembler.pool.source_materials();
         let material_id = Id::from_uuid(final_state.material_id);
 
@@ -572,7 +572,7 @@ fn rollback_finalization_failure(
 
 #[cfg(test)]
 mod tests {
-    use crate::node_sdk::content_store::ContentStoreKey;
+    use crate::runtime::content_store::ContentStoreKey;
     use sinex_primitives::MaterialStatus;
     use sinex_primitives::Uuid;
     use xtask::sandbox::prelude::*;

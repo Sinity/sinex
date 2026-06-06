@@ -1,6 +1,6 @@
-# Ingestd Patterns
+# EventEngine Patterns
 
-> Maintained ingestd-side pattern note for event sourcing, idempotency, and backpressure.
+> Maintained event-engine-side pattern note for event sourcing, idempotency, and backpressure.
 
 ## Event Sourcing Architecture
 
@@ -14,15 +14,15 @@
 
 ### 2. Provisional/Confirmed Model (Saga Pattern)
 ```
-Node Capture
+RuntimeModule Capture
     ↓ (stage material, emit provisional)
 NATS JetStream events.raw.{source}.{type}
     ↓ (Nats-Msg-Id for idempotency)
-Ingestd JetStreamConsumer
+EventEngine JetStreamConsumer
     ├─→ Validate Event
     ├─→ Persist to Postgres (TimescaleDB)
     ├─→ Publish Confirmation → events.confirmations.{event_id}
-    └─→ On Error → DLQ events.dlq.ingestd
+    └─→ On Error → DLQ events.dlq.event_engine
          ↓ (confirmed events only)
 Automata (search, analytics, health)
 ```
@@ -38,7 +38,7 @@ Three-layer defense achieving exactly-once semantics:
 
 ### Layer 1: NATS Message Deduplication
 ```rust
-let msg_id = format!("{}:{}", node_id, event.id);
+let msg_id = format!("{}:{}", producer_id, event.id);
 headers.insert("Nats-Msg-Id", msg_id);
 ```
 

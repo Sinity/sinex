@@ -58,7 +58,7 @@ pub use source_materials::{
     relation_types as source_material_relation_types, timing_info_types,
 };
 pub use state::{
-    ManifestRow, NodeRun, Operation, OperationRecord, OperationStatistics, StateRepository,
+    ManifestRow, ModuleRun, Operation, OperationRecord, OperationStatistics, StateRepository,
     SystemHealthReport,
 };
 
@@ -69,7 +69,7 @@ use sqlx::PgPool;
 /// This trait allows you to access repositories directly from a pool:
 /// ```rust
 /// let event = pool.events().get_by_id(event_id).await?;
-/// // let checkpoint = pool.checkpoints().get_latest(node_name).await?; // Removed
+/// // let checkpoint = pool.checkpoints().get_latest(module_name).await?; // Removed
 /// let schema = pool.schemas().get_active_schema(source, event_type).await?;
 /// ```
 pub trait DbPoolExt {

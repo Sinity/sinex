@@ -1,7 +1,7 @@
 //! Integration bridge event payloads.
 //!
 //! Covers metadata-only events emitted by external producer daemons that bridge
-//! external data sources into sinex via NATS without depending on the Rust SDK.
+//! external data sources into sinex via NATS without depending on the Rust runtime.
 //!
 //! # Polylogue bridge (#1122)
 //!

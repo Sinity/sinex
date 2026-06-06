@@ -1,18 +1,18 @@
 //! Terminal history parser privacy-boundary regression tests.
 //!
-//! Source-unit parsers preserve interpreted payload fields. DB-backed
+//! Source parsers preserve interpreted payload fields. DB-backed
 //! admission policy owns redaction, hashing, encryption, and suppression.
 
 use camino::Utf8PathBuf;
 use sinex_primitives::{
     Uuid,
     ids::Id,
-    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
+    parser::{MaterialAnchor, ParserContext, SourceId, SourceRecord},
     privacy::ProcessingContext,
     temporal::Timestamp,
 };
-use sinexd::node_sdk::parser::MaterialParser;
-use sinexd::sources::source_units::terminal::{
+use sinexd::runtime::parser::MaterialParser;
+use sinexd::sources::source_contracts::terminal::{
     atuin_history::AtuinHistoryParser, bash_history::BashHistoryParser,
     fish_history::FishHistoryParser, text_history::TextHistoryParser,
     zsh_history::ZshHistoryParser,
@@ -25,9 +25,9 @@ const SECRET_COMMAND: &str = concat!(
 );
 const SECRET_CWD: &str = "/home/sinity/project/top-secret-client";
 
-fn test_ctx(source_unit_id: &'static str) -> ParserContext {
+fn test_ctx(source_id: &'static str) -> ParserContext {
     ParserContext {
-        source_unit_id: SourceUnitId::from_static(source_unit_id),
+        source_id: SourceId::from_static(source_id),
         source_material_id: Id::new(),
         record_anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
         operation_id: Uuid::new_v4(),
@@ -51,9 +51,9 @@ fn line_record(line: &str, logical_path: &str) -> SourceRecord {
     }
 }
 
-fn json_record(value: serde_json::Value, logical_path: &str) -> SourceRecord {
-    let bytes = serde_json::to_vec(&value).expect("test JSON serializes");
-    SourceRecord {
+fn json_record(value: serde_json::Value, logical_path: &str) -> serde_json::Result<SourceRecord> {
+    let bytes = serde_json::to_vec(&value)?;
+    Ok(SourceRecord {
         material_id: Id::new(),
         anchor: MaterialAnchor::ByteRange {
             start: 0,
@@ -63,7 +63,7 @@ fn json_record(value: serde_json::Value, logical_path: &str) -> SourceRecord {
         logical_path: Some(Utf8PathBuf::from(logical_path)),
         source_ts_hint: None,
         metadata: serde_json::Value::Null,
-    }
+    })
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -116,7 +116,7 @@ async fn text_history_command_is_not_parser_redacted() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fish_history_command_is_not_parser_redacted() {
+async fn fish_history_command_is_not_parser_redacted() -> Result<(), Box<dyn std::error::Error>> {
     let mut parser = FishHistoryParser;
     let record = json_record(
         serde_json::json!({
@@ -125,7 +125,7 @@ async fn fish_history_command_is_not_parser_redacted() {
             "when": 1700000000
         }),
         ".local/share/fish/fish_history",
-    );
+    )?;
     let intents = parser
         .parse_record(record, &test_ctx("terminal.fish-history"))
         .await
@@ -134,10 +134,12 @@ async fn fish_history_command_is_not_parser_redacted() {
     assert_eq!(intents.len(), 1);
     assert_eq!(intents[0].payload["command"], SECRET_COMMAND);
     assert_eq!(intents[0].privacy_context, ProcessingContext::Command);
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn atuin_history_command_and_cwd_are_not_parser_redacted() {
+async fn atuin_history_command_and_cwd_are_not_parser_redacted()
+-> Result<(), Box<dyn std::error::Error>> {
     let mut parser = AtuinHistoryParser;
     let record = json_record(
         serde_json::json!({
@@ -151,7 +153,7 @@ async fn atuin_history_command_and_cwd_are_not_parser_redacted() {
             "command": SECRET_COMMAND
         }),
         ".local/share/atuin/history.db",
-    );
+    )?;
     let intents = parser
         .parse_record(record, &test_ctx("terminal.atuin-history"))
         .await
@@ -161,4 +163,5 @@ async fn atuin_history_command_and_cwd_are_not_parser_redacted() {
     assert_eq!(intents[0].payload["command_string"], SECRET_COMMAND);
     assert_eq!(intents[0].payload["cwd"], SECRET_CWD);
     assert_eq!(intents[0].privacy_context, ProcessingContext::Command);
+    Ok(())
 }

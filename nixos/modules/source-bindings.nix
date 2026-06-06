@@ -44,7 +44,7 @@ let
   # JSON representation of a single source binding for export.
   bindingToJson = name: binding: {
     inherit name;
-    sourceUnitId = binding.sourceUnitId;
+    sourceId = binding.sourceId;
     sourceFamily = binding.sourceFamily;
     bindingMode = binding.bindingMode;
     inputShapeKind = binding.inputShapeKind;
@@ -92,10 +92,10 @@ let
         default = null;
         description = "Parser identifier (null for stage-only bindings).";
       };
-      sourceUnitId = mkOption {
+      sourceId = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "Stable source-unit identity.";
+        description = "Stable source identity.";
       };
       privacyPolicyId = mkOption {
         type = privacyPolicyType;
@@ -126,10 +126,11 @@ in
 
           nix eval --raw .#nixosConfigurations.YOUR_HOSTNAME.config.services.sinex.sources.exportedJson
 
-        The resulting path can be passed to `xtask verify source-worker
-        --bindings-json <path>` for drift detection against Rust descriptors.
+        The resulting path is consumed by the sinexd source-binding loader and
+        can be inspected when debugging host activation. It is not a generated
+        Rust descriptor catalog or a verifier input.
 
-        Shape: { bindings: [{ name, sourceUnitId, sourceFamily, bindingMode,
+        Shape: { bindings: [{ name, sourceId, sourceFamily, bindingMode,
           inputShapeKind, privacyPolicyId, parserId, enabled }] }
       '';
     };
@@ -144,7 +145,7 @@ in
           resolverPreset = "atuin.default";
           inputShapeKind = "SqliteQuery";
           parserId = "shell.atuin";
-          sourceUnitId = "terminal.atuin-history";
+          sourceId = "terminal.atuin-history";
           privacyPolicyId = "allowPlaintext";
         };
       };
@@ -159,7 +160,7 @@ in
 
           The Polylogue daemon is an external producer: it publishes
           metadata-only conversation-indexed events directly to NATS JetStream
-          without depending on the sinex Rust SDK. ingestd accepts these events
+          without depending on the sinex Rust SDK. event_engine accepts these events
           on the standard {env}.sinex.events.raw.> stream.
 
           Setting this to true signals that the Polylogue daemon is expected to
@@ -167,7 +168,7 @@ in
           systemd service — the Polylogue publisher is the unblocker (see
           https://github.com/sinity/polylogue for the companion PR).
 
-          The sinex-side source unit descriptor (integration.polylogue) and
+          The sinex-side source contract (integration.polylogue) and
           typed payload schema (PolylogueConversationIndexedPayload) land
           unconditionally; only the Polylogue daemon's runtime activation is
           gated here.

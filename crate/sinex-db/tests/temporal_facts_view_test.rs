@@ -8,7 +8,7 @@ use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::source_materials::TemporalLedgerEntry;
 use sinex_db::{Event, Provenance};
-use sinex_primitives::domain::{DerivedNodeModel, RecordedPath, SyntheticTemporalPolicy};
+use sinex_primitives::domain::{AutomatonModel, RecordedPath, SyntheticTemporalPolicy};
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_primitives::{Id, Timestamp, Uuid};
 use xtask::sandbox::prelude::*;
@@ -149,7 +149,7 @@ async fn synthetic_event_projected_inline(ctx: TestContext) -> TestResult<()> {
     derived.scope_key = Some("test-scope".to_string());
     derived.equivalence_key = Some("test-equiv".to_string());
     derived.created_by_operation_id = Some(operation_id);
-    derived.node_model = Some(DerivedNodeModel::Windowed);
+    derived.automaton_model = Some(AutomatonModel::Windowed);
 
     let inserted = ctx.pool.events().insert(derived).await?;
     let event_id = inserted.id.unwrap();
@@ -167,7 +167,7 @@ async fn synthetic_event_projected_inline(ctx: TestContext) -> TestResult<()> {
             scope_key,
             equivalence_key,
             created_by_operation_id,
-            node_model
+            automaton_model
         FROM core.event_temporal_facts
         WHERE event_id = $1"#,
         event_id.as_uuid()
@@ -186,8 +186,8 @@ async fn synthetic_event_projected_inline(ctx: TestContext) -> TestResult<()> {
     assert_eq!(row.scope_key.as_deref(), Some("test-scope"));
     assert_eq!(row.equivalence_key.as_deref(), Some("test-equiv"));
     assert_eq!(row.created_by_operation_id, Some(operation_id));
-    // DerivedNodeModel uses snake_case serde in storage and query surfaces.
-    assert_eq!(row.node_model.as_deref(), Some("windowed"));
+    // AutomatonModel uses snake_case serde in storage and query surfaces.
+    assert_eq!(row.automaton_model.as_deref(), Some("windowed"));
 
     Ok(())
 }

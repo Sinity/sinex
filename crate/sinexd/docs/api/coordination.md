@@ -96,7 +96,7 @@ impl DistributedRateLimiter {
 
 ```rust
 KvConfig {
-    bucket: "sinex_gateway_rate_limits",
+    bucket: "sinex_api_rate_limits",
     max_age: Duration::from_secs(window_seconds * 2), // Auto-cleanup
     ..Default::default()
 }
@@ -141,9 +141,9 @@ let (rate_limiter, cleanup_task) = match services.nats_client() {
 
 **Environment Variables:**
 
-- `SINEX_RPC_RATE_LIMIT_ENABLED` - Enable/disable rate limiting (default: true)
-- `SINEX_RPC_RATE_LIMIT_PER_MINUTE` - Requests per minute per token (default: 6000)
-- `SINEX_RPC_RATE_LIMIT_WINDOW_SECS` - Window duration in seconds (default: 60)
+- `SINEX_API_RATE_LIMIT_ENABLED` - Enable/disable rate limiting (default: true)
+- `SINEX_API_RATE_LIMIT_PER_MINUTE` - Requests per minute per token (default: 6000)
+- `SINEX_API_RATE_LIMIT_WINDOW_SECS` - Window duration in seconds (default: 60)
 
 ## TCP Listener Binding
 
@@ -199,10 +199,10 @@ async fn restart(&mut self) -> Result<()> {
 
 **Version Comparison for Leadership:**
 
-Updated `NodeVersion::Ord` to include build metadata:
+Updated `RuntimeVersion::Ord` to include build metadata:
 
 ```rust
-impl Ord for NodeVersion {
+impl Ord for RuntimeVersion {
     fn cmp(&self, other: &Self) -> Ordering {
         // Primary: semver
         match self.version.cmp(&other.version) {
@@ -322,9 +322,9 @@ Load Balancer
 
 ```bash
 # Rate Limiting
-SINEX_RPC_RATE_LIMIT_ENABLED=true
-SINEX_RPC_RATE_LIMIT_PER_MINUTE=6000
-SINEX_RPC_RATE_LIMIT_WINDOW_SECS=60
+SINEX_API_RATE_LIMIT_ENABLED=true
+SINEX_API_RATE_LIMIT_PER_MINUTE=6000
+SINEX_API_RATE_LIMIT_WINDOW_SECS=60
 
 # TLS Binding
 SINEX_API_TCP_LISTEN=127.0.0.1:9999
@@ -345,7 +345,7 @@ SINEX_NATS_URL=nats://localhost:4222
 ## References
 
 - Hot Reload Orchestrator: `xtask/src/devtools/orchestrator.rs`
-- Distributed Rate Limiter: `crate/core/sinex-gateway/src/distributed_rate_limit.rs`
-- Connection Tracking: `crate/core/sinex-gateway/src/rpc_server.rs`
-- Version Comparison: `crate/lib/sinex-node-sdk/src/version.rs`
-- Node Coordination: `crate/lib/sinex-node-sdk/src/coordination.rs`
+- Distributed Rate Limiter: `crate/sinexd/src/api/distributed_rate_limit.rs`
+- Connection Tracking: `crate/sinexd/src/api/rpc_server.rs`
+- Version Comparison: `crate/sinexd/src/runtime/version.rs`
+- RuntimeModule Coordination: `crate/sinexd/src/runtime/coordination.rs`

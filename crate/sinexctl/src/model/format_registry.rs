@@ -119,7 +119,7 @@ const NONE: &[OutputFormat] = &[];
 /// Build the complete format-capability registry for `sinexctl`.
 ///
 /// Keys match the command path as it appears in `sinexctl --help`, using
-/// space-separated segments (e.g. `"node list"`, `"replay plan"`).
+/// space-separated segments (e.g. `"runtime list"`, `"replay plan"`).
 ///
 /// Commands that produce no user-visible output (e.g. `completions`,
 /// `tui`, `demo`) appear with an empty supported set and a note explaining
@@ -144,20 +144,29 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
-    // ── Node ─────────────────────────────────────────────────────────────────
-    m.insert("node list", FormatCapability::single_shot(TABLE_JSON_YAML));
+    // ── RuntimeModule ─────────────────────────────────────────────────────────────────
     m.insert(
-        "node status",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
-    m.insert("ingestors", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("node drain", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert(
-        "node resume",
+        "runtime list",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "node set-horizon",
+        "runtime status",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "sources status",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "runtime drain",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "runtime resume",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "runtime set-horizon",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
@@ -492,24 +501,6 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
-    // ── GitOps ───────────────────────────────────────────────────────────────
-    m.insert(
-        "git-ops list",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
-    m.insert(
-        "git-ops create",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
-    m.insert(
-        "git-ops delete",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
-    m.insert(
-        "git-ops sync",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
-
     // ── Telemetry ────────────────────────────────────────────────────────────
     m.insert(
         "telemetry window-focus",
@@ -532,7 +523,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry node-stats",
+        "telemetry source-stats",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -560,11 +551,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry ingestd-batch-stats",
+        "telemetry event-engine-batch-stats",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry ingestd-validation",
+        "telemetry event-engine-validation",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert("throughput", FormatCapability::single_shot(TABLE_JSON_YAML));
@@ -624,7 +615,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("compact dashboard; json/yaml emit full snapshot"),
     );
-    m.insert("nodes", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("modules", FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── TUI ──────────────────────────────────────────────────────────────────
     m.insert(
@@ -759,9 +750,10 @@ fn family_for_path(path: &str) -> CommandFamily {
     match root {
         "gateway" | "core" => CommandFamily::Gateway,
         "query" | "trace" | "recent" | "errors" | "watch" | "context" | "explain" | "verify"
-        | "now" | "nodes" | "status" => CommandFamily::Query,
-        "node" | "automata" | "ingestors" | "replay" | "dlq" | "ops" | "audit" | "lifecycle"
-        | "git-ops" | "privacy" | "blob" => CommandFamily::Operate,
+        | "now" | "modules" | "status" => CommandFamily::Query,
+        "automata" | "replay" | "dlq" | "ops" | "audit" | "lifecycle" | "privacy" | "blob" => {
+            CommandFamily::Operate
+        }
         "sources" => CommandFamily::Sources,
         "declare" | "instructions" | "tasks" | "curation" | "semantics" | "llm" | "documents"
         | "annotate" => CommandFamily::Domain,
@@ -797,18 +789,15 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "declare task",
         "dlq purge",
         "dlq requeue",
-        "git-ops create",
-        "git-ops delete",
-        "git-ops sync",
         "instructions hyprland-workspace",
         "lifecycle archive",
         "lifecycle restore",
         "lifecycle tombstone approve",
         "lifecycle tombstone cancel",
         "lifecycle tombstone create",
-        "node drain",
-        "node resume",
-        "node set-horizon",
+        "runtime drain",
+        "runtime resume",
+        "runtime set-horizon",
         "ops cancel",
         "ops start",
         "privacy private-mode disable",
@@ -843,7 +832,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "tasks update",
     ];
 
-    if mutating.binary_search(&path).is_ok() {
+    if mutating.contains(&path) {
         CommandEffect::Mutating
     } else {
         CommandEffect::ReadOnly
@@ -870,15 +859,12 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "declare health intake"
         | "declare task"
         | "dlq requeue"
-        | "git-ops create"
-        | "git-ops delete"
-        | "git-ops sync"
         | "instructions hyprland-workspace"
         | "lifecycle tombstone cancel"
         | "lifecycle tombstone create"
-        | "node drain"
-        | "node resume"
-        | "node set-horizon"
+        | "runtime drain"
+        | "runtime resume"
+        | "runtime set-horizon"
         | "ops cancel"
         | "ops start"
         | "privacy private-mode disable"
@@ -913,7 +899,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "gateway ping" => &[methods::SYSTEM_PING],
         "gateway version" => &[methods::SYSTEM_VERSION],
         "core health" => &[methods::SYSTEM_HEALTH],
-        "node list" | "nodes" => &[methods::COORDINATION_LIST_INSTANCES],
+        "runtime list" | "modules" => &[methods::COORDINATION_LIST_INSTANCES],
         "status" => &[
             methods::SYSTEM_VERSION,
             methods::SYSTEM_HEALTH,
@@ -931,11 +917,11 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::DLQ_LIST,
             methods::EVENTS_QUERY,
         ],
-        "node status" => &[methods::COORDINATION_INSTANCE_HEALTH],
-        "ingestors" => &[methods::INGESTORS_STATUS],
-        "node drain" => &[methods::NODES_DRAIN],
-        "node resume" => &[methods::NODES_RESUME],
-        "node set-horizon" => &[methods::NODES_SET_HORIZON],
+        "runtime status" => &[methods::COORDINATION_INSTANCE_HEALTH],
+        "sources status" => &[methods::SOURCES_STATUS],
+        "runtime drain" => &[methods::RUNTIME_DRAIN],
+        "runtime resume" => &[methods::RUNTIME_RESUME],
+        "runtime set-horizon" => &[methods::RUNTIME_SET_HORIZON],
         "automata" => &[methods::AUTOMATA_STATUS],
         "replay plan" | "replay run" => &[methods::REPLAY_CREATE_OPERATION],
         "replay preview" => &[methods::REPLAY_PREVIEW_OPERATION],
@@ -1039,24 +1025,20 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "lifecycle tombstone cancel" => &[methods::LIFECYCLE_TOMBSTONE_CANCEL],
         "lifecycle tombstone list" => &[methods::LIFECYCLE_TOMBSTONE_LIST],
         "lifecycle tombstone status" => &[methods::LIFECYCLE_TOMBSTONE_STATUS],
-        "git-ops list" => &[methods::GITOPS_LIST_SOURCES],
-        "git-ops create" => &[methods::GITOPS_CREATE_SOURCE],
-        "git-ops delete" => &[methods::GITOPS_DELETE_SOURCE],
-        "git-ops sync" => &[methods::GITOPS_TRIGGER_SYNC],
         "telemetry window-focus" => &[methods::TELEMETRY_WINDOW_FOCUS],
         "telemetry command-frequency" => &[methods::TELEMETRY_COMMAND_FREQUENCY],
         "telemetry file-activity" => &[methods::TELEMETRY_FILE_ACTIVITY],
         "telemetry recent-activity" => &[methods::TELEMETRY_RECENT_ACTIVITY],
         "telemetry system-state" => &[methods::TELEMETRY_SYSTEM_STATE],
-        "telemetry node-stats" => &[methods::TELEMETRY_NODE_STATS],
+        "telemetry source-stats" => &[methods::TELEMETRY_SOURCE_STATS],
         "telemetry stream-stats" => &[methods::TELEMETRY_STREAM_STATS],
         "telemetry gateway-stats" => &[methods::TELEMETRY_GATEWAY_STATS],
         "telemetry assembly-stats" => &[methods::TELEMETRY_ASSEMBLY_STATS],
         "telemetry metric-counters" => &[methods::TELEMETRY_METRIC_COUNTERS],
         "telemetry current-device-state" => &[methods::TELEMETRY_CURRENT_DEVICE_STATE],
         "telemetry current-health" => &[methods::TELEMETRY_CURRENT_HEALTH],
-        "telemetry ingestd-batch-stats" => &[methods::TELEMETRY_INGESTD_BATCH_STATS],
-        "telemetry ingestd-validation" => &[methods::TELEMETRY_INGESTD_VALIDATION],
+        "telemetry event-engine-batch-stats" => &[methods::TELEMETRY_EVENT_ENGINE_BATCH_STATS],
+        "telemetry event-engine-validation" => &[methods::TELEMETRY_EVENT_ENGINE_VALIDATION],
         "throughput" => &[methods::TELEMETRY_THROUGHPUT],
         "documents search" => &[methods::DOCUMENTS_SEARCH],
         "documents get" => &[methods::DOCUMENTS_GET],
@@ -1343,8 +1325,6 @@ mod tests {
         );
         assert_eq!(effect_for("replay plan"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("replay preview"), Some(CommandEffect::Mutating));
-        assert_eq!(effect_for("git-ops create"), Some(CommandEffect::Mutating));
-        assert_eq!(effect_for("git-ops sync"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("state inspect"), Some(CommandEffect::ReadOnly));
         assert_eq!(effect_for("state restore"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("state snapshot"), Some(CommandEffect::Mutating));
@@ -1550,7 +1530,7 @@ mod tests {
             "recent",
             "errors",
             "automata",
-            "node list",
+            "runtime list",
             "replay plan",
             "replay watch",
             "dlq list",

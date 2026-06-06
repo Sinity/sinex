@@ -228,6 +228,10 @@ pub struct TestCommand {
     #[arg(long)]
     pub lib: bool,
 
+    /// Cargo features to enable for the selected test packages.
+    #[arg(long = "features", value_delimiter = ',')]
+    pub cargo_features: Vec<String>,
+
     /// Print what would happen
     #[arg(long)]
     pub dry_run: bool,
@@ -638,6 +642,7 @@ impl TestCommand {
                 "excluded_packages": execution_plan.excluded_packages,
                 "test_binaries": effective_test_binaries,
                 "lib": effective_lib_target,
+                "features": normalize_packages(&self.cargo_features),
                 "filter": effective_filter,
                 "runtime_binary_requirements": runtime_binary_requirements,
                 "db_pool_size": db_pool_size,
@@ -737,15 +742,31 @@ impl TestCommand {
         if !self.test_binaries.is_empty() {
             return Ok(normalize_packages(&self.test_binaries));
         }
-        if !self.packages.is_empty() {
-            return Ok(Vec::new());
-        }
 
         let Some(filter) = filter else {
             return Ok(Vec::new());
         };
 
-        affected::infer_test_binaries_for_test_filter(filter)
+        let inferred_binary_packages =
+            affected::infer_test_binary_packages_for_test_filter(filter)?;
+        if !self.packages.is_empty() {
+            let selected_packages = normalize_packages(&self.packages);
+            if inferred_binary_packages.is_empty()
+                || inferred_binary_packages
+                    .iter()
+                    .any(|(package, _binary)| !selected_packages.contains(package))
+            {
+                return Ok(Vec::new());
+            }
+        }
+
+        let mut binaries: Vec<String> = inferred_binary_packages
+            .into_iter()
+            .map(|(_package, binary)| binary)
+            .collect();
+        binaries.sort();
+        binaries.dedup();
+        Ok(binaries)
     }
 
     fn effective_lib_target(&self, filter: Option<&str>, test_binaries: &[String]) -> Result<bool> {
@@ -841,6 +862,9 @@ impl TestCommand {
         }
         if self.all {
             args.push("--all".to_string());
+        }
+        for feature in normalize_packages(&self.cargo_features) {
+            args.push(format!("--features={feature}"));
         }
         if self.no_reuse {
             args.push("--no-reuse".to_string());
@@ -1091,6 +1115,10 @@ impl TestCommand {
         );
         push_flag(&mut args, self.no_reuse, "--no-reuse");
         push_flag(&mut args, self.lib, "--lib");
+        for feature in normalize_packages(&self.cargo_features) {
+            args.push("--features".to_string());
+            args.push(feature);
+        }
         if !matches!(self.impact_mode, crate::impact::ImpactMode::Balanced) {
             args.push(format!("--impact-mode={}", self.impact_mode.as_str()));
         }
@@ -1477,6 +1505,7 @@ fn execute_nextest_list(
     execution_plan: &plan::NextestExecutionPlan,
     effective_test_binaries: &[String],
     effective_lib_target: bool,
+    cargo_features: &[String],
     effective_filter: Option<&str>,
 ) -> Result<CommandResult> {
     let mut cmd = crate::process::ProcessBuilder::cargo().args(["nextest", "list"]);
@@ -1495,6 +1524,9 @@ fn execute_nextest_list(
     }
     if effective_lib_target {
         cmd = cmd.arg("--lib");
+    }
+    for feature in cargo_features {
+        cmd = cmd.args(["--features", feature]);
     }
     if let Some(filter) = effective_filter {
         cmd = cmd.args(["-E", filter]);
@@ -1531,6 +1563,10 @@ fn print_dry_run_plan(
     }
     if !effective_test_binaries.is_empty() {
         println!("  test binaries: {}", effective_test_binaries.join(", "));
+    }
+    let features = normalize_packages(&this.cargo_features);
+    if !features.is_empty() {
+        println!("  features: {}", features.join(", "));
     }
     println!("  lib target: {effective_lib_target}");
     if let Some(filter) = effective_filter {
@@ -1800,22 +1836,6 @@ impl XtaskCommand for TestCommand {
             return Ok(early_return);
         }
 
-        // Preflight is default ON unless explicitly disabled
-        if !self.skip_preflight {
-            let stage = ctx.start_stage("preflight");
-            let ready = crate::preflight::ensure_ready(ctx);
-            ctx.finish_stage(stage, ready.is_ok());
-            ready?;
-        }
-
-        // Determine profile
-        // Available profiles in .config/nextest.toml:
-        //   default = 24 threads, fail-fast=false (good for CI/batch runs)
-        //   debug   = 1 thread, 300s slow-timeout (good for investigating tests)
-        let profile = if self.debug { "debug" } else { "default" };
-        let use_fail_fast = self.fail_fast;
-
-        // Affected mode is default ON, --all disables it.
         let raw_impact_packages = impact_plan
             .as_ref()
             .and_then(crate::impact::packages_for_plan);
@@ -1824,17 +1844,14 @@ impl XtaskCommand for TestCommand {
             .and_then(|plan| plan.impact_filter.clone())
             .or_else(|| self.filter.clone());
 
-        // Determine the package set to test and subtract reusable proofs.
-        // Two paths:
-        //   (a) Impact plan selected packages → subtract reusable (existing path).
-        //   (b) Explicit -p packages (no impact plan) → also try subtraction.
+        // Determine the package set to test and subtract reusable proofs before
+        // preflight. A reusable proof or package-proof hit should not start
+        // Postgres/NATS only to discover that no tests need to run.
         let (impact_packages, reused_package_proofs) = {
             let packages_for_subtraction: Option<Vec<String>> =
                 if let Some(packages) = raw_impact_packages.as_ref() {
-                    // Path (a): packages from impact planner
                     Some(packages.clone())
                 } else if !self.packages.is_empty() && effective_filter.is_none() {
-                    // Path (b): explicit -p packages, no filter
                     Some(normalize_packages(&self.packages))
                 } else {
                     None
@@ -1890,13 +1907,14 @@ impl XtaskCommand for TestCommand {
         );
         ctx.record_invocation_args(&coordination_args);
 
-        // List is an introspection command, not a proof-producing or proof-consuming
-        // test run. Keep it before proof fingerprints and reuse gates.
+        // List is an introspection command, not a proof-producing or
+        // proof-consuming test run. It also does not need runtime preflight.
         if self.list {
             return execute_nextest_list(
                 &execution_plan,
                 &effective_test_binaries,
                 effective_lib_target,
+                &normalize_packages(&self.cargo_features),
                 effective_filter.as_deref(),
             );
         }
@@ -1939,6 +1957,21 @@ impl XtaskCommand for TestCommand {
                 }
             }
         }
+
+        // Preflight is default ON unless explicitly disabled
+        if !self.skip_preflight {
+            let stage = ctx.start_stage("preflight");
+            let ready = crate::preflight::ensure_ready(ctx);
+            ctx.finish_stage(stage, ready.is_ok());
+            ready?;
+        }
+
+        // Determine profile
+        // Available profiles in .config/nextest.toml:
+        //   default = 24 threads, fail-fast=false (good for CI/batch runs)
+        //   debug   = 1 thread, 300s slow-timeout (good for investigating tests)
+        let profile = if self.debug { "debug" } else { "default" };
+        let use_fail_fast = self.fail_fast;
         self.guard_broad_start_pressure(
             ctx,
             &execution_plan,
@@ -2015,6 +2048,10 @@ impl XtaskCommand for TestCommand {
         }
         if effective_lib_target {
             runner.add_arg("--lib");
+        }
+        for feature in normalize_packages(&self.cargo_features) {
+            runner.add_arg("--features");
+            runner.add_arg(feature);
         }
         if let Some(ref filter) = effective_filter {
             runner.add_arg("-E");
@@ -2128,6 +2165,7 @@ impl XtaskCommand for TestCommand {
                             "excluded_packages": execution_plan.excluded_packages,
                             "test_binaries": effective_test_binaries,
                             "lib": effective_lib_target,
+                            "features": normalize_packages(&self.cargo_features),
                             "filter": effective_filter,
                             "runtime_binary_requirements": runtime_binary_requirements,
                             "db_pool_size": self.narrow_test_db_pool_size(
@@ -2428,6 +2466,25 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_semantic_invocation_args_include_cargo_features()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            cargo_features: vec!["runtime-introspection".to_string()],
+            ..Default::default()
+        };
+
+        let args = command.semantic_invocation_args(
+            &WorkloadScope::Packages(vec!["xtask".to_string()]),
+            Some("test(deployment_readiness)"),
+            &[],
+            true,
+        );
+
+        assert!(args.contains(&"--features=runtime-introspection".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_semantic_invocation_args_include_nextest_test_targets()
     -> ::xtask::sandbox::TestResult<()> {
         let command = TestCommand::default();
@@ -2447,11 +2504,30 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_explicit_package_scope_disables_test_binary_inference()
+    async fn test_explicit_package_scope_preserves_matching_test_binary_inference()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            packages: vec!["sinexd".to_string()],
+            filter: Some("test(weechat_descriptor_registered)".to_string()),
+            ..Default::default()
+        };
+
+        let binaries = command.effective_test_binaries(command.filter.as_deref())?;
+
+        assert_eq!(
+            binaries,
+            vec!["registry_dispatch_test".to_string()],
+            "explicit matching package scope should still infer the exact integration-test binary"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_explicit_package_scope_rejects_cross_package_test_binary_inference()
     -> ::xtask::sandbox::TestResult<()> {
         let command = TestCommand {
             packages: vec!["xtask".to_string()],
-            filter: Some("test(run)".to_string()),
+            filter: Some("test(mcp_catalog_exactly_covers_live_tools)".to_string()),
             ..Default::default()
         };
 
@@ -2572,9 +2648,9 @@ mod tests {
         _guard.clear("SINEX_TEST_DB_POOL_SIZE");
         let command = TestCommand::default();
         let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-source-worker".to_string()],
+            runner_packages: vec!["sinexd".to_string()],
             excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-source-worker".to_string()]),
+            workload_scope: WorkloadScope::Packages(vec!["sinexd".to_string()]),
         };
 
         assert_eq!(
@@ -2598,9 +2674,9 @@ mod tests {
     async fn test_narrow_test_db_pool_size_skips_broad_or_configured_runs()
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-source-worker".to_string()],
+            runner_packages: vec!["sinexd".to_string()],
             excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-source-worker".to_string()]),
+            workload_scope: WorkloadScope::Packages(vec!["sinexd".to_string()]),
         };
         let broad = TestCommand {
             all: true,
@@ -3095,6 +3171,7 @@ mod tests {
             impact_mode: crate::impact::ImpactMode::Aggressive,
             packages: vec!["xtask".to_string()],
             filter: Some("test(freshness_explain)".to_string()),
+            cargo_features: vec!["runtime-introspection".to_string()],
             ..Default::default()
         };
 
@@ -3113,6 +3190,12 @@ mod tests {
                 .find(|window| window[0] == "-E")
                 .map(|window| window[1].as_str()),
             Some("test(freshness_explain)")
+        );
+        assert_eq!(
+            args.windows(2)
+                .find(|window| window[0] == "--features")
+                .map(|window| window[1].as_str()),
+            Some("runtime-introspection")
         );
         Ok(())
     }

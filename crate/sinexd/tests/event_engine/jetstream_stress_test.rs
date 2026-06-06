@@ -1,4 +1,4 @@
-//! `JetStream` stress/regression tests for ingestd pipeline throughput.
+//! `JetStream` stress/regression tests for event_engine pipeline throughput.
 
 use async_nats::jetstream;
 use serde_json::json;

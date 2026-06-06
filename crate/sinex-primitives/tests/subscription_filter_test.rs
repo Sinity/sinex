@@ -20,7 +20,7 @@ fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::V
         payload,
         ts_orig: Some(Timestamp::now()),
         ts_quality: None,
-        source_run_id: None,
+        module_run_id: None,
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: Id::<SourceMaterial>::new(),
@@ -35,7 +35,7 @@ fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::V
         scope_key: None,
         equivalence_key: None,
         created_by_operation_id: None,
-        node_model: None,
+        automaton_model: None,
         anchor_payload_hash: None,
     }
 }

@@ -4,14 +4,14 @@
 
 // Local crate imports
 use crate::event_engine::{
-    IngestdResult, JetStreamTopology, SinexError, config::IngestdConfig,
+    EventEngineResult, JetStreamTopology, SinexError, config::EventEngineConfig,
     material_ready_set::MaterialReadySet, validator::IngestEventValidator,
 };
 // External crates
-use crate::node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
-use crate::node_sdk::heartbeat::HeartbeatEmitter;
-use crate::node_sdk::systemd_notify;
-use crate::node_sdk::{SelfObserver, SelfObserverConfig};
+use crate::runtime::content_store::{ContentStoreConfig, MaterialContentStore};
+use crate::runtime::heartbeat::HeartbeatEmitter;
+use crate::runtime::systemd_notify;
+use crate::runtime::{SelfObserver, SelfObserverConfig};
 use async_nats::{Client as NatsClient, jetstream};
 use serde::Serialize;
 use sinex_db::DbPoolExt;
@@ -19,7 +19,7 @@ use sinex_db::advisory_lock::AdvisoryLock;
 use sinex_db::repositories::EventPayloadSchema;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::{NodeName, NodeType, ServiceName};
+use sinex_primitives::domain::{ModuleKind, ModuleName, ServiceName};
 use sinex_primitives::environment as sinex_environment;
 use sinex_primitives::nats::create_or_open_kv_store;
 use sinex_primitives::transport;
@@ -50,17 +50,17 @@ fn trigger_shutdown(shutdown_flag: &Arc<AtomicBool>, shutdown_notify: &Arc<tokio
     }
 }
 
-fn log_node_manifest_write_failure(
+fn log_module_manifest_write_failure(
     operation: &'static str,
-    node_name: &NodeName,
+    module_name: &ModuleName,
     error: &SinexError,
 ) {
     warn!(
         operation,
-        node = %node_name,
+        module = %module_name,
         version = env!("CARGO_PKG_VERSION"),
         error = %error,
-        "Failed to persist ingestd node manifest state"
+        "Failed to persist event_engine module manifest state"
     );
 }
 
@@ -68,7 +68,7 @@ async fn await_ready_signal(
     component: &'static str,
     ready_timeout: Duration,
     ready_rx: oneshot::Receiver<()>,
-) -> IngestdResult<()> {
+) -> EventEngineResult<()> {
     match tokio::time::timeout(ready_timeout, ready_rx).await {
         Ok(Ok(())) => {
             info!(component, "Startup component reached ready state");
@@ -132,7 +132,7 @@ fn background_task_timeout(count: usize, timeout: Duration) -> SinexError {
 
 /// Main ingestion service
 pub struct IngestService {
-    config: IngestdConfig,
+    config: EventEngineConfig,
     db_pool: Option<PgPool>,
     nats_client: Option<NatsClient>,
     jetstream: Option<jetstream::Context>,
@@ -142,12 +142,12 @@ pub struct IngestService {
     shutdown_notify: Arc<tokio::sync::Notify>,
     task_handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Heartbeat counter handle — set during `start()`, passed to `JetStreamConsumer`
-    heartbeat_counter_handle: Option<crate::node_sdk::heartbeat::HeartbeatCounterHandle>,
+    heartbeat_counter_handle: Option<crate::runtime::heartbeat::HeartbeatCounterHandle>,
 }
 
 type CriticalTaskOutcome = (
     &'static str,
-    Result<IngestdResult<()>, tokio::task::JoinError>,
+    Result<EventEngineResult<()>, tokio::task::JoinError>,
 );
 
 impl Clone for IngestService {
@@ -169,7 +169,7 @@ impl Clone for IngestService {
 
 impl IngestService {
     /// Create a new ingestion service
-    pub async fn new(config: IngestdConfig) -> IngestdResult<Self> {
+    pub async fn new(config: EventEngineConfig) -> EventEngineResult<Self> {
         info!("Initializing ingestion service");
 
         let db_pool = Self::init_db_pool(&config).await?;
@@ -192,7 +192,7 @@ impl IngestService {
         if let Err(error) = observer.prime().await {
             warn!(
                 %error,
-                "Failed to prime ingestd self-observation materializer; telemetry events may retry before the source material is registered"
+                "Failed to prime event_engine self-observation materializer; telemetry events may retry before the source material is registered"
             );
         }
 
@@ -213,7 +213,7 @@ impl IngestService {
         Ok(service)
     }
 
-    async fn init_db_pool(config: &IngestdConfig) -> IngestdResult<Option<PgPool>> {
+    async fn init_db_pool(config: &EventEngineConfig) -> EventEngineResult<Option<PgPool>> {
         if config.dry_run {
             return Ok(None);
         }
@@ -222,7 +222,7 @@ impl IngestService {
         Ok(Some(pool))
     }
 
-    async fn verify_binary_schema_version(pool: &PgPool) -> IngestdResult<()> {
+    async fn verify_binary_schema_version(pool: &PgPool) -> EventEngineResult<()> {
         use sinex_primitives::EXPECTED_BINARY_SCHEMA_VERSION;
         let db_version: Option<String> = sqlx::query_scalar(
             "SELECT version FROM sinex_schemas.binary_schema_version WHERE id = 1",
@@ -261,8 +261,8 @@ impl IngestService {
     }
 
     async fn init_nats(
-        config: &IngestdConfig,
-    ) -> IngestdResult<(Option<NatsClient>, Option<jetstream::Context>)> {
+        config: &EventEngineConfig,
+    ) -> EventEngineResult<(Option<NatsClient>, Option<jetstream::Context>)> {
         if config.dry_run {
             return Ok((None, None));
         }
@@ -281,9 +281,9 @@ impl IngestService {
     }
 
     async fn init_validator(
-        config: &IngestdConfig,
+        config: &EventEngineConfig,
         pool: Option<&PgPool>,
-    ) -> IngestdResult<IngestEventValidator> {
+    ) -> EventEngineResult<IngestEventValidator> {
         if let Some(pool) = pool {
             let _lock = try_acquire_migration_lock(pool).await?;
 
@@ -304,7 +304,7 @@ impl IngestService {
         }
     }
 
-    async fn sync_schemas(pool: &PgPool) -> IngestdResult<()> {
+    async fn sync_schemas(pool: &PgPool) -> EventEngineResult<()> {
         let sync_result = crate::event_engine::schema_sync::synchronize_schemas(pool)
             .await
             .map_err(|e| {
@@ -334,7 +334,7 @@ impl IngestService {
     }
 
     /// Run the ingestion service
-    pub async fn run(&mut self) -> IngestdResult<()> {
+    pub async fn run(&mut self) -> EventEngineResult<()> {
         info!("Starting ingestion service");
 
         // Create shared MaterialReadySet for event/material coordination. Events and
@@ -399,26 +399,26 @@ impl IngestService {
             );
         }
 
-        // Register a run for ingestd and start periodic heartbeat
+        // Register a run for event_engine and start periodic heartbeat
         if let Some(ref pool) = self.db_pool {
             let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string());
-            let node_name = NodeName::new("sinexd");
+            let module_name = ModuleName::new("sinexd");
             let manifest_id = match pool
                 .state()
-                .register_node(
-                    &node_name,
-                    NodeType::Service,
+                .register_module(
+                    &module_name,
+                    ModuleKind::Service,
                     env!("CARGO_PKG_VERSION"),
                     Some("Ingestion daemon: NATS JetStream consumer to PostgreSQL batch writer"),
                 )
                 .await
             {
                 Ok(row) => {
-                    info!(manifest_id = row.id, "Registered ingestd manifest");
+                    info!(manifest_id = row.id, "Registered event_engine manifest");
                     Some(row.id)
                 }
                 Err(e) => {
-                    warn!(%e, "Failed to register ingestd manifest; heartbeat persistence disabled");
+                    warn!(%e, "Failed to register event_engine manifest; heartbeat persistence disabled");
                     None
                 }
             };
@@ -428,10 +428,10 @@ impl IngestService {
                 .await
             {
                 Ok(run) => {
-                    info!(run_id = %run.id, "Started ingestd run");
-                    self.observer.set_source_run_id(run.id.to_uuid());
+                    info!(run_id = %run.id, "Started event_engine run");
+                    self.observer.set_module_run_id(run.id.to_uuid());
                 }
-                Err(e) => warn!(%e, "Failed to start ingestd run"),
+                Err(e) => warn!(%e, "Failed to start event_engine run"),
             }
 
             // Emit health-aware heartbeats on a fixed cadence.
@@ -441,7 +441,7 @@ impl IngestService {
                 ServiceName::new("sinexd"),
                 sinex_primitives::Seconds::from_secs(60),
             )
-            .with_node_name(NodeName::new("sinexd"))
+            .with_module_name(ModuleName::new("sinexd"))
             .with_db_pool(pool.clone());
             self.heartbeat_counter_handle = Some(emitter.get_counter_handle());
 
@@ -451,14 +451,14 @@ impl IngestService {
             let handle = tokio::spawn(async move {
                 tokio::select! {
                     () = emitter.start_periodic_heartbeat(None) => {}
-                    () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
-                        let node_name = NodeName::new("sinexd");
+                    () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                        let module_name = ModuleName::new("sinexd");
                         if let Err(error) = heartbeat_pool
                             .state()
-                            .mark_node_inactive_for_version(&node_name, env!("CARGO_PKG_VERSION"))
+                            .mark_module_inactive_for_version(&module_name, env!("CARGO_PKG_VERSION"))
                             .await
                         {
-                            log_node_manifest_write_failure("mark_node_inactive", &node_name, &error);
+                            log_module_manifest_write_failure("mark_module_inactive", &module_name, &error);
                         }
                     }
                 }
@@ -507,7 +507,7 @@ impl IngestService {
             (Err(error), Err(cleanup_error)) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.component_failures_total",
+                    metric = "event_engine.component_failures_total",
                     component = "runtime_shutdown",
                     runtime_error = %error,
                     cleanup_error = %cleanup_error,
@@ -521,14 +521,14 @@ impl IngestService {
     async fn finish_startup_failure(
         &self,
         startup_error: SinexError,
-        js_handle: Option<JoinHandle<IngestdResult<()>>>,
-        ma_handle: Option<JoinHandle<IngestdResult<()>>>,
-    ) -> IngestdResult<()> {
+        js_handle: Option<JoinHandle<EventEngineResult<()>>>,
+        ma_handle: Option<JoinHandle<EventEngineResult<()>>>,
+    ) -> EventEngineResult<()> {
         error!(
             target: "sinex_metrics",
-            metric = "ingestd.startup_failures_total",
+            metric = "event_engine.startup_failures_total",
             error = %startup_error,
-            "Critical ingestd component failed during startup"
+            "Critical event_engine component failed during startup"
         );
         trigger_shutdown(&self.shutdown_flag, &self.shutdown_notify);
 
@@ -537,7 +537,7 @@ impl IngestService {
             Err(cleanup_error) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.startup_failures_total",
+                    metric = "event_engine.startup_failures_total",
                     startup_error = %startup_error,
                     cleanup_error = %cleanup_error,
                     "Startup failure cleanup surfaced an additional critical task failure"
@@ -549,7 +549,7 @@ impl IngestService {
         if let Err(cleanup_error) = self.wait_for_tasks(Duration::from_secs(5)).await {
             error!(
                 target: "sinex_metrics",
-                metric = "ingestd.startup_failures_total",
+                metric = "event_engine.startup_failures_total",
                 startup_error = %startup_error,
                 cleanup_error = %cleanup_error,
                 "Startup failure cleanup surfaced an additional background task failure"
@@ -562,9 +562,9 @@ impl IngestService {
     /// Monitor critical tasks - exit on first failure or shutdown signal
     async fn monitor_runtime(
         &self,
-        js_handle: Option<JoinHandle<IngestdResult<()>>>,
-        ma_handle: Option<JoinHandle<IngestdResult<()>>>,
-    ) -> IngestdResult<()> {
+        js_handle: Option<JoinHandle<EventEngineResult<()>>>,
+        ma_handle: Option<JoinHandle<EventEngineResult<()>>>,
+    ) -> EventEngineResult<()> {
         let shutdown_flag = self.shutdown_flag.clone();
         let shutdown_notify = self.shutdown_notify.clone();
         // `critical_tasks` is the JoinSet of wrapper futures used for completion
@@ -602,7 +602,7 @@ impl IngestService {
             }
 
             // Normal shutdown signal
-            () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+            () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                 info!("Received shutdown signal");
                 Ok(())
             }
@@ -625,7 +625,7 @@ impl IngestService {
         tasks: &mut JoinSet<CriticalTaskOutcome>,
         abort_handles: &mut Vec<(&'static str, tokio::task::AbortHandle)>,
         name: &'static str,
-        handle: Option<JoinHandle<IngestdResult<()>>>,
+        handle: Option<JoinHandle<EventEngineResult<()>>>,
     ) {
         if let Some(handle) = handle {
             // Obtain an AbortHandle *before* moving `handle` into the JoinSet
@@ -719,10 +719,10 @@ impl IngestService {
 
     fn handle_task_result(
         name: &str,
-        result: Result<IngestdResult<()>, tokio::task::JoinError>,
+        result: Result<EventEngineResult<()>, tokio::task::JoinError>,
         shutdown_flag: &Arc<AtomicBool>,
         shutdown_notify: &Arc<tokio::sync::Notify>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         match result {
             Ok(res) => Self::handle_join_success(name, res, shutdown_flag, shutdown_notify),
             Err(e) => Self::handle_join_error(name, &e, shutdown_flag, shutdown_notify),
@@ -731,10 +731,10 @@ impl IngestService {
 
     fn handle_join_success(
         name: &str,
-        result: IngestdResult<()>,
+        result: EventEngineResult<()>,
         shutdown_flag: &Arc<AtomicBool>,
         shutdown_notify: &Arc<tokio::sync::Notify>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         match result {
             Ok(()) if shutdown_flag.load(Ordering::Acquire) => {
                 info!("{name} completed during shutdown");
@@ -743,7 +743,7 @@ impl IngestService {
             Ok(()) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.component_exits_total",
+                    metric = "event_engine.component_exits_total",
                     component = name,
                     "{name} exited unexpectedly without error"
                 );
@@ -753,7 +753,7 @@ impl IngestService {
             Err(e) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.component_failures_total",
+                    metric = "event_engine.component_failures_total",
                     component = name,
                     error = %e,
                     "{name} failed"
@@ -769,10 +769,10 @@ impl IngestService {
         err: &tokio::task::JoinError,
         shutdown_flag: &Arc<AtomicBool>,
         shutdown_notify: &Arc<tokio::sync::Notify>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         error!(
             target: "sinex_metrics",
-            metric = "ingestd.component_panics_total",
+            metric = "event_engine.component_panics_total",
             component = name,
             error = ?err,
             "{name} panicked"
@@ -782,9 +782,9 @@ impl IngestService {
     }
 
     fn handle_material_assembler_result(
-        result: IngestdResult<()>,
+        result: EventEngineResult<()>,
         shutdown_flag: &Arc<AtomicBool>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         match result {
             Ok(()) if shutdown_flag.load(Ordering::Acquire) => {
                 info!("MaterialAssembler shutting down normally");
@@ -797,7 +797,7 @@ impl IngestService {
             Err(error) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.material_assembler_failures_total",
+                    metric = "event_engine.material_assembler_failures_total",
                     error = %error,
                     "MaterialAssembler failed"
                 );
@@ -816,7 +816,7 @@ impl IngestService {
         pool: PgPool,
         ready_set: Option<MaterialReadySet>,
     ) -> (
-        JoinHandle<IngestdResult<()>>,
+        JoinHandle<EventEngineResult<()>>,
         tokio::sync::oneshot::Receiver<()>,
     ) {
         let shutdown_flag = self.shutdown_flag.clone();
@@ -834,7 +834,7 @@ impl IngestService {
         let fetch_timeout = self.config.consumer_fetch_timeout_ms.as_duration();
         let fetch_max = self.config.consumer_fetch_max_messages.max(1);
         let max_ack_pending = self.config.consumer_max_ack_pending;
-        let stats_log_interval = Duration::from_secs(self.config.stats_log_interval_secs);
+        let telemetry_interval = Duration::from_secs(self.config.telemetry_interval_secs);
         let reject_initial_replay = self.config.reject_initial_replay;
         let future_ts_skew = time::Duration::seconds(self.config.ts_orig_future_skew_secs as i64);
         let heartbeat_handle = self.heartbeat_counter_handle.clone();
@@ -861,7 +861,7 @@ impl IngestService {
             )
             .with_batch_fetch_config(fetch_max, fetch_timeout)
             .with_max_ack_pending(max_ack_pending)
-            .with_stats_log_interval(stats_log_interval)
+            .with_stats_log_interval(telemetry_interval)
             .with_future_ts_skew(future_ts_skew)
             .with_ts_orig_lower_bound(ts_orig_lower_bound)
             .with_reject_initial_replay(reject_initial_replay)
@@ -888,7 +888,7 @@ impl IngestService {
                         Err(e) => {
                             error!(
                                 target: "sinex_metrics",
-                                metric = "ingestd.component_failures_total",
+                                metric = "event_engine.component_failures_total",
                                 component = "jetstream_consumer",
                                 error = %e,
                                 "JetStream consumer failed"
@@ -897,7 +897,7 @@ impl IngestService {
                         }
                     }
                 }
-                () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                     info!("JetStream consumer shutting down");
                     Ok(())
                 }
@@ -916,7 +916,7 @@ impl IngestService {
         pool: PgPool,
         ready_set: Option<MaterialReadySet>,
     ) -> (
-        JoinHandle<IngestdResult<()>>,
+        JoinHandle<EventEngineResult<()>>,
         tokio::sync::oneshot::Receiver<()>,
     ) {
         let shutdown_flag = self.shutdown_flag.clone();
@@ -948,7 +948,7 @@ impl IngestService {
                 Err(e) => {
                     error!(
                         target: "sinex_metrics",
-                        metric = "ingestd.startup_failures_total",
+                        metric = "event_engine.startup_failures_total",
                         path = %content_store_path,
                         error = %e,
                         "Failed to initialize content-store root"
@@ -981,7 +981,7 @@ impl IngestService {
                     Err(e) => {
                         error!(
                             target: "sinex_metrics",
-                            metric = "ingestd.material_assembler_failures_total",
+                            metric = "event_engine.material_assembler_failures_total",
                             error = %e,
                             "Failed to create MaterialAssembler"
                         );
@@ -1065,7 +1065,7 @@ impl IngestService {
                             }
                         }
                     }
-                    () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                    () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                         break;
                     }
                 }
@@ -1097,7 +1097,7 @@ impl IngestService {
                             );
                         }
                     }
-                    () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                    () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                         break;
                     }
                 }
@@ -1136,7 +1136,7 @@ impl IngestService {
                             }
                         };
 
-                        match crate::node_sdk::content_store::gc::sweep_orphans(
+                        match crate::runtime::content_store::gc::sweep_orphans(
                             &pool,
                             &content_store,
                             true,
@@ -1157,7 +1157,7 @@ impl IngestService {
                             }
                         }
                     }
-                    () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                    () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                         break;
                     }
                 }
@@ -1170,7 +1170,7 @@ impl IngestService {
         handles.push(handle);
     }
 
-    fn collapse_background_shutdown_errors(mut errors: Vec<SinexError>) -> IngestdResult<()> {
+    fn collapse_background_shutdown_errors(mut errors: Vec<SinexError>) -> EventEngineResult<()> {
         if errors.is_empty() {
             return Ok(());
         }
@@ -1207,7 +1207,7 @@ impl IngestService {
             Err(error) => {
                 error!(
                     target: "sinex_metrics",
-                    metric = "ingestd.component_exits_total",
+                    metric = "event_engine.component_exits_total",
                     component = "background_task",
                     task_index = index,
                     error = %error,
@@ -1222,7 +1222,7 @@ impl IngestService {
         }
     }
 
-    async fn wait_for_tasks(&self, timeout: Duration) -> IngestdResult<()> {
+    async fn wait_for_tasks(&self, timeout: Duration) -> EventEngineResult<()> {
         let mut handles = {
             let mut guard = self.task_handles.lock().await;
             std::mem::take(&mut *guard)
@@ -1244,7 +1244,7 @@ impl IngestService {
                     if error.is_panic() {
                         error!(
                             target: "sinex_metrics",
-                            metric = "ingestd.component_panics_total",
+                            metric = "event_engine.component_panics_total",
                             component = "background_task",
                             task_index = i,
                             error = %error,
@@ -1283,7 +1283,7 @@ impl IngestService {
     }
 
     /// Graceful shutdown
-    pub async fn shutdown(&mut self) -> IngestdResult<()> {
+    pub async fn shutdown(&mut self) -> EventEngineResult<()> {
         info!("Initiating graceful shutdown");
 
         trigger_shutdown(&self.shutdown_flag, &self.shutdown_notify);
@@ -1293,7 +1293,7 @@ impl IngestService {
 
         // Close database connections
         if let Some(pool) = &self.db_pool {
-            info!("Closing ingestd database pool");
+            info!("Closing event_engine database pool");
             pool.close().await;
         }
 
@@ -1302,16 +1302,16 @@ impl IngestService {
     }
 }
 
-const MIGRATION_LOCK_KEY: &str = "ingestd.migrations";
+const MIGRATION_LOCK_KEY: &str = "event_engine.migrations";
 const SCHEMA_KV_BUCKET_NAME: &str = "sinex_schemas";
 
 pub async fn try_acquire_migration_lock(
     pool: &PgPool,
-) -> IngestdResult<ResourceGuard<AdvisoryLock>> {
+) -> EventEngineResult<ResourceGuard<AdvisoryLock>> {
     match AdvisoryLock::try_acquire(pool, MIGRATION_LOCK_KEY).await {
         Ok(Some(guard)) => Ok(guard),
         Ok(None) => Err(SinexError::service(
-            "Another ingestd instance is already applying migrations",
+            "Another event_engine instance is already applying migrations",
         )
         .with_operation("service.migration_lock")),
         Err(err) => Err(SinexError::service("Failed to acquire migration lock")
@@ -1330,7 +1330,7 @@ struct SchemaBroadcastEntry {
 impl IngestService {
     fn parse_schema_broadcast_entries(
         entries: &[SchemaBroadcastEntry],
-    ) -> IngestdResult<Vec<(uuid::Uuid, &SchemaBroadcastEntry)>> {
+    ) -> EventEngineResult<Vec<(uuid::Uuid, &SchemaBroadcastEntry)>> {
         entries
             .iter()
             .map(|entry| {
@@ -1350,7 +1350,7 @@ impl IngestService {
         validator: &IngestEventValidator,
         nats_client: &NatsClient,
         pool: &PgPool,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         let env = sinex_environment();
         let subject = env.nats_subject("system.schemas.active");
         let js = jetstream::new(nats_client.clone());
@@ -1365,7 +1365,7 @@ impl IngestService {
             })
             .collect();
 
-        // Store full schemas in NATS KV for node-side validation
+        // Store full schemas in NATS KV for producer-side validation
         Self::store_schemas_in_kv(&entries, pool, &js).await?;
 
         // Broadcast metadata for cache invalidation signal using core NATS pub/sub.
@@ -1391,12 +1391,12 @@ impl IngestService {
         Ok(())
     }
 
-    /// Store full schema JSON in NATS KV for node validation
+    /// Store full schema JSON in NATS KV for producer validation.
     async fn store_schemas_in_kv(
         entries: &[SchemaBroadcastEntry],
         pool: &PgPool,
         js: &jetstream::Context,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         use sinex_db::repositories::DbPoolExt;
 
         // KV bucket name is namespaced by environment (dev/prod) to prevent cross-environment
@@ -1458,7 +1458,7 @@ impl IngestService {
 
         info!(
             count = entries.len(),
-            "Stored full schemas in NATS KV for node validation"
+            "Stored full schemas in NATS KV for producer validation"
         );
 
         Ok(())
@@ -1474,7 +1474,7 @@ mod tests {
 
     fn test_service() -> IngestService {
         IngestService {
-            config: IngestdConfig::builder().build(),
+            config: EventEngineConfig::builder().build(),
             db_pool: None,
             nats_client: None,
             jetstream: None,
@@ -1547,7 +1547,7 @@ mod tests {
     async fn log_aborted_task_shutdown_result_rejects_panicked_task()
     -> xtask::sandbox::TestResult<()> {
         let handle = tokio::spawn(async {
-            panic!("ingestd background task panic");
+            panic!("event_engine background task panic");
         });
         let error = IngestService::log_aborted_task_shutdown_result(2, handle.await)
             .expect("panicked background task must stay visible");
@@ -1614,7 +1614,7 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            crate::node_sdk::wait_for_shutdown_signal_bool(
+            crate::runtime::wait_for_shutdown_signal_bool(
                 &service.shutdown_flag,
                 &service.shutdown_notify,
             ),
@@ -1640,7 +1640,7 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            crate::node_sdk::wait_for_shutdown_signal_bool(
+            crate::runtime::wait_for_shutdown_signal_bool(
                 &service.shutdown_flag,
                 &service.shutdown_notify,
             ),
@@ -1660,7 +1660,7 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            crate::node_sdk::wait_for_shutdown_signal_bool(
+            crate::runtime::wait_for_shutdown_signal_bool(
                 &service.shutdown_flag,
                 &service.shutdown_notify,
             ),
@@ -1745,7 +1745,7 @@ mod tests {
         let shutdown_flag = Arc::clone(&service.shutdown_flag);
         let shutdown_notify = Arc::clone(&service.shutdown_notify);
         let sibling = tokio::spawn(async move {
-            crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
+            crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
             sibling_flag.store(true, Ordering::SeqCst);
             Ok(())
         });
@@ -1774,7 +1774,7 @@ mod tests {
         let shutdown_flag = Arc::clone(&service.shutdown_flag);
         let shutdown_notify = Arc::clone(&service.shutdown_notify);
         let sibling = tokio::spawn(async move {
-            crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
+            crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
             sibling_flag.store(true, Ordering::SeqCst);
             Ok(())
         });
@@ -1947,11 +1947,11 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn log_node_manifest_write_failure_accepts_processing_errors()
+    async fn log_module_manifest_write_failure_accepts_processing_errors()
     -> xtask::sandbox::TestResult<()> {
-        let node_name = NodeName::new("sinexd");
-        let error = SinexError::processing("node manifest update exploded");
-        log_node_manifest_write_failure("mark_node_inactive", &node_name, &error);
+        let module_name = ModuleName::new("sinexd");
+        let error = SinexError::processing("module manifest update exploded");
+        log_module_manifest_write_failure("mark_module_inactive", &module_name, &error);
         Ok(())
     }
 }

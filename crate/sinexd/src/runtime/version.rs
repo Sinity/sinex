@@ -1,0 +1,300 @@
+//! RuntimeModule version information and utilities
+//!
+//! This module provides access to compile-time version information generated
+//! by shadow-rs, including semantic versioning, git metadata, and
+//! build information for runtime coordination and handoff.
+
+use semver::Version;
+use serde::{Deserialize, Serialize};
+use sinex_primitives::domain::ServiceName;
+use std::cmp::Ordering;
+use std::fmt;
+use std::str::FromStr;
+use std::time::SystemTime;
+use tracing::warn;
+
+// Build constants — use env vars since shadow_rs build.rs was removed (#1054).
+mod build {
+    pub const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+    pub const SHORT_COMMIT: &str = "unknown";
+    pub const BRANCH: &str = "unknown";
+    pub const BUILD_TIME_3339: &str = "unknown";
+    pub const GIT_CLEAN: bool = false;
+}
+
+/// Complete runtime version information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeVersion {
+    /// Semantic version (major.minor.patch)
+    pub version: Version,
+    /// Full version with build metadata (`version+commit_hash`)
+    pub full_version: String,
+    /// Git commit hash (8 characters)
+    pub commit_hash: String,
+    /// Git branch name
+    pub branch: String,
+    /// Build timestamp (RFC3339)
+    pub build_timestamp: String,
+    /// Whether working directory was dirty during build
+    pub is_dirty: bool,
+}
+
+impl RuntimeVersion {
+    /// Get the current runtime version information.
+    ///
+    /// # Errors
+    /// Returns `SinexError::configuration` if any version information is invalid
+    pub fn current() -> crate::runtime::RuntimeResult<Self> {
+        Ok(Self {
+            version: runtime_version()?,
+            full_version: runtime_full_version(),
+            commit_hash: runtime_commit_hash(),
+            branch: runtime_branch(),
+            build_timestamp: runtime_build_timestamp(),
+            is_dirty: runtime_is_dirty(),
+        })
+    }
+
+    /// Compare versions for leadership election (newer version wins)
+    #[must_use]
+    pub fn is_newer_than(&self, other: &RuntimeVersion) -> bool {
+        self.version > other.version
+    }
+
+    /// Check if this is a production build (not dirty, not on dev branch)
+    #[must_use]
+    pub fn is_production_build(&self) -> bool {
+        !self.is_dirty && !self.branch.starts_with("dev") && self.branch != "HEAD"
+    }
+
+    /// Get age of this build in seconds
+    #[must_use]
+    pub fn build_age_seconds(&self) -> Option<u64> {
+        let build_time =
+            sinex_primitives::temporal::Timestamp::parse_rfc3339(&self.build_timestamp).ok()?;
+        let now = sinex_primitives::temporal::Timestamp::now();
+        let duration = now - build_time;
+        Some(duration.whole_seconds().max(0) as u64)
+    }
+
+    /// Create version summary for logging
+    #[must_use]
+    pub fn summary(&self) -> String {
+        format!(
+            "{} ({}@{}, built {})",
+            self.version, self.commit_hash, self.branch, self.build_timestamp
+        )
+    }
+}
+
+impl PartialEq for RuntimeVersion {
+    fn eq(&self, other: &Self) -> bool {
+        self.version == other.version
+    }
+}
+
+impl Eq for RuntimeVersion {}
+
+impl PartialOrd for RuntimeVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RuntimeVersion {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Primary: compare semantic versions
+        match self.version.cmp(&other.version) {
+            Ordering::Equal => {
+                // Secondary: if same version, prefer non-dirty builds
+                match (self.is_dirty, other.is_dirty) {
+                    (false, true) => Ordering::Greater,
+                    (true, false) => Ordering::Less,
+                    _ => {
+                        // Both dirty or both clean - use build timestamp (development rebuilds)
+                        // This enables hot reload with same semver to prefer newer builds
+                        self.build_timestamp.cmp(&other.build_timestamp)
+                    }
+                }
+            }
+            other => other,
+        }
+    }
+}
+
+impl fmt::Display for RuntimeVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.full_version)
+    }
+}
+
+impl FromStr for RuntimeVersion {
+    type Err = crate::runtime::SinexError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Parse version string (expected format: "major.minor.patch" or "major.minor.patch+metadata")
+        let version = Version::from_str(s.split('+').next().unwrap_or(s)).map_err(|e| {
+            crate::runtime::SinexError::configuration(format!("Invalid version string '{s}': {e}"))
+        })?;
+
+        Ok(Self {
+            version,
+            full_version: s.to_string(),
+            commit_hash: "unknown".to_string(),
+            branch: "unknown".to_string(),
+            build_timestamp: sinex_primitives::temporal::now().format_rfc3339(),
+            is_dirty: false,
+        })
+    }
+}
+
+/// Instance information for coordination
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeInstance {
+    pub instance_id: String,
+    pub version: RuntimeVersion,
+    pub start_time: SystemTime,
+    pub service_name: ServiceName,
+    pub host_name: String,
+}
+
+impl RuntimeInstance {
+    /// Create a new runtime instance.
+    ///
+    /// # Errors
+    /// Returns `SinexError::configuration` if version information is invalid
+    pub fn new(
+        instance_id: String,
+        service_name: impl Into<ServiceName>,
+    ) -> crate::runtime::RuntimeResult<Self> {
+        let host_name = gethostname::gethostname().to_string_lossy().to_string();
+
+        Ok(Self {
+            instance_id,
+            version: RuntimeVersion::current()?,
+            start_time: SystemTime::now(),
+            service_name: service_name.into(),
+            host_name,
+        })
+    }
+
+    /// Get instance uptime in seconds
+    #[must_use]
+    pub fn uptime_seconds(&self) -> u64 {
+        elapsed_seconds_with_warning(self.start_time, "runtime instance uptime")
+    }
+
+    /// Check if this instance should be leader over another
+    #[must_use]
+    pub fn should_be_leader_over(&self, other: &RuntimeInstance) -> bool {
+        match self.version.cmp(&other.version) {
+            Ordering::Greater => true,
+            Ordering::Less => false,
+            Ordering::Equal => {
+                // Same version - earlier start time wins (stability)
+                self.start_time < other.start_time
+            }
+        }
+    }
+
+    /// Create instance summary for logging
+    #[must_use]
+    pub fn summary(&self) -> String {
+        format!(
+            "{} v{} on {} (up {}s)",
+            self.service_name,
+            self.version.version,
+            self.host_name,
+            self.uptime_seconds()
+        )
+    }
+}
+
+fn elapsed_seconds_with_warning(start_time: SystemTime, context: &str) -> u64 {
+    match start_time.elapsed() {
+        Ok(elapsed) => elapsed.as_secs(),
+        Err(error) => {
+            warn!(
+                context,
+                error = %error,
+                "System clock moved backwards; clamping elapsed time to zero"
+            );
+            0
+        }
+    }
+}
+
+// Version accessor functions using shadow-rs compile-time constants
+
+/// Get semantic version of the runtime.
+///
+/// # Errors
+/// Returns `SinexError::configuration` if the runtime version is invalid.
+pub fn runtime_version() -> crate::runtime::RuntimeResult<Version> {
+    Version::from_str(build::PKG_VERSION).map_err(|e| {
+        crate::runtime::SinexError::configuration(format!("Invalid runtime version: {e}"))
+    })
+}
+
+/// Get full version string with build metadata
+#[must_use]
+pub fn runtime_full_version() -> String {
+    let commit = build::SHORT_COMMIT;
+    if commit.is_empty() || commit == "unknown" {
+        build::PKG_VERSION.to_string()
+    } else {
+        format!("{}+{}", build::PKG_VERSION, commit)
+    }
+}
+
+/// Get git commit hash (8 characters)
+#[must_use]
+pub fn runtime_commit_hash() -> String {
+    let commit = build::SHORT_COMMIT;
+    if commit.is_empty() {
+        "unknown".to_string()
+    } else {
+        commit.to_string()
+    }
+}
+
+/// Get git branch name
+#[must_use]
+pub fn runtime_branch() -> String {
+    let branch = build::BRANCH;
+    if branch.is_empty() {
+        "unknown".to_string()
+    } else {
+        branch.to_string()
+    }
+}
+
+/// Get build timestamp (RFC3339 format)
+#[must_use]
+pub fn runtime_build_timestamp() -> String {
+    // shadow-rs provides BUILD_TIME_3339 in RFC3339 format
+    build::BUILD_TIME_3339.to_string()
+}
+
+/// Check if working directory was dirty during build
+#[must_use]
+pub fn runtime_is_dirty() -> bool {
+    // shadow-rs GIT_CLEAN is a bool: true when clean, false when dirty
+    !build::GIT_CLEAN
+}
+
+/// Print version information to stdout (for --version flags).
+///
+/// # Errors
+/// Returns `SinexError::configuration` if version metadata is invalid.
+pub fn print_version_info() -> crate::runtime::RuntimeResult<()> {
+    let version = RuntimeVersion::current()?;
+    println!("{}", version.full_version);
+    println!("commit: {}", version.commit_hash);
+    println!("branch: {}", version.branch);
+    println!("built: {}", version.build_timestamp);
+    if version.is_dirty {
+        println!("status: dirty");
+    }
+    Ok(())
+}

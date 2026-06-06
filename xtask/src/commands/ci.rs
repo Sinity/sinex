@@ -315,7 +315,7 @@ async fn execute_workspace(
         .run_stdout()?;
     let workspace_dirty: Vec<&str> = dirty
         .lines()
-        .filter(|l| !l.trim().is_empty() && !l.contains("crate/lib/sinex-schema/schemas"))
+        .filter(|l| !l.trim().is_empty() && !l.contains("crate/sinex-schema/schemas"))
         .collect();
     if !workspace_dirty.is_empty() {
         bail!(
@@ -370,9 +370,9 @@ async fn execute_workspace(
     ctx.finish_stage(stage, true);
 
     // Heavy slice for sinex-primitives: runs the trybuild compile-failure
-    // tests (`proof_descriptor_compile_failures` + `id_type_mismatch_is_compile_error`)
+    // tests (`source_contract_compile_failures` + `id_type_mismatch_is_compile_error`)
     // that the full-suite run skips. Gated to one package so unrelated heavy
-    // tests (e.g. `#[ignore = "external"]` in sinex-gateway) don't pull in
+    // tests (e.g. `#[ignore = "external"]` in sinexd) don't pull in
     // infrastructure dependencies (#1215).
     if ctx.is_human() {
         println!("Running heavy slice (sinex-primitives trybuild)...");
@@ -751,7 +751,7 @@ fn git_show_reports_missing_object(stderr: &str) -> bool {
         || stderr.contains("unknown revision or path not in the working tree")
 }
 
-/// Check that a schema change is backwards-compatible.
+/// Check schema-contract drift against another branch.
 ///
 /// Three classes of breaking changes are detected:
 ///

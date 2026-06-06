@@ -6,7 +6,7 @@
 
 use camino::Utf8PathBuf;
 use sinexd::api::content_service::ContentService;
-use sinexd::node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
+use sinexd::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
 use std::sync::Arc;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;

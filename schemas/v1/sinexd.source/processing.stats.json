@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "RuntimeModule event processing statistics\n\nAddresses Issues 24, 29: Event Processing Metrics",
+  "properties": {
+    "avg_latency_ms": {
+      "description": "Average processing latency (ms)",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "error_count": {
+      "description": "Errors encountered",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "events_dropped": {
+      "description": "Events dropped (channel full, errors)",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "events_processed": {
+      "description": "Events processed since last report",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "module_kind": {
+      "description": "Runtime module kind (fs-source, terminal-source, etc.)",
+      "type": "string"
+    },
+    "queue_depth": {
+      "description": "Current queue depth",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "module_kind",
+    "events_processed",
+    "events_dropped",
+    "queue_depth",
+    "error_count"
+  ],
+  "title": "SourceProcessingStatsPayload",
+  "type": "object",
+  "x-sinex-event-type": "processing.stats",
+  "x-sinex-source": "sinexd.source",
+  "x-sinex-version": "1.0.0"
+}

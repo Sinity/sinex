@@ -7,8 +7,8 @@ use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::session::{MAX_SESSION_WINDOW_COUNT, SessionDetector, SessionState};
-use sinexd::node_sdk::Windowed;
-use sinexd::node_sdk::derived_node::{AutomatonContext, DerivedAggregationMeta};
+use sinexd::runtime::Windowed;
+use sinexd::runtime::automaton::{AutomatonContext, DerivedAggregationMeta};
 use std::collections::BTreeMap;
 use xtask::sandbox::prelude::*;
 

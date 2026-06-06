@@ -54,13 +54,13 @@ Families (canonical event_type and minimal payload)
   - `ld.delta`: target_note_id, patch_hash|full_text_hash, model_name?, model_version?, rationale_hash?, ts_client?
 
 - Metrics/Diagnostics (internal)
-  - `system.heartbeat`: node, version?, uptime_s?
-  - `ingestion.anchor_mismatch`: node, material_id, anchor_byte, rule_id, expected?, observed?
+  - `process.heartbeat`: module_name, module_kind?, version?, uptime_s?
+  - `ingestion.anchor_mismatch`: module_name, material_id, anchor_byte, rule_id, expected?, observed?
   - `annex.probe`: sample_size, failures, bytes_missing, duration_ms
 
 Notes
 - Minimal payloads prioritize identifiers/hashes; put large content in blobs and reference by hash.
-- See `crate/lib/sinex-schema/docs/overview.md` for database columns and provenance rules; schemas live under `crate/lib/sinex-schema/src/schema/`.
+- See `crate/sinex-db/docs/schema/overview.md` for database columns and provenance rules; schemas live under `crate/sinex-schema/src/defs/`.
 
 Relations (planned)
 - Purpose: capture causality, context, and workflows between events.

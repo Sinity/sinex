@@ -46,17 +46,17 @@ jobs:
       - name: Cache corpus
         uses: actions/cache@v4
         with:
-          path: crate/lib/sinex-primitives/fuzz/corpus/${{ matrix.target }}
+          path: crate/sinex-primitives/fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-primitives-${{ matrix.target }}-${{ github.sha }}
           restore-keys: |
             fuzz-corpus-primitives-${{ matrix.target }}-
 
       - name: Create corpus directory
-        run: mkdir -p crate/lib/sinex-primitives/fuzz/corpus/${{ matrix.target }}
+        run: mkdir -p crate/sinex-primitives/fuzz/corpus/${{ matrix.target }}
 
       - name: Run fuzzer (${{ matrix.target }})
         if: github.event.inputs.target == 'all' || github.event.inputs.target == matrix.target
-        working-directory: crate/lib/sinex-primitives/fuzz
+        working-directory: crate/sinex-primitives/fuzz
         run: |
           cargo +nightly fuzz run ${{ matrix.target }} -- \
             -max_total_time=${{ env.FUZZ_DURATION }} \
@@ -65,7 +65,7 @@ jobs:
 
       - name: Check for crashes
         id: check-crashes
-        working-directory: crate/lib/sinex-primitives/fuzz
+        working-directory: crate/sinex-primitives/fuzz
         run: |
           if [ -d "artifacts/${{ matrix.target }}" ] && [ "$(ls -A artifacts/${{ matrix.target }} 2>/dev/null)" ]; then
             echo "crashes_found=true" >> $GITHUB_OUTPUT
@@ -79,14 +79,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-crashes-primitives-${{ matrix.target }}
-          path: crate/lib/sinex-primitives/fuzz/artifacts/${{ matrix.target }}
+          path: crate/sinex-primitives/fuzz/artifacts/${{ matrix.target }}
           retention-days: 30
 
       - name: Upload corpus
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-corpus-primitives-${{ matrix.target }}
-          path: crate/lib/sinex-primitives/fuzz/corpus/${{ matrix.target }}
+          path: crate/sinex-primitives/fuzz/corpus/${{ matrix.target }}
           retention-days: 7
           if-no-files-found: ignore
 
@@ -114,17 +114,17 @@ jobs:
       - name: Cache corpus
         uses: actions/cache@v4
         with:
-          path: crate/lib/sinex-db/fuzz/corpus/${{ matrix.target }}
+          path: crate/sinex-db/fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-db-${{ matrix.target }}-${{ github.sha }}
           restore-keys: |
             fuzz-corpus-db-${{ matrix.target }}-
 
       - name: Create corpus directory
-        run: mkdir -p crate/lib/sinex-db/fuzz/corpus/${{ matrix.target }}
+        run: mkdir -p crate/sinex-db/fuzz/corpus/${{ matrix.target }}
 
       - name: Run fuzzer (${{ matrix.target }})
         if: github.event.inputs.target == 'all' || github.event.inputs.target == matrix.target
-        working-directory: crate/lib/sinex-db/fuzz
+        working-directory: crate/sinex-db/fuzz
         run: |
           cargo +nightly fuzz run ${{ matrix.target }} -- \
             -max_total_time=${{ env.FUZZ_DURATION }} \
@@ -133,7 +133,7 @@ jobs:
 
       - name: Check for crashes
         id: check-crashes
-        working-directory: crate/lib/sinex-db/fuzz
+        working-directory: crate/sinex-db/fuzz
         run: |
           if [ -d "artifacts/${{ matrix.target }}" ] && [ "$(ls -A artifacts/${{ matrix.target }} 2>/dev/null)" ]; then
             echo "crashes_found=true" >> $GITHUB_OUTPUT
@@ -147,14 +147,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-crashes-db-${{ matrix.target }}
-          path: crate/lib/sinex-db/fuzz/artifacts/${{ matrix.target }}
+          path: crate/sinex-db/fuzz/artifacts/${{ matrix.target }}
           retention-days: 30
 
       - name: Upload corpus
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-corpus-db-${{ matrix.target }}
-          path: crate/lib/sinex-db/fuzz/corpus/${{ matrix.target }}
+          path: crate/sinex-db/fuzz/corpus/${{ matrix.target }}
           retention-days: 7
           if-no-files-found: ignore
 

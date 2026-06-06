@@ -697,8 +697,8 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                     expression: "temporal_policy IS NULL OR temporal_policy IN ('inherit_parent', 'latest_input', 'window_boundary', 'declared_effective')",
                 },
                 NamedConstraint {
-                    name: "events_node_model_valid",
-                    expression: "node_model IS NULL OR node_model IN ('transducer', 'windowed', 'scope_reconciler')",
+                    name: "events_automaton_model_valid",
+                    expression: "automaton_model IS NULL OR automaton_model IN ('transducer', 'windowed', 'scope_reconciler')",
                 },
                 NamedConstraint {
                     name: "events_host_bounds",
@@ -718,10 +718,10 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                 },
             ],
             foreign_keys: vec![NamedForeignKey {
-                name: "events_source_run_id_fkey",
-                statement_fn: Events::create_node_run_foreign_key,
+                name: "events_module_run_id_fkey",
+                statement_fn: Events::create_module_run_foreign_key,
             }],
-            // node_version was the predecessor to source_run_id.
+            // node_version was the predecessor to module_run_id.
             // occurrence_id was removed when occurrence rows were folded back
             // into material provenance identity: (source_material_id, anchor_byte).
             columns_to_drop: &["node_version", "occurrence_id"],

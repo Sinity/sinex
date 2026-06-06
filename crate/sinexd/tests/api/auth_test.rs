@@ -1,8 +1,8 @@
+use sinex_primitives::temporal;
 use sinexd::api::{
     auth::{Role, TokenRoleError},
     rpc_server::RpcAuthContext,
 };
-use sinex_primitives::temporal;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]

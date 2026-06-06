@@ -92,7 +92,7 @@ async fn mcp_tool_schemas_are_closed_objects() -> TestResult<()> {
 #[sinex_test]
 async fn mcp_docs_tool_table_matches_live_tools() -> TestResult<()> {
     let docs_path =
-        workspace_root_from_manifest_dir()?.join("docs/architecture/mcp-readonly-server.md");
+        workspace_root_from_manifest_dir()?.join("crate/sinexctl/docs/mcp_readonly_server.md");
     let docs = std::fs::read_to_string(&docs_path)?;
     let documented = docs
         .lines()
@@ -337,7 +337,7 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
         "sinex.source_readiness",
         json!({
             "source_family": "terminal",
-            "source_unit_id": "terminal.atuin-history",
+            "source_id": "terminal.atuin-history",
             "include_caveats": false
         }),
     )
@@ -350,7 +350,7 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
         ));
     };
     assert_eq!(sources.len(), 1);
-    assert_eq!(sources[0]["source_unit_id"], "terminal.atuin-history");
+    assert_eq!(sources[0]["source_id"], "terminal.atuin-history");
     assert_eq!(sources[0]["evidence"]["sample"], "[REDACTED]");
     assert_eq!(response["items"]["caveats"], "suppressed_by_request");
     assert!(
@@ -395,7 +395,7 @@ async fn mcp_source_drift_call_uses_gateway_fixture() -> TestResult<()> {
         &client,
         "sinex.source_drift",
         json!({
-            "source_unit_id": "browser.history",
+            "source_id": "browser.history",
             "limit": 5
         }),
     )
@@ -403,7 +403,7 @@ async fn mcp_source_drift_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["tool"], "sinex.source_drift");
     assert_eq!(
-        response["items"]["result"]["drifts"][0]["source_unit_id"],
+        response["items"]["result"]["drifts"][0]["source_id"],
         "browser.history"
     );
     assert_eq!(
@@ -609,7 +609,7 @@ async fn mcp_replay_operations_call_uses_gateway_fixture() -> TestResult<()> {
         "sinex.replay_operations",
         json!({
             "state": "Planning",
-            "node": "terminal.atuin-history",
+            "module": "terminal.atuin-history",
             "limit": 5
         }),
     )
@@ -846,7 +846,7 @@ async fn mcp_automata_status_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["query"]["stale_after_secs"], 120);
     assert_eq!(response["items"]["result"]["stale_after_secs"], 120);
     assert_eq!(
-        response["items"]["result"]["automata"][0]["node_name"],
+        response["items"]["result"]["automata"][0]["module_name"],
         "session-detector"
     );
     assert_eq!(
@@ -858,26 +858,26 @@ async fn mcp_automata_status_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn mcp_ingestors_status_call_uses_gateway_fixture() -> TestResult<()> {
+async fn mcp_sources_status_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
     let response = call_tool(
         &client,
-        "sinex.ingestors_status",
+        "sinex.sources_status",
         json!({ "stale_after_secs": 120, "recent_window_secs": 60 }),
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.ingestors_status");
+    assert_eq!(response["tool"], "sinex.sources_status");
     assert_eq!(response["query"]["recent_window_secs"], 60);
     assert_eq!(response["items"]["result"]["recent_window_secs"], 60);
     assert_eq!(
-        response["items"]["result"]["ingestors"][0]["node_name"],
+        response["items"]["result"]["sources"][0]["module_name"],
         "terminal.atuin-history"
     );
     assert_eq!(
-        response["items"]["result"]["ingestors"][0]["current_health"],
+        response["items"]["result"]["sources"][0]["current_health"],
         "healthy"
     );
     assert_eq!(response["redaction"]["raw_samples"], false);
@@ -885,46 +885,46 @@ async fn mcp_ingestors_status_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn mcp_nodes_health_call_uses_gateway_fixture() -> TestResult<()> {
+async fn mcp_runtime_health_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
     let response = call_tool(
         &client,
-        "sinex.nodes_health",
+        "sinexd.source_health",
         json!({ "stale_after_secs": 120 }),
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.nodes_health");
+    assert_eq!(response["tool"], "sinexd.source_health");
     assert_eq!(response["query"]["stale_after_secs"], 120);
     assert_eq!(response["items"]["result"]["active_count"], 2);
     assert_eq!(response["items"]["result"]["inactive_count"], 1);
-    assert_eq!(response["items"]["result"]["unique_nodes"], 3);
+    assert_eq!(response["items"]["result"]["unique_modules"], 3);
     assert_eq!(response["redaction"]["raw_samples"], false);
     Ok(())
 }
 
 #[sinex_test]
-async fn mcp_nodes_active_call_uses_gateway_fixture() -> TestResult<()> {
+async fn mcp_runtime_active_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
     let response = call_tool(
         &client,
-        "sinex.nodes_active",
+        "sinexd.sources_active",
         json!({ "stale_after_secs": 120 }),
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.nodes_active");
+    assert_eq!(response["tool"], "sinexd.sources_active");
     assert_eq!(response["query"]["stale_after_secs"], 120);
     assert_eq!(
-        response["items"]["result"]["nodes"][0]["node_name"],
+        response["items"]["result"]["modules"][0]["module_name"],
         "terminal.atuin-history"
     );
     assert_eq!(
-        response["items"]["result"]["nodes"][0]["heartbeat_source"],
+        response["items"]["result"]["modules"][0]["heartbeat_source"],
         "run"
     );
     assert_eq!(response["redaction"]["raw_samples"], false);
@@ -932,30 +932,33 @@ async fn mcp_nodes_active_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn mcp_nodes_registry_call_uses_gateway_fixture() -> TestResult<()> {
+async fn mcp_runtime_registry_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.nodes_registry", json!({})).await?;
+    let response = call_tool(&client, "sinexd.sources_registry", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.nodes_registry");
+    assert_eq!(response["tool"], "sinexd.sources_registry");
     assert_eq!(
-        response["items"]["result"]["nodes"][0]["node_id"],
+        response["items"]["result"]["modules"][0]["module_name"],
         "terminal.atuin-history"
     );
-    assert_eq!(response["items"]["result"]["nodes"][0]["state"], "running");
+    assert_eq!(
+        response["items"]["result"]["modules"][0]["state"],
+        "running"
+    );
     assert_eq!(response["redaction"]["raw_samples"], false);
     Ok(())
 }
 
 #[sinex_test]
-async fn mcp_ingestd_validation_call_uses_gateway_fixture() -> TestResult<()> {
+async fn mcp_event_engine_validation_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.ingestd_validation", json!({})).await?;
+    let response = call_tool(&client, "sinex.event_engine_validation", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.ingestd_validation");
+    assert_eq!(response["tool"], "sinex.event_engine_validation");
     assert_eq!(response["items"]["snapshot"]["batch_size"], 12);
     assert_eq!(response["items"]["snapshot"]["validation_invalid"], 0);
     assert_eq!(
@@ -967,13 +970,13 @@ async fn mcp_ingestd_validation_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn mcp_ingestd_batch_stats_call_uses_gateway_fixture() -> TestResult<()> {
+async fn mcp_event_engine_batch_stats_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
     let response = call_tool(
         &client,
-        "sinex.ingestd_batch_stats",
+        "sinex.event_engine_batch_stats",
         json!({
             "from": "2026-05-19T00:00:00Z",
             "to": "2026-05-19T01:00:00Z",
@@ -982,7 +985,7 @@ async fn mcp_ingestd_batch_stats_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.ingestd_batch_stats");
+    assert_eq!(response["tool"], "sinex.event_engine_batch_stats");
     assert_eq!(response["query"]["limit"], 5);
     assert_eq!(response["items"]["buckets"][0]["batch_count"], 3);
     assert_eq!(response["items"]["buckets"][0]["validation_invalid"], 0);
@@ -1012,7 +1015,7 @@ async fn mcp_throughput_call_uses_gateway_fixture() -> TestResult<()> {
     );
     assert_eq!(
         response["items"]["result"]["per_component"][0]["component"],
-        "ingestd"
+        "event_engine"
     );
     assert_eq!(response["redaction"]["raw_samples"], false);
     Ok(())
@@ -1158,10 +1161,7 @@ async fn mcp_current_device_state_call_uses_gateway_fixture() -> TestResult<()> 
 
     assert_eq!(response["tool"], "sinex.current_device_state");
     assert_eq!(response["query"]["limit"], 4);
-    assert_eq!(
-        response["items"]["entries"][0]["unit_name"],
-        "sinex-gateway"
-    );
+    assert_eq!(response["items"]["entries"][0]["unit_name"], "sinexd");
     assert_eq!(response["items"]["entries"][0]["state"], "active");
     assert_eq!(response["redaction"]["raw_samples"], false);
     Ok(())
@@ -1213,15 +1213,15 @@ async fn mcp_assembly_stats_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn mcp_node_stats_call_uses_gateway_fixture() -> TestResult<()> {
+async fn mcp_source_stats_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.node_stats", telemetry_window_args()).await?;
+    let response = call_tool(&client, "sinex.source_stats", telemetry_window_args()).await?;
 
-    assert_eq!(response["tool"], "sinex.node_stats");
+    assert_eq!(response["tool"], "sinex.source_stats");
     assert_eq!(response["query"]["limit"], 3);
-    assert_eq!(response["items"]["buckets"][0]["node_type"], "ingestor");
+    assert_eq!(response["items"]["buckets"][0]["module_kind"], "source");
     assert_eq!(
         response["items"]["buckets"][0]["total_events_processed"],
         42
@@ -1239,7 +1239,7 @@ async fn mcp_metric_counters_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["tool"], "sinex.metric_counters");
     assert_eq!(response["query"]["limit"], 3);
-    assert_eq!(response["items"]["buckets"][0]["component"], "ingestd");
+    assert_eq!(response["items"]["buckets"][0]["component"], "event_engine");
     assert_eq!(response["items"]["buckets"][0]["metric_name"], "events");
     assert_eq!(response["items"]["buckets"][0]["total_value"], 99);
     assert_eq!(response["redaction"]["raw_samples"], false);
@@ -1519,28 +1519,6 @@ async fn mcp_lifecycle_status_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn mcp_gitops_sources_call_uses_gateway_fixture() -> TestResult<()> {
-    let server = mount_mcp_gateway_fixture().await;
-    let client = fixture_gateway_client(&server)?;
-
-    let response = call_tool(
-        &client,
-        "sinex.gitops_sources",
-        json!({ "include_disabled": true }),
-    )
-    .await?;
-
-    assert_eq!(response["tool"], "sinex.gitops_sources");
-    assert_eq!(response["query"]["include_disabled"], true);
-    assert_eq!(
-        response["items"]["result"]["sources"][0]["repository_url"],
-        "https://example.invalid/sinex-schemas.git"
-    );
-    assert_eq!(response["redaction"]["raw_samples"], false);
-    Ok(())
-}
-
-#[sinex_test]
 async fn mcp_audit_trail_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -1571,12 +1549,12 @@ async fn mcp_coordination_instances_call_uses_gateway_fixture() -> TestResult<()
     let response = call_tool(
         &client,
         "sinex.coordination_instances",
-        json!({ "node_type": "service" }),
+        json!({ "module_kind": "service" }),
     )
     .await?;
 
     assert_eq!(response["tool"], "sinex.coordination_instances");
-    assert_eq!(response["query"]["node_type"], "service");
+    assert_eq!(response["query"]["module_kind"], "service");
     assert_eq!(
         response["items"]["result"]["instances"][0]["instance_id"],
         fixture_instance_id()
@@ -1593,7 +1571,7 @@ async fn mcp_coordination_leader_call_uses_gateway_fixture() -> TestResult<()> {
     let response = call_tool(
         &client,
         "sinex.coordination_leader",
-        json!({ "node_type": "service" }),
+        json!({ "module_kind": "service" }),
     )
     .await?;
 
@@ -1771,7 +1749,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "sources": [
                         {
                             "source_family": "terminal",
-                            "source_unit_id": "terminal.atuin-history",
+                            "source_id": "terminal.atuin-history",
                             "source_identifier": "atuin-history",
                             "status": "available",
                             "cost": "local_fast",
@@ -1791,7 +1769,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         },
                         {
                             "source_family": "terminal",
-                            "source_unit_id": "terminal.text-history",
+                            "source_id": "terminal.text-history",
                             "source_identifier": "text-history",
                             "status": "stale",
                             "cost": "local_fast",
@@ -1802,7 +1780,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                 "sources.readiness.get" => json!({
                     "readiness": {
                         "source_family": "terminal",
-                        "source_unit_id": "terminal.atuin-history",
+                        "source_id": "terminal.atuin-history",
                         "source_identifier": "atuin-history",
                         "status": "available",
                         "cost": "local_fast",
@@ -1843,8 +1821,8 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                 "sources.drift.list" => json!({
                     "drifts": [
                         {
-                            "checkpoint_key": "source-worker.default.fixture",
-                            "source_unit_id": body["params"]["source_unit_id"].as_str().unwrap_or("browser.history"),
+                            "checkpoint_key": "source.default.fixture",
+                            "source_id": body["params"]["source_id"].as_str().unwrap_or("browser.history"),
                             "consumer_group": "default",
                             "consumer_name": "fixture",
                             "previous_hash": "shape-old",
@@ -2060,14 +2038,14 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "recent_window_secs": body["params"]["recent_window_secs"].as_u64().unwrap_or(300),
                     "automata": [
                         {
-                            "node_name": "session-detector",
+                            "module_name": "session-detector",
                             "version": "0.4.2",
                             "description": "fixture automaton",
                             "manifest_status": "registered",
                             "live": true,
-                            "service_name": "sinex-process-session-detector.service",
+                            "service_name": "sinex-session-detector.service",
                             "instance_id": "session-detector-1",
-                            "source_run_id": null,
+                            "module_run_id": null,
                             "host": "test-host",
                             "run_status": "healthy",
                             "started_at": "2026-05-19T11:00:00Z",
@@ -2089,20 +2067,20 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         }
                     ]
                 }),
-                "ingestors.status" => json!({
+                "sources.status" => json!({
                     "generated_at": "2026-05-19T12:00:00Z",
                     "stale_after_secs": body["params"]["stale_after_secs"].as_u64().unwrap_or(300),
                     "recent_window_secs": body["params"]["recent_window_secs"].as_u64().unwrap_or(300),
-                    "ingestors": [
+                    "sources": [
                         {
-                            "node_name": "terminal.atuin-history",
+                            "module_name": "terminal.atuin-history",
                             "version": "0.4.2",
-                            "description": "fixture ingestor",
+                            "description": "fixture source",
                             "manifest_status": "registered",
                             "live": true,
-                            "service_name": "sinex-source-worker@terminal.atuin-history.service",
+                            "service_name": "source-driver-terminal.atuin-history.service",
                             "instance_id": "terminal-atuin-1",
-                            "source_run_id": null,
+                            "module_run_id": null,
                             "host": "test-host",
                             "run_status": "healthy",
                             "started_at": "2026-05-19T11:00:00Z",
@@ -2115,23 +2093,23 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         }
                     ]
                 }),
-                "nodes.health" => json!({
+                "runtime.health" => json!({
                     "active_count": 2,
                     "inactive_count": 1,
-                    "unique_nodes": 3,
+                    "unique_modules": 3,
                     "active_run_count": 2,
                     "oldest_heartbeat": "2026-05-19T11:50:00Z"
                 }),
-                "nodes.list_active" => json!({
-                    "nodes": [
+                "runtime.list_active" => json!({
+                    "modules": [
                         {
-                            "node_name": "terminal.atuin-history",
-                            "node_type": "ingestor",
+                            "module_name": "terminal.atuin-history",
+                            "module_kind": "source",
                             "version": "0.4.2",
-                            "description": "fixture source worker",
-                            "service_name": "sinex-source-worker@terminal.atuin-history.service",
+                            "description": "fixture source host",
+                            "service_name": "source-driver-terminal.atuin-history.service",
                             "instance_id": "terminal-atuin-1",
-                            "source_run_id": null,
+                            "module_run_id": null,
                             "host": "test-host",
                             "status": "healthy",
                             "last_heartbeat_at": "2026-05-19T11:59:59Z",
@@ -2140,17 +2118,17 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         }
                     ]
                 }),
-                "nodes.list" => json!({
-                    "nodes": [
+                "runtime.list" => json!({
+                    "modules": [
                         {
-                            "node_id": "terminal.atuin-history",
+                            "module_name": "terminal.atuin-history",
                             "state": "running",
                             "last_heartbeat": "2026-05-19T11:59:59Z",
                             "processing_horizon": "2026-05-19T12:00:00Z"
                         }
                     ]
                 }),
-                "telemetry.ingestd_validation" => json!({
+                "telemetry.event_engine_validation" => json!({
                     "snapshot": {
                         "observed_at": "2026-05-19T11:59:59Z",
                         "batch_size": 12,
@@ -2168,7 +2146,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         "suspicious_future_ts_orig": 0
                     }
                 }),
-                "telemetry.ingestd_batch_stats" => json!({
+                "telemetry.event_engine_batch_stats" => json!({
                     "buckets": [
                         {
                             "bucket": "2026-05-19T00:00:00Z",
@@ -2201,7 +2179,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     ],
                     "per_component": [
                         {
-                            "component": "ingestd",
+                            "component": "event_engine",
                             "eps_1h": 0.05,
                             "eps_24h": 0.02
                         }
@@ -2282,7 +2260,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                 "telemetry.current_device_state" => json!({
                     "entries": [
                         {
-                            "unit_name": "sinex-gateway",
+                            "unit_name": "sinexd",
                             "unit_type": "service",
                             "state": "active",
                             "sub_state": "running",
@@ -2330,11 +2308,11 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         }
                     ]
                 }),
-                "telemetry.node_stats" => json!({
+                "telemetry.source_stats" => json!({
                     "buckets": [
                         {
                             "bucket": "2026-05-19T12:00:00Z",
-                            "node_type": "ingestor",
+                            "module_kind": "source",
                             "total_events_processed": 42,
                             "total_events_dropped": 0,
                             "avg_latency_ms": 5.5,
@@ -2348,7 +2326,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "buckets": [
                         {
                             "bucket": "2026-05-19T12:00:00Z",
-                            "component": "ingestd",
+                            "component": "event_engine",
                             "metric_name": "events",
                             "total_value": 99,
                             "max_value": 20,
@@ -2569,20 +2547,6 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     ],
                     "total_events": 42
                 }),
-                "gitops.list_sources" => json!({
-                    "sources": [
-                        {
-                            "id": "018f4b6b-6a4d-7c80-8000-000000000012",
-                            "repository_url": "https://example.invalid/sinex-schemas.git",
-                            "branch": "main",
-                            "path_pattern": "schemas/**/*.json",
-                            "sync_enabled": true,
-                            "last_sync_at": "2026-05-19T12:00:00Z",
-                            "last_sync_commit": "abcdef123456",
-                            "sync_frequency_minutes": 60
-                        }
-                    ]
-                }),
                 "audit.get" => json!({
                     "audit_trail": {
                         "operation": fixture_operation(),
@@ -2703,7 +2667,7 @@ fn fixture_instance_id() -> &'static str {
 fn fixture_instance(is_leader: bool) -> Value {
     json!({
         "instance_id": fixture_instance_id(),
-        "node_type": "service",
+        "module_kind": "service",
         "hostname": "test-host",
         "last_heartbeat": "2026-05-19T12:00:00Z",
         "is_leader": is_leader
@@ -2716,7 +2680,7 @@ fn fixture_operation() -> Value {
         "operation_type": "replay",
         "operator": "fixture",
         "scope": {
-            "node_id": "terminal.atuin-history"
+            "source_name": "terminal.atuin-history"
         },
         "result_status": "running",
         "result_message": null,
@@ -2732,7 +2696,7 @@ fn fixture_replay_operation(state: &str) -> Value {
         "operation_id": fixture_operation_id(),
         "state": state,
         "scope": {
-            "node_id": "terminal.atuin-history",
+            "source_name": "terminal.atuin-history",
             "time_window": null,
             "material_filter": null,
             "filters": {}
@@ -2756,7 +2720,7 @@ fn fixture_replay_operation(state: &str) -> Value {
         "created_at": "2026-05-19T10:00:00Z",
         "approved_by": null,
         "approved_at": null,
-        "executor_node": null,
+        "executor_module": null,
         "started_at": null,
         "finished_at": null,
         "outcome": null,

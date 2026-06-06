@@ -272,19 +272,19 @@ async fn test_config_env_var_rpc_url() -> TestResult<()> {
     // Runtime transport settings are env-first.
 
     // Save original
-    let original = env::var("SINEX_RPC_URL").ok();
+    let original = env::var("SINEX_API_URL").ok();
 
-    unsafe { env::set_var("SINEX_RPC_URL", "https://env-gateway:9999") };
+    unsafe { env::set_var("SINEX_API_URL", "https://env-gateway:9999") };
 
-    let url = env::var("SINEX_RPC_URL").unwrap();
+    let url = env::var("SINEX_API_URL").unwrap();
     assert_eq!(url, "https://env-gateway:9999");
 
     // Restore
     unsafe {
         if let Some(orig) = original {
-            env::set_var("SINEX_RPC_URL", orig);
+            env::set_var("SINEX_API_URL", orig);
         } else {
-            env::remove_var("SINEX_RPC_URL");
+            env::remove_var("SINEX_API_URL");
         }
     }
     Ok(())
@@ -380,7 +380,7 @@ async fn test_config_aliases_from_toml() -> TestResult<()> {
 
         [aliases]
         h = ["health"]
-        nodes = ["node", "list"]
+        modules = ["runtime", "list"]
         q = ["query", "events"]
     "#;
 
@@ -389,8 +389,8 @@ async fn test_config_aliases_from_toml() -> TestResult<()> {
     assert_eq!(config.aliases.len(), 3);
     assert_eq!(config.aliases.get("h"), Some(&vec!["health".to_string()]));
     assert_eq!(
-        config.aliases.get("nodes"),
-        Some(&vec!["node".to_string(), "list".to_string()])
+        config.aliases.get("modules"),
+        Some(&vec!["runtime".to_string(), "list".to_string()])
     );
     Ok(())
 }

@@ -26,14 +26,12 @@ deliberately invoked by hand.
 - **`verify-perf.yml`** — On-demand performance verification. Runs
   `xtask test bench --contracts` inside an ephemeral Postgres environment and
   uploads the perf-verification artifacts.
-- **`n1-compat.yml`** — On-demand N-1 protocol compatibility check. Brings
-  up current gateway plus the latest released terminal ingestor and verifies the
-  rolling-update path still moves events.
 - **`fuzz.yml`** — On-demand fuzzing for selected `sinex-primitives` and
   `sinex-db` targets. Crash artifacts are uploaded and the summary job fails if any
   crashes are found.
-- **`schema-compatibility.yml`** — Manual contract compatibility checks
-  against the base branch.
+- **`schema-compatibility.yml`** — Manual schema-contract drift checks against
+  the base branch. This is not an N-1 runtime compatibility promise; it catches
+  unversioned payload/schema contract edits.
 - **`schema-management.yml`** — Validates JSON schemas, regenerates the checked-in
   schema bundle from the Rust registry, and can deploy via `xtask infra
   schema-apply` from a manual default-branch run if the production DB secret is
@@ -49,7 +47,7 @@ nix develop --accept-flake-config --no-pure-eval --command \
   xtask ci postgres -- \
   xtask ci workspace
 
-# Schema contract check (matches schema-compatibility.yml)
+# Schema contract drift check (matches schema-compatibility.yml)
 xtask ci compat --base master
 ```
 

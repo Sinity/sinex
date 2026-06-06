@@ -159,7 +159,7 @@ let stream = namespace.stream("MY_STREAM");
 let subject = namespace.subject("events.>");
 ```
 
-### PipelineScope (Full Pipeline with Ingestd)
+### PipelineScope (Full Pipeline with EventEngine)
 
 ```rust
 let scope = ctx.pipeline_scope().await?;

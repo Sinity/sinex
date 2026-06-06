@@ -13,7 +13,7 @@ use crate::api::{
 use sinex_primitives::env as shared_env;
 
 // External crates
-use crate::node_sdk::systemd_notify;
+use crate::runtime::systemd_notify;
 use axum::{
     BoxError, Json, Router,
     error_handling::HandleErrorLayer,
@@ -262,12 +262,12 @@ impl GatewayAuth {
         if let Some(ref t) = token {
             if t.trim().is_empty() {
                 return Err(SinexError::configuration(
-                    "SINEX_RPC_TOKEN (or token file) is set but empty; refusing to start without a token",
+                    "SINEX_API_TOKEN (or token file) is set but empty; refusing to start without a token",
                 ));
             }
         } else {
             return Err(SinexError::configuration(
-                "SINEX_RPC_TOKEN is not set. Export a token (or SINEX_API_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) so the gateway can authenticate RPC clients.",
+                "SINEX_API_TOKEN is not set. Export a token (or SINEX_API_ADMIN_TOKEN_FILE / SINEX_API_TOKEN_FILE) so the gateway can authenticate RPC clients.",
             ));
         }
 
@@ -460,17 +460,17 @@ fn read_token_and_path_from_env() -> SinexResult<(Option<String>, Option<PathBuf
         return Ok((Some(contents.trim().to_string()), Some(path)));
     }
 
-    if let Some(path_str) = shared_env::strict_var("SINEX_RPC_TOKEN_FILE")? {
+    if let Some(path_str) = shared_env::strict_var("SINEX_API_TOKEN_FILE")? {
         let path = PathBuf::from(&path_str);
         let contents = std::fs::read_to_string(&path).map_err(|e| {
-            SinexError::configuration("Failed to read SINEX_RPC_TOKEN_FILE")
+            SinexError::configuration("Failed to read SINEX_API_TOKEN_FILE")
                 .with_context("path", path.display().to_string())
                 .with_std_error(&e)
         })?;
         return Ok((Some(contents.trim().to_string()), Some(path)));
     }
 
-    if let Some(token) = shared_env::strict_var("SINEX_RPC_TOKEN")? {
+    if let Some(token) = shared_env::strict_var("SINEX_API_TOKEN")? {
         return Ok((Some(token.trim().to_string()), None));
     }
 
@@ -505,7 +505,7 @@ impl AuthError {
     fn into_response(self) -> (StatusCode, Json<JsonRpcResponse>) {
         let message = match self {
             AuthError::Missing => {
-                "Authentication required. Provide SINEX_RPC_TOKEN via Authorization header."
+                "Authentication required. Provide SINEX_API_TOKEN via Authorization header."
             }
             AuthError::Invalid => "Authentication failed: invalid token.",
         };
@@ -522,7 +522,7 @@ impl std::fmt::Display for AuthError {
         match self {
             AuthError::Missing => write!(
                 f,
-                "authentication required: provide SINEX_RPC_TOKEN via Authorization header"
+                "authentication required: provide SINEX_API_TOKEN via Authorization header"
             ),
             AuthError::Invalid => write!(f, "authentication failed: invalid token"),
         }
@@ -1453,7 +1453,7 @@ fn parse_tcp_listen(spec: &str) -> SinexResult<(String, u16)> {
 }
 
 /// Read RPC token from environment variables.
-/// Priority: `SINEX_API_ADMIN_TOKEN_FILE` > `SINEX_RPC_TOKEN_FILE` > `SINEX_RPC_TOKEN`
+/// Priority: `SINEX_API_ADMIN_TOKEN_FILE` > `SINEX_API_TOKEN_FILE` > `SINEX_API_TOKEN`
 ///
 /// Used by test support utilities and external consumers that need token access.
 pub fn read_token_from_env() -> SinexResult<Option<String>> {
@@ -1576,7 +1576,7 @@ fn load_rustls_config(
 /// `ServerConfig` is built anywhere in the process — reqwest is compiled with
 /// `rustls-no-provider`, so building a client without a default provider
 /// panics. Called once at daemon startup (`sinexd` main) so every entry point
-/// (supervisor, standalone gateway, source-unit scans) is covered regardless of
+/// (supervisor, standalone gateway, source scans) is covered regardless of
 /// which subsystem builds the first TLS client.
 pub fn ensure_rustls_crypto_provider() -> SinexResult<()> {
     if rustls::crypto::CryptoProvider::get_default().is_some() {
@@ -1881,14 +1881,14 @@ pub async fn spawn(
     })?;
     info!("RPC server listening on TLS {}", local_addr);
 
-    systemd_notify::notify_ready("sinex-gateway");
-    let watchdog_handle = systemd_notify::spawn_watchdog("sinex-gateway");
+    systemd_notify::notify_ready("sinexd");
+    let watchdog_handle = systemd_notify::spawn_watchdog("sinexd");
 
     let handle = tokio::spawn(async move {
         // Run accept loop until shutdown signal
         let accept_result = RpcServer::accept_loop(listener, acceptor, app, &mut shutdown).await;
-        systemd_notify::stop_watchdog(watchdog_handle, "sinex-gateway").await;
-        systemd_notify::notify_stopping("sinex-gateway");
+        systemd_notify::stop_watchdog(watchdog_handle, "sinexd").await;
+        systemd_notify::notify_stopping("sinexd");
         accept_result?;
 
         // Signal all background tasks to shut down
@@ -2321,8 +2321,8 @@ mod tests {
 
     fn clear_auth_env() {
         unsafe {
-            std::env::remove_var("SINEX_RPC_TOKEN");
-            std::env::remove_var("SINEX_RPC_TOKEN_FILE");
+            std::env::remove_var("SINEX_API_TOKEN");
+            std::env::remove_var("SINEX_API_TOKEN_FILE");
             std::env::remove_var("SINEX_API_ADMIN_TOKEN_FILE");
         }
     }
@@ -2789,14 +2789,14 @@ mod tests {
         clear_auth_env();
         unsafe {
             std::env::set_var(
-                "SINEX_RPC_TOKEN",
+                "SINEX_API_TOKEN",
                 OsString::from_vec(vec![0x73, 0x80, 0x65]),
             );
         }
 
         let error =
             read_token_and_path_from_env().expect_err("non-UTF-8 token env should be rejected");
-        assert!(error.to_string().contains("SINEX_RPC_TOKEN"));
+        assert!(error.to_string().contains("SINEX_API_TOKEN"));
 
         clear_auth_env();
         Ok(())
@@ -2812,7 +2812,7 @@ mod tests {
         std::fs::write(&token_file, "initial-token")?;
         unsafe {
             std::env::set_var(
-                "SINEX_RPC_TOKEN_FILE",
+                "SINEX_API_TOKEN_FILE",
                 token_file
                     .to_str()
                     .expect("token path should be valid UTF-8"),

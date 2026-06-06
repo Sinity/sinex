@@ -16,7 +16,7 @@ pub const EVENT_CARD_LIST_SCHEMA_VERSION: &str = "sinex.event-card-list/v3";
 #[serde(rename_all = "snake_case")]
 pub enum SinexObjectKind {
     Event,
-    SourceUnit,
+    SourceDriver,
     SourceMaterial,
     MaterialAnchor,
     Document,
@@ -284,7 +284,7 @@ pub struct EventSourceView {
     pub family: String,
     pub raw: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub unit_ref: Option<SinexObjectRef>,
+    pub source_ref: Option<SinexObjectRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -349,8 +349,8 @@ impl EventCardView {
             source: EventSourceView {
                 family: source_family(event.source.as_str()),
                 raw: event.source.to_string(),
-                unit_ref: Some(
-                    SinexObjectRef::new(SinexObjectKind::SourceUnit, event.source.to_string())
+                source_ref: Some(
+                    SinexObjectRef::new(SinexObjectKind::SourceDriver, event.source.to_string())
                         .with_label(event.source.to_string()),
                 ),
             },
@@ -594,7 +594,7 @@ mod tests {
                 ts_orig: Some(Timestamp::now()),
                 ts_quality: None,
                 host: HostName::new("sinnix-prime")?,
-                source_run_id: None,
+                module_run_id: None,
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,
@@ -609,7 +609,7 @@ mod tests {
                 scope_key: None,
                 equivalence_key: None,
                 created_by_operation_id: None,
-                node_model: None,
+                automaton_model: None,
                 anchor_payload_hash: None,
             },
             relevance_score: Some(0.9),
@@ -673,7 +673,7 @@ mod tests {
                 ts_orig: None,
                 ts_quality: None,
                 host: HostName::new("test-host")?,
-                source_run_id: None,
+                module_run_id: None,
                 payload_schema_id: None,
                 provenance: Provenance::Derived {
                     source_event_ids: NonEmptyVec::single(Id::<Event<JsonValue>>::new()),
@@ -685,7 +685,7 @@ mod tests {
                 scope_key: None,
                 equivalence_key: None,
                 created_by_operation_id: None,
-                node_model: None,
+                automaton_model: None,
                 anchor_payload_hash: None,
             },
             relevance_score: None,

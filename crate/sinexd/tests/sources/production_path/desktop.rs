@@ -1,6 +1,6 @@
-//! Wave B production-path obligation tests for desktop source units.
+//! Wave B production-path obligation tests for desktop source contracts.
 //!
-//! Source units covered:
+//! Source contracts covered:
 //! - `desktop.activitywatch`   (`SqliteRowAdapter` + `ActivityWatchParser`)
 //! - `desktop.clipboard`       (`ClipboardPollingAdapter` + `ClipboardParser`)
 //! - `desktop.window-manager`  (`UnixSocketStreamAdapter` + `HyprlandParser`)
@@ -102,13 +102,13 @@ mod tests {
     async fn desktop_activitywatch_titles_are_not_parser_redacted() -> TestResult<()> {
         use sinex_primitives::events::SourceMaterial;
         use sinex_primitives::ids::Id;
-        use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId};
+        use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceId, SourceRecord};
         use sinex_primitives::temporal::Timestamp;
-        use sinexd::node_sdk::parser::MaterialParser;
-        use sinexd::sources::source_units::desktop::activitywatch::ActivityWatchParser;
+        use sinexd::runtime::parser::MaterialParser;
+        use sinexd::sources::source_contracts::desktop::activitywatch::ActivityWatchParser;
 
         let material_id = Id::<SourceMaterial>::from_uuid(sinex_primitives::Uuid::now_v7());
-        let source_unit_id = SourceUnitId::from_static("desktop.activitywatch");
+        let source_id = SourceId::from_static("desktop.activitywatch");
         let record = SourceRecord {
             material_id,
             anchor: MaterialAnchor::SqliteRow {
@@ -121,7 +121,7 @@ mod tests {
             metadata: serde_json::Value::Null,
         };
         let ctx = ParserContext {
-            source_unit_id,
+            source_id,
             source_material_id: material_id,
             record_anchor: record.anchor.clone(),
             operation_id: sinex_primitives::Uuid::now_v7(),
@@ -190,12 +190,12 @@ mod tests {
         use futures::StreamExt;
         use sinex_primitives::events::SourceMaterial;
         use sinex_primitives::ids::Id;
-        use sinex_primitives::parser::{ParserContext, SourceUnitId};
+        use sinex_primitives::parser::{ParserContext, SourceId};
         use sinex_primitives::temporal::Timestamp;
-        use sinexd::node_sdk::parser::{
+        use sinexd::runtime::parser::{
             InputShapeAdapter, MaterialParser, UnixSocketStreamAdapter, UnixSocketStreamConfig,
         };
-        use sinexd::sources::source_units::desktop::window_manager::HyprlandParser;
+        use sinexd::sources::source_contracts::desktop::window_manager::HyprlandParser;
 
         let fixture = crate::fixtures::unix_socket::build(b"activewindow>>kitty,~/project/sinex\n")
             .await
@@ -222,9 +222,9 @@ mod tests {
             .await
             .ok_or_else(|| color_eyre::eyre::eyre!("unix socket fixture emitted no frames"))??;
 
-        let source_unit_id = SourceUnitId::from_static("desktop.window-manager");
+        let source_id = SourceId::from_static("desktop.window-manager");
         let ctx = ParserContext {
-            source_unit_id: source_unit_id.clone(),
+            source_id: source_id.clone(),
             source_material_id: material_id,
             record_anchor: record.anchor.clone(),
             operation_id: sinex_primitives::Uuid::now_v7(),

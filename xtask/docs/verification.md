@@ -39,8 +39,8 @@ the important output is a structured measurement artifact rather than the
 wall-clock duration of a whole nextest run. For example:
 
 ```bash
-xtask test -p sinex-node-sdk -E 'test(source_material_scenario_batches_row_stream_records_with_stable_anchors)'
-xtask test -p sinex-node-sdk --heavy
+xtask test -p sinexd -E 'test(material_assembler)'
+xtask test -p sinex-e2e-tests -E 'test(source_material)'
 ```
 
 These artifacts are observed/advisory by default. Promote a resource

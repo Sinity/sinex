@@ -17,7 +17,7 @@ Set `SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true` to suppress Rust-side bootstrap
 
 All subjects are prefixed with the environment name (`dev`, `staging`, `prod`) via `SinexEnvironment::nats_subject()`. For example, `events.raw.fs.file.created` becomes `dev.events.raw.fs.file.created` in development.
 
-Reference: `crate/lib/sinex-primitives/src/environment.rs`
+Reference: `crate/sinex-primitives/src/environment.rs`
 
 ## Subject Naming
 
@@ -29,19 +29,19 @@ Reference: `crate/lib/sinex-primitives/src/environment.rs`
 
 This keeps the fixed `events.raw.<source>.<event_type>` hierarchy while preserving a one-to-one mapping from logical identifiers to NATS subject tokens.
 
-Reference: `crate/lib/sinex-node-sdk/src/nats_publisher.rs:121-127`
+Reference: `crate/sinexd/src/runtime/nats_publisher.rs`
 
 ## Core Subjects
 
 | Subject Pattern | Purpose | Publisher |
 |-----------------|---------|-----------|
-| `events.raw.<source>.<event_type>` | Raw events from ingestor nodes | Node SDK via `NatsPublisher` |
-| `events.confirmations.<event_id>` | Persistence acknowledgments | ingestd |
-| `events.confirmation_retries.<event_id>` | Confirmation retry processing | ingestd |
-| `events.processing_failures.<component>` | Processing failure envelopes | ingestd |
-| `events.dlq.<component>` | Dead letter queue messages | ingestd, failed consumers |
-| `sinex.derived.invalidation` | Scope invalidation signals for automata | ingestd |
-| `system.schemas.active` | Schema broadcast snapshots | ingestd |
+| `events.raw.<source>.<event_type>` | Raw events from source contracts | Runtime via `NatsPublisher` |
+| `events.confirmations.<event_id>` | Persistence acknowledgments | event engine |
+| `events.confirmation_retries.<event_id>` | Confirmation retry processing | event engine |
+| `events.processing_failures.<component>` | Processing failure envelopes | event engine |
+| `events.dlq.<component>` | Dead letter queue messages | event engine, failed consumers |
+| `sinex.derived.invalidation` | Scope invalidation signals for automata | event engine |
+| `system.schemas.active` | Schema broadcast snapshots | event engine |
 
 ## JetStream Streams
 
@@ -56,7 +56,7 @@ Stream names are derived from a configurable base name (typically `SINEX_EVENTS`
 | `<base>_DLQ` | `events.dlq.>` | Dead letter queue |
 | `<base>_DERIVED_INVALIDATIONS` | `sinex.derived.invalidation` | Scope invalidation signals |
 
-Reference: `crate/core/sinex-ingestd/src/jetstream_consumer.rs:93-107`
+Reference: `crate/sinexd/src/event_engine/jetstream_consumer.rs`
 
 ## Consumers
 
@@ -65,7 +65,7 @@ Reference: `crate/core/sinex-ingestd/src/jetstream_consumer.rs:93-107`
 | Ingest consumer | `events.raw.>` | Batch ingestion to PostgreSQL |
 | DLQ retry | `events.dlq.>` | Retry failed messages |
 
-Reference: `crate/lib/sinex-node-sdk/src/dlq_retry.rs:70-85`
+Reference: `crate/sinexd/src/runtime/dlq_retry.rs`
 
 ## Subject Examples
 
@@ -76,8 +76,8 @@ dev.events.raw.fs_d_watcher.file_d_created             # File creation event
 dev.events.raw.terminal_u_kitty.shell_d_command        # Shell command event
 dev.events.confirmations.01HXYZ...                     # Confirmation for event ID
 dev.events.confirmation_retries.01HXYZ...               # Confirmation retry for event ID
-dev.events.processing_failures.ingestd                  # Processing failure from ingestd
-dev.events.dlq.ingestd                                  # DLQ message from ingestd
+dev.events.processing_failures.event_engine             # Processing failure from event engine
+dev.events.dlq.event_engine                             # DLQ message from event engine
 dev.sinex.derived.invalidation                          # Scope invalidation signal
 dev.system.schemas.active                               # Schema broadcast
 ```
@@ -85,7 +85,7 @@ dev.system.schemas.active                               # Schema broadcast
 ## Implementation References
 
 - Environment namespacing: `sinex-primitives/src/environment.rs`
-- Event publishing: `sinex-node-sdk/src/nats_publisher.rs`
-- Stream topology: `sinex-ingestd/src/jetstream_consumer.rs`
-- Schema broadcast: `sinex-ingestd/src/service.rs`
-- DLQ handling: `sinex-node-sdk/src/dlq_retry.rs`
+- Event publishing: `crate/sinexd/src/runtime/nats_publisher.rs`
+- Stream topology: `crate/sinexd/src/event_engine/jetstream_consumer.rs`
+- Schema broadcast: `crate/sinexd/src/event_engine/service.rs`
+- DLQ handling: `crate/sinexd/src/runtime/dlq_retry.rs`

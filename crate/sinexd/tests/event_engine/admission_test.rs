@@ -172,7 +172,7 @@ async fn admission_candidate_metadata_stamps_existing_event_columns(
     let metadata = CandidateEventMetadata {
         source_material_id: Some(*material_id.as_uuid()),
         stable_natural_key: Some("source:row:42".to_string()),
-        parser_source_unit_id: Some("test.parser".to_string()),
+        parser_source_id: Some("test.parser".to_string()),
         parser_semantics_version: Some("parser-v2".to_string()),
         timestamp_derivation_evidence: Some("payload.started_at".to_string()),
         privacy_context: Some("metadata".to_string()),

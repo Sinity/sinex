@@ -1,14 +1,14 @@
-use sinexd::node_sdk::{SelfObserver, SelfObserverConfig};
+use sinexd::runtime::{SelfObserver, SelfObserverConfig};
 use tempfile::tempdir;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test(timeout = 60)]
-async fn self_observation_metrics_persist_via_ingestd(ctx: TestContext) -> TestResult<()> {
+async fn self_observation_metrics_persist_via_event_engine(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let work_dir = tempdir()?;
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let mut ingestd = start_test_ingestd_with_config(
-        TestIngestdConfig {
+    let mut event_engine = start_test_event_engine_with_config(
+        TestEventEngineConfig {
             nats: ctx.nats_handle()?.connection_config(),
             database_url: ctx.database_url().to_string(),
             work_dir: Some(work_dir.path().to_path_buf()),
@@ -61,6 +61,6 @@ async fn self_observation_metrics_persist_via_ingestd(ctx: TestContext) -> TestR
     )
     .await?;
 
-    ingestd.stop().await?;
+    event_engine.stop().await?;
     Ok(())
 }

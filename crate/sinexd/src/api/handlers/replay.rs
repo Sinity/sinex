@@ -151,7 +151,7 @@ pub async fn handle_replay_list_operations(
     _auth: &RpcAuthContext,
 ) -> Result<ReplayListResponse> {
     let operations = client
-        .list(req.state.map(db_replay_state), req.node, req.limit)
+        .list(req.state.map(db_replay_state), req.module, req.limit)
         .await
         .map_err(|error| {
             SinexError::service("failed to list replay operations").with_source(error)
@@ -177,7 +177,7 @@ fn into_replay_operation(operation: DbReplayOperation) -> Result<ReplayOperation
 
 fn db_replay_scope(scope: RpcReplayScope) -> Result<DbReplayScope> {
     Ok(DbReplayScope {
-        node_id: scope.node_id,
+        source_name: scope.source_name,
         time_window: scope
             .time_window
             .map(|(start, end)| {
@@ -210,7 +210,7 @@ fn db_replay_scope(scope: RpcReplayScope) -> Result<DbReplayScope> {
             })
             .transpose()?,
         filters: scope.filters,
-        source_id: scope.source_unit_id.or(scope.parser_id),
+        source_id: scope.source_id.or(scope.parser_id),
         source_material_id: scope
             .source_material_id
             .map(|raw| {

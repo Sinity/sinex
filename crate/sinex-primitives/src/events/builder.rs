@@ -23,7 +23,7 @@ pub struct EventBuilder<T, P> {
     pub(crate) timestamp: Option<Timestamp>,
     pub(crate) ts_quality: Option<TemporalSourceType>,
     pub(crate) hostname: Option<crate::domain::HostName>,
-    pub(crate) source_run_id: Option<Uuid>,
+    pub(crate) module_run_id: Option<Uuid>,
     pub(crate) payload_schema_id: Option<Uuid>,
     pub(crate) provenance_data: Option<Provenance>,
     pub(crate) associated_blob_ids: Option<Vec<Uuid>>,
@@ -47,7 +47,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             timestamp: None,
             ts_quality: None,
             hostname: None,
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             provenance_data: None,
             associated_blob_ids: None,
@@ -64,9 +64,9 @@ impl<T> EventBuilder<T, NoProvenance> {
         self
     }
 
-    /// Set the node run ID (references `core.runs`)
-    pub fn source_run_id(mut self, run_id: Uuid) -> Self {
-        self.source_run_id = Some(run_id);
+    /// Set the runtime module run ID (references `core.runs`)
+    pub fn module_run_id(mut self, run_id: Uuid) -> Self {
+        self.module_run_id = Some(run_id);
         self
     }
 
@@ -94,7 +94,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             timestamp: self.timestamp,
             ts_quality: self.ts_quality,
             hostname: self.hostname,
-            source_run_id: self.source_run_id,
+            module_run_id: self.module_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance_data: Some(provenance),
             associated_blob_ids: self.associated_blob_ids,
@@ -274,7 +274,7 @@ impl<T> EventBuilder<T, HasProvenance> {
 
         // #1570 Prong B — builder inversion:
         // Material-provenance events without an explicit timestamp leave
-        // `ts_orig = None` as the "derive me at persistence" signal; the ingestd
+        // `ts_orig = None` as the "derive me at persistence" signal; the event_engine
         // admission stage resolves it from the source-material timing tier.
         // Derived events have no material to resolve against, so they keep the
         // wall-clock fallback (their synthesis time). Any caller that set an
@@ -294,7 +294,7 @@ impl<T> EventBuilder<T, HasProvenance> {
             ts_orig,
             ts_quality: self.ts_quality,
             host: self.hostname.unwrap_or_else(get_hostname),
-            source_run_id: self.source_run_id,
+            module_run_id: self.module_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance,
             anchor_payload_hash,
@@ -304,7 +304,7 @@ impl<T> EventBuilder<T, HasProvenance> {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id,
-            node_model: None,
+            automaton_model: None,
         })
     }
 }
@@ -544,6 +544,20 @@ impl Provenance {
             offset_end,
             offset_kind: OffsetKind::default(),
         }
+    }
+
+    /// Set the offset coordinate system on Material provenance.
+    /// No-op on Derived provenance.
+    #[must_use]
+    pub fn with_offset_kind(mut self, kind: OffsetKind) -> Self {
+        if let Provenance::Material {
+            ref mut offset_kind,
+            ..
+        } = self
+        {
+            *offset_kind = kind;
+        }
+        self
     }
 
     pub fn from_derived<I: IntoIterator<Item = EventId>>(ids: I) -> Option<Self> {

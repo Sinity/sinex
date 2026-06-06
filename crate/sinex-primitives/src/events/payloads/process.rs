@@ -1,6 +1,6 @@
 //! Process lifecycle event payloads
 
-use crate::domain::NodeType;
+use crate::domain::ModuleKind;
 use crate::events::enums::ShutdownReason;
 use crate::units::{ExitCode, ProcessId};
 use schemars::JsonSchema;
@@ -15,7 +15,7 @@ use sinex_macros::EventPayload;
 #[event_payload(source = "sinex", event_type = "process.started")]
 pub struct ProcessStartedPayload {
     pub process_name: String,
-    pub process_type: NodeType,
+    pub process_type: ModuleKind,
     pub pid: ProcessId,
     pub version: String,
     pub config: serde_json::Value,
@@ -49,7 +49,7 @@ pub struct ProcessFailedPayload {
 #[event_payload(source = "sinex", event_type = "process.shutdown")]
 pub struct ProcessShutdownPayload {
     pub process_name: String,
-    pub process_type: NodeType,
+    pub process_type: ModuleKind,
     pub pid: ProcessId,
     pub uptime_seconds: u64,
     pub shutdown_reason: ShutdownReason,
@@ -69,30 +69,30 @@ pub struct AutomatonErrorPayload {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Source-unit descriptors for sinex.* self-observation infra events.
+// Source descriptors for sinex.* self-observation infra events.
 //
 // `sinex.process.*` and `sinex.automaton.error` are emitted by every long-
 // running sinex binary as part of standard lifecycle/health observability.
-// These are infra source units in the same sense as `blob-storage`: the
-// events exist today (ingestd/gateway/nodes publish them on boot, on
+// These are infra source contracts in the same sense as `blob-storage`: the
+// events exist today (sinexd modules publish them on boot, on
 // degradation, on shutdown), but they are not produced by a dedicated
 // systemd service — every binary participates. We register descriptors so
-// `sinexctl verify --source-units` finds a claim for each declared
-// `(source, event_type)` payload pair. They have no `SourceUnitBinding`
+// `sinexctl verify --sources` finds a claim for each declared
+// `(source, event_type)` payload pair. They have no `SourceRuntimeBinding`
 // because the runtime owners are existing pack bindings.
 // ─────────────────────────────────────────────────────────────────────────────
 
-use crate::proof::{
+use crate::source_contracts::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceBuildImpact,
+    SourceContract, SourceRuntimeBinding, SubjectRef,
 };
-use crate::{register_source_unit, register_source_unit_binding};
+use crate::{register_source_contract, register_source_runtime_binding};
 
-register_source_unit! {
-    SourceUnitDescriptor {
-        id: "sinex-process-lifecycle",
+register_source_contract! {
+    SourceContract {
+        id: "sinexd-lifecycle",
         namespace: "infra",
         event_types: &[
             ("sinex", "process.started"),
@@ -103,30 +103,28 @@ register_source_unit! {
         privacy_tier: SuPrivacyTier::Public,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_every_sinex_binary",
     }
 }
 
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "sinex-automaton-error",
         namespace: "infra",
         event_types: &[("sinex", "automaton.error")],
         privacy_tier: SuPrivacyTier::Public,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_automaton_runtime",
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:sinex-process-lifecycle"),
-        "sinex-process-lifecycle",
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:sinexd-lifecycle"),
+        "sinexd-lifecycle",
         "infra",
     )
     .implementation("sinex-primitives::process")
@@ -136,38 +134,38 @@ register_source_unit_binding! {
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
-    .source_unit_id("sinex-process-lifecycle")
+    .source_id("sinexd-lifecycle")
     .proposed(true)
     .runner_pack("infra")
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
     .implementation_mode("rust_in_every_sinex_binary")
-    .build_impact(SourceUnitBuildImpact::ZERO)
+    .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:sinex-automaton-error"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:sinex-automaton-error"),
         "sinex-automaton-error",
         "infra",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("EmbeddedEmitter")
     .output_event_type("automaton.error")
     .privacy_context("none")
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
-    .source_unit_id("sinex-automaton-error")
+    .source_id("sinex-automaton-error")
     .proposed(true)
     .runner_pack("infra")
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
-    .build_impact(SourceUnitBuildImpact::ZERO)
+    .implementation_mode("in_process:sinexd")
+    .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
 
@@ -178,7 +176,7 @@ impl ProcessStartedPayload {
     pub fn test_default() -> Self {
         Self {
             process_name: "test-process".into(),
-            process_type: NodeType::Ingestor,
+            process_type: ModuleKind::Source,
             pid: ProcessId::from(0u32),
             version: "0.0.0".into(),
             config: serde_json::json!({}),
@@ -192,7 +190,7 @@ impl ProcessShutdownPayload {
     pub fn test_default() -> Self {
         Self {
             process_name: "test-process".into(),
-            process_type: NodeType::Ingestor,
+            process_type: ModuleKind::Source,
             pid: ProcessId::from(0u32),
             uptime_seconds: 0,
             shutdown_reason: ShutdownReason::Requested,

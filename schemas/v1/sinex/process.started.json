@@ -1,21 +1,21 @@
 {
   "$defs": {
-    "NodeType": {
-      "description": "Type of node in the system\n\n`Display` rendering maps to `core.manifests.manifest_type`. The\n`#[derive(DbCheck)]` declaration below is the source of truth for the\nDB `CHECK` constraint: bumping `version` ships a rename without manual\nmigration. See issue #1236.",
+    "ModuleKind": {
+      "description": "Type of runtime module in the system.\n\n`Display` rendering maps to `core.manifests.manifest_type`. The\n`#[derive(DbCheck)]` declaration below is the source of truth for the\nDB `CHECK` constraint: bumping `version` ships a rename without manual\nmigration. See issue #1236.",
       "oneOf": [
         {
-          "const": "ingestor",
-          "description": "Ingestor node (captures events from external sources)",
+          "const": "source",
+          "description": "Source module (captures events from external systems or files)",
           "type": "string"
         },
         {
           "const": "automaton",
-          "description": "Automaton node (processes events and generates derived data)",
+          "description": "Automaton module (processes events and generates derived data)",
           "type": "string"
         },
         {
           "const": "service",
-          "description": "Service node (provides API endpoints)",
+          "description": "Service module (provides APIs or internal daemon services)",
           "type": "string"
         }
       ]
@@ -37,7 +37,7 @@
       "type": "string"
     },
     "process_type": {
-      "$ref": "#/$defs/NodeType"
+      "$ref": "#/$defs/ModuleKind"
     },
     "version": {
       "type": "string"

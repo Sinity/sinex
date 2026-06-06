@@ -631,11 +631,11 @@ impl XtaskCommand for CheckCommand {
             result = result.with_detail("nix flake check passed");
         }
 
-        // If NixOS modules are dirty, suggest running the NixOS compatibility gate.
+        // If NixOS modules are dirty, suggest running the NixOS VM deployment gate.
         match crate::affected::nixos_modules_dirty() {
             Ok(true) if ctx.is_human() => {
                 eprintln!(
-                    "→ NixOS modules modified. Run the NixOS compatibility gate: \
+                    "→ NixOS modules modified. Run the NixOS VM deployment gate: \
                      xtask test vm --category smoke"
                 );
             }
@@ -784,7 +784,7 @@ fn ensure_nix_tool_ready_with(check_tool: impl FnOnce(&str) -> Result<ToolInfo>)
 
 /// Extract package names from planner action commands (#1146).
 ///
-/// Parses commands like "xtask check -p sinex-db -p sinex-gateway" and
+/// Parses commands like "xtask check -p sinex-db -p sinexd" and
 /// returns the set of package names after `-p` flags.
 fn extract_packages_from_actions(actions: &[crate::planner::PlannedAction]) -> Vec<String> {
     let mut packages = std::collections::BTreeSet::new();

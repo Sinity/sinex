@@ -102,14 +102,14 @@ fn extract_status_code(err: &Report) -> Option<StatusCode> {
 /// Enhance not found errors with suggestions
 fn enhance_not_found_error(method: &str, err: &Report) -> Report {
     let help_text = match method {
-        methods::NODES_LIST
-        | methods::NODES_DRAIN
-        | methods::NODES_RESUME
-        | methods::NODES_SET_HORIZON
+        methods::RUNTIME_LIST
+        | methods::RUNTIME_DRAIN
+        | methods::RUNTIME_RESUME
+        | methods::RUNTIME_SET_HORIZON
         | methods::COORDINATION_LIST_INSTANCES
         | methods::COORDINATION_GET_LEADER
         | methods::COORDINATION_INSTANCE_HEALTH => {
-            "Use 'sinexctl node list' to see all available nodes"
+            "Use 'sinexctl runtime list' to see all available runtime modules"
         }
         methods::OPS_START | methods::OPS_LIST | methods::OPS_GET | methods::OPS_CANCEL => {
             "Use 'sinexctl ops list' to see all operations"
@@ -136,14 +136,14 @@ fn connection_error_help() -> &'static str {
     "Troubleshooting:\n\
      • Verify gateway is running: systemctl status sinexd\n\
      • Check network connectivity\n\
-     • Verify RPC URL: echo $SINEX_RPC_URL\n\
+     • Verify RPC URL: echo $SINEX_API_URL\n\
      • Try --insecure if using self-signed certificates (dev only)"
 }
 
 /// Help text for authentication errors
 fn auth_error_help() -> &'static str {
     "Troubleshooting:\n\
-     • Set token: export SINEX_RPC_TOKEN=your-token\n\
+     • Set token: export SINEX_API_TOKEN=your-token\n\
      • Or use token file: --token-file ~/.config/sinex/token\n\
      • Verify token is valid: sinexctl gateway ping\n\
      • Check token permissions in gateway config"

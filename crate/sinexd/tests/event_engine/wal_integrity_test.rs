@@ -1,10 +1,10 @@
 use serde_json::json;
 use sinexd::event_engine::{MaterialAssembler, MaterialReadySet};
-use sinexd::node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
+use sinexd::runtime::content_store::{ContentStoreConfig, MaterialContentStore};
 use std::sync::Arc;
 use xtask::sandbox::prelude::*;
 
-async fn abort_and_join(handle: tokio::task::JoinHandle<sinexd::event_engine::IngestdResult<()>>) {
+async fn abort_and_join(handle: tokio::task::JoinHandle<sinexd::event_engine::EventEngineResult<()>>) {
     handle.abort();
     let _ = handle.await;
 }
@@ -32,7 +32,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
     })?);
 
     // Bootstrap streams
-    sinexd::node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+    sinexd::runtime::AcquisitionManager::bootstrap_streams_with_namespace(
         &nats_client,
         Some(&namespace),
     )

@@ -1,7 +1,7 @@
 # Sinex headless server example
 #
 # Intended for machines without desktop/terminal capture requirements.
-# Enables filesystem and system nodes along with maintenance timers.
+# Enables filesystem and system sources along with maintenance timers.
 
 { config, lib, pkgs, ... }:
 
@@ -24,13 +24,15 @@
 
     core = {
       enable = true;
-      gateway.autoGenerateTls = true;
+      api.autoGenerateTls = true;
     };
 
-    nodes = {
+    runtime = {
       enable = true;
       defaults.logLevel = "info";
+    };
 
+    sources = {
       filesystem = {
         enable = true;
         instances = 1;
@@ -53,14 +55,14 @@
       terminal.enable = false;
       browser.enable = false;
       desktop.enable = false;
+    };
 
-      automata = {
-        enable = true;
-        canonicalizer.enable = true;
-        healthAggregator.enable = true;
-        analyticsAutomaton.enable = true;
-        sessionDetector.enable = true;
-      };
+    automata = {
+      enable = true;
+      canonicalizer.enable = true;
+      healthAggregator.enable = true;
+      analyticsAutomaton.enable = true;
+      sessionDetector.enable = true;
     };
 
     observability.enable = false;
@@ -73,5 +75,5 @@
     extraGroups = [ "wheel" ];
   };
 
-  environment.etc."sinex/gateway-admin-token".text = "headless-admin:admin";
+  environment.etc."sinex/api-admin-token".text = "headless-admin:admin";
 }

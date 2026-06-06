@@ -12,7 +12,7 @@ xtask deps list
 xtask deps duplicates
 
 # Show dependency tree for a package
-xtask deps tree --package sinex-gateway
+xtask deps tree --package sinexd
 ```
 
 ## Commands
@@ -43,9 +43,9 @@ xtask deps list --format json
 Workspace packages (15 total):
 
   xtask v0.1.0
-  sinex-gateway v0.1.0
-  sinex-gateway v0.1.0
-  sinex-ingestd v0.1.0
+  sinexd v0.1.0
+  sinexctl v0.1.0
+  sinex-db v0.1.0
   ...
 ```
 
@@ -70,16 +70,16 @@ xtask deps tree [--package <name>] [--depth <n>]
 xtask deps tree
 
 # Specific package
-xtask deps tree --package sinex-gateway
+xtask deps tree --package sinexd
 
 # Limited depth
-xtask deps tree --package sinex-gateway --depth 3
+xtask deps tree --package sinexd --depth 3
 ```
 
 **Output**:
 ```
-Dependency tree for 'sinex-gateway' (depth: 10):
-sinex-gateway
+Dependency tree for 'sinexd' (depth: 10):
+sinexd
 ├── sinex-primitives
 ├── sinex-db
 └── ...
@@ -226,11 +226,11 @@ Human Format:
 ```
 Found 3 unused dependencies (tool: cargo-machete):
 
-  sinex-gateway:
+  sinexd:
     - serde_json
     - tokio-util
 
-  sinex-gateway:
+  sinexctl:
     - anyhow
 ```
 
@@ -238,9 +238,9 @@ JSON Format:
 ```json
 {
   "unused": [
-    { "package": "sinex-gateway", "dependency": "serde_json" },
-    { "package": "sinex-gateway", "dependency": "tokio-util" },
-    { "package": "sinex-gateway", "dependency": "anyhow" }
+    { "package": "sinexd", "dependency": "serde_json" },
+    { "package": "sinexd", "dependency": "tokio-util" },
+    { "package": "sinexd", "dependency": "anyhow" }
   ],
   "tool": "cargo-machete"
 }
@@ -297,10 +297,10 @@ Build Timing Analysis
 Total build time: 127.45s
 
 Top 10 slowest crates:
-  1. sinex-gateway - 45.23s (35.5%)
-  2. sinex-gateway - 23.12s (18.1%)
-  3. sinex-ingestd - 18.34s (14.4%)
-  4. sinex-node-sdk - 12.45s (9.8%)
+  1. sinexd - 45.23s (35.5%)
+  2. sinexd - 23.12s (18.1%)
+  3. sinexd - 18.34s (14.4%)
+  4. sinexd - 12.45s (9.8%)
   5. sinex-schema - 7.34s (5.8%)
   6. sinex-macros - 6.12s (4.8%)
   7. sinex-test-utils - 2.89s (2.3%)
@@ -333,7 +333,7 @@ xtask deps unused --ci
 xtask deps timings --top 15
 
 # Check rebuild impact of changes
-xtask deps impact sinex-gateway
+xtask deps impact --package sinexd
 ```
 
 ### Dependency Audit

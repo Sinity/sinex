@@ -1,8 +1,8 @@
 #![doc = include_str!("../../docs/event_engine/schema_sync.md")]
 
-//! Helpers that ensure ingestd stays in sync with schema metadata.
+//! Helpers that ensure event_engine stays in sync with schema metadata.
 
-use crate::event_engine::IngestdResult;
+use crate::event_engine::EventEngineResult;
 use sinex_db::repositories::schema_management::{
     NewEventSchema, SchemaManagementRepository, SchemaSyncResult,
 };
@@ -12,7 +12,7 @@ use sqlx::PgPool;
 use tracing::info;
 
 /// Synchronize all discovered payload schemas with the database
-pub async fn synchronize_schemas(pool: &PgPool) -> IngestdResult<SchemaSyncResult> {
+pub async fn synchronize_schemas(pool: &PgPool) -> EventEngineResult<SchemaSyncResult> {
     info!("Starting schema synchronization");
 
     let schema_bundle = generate_schema_bundle()

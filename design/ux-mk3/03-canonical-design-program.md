@@ -10,7 +10,10 @@ The interface should feel like an operator-grade evidence workbench, not a gener
 
 ### Runtime loop
 
-Verify that the system is alive, fresh, private-mode-compatible, and source-complete enough to trust. This loop uses health, nodes, automata, recent activity, source readiness, DLQ, replay/ops, and snapshot status.
+Verify that the system is alive, fresh, private-mode-compatible, and
+source-complete enough to trust. This loop uses health, runtime modules,
+automata, recent activity, source readiness, DLQ, replay/ops, and snapshot
+status.
 
 ### Evidence loop
 

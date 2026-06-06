@@ -78,8 +78,8 @@ impl XtaskCommand for LintForbiddenCommand {
         // - Advisory locks
         // - Dynamic queries (analytics, cascade analysis)
         // - Test infrastructure
-        // Paths are post-fold (#1559): sinex-gateway/ingestd folded into
-        // crate/sinexd/{api,event_engine}; node_sdk under crate/sinexd/src/node_sdk;
+        // Paths are post-fold (#1559): sinexd/event_engine folded into
+        // crate/sinexd/{api,event_engine}; runtime under crate/sinexd/src/runtime;
         // sinex-db/schema flattened out of crate/lib. xtask/ and tests/ auto-skip
         // via is_tests_path, so they are not listed here.
         let sqlx_query_allow = [
@@ -91,19 +91,21 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/sinex-db/src/repositories/document_search.rs",
             "crate/sinex-db/src/repositories/events/persistence.rs",
             "crate/sinex-db/src/repositories/knowledge_graph.rs",
+            // #1619 classified: static SQL, but core.model_effects is not in
+            // the xtask SQLx compile database; macro promotion fails until
+            // that bootstrap surface includes the table.
             "crate/sinex-db/src/repositories/model_effects.rs",
             "crate/sinex-db/src/repositories/schema_management.rs",
-            // Gateway/api dynamic + analytical SQL (cascade analysis, curation CTEs).
+            // Gateway/api dynamic + analytical SQL (cascade analysis, curation
+            // CTEs). #1619 classified curation duplicate-candidate CTEs as
+            // analytical runtime SQL over JSON expressions and optional filters.
             "crate/sinexd/src/api/cascade_analyzer.rs",
             "crate/sinexd/src/api/handlers/curation.rs",
             "crate/sinexd/src/api/service_container.rs",
             // SDK preflight: dynamic session GUC setup over a small fixed option table.
-            "crate/sinexd/src/node_sdk/preflight/mod.rs",
-            "crate/sinexd/src/node_sdk/preflight/database.rs",
-            "crate/sinexd/src/node_sdk/preflight/verification.rs",
-            // CLI direct operations-log writes (audit trail for cascade ops).
-            // Tracked for repository routing / macro promotion: #1619.
-            "crate/sinexctl/src/commands/blob.rs",
+            "crate/sinexd/src/runtime/preflight/mod.rs",
+            "crate/sinexd/src/runtime/preflight/database.rs",
+            "crate/sinexd/src/runtime/preflight/verification.rs",
         ];
         let sqlx_query_as_allow = [
             // Dynamic ranking/filter SQL where the query string is assembled at runtime.
@@ -111,9 +113,10 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/sinex-db/src/repositories/common.rs",
             "crate/sinex-db/src/repositories/events/composable_query.rs",
             "crate/sinex-db/src/repositories/events/persistence.rs",
+            // #1619 classified: see sqlx_query_allow entry above.
             "crate/sinex-db/src/repositories/model_effects.rs",
             "crate/sinexd/src/api/handlers/audit.rs",
-            "crate/sinexd/src/node_sdk/preflight/database.rs",
+            "crate/sinexd/src/runtime/preflight/database.rs",
             // Timescale catalog tables may not exist in compile-time check DBs.
             "crate/sinex-schema/src/strict_diff.rs",
         ];
@@ -142,8 +145,8 @@ impl XtaskCommand for LintForbiddenCommand {
         let raw_event_subject_allow = [
             "crate/sinex-primitives/src/domain.rs",
             "crate/sinex-primitives/src/environment.rs",
-            "crate/sinexd/src/node_sdk/nats_publisher.rs",
-            "crate/sinexd/src/node_sdk/event_node.rs",
+            "crate/sinexd/src/runtime/nats_publisher.rs",
+            "crate/sinexd/src/runtime/event_transport.rs",
         ];
         violations.extend(check_pattern(
             "nats_raw_event_subject_with_namespace(",
@@ -164,7 +167,7 @@ impl XtaskCommand for LintForbiddenCommand {
         let color_eyre_lib_allow = [
             // Inline #[cfg(test)] module: builds a TestResult (color_eyre) failure
             // via eyre!. is_tests_path can't see inline test modules in src/ files.
-            "crate/sinexd/src/node_sdk/parser/adapters/unix_socket_stream.rs",
+            "crate/sinexd/src/runtime/parser/adapters/unix_socket_stream.rs",
         ];
         violations.extend(check_color_eyre_in_lib(
             "color_eyre::",
@@ -175,12 +178,12 @@ impl XtaskCommand for LintForbiddenCommand {
         // println! in library code (use tracing for structured logging)
         let println_lib_allow = [
             // Intentional stdout output for CLI-facing SDK functions.
-            "crate/sinexd/src/node_sdk/node_cli.rs",
-            "crate/sinexd/src/node_sdk/version.rs",
-            "crate/sinexd/src/node_sdk/heartbeat.rs",
-            "crate/sinexd/src/node_sdk/diagnostics/regression.rs",
+            "crate/sinexd/src/runtime/runtime_cli.rs",
+            "crate/sinexd/src/runtime/version.rs",
+            "crate/sinexd/src/runtime/heartbeat.rs",
+            "crate/sinexd/src/runtime/diagnostics/regression.rs",
             // Doc comment code examples (scanner can't distinguish from real code)
-            "crate/sinexd/src/node_sdk/watcher_handle.rs",
+            "crate/sinexd/src/runtime/watcher_handle.rs",
             "crate/sinex-schema/src/strict_diff.rs",
         ];
         violations.extend(check_println_in_lib(
@@ -224,15 +227,15 @@ impl XtaskCommand for LintForbiddenCommand {
             // later promotion to Id<T> repository surfaces.
             "crate/sinex-db/src/repositories/embeddings.rs",
             "crate/sinex-schema/src/defs/annotations.rs",
-            // Ingestd material assembler state mirrors NATS frame UUIDs
+            // EventEngine material assembler state mirrors NATS frame UUIDs
             // (folded into crate/sinexd/src/event_engine).
             "crate/sinexd/src/event_engine/admission.rs",
             "crate/sinexd/src/event_engine/material_assembler/restore_plan.rs",
             "crate/sinexd/src/event_engine/material_assembler/state.rs",
             // SDK material/anchor surface kept on bare Uuid until the
             // SourceRecordAnchor / SourceMaterialHandle pair is promoted.
-            "crate/sinexd/src/node_sdk/acquisition_manager.rs",
-            "crate/sinexd/src/node_sdk/ingestion_helpers.rs",
+            "crate/sinexd/src/runtime/acquisition_manager.rs",
+            "crate/sinexd/src/runtime/ingestion_helpers.rs",
             // Process automata analytics row (folded into crate/sinexd/src/automata).
             "crate/sinexd/src/automata/analytics.rs",
         ];
@@ -251,7 +254,7 @@ impl XtaskCommand for LintForbiddenCommand {
         // Check for test-utils usage in production code (layering violation)
         check_test_utils_layering(&mut violations)?;
 
-        // Source-unit privacy policy is enforced at admission; source units
+        // Source privacy policy is enforced at admission; source contracts
         // declare metadata/hints rather than invoking the privacy engine.
 
         let ast_grep = run_ast_grep_scan()?;
@@ -320,32 +323,33 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
     // that prevents new raw publish sites from appearing silently.
     let allow = [
         // Canonical event, telemetry, raw-ingest DLQ, and processing-failure publisher.
-        "crate/sinexd/src/node_sdk/nats_publisher.rs",
+        "crate/sinexd/src/runtime/nats_publisher.rs",
         // Source-material lifecycle frame publisher.
-        "crate/sinexd/src/node_sdk/acquisition_manager.rs",
+        "crate/sinexd/src/runtime/acquisition_manager.rs",
         // Raw-ingest DLQ retry re-publishes into the original raw-event subject.
-        "crate/sinexd/src/node_sdk/dlq_retry.rs",
-        // Node coordination control messages.
-        "crate/sinexd/src/node_sdk/coordination.rs",
+        "crate/sinexd/src/runtime/dlq_retry.rs",
+        // RuntimeModule coordination control messages.
+        "crate/sinexd/src/runtime/coordination.rs",
         // Runtime scan/drain control messages.
-        "crate/sinexd/src/node_sdk/runtime/stream/runner/control_messages.rs",
+        "crate/sinexd/src/runtime/stream/runner/control_messages.rs",
         // Inline private-mode listener regression publishes a synthetic
         // control message; the production listener only subscribes.
-        "crate/sinexd/src/node_sdk/parser/adapter_node.rs",
-        // Event-engine confirmation and raw-ingest DLQ publishers (folded ingestd).
+        "crate/sinexd/src/runtime/parser/adapter_source.rs",
+        // Event-engine confirmation and raw-ingest DLQ publishers (folded event_engine).
         "crate/sinexd/src/event_engine/jetstream_consumer.rs",
         // Source-material assembler DLQ routing.
         "crate/sinexd/src/event_engine/material_assembler/finalize.rs",
         // Active-schema broadcast control notification.
         "crate/sinexd/src/event_engine/service.rs",
-        // Gateway/api node control command publishers (folded gateway).
-        "crate/sinexd/src/api/handlers/nodes.rs",
+        // Gateway/api replay and runtime control publishers (folded gateway).
+        "crate/sinexd/src/api/replay_control/server.rs",
+        "crate/sinexd/src/api/handlers/runtime_registry.rs",
         // Private-mode control broadcasts.
         "crate/sinexd/src/api/handlers/privacy.rs",
         // Replay control request/reply and invalidation publishers.
         "crate/sinexd/src/api/replay_control/server.rs",
         "crate/sinexd/src/api/replay_control/execution/collect.rs",
-        // Source parse command request/reply acknowledgements (folded source-worker).
+        // Source parse command request/reply acknowledgements (folded source host).
         "crate/sinexd/src/sources/parse_listener.rs",
     ];
 
@@ -356,8 +360,8 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         |path| {
             is_tests_path(path)
                 || path == "crate/sinex-primitives/src/testing.rs"
-                || path == "crate/sinexd/src/node_sdk/event_node.rs"
-                || path == "crate/sinexd/src/node_sdk/self_observation.rs"
+                || path == "crate/sinexd/src/runtime/event_transport.rs"
+                || path == "crate/sinexd/src/runtime/self_observation.rs"
         },
     )
 }
@@ -371,7 +375,7 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
 /// Any one of these present in a file satisfies the gate:
 ///
 /// - `ProcessingContext::` — emitted intent context metadata
-/// - `.privacy_context(` — source-unit binding context metadata
+/// - `.privacy_context(` — source binding context metadata
 /// - `privacy_contexts:` — parser manifest context metadata
 /// - `default_privacy_context =` — declarative `#[source_record]` DSL attribute
 /// - `#[allow(missing_privacy_metadata` — explicit escape hatch with required `reason =`
@@ -383,7 +387,7 @@ const PRIVACY_METADATA_INDICATORS: &[&str] = &[
     "#[allow(missing_privacy_metadata",
 ];
 
-/// Patterns that indicate a non-Public privacy tier in a `register_source_unit!` block.
+/// Patterns that indicate a non-Public privacy tier in a `register_source_contract!` block.
 const NON_PUBLIC_TIER_PATTERNS: &[&str] = &[
     "PrivacyTier::Sensitive",
     "PrivacyTier::Secret",
@@ -393,29 +397,29 @@ const NON_PUBLIC_TIER_PATTERNS: &[&str] = &[
 
 /// Files exempt from the privacy-metadata gate.
 ///
-/// These are **descriptor-only** source units: they declare event-type metadata
-/// for events emitted from inside the pipeline infrastructure (ingestd, gateway,
+/// These are **descriptor-only** source contracts: they declare event-type metadata
+/// for events emitted from inside the pipeline infrastructure (event_engine, gateway,
 /// SDK), rather than from a dedicated parser. Privacy is handled at the emit
 /// site inside those binaries, not by a standalone parser.
 ///
-/// New entries MUST include: (1) the source unit id, (2) which binary emits it,
+/// New entries MUST include: (1) the source id, (2) which binary emits it,
 /// (3) where privacy is handled.
 const PRIVACY_GATE_ALLOWLIST: &[&str] = &[
-    // "blob-storage" source unit: blob.retrieved / blob.ingested / blob.verified /
-    // storage.statistics events are emitted from ingestd / gateway / node-sdk internals.
+    // "blob-storage" source: blob.retrieved / blob.ingested / blob.verified /
+    // storage.statistics events are emitted from event_engine / gateway / runtime internals.
     // Privacy is handled at the emit site in those binaries; no standalone parser exists.
     "crate/sinex-primitives/src/events/payloads/blob.rs",
 ];
 
-/// Gate: every source-unit parser with a non-Public privacy tier must declare
+/// Gate: every source parser with a non-Public privacy tier must declare
 /// privacy metadata so DB admission policy can select rules.
 ///
-/// For each `.rs` file containing `register_source_unit!` AND a non-Public
+/// For each `.rs` file containing `register_source_contract!` AND a non-Public
 /// `privacy_tier`:
 /// - If the file (or any `.rs` sibling in its immediate containing directory)
 ///   contains any [`PRIVACY_METADATA_INDICATORS`] → pass.
 /// - If the file is in [`PRIVACY_GATE_ALLOWLIST`] → pass (descriptor-only units).
-/// - Otherwise → violation with source-unit id, privacy tier, and file path.
+/// - Otherwise → violation with source id, privacy tier, and file path.
 ///
 /// The sibling-directory scan handles the common pattern where `lib.rs` holds
 /// the descriptor registration while parser files in the same directory
@@ -432,8 +436,8 @@ fn check_privacy_metadata_for_sensitive_units() -> Result<Vec<String>> {
     let root = workspace_root();
     let mut violations: Vec<String> = Vec::new();
 
-    // Find all .rs files that contain `register_source_unit!`.
-    let rsu_files = find_files_with_pattern(&root, "register_source_unit!")?;
+    // Find all .rs files that contain `register_source_contract!`.
+    let rsu_files = find_files_with_pattern(&root, "register_source_contract!")?;
 
     for rel_path in rsu_files {
         let abs_path = root.join(&rel_path);
@@ -470,11 +474,11 @@ fn check_privacy_metadata_for_sensitive_units() -> Result<Vec<String>> {
             continue;
         }
 
-        // Extract the source-unit id(s) and tier(s) for the error message.
-        let unit_ids = extract_source_unit_ids(&contents);
+        // Extract the source id(s) and tier(s) for the error message.
+        let unit_ids = extract_source_ids(&contents);
         let tiers = extract_non_public_tiers(&contents);
         violations.push(format!(
-            "{rel_path}: source unit(s) [{units}] with privacy tier [{tiers}] \
+            "{rel_path}: source(s) [{units}] with privacy tier [{tiers}] \
              must declare privacy metadata (ProcessingContext::, .privacy_context(, \
              privacy_contexts:, default_privacy_context =) or declare \
              #[allow(missing_privacy_metadata, reason = \"...\")]",
@@ -537,8 +541,8 @@ fn find_files_with_pattern(root: &std::path::Path, literal: &str) -> Result<Vec<
         .collect())
 }
 
-/// Extract `id: "..."` values from a source-unit descriptor block.
-fn extract_source_unit_ids(contents: &str) -> Vec<String> {
+/// Extract `id: "..."` values from a source descriptor block.
+fn extract_source_ids(contents: &str) -> Vec<String> {
     let mut ids = Vec::new();
     // Match lines like: `id: "some.id",`
     for line in contents.lines() {
@@ -688,7 +692,7 @@ fn check_anyhow_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec
 /// Shared skip predicate for the "no X in library code" checks
 /// (`anyhow::`, `color_eyre::`, `println!`). Exempts build tooling, tests,
 /// binaries, CLI, and examples. Paths are post-fold (#1559): the CLI crate
-/// is `crate/sinexctl/` and the VM test-suite binary is `crate/sinex-vm-suite/`.
+/// is `crate/sinexctl/` and the VM test-suite binary is `tests/vm-suite/`.
 fn is_lib_check_skip(path: &str) -> bool {
     path.starts_with("xtask/")
         || is_tests_path(path)
@@ -697,7 +701,7 @@ fn is_lib_check_skip(path: &str) -> bool {
         || path.contains("/bin/")
         || path.contains("/examples/")
         || path.starts_with("crate/sinexctl/")
-        || path.starts_with("crate/sinex-vm-suite/")
+        || path.starts_with("tests/vm-suite/")
 }
 
 /// Check for `color_eyre::` usage in library code (use SinexError error stack).
@@ -1106,10 +1110,10 @@ mod tests {
             return violations;
         }
 
-        let unit_ids = extract_source_unit_ids(contents);
+        let unit_ids = extract_source_ids(contents);
         let tiers = extract_non_public_tiers(contents);
         violations.push(format!(
-            "fixture: source unit(s) [{units}] with privacy tier [{tiers}] missing privacy metadata",
+            "fixture: source(s) [{units}] with privacy tier [{tiers}] missing privacy metadata",
             units = unit_ids.join(", "),
             tiers = tiers.join(", "),
         ));
@@ -1122,8 +1126,8 @@ mod tests {
         // Planted violation: Sensitive tier, no privacy indicator.
         // IMPORTANT: the comment below must NOT contain privacy indicator strings.
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "stub.planted",
                     privacy_tier: PrivacyTier::Sensitive,
                 }
@@ -1142,7 +1146,7 @@ mod tests {
         );
         assert!(
             violations[0].contains("stub.planted"),
-            "violation must name the source unit id; got: {}",
+            "violation must name the source id; got: {}",
             violations[0]
         );
         assert!(
@@ -1157,8 +1161,8 @@ mod tests {
     async fn privacy_gate_catches_secret_unit_without_privacy_metadata()
     -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "stub.secret",
                     privacy_tier: PrivacyTier::Secret,
                 }
@@ -1174,8 +1178,8 @@ mod tests {
     async fn privacy_gate_passes_public_unit_without_privacy_call()
     -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "noop",
                     privacy_tier: PrivacyTier::Public,
                 }
@@ -1194,8 +1198,8 @@ mod tests {
     async fn privacy_gate_ignores_privacy_engine_call_without_metadata()
     -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "stub.sensitive",
                     privacy_tier: PrivacyTier::Sensitive,
                 }
@@ -1220,8 +1224,8 @@ mod tests {
     async fn privacy_gate_passes_with_processing_context_metadata()
     -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "stub.irc",
                     privacy_tier: PrivacyTier::Sensitive,
                 }
@@ -1244,8 +1248,8 @@ mod tests {
     async fn privacy_gate_passes_with_declarative_default_privacy_context()
     -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "stub.declarative",
                     privacy_tier: PrivacyTier::Sensitive,
                 }
@@ -1271,14 +1275,14 @@ mod tests {
     async fn privacy_gate_passes_with_explicit_allow() -> ::xtask::sandbox::TestResult<()> {
         // Escape hatch: `#[allow(missing_privacy_metadata, reason = "...")]`
         let fixture = r#"
-            register_source_unit! {
-                SourceUnitDescriptor {
+            register_source_contract! {
+                SourceContract {
                     id: "stub.exempt",
                     privacy_tier: PrivacyTier::Sensitive,
                 }
             }
 
-            #[allow(missing_privacy_metadata, reason = "descriptor-only source unit")]
+            #[allow(missing_privacy_metadata, reason = "descriptor-only source")]
             fn parse_record(&self) {}
         "#;
 

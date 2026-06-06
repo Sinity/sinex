@@ -1,14 +1,5 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinexd::api::handlers::{
-    handle_lifecycle_archive as handle_lifecycle_archive_typed,
-    handle_ops_cancel as handle_ops_cancel_typed, handle_ops_get as handle_ops_get_typed,
-    handle_ops_list as handle_ops_list_typed, handle_ops_start as handle_ops_start_typed,
-    handle_tombstone_create as handle_tombstone_create_typed,
-    handle_tombstone_status as handle_tombstone_status_typed,
-};
-use sinexd::api::rpc_server::RpcAuthContext;
-use sinexd::api::{ReplayScope, ReplayState, ReplayStateMachine};
 use sinex_primitives::domain::{OperationStatus, ReplayOutcome};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::lifecycle::{
@@ -20,6 +11,15 @@ use sinex_primitives::rpc::ops::{
     OpsCancelRequest, OpsCancelResponse, OpsGetRequest, OpsGetResponse, OpsListRequest,
     OpsListResponse, OpsStartRequest, OpsStartResponse,
 };
+use sinexd::api::handlers::{
+    handle_lifecycle_archive as handle_lifecycle_archive_typed,
+    handle_ops_cancel as handle_ops_cancel_typed, handle_ops_get as handle_ops_get_typed,
+    handle_ops_list as handle_ops_list_typed, handle_ops_start as handle_ops_start_typed,
+    handle_tombstone_create as handle_tombstone_create_typed,
+    handle_tombstone_status as handle_tombstone_status_typed,
+};
+use sinexd::api::rpc_server::RpcAuthContext;
+use sinexd::api::{ReplayScope, ReplayState, ReplayStateMachine};
 use std::collections::HashMap;
 use xtask::sandbox::prelude::*;
 
@@ -382,7 +382,7 @@ async fn ops_cancel_replay_updates_replay_state_machine(ctx: TestContext) -> Tes
     let operation = replay
         .create_operation(
             ReplayScope {
-                node_id: "ops-replay-node".to_string(),
+                source_name: "ops-replay-source".to_string(),
                 time_window: None,
                 material_filter: None,
                 filters: HashMap::new(),

@@ -11,7 +11,7 @@ use sinexd::event_engine::validator::IngestEventValidator;
 use sinexd::event_engine::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{
     Uuid,
-    domain::{EventSource, EventType, NodeName, NodeType},
+    domain::{EventSource, EventType, ModuleName, ModuleKind},
     error::SinexError,
 };
 use std::sync::Arc;
@@ -169,7 +169,7 @@ async fn test_dlq_cases_table() -> TestResult<()> {
     let topology = JetStreamTopology::new(
         env,
         base_stream.clone(),
-        ctx.pipeline_namespace().consumer_name("ingestd"),
+        ctx.pipeline_namespace().consumer_name("event_engine"),
         Some(&namespace),
     );
     let consumer = JetStreamConsumer::with_ack_wait(
@@ -263,13 +263,13 @@ async fn test_dlq_cases_table() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 /// Helper for publishing test events with a specific source to NATS.
-struct TestNodePublisher {
+struct TestSourcePublisher {
     nats_client: async_nats::Client,
     source: String,
     namespace: Option<String>,
 }
 
-impl TestNodePublisher {
+impl TestSourcePublisher {
     fn with_namespace(
         nats_client: async_nats::Client,
         source: impl Into<String>,
@@ -348,7 +348,7 @@ impl TestNodePublisher {
 /// Consumer setup result with all components needed for testing.
 struct ConsumerSetup {
     nats_client: async_nats::Client,
-    handle: tokio::task::JoinHandle<sinexd::event_engine::IngestdResult<()>>,
+    handle: tokio::task::JoinHandle<sinexd::event_engine::EventEngineResult<()>>,
     js: jetstream::Context,
     topology: JetStreamTopology,
     namespace: String,
@@ -396,7 +396,7 @@ async fn start_consumer_with_hooks_and_batch_config(
         env,
         stream,
         ctx.pipeline_namespace()
-            .consumer_name(&format!("ingestd-{suffix}")),
+            .consumer_name(&format!("event-engine-{suffix}")),
         Some(&namespace),
     );
 
@@ -509,7 +509,7 @@ async fn test_fk_violation_routes_to_dlq_after_retry_budget() -> TestResult<()> 
 }
 
 #[sinex_test]
-async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material_exists()
+async fn test_fk_violation_with_valid_schema_and_module_run_retries_until_material_exists()
 -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
     let suffix = format!("fk-enriched-{}", Uuid::now_v7().to_string().to_lowercase());
@@ -545,17 +545,17 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
     let manifest = ctx
         .pool
         .state()
-        .register_node(
-            &NodeName::new(format!("fk-enriched-node-{suffix}")),
-            NodeType::Ingestor,
+        .register_module(
+            &ModuleName::new(format!("fk-enriched-module-{suffix}")),
+            ModuleKind::Source,
             "1.0.0",
-            Some("FK retry regression test node"),
+            Some("FK retry regression test module"),
         )
         .await?;
-    let node_run = ctx
+    let module_run = ctx
         .pool
         .state()
-        .start_node_run(
+        .start_module_run(
             manifest.id,
             "fk-enriched-test-service",
             &format!("instance-{suffix}"),
@@ -577,7 +577,7 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
         "source_material_id": missing_material_id.to_string(),
         "anchor_byte": 0,
         "payload_schema_id": schema.id.to_string(),
-        "source_run_id": node_run.id.to_string(),
+        "module_run_id": module_run.id.to_string(),
     });
 
     publish_custom_event(
@@ -661,7 +661,7 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
         .await?
         .ok_or_else(|| SinexError::not_found("persisted event after material registration"))?;
     assert_eq!(persisted.payload_schema_id, Some(*schema.id.as_uuid()));
-    assert_eq!(persisted.source_run_id, Some(node_run.id.to_uuid()));
+    assert_eq!(persisted.module_run_id, Some(module_run.id.to_uuid()));
 
     setup.handle.abort();
     let _ = setup.handle.await;
@@ -885,7 +885,7 @@ async fn test_validation_error_routes_to_dlq() -> TestResult<()> {
         .subscribe(setup.topology.dlq_publish_subject.clone())
         .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("val.{suffix}"),
         Some(setup.namespace.clone()),
@@ -949,7 +949,7 @@ async fn test_persistence_error_routed_to_dlq_when_enabled() -> TestResult<()> {
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("persist.{suffix}"),
         Some(setup.namespace.clone()),
@@ -992,7 +992,7 @@ async fn test_persistence_error_naked_when_dlq_routing_disabled() -> TestResult<
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("persist.{suffix}"),
         Some(setup.namespace.clone()),
@@ -1038,7 +1038,7 @@ async fn test_persistence_error_naked_when_dlq_routing_disabled() -> TestResult<
     Ok(())
 }
 
-/// When a non-retryable persistence error keeps recurring, ingestd should
+/// When a non-retryable persistence error keeps recurring, event_engine should
 /// eventually route it to DLQ itself instead of relying on JetStream expiry.
 #[sinex_test]
 async fn test_non_retryable_persistence_error_routes_terminal_delivery_to_dlq() -> TestResult<()> {
@@ -1055,7 +1055,7 @@ async fn test_non_retryable_persistence_error_routes_terminal_delivery_to_dlq() 
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_millis(100), &hooks).await?;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("persist.{suffix}"),
         Some(setup.namespace.clone()),
@@ -1110,7 +1110,7 @@ async fn test_dlq_unparseable_payload_preserved_as_base64() -> TestResult<()> {
         .subscribe(setup.topology.dlq_publish_subject.clone())
         .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("b64.{suffix}"),
         Some(setup.namespace.clone()),
@@ -1168,7 +1168,7 @@ async fn test_dlq_entry_has_reasonable_failed_at() -> TestResult<()> {
         .subscribe(setup.topology.dlq_publish_subject.clone())
         .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("ts.{suffix}"),
         Some(setup.namespace.clone()),
@@ -1430,7 +1430,7 @@ async fn oversized_payload_routes_to_dlq() -> TestResult<()> {
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         "test.size",
         Some(setup.namespace.clone()),
@@ -1456,7 +1456,7 @@ async fn depth_exceeded_payload_routes_to_dlq() -> TestResult<()> {
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         "test.depth",
         Some(setup.namespace.clone()),
@@ -1482,7 +1482,7 @@ async fn normal_payload_accepted() -> TestResult<()> {
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
+    let publisher = TestSourcePublisher::with_namespace(
         setup.nats_client.clone(),
         "test.normal",
         Some(setup.namespace.clone()),

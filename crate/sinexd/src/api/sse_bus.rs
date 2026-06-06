@@ -352,11 +352,11 @@ impl SubscriptionBus {
     /// Like [`run`](Self::run), but notifies `ready` once the NATS subscription is active.
     /// Useful in tests to avoid racing between subscribe and publish.
     ///
-    /// `namespace` MUST match the namespace the paired ingestd publishes
+    /// `namespace` MUST match the namespace the paired event_engine publishes
     /// confirmations under (`SINEX_NAMESPACE`): NATS subjects are
     /// namespace-prefixed, so a mismatched (or absent) namespace makes the bus
     /// subscribe to `{default}.events.confirmations.>` while a namespaced
-    /// ingestd publishes to `{namespace}.events.confirmations.*`, and SSE
+    /// event_engine publishes to `{namespace}.events.confirmations.*`, and SSE
     /// delivery silently never completes.
     pub async fn run_with_ready(
         self: Arc<Self>,
@@ -367,7 +367,8 @@ impl SubscriptionBus {
         mut shutdown: tokio::sync::watch::Receiver<bool>,
         ready: Option<Arc<tokio::sync::Notify>>,
     ) {
-        let subject = env.nats_subject_with_namespace(namespace.as_deref(), "events.confirmations.>");
+        let subject =
+            env.nats_subject_with_namespace(namespace.as_deref(), "events.confirmations.>");
         let mut id_buffer: Vec<Id<Event<JsonValue>>> = Vec::with_capacity(BATCH_MAX_IDS);
         let mut batch_timer = tokio::time::interval(BATCH_WINDOW);
         batch_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

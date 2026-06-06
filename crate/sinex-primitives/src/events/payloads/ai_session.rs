@@ -44,7 +44,7 @@ pub struct ClaudeAiMessagePayload {
 pub struct ChatGptAiMessagePayload {
     /// `ChatGPT` conversation id.
     pub session_id: String,
-    /// Node id of the message.
+    /// RuntimeModule id of the message.
     pub message_id: String,
     /// `"user"`, `"assistant"`, `"system"`, or `"tool"`.
     pub role: String,

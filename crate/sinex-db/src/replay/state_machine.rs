@@ -2,7 +2,7 @@ use crate::repositories::DbPoolExt;
 use crate::repositories::replay::ReplayRepository;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::{NodeName, ReplayOutcome};
+use sinex_primitives::domain::{ModuleName, ReplayOutcome};
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::temporal;
 use sqlx::postgres::types::PgRange;
@@ -101,8 +101,8 @@ impl ReplayState {
 /// Scope defining what to replay
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReplayScope {
-    /// Node ID to replay
-    pub node_id: String,
+    /// Source runtime to replay
+    pub source_name: String,
     /// Optional time window
     pub time_window: Option<(Timestamp, Timestamp)>,
     /// Optional material filter
@@ -112,7 +112,7 @@ pub struct ReplayScope {
     pub filters: HashMap<String, serde_json::Value>,
     /// ── Staged-source replay (#1060) ───────────────────────────────
     /// Source to replay material through (e.g. "weechat-log", "fs-watcher").
-    /// When set, routes execution through source-worker instead of legacy node scan.
+    /// When set, routes execution through the source host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_id: Option<String>,
     /// Replay only this specific source material by UUID.
@@ -136,8 +136,7 @@ pub struct ReplayScopeFilters {
 
 impl ReplayScope {
     /// Returns `true` when the scope targets the staged-source architecture
-    /// (source identity or specific material). Replay planning uses this to
-    /// decide between source-worker and legacy node-scan execution.
+    /// (source identity or specific material).
     #[must_use]
     pub fn is_staged_source_scope(&self) -> bool {
         self.source_id.is_some()
@@ -203,7 +202,7 @@ impl ReplayScope {
         }
     }
 
-    /// Event sources that should be considered replay roots for this node scope.
+    /// Event sources that should be considered replay roots for this source scope.
     #[must_use]
     pub fn replay_event_sources(&self) -> Vec<String> {
         let mut sources = Vec::new();
@@ -213,9 +212,9 @@ impl ReplayScope {
             }
         };
 
-        push(&self.node_id);
+        push(&self.source_name);
 
-        match self.node_id.as_str() {
+        match self.source_name.as_str() {
             "filesystem-watcher" => {
                 push("fs-watcher");
             }
@@ -298,8 +297,8 @@ pub struct ReplayOperation {
     pub approved_by: Option<String>,
     /// When approved
     pub approved_at: Option<Timestamp>,
-    /// Which node is executing
-    pub executor_node: Option<NodeName>,
+    /// Runtime module or authenticated actor executing the replay
+    pub executor_module: Option<ModuleName>,
     /// When execution started
     pub started_at: Option<Timestamp>,
     /// When execution finished
@@ -385,14 +384,18 @@ impl ReplayStateMachine {
         let repo = self.repo();
         let mut tx = repo.begin_context("create_operation").await?;
 
-        repo.acquire_creation_guard(&mut tx, &scope.node_id).await?;
+        repo.acquire_creation_guard(&mut tx, &scope.source_name)
+            .await?;
 
-        // Idempotency guard: reject if an active operation exists for this node.
-        if let Some(existing_id) = repo.check_active_operation(&mut tx, &scope.node_id).await? {
+        // Idempotency guard: reject if an active operation exists for this source.
+        if let Some(existing_id) = repo
+            .check_active_operation(&mut tx, &scope.source_name)
+            .await?
+        {
             return Err(SinexError::invalid_state(
-                "A replay operation for this node is already active",
+                "A replay operation for this source is already active",
             )
-            .with_context("node_id", &scope.node_id)
+            .with_context("source_name", &scope.source_name)
             .with_id("existing_operation_id", existing_id.to_string())
             .with_operation("create_replay_operation"));
         }
@@ -416,7 +419,7 @@ impl ReplayStateMachine {
             created_at: now,
             approved_by: None,
             approved_at: None,
-            executor_node: None,
+            executor_module: None,
             started_at: None,
             finished_at: None,
             outcome: None,
@@ -430,7 +433,7 @@ impl ReplayStateMachine {
             created_at: operation.created_at,
             approved_by: operation.approved_by.clone(),
             approved_at: operation.approved_at,
-            executor_node: operation.executor_node.clone(),
+            executor_module: operation.executor_module.clone(),
             started_at: operation.started_at,
             finished_at: operation.finished_at,
             outcome: operation.outcome,
@@ -597,7 +600,7 @@ impl ReplayStateMachine {
         let cascade_impact = self.preview_cascade_impact(scope).await;
 
         let preview = serde_json::json!({
-            "node_id": scope.node_id,
+            "source_name": scope.source_name,
             "time_window": {
                 "start": window.0,
                 "end": window.1,
@@ -619,7 +622,7 @@ impl ReplayStateMachine {
                 .collect::<Vec<_>>(),
             "material_filter": material_summary,
             "cascade_impact": cascade_impact,
-            "replay_semantics": "reexecute_material_roots_via_node_scan",
+            "replay_semantics": "reexecute_material_roots_via_source_scan",
         });
 
         Ok(preview)
@@ -679,8 +682,8 @@ impl ReplayStateMachine {
                 (all_ids, derived, max_depth)
             };
 
-            let affected_nodes =
-                ReplayRepository::load_cascade_affected_nodes(&mut tx, &derived_ids).await?;
+            let affected_modules =
+                ReplayRepository::load_cascade_affected_modules(&mut tx, &derived_ids).await?;
             let affected_scopes =
                 ReplayRepository::load_cascade_affected_scopes(&mut tx, &derived_ids).await?;
 
@@ -693,7 +696,7 @@ impl ReplayStateMachine {
                 "direct_events": root_ids.len(),
                 "derived_events": derived_ids.len(),
                 "max_depth": max_depth,
-                "affected_nodes": affected_nodes,
+                "affected_modules": affected_modules,
                 "affected_scopes": affected_scopes.into_iter()
                     .map(|(et, sk)| serde_json::json!({"event_type": et, "scope_key": sk}))
                     .collect::<Vec<_>>(),
@@ -744,7 +747,7 @@ impl ReplayStateMachine {
         &self,
         operation_id: Uuid,
         approver: String,
-        executor_node: NodeName,
+        executor_module: ModuleName,
     ) -> Result<ReplayOperation> {
         let repo = self.repo();
         let now = temporal::now();
@@ -811,7 +814,7 @@ impl ReplayStateMachine {
         meta.finished_at = None;
         meta.outcome = None;
         meta.error_details = None;
-        meta.executor_node = Some(executor_node.clone());
+        meta.executor_module = Some(executor_module.clone());
         let (status, msg) = map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
         repo.update_operation_meta(&mut tx, operation_id, meta_json.clone(), status, msg, None)
@@ -821,7 +824,7 @@ impl ReplayStateMachine {
         info!(
             operation_id = %operation_id,
             approver = %approver,
-            executor_node = %executor_node,
+            executor_module = %executor_module,
             "Atomically submitted replay operation for execution"
         );
 
@@ -829,7 +832,11 @@ impl ReplayStateMachine {
     }
 
     /// Atomically transition an approved operation into execution while recording the executor.
-    pub async fn begin_execution(&self, operation_id: Uuid, executor_node: NodeName) -> Result<()> {
+    pub async fn begin_execution(
+        &self,
+        operation_id: Uuid,
+        executor_module: ModuleName,
+    ) -> Result<()> {
         let repo = self.repo();
         let now = temporal::now();
         let mut tx = repo.begin_context("begin_execution").await?;
@@ -850,7 +857,7 @@ impl ReplayStateMachine {
         meta.finished_at = None;
         meta.outcome = None;
         meta.error_details = None;
-        meta.executor_node = Some(executor_node.clone());
+        meta.executor_module = Some(executor_module.clone());
         let (status, msg) = map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
         repo.update_operation_meta(&mut tx, operation_id, meta_json, status, msg, None)
@@ -859,7 +866,7 @@ impl ReplayStateMachine {
 
         info!(
             operation_id = %operation_id,
-            executor_node = %executor_node,
+            executor_module = %executor_module,
             "Atomically transitioned replay operation into execution"
         );
 
@@ -1023,34 +1030,34 @@ impl ReplayStateMachine {
         self.repo().try_acquire_execution_lock(operation_id).await
     }
 
-    /// Persist the executor node after execution has actually entered the Executing state.
-    pub async fn set_executor_node(
+    /// Persist the executor module after execution has actually entered the Executing state.
+    pub async fn set_executor_module(
         &self,
         operation_id: Uuid,
-        executor_node: NodeName,
+        executor_module: ModuleName,
     ) -> Result<()> {
         let repo = self.repo();
-        let mut tx = repo.begin_context("set_executor_node").await?;
+        let mut tx = repo.begin_context("set_executor_module").await?;
 
         let existing = repo.fetch_meta_for_update(&mut tx, operation_id).await?;
         let mut meta = decode_meta_json(Some(existing))?;
         if meta.state != ReplayState::Executing {
             return Err(SinexError::invalid_state(
-                "Cannot set replay executor node unless the operation is executing",
+                "Cannot set replay executor module unless the operation is executing",
             )
             .with_context("current_state", format!("{:?}", meta.state))
             .with_id("operation_id", operation_id.to_string())
-            .with_operation("set_replay_executor_node"));
+            .with_operation("set_replay_executor_module"));
         }
-        meta.executor_node = Some(executor_node.clone());
+        meta.executor_module = Some(executor_module.clone());
         let meta_json = serde_json::to_value(&meta)?;
         repo.update_operation_meta_only(&mut tx, operation_id, meta_json)
             .await?;
         tx.commit().await?;
 
         info!(
-            "Node {} executing replay operation {}",
-            executor_node, operation_id
+            "RuntimeModule {} executing replay operation {}",
+            executor_module, operation_id
         );
         Ok(())
     }
@@ -1110,7 +1117,7 @@ impl ReplayStateMachine {
         meta.state = ReplayState::Failed;
         meta.finished_at = Some(temporal::now());
         meta.outcome = Some(ReplayOutcome::Failed);
-        meta.executor_node = None;
+        meta.executor_module = None;
         meta.error_details = Some(format!(
             "recovered from stale {} state (likely process crash)",
             state_json_label(recovered_state).to_ascii_lowercase()
@@ -1158,12 +1165,12 @@ impl ReplayStateMachine {
     pub async fn list_operations(
         &self,
         filter_state: Option<ReplayState>,
-        filter_node: Option<&str>,
+        filter_source_name: Option<&str>,
         limit: Option<i64>,
     ) -> Result<Vec<ReplayOperation>> {
         let repo = self.repo();
         let rows = repo
-            .list_operations(filter_state, filter_node, limit)
+            .list_operations(filter_state, filter_source_name, limit)
             .await?;
 
         let mut operations = Vec::new();
@@ -1190,7 +1197,7 @@ pub struct MetaJson {
     pub created_at: Timestamp,
     pub approved_by: Option<String>,
     pub approved_at: Option<Timestamp>,
-    pub executor_node: Option<NodeName>,
+    pub executor_module: Option<ModuleName>,
     pub started_at: Option<Timestamp>,
     pub finished_at: Option<Timestamp>,
     pub outcome: Option<ReplayOutcome>,
@@ -1279,7 +1286,7 @@ pub fn decode_meta_to_operation(
         created_at: meta.created_at,
         approved_by: meta.approved_by,
         approved_at: meta.approved_at,
-        executor_node: meta.executor_node,
+        executor_module: meta.executor_module,
         started_at: meta.started_at,
         finished_at: meta.finished_at,
         outcome: meta.outcome,

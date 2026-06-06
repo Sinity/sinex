@@ -76,7 +76,7 @@ impl JetStreamTestHelper {
             env,
             stream,
             ctx.pipeline_namespace()
-                .consumer_name(&format!("ingestd-{suffix}")),
+                .consumer_name(&format!("event-engine-{suffix}")),
             Some(&namespace),
         );
 

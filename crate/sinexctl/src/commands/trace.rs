@@ -166,10 +166,10 @@ fn render_tree(result: &LineageResult) {
     }
 }
 
-/// Render a slice of lineage nodes with tree connectors.
-fn render_nodes(nodes: &[LineageNode]) {
-    for (i, node) in nodes.iter().enumerate() {
-        let is_last = i == nodes.len() - 1;
+/// Render a slice of lineage modules with tree connectors.
+fn render_nodes(modules: &[LineageNode]) {
+    for (i, node) in modules.iter().enumerate() {
+        let is_last = i == modules.len() - 1;
         let connector = if is_last { "└─" } else { "├─" };
         println!(
             "    {connector} {} {} {}",

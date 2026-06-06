@@ -330,7 +330,7 @@ mod tests {
                     "dependencies": ["serde"]
                 },
                 {
-                    "package": "sinex-gateway",
+                    "package": "sinexd",
                     "dependencies": ["anyhow", "tokio"]
                 }
             ]
@@ -340,8 +340,8 @@ mod tests {
 
         assert_eq!(report.unused.len(), 3);
         assert_eq!(report.unused[0].package, "sinex-db");
-        assert_eq!(report.unused[1].package, "sinex-gateway");
-        assert_eq!(report.unused[2].package, "sinex-gateway");
+        assert_eq!(report.unused[1].package, "sinexd");
+        assert_eq!(report.unused[2].package, "sinexd");
         Ok(())
     }
 
@@ -357,7 +357,7 @@ mod tests {
     #[sinex_test]
     async fn test_parse_machete_stdout_text_output() -> TestResult<()> {
         let report = UnusedDetector::parse_machete_stdout(
-            "sinex-db -- ./crate/lib/sinex-db/Cargo.toml:\n    serde\n    tokio\n",
+            "sinex-db -- ./crate/sinex-db/Cargo.toml:\n    serde\n    tokio\n",
         )?;
 
         assert_eq!(report.tool, "cargo-machete");
@@ -371,7 +371,7 @@ mod tests {
     async fn test_parse_machete_text_output_ignores_footer() -> TestResult<()> {
         let report = UnusedDetector::parse_machete_text_output(
             r#"cargo-machete found the following unused dependencies in this directory:
-sinex-db -- ./crate/lib/sinex-db/Cargo.toml:
+sinex-db -- ./crate/sinex-db/Cargo.toml:
     serde
     tokio-test
 

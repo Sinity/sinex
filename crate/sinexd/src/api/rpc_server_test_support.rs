@@ -28,14 +28,14 @@ pub fn gateway_auth_mode_from_env() -> Result<GatewayAuthModeSnapshot> {
         Some(token) => {
             if token.trim().is_empty() {
                 Err(SinexError::configuration(
-                    "SINEX_RPC_TOKEN (or SINEX_API_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) is set but empty; refusing to start without a token",
+                    "SINEX_API_TOKEN (or SINEX_API_ADMIN_TOKEN_FILE / SINEX_API_TOKEN_FILE) is set but empty; refusing to start without a token",
                 ))
             } else {
                 Ok(GatewayAuthModeSnapshot::StaticToken)
             }
         }
         None => Err(SinexError::configuration(
-            "SINEX_RPC_TOKEN is not set. Export a token (or SINEX_API_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) so the gateway can authenticate RPC clients.",
+            "SINEX_API_TOKEN is not set. Export a token (or SINEX_API_ADMIN_TOKEN_FILE / SINEX_API_TOKEN_FILE) so the gateway can authenticate RPC clients.",
         )),
     }
 }

@@ -35,14 +35,14 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 ///
 /// ### [`Class::Critical`] — provenance-bearing event payloads
 ///
-/// Raw event batches from ingestors. These are the ground-truth records.
+/// Raw event batches from sources. These are the ground-truth records.
 /// Loss means lost provenance history.
 ///
 /// - **Subject pattern**: `{env}.sinex.events.raw.{source}.{event_type}`
 /// - **`QoS`**: `JetStream` with `Nats-Msg-Id` idempotency header; `AckAll` after
 ///   ack from server.
 /// - **Retry budget**: semaphore-bounded (100 permits); on NATS error, caller
-///   retries up to the node's configured retry limit.
+///   retries up to the runtime module's configured retry limit.
 /// - **Failure routing**: permanent NATS failure → local recovery spool
 ///   (`sinex_event_recovery_spool.jsonl`); at-most once per-run the spool
 ///   is replayed on next startup.
@@ -51,7 +51,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 ///
 /// ### [`Class::Derived`] — automaton derived outputs
 ///
-/// Derived events produced by derived nodes. Same subject plane as critical
+/// Derived events produced by automatons. Same subject plane as critical
 /// but semantically distinct: a derived event can be replayed from its parents
 /// if lost; a critical event cannot be replayed without its source material.
 ///
@@ -59,7 +59,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// - **`QoS`**: `JetStream` with `Nats-Msg-Id` idempotency header.
 /// - **Retry budget**: semaphore-bounded (100 permits); exhausted retries →
 ///   processing-failure stream.
-/// - **Failure routing**: `events.processing_failures.{node}.{event_id}` —
+/// - **Failure routing**: `events.processing_failures.{module}.{event_id}` —
 ///   **not** the raw-ingest DLQ. Derived failures are re-runnable; raw-ingest
 ///   DLQ is operator-reviewed.
 /// - **Drain on SIGTERM**: wait for in-flight ACKs; checkpoint saved before
@@ -73,14 +73,14 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// - **Subject pattern**: `{env}.source_material.frames.*`
 /// - **`QoS`**: `JetStream`, ordered stream, slice idempotency headers.
 /// - **Retry budget**: caller operation propagates publish failure and retries
-///   according to the node's material acquisition policy.
+///   according to the module's material acquisition policy.
 /// - **Failure routing**: no raw-event DLQ; material acquisition fails before
 ///   dependent events can be truthfully published.
 /// - **Drain on SIGTERM**: wait for ACKs before considering anchors durable.
 ///
 /// ### [`Class::Confirmation`] — persistence acknowledgement signals
 ///
-/// Per-event ACK signals from ingestd to derived-node adapters. Loss causes
+/// Per-event ACK signals from event_engine to automaton adapters. Loss causes
 /// duplicate processing (not data loss); automata re-check against DB state.
 ///
 /// - **Subject pattern**: `{env}.events.confirmations.{event_id}`
@@ -95,7 +95,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 ///
 /// ### [`Class::Invalidation`] — scope invalidation signals
 ///
-/// Fan-out signals to derived nodes when persisted facts change (replay,
+/// Fan-out signals to automatons when persisted facts change (replay,
 /// archival). JetStream-backed; consumers have durable subscriptions.
 ///
 /// - **Subject pattern**: `{env}.sinex.derived.invalidation`
@@ -113,7 +113,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// Request-reply coordination: leadership handoff, heartbeat ready-signals,
 /// scan commands, replay control responses.
 ///
-/// - **Subject pattern**: `{env}.sinex.control.nodes.{id}.*`,
+/// - **Subject pattern**: `{env}.sinex.control.sources.{id}.*`,
 ///   `{env}.sinex.control.replay.progress.{op}`, direct request-reply
 ///   subjects.
 /// - **`QoS`**: Core NATS (not `JetStream`); at-most-once. Request-reply with
@@ -139,7 +139,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// - **Drain on SIGTERM**: best-effort flush; no wait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Class {
-    /// Provenance-bearing raw event payloads from ingestors.
+    /// Provenance-bearing raw event payloads from sources.
     /// Loss = lost provenance history. Failure routes to local recovery spool.
     Critical,
 
@@ -151,11 +151,11 @@ pub enum Class {
     /// Loss breaks material provenance and must fail the acquisition operation.
     SourceMaterial,
 
-    /// Persistence acknowledgement signals from ingestd to derived nodes.
+    /// Persistence acknowledgement signals from event_engine to automatons.
     /// Loss causes duplicate processing; best-effort with retry queue.
     Confirmation,
 
-    /// Scope invalidation fan-out to derived nodes.
+    /// Scope invalidation fan-out to automatons.
     /// JetStream-backed; delivery guaranteed to active consumers.
     Invalidation,
 
@@ -244,10 +244,10 @@ impl Class {
     pub const fn failure_routing(self) -> &'static str {
         match self {
             Self::Critical => {
-                "local recovery spool (sinex_event_recovery_spool.jsonl) in node work dir"
+                "local recovery spool (sinex_event_recovery_spool.jsonl) in module work dir"
             }
             Self::Derived => {
-                "processing-failure stream (events.processing_failures.{node}.{event_id})"
+                "processing-failure stream (events.processing_failures.{module}.{event_id})"
             }
             Self::SourceMaterial => "material acquisition operation fails before event publish",
             Self::Confirmation => {

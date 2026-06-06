@@ -16,6 +16,7 @@ This crate provides:
 | [patterns.md](./patterns.md) | Repository trait, DbPoolExt, SQLX compile-time validation |
 | [diagrams.md](./diagrams.md) | Schema visualization, repository architecture diagrams |
 | [data_lifecycle.md](./data_lifecycle.md) | Live/archive/tombstone lifecycle and replay-facing retention rules |
+| [backup_restore.md](./backup_restore.md) | PostgreSQL basebackup/WAL archive setup and restore drill guidance |
 
 ## Quick Start
 
@@ -51,5 +52,5 @@ Repositories borrow the connection pool with lifetime `'a`, ensuring:
 
 ## See Also
 
-- Schema definitions: `crate/lib/sinex-schema/docs/`
-- Core types: `crate/lib/sinex-primitives/docs/`
+- Schema definitions: `crate/sinex-db/docs/schema/`, `crate/sinex-schema/src/defs/`
+- Core types: `crate/sinex-primitives/docs/`

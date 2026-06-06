@@ -1,6 +1,6 @@
-use sinexd::api::handlers::handle_documents_search;
 use sinex_primitives::Uuid;
 use sinex_primitives::rpc::documents::DocumentsSearchRequest;
+use sinexd::api::handlers::handle_documents_search;
 use xtask::sandbox::prelude::*;
 
 async fn seed_document(

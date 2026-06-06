@@ -1,6 +1,6 @@
 //! Instruction/actuator-loop RPC handlers.
 
-use crate::node_sdk::{
+use crate::runtime::{
     dispatch_hyprland_workspace_command, probe_hyprland_command_socket,
     resolve_hyprland_command_socket_path,
 };

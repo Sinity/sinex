@@ -9,8 +9,8 @@ use serde::Serialize;
 use serde_json::json;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::schema_registry::get_all_payloads;
-use sinex_primitives::proof;
 use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter, TimeRange};
+use sinex_primitives::source_contracts;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{DeploymentReadinessDescriptor, Uuid};
 use tokio::process::Command;
@@ -36,19 +36,15 @@ pub struct VerifyCommand {
     #[arg(long = "historical-evidence", default_value_t = false)]
     historical_evidence: bool,
 
-    /// Cross-check every registered `SourceUnitDescriptor` against the
+    /// Cross-check every registered `SourceContract` against the
     /// `EventPayload` inventory: report orphan descriptor pairs (descriptor
     /// declares a (source, `event_type`) with no matching payload) and
-    /// unclaimed payloads (payload has no `register_source_unit!` entry).
+    /// unclaimed payloads (payload has no `register_source_contract!` entry).
     ///
-    /// Uses `docs/source-units.json` if present (xtask renders the manifest
-    /// from the full descriptor graph including node crates); otherwise
-    /// falls back to the descriptors compiled into this binary, which
-    /// generally only covers the infra/primitives descriptors and will
-    /// report node-crate-claimed payloads as unclaimed. Use
-    /// `xtask source-units check` for the deeper, fully-linked validation.
-    #[arg(long = "source-units", default_value_t = false)]
-    source_units: bool,
+    /// Uses source contracts compiled into this binary. Generated source
+    /// catalog JSON files are not a runtime authority.
+    #[arg(long = "sources", default_value_t = false)]
+    source_contracts: bool,
 
     /// Run the seeded demo walkthrough (#1172 AC-10): if the database is
     /// empty, seed it with `sinexctl demo`; then exercise documented
@@ -65,7 +61,7 @@ enum VerifySubcommand {
     Baseline(baseline::BaselineArgs),
 }
 
-const DOCUMENT_INGESTOR_SOURCE: &str = "document-ingestor";
+const DOCUMENT_SOURCE: &str = "document-source";
 const DOCUMENT_INGESTED_EVENT_TYPE: &str = "document.ingested";
 const SOURCE_EVIDENCE_RECENT_WINDOW: Duration = Duration::from_hours(1);
 const VERIFY_EVENT_SAMPLE_LIMIT: i64 = 25;
@@ -210,17 +206,17 @@ impl VerifyCommand {
         .await?;
         run_active_verification(self, &mut summary, client, descriptor.as_ref()).await?;
         report_historical_evidence(self, &mut summary, client, descriptor.as_ref()).await?;
-        report_source_units_check(self, &mut summary);
+        report_source_contracts_check(self, &mut summary);
 
         finalize_summary(&summary, format)
     }
 
-    /// Returns true when `--source-units` is the only request and the
+    /// Returns true when `--sources` is the only request and the
     /// gateway-dependent checks should be skipped entirely.
     #[must_use]
-    pub fn is_source_units_only(&self) -> bool {
+    pub fn is_source_contracts_only(&self) -> bool {
         self.cmd.is_none()
-            && self.source_units
+            && self.source_contracts
             && !self.demo
             && !self.document_smoke
             && !self.source_evidence
@@ -233,15 +229,15 @@ impl VerifyCommand {
     }
 
     /// Run only the descriptor/payload coverage check, without requiring a
-    /// gateway connection or auth token. Use after [`Self::is_source_units_only`]
+    /// gateway connection or auth token. Use after [`Self::is_source_contracts_only`]
     /// returns true.
-    pub fn execute_source_units_only(&self, format: OutputFormat) -> Result<()> {
+    pub fn execute_source_contracts_only(&self, format: OutputFormat) -> Result<()> {
         let table_mode = matches!(format, OutputFormat::Table);
         if table_mode {
             print_verification_header();
         }
         let mut summary = VerificationSummary::new(format);
-        report_source_units_check(self, &mut summary);
+        report_source_contracts_check(self, &mut summary);
         finalize_summary(&summary, format)
     }
 }
@@ -432,26 +428,26 @@ async fn report_historical_evidence(
     Ok(())
 }
 
-/// Cross-check `SourceUnitDescriptor.event_types` pairs against the
-/// `EventPayload` inventory. See `--source-units` flag docs.
-fn report_source_units_check(command: &VerifyCommand, summary: &mut VerificationSummary) {
-    if !command.source_units {
+/// Cross-check `SourceContract.event_types` pairs against the
+/// `EventPayload` inventory. See `--sources` flag docs.
+fn report_source_contracts_check(command: &VerifyCommand, summary: &mut VerificationSummary) {
+    if !command.source_contracts {
         summary.skip(
-            "Descriptor/payload coverage check not run — pass --source-units to cross-check `SourceUnitDescriptor` declarations against the `EventPayload` inventory",
+            "Descriptor/payload coverage check not run — pass --sources to cross-check `SourceContract` declarations against the `EventPayload` inventory",
         );
         return;
     }
-    run_source_units_check(summary);
+    run_source_contracts_check(summary);
 }
 
-fn run_source_units_check(summary: &mut VerificationSummary) {
-    let report = build_source_units_report();
+fn run_source_contracts_check(summary: &mut VerificationSummary) {
+    let report = build_source_contracts_report();
     if let Some(source) = &report.descriptor_source_note {
         summary.warn(format!("Descriptor source: {source}"));
     }
     if report.orphan_descriptor_pairs.is_empty() {
         summary.pass(format!(
-            "Every declared `SourceUnitDescriptor` (source, event_type) pair ({} pairs across {} descriptors) maps to a registered `EventPayload`",
+            "Every declared `SourceContract` (source, event_type) pair ({} pairs across {} descriptors) maps to a registered `EventPayload`",
             report.descriptor_pair_count, report.descriptor_count
         ));
     } else {
@@ -474,7 +470,7 @@ fn run_source_units_check(summary: &mut VerificationSummary) {
     }
     if report.unclaimed_payloads.is_empty() {
         summary.pass(format!(
-            "Every registered `EventPayload` ({} payloads) is claimed by a `SourceUnitDescriptor`",
+            "Every registered `EventPayload` ({} payloads) is claimed by a `SourceContract`",
             report.payload_count
         ));
     } else {
@@ -493,7 +489,7 @@ fn run_source_units_check(summary: &mut VerificationSummary) {
             .collect::<Vec<_>>()
             .join(", ");
         summary.warn(format!(
-            "{} `EventPayload`(s) have no `register_source_unit!` claim: {preview}{}",
+            "{} `EventPayload`(s) have no `register_source_contract!` claim: {preview}{}",
             report.unclaimed_payloads.len(),
             if report.unclaimed_payloads.len() > 10 {
                 format!(" … +{} more", report.unclaimed_payloads.len() - 10)
@@ -502,55 +498,36 @@ fn run_source_units_check(summary: &mut VerificationSummary) {
             }
         ));
     }
-    summary.skip(
-        "Use `xtask source-units check` for the deeper, fully-linked validation across every node crate",
-    );
+    summary.skip("Generated source catalogs are not a verification authority");
 }
 
 #[derive(Debug, Default)]
-struct SourceUnitsReport {
+struct SourceContractsReport {
     descriptor_count: usize,
     descriptor_pair_count: usize,
     payload_count: usize,
     orphan_descriptor_pairs: Vec<String>,
     unclaimed_payloads: Vec<String>,
-    /// Set when descriptor pairs were loaded from `docs/source-units.json`
-    /// instead of the in-binary `proof::all_source_units()` inventory; or
-    /// when neither source could be loaded.
+    /// Set when no in-binary descriptor inventory is available.
     descriptor_source_note: Option<String>,
 }
 
-fn build_source_units_report() -> SourceUnitsReport {
-    let manifest_pairs = load_descriptor_pairs_from_manifest();
-    let (descriptor_count, declared_pairs, source_note) = if let Some((count, pairs)) =
-        manifest_pairs
-    {
-        (
-            count,
-            pairs,
-            Some(format!(
-                "loaded from {MANIFEST_RELATIVE_PATH} (xtask-rendered manifest with full crate linkage)"
-            )),
+fn build_source_contracts_report() -> SourceContractsReport {
+    let mut descriptor_count = 0usize;
+    let mut declared_pairs = BTreeSet::new();
+    for descriptor in source_contracts::all_source_contracts() {
+        descriptor_count += 1;
+        for (src, ty) in descriptor.event_types {
+            declared_pairs.insert(((*src).to_string(), (*ty).to_string()));
+        }
+    }
+    let source_note = if descriptor_count == 0 {
+        Some(
+            "no descriptors compiled into this binary — descriptor coverage cannot be verified"
+                .to_string(),
         )
     } else {
-        let mut count = 0usize;
-        let mut pairs = BTreeSet::new();
-        for descriptor in proof::all_source_units() {
-            count += 1;
-            for (src, ty) in descriptor.event_types {
-                pairs.insert(((*src).to_string(), (*ty).to_string()));
-            }
-        }
-        let note = if count == 0 {
-            Some(
-                "no manifest at docs/source-units.json and no descriptors compiled into this binary — descriptor coverage cannot be verified".to_string(),
-            )
-        } else {
-            Some(format!(
-                "no manifest at {MANIFEST_RELATIVE_PATH}; falling back to {count} in-binary descriptor(s); node-crate descriptors will not be visible — run `xtask source-units check` for full coverage"
-            ))
-        };
-        (count, pairs, note)
+        None
     };
 
     let mut payload_pairs: BTreeSet<(String, String)> = BTreeSet::new();
@@ -569,7 +546,7 @@ fn build_source_units_report() -> SourceUnitsReport {
         .map(|(src, ty)| format!("{src}/{ty}"))
         .collect::<Vec<_>>();
 
-    SourceUnitsReport {
+    SourceContractsReport {
         descriptor_count,
         descriptor_pair_count: declared_pairs.len(),
         payload_count: payload_pairs.len(),
@@ -577,40 +554,6 @@ fn build_source_units_report() -> SourceUnitsReport {
         unclaimed_payloads,
         descriptor_source_note: source_note,
     }
-}
-
-const MANIFEST_RELATIVE_PATH: &str = "docs/source-units.json";
-
-/// Try to load descriptor pairs from the xtask-rendered manifest, which
-/// reflects the full descriptor graph (including node crates not linked into
-/// the CLI binary). Searches a small set of candidate paths anchored at the
-/// current working directory, falling back to None if the manifest is not
-/// present (e.g. deployed CLI run from `/`).
-fn load_descriptor_pairs_from_manifest() -> Option<(usize, BTreeSet<(String, String)>)> {
-    let candidates: [PathBuf; 3] = [
-        PathBuf::from(MANIFEST_RELATIVE_PATH),
-        PathBuf::from("../").join(MANIFEST_RELATIVE_PATH),
-        PathBuf::from("../../").join(MANIFEST_RELATIVE_PATH),
-    ];
-    let path = candidates.iter().find(|candidate| candidate.is_file())?;
-    let content = std::fs::read_to_string(path).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let units = value.get("source_units")?.as_array()?;
-    let mut pairs = BTreeSet::new();
-    for unit in units {
-        let event_pairs = unit.get("output_event_types").and_then(|v| v.as_array());
-        let Some(event_pairs) = event_pairs else {
-            continue;
-        };
-        for pair in event_pairs {
-            let source = pair.get("source").and_then(|v| v.as_str());
-            let event_type = pair.get("event_type").and_then(|v| v.as_str());
-            if let (Some(source), Some(event_type)) = (source, event_type) {
-                pairs.insert((source.to_string(), event_type.to_string()));
-            }
-        }
-    }
-    Some((units.len(), pairs))
 }
 
 fn print_verification_footer(summary: &VerificationSummary) {
@@ -894,12 +837,8 @@ async fn report_document_surface_check(
         return Ok(());
     }
 
-    let count = sample_events_matching(
-        client,
-        &[DOCUMENT_INGESTOR_SOURCE],
-        DOCUMENT_INGESTED_EVENT_TYPE,
-    )
-    .await?;
+    let count =
+        sample_events_matching(client, &[DOCUMENT_SOURCE], DOCUMENT_INGESTED_EVENT_TYPE).await?;
     if count > 0 {
         summary.pass(format!(
             "Managed document surface has at least {count} persisted {DOCUMENT_INGESTED_EVENT_TYPE} event samples"
@@ -1229,7 +1168,7 @@ fn build_document_smoke_path(descriptor: &DeploymentReadinessDescriptor) -> Resu
 
 fn document_smoke_query(file_path: &str) -> Result<EventQuery> {
     Ok(EventQuery {
-        sources: vec![EventSource::new(DOCUMENT_INGESTOR_SOURCE)?],
+        sources: vec![EventSource::new(DOCUMENT_SOURCE)?],
         event_types: vec![EventType::new(DOCUMENT_INGESTED_EVENT_TYPE)?],
         payload: Some(PayloadFilter::Contains {
             value: json!({ "file_path": file_path }),
@@ -1454,7 +1393,7 @@ mod tests {
         let query = document_smoke_query("/tmp/sinex-docs/.sinex-verify-abc.md")?;
 
         assert_eq!(query.sources.len(), 1);
-        assert_eq!(query.sources[0].as_str(), DOCUMENT_INGESTOR_SOURCE);
+        assert_eq!(query.sources[0].as_str(), DOCUMENT_SOURCE);
         assert_eq!(query.event_types.len(), 1);
         assert_eq!(query.event_types[0].as_str(), DOCUMENT_INGESTED_EVENT_TYPE);
         assert!(matches!(

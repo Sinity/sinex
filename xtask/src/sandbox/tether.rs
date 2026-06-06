@@ -52,9 +52,9 @@ impl TetherConfig {
             .or_else(|_| std::env::var(format!("SINEX_{}_GATEWAY_URL", target.to_uppercase())))
             .unwrap_or_else(|_| format!("https://gateway.{target}.sinex.io:9999"));
 
-        let auth_token = std::env::var("SINEX_RPC_TOKEN")
+        let auth_token = std::env::var("SINEX_API_TOKEN")
             .or_else(|_| std::env::var(format!("SINEX_{}_RPC_TOKEN", target.to_uppercase())))
-            .context("SINEX_RPC_TOKEN or SINEX_{TARGET}_RPC_TOKEN must be set for tether")?;
+            .context("SINEX_API_TOKEN or SINEX_{TARGET}_RPC_TOKEN must be set for tether")?;
 
         let consumer_prefix = std::env::var("USER")
             .or_else(|_| std::env::var("USERNAME"))

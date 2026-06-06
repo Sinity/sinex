@@ -110,11 +110,6 @@ mod tests {
             find_command(&commands, "schema strict-diff").is_some(),
             "strict schema drift check must stay discoverable"
         );
-        assert!(
-            find_command(&commands, "docs proof-catalog").is_some(),
-            "proof catalog command must stay discoverable"
-        );
-
         let global_args = collect_global_args();
         for arg in ["json", "list_commands", "bg"] {
             assert!(

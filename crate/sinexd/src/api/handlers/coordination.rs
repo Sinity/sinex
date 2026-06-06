@@ -7,7 +7,7 @@ use sinex_primitives::rpc::coordination::{
 };
 use sinex_primitives::{
     Result, SinexError,
-    domain::{HostName, InstanceId, NodeType},
+    domain::{HostName, InstanceId, ModuleKind},
     temporal,
     temporal::Timestamp,
 };
@@ -21,7 +21,7 @@ fn metadata_to_instance_info(meta: &InstanceMetadata, is_leader: bool) -> Result
 
     Ok(InstanceInfo {
         instance_id: InstanceId::new(&meta.instance_id),
-        node_type: NodeType::Service,
+        module_kind: ModuleKind::Service,
         hostname: Some(hostname),
         last_heartbeat: Timestamp::from_unix_timestamp(meta.last_heartbeat),
         is_leader,

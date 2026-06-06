@@ -1,0 +1,133 @@
+use camino::Utf8PathBuf;
+use serde_json::json;
+use sinex_primitives::nats::NatsConnectionConfig;
+use sinex_primitives::{
+    Event, EventSource, EventType, HostName, Id, OffsetKind, Provenance, SourceMaterial,
+};
+use sinexd::event_engine::{JetStreamTopology, config::EventEngineConfig, service::IngestService};
+use tempfile::TempDir;
+use tokio::time::{Duration, timeout};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
+
+#[sinex_test]
+async fn event_engine_processes_backlog_after_downtime(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().await?;
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
+    let js = ctx.jetstream().await?;
+    let env = ctx.env();
+
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let consumer_name = format!("event-engine-backlog-{namespace}");
+
+    let work_dir = TempDir::new()?;
+    let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
+        .unwrap_or_else(|_| Utf8PathBuf::from("/tmp"));
+    let content_store_path = work_dir_utf8.join("content-store");
+    let assembler_state_dir = work_dir_utf8.join("assembler_state");
+    tokio::fs::create_dir_all(content_store_path.as_std_path()).await?;
+    tokio::fs::create_dir_all(assembler_state_dir.as_std_path()).await?;
+
+    let config = EventEngineConfig::builder()
+        .database_url(ctx.database_url().to_string())
+        .nats(
+            NatsConnectionConfig::builder()
+                .url(nats.client_url().to_string())
+                .build(),
+        )
+        .nats_stream_name("SINEX_RAW_EVENTS")
+        .nats_consumer_name(consumer_name)
+        .nats_namespace(namespace)
+        .consumer_fetch_max_messages(32)
+        .consumer_fetch_timeout_ms(50.into())
+        .validate_schemas(false)
+        .skip_schema_sync(true)
+        .work_dir(work_dir_utf8.clone())
+        .content_store_path(content_store_path)
+        .assembler_state_dir(assembler_state_dir)
+        .build();
+    let topology = JetStreamTopology::new(
+        env,
+        config.nats_stream_name.clone(),
+        config.nats_consumer_name.clone(),
+        config.nats_namespace.as_deref(),
+    );
+
+    // Create the JetStream stream directly (instead of starting+stopping event_engine just for this)
+    let stream_config = async_nats::jetstream::stream::Config {
+        name: topology.events_stream.to_string(),
+        subjects: vec![topology.events_subject.to_string()],
+        ..Default::default()
+    };
+    js.get_or_create_stream(stream_config).await?;
+
+    // Publish events to JetStream while event_engine is offline (the "backlog")
+    let subject = env.nats_raw_event_subject_with_namespace(
+        config.nats_namespace.as_deref(),
+        "backlog-source",
+        "backlog.event",
+    );
+
+    // Pre-register a source material for FK constraints
+    let material_id = Id::<SourceMaterial>::new();
+    let identifier = format!("backlog-source-{material_id}");
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry
+            (id, material_kind, source_identifier, status, timing_info_type, staged_at)
+        VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime', NOW())
+        ON CONFLICT (id) DO NOTHING
+        "#,
+        material_id.to_uuid(),
+        identifier,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    for idx in 0..3 {
+        let event = Event::<serde_json::Value> {
+            id: Some(Id::new()),
+            source: EventSource::new("backlog-source").expect("valid source"),
+            event_type: EventType::new("backlog.event").expect("valid event type"),
+            payload: json!({"seq": idx}),
+            ts_orig: Some(sinex_primitives::Timestamp::now()),
+            host: HostName::new("test-host")?,
+            module_run_id: None,
+            payload_schema_id: None,
+            provenance: Provenance::Material {
+                id: material_id,
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            automaton_model: None,
+            ts_quality: None,
+            anchor_payload_hash: None,
+        };
+        let payload = serde_json::to_vec(&event)?;
+        nats_client.publish(subject.clone(), payload.into()).await?;
+    }
+    nats_client.flush().await?;
+
+    let mut service = IngestService::new(config).await?;
+    let mut runner = service.clone();
+    let handle = tokio::spawn(async move { runner.run().await });
+
+    WaitHelpers::wait_for_event_count(&ctx.pool, 3, Timeouts::STANDARD).await?;
+
+    service.shutdown().await?;
+    let join_result = timeout(Duration::from_secs(Timeouts::QUICK), handle)
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("event_engine runner shutdown timed out"))?;
+    join_result??;
+
+    Ok(())
+}

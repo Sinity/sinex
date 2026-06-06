@@ -1,4 +1,4 @@
-name: Schema Compatibility Check
+name: Schema Contract Drift Check
 
 permissions:
   contents: read
@@ -26,7 +26,7 @@ jobs:
           cache-name: sinity
           cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
-      - name: Run schema compatibility check
+      - name: Run schema contract drift check
         run: |
           nix develop --accept-flake-config --no-pure-eval --command bash -lc '
             set -euo pipefail
@@ -39,11 +39,12 @@ jobs:
         with:
           script: |
             const message = `
-            ❌ **Schema Compatibility Check Failed**
+            ❌ **Schema Contract Drift Check Failed**
 
             Please ensure:
-            - Any breaking changes get a schema version bump
-            - Optional additions remain backward compatible
+            - Payload/schema contract edits are deliberate
+            - Contract-breaking edits carry a schema version bump
+            - Generated schema bundle changes are checked in
 
             Run \`xtask ci compat --base ${{ github.base_ref }}\` locally for details.
             `;

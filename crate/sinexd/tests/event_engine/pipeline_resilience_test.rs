@@ -55,7 +55,7 @@ async fn spawn_consumer(
     ctx: &TestContext,
     durable: &str,
 ) -> TestResult<(
-    tokio::task::JoinHandle<sinexd::event_engine::IngestdResult<()>>,
+    tokio::task::JoinHandle<sinexd::event_engine::EventEngineResult<()>>,
     String,
 )> {
     let nats = ctx.nats_handle()?;
@@ -70,7 +70,7 @@ async fn spawn_consumer(
         &env,
         stream_name,
         ctx.pipeline_namespace()
-            .consumer_name(&format!("ingestd-{durable}")),
+            .consumer_name(&format!("event-engine-{durable}")),
         Some(&namespace),
     );
 

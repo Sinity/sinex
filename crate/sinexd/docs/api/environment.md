@@ -1,9 +1,9 @@
-# Gateway Environment Variables
+# sinexd API Environment Variables
 
-Environment variables specific to direct `sinex-gateway` runs.
+Environment variables specific to direct `sinexd` API runs.
 
 For deployed systems, prefer typed `services.sinex.*` NixOS module options. The module is the
-canonical deployment surface and exports the matching `SINEX_API_*`, `SINEX_RPC_*`, and shared
+canonical deployment surface and exports the matching `SINEX_API_*`, `SINEX_API_*`, and shared
 runtime variables automatically.
 
 The loaded runtime path is now:
@@ -33,10 +33,10 @@ SINEX_API_REQUIRE_CLIENT_TLS=true
 ```bash
 # RPC authentication token (direct value)
 # Required format: <token>:<role> where role is readonly|write|admin
-SINEX_RPC_TOKEN="your-secret-token:admin"
+SINEX_API_TOKEN="your-secret-token:admin"
 
 # RPC authentication token (file path) - PREFERRED
-SINEX_RPC_TOKEN_FILE="/run/secrets/rpc-token"
+SINEX_API_TOKEN_FILE="/run/secrets/rpc-token"
 
 # Admin token file (elevated privileges)
 SINEX_API_ADMIN_TOKEN_FILE="/run/secrets/admin-token"
@@ -72,22 +72,22 @@ SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS=10
 
 ```bash
 # Enable rate limiting (default: true)
-SINEX_RPC_RATE_LIMIT_ENABLED=true
+SINEX_API_RATE_LIMIT_ENABLED=true
 
 # In-memory mode: requests per second (default: 100)
-SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC=100
+SINEX_API_RATE_LIMIT_REQUESTS_PER_SEC=100
 
 # In-memory mode: burst capacity (default: 50)
-SINEX_RPC_RATE_LIMIT_BURST=50
+SINEX_API_RATE_LIMIT_BURST=50
 
 # In-memory mode: idle timeout for per-token state in seconds (default: 3600)
-SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS=3600
+SINEX_API_RATE_LIMIT_IDLE_TIMEOUT_SECS=3600
 
 # Distributed mode: time window for rate counting in seconds (default: 60)
-SINEX_RPC_RATE_LIMIT_WINDOW_SECS=60
+SINEX_API_RATE_LIMIT_WINDOW_SECS=60
 
 # Distributed mode: maximum requests per minute (default: 6000)
-SINEX_RPC_RATE_LIMIT_PER_MINUTE=6000
+SINEX_API_RATE_LIMIT_PER_MINUTE=6000
 ```
 
 ## Native Messaging
@@ -119,22 +119,22 @@ SINEX_API_POOL_ACQUIRE_TIMEOUT_SECS=5
 | `SINEX_API_MAX_CONCURRENCY` | No | 100 | Max concurrent RPC requests |
 | `SINEX_API_REQUEST_TIMEOUT_SECS` | No | 30s | RPC request timeout |
 | `SINEX_API_MAX_BODY_BYTES` | No | 2 MiB | Max RPC body size |
-| `SINEX_RPC_TOKEN` | Yes* | - | Bearer token (direct) |
-| `SINEX_RPC_TOKEN_FILE` | Yes* | - | Bearer token (file) |
+| `SINEX_API_TOKEN` | Yes* | - | Bearer token (direct) |
+| `SINEX_API_TOKEN_FILE` | Yes* | - | Bearer token (file) |
 | `SINEX_API_MAX_BLOB_BYTES` | No | 5 MiB | Max decoded blob payload |
 | `SINEX_REPLAY_CONTROL_TIMEOUT_SECS` | No | 30s | Replay request timeout |
 | `SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS` | No | 10s | Consumer creation timeout |
-| `SINEX_RPC_RATE_LIMIT_ENABLED` | No | `true` | Enable rate limiting |
-| `SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC` | No | 100 | Token fill rate |
-| `SINEX_RPC_RATE_LIMIT_BURST` | No | 50 | Token bucket capacity |
-| `SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS` | No | 3600s | Client state TTL |
-| `SINEX_RPC_RATE_LIMIT_WINDOW_SECS` | No | 60s | Distributed count window |
-| `SINEX_RPC_RATE_LIMIT_PER_MINUTE` | No | 6000 | Max requests/min (distributed) |
+| `SINEX_API_RATE_LIMIT_ENABLED` | No | `true` | Enable rate limiting |
+| `SINEX_API_RATE_LIMIT_REQUESTS_PER_SEC` | No | 100 | Token fill rate |
+| `SINEX_API_RATE_LIMIT_BURST` | No | 50 | Token bucket capacity |
+| `SINEX_API_RATE_LIMIT_IDLE_TIMEOUT_SECS` | No | 3600s | Client state TTL |
+| `SINEX_API_RATE_LIMIT_WINDOW_SECS` | No | 60s | Distributed count window |
+| `SINEX_API_RATE_LIMIT_PER_MINUTE` | No | 6000 | Max requests/min (distributed) |
 | `SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES` | No | 1 MiB | Max native message size |
 | `SINEX_NATIVE_MESSAGING_EXTENSION_ROLES` | No | - | Per-extension role map (JSON) |
 | `SINEX_API_POOL_ACQUIRE_TIMEOUT_SECS` | No | 5s | DB pool acquire timeout |
 
-*One of `SINEX_RPC_TOKEN` or `SINEX_RPC_TOKEN_FILE` required. Tokens must include a role suffix (`:readonly`, `:write`, or `:admin`).
+*One of `SINEX_API_TOKEN` or `SINEX_API_TOKEN_FILE` required. Tokens must include a role suffix (`:readonly`, `:write`, or `:admin`).
 
 ## See Also
 

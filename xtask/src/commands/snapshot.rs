@@ -43,7 +43,7 @@ pub struct SnapshotCommand {
     #[arg(long)]
     pub project_memory: bool,
 
-    /// U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests)
+    /// U5: Scope to a crate or directory group (e.g., sinex-db, sinexd, sources, tests)
     #[arg(long)]
     pub scope: Option<String>,
 }
@@ -573,23 +573,25 @@ fn format_age(secs: i64) -> String {
 /// Resolve a scope string into repomix --include patterns.
 ///
 /// Predefined aliases:
-/// - `core`  → `crate/core/**`
-/// - `nodes` → `crate/nodes/**`
+/// - `sinexd` → `crate/sinexd/**`
+/// - `sources` → `crate/sinexd/src/sources/**`
+/// - `automata` → `crate/sinexd/src/automata/**`
 /// - `tests` → `tests/**, xtask/tests/**`
-/// - `cli`   → `crate/cli/**`
+/// - `sinexctl` → `crate/sinexctl/**`
 ///
 /// Any other string is treated as a crate name. The function resolves the crate's
 /// directory from `cargo metadata` and collects transitive workspace dependencies.
 fn collect_scope_includes(scope: &str) -> Result<Vec<String>> {
     Ok(match scope {
-        "core" => vec!["crate/core/**".to_string()],
-        "nodes" => vec!["crate/nodes/**".to_string()],
+        "sinexd" => vec!["crate/sinexd/**".to_string()],
+        "sources" => vec!["crate/sinexd/src/sources/**".to_string()],
+        "automata" => vec!["crate/sinexd/src/automata/**".to_string()],
         "tests" => vec![
             "tests/**".to_string(),
             "xtask/tests/**".to_string(),
             "xtask/src/**".to_string(),
         ],
-        "cli" => vec!["crate/cli/**".to_string()],
+        "sinexctl" => vec!["crate/sinexctl/**".to_string()],
         "all" | "workspace" => vec!["crate/**".to_string()],
         crate_name => collect_crate_scope(crate_name)?,
     })
@@ -908,7 +910,7 @@ exit 101
         write_executable_script(
             &bin_dir.join("cargo"),
             r#"#!/bin/sh
-printf '%s\n' '{"packages":[{"id":"path+file:///realm/project/sinex/crate/lib/sinex-db#0.1.0","name":"sinex-db","manifest_path":"/realm/project/sinex/crate/lib/sinex-db/Cargo.toml","dependencies":[]}],"workspace_members":["path+file:///realm/project/sinex/crate/lib/sinex-db#0.1.0"]}'
+printf '%s\n' '{"packages":[{"id":"path+file:///realm/project/sinex/crate/sinex-db#0.1.0","name":"sinex-db","manifest_path":"/realm/project/sinex/crate/sinex-db/Cargo.toml","dependencies":[]}],"workspace_members":["path+file:///realm/project/sinex/crate/sinex-db#0.1.0"]}'
 "#,
         )?;
 

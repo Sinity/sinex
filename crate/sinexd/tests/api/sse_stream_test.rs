@@ -7,10 +7,10 @@
 //! - HTTP-level auth rejection on the SSE endpoint
 
 use serde_json::json;
-use sinexd::api::sse_bus::{MAX_ACTIVE_SUBSCRIPTIONS, SseMessage, SubscriptionBus};
 use sinex_primitives::query::{PayloadFilter, SubscriptionFilter};
 use sinex_primitives::temporal;
 use sinex_primitives::{EventSource, EventType, Uuid as CoreUuid};
+use sinexd::api::sse_bus::{MAX_ACTIVE_SUBSCRIPTIONS, SseMessage, SubscriptionBus};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -88,7 +88,7 @@ async fn insert_test_event(
     Ok(id)
 }
 
-/// Publish a fake confirmation message to NATS (mimics what ingestd does after persisting).
+/// Publish a fake confirmation message to NATS (mimics what event_engine does after persisting).
 async fn publish_confirmation(
     nats: &async_nats::Client,
     env_name: &str,

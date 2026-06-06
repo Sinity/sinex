@@ -9,7 +9,7 @@
 
 use crate::api::service_container::ServiceContainer;
 use crate::event_engine::policy::PolicyEngine;
-use crate::node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
+use crate::runtime::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
 use serde_json::Value as JsonValue;
 use sinex_primitives::validation::normalize_unicode;
 use sinex_primitives::{Result, SinexError};

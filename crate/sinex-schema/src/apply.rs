@@ -12,7 +12,7 @@ use sinex_primitives::validation::validate_pg_identifier;
 use sqlx::{Executor, PgPool};
 
 const REQUIRED_EXTENSIONS: &[&str] = &["pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
-pub const SHARED_ACCESS_ROLES: &[&str] = &["sinex_ingestd", "sinex_gateway", "sinex_readonly"];
+pub const SHARED_ACCESS_ROLES: &[&str] = &["sinex_event_engine", "sinex_api", "sinex_readonly"];
 const EVENTS_REQUIRED_TRIGGERS: &[&str] = &[
     "trg_events_no_update",
     "trg_events_archive_before_delete",
@@ -42,7 +42,7 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_events_scope_key",
     "ix_events_created_by_operation_id",
     "ix_events_sinex_metric_gauge_latest",
-    "ix_events_node_run_synthesis_latest",
+    "ix_events_module_run_synthesis_latest",
 ];
 const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_archived_events_ts_orig",
@@ -67,9 +67,9 @@ const TELEMETRY_CONTINUOUS_AGGREGATES: &[&str] = &[
     "gateway_stats_1h",
     "stream_stats_1h",
     "assembly_stats_1h",
-    "node_stats_1h",
+    "source_stats_1h",
     "metric_counters_1h",
-    "ingestd_batch_stats_1h",
+    "event_engine_batch_stats_1h",
     "current_window_focus",
     "command_frequency_hourly",
     "file_activity_summary",
@@ -121,6 +121,7 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
     crate::converge::converge_tables(pool, &convergible_tables).await?;
     converge_operations_log_constraints(pool).await?;
     converge_source_material_registry_constraints(pool).await?;
+    normalize_manifest_type_values(pool).await?;
     converge_db_check_constraints(pool).await?;
     create_indexes(pool).await?;
     create_triggers_and_functions(pool).await?;
@@ -357,6 +358,27 @@ async fn ensure_schemas(pool: &PgPool) -> Result<(), ApplyError> {
         execute_sql(pool, &sql).await?;
     }
     execute_sql(pool, "CREATE SCHEMA IF NOT EXISTS sinex_telemetry").await?;
+    Ok(())
+}
+
+async fn normalize_manifest_type_values(pool: &PgPool) -> Result<(), ApplyError> {
+    if !relation_exists(pool, "core.manifests").await? {
+        return Ok(());
+    }
+    if !column_exists(pool, "core", "manifests", "manifest_type").await? {
+        return Ok(());
+    }
+
+    execute_sql(
+        pool,
+        r"
+        UPDATE core.manifests
+        SET manifest_type = 'source'
+        WHERE manifest_type = 'ingestor'
+        ",
+    )
+    .await?;
+
     Ok(())
 }
 
@@ -919,8 +941,8 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
         CREATE INDEX IF NOT EXISTS ix_events_sinex_metric_gauge_latest
         ON core.events (
             (payload->>'name'),
-            ((payload->'labels'->>'node')),
-            ((payload->'labels'->>'source_run_id')),
+            ((payload->'labels'->>'module')),
+            ((payload->'labels'->>'module_run_id')),
             id DESC
         )
         WHERE source = 'sinex' AND event_type = 'metric.gauge'
@@ -930,9 +952,9 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(
         pool,
         r"
-        CREATE INDEX IF NOT EXISTS ix_events_node_run_synthesis_latest
-        ON core.events (source_run_id, id DESC)
-        WHERE source_run_id IS NOT NULL AND source_event_ids IS NOT NULL
+        CREATE INDEX IF NOT EXISTS ix_events_module_run_synthesis_latest
+        ON core.events (module_run_id, id DESC)
+        WHERE module_run_id IS NOT NULL AND source_event_ids IS NOT NULL
         ",
     )
     .await?;
@@ -941,6 +963,11 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(pool, TELEMETRY_CONTINUOUS_AGGREGATES_SQL).await?;
     execute_sql(pool, TELEMETRY_SQL).await?;
     execute_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await?;
+    execute_sql(
+        pool,
+        "DROP VIEW IF EXISTS core.event_temporal_facts, core.derived_scope_summary",
+    )
+    .await?;
     execute_sql(pool, EVENT_TEMPORAL_FACTS_SQL).await?;
     execute_sql(pool, DERIVED_SCOPE_SUMMARY_SQL).await?;
 
@@ -971,13 +998,13 @@ async fn recreate_telemetry_read_models(pool: &PgPool) -> Result<(), ApplyError>
         BEGIN
             FOREACH relation_name IN ARRAY ARRAY[
                 'recent_activity_summary',
-                'ingestd_batch_stats_1h',
+                'event_engine_batch_stats_1h',
                 'file_activity_summary',
                 'command_frequency_hourly',
                 'current_window_focus',
                 'current_system_state',
                 'metric_counters_1h',
-                'node_stats_1h',
+                'source_stats_1h',
                 'assembly_stats_1h',
                 'stream_stats_1h',
                 'gateway_stats_1h',
@@ -1162,7 +1189,7 @@ CREATE TRIGGER set_timestamp
 
 // Privacy policy schema (#1042). User-controlled, DB-backed redaction policy
 // managed via `sinexctl privacy` (CLI deferred to a follow-up) and enforced at
-// the ingestd persistence chokepoint. Key MATERIAL never lives in the DB — the
+// the event_engine persistence chokepoint. Key MATERIAL never lives in the DB — the
 // `encryption_keys` table is a namespace registry only; key bytes resolve from
 // env/files via the existing KeyConfig pattern.
 const PRIVACY_SCHEMA_SQL: &str = r"
@@ -1696,18 +1723,18 @@ BEGIN
             ts_orig, ts_orig_subnano,
             source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
             source_event_ids, associated_blob_ids,
-            payload_schema_id, source_run_id,
+            payload_schema_id, module_run_id,
             temporal_policy, semantics_version, scope_key, equivalence_key,
-            created_by_operation_id, node_model
+            created_by_operation_id, automaton_model
         )
         SELECT
             ae.id, ae.source, ae.event_type, ae.host, ae.payload,
             ae.ts_orig, ae.ts_orig_subnano,
             ae.source_material_id, ae.anchor_byte, ae.offset_start, ae.offset_end, ae.offset_kind,
             ae.source_event_ids, ae.associated_blob_ids,
-            ae.payload_schema_id, ae.source_run_id,
+            ae.payload_schema_id, ae.module_run_id,
             ae.temporal_policy, ae.semantics_version, ae.scope_key, ae.equivalence_key,
-            ae.created_by_operation_id, ae.node_model
+            ae.created_by_operation_id, ae.automaton_model
         FROM audit.archived_events ae
         WHERE ae.id = ANY(p_archived_ids)
         ON CONFLICT (id) DO NOTHING
@@ -2116,11 +2143,11 @@ SELECT add_continuous_aggregate_policy('sinex_telemetry.assembly_stats_1h',
     end_offset => INTERVAL '1 hour',
     schedule_interval => INTERVAL '1 hour');
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.node_stats_1h
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.source_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
     time_bucket('1 hour', id) AS bucket,
-    payload->>'node_type' AS node_type,
+    payload->>'module_kind' AS module_kind,
     SUM((payload->>'events_processed')::bigint) AS total_events_processed,
     SUM((payload->>'events_dropped')::bigint) AS total_events_dropped,
     AVG((payload->>'avg_latency_ms')::float) AS avg_latency_ms,
@@ -2128,12 +2155,12 @@ SELECT
     SUM((payload->>'error_count')::bigint) AS total_errors,
     COUNT(*) AS sample_count
 FROM core.events
-WHERE source = 'sinex.node'
+WHERE source = 'sinexd.source'
   AND event_type = 'processing.stats'
-GROUP BY time_bucket('1 hour', id), payload->>'node_type'
+GROUP BY time_bucket('1 hour', id), payload->>'module_kind'
 WITH NO DATA;
 
-SELECT add_continuous_aggregate_policy('sinex_telemetry.node_stats_1h',
+SELECT add_continuous_aggregate_policy('sinex_telemetry.source_stats_1h',
     start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 hour',
     schedule_interval => INTERVAL '1 hour');
@@ -2158,7 +2185,7 @@ SELECT add_continuous_aggregate_policy('sinex_telemetry.metric_counters_1h',
     end_offset => INTERVAL '1 hour',
     schedule_interval => INTERVAL '1 hour');
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.ingestd_batch_stats_1h
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.event_engine_batch_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
     time_bucket('1 hour', id) AS bucket,
@@ -2182,7 +2209,7 @@ WHERE source = 'sinexd.event_engine'
 GROUP BY time_bucket('1 hour', id)
 WITH NO DATA;
 
-SELECT add_continuous_aggregate_policy('sinex_telemetry.ingestd_batch_stats_1h',
+SELECT add_continuous_aggregate_policy('sinex_telemetry.event_engine_batch_stats_1h',
     start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 hour',
     schedule_interval => INTERVAL '1 hour');
@@ -2289,8 +2316,8 @@ SELECT
     MAX((payload->>'active_units')::bigint) AS current_active_units,
     COUNT(*) AS sample_count
 FROM core.events
-WHERE source = 'system-ingestor'
-  AND event_type IN ('system.resources', 'systemd.units_summary')
+WHERE (source = 'system.monitor' AND event_type = 'system.resources')
+   OR (source = 'system.systemd' AND event_type = 'systemd.units_summary')
 GROUP BY time_bucket('5 minutes', id)
 WITH NO DATA;
 
@@ -2361,7 +2388,7 @@ SELECT
     NULL::text AS scope_key,
     NULL::text AS equivalence_key,
     NULL::uuid AS created_by_operation_id,
-    NULL::text AS node_model
+    NULL::text AS automaton_model
 FROM core.events e
 INNER JOIN LATERAL (
     SELECT
@@ -2407,20 +2434,20 @@ SELECT
     e.scope_key,
     e.equivalence_key,
     e.created_by_operation_id,
-    e.node_model
+    e.automaton_model
 FROM core.events e
 WHERE e.source_event_ids IS NOT NULL;
 ";
 
-/// Scope health dashboard for derived nodes.
+/// Scope health dashboard for automatons.
 ///
-/// Provides a per-node, per-scope summary of derived events: how many exist,
+/// Provides a per-automaton, per-scope summary of derived events: how many exist,
 /// when last updated, and what processing metadata (`semantics_version`, `temporal_policy`)
 /// they carry. Operators query this to find stale scopes or version mismatches.
 const DERIVED_SCOPE_SUMMARY_SQL: &str = r"
 CREATE OR REPLACE VIEW core.derived_scope_summary AS
 SELECT
-    source AS node,
+    source AS automaton,
     scope_key,
     event_type,
     COUNT(*) AS event_count,
@@ -2437,31 +2464,31 @@ ORDER BY last_updated DESC;
 // schema-apply bootstrap binary), so declarative schema apply remains safe to run as
 // the database owner role.
 const ROLE_GRANTS_SQL: &str = r"
-GRANT USAGE ON SCHEMA core, raw, sinex_schemas, audit TO sinex_ingestd, sinex_gateway, sinex_readonly;
+GRANT USAGE ON SCHEMA core, raw, sinex_schemas, audit TO sinex_event_engine, sinex_api, sinex_readonly;
 
--- Privacy policy (#1042): ingestd loads rules at the chokepoint; gateway manages
+-- Privacy policy (#1042): event_engine loads rules at the chokepoint; gateway manages
 -- them via sinexctl; readonly may inspect.
-GRANT USAGE ON SCHEMA privacy TO sinex_ingestd, sinex_gateway, sinex_readonly;
-GRANT SELECT ON ALL TABLES IN SCHEMA privacy TO sinex_ingestd, sinex_readonly;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA privacy TO sinex_gateway;
+GRANT USAGE ON SCHEMA privacy TO sinex_event_engine, sinex_api, sinex_readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA privacy TO sinex_event_engine, sinex_readonly;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA privacy TO sinex_api;
 
 
-GRANT EXECUTE ON FUNCTION core.start_operation TO sinex_gateway;
-GRANT EXECUTE ON FUNCTION core.complete_operation TO sinex_gateway;
-GRANT EXECUTE ON FUNCTION core.fail_operation TO sinex_gateway;
-GRANT EXECUTE ON FUNCTION core.execute_cascade_tombstone TO sinex_gateway;
-GRANT EXECUTE ON FUNCTION core.execute_cascade_restore TO sinex_gateway;
-GRANT EXECUTE ON FUNCTION core.lifecycle_tier_status TO sinex_gateway, sinex_readonly;
-GRANT EXECUTE ON FUNCTION core.jsonb_merge_deep TO sinex_ingestd, sinex_gateway;
+GRANT EXECUTE ON FUNCTION core.start_operation TO sinex_api;
+GRANT EXECUTE ON FUNCTION core.complete_operation TO sinex_api;
+GRANT EXECUTE ON FUNCTION core.fail_operation TO sinex_api;
+GRANT EXECUTE ON FUNCTION core.execute_cascade_tombstone TO sinex_api;
+GRANT EXECUTE ON FUNCTION core.execute_cascade_restore TO sinex_api;
+GRANT EXECUTE ON FUNCTION core.lifecycle_tier_status TO sinex_api, sinex_readonly;
+GRANT EXECUTE ON FUNCTION core.jsonb_merge_deep TO sinex_event_engine, sinex_api;
 ";
 
 const SHARED_ACCESS_ROLES_BOOTSTRAP_SQL: &str = r"
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_ingestd') THEN
-    CREATE ROLE sinex_ingestd NOLOGIN;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_event_engine') THEN
+    CREATE ROLE sinex_event_engine NOLOGIN;
   END IF;
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_gateway') THEN
-    CREATE ROLE sinex_gateway NOLOGIN;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_api') THEN
+    CREATE ROLE sinex_api NOLOGIN;
   END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_readonly') THEN
     CREATE ROLE sinex_readonly NOLOGIN;

@@ -1,7 +1,7 @@
 
 # Sinex hot-standby coordination example
 #
-# Demonstrates running multiple node instances with leadership hand-off for
+# Demonstrates running multiple source runtime instances with leadership hand-off for
 # zero-downtime upgrades.  Use this as a starting point for production clusters.
 
 { config, lib, pkgs, ... }:
@@ -23,12 +23,12 @@
 
     core = {
       enable = true;
-      gateway.autoGenerateTls = true;
+      api.autoGenerateTls = true;
     };
 
     nats.environment = "prod";
 
-    nodes = {
+    runtime = {
       enable = true;
       defaults.logLevel = "info";
 
@@ -38,7 +38,9 @@
         leadershipTimeoutSec = 120;
         handoffTimeoutSec = 60;
       };
+    };
 
+    sources = {
       filesystem = {
         enable = true;
         instances = 3;   # one leader + two standbys
@@ -62,14 +64,14 @@
         enable = true;
         instances = 2;
       };
+    };
 
-      automata = {
-        enable = true;
-        canonicalizer.enable = true;
-        healthAggregator.enable = true;
-        analyticsAutomaton.enable = true;
-        sessionDetector.enable = true;
-      };
+    automata = {
+      enable = true;
+      canonicalizer.enable = true;
+      healthAggregator.enable = true;
+      analyticsAutomaton.enable = true;
+      sessionDetector.enable = true;
     };
 
     observability = {
@@ -120,7 +122,7 @@
   };
 
   # Ensure the monitored operator account exists
-  environment.etc."sinex/gateway-admin-token".text = "coordination-admin:admin";
+  environment.etc."sinex/api-admin-token".text = "coordination-admin:admin";
 
   users.users."sinex-prod" = {
     isNormalUser = true;

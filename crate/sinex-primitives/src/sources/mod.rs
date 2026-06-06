@@ -7,7 +7,7 @@
 //! Types in this module sit alongside (not inside) `crate::rpc::sources`
 //! because they describe *operator-facing diagnostics* rather than the
 //! material-staging RPC contract. Both surfaces share `SourceFamily` and
-//! the `SourceUnitId` already defined under `crate::parser` so the two
+//! the `SourceId` already defined under `crate::parser` so the two
 //! issues can land independently without colliding.
 
 pub mod continuity;
@@ -19,7 +19,7 @@ use std::borrow::Cow;
 /// Coarse grouping of sources (e.g. "filesystem", "terminal", "browser").
 ///
 /// `SourceFamily` is an operator-facing rollup over the finer `EventSource` /
-/// `SourceUnitId` axis. It is loosely validated (lowercase, dotted) so the set
+/// `SourceId` axis. It is loosely validated (lowercase, dotted) so the set
 /// can grow without code changes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 #[serde(transparent)]

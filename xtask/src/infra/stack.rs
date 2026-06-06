@@ -485,7 +485,7 @@ pub fn apply_schema_for_database_url(database_url: &str, verbose: bool) -> Resul
 
 /// Synchronize discovered event payload schemas into the database.
 ///
-/// Uses the same in-process schema registry inventory that ingestd uses at startup.
+/// Uses the same in-process schema registry inventory that event_engine uses at startup.
 pub fn sync_event_payload_schemas_for_database_url(
     database_url: &str,
     verbose: bool,

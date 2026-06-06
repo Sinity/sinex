@@ -32,10 +32,10 @@ pub struct SourceParseAck {
     pub event_count: Option<usize>,
 }
 
-/// Subscribe to parse commands for a source unit and handle them.
+/// Subscribe to parse commands for a source and handle them.
 ///
-/// Runs as a background task alongside the source unit's normal continuous
-/// operation. Each source unit gets its own subscription so parse commands
+/// Runs as a background task alongside the source's normal continuous
+/// operation. Each source gets its own subscription so parse commands
 /// for `source_id = "desktop"` only reach the desktop source.
 pub async fn spawn_parse_listener(
     client: Client,
@@ -68,7 +68,7 @@ pub async fn spawn_parse_listener(
                     Err(e) => {
                         warn!(
                             target: "sinex_metrics",
-                            metric = "source_worker.parse_command_failures_total",
+                            metric = "source.parse_command_failures_total",
                             source_id = %source_id,
                             error = %e,
                             "Parse command handling failed"
@@ -124,7 +124,7 @@ async fn handle_parse_command(
                     Err(e) => {
                         warn!(
                             target: "sinex_metrics",
-                            metric = "source_worker.parse_dispatch_failures_total",
+                            metric = "source.parse_dispatch_failures_total",
                             operation_id = %cmd.operation_id,
                             source_id = %cmd.source_id,
                             error = %e,
@@ -151,7 +151,7 @@ async fn handle_parse_command(
         Err(e) => {
             warn!(
                 target: "sinex_metrics",
-                metric = "source_worker.parse_command_deser_failures_total",
+                metric = "source.parse_command_deser_failures_total",
                 error = %e,
                 "Failed to deserialize parse command"
             );
@@ -168,7 +168,7 @@ async fn handle_parse_command(
         if let Err(e) = client.publish(reply, payload.into()).await {
             error!(
                 target: "sinex_metrics",
-                metric = "source_worker.parse_ack_failures_total",
+                metric = "source.parse_ack_failures_total",
                 error = %e,
                 "Failed to send parse command ack"
             );

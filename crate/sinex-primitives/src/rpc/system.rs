@@ -50,7 +50,7 @@ pub struct SystemHealthRequest {}
 /// RPC wire projection of a single component's health status.
 ///
 /// Renamed from `ComponentHealth` to `ComponentHealthReport` to distinguish it from
-/// the automaton's in-memory `ComponentHealth` state (sinex-process) and the event
+/// the automaton's in-memory `ComponentHealth` state and the event
 /// payload shape — see issue #746 (A4).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentHealthReport {

@@ -8,7 +8,7 @@ use crate::sandbox::Sandbox;
 use crate::sandbox::coordination::PipelineNamespace;
 use crate::sandbox::events::EventPublisher;
 use crate::sandbox::nats::{acquire_pipeline_permit, wait_for_event_persisted};
-use crate::sandbox::orchestrator::{TestIngestdConfig, start_test_ingestd_with_config};
+use crate::sandbox::orchestrator::{TestEventEngineConfig, start_test_event_engine_with_config};
 use crate::sandbox::prelude::{EventId, TestResult};
 use crate::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
 use sinex_db::DbPoolExt;
@@ -21,22 +21,22 @@ use tokio::runtime::Handle;
 use tokio::sync::OwnedSemaphorePermit;
 use tracing::{info, warn};
 
-/// `PipelineScope` provides a complete pipeline test harness with ingestd, `JetStream`,
+/// `PipelineScope` provides a complete pipeline test harness with event_engine, `JetStream`,
 /// and automatic cleanup.
 ///
 /// This is the primary type for tests that need to exercise the full ingestion pipeline.
 pub struct PipelineScope<'ctx> {
     ctx: &'ctx Sandbox,
-    ingestd: Option<crate::sandbox::orchestrator::TestIngestdHandle>,
+    event_engine: Option<crate::sandbox::orchestrator::TestEventEngineHandle>,
     pipeline_permit: Option<OwnedSemaphorePermit>,
-    /// Per-test work directory for ingestd. Held here so the TempDir isn't
-    /// dropped (and cleaned up) while ingestd is still running.
+    /// Per-test work directory for event_engine. Held here so the TempDir isn't
+    /// dropped (and cleaned up) while event_engine is still running.
     _work_dir: tempfile::TempDir,
 }
 
 impl<'ctx> PipelineScope<'ctx> {
     /// Create a pipeline scope that enforces shared NATS, resets the DB slot,
-    /// and starts ingestd.
+    /// and starts event_engine.
     pub async fn new(ctx: &'ctx Sandbox) -> TestResult<Self> {
         ctx.ensure_shared_nats()?;
         ctx.reset_database_slot().await?;
@@ -49,7 +49,7 @@ impl<'ctx> PipelineScope<'ctx> {
         // tests don't contaminate this run (avoids 10-20s WAL restoration overhead).
         let work_dir = tempfile::tempdir()?;
 
-        let config = TestIngestdConfig {
+        let config = TestEventEngineConfig {
             nats: nats.connection_config(),
             database_url: ctx.database_url().to_string(),
             work_dir: Some(work_dir.path().to_path_buf()),
@@ -61,11 +61,11 @@ impl<'ctx> PipelineScope<'ctx> {
             reject_initial_replay: false,
         };
 
-        let ingestd = start_test_ingestd_with_config(config, Some(ctx)).await?;
+        let event_engine = start_test_event_engine_with_config(config, Some(ctx)).await?;
 
         Ok(Self {
             ctx,
-            ingestd: Some(ingestd),
+            event_engine: Some(event_engine),
             pipeline_permit,
             _work_dir: work_dir,
         })
@@ -101,7 +101,7 @@ impl<'ctx> PipelineScope<'ctx> {
         self.namespace().consumer_name(base)
     }
 
-    /// Publish a test event through `JetStream` and wait until ingestd persists it.
+    /// Publish a test event through `JetStream` and wait until event_engine persists it.
     ///
     /// Accepts any type implementing `Publishable`:
     /// - Typed `EventPayload` implementations (recommended)
@@ -172,7 +172,7 @@ impl<'ctx> PipelineScope<'ctx> {
             payload,
             ts_orig: Some(timestamp_override.unwrap_or_else(Timestamp::now)),
             host: crate::sandbox::local_test_host(),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             anchor_payload_hash: None,
             provenance: sinex_primitives::events::Provenance::Material {
@@ -188,7 +188,7 @@ impl<'ctx> PipelineScope<'ctx> {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             ts_quality: None,
         })
     }
@@ -424,10 +424,10 @@ impl<'ctx> PipelineScope<'ctx> {
         Ok(ids)
     }
 
-    /// Stop the ingestd instance backing this scope.
+    /// Stop the event_engine instance backing this scope.
     pub async fn shutdown(mut self) -> TestResult<()> {
-        if let Some(mut ingestd) = self.ingestd.take() {
-            ingestd.stop().await?;
+        if let Some(mut event_engine) = self.event_engine.take() {
+            event_engine.stop().await?;
         }
         self.pipeline_permit.take();
         Ok(())
@@ -457,15 +457,16 @@ impl<'ctx> PipelineScope<'ctx> {
             }
         }
 
-        // Read the file-based ingestd debug log (written by the orchestrator subprocess).
+        // Read the file-based event_engine debug log (written by the orchestrator subprocess).
         // The log file is named after the TEST process PID, not the child process PID.
-        let debug_log = crate::sandbox::orchestrator::ingestd_debug_log_path_for_test_process();
-        match crate::sandbox::orchestrator::read_ingestd_debug_log(&debug_log) {
+        let debug_log =
+            crate::sandbox::orchestrator::event_engine_debug_log_path_for_test_process();
+        match crate::sandbox::orchestrator::read_event_engine_debug_log(&debug_log) {
             Ok(Some(content)) => {
                 let lines: Vec<&str> = content.lines().collect();
                 let start = lines.len().saturating_sub(LOG_TAIL);
                 eprintln!(
-                    "--- ingestd log tail ({} lines, showing last {}) ---",
+                    "--- event_engine log tail ({} lines, showing last {}) ---",
                     lines.len(),
                     lines.len() - start
                 );
@@ -475,30 +476,30 @@ impl<'ctx> PipelineScope<'ctx> {
                 return;
             }
             Ok(None) => {
-                eprintln!("--- ingestd log tail unavailable: debug log empty ---");
+                eprintln!("--- event_engine log tail unavailable: debug log empty ---");
             }
             Err(error) => {
-                eprintln!("--- ingestd log tail unavailable: {error:#} ---");
+                eprintln!("--- event_engine log tail unavailable: {error:#} ---");
             }
         }
 
         // Fallback: check in-process captured logs
         let logs = self.ctx.captured_logs();
-        let mut ingestd_lines: VecDeque<String> = VecDeque::with_capacity(LOG_TAIL);
+        let mut event_engine_lines: VecDeque<String> = VecDeque::with_capacity(LOG_TAIL);
         for line in logs {
-            if line.contains("ingestd") {
-                if ingestd_lines.len() == LOG_TAIL {
-                    ingestd_lines.pop_front();
+            if line.contains("event_engine") {
+                if event_engine_lines.len() == LOG_TAIL {
+                    event_engine_lines.pop_front();
                 }
-                ingestd_lines.push_back(line);
+                event_engine_lines.push_back(line);
             }
         }
 
-        if ingestd_lines.is_empty() {
-            eprintln!("--- ingestd logs: none captured ---");
+        if event_engine_lines.is_empty() {
+            eprintln!("--- event_engine logs: none captured ---");
         } else {
-            eprintln!("--- ingestd log tail ---");
-            for line in ingestd_lines {
+            eprintln!("--- event_engine log tail ---");
+            for line in event_engine_lines {
                 eprintln!("{line}");
             }
         }
@@ -509,22 +510,22 @@ impl Drop for PipelineScope<'_> {
     fn drop(&mut self) {
         // Always dump diagnostic logs when dropping without explicit shutdown
         // (panicking OR error return from test)
-        if self.ingestd.is_some() {
+        if self.event_engine.is_some() {
             self.dump_failure_logs();
         }
 
         // Release permit before cleanup
         self.pipeline_permit.take();
 
-        if let Some(mut ingestd) = self.ingestd.take() {
+        if let Some(mut event_engine) = self.event_engine.take() {
             if let Ok(handle) = Handle::try_current() {
                 handle.spawn(async move {
-                    if let Err(error) = ingestd.stop().await {
-                        warn!(error = %error, "Failed to stop pipeline ingestd during drop cleanup");
+                    if let Err(error) = event_engine.stop().await {
+                        warn!(error = %error, "Failed to stop pipeline event_engine during drop cleanup");
                     }
                 });
-            } else if let Err(error) = futures::executor::block_on(ingestd.stop()) {
-                warn!(error = %error, "Failed to stop pipeline ingestd during sync drop cleanup");
+            } else if let Err(error) = futures::executor::block_on(event_engine.stop()) {
+                warn!(error = %error, "Failed to stop pipeline event_engine during sync drop cleanup");
             }
         }
     }

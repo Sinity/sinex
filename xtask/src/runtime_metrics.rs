@@ -1,17 +1,17 @@
 //! Runtime metrics from the Sinex Postgres database.
 //!
 //! Provides single-shot queries against runtime heartbeat state and telemetry
-//! events to surface ingestd health, consumer lag, and batch latency in
+//! events to surface event_engine health, consumer lag, and batch latency in
 //! xtask status/doctor/run commands.
 
 use serde::Serialize;
 use sqlx::postgres::PgPoolOptions;
 use std::fmt;
 
-/// Runtime health status for ingestd
+/// Runtime health status for event_engine
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum IngestdStatus {
+pub enum EventEngineStatus {
     /// Heartbeat fresh within stale threshold
     Healthy,
     /// Heartbeat older than stale threshold
@@ -22,7 +22,7 @@ pub enum IngestdStatus {
     Unknown,
 }
 
-impl fmt::Display for IngestdStatus {
+impl fmt::Display for EventEngineStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Healthy => write!(f, "ok"),
@@ -36,7 +36,7 @@ impl fmt::Display for IngestdStatus {
 /// Aggregated runtime metrics from Postgres
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeMetrics {
-    pub ingestd_status: IngestdStatus,
+    pub event_engine_status: EventEngineStatus,
     /// Seconds since last heartbeat (None if no row)
     pub last_heartbeat_age_secs: Option<i64>,
     /// Latest consumer lag (pending messages) from metric.gauge events
@@ -69,7 +69,7 @@ impl RuntimeMetrics {
     #[must_use]
     pub fn unavailable() -> Self {
         Self {
-            ingestd_status: IngestdStatus::Unknown,
+            event_engine_status: EventEngineStatus::Unknown,
             last_heartbeat_age_secs: None,
             consumer_lag_pending: None,
             consumer_lag_age_secs: None,
@@ -139,14 +139,14 @@ impl RuntimeMetrics {
                 "Runtime health: failed to query runtime metrics ({error})"
             ));
         }
-        match self.ingestd_status {
-            IngestdStatus::Healthy => {}
-            IngestdStatus::Stale => {
-                warnings.push("Runtime health: ingestd heartbeat is stale".into());
+        match self.event_engine_status {
+            EventEngineStatus::Healthy => {}
+            EventEngineStatus::Stale => {
+                warnings.push("Runtime health: event_engine heartbeat is stale".into());
             }
-            IngestdStatus::Down => warnings.push("Runtime health: ingestd is down".into()),
-            IngestdStatus::Unknown => {
-                warnings.push("Runtime health: ingestd status is unknown".into());
+            EventEngineStatus::Down => warnings.push("Runtime health: event_engine is down".into()),
+            EventEngineStatus::Unknown => {
+                warnings.push("Runtime health: event_engine status is unknown".into());
             }
         }
 
@@ -182,7 +182,7 @@ impl RuntimeMetrics {
     #[must_use]
     pub fn assessment(&self) -> RuntimeAssessment {
         let warnings = self.warnings();
-        let status = if matches!(self.ingestd_status, IngestdStatus::Unknown)
+        let status = if matches!(self.event_engine_status, EventEngineStatus::Unknown)
             && self.consumer_lag_pending.is_none()
             && self.last_batch_latency_ms.is_none()
         {
@@ -199,7 +199,7 @@ impl RuntimeMetrics {
     /// Format as a compact one-line summary fragment for status --summary
     #[must_use]
     pub fn summary_fragment(&self) -> String {
-        let ingestd = format!("ingestd:{}", self.ingestd_status);
+        let event_engine = format!("event_engine:{}", self.event_engine_status);
         let lag = self.fresh_consumer_lag_pending().map_or_else(
             || {
                 if self.consumer_lag_is_stale() {
@@ -225,11 +225,11 @@ impl RuntimeMetrics {
         } else {
             ""
         };
-        format!("{ingestd} {lag} {batch}{query}")
+        format!("{event_engine} {lag} {batch}{query}")
     }
 }
 
-/// Default stale threshold in seconds (matches SINEX_NODE_HEARTBEAT_STALE_SECS)
+/// Default stale threshold in seconds for runtime heartbeats.
 const HEARTBEAT_STALE_SECS: i64 = 120;
 const TELEMETRY_STALE_SECS: i64 = 120;
 const RUNTIME_LAG_WARN_THRESHOLD: f64 = 1000.0;
@@ -254,7 +254,7 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
         .connect(db_url)
         .await?;
 
-    // 1. Heartbeat status from concrete node runs when present, falling back
+    // 1. Heartbeat status from concrete module runs when present, falling back
     // to manifest heartbeats for core services that have not adopted run
     // registration yet.
     let heartbeat_row = sqlx::query_as!(
@@ -274,13 +274,13 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
     .fetch_optional(&pool)
     .await?;
 
-    let (ingestd_status, last_heartbeat_age_secs) = match heartbeat_row {
+    let (event_engine_status, last_heartbeat_age_secs) = match heartbeat_row {
         Some(row) => {
             let age = row.age_secs;
-            let status = interpret_ingestd_status(row.status.as_deref(), age);
+            let status = interpret_event_engine_status(row.status.as_deref(), age);
             (status, age)
         }
-        None => (IngestdStatus::Down, None),
+        None => (EventEngineStatus::Down, None),
     };
 
     // 2. Latest consumer lag from metric.gauge events
@@ -294,7 +294,7 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
         FROM core.events
         WHERE source = 'sinex'
           AND event_type = 'metric.gauge'
-          AND payload->>'name' = 'ingestd.consumer.lag.pending'
+          AND payload->>'name' = 'event_engine.consumer.lag.pending'
         ORDER BY id DESC
         LIMIT 1
         "#,
@@ -311,7 +311,7 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
             (payload->>'fetch_to_ack_ms')::float8 AS "value!",
             EXTRACT(EPOCH FROM (NOW() - ts_coided))::bigint AS "age_secs!: i64"
         FROM core.events
-        WHERE source = 'sinex.ingestd'
+        WHERE source = 'sinex.event_engine'
           AND event_type = 'batch.stats'
         ORDER BY id DESC
         LIMIT 1
@@ -323,7 +323,7 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
     pool.close().await;
 
     Ok(RuntimeMetrics {
-        ingestd_status,
+        event_engine_status,
         last_heartbeat_age_secs,
         consumer_lag_pending: consumer_lag.as_ref().map(|row| row.value),
         consumer_lag_age_secs: consumer_lag.as_ref().map(|row| row.age_secs),
@@ -345,14 +345,14 @@ struct TimedMetricRow {
     age_secs: i64,
 }
 
-fn interpret_ingestd_status(status: Option<&str>, age_secs: Option<i64>) -> IngestdStatus {
+fn interpret_event_engine_status(status: Option<&str>, age_secs: Option<i64>) -> EventEngineStatus {
     match status {
         Some("running" | "active") => match age_secs {
-            Some(age) if age > HEARTBEAT_STALE_SECS => IngestdStatus::Stale,
-            Some(_) => IngestdStatus::Healthy,
-            None => IngestdStatus::Down,
+            Some(age) if age > HEARTBEAT_STALE_SECS => EventEngineStatus::Stale,
+            Some(_) => EventEngineStatus::Healthy,
+            None => EventEngineStatus::Down,
         },
-        Some(_) | None => IngestdStatus::Down,
+        Some(_) | None => EventEngineStatus::Down,
     }
 }
 
@@ -364,7 +364,7 @@ mod tests {
     #[sinex_test]
     async fn test_summary_fragment_marks_stale_samples() -> xtask::sandbox::TestResult<()> {
         let metrics = RuntimeMetrics {
-            ingestd_status: IngestdStatus::Down,
+            event_engine_status: EventEngineStatus::Down,
             last_heartbeat_age_secs: Some(300),
             consumer_lag_pending: Some(42.0),
             consumer_lag_age_secs: Some(300),
@@ -375,7 +375,7 @@ mod tests {
 
         assert_eq!(
             metrics.summary_fragment(),
-            "ingestd:down lag:stale batch:stale"
+            "event_engine:down lag:stale batch:stale"
         );
         Ok(())
     }
@@ -383,7 +383,7 @@ mod tests {
     #[sinex_test]
     async fn test_summary_fragment_uses_fresh_samples() -> xtask::sandbox::TestResult<()> {
         let metrics = RuntimeMetrics {
-            ingestd_status: IngestdStatus::Healthy,
+            event_engine_status: EventEngineStatus::Healthy,
             last_heartbeat_age_secs: Some(5),
             consumer_lag_pending: Some(7.0),
             consumer_lag_age_secs: Some(10),
@@ -392,7 +392,10 @@ mod tests {
             query_error: None,
         };
 
-        assert_eq!(metrics.summary_fragment(), "ingestd:ok lag:7 batch:125ms");
+        assert_eq!(
+            metrics.summary_fragment(),
+            "event_engine:ok lag:7 batch:125ms"
+        );
         Ok(())
     }
 
@@ -400,7 +403,7 @@ mod tests {
     async fn test_runtime_assessment_marks_unknown_runtime_unavailable()
     -> xtask::sandbox::TestResult<()> {
         let metrics = RuntimeMetrics {
-            ingestd_status: IngestdStatus::Unknown,
+            event_engine_status: EventEngineStatus::Unknown,
             last_heartbeat_age_secs: None,
             consumer_lag_pending: None,
             consumer_lag_age_secs: None,
@@ -413,7 +416,7 @@ mod tests {
         assert_eq!(assessment.status, RuntimeHealthStatus::Unavailable);
         assert_eq!(
             assessment.warnings,
-            vec!["Runtime health: ingestd status is unknown".to_string()]
+            vec!["Runtime health: event_engine status is unknown".to_string()]
         );
         Ok(())
     }
@@ -422,7 +425,7 @@ mod tests {
     async fn test_runtime_assessment_marks_degraded_on_stale_signals()
     -> xtask::sandbox::TestResult<()> {
         let metrics = RuntimeMetrics {
-            ingestd_status: IngestdStatus::Stale,
+            event_engine_status: EventEngineStatus::Stale,
             last_heartbeat_age_secs: Some(300),
             consumer_lag_pending: Some(42.0),
             consumer_lag_age_secs: Some(300),
@@ -437,7 +440,7 @@ mod tests {
             assessment
                 .warnings
                 .iter()
-                .any(|warning| warning.contains("ingestd heartbeat is stale"))
+                .any(|warning| warning.contains("event_engine heartbeat is stale"))
         );
         assert!(
             assessment
@@ -452,7 +455,7 @@ mod tests {
     async fn test_runtime_assessment_preserves_unknown_stale_sample_age()
     -> xtask::sandbox::TestResult<()> {
         let metrics = RuntimeMetrics {
-            ingestd_status: IngestdStatus::Healthy,
+            event_engine_status: EventEngineStatus::Healthy,
             last_heartbeat_age_secs: Some(5),
             consumer_lag_pending: Some(42.0),
             consumer_lag_age_secs: None,
@@ -483,7 +486,7 @@ mod tests {
     #[sinex_test]
     async fn test_summary_fragment_marks_query_failures() -> xtask::sandbox::TestResult<()> {
         let metrics = RuntimeMetrics {
-            ingestd_status: IngestdStatus::Unknown,
+            event_engine_status: EventEngineStatus::Unknown,
             last_heartbeat_age_secs: None,
             consumer_lag_pending: None,
             consumer_lag_age_secs: None,
@@ -494,7 +497,7 @@ mod tests {
 
         assert_eq!(
             metrics.summary_fragment(),
-            "ingestd:unknown lag:- batch:- query:error"
+            "event_engine:unknown lag:- batch:- query:error"
         );
         assert!(
             metrics
@@ -506,41 +509,44 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_interpret_ingestd_status_accepts_running_and_active()
+    async fn test_interpret_event_engine_status_accepts_running_and_active()
     -> xtask::sandbox::TestResult<()> {
         assert_eq!(
-            interpret_ingestd_status(Some("running"), Some(5)),
-            IngestdStatus::Healthy
+            interpret_event_engine_status(Some("running"), Some(5)),
+            EventEngineStatus::Healthy
         );
         assert_eq!(
-            interpret_ingestd_status(Some("active"), Some(5)),
-            IngestdStatus::Healthy
+            interpret_event_engine_status(Some("active"), Some(5)),
+            EventEngineStatus::Healthy
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_interpret_ingestd_status_marks_live_rows_stale_or_down_when_needed()
+    async fn test_interpret_event_engine_status_marks_live_rows_stale_or_down_when_needed()
     -> xtask::sandbox::TestResult<()> {
         assert_eq!(
-            interpret_ingestd_status(Some("running"), Some(HEARTBEAT_STALE_SECS + 1)),
-            IngestdStatus::Stale
+            interpret_event_engine_status(Some("running"), Some(HEARTBEAT_STALE_SECS + 1)),
+            EventEngineStatus::Stale
         );
         assert_eq!(
-            interpret_ingestd_status(Some("active"), None),
-            IngestdStatus::Down
+            interpret_event_engine_status(Some("active"), None),
+            EventEngineStatus::Down
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_interpret_ingestd_status_rejects_non_live_statuses()
+    async fn test_interpret_event_engine_status_rejects_non_live_statuses()
     -> xtask::sandbox::TestResult<()> {
         assert_eq!(
-            interpret_ingestd_status(Some("inactive"), Some(1)),
-            IngestdStatus::Down
+            interpret_event_engine_status(Some("inactive"), Some(1)),
+            EventEngineStatus::Down
         );
-        assert_eq!(interpret_ingestd_status(None, Some(1)), IngestdStatus::Down);
+        assert_eq!(
+            interpret_event_engine_status(None, Some(1)),
+            EventEngineStatus::Down
+        );
         Ok(())
     }
 }

@@ -1,24 +1,24 @@
 //! TLS Integration Test
 //!
 //! Verifies that the test infrastructure properly propagates TLS configuration
-//! through all components: `EphemeralNats` → `TestIngestdConfig` → `IngestService`.
+//! through all components: `EphemeralNats` → `TestEventEngineConfig` → `IngestService`.
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_primitives::{Id, SourceMaterial, Uuid};
 use std::time::Duration;
 use xtask::sandbox::{
-    TestIngestdConfig,
+    TestEventEngineConfig,
     nats::{SharedNatsProfile, shared_ephemeral_nats},
     prelude::*,
-    sinex_test, start_test_ingestd_with_config,
+    sinex_test, start_test_event_engine_with_config,
     timing::{Timeouts, WaitHelpers},
 };
 
 /// Helper to publish a test event directly to `JetStream`.
 ///
 /// The caller must pre-register `material_id` in the database before calling this
-/// (and before starting ingestd, so that the `MaterialReadySet` is seeded from DB).
+/// (and before starting event_engine, so that the `MaterialReadySet` is seeded from DB).
 async fn publish_test_event(
     nats_client: &async_nats::Client,
     material_id: Id<SourceMaterial>,
@@ -59,9 +59,9 @@ async fn publish_test_event(
 }
 
 /// Verify that TLS configuration is properly propagated from EphemeralNats through
-/// the ingestd pipeline. This test exercises the full TLS path:
+/// the event_engine pipeline. This test exercises the full TLS path:
 /// 1. Start NATS with mTLS enabled
-/// 2. Start ingestd using the TLS connection config
+/// 2. Start event_engine using the TLS connection config
 /// 3. Publish events over TLS
 /// 4. Verify events are persisted
 #[sinex_test]
@@ -86,12 +86,12 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     );
     assert!(conn_config.client_key.is_some(), "Client key should be set");
 
-    // Pre-register source material BEFORE starting ingestd.
+    // Pre-register source material BEFORE starting event_engine.
     //
-    // ingestd seeds its MaterialReadySet from the database at startup. If we register
-    // the material after ingestd is running, it won't be in the ReadySet and the event
+    // event_engine seeds its MaterialReadySet from the database at startup. If we register
+    // the material after event_engine is running, it won't be in the ReadySet and the event
     // will be NAK'd indefinitely (never persisted). Pre-registration ensures the material
-    // is visible to ingestd's startup seed query.
+    // is visible to event_engine's startup seed query.
     let material_id = Id::<SourceMaterial>::new();
     let run_suffix = Uuid::now_v7();
     sqlx::query!(
@@ -113,9 +113,9 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     // DeliverAll to process historical noise before reaching our event.
     let namespace = format!("tls-test-{run_suffix}");
 
-    // Start ingestd with TLS configuration
+    // Start event_engine with TLS configuration
     let work_dir = tempfile::tempdir()?;
-    let ingest_config = TestIngestdConfig {
+    let ingest_config = TestEventEngineConfig {
         nats: conn_config.clone(),
         database_url: ctx.database_url().to_string(),
         work_dir: Some(work_dir.path().to_path_buf()),
@@ -123,13 +123,13 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
         ..Default::default()
     };
 
-    let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+    let mut ingest_handle = start_test_event_engine_with_config(ingest_config, Some(&ctx)).await?;
 
     // Connect directly using TLS config to publish events
     let nats_client = conn_config.connect().await?;
 
-    // Wait for ingestd's JetStream stream + consumer to be ready.
-    // start_test_ingestd_with_config skipped its readiness check because ctx has
+    // Wait for event_engine's JetStream stream + consumer to be ready.
+    // start_test_event_engine_with_config skipped its readiness check because ctx has
     // no NATS handle (TLS NATS is obtained independently). Without this wait,
     // events published via NATS Core are silently lost (no JetStream stream yet).
     let js = async_nats::jetstream::new(nats_client.clone());

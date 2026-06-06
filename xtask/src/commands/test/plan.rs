@@ -7,24 +7,28 @@ use crate::process::ProcessBuilder;
 pub(super) const HEAVY_TEST_THREAD_CAP: usize = 4;
 // Packages whose integration tests require the `sinexd` runtime binary.
 //
-// Post Wave-B fold (#1223) and the gateway fold (#1559), `sinexd` is the single
-// runtime binary hosting both the event engine (formerly `sinex-ingestd`) and
-// the operator API / gateway (formerly `sinex-gateway`). Test fixtures spawn it
-// as the engine-only ingestd (`SINEX_API_ENABLED=false`) and/or as the
-// gateway-only `rpc-server` subprocess, so any package using either fixture
-// needs this binary built.
+// `sinexd` is the single runtime binary hosting both the event engine and the
+// operator API. Test fixtures spawn it as an engine-only process
+// (`SINEX_API_ENABLED=false`) and/or as an API-only `rpc-server` subprocess, so
+// any package using either fixture needs this binary built.
 const SINEXD_RUNTIME_TEST_PACKAGES: &[&str] = &[
     "sinex-db",
     "sinex-e2e-tests",
     "sinexd",
     "sinex-workspace-tests",
 ];
+const SINEXCTL_RUNTIME_TEST_PACKAGES: &[&str] = &["sinex-workspace-tests"];
 const DATABASE_TEST_PACKAGES: &[&str] = &[
     "sinex-db",
     "sinex-e2e-tests",
     "sinexd",
     "sinex-schema",
     "sinex-workspace-tests",
+];
+const SINEXD_RUNTIME_INDEPENDENT_TEST_BINARIES: &[&str] = &[
+    "browser_history_parser_test",
+    "registry_dispatch_test",
+    "terminal_history_parser_test",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -108,6 +112,15 @@ pub(super) fn runtime_binary_requirements_for_plan(
             binary: "sinexd",
         });
     }
+    if workload_scope_includes_any(
+        &execution_plan.workload_scope,
+        SINEXCTL_RUNTIME_TEST_PACKAGES,
+    ) {
+        requirements.push(RuntimeBinaryRequirement {
+            package: "sinexctl",
+            binary: "sinexctl",
+        });
+    }
     requirements
 }
 
@@ -115,56 +128,17 @@ pub(super) fn runtime_binary_requirements_for_target(
     execution_plan: &NextestExecutionPlan,
     lib_target: bool,
     test_binaries: &[String],
-    filter: Option<&str>,
+    _filter: Option<&str>,
 ) -> Vec<RuntimeBinaryRequirement> {
     if lib_target {
         return Vec::new();
     }
 
     let mut requirements = runtime_binary_requirements_for_plan(execution_plan);
-    if workload_scope_includes_any(&execution_plan.workload_scope, &["sinex-source-worker"])
-        && source_worker_production_path_requires_ingestd(test_binaries, filter)
-    {
-        push_runtime_requirement(&mut requirements, "sinexd", "sinexd");
+    if sinexd_runtime_independent_target(execution_plan, test_binaries) {
+        requirements.retain(|requirement| requirement.package != "sinexd");
     }
-
     requirements
-}
-
-fn push_runtime_requirement(
-    requirements: &mut Vec<RuntimeBinaryRequirement>,
-    package: &'static str,
-    binary: &'static str,
-) {
-    if requirements
-        .iter()
-        .any(|requirement| requirement.package == package)
-    {
-        return;
-    }
-
-    requirements.push(RuntimeBinaryRequirement { package, binary });
-}
-
-fn source_worker_production_path_requires_ingestd(
-    test_binaries: &[String],
-    filter: Option<&str>,
-) -> bool {
-    let production_path_selected = test_binaries.is_empty()
-        || test_binaries
-            .iter()
-            .any(|binary| binary == "production_path");
-    if !production_path_selected {
-        return false;
-    }
-
-    let Some(filter) = filter else {
-        return true;
-    };
-
-    filter.contains("binary_path")
-        || filter.contains("source_worker_binary")
-        || filter.contains("source_worker_binary_scan_private_mode_matrix")
 }
 
 pub(super) fn test_database_required_for_plan(execution_plan: &NextestExecutionPlan) -> bool {
@@ -177,6 +151,27 @@ fn workload_scope_includes_any(scope: &WorkloadScope, packages: &[&str]) -> bool
         WorkloadScope::Packages(selected) | WorkloadScope::Affected(selected) => selected
             .iter()
             .any(|package| packages.iter().any(|candidate| package == candidate)),
+    }
+}
+
+fn sinexd_runtime_independent_target(
+    execution_plan: &NextestExecutionPlan,
+    test_binaries: &[String],
+) -> bool {
+    if test_binaries.is_empty() {
+        return false;
+    }
+    match &execution_plan.workload_scope {
+        WorkloadScope::Packages(selected) | WorkloadScope::Affected(selected)
+            if selected.len() == 1 && selected[0] == "sinexd" =>
+        {
+            test_binaries.iter().all(|binary| {
+                SINEXD_RUNTIME_INDEPENDENT_TEST_BINARIES
+                    .iter()
+                    .any(|candidate| candidate == binary)
+            })
+        }
+        _ => false,
     }
 }
 
@@ -401,16 +396,18 @@ mod tests {
             workload_scope: WorkloadScope::Workspace,
         };
 
-        // A single `sinexd` runtime binary hosts both engine and gateway.
+        // Workspace tests spawn both the unified daemon and sinexctl CLI.
         let requirements = runtime_binary_requirements_for_plan(&plan);
-        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements.len(), 2);
         assert_eq!(requirements[0].package, "sinexd");
         assert_eq!(requirements[0].binary, "sinexd");
+        assert_eq!(requirements[1].package, "sinexctl");
+        assert_eq!(requirements[1].binary, "sinexctl");
         Ok(())
     }
 
     #[sinex_test]
-    async fn runtime_binary_requirements_include_ingestd_for_node_sdk_tests()
+    async fn runtime_binary_requirements_include_event_engine_for_runtime_tests()
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinexd".to_string()],
@@ -425,7 +422,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn runtime_binary_requirements_include_ingestd_for_db_tests()
+    async fn runtime_binary_requirements_include_event_engine_for_db_tests()
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinex-db".to_string()],
@@ -460,8 +457,8 @@ mod tests {
     #[sinex_test]
     async fn runtime_binary_requirements_include_sinexd_for_workspace_tests()
     -> ::xtask::sandbox::TestResult<()> {
-        // sinex-workspace-tests includes the gateway-driving TestCoreStack
-        // fixture, which spawns the `sinexd rpc-server` subprocess.
+        // sinex-workspace-tests includes gateway-driving fixtures that spawn
+        // `sinexd rpc-server` and CLI fixtures that spawn `sinexctl`.
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinex-workspace-tests".to_string()],
             excluded_packages: Vec::new(),
@@ -469,8 +466,9 @@ mod tests {
         };
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
-        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements.len(), 2);
         assert_eq!(requirements[0].package, "sinexd");
+        assert_eq!(requirements[1].package, "sinexctl");
         Ok(())
     }
 
@@ -502,78 +500,33 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn runtime_binary_requirements_include_ingestd_for_source_worker_production_path()
+    async fn runtime_binary_requirements_skip_runtime_independent_sinexd_test_targets()
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-source-worker".to_string()],
+            runner_packages: vec!["sinexd".to_string()],
             excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-source-worker".to_string()]),
+            workload_scope: WorkloadScope::Packages(vec!["sinexd".to_string()]),
         };
 
         assert!(
             runtime_binary_requirements_for_target(
                 &plan,
                 false,
-                &["parse_listener_integration_test".to_string()],
-                None,
+                &["registry_dispatch_test".to_string()],
+                Some("test(weechat_descriptor_registered)"),
             )
-            .is_empty(),
-            "non-production-path source-worker integration tests should not pay ingestd prep"
+            .is_empty()
         );
-
-        let requirements = runtime_binary_requirements_for_target(
-            &plan,
-            false,
-            &["production_path".to_string()],
-            None,
-        );
-        assert_eq!(requirements.len(), 1);
-        assert_eq!(requirements[0].package, "sinexd");
-        assert_eq!(requirements[0].binary, "sinexd");
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn runtime_binary_requirements_skip_source_worker_parser_only_production_path_filters()
-    -> ::xtask::sandbox::TestResult<()> {
-        let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-source-worker".to_string()],
-            excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-source-worker".to_string()]),
-        };
-
-        let requirements = runtime_binary_requirements_for_target(
-            &plan,
-            false,
-            &["production_path".to_string()],
-            Some("test(desktop_activitywatch_web_obligations)"),
-        );
-
         assert!(
-            requirements.is_empty(),
-            "parser-only production_path filters should not rebuild ingestd"
+            runtime_binary_requirements_for_target(
+                &plan,
+                false,
+                &["replay_rpc_live_test".to_string()],
+                Some("test(replay_rpc_live_submits_operation)"),
+            )
+            .iter()
+            .any(|requirement| requirement.package == "sinexd")
         );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn runtime_binary_requirements_keep_source_worker_binary_path_filters()
-    -> ::xtask::sandbox::TestResult<()> {
-        let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-source-worker".to_string()],
-            excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-source-worker".to_string()]),
-        };
-
-        let requirements = runtime_binary_requirements_for_target(
-            &plan,
-            false,
-            &["production_path".to_string()],
-            Some("test(source_worker_binary_scan_private_mode_matrix)"),
-        );
-
-        assert_eq!(requirements.len(), 1);
-        assert_eq!(requirements[0].package, "sinexd");
         Ok(())
     }
 

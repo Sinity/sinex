@@ -9,7 +9,7 @@
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::SourceRecord;
-use sinexd::node_sdk::parser::{ParserResult, records_from_journal_lines};
+use sinexd::runtime::parser::{ParserResult, records_from_journal_lines};
 
 use super::{FixtureBinding, FixtureHandle};
 

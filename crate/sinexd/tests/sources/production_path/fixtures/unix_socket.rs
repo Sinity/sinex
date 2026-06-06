@@ -2,7 +2,7 @@
 //!
 //! Starts a minimal line-delimited Unix socket server in a temp directory.
 //! The server writes each line from `data` to connecting clients then closes.
-//! The fixture returns the socket path so the source worker can connect.
+//! The fixture returns the socket path so the source host can connect.
 
 use std::path::PathBuf;
 use tempfile::TempDir;

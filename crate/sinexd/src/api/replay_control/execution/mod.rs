@@ -4,7 +4,7 @@ use serde::Deserialize;
 use sinex_db::replay::state_machine::{
     ReplayCheckpoint, ReplayOperation, ReplayState, ReplayStateMachine,
 };
-use sinex_primitives::domain::{EventSource, EventType, NodeName};
+use sinex_primitives::domain::{EventSource, EventType, ModuleName};
 use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::rpc::replay::ReplayGateOverrides;
 use sinex_primitives::{Result, SinexError, Timestamp, Uuid};
@@ -25,8 +25,8 @@ pub(super) const REPLAY_OUTPUT_VISIBILITY_TIMEOUT: Duration = Duration::from_sec
 /// The execution engine:
 /// 1. Queries events from the database matching the replay scope
 /// 2. Expands and archives the full affected cascade (live -> archive)
-/// 3. Dispatches a scan command to the target ingestor node via NATS
-/// 4. The node re-reads source material and emits fresh events through normal flow
+/// 3. Dispatches a scan command to the target source runtime via NATS
+/// 4. The source re-reads source material and emits fresh events through normal flow
 /// 5. Tracks progress via checkpoints and NATS progress messages
 #[derive(Clone)]
 pub(super) struct ReplayExecutionEngine {
@@ -181,7 +181,7 @@ impl ReplayExecutionEngine {
     ) -> Result<ReplayOperation> {
         let Some(_execution_lock) = self.replay.acquire_execution_lock(operation_id).await? else {
             return Err(SinexError::invalid_state(format!(
-                "Operation {operation_id} is already executing on another node"
+                "Operation {operation_id} is already executing on another executor"
             )));
         };
 
@@ -227,7 +227,7 @@ impl ReplayExecutionEngine {
     ) -> Result<ReplayOperation> {
         let Some(_execution_lock) = self.replay.acquire_execution_lock(operation_id).await? else {
             return Err(SinexError::invalid_state(format!(
-                "Operation {operation_id} is already executing on another node"
+                "Operation {operation_id} is already executing on another executor"
             )));
         };
 
@@ -458,13 +458,13 @@ impl ReplayExecutionEngine {
             Self::execution_inputs_from_operation(operation_id, &op)?;
 
         self.replay
-            .begin_execution(operation_id, NodeName::new(executor_name))
+            .begin_execution(operation_id, ModuleName::new(executor_name))
             .await?;
 
         info!(
             operation_id = %operation_id,
             total_events = total_events,
-            node_id = %op.scope.node_id,
+            source_name = %op.scope.source_name,
             "Beginning event replay"
         );
 
@@ -485,10 +485,10 @@ impl ReplayExecutionEngine {
         })?;
         ensure_replay_gates_pass(operation_id, preview, gate_overrides)?;
 
-        let executor_node = NodeName::new(submitter);
+        let executor_module = ModuleName::new(submitter);
         let operation = self
             .replay
-            .submit_previewed_for_execution(operation_id, submitter.to_string(), executor_node)
+            .submit_previewed_for_execution(operation_id, submitter.to_string(), executor_module)
             .await?;
         let (total_events, execution_window, preview_root_ids) =
             Self::execution_inputs_from_operation(operation_id, &operation)?;
@@ -496,7 +496,7 @@ impl ReplayExecutionEngine {
         info!(
             operation_id = %operation_id,
             total_events = total_events,
-            node_id = %operation.scope.node_id,
+            source_name = %operation.scope.source_name,
             "Beginning event replay from atomic submit"
         );
 

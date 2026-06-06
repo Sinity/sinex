@@ -104,7 +104,7 @@ async fn rate_limit_kv_uses_hashed_token_keys(ctx: TestContext) -> TestResult<()
 
     let nats = ctx.nats_handle()?;
     let js = nats.jetstream().await?;
-    let kv = js.get_key_value("sinex_gateway_rate_limits").await?;
+    let kv = js.get_key_value("sinex_api_rate_limits").await?;
     let hashed_key = format!("token.{}", blake3::hash(token.as_bytes()).to_hex());
     let raw_key = format!("token.{token}");
 

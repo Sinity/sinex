@@ -3,7 +3,7 @@
 //! These types mirror `sinex_db::replay::state_machine` for RPC serialization.
 //! The gateway uses sinex-db types internally; these are wire-compatible equivalents.
 
-use crate::domain::{NodeName, ReplayOutcome};
+use crate::domain::{ModuleName, ReplayOutcome};
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -133,15 +133,15 @@ impl ReplayState {
 ///
 /// ## Compatibility
 ///
-/// The four staged-source fields (`source_unit_id`, `source_material_id`,
+/// The four staged-source fields (`source_id`, `source_material_id`,
 /// `parser_id`, `parser_version`) are optional and backward-compatible:
-/// existing `node_id`-only scopes continue to work as before. A scope that
+/// A scope that
 /// specifies any staged-source field implies the replay planner should queue
-/// parser jobs for the matching materials rather than scanning a live ingestor.
+/// parser jobs for the matching materials rather than scanning a live source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayScope {
-    /// Node ID to replay
-    pub node_id: String,
+    /// Source runtime to replay
+    pub source_name: String,
     /// Optional time window as (start, end) ISO8601 timestamps
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_window: Option<(String, String)>,
@@ -152,9 +152,9 @@ pub struct ReplayScope {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub filters: HashMap<String, Value>,
     /// ── Staged-source architecture extension (#1060) ────────────
-    /// Replay only material registered by this source unit.
+    /// Replay only material registered by this source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_unit_id: Option<String>,
+    pub source_id: Option<String>,
     /// Replay only this specific source material (`UUIDv7`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_material_id: Option<String>,
@@ -168,11 +168,11 @@ pub struct ReplayScope {
 
 impl ReplayScope {
     /// Returns `true` when the scope references the staged-source architecture
-    /// (source units, materials, or parsers). Replay planning uses this to
-    /// decide between live-ingestor scanning and parser-queue replay.
+    /// (source contracts, materials, or parsers). Replay planning uses this to
+    /// decide between live-source scanning and parser-queue replay.
     #[must_use]
     pub fn is_staged_source_scope(&self) -> bool {
-        self.source_unit_id.is_some()
+        self.source_id.is_some()
             || self.source_material_id.is_some()
             || self.parser_id.is_some()
             || self.parser_version.is_some()
@@ -222,9 +222,9 @@ pub struct ReplayOperation {
     /// When approved
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved_at: Option<String>,
-    /// Which node is executing
+    /// Runtime module or authenticated actor executing the replay
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor_node: Option<NodeName>,
+    pub executor_module: Option<ModuleName>,
     /// When execution started
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,
@@ -393,9 +393,9 @@ pub struct ReplayListRequest {
     /// Filter by state
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<ReplayState>,
-    /// Filter by node ID
+    /// Filter by source module ID
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node: Option<String>,
+    pub module: Option<String>,
     /// Maximum results (default: unbounded)
     #[serde(default)]
     pub limit: Option<i64>,

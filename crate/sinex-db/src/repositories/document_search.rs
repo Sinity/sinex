@@ -13,7 +13,7 @@
 //! `sqlx::query!()` macros because the `document_ids: Option<&[Uuid]>` bind
 //! cannot be expressed cleanly in the macro form (optional array binds are not
 //! supported by sqlx compile-time checking).  Correctness is covered by the
-//! integration tests in `crate/lib/sinex-db/tests/document_search_test.rs`.
+//! integration tests in `crate/sinex-db/tests/document_search_test.rs`.
 
 use super::common::DbResult;
 use crate::schema::defs::documents::{DocumentChunkRecord, DocumentRecord};

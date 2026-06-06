@@ -61,7 +61,7 @@ let
           cfg.nats.environment
           cfg.database.name
           (toString cfg.stateRoot)
-          cfg.users.nodes
+          cfg.users.runtime
         ]
       );
     in

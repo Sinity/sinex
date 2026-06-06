@@ -4,7 +4,7 @@
 //! This consolidates schema access patterns from:
 //! - `types/events/schema_registry.rs` (lazy lookup by `source/event_type`)
 //! - `db/validation.rs` (bulk loading for `EventValidator`)
-//! - `sinex-ingestd/service.rs` (schema content for NATS KV)
+//! - `sinexd/service.rs` (schema content for NATS KV)
 
 use crate::repositories::common::db_error;
 use crate::repositories::events::EventPayloadSchema;
@@ -89,7 +89,7 @@ impl<'a> SchemaCacheRepository<'a> {
 
     /// Fetch the full schema content for a given schema ID
     ///
-    /// Used by sinex-ingestd to store schemas in NATS KV.
+    /// Used by sinexd to store schemas in NATS KV.
     pub async fn get_schema_content(
         &self,
         schema_id: Id<EventPayloadSchema>,
@@ -182,7 +182,7 @@ impl<'a> SchemaCacheRepository<'a> {
 
     /// Bulk fetch schema content for multiple schema IDs
     ///
-    /// Used by sinex-ingestd to efficiently load schemas for NATS KV storage.
+    /// Used by sinexd to efficiently load schemas for NATS KV storage.
     pub async fn get_schemas_by_ids(
         &self,
         schema_ids: &[Id<EventPayloadSchema>],

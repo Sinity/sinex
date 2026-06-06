@@ -11,7 +11,7 @@ use crate::client::GatewayClient;
 use crate::fmt::format_heartbeat_age;
 use crate::model::OutputFormat;
 
-/// Show what's happening right now — recent activity, active nodes, current status.
+/// Show what's happening right now — recent activity, active modules, current status.
 #[derive(Debug, Args)]
 #[command(after_help = "\
 EXAMPLES:
@@ -26,16 +26,16 @@ pub struct NowCommand;
 impl NowCommand {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         // Fetch everything in parallel.
-        let (health, nodes, recent, automata) = tokio::try_join!(
+        let (health, modules, recent, automata) = tokio::try_join!(
             async { client.health().await },
-            async { client.list_nodes(None).await },
+            async { client.list_runtime(None).await },
             async { client.telemetry_recent_activity(Some(10)).await },
             async { client.automata_status(60, 300).await },
         )?;
 
         let snapshot = NowSnapshot {
             health,
-            nodes: nodes.clone(),
+            modules: modules.clone(),
             recent,
             automata,
         };
@@ -63,7 +63,7 @@ impl NowCommand {
 #[derive(serde::Serialize)]
 struct NowSnapshot {
     health: SystemHealthResponse,
-    nodes: Vec<InstanceInfo>,
+    modules: Vec<InstanceInfo>,
     recent: Vec<RecentActivityEntry>,
     automata: AutomataStatusResponse,
 }
@@ -82,9 +82,9 @@ fn render_table(snapshot: &NowSnapshot) {
     // ── Health signals ──────────────────────────────────────────
 
     let now_ts = Timestamp::now();
-    let node_count = snapshot.nodes.len();
-    let healthy_nodes = snapshot
-        .nodes
+    let module_count = snapshot.modules.len();
+    let healthy_modules = snapshot
+        .modules
         .iter()
         .filter(|n| {
             n.last_heartbeat
@@ -92,12 +92,12 @@ fn render_table(snapshot: &NowSnapshot) {
         })
         .count();
 
-    let node_status_label = if healthy_nodes == node_count && node_count > 0 {
+    let runtime_status_label = if healthy_modules == module_count && module_count > 0 {
         style("healthy").green()
-    } else if healthy_nodes > 0 {
+    } else if healthy_modules > 0 {
         style("degraded").yellow()
-    } else if node_count == 0 {
-        style("no nodes").dim()
+    } else if module_count == 0 {
+        style("no modules").dim()
     } else {
         style("unhealthy").red()
     };
@@ -120,10 +120,10 @@ fn render_table(snapshot: &NowSnapshot) {
     }
 
     println!(
-        "  Nodes:    {} ({}/{} healthy)",
-        node_status_label,
-        style(healthy_nodes).bold(),
-        style(node_count).dim()
+        "  Runtime: {} ({}/{} modules healthy)",
+        runtime_status_label,
+        style(healthy_modules).bold(),
+        style(module_count).dim()
     );
     println!(
         "  Automata: {} registered, {} live",
@@ -163,11 +163,11 @@ fn render_table(snapshot: &NowSnapshot) {
         }
     }
 
-    // ── Active nodes ────────────────────────────────────────────
+    // ── Active modules ────────────────────────────────────────────
 
-    if !snapshot.nodes.is_empty() {
+    if !snapshot.modules.is_empty() {
         println!();
-        println!("{}", style("Active Nodes").bold());
+        println!("{}", style("Active Runtime Modules").bold());
         println!(
             "  {:<30} {:<14} {:<10}  {:<10}  LDR",
             "NAME", "TYPE", "STATUS", "LAST SEEN"
@@ -177,24 +177,24 @@ fn render_table(snapshot: &NowSnapshot) {
             "", "", "", "", ""
         );
 
-        for node in &snapshot.nodes {
-            let age = node
+        for module in &snapshot.modules {
+            let age = module
                 .last_heartbeat
                 .as_ref()
                 .map_or_else(|| "never".to_string(), format_heartbeat_age);
 
-            let status = if node
+            let status = if module
                 .last_heartbeat
                 .is_some_and(|hb| (now_ts - hb).whole_seconds() < 60)
             {
                 style("healthy").green()
-            } else if node.last_heartbeat.is_some() {
+            } else if module.last_heartbeat.is_some() {
                 style("stale").yellow()
             } else {
                 style("unknown").dim()
             };
 
-            let leader = if node.is_leader {
+            let leader = if module.is_leader {
                 style("L").cyan()
             } else {
                 style(" ").dim()
@@ -202,8 +202,8 @@ fn render_table(snapshot: &NowSnapshot) {
 
             println!(
                 "  {:<30} {:<14} {:<10}  {:<10}  {}",
-                node.instance_id.as_str(),
-                node.node_type.to_string().to_lowercase(),
+                module.instance_id.as_str(),
+                module.module_kind.to_string().to_lowercase(),
                 status,
                 age,
                 leader
@@ -232,7 +232,7 @@ fn render_table(snapshot: &NowSnapshot) {
 
             println!(
                 "  {:<30} {:<12} {:<10}  {}",
-                automaton.node_name.as_str(),
+                automaton.module_name.as_str(),
                 live,
                 style(run_status).dim(),
                 events

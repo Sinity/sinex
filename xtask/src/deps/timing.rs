@@ -275,7 +275,7 @@ mod tests {
         let json_content = r#"{
             "targets": [
                 {"name": "sinex-db", "duration": 45.5},
-                {"name": "sinex-gateway", "duration": 12.3},
+                {"name": "sinexd", "duration": 12.3},
                 {"name": "xtask", "duration": 5.1}
             ]
         }"#;
@@ -292,7 +292,7 @@ mod tests {
         // Should be sorted slowest first
         assert_eq!(report.crate_times[0].name, "sinex-db");
         assert_eq!(report.crate_times[0].duration_secs, 45.5);
-        assert_eq!(report.crate_times[1].name, "sinex-gateway");
+        assert_eq!(report.crate_times[1].name, "sinexd");
         assert_eq!(report.crate_times[1].duration_secs, 12.3);
         assert_eq!(report.crate_times[2].name, "xtask");
         assert_eq!(report.crate_times[2].duration_secs, 5.1);
