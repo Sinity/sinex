@@ -12,8 +12,8 @@ use sinex_primitives::rpc::replay::{
     ReplayCheckpoint, ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest,
     ReplayExecuteResponse, ReplayListRequest, ReplayListResponse, ReplayOperation,
     ReplayPreviewRequest, ReplayPreviewResponse, ReplayScope as RpcReplayScope,
-    ReplayState as RpcReplayState, ReplayStatusRequest, ReplayStatusResponse,
-    ReplaySubmitRequest, ReplaySubmitResponse,
+    ReplayState as RpcReplayState, ReplayStatusRequest, ReplayStatusResponse, ReplaySubmitRequest,
+    ReplaySubmitResponse,
 };
 use sinex_primitives::{Result, SinexError, Uuid};
 
