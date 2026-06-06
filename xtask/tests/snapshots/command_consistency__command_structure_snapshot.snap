@@ -2441,6 +2441,33 @@ expression: json
           "subcommands": []
         },
         {
+          "about": "Show pre-exec devshell wrapper rebuild events",
+          "args": [
+            {
+              "global": false,
+              "help": "How many days back to analyse",
+              "long": "days",
+              "name": "days",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Maximum number of events to show",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "wrapper-events",
+          "subcommands": []
+        },
+        {
           "about": "Compare command duration and pressure between two calendar days",
           "args": [
             {

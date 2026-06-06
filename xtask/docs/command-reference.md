@@ -732,6 +732,7 @@ Query build, test, and runtime history recorded by xtask
 | `list` | List recent invocations |
 | `stats` | Show statistics for a command (or all commands / all packages) |
 | `cost` | Summarise dev-loop wallclock cost without double-counting wrappers |
+| `wrapper-events` | Show pre-exec devshell wrapper rebuild events |
 | `compare-days` | Compare command duration and pressure between two calendar days |
 | `resources` | Aggregate recorded resource pressure and block I/O by command/window |
 | `overlap` | Explain what overlapped an invocation and what shared resources were recorded |
@@ -800,6 +801,18 @@ Summarise dev-loop wallclock cost without double-counting wrappers
 |---|---|---|---|
 | `--command` | yes | no | Commands to include. Defaults to check+test |
 | `--days` | yes | no | How many days back to analyse |
+
+
+### `xtask history wrapper-events`
+
+Show pre-exec devshell wrapper rebuild events
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--days` | yes | no | How many days back to analyse |
+| `--limit` | yes | no | Maximum number of events to show |
 
 
 ### `xtask history compare-days`

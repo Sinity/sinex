@@ -4,6 +4,8 @@ use color_eyre::eyre::Result;
 use console::style;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
 use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
@@ -90,6 +92,15 @@ pub enum HistorySubcommand {
         /// How many days back to analyse
         #[arg(long, default_value = "7")]
         days: u32,
+    },
+    /// Show pre-exec devshell wrapper rebuild events
+    WrapperEvents {
+        /// How many days back to analyse.
+        #[arg(long, default_value = "7")]
+        days: u32,
+        /// Maximum number of events to show.
+        #[arg(long, default_value = "20")]
+        limit: usize,
     },
     /// Compare command duration and pressure between two calendar days
     CompareDays {
@@ -431,6 +442,9 @@ impl XtaskCommand for HistoryCommand {
                 }
                 HistorySubcommand::Cost { commands, days } => {
                     execute_cost(db, commands, *days, ctx)
+                }
+                HistorySubcommand::WrapperEvents { days, limit } => {
+                    execute_wrapper_events(*days, *limit, ctx)
                 }
                 HistorySubcommand::CompareDays {
                     day,
@@ -1207,6 +1221,172 @@ fn execute_cost(
         .with_message("Computed dev-loop cost summary")
         .with_duration(ctx.elapsed())
         .with_data(serde_json::to_value(summary)?))
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RawWrapperEvent {
+    #[serde(default)]
+    event: String,
+    #[serde(default)]
+    status: String,
+    started_at: String,
+    #[serde(default)]
+    finished_at: Option<String>,
+    #[serde(default)]
+    duration_ms: Option<u64>,
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    args: Option<String>,
+    #[serde(default)]
+    requires_runtime_introspection: bool,
+    #[serde(default)]
+    force_rebuild: bool,
+    #[serde(default)]
+    log_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WrapperEvent {
+    event: String,
+    status: String,
+    started_at: String,
+    finished_at: Option<String>,
+    duration_secs: Option<f64>,
+    command: Option<String>,
+    args: Option<String>,
+    requires_runtime_introspection: bool,
+    force_rebuild: bool,
+    log_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WrapperEventsReport {
+    days: u32,
+    path: String,
+    event_count: usize,
+    total_duration_secs: f64,
+    events: Vec<WrapperEvent>,
+    skipped_lines: usize,
+}
+
+fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Result<CommandResult> {
+    let path = wrapper_events_path(ctx.history_db_path());
+    let cutoff = time::OffsetDateTime::now_utc() - time::Duration::days(i64::from(days));
+    let (mut events, skipped_lines) = read_wrapper_events(&path, cutoff)?;
+    events.sort_by(|left, right| right.started_at.cmp(&left.started_at));
+    events.truncate(limit);
+
+    let total_duration_secs = events
+        .iter()
+        .filter_map(|event| event.duration_secs)
+        .sum::<f64>();
+    let report = WrapperEventsReport {
+        days,
+        path: path.display().to_string(),
+        event_count: events.len(),
+        total_duration_secs,
+        events,
+        skipped_lines,
+    };
+
+    if ctx.is_human() {
+        println!(
+            "Wrapper events over {} day(s): {} row(s), {:.1}s total",
+            report.days, report.event_count, report.total_duration_secs
+        );
+        println!("Source: {}", report.path);
+        if report.events.is_empty() {
+            println!("No wrapper rebuild events recorded.");
+        } else {
+            let mut builder = Builder::new();
+            builder.push_record([
+                "STARTED",
+                "EVENT",
+                "STATUS",
+                "SECS",
+                "COMMAND",
+                "RT-INTROSPECT",
+                "FORCE",
+            ]);
+            for event in &report.events {
+                builder.push_record([
+                    event.started_at.clone(),
+                    event.event.clone(),
+                    event.status.clone(),
+                    event
+                        .duration_secs
+                        .map(|secs| format!("{secs:.1}"))
+                        .unwrap_or_else(|| "-".to_string()),
+                    event.command.clone().unwrap_or_else(|| "-".to_string()),
+                    event.requires_runtime_introspection.to_string(),
+                    event.force_rebuild.to_string(),
+                ]);
+            }
+            let mut table = builder.build();
+            table.with(Style::rounded());
+            println!("{table}");
+        }
+        if report.skipped_lines > 0 {
+            println!(
+                "Skipped {} malformed wrapper event line(s).",
+                report.skipped_lines
+            );
+        }
+    } else {
+        ctx.print_json(&report)?;
+    }
+
+    Ok(CommandResult::success()
+        .with_message("Loaded wrapper event history")
+        .with_duration(ctx.elapsed())
+        .with_data(serde_json::to_value(report)?))
+}
+
+fn wrapper_events_path(history_db_path: &Path) -> std::path::PathBuf {
+    history_db_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("xtask-wrapper-events.jsonl")
+}
+
+fn read_wrapper_events(
+    path: &Path,
+    cutoff: time::OffsetDateTime,
+) -> Result<(Vec<WrapperEvent>, usize)> {
+    let Ok(content) = fs::read_to_string(path) else {
+        return Ok((Vec::new(), 0));
+    };
+    let mut events = Vec::new();
+    let mut skipped_lines = 0;
+
+    for line in content.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(raw) = serde_json::from_str::<RawWrapperEvent>(line) else {
+            skipped_lines += 1;
+            continue;
+        };
+        let Ok(started_at) = parse_history_time(&raw.started_at, "wrapper event started_at") else {
+            skipped_lines += 1;
+            continue;
+        };
+        if started_at < cutoff {
+            continue;
+        }
+        events.push(WrapperEvent {
+            event: raw.event,
+            status: raw.status,
+            started_at: raw.started_at,
+            finished_at: raw.finished_at,
+            duration_secs: raw.duration_ms.map(|ms| ms as f64 / 1000.0),
+            command: raw.command.filter(|command| !command.is_empty()),
+            args: raw.args,
+            requires_runtime_introspection: raw.requires_runtime_introspection,
+            force_rebuild: raw.force_rebuild,
+            log_path: raw.log_path,
+        });
+    }
+
+    Ok((events, skipped_lines))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -5659,6 +5839,54 @@ mod tests {
         assert_eq!(candidate.repeated_invocation_count, 2);
         assert_eq!(candidate.invocation_ids, vec![1, 2, 3]);
         assert_eq!(candidate.repeated_hours, 50.0 / 3600.0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_wrapper_events_path_lives_next_to_history_db() -> ::xtask::sandbox::TestResult<()>
+    {
+        let path = wrapper_events_path(Path::new("/tmp/sinex-state/xtask-history.db"));
+        assert_eq!(
+            path,
+            Path::new("/tmp/sinex-state/xtask-wrapper-events.jsonl")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_read_wrapper_events_filters_and_skips_malformed_lines()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("xtask-wrapper-events.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                "{\"event\":\"checkout-local-rebuild\",\"status\":\"success\",",
+                "\"started_at\":\"2026-06-06T10:00:00Z\",",
+                "\"finished_at\":\"2026-06-06T10:00:02Z\",",
+                "\"duration_ms\":2500,\"command\":\"docs\",",
+                "\"requires_runtime_introspection\":false,",
+                "\"force_rebuild\":true}\n",
+                "not-json\n",
+                "{\"event\":\"checkout-local-rebuild\",\"status\":\"success\",",
+                "\"started_at\":\"2026-06-05T10:00:00Z\",",
+                "\"duration_ms\":1000}\n",
+            ),
+        )?;
+
+        let cutoff = time::OffsetDateTime::parse(
+            "2026-06-06T00:00:00Z",
+            &time::format_description::well_known::Rfc3339,
+        )?;
+        let (events, skipped_lines) = read_wrapper_events(&path, cutoff)?;
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(skipped_lines, 1);
+        assert_eq!(events[0].event, "checkout-local-rebuild");
+        assert_eq!(events[0].status, "success");
+        assert_eq!(events[0].duration_secs, Some(2.5));
+        assert_eq!(events[0].command.as_deref(), Some("docs"));
+        assert!(events[0].force_rebuild);
         Ok(())
     }
 

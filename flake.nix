@@ -286,9 +286,57 @@
                 build_lock_dir="$build_state_dir/xtask-build.lock"
                 build_failure_stamp="$build_state_dir/xtask-build.failed"
                 build_failure_log="$build_state_dir/xtask-build.failed.log"
+                wrapper_event_log="$build_state_dir/xtask-wrapper-events.jsonl"
                 runtime_introspection_stamp="$cargo_target_dir/debug/xtask.runtime-introspection.built"
                 force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
                 requires_runtime_introspection="0"
+
+                _sinex_xtask_json_string() {
+                  ${pkgs.jq}/bin/jq -Rn --arg value "$1" '$value'
+                }
+
+                _sinex_xtask_bool_json() {
+                  case "$1" in
+                    1|true|yes) printf 'true' ;;
+                    *) printf 'false' ;;
+                  esac
+                }
+
+                _sinex_xtask_record_wrapper_event() {
+                  local event_name="$1"
+                  local status="$2"
+                  local started_at="$3"
+                  local finished_at="$4"
+                  local duration_ms="$5"
+                  local log_path="$6"
+                  local command_name args_text log_value
+                  shift 6
+
+                  mkdir -p "$build_state_dir" || return 0
+                  command_name="$(_sinex_xtask_command_name "$@" || true)"
+                  args_text="$*"
+                  if [ -n "$log_path" ]; then
+                    log_value="$(_sinex_xtask_json_string "$log_path")"
+                  else
+                    log_value="null"
+                  fi
+
+                  {
+                    printf '{'
+                    printf '"schema_version":1'
+                    printf ',"event":%s' "$(_sinex_xtask_json_string "$event_name")"
+                    printf ',"status":%s' "$(_sinex_xtask_json_string "$status")"
+                    printf ',"started_at":%s' "$(_sinex_xtask_json_string "$started_at")"
+                    printf ',"finished_at":%s' "$(_sinex_xtask_json_string "$finished_at")"
+                    printf ',"duration_ms":%s' "$duration_ms"
+                    printf ',"command":%s' "$(_sinex_xtask_json_string "$command_name")"
+                    printf ',"args":%s' "$(_sinex_xtask_json_string "$args_text")"
+                    printf ',"requires_runtime_introspection":%s' "$(_sinex_xtask_bool_json "$requires_runtime_introspection")"
+                    printf ',"force_rebuild":%s' "$(_sinex_xtask_bool_json "$force_rebuild")"
+                    printf ',"log_path":%s' "$log_value"
+                    printf '}\n'
+                  } >> "$wrapper_event_log" || true
+                }
 
                 _sinex_xtask_normalize_global_args() {
                   local global_args=()
@@ -528,10 +576,21 @@
                   fi
 
                   if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
+                    local rebuild_started_at rebuild_started_ns rebuild_finished_at rebuild_finished_ns rebuild_duration_ms
+                    rebuild_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                    rebuild_started_ns="$(date +%s%N)"
                     echo "ℹ  Rebuilding checkout-local xtask..." >&2
                     if _sinex_xtask_build_checkout_binary >"$build_failure_log" 2>&1; then
+                      rebuild_finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                      rebuild_finished_ns="$(date +%s%N)"
+                      rebuild_duration_ms="$(( (rebuild_finished_ns - rebuild_started_ns) / 1000000 ))"
+                      _sinex_xtask_record_wrapper_event "checkout-local-rebuild" "success" "$rebuild_started_at" "$rebuild_finished_at" "$rebuild_duration_ms" "" "$@"
                       rm -f "$build_failure_stamp" "$build_failure_log"
                     else
+                      rebuild_finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                      rebuild_finished_ns="$(date +%s%N)"
+                      rebuild_duration_ms="$(( (rebuild_finished_ns - rebuild_started_ns) / 1000000 ))"
+                      _sinex_xtask_record_wrapper_event "checkout-local-rebuild" "failed" "$rebuild_started_at" "$rebuild_finished_at" "$rebuild_duration_ms" "$build_failure_log" "$@"
                       printf '%s\n' "$(date -Iseconds)" > "$build_failure_stamp"
                       cat "$build_failure_log" >&2 || true
                       rm -rf "$build_lock_dir"
@@ -633,7 +692,7 @@
                     elif _sinex_xtask_is_observability_command "$@"; then
                       echo "ℹ  Using existing xtask binary for read-only command while sources are newer" >&2
                     else
-                      if ! _sinex_xtask_build_with_lock; then
+                      if ! _sinex_xtask_build_with_lock "$@"; then
                         if _sinex_xtask_failed_build_is_current; then
                           if [ "$requires_runtime_introspection" = "1" ]; then
                             _sinex_xtask_report_current_failure
@@ -655,7 +714,7 @@
                 fi
 
                 if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
-                  if ! _sinex_xtask_build_with_lock; then
+                  if ! _sinex_xtask_build_with_lock "$@"; then
                     if _sinex_xtask_failed_build_is_current; then
                       if [ "$requires_runtime_introspection" = "1" ]; then
                         _sinex_xtask_report_current_failure
