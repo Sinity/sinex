@@ -362,7 +362,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "tasks update",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
-    m.insert("tasks import", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "tasks import",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
     m.insert("tasks list", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "tasks state",
