@@ -821,6 +821,7 @@ Query test result history
 | `trends` |  |
 | `failures` | Show failing tests from the most recent test run |
 | `analyze` | Comprehensive analysis of the most recent test run |
+| `overhead` | Rank recent test runs by non-test runner/setup overhead and host pressure |
 | `output` | Show captured output for a test (pass or fail) |
 | `eta` |  |
 | `grep` | Full-text search across stored test output (G7) |
@@ -894,6 +895,18 @@ Comprehensive analysis of the most recent test run
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
+
+
+#### `xtask history tests overhead`
+
+Rank recent test runs by non-test runner/setup overhead and host pressure
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--runs` | yes | no | Number of recent completed test invocations with stored results to inspect |
+| `--limit` | yes | no | Number of rows to display after ranking by non-test overhead |
 
 
 #### `xtask history tests output`

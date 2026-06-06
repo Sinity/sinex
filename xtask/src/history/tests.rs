@@ -1000,6 +1000,32 @@ impl HistoryDb {
             .map_err(Into::into)
     }
 
+    /// Recent completed test invocations that have stored test result rows.
+    pub fn recent_test_runs(&self, limit: usize) -> Result<Vec<ResolvedTestRun>> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT i.id, i.started_at
+            FROM invocations i
+            WHERE i.command = 'test'
+              AND i.status IN ('success', 'failed')
+              AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
+            ORDER BY i.started_at DESC, i.id DESC
+            LIMIT ?1
+            ",
+        )?;
+
+        stmt.query_map([limit], |row| {
+            Ok(ResolvedTestRun {
+                invocation_id: row.get(0)?,
+                started_at: row.get(1)?,
+                job_id: None,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("failed to collect recent test invocations with stored results")
+    }
+
     fn resolve_test_run_invocation(&self, invocation_id: i64) -> Result<Option<ResolvedTestRun>> {
         self.conn
             .query_row(
@@ -1893,6 +1919,50 @@ mod tests {
         assert_eq!(resolved_from_numeric.invocation_id, background_invocation);
         assert_eq!(resolved_from_numeric.job_id, Some(background_job));
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_recent_test_runs_lists_completed_runs_with_results_newest_first() -> TestResult<()>
+    {
+        let (_dir, db, first_inv) = test_db_with_invocation()?;
+        db.store_test_results(
+            first_inv,
+            &[TestResult {
+                test_name: "test_first".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.1),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let without_results = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(without_results, InvocationStatus::Success, Some(0), 1.0)?;
+
+        let check_inv = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(check_inv, InvocationStatus::Success, Some(0), 1.0)?;
+
+        let second_inv = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(second_inv, InvocationStatus::Failed, Some(1), 1.0)?;
+        db.store_test_results(
+            second_inv,
+            &[TestResult {
+                test_name: "test_second".into(),
+                package: "pkg-b".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(0.2),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let runs = db.recent_test_runs(10)?;
+        let ids = runs.iter().map(|run| run.invocation_id).collect::<Vec<_>>();
+
+        assert_eq!(ids, vec![second_inv, first_inv]);
+        assert_eq!(db.recent_test_runs(1)?[0].invocation_id, second_inv);
         Ok(())
     }
 

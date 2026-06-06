@@ -5,7 +5,9 @@ use tabled::{builder::Builder, settings::Style};
 
 use crate::affected;
 use crate::command::{CommandContext, CommandResult};
-use crate::history::{HistoricalSlowTest, HistoryDb};
+use crate::history::{
+    HistoricalSlowTest, HistoryDb, HostPressureFailureClassification, TestRunOverhead,
+};
 
 #[derive(Debug, Clone, Serialize)]
 struct SlowTestCandidate {
@@ -15,6 +17,63 @@ struct SlowTestCandidate {
     passing_runs: i64,
     optimization_kind: &'static str,
     recommendation: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TestRunOverheadReport {
+    inspected_runs: usize,
+    rows: Vec<TestRunOverheadRow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TestRunOverheadRow {
+    invocation_id: i64,
+    started_at: String,
+    total_passed: usize,
+    total_failed: usize,
+    total_ignored: usize,
+    invocation_duration_secs: f64,
+    test_body_duration_secs: f64,
+    non_test_overhead_secs: f64,
+    test_body_ratio: f64,
+    overhead_classification: String,
+    host_pressure_level: String,
+    host_pressure_reason: Option<String>,
+    host_io_pressure_full_avg10_max: Option<f64>,
+    host_memory_pressure_full_avg10_max: Option<f64>,
+    host_cpu_pressure_some_avg10_max: Option<f64>,
+}
+
+impl TestRunOverheadRow {
+    fn from_analysis(
+        analysis: &crate::history::TestSuiteAnalysis,
+        overhead: &TestRunOverhead,
+        host_pressure: Option<&HostPressureFailureClassification>,
+    ) -> Self {
+        Self {
+            invocation_id: analysis.invocation_id,
+            started_at: analysis.started_at.clone(),
+            total_passed: analysis.total_passed,
+            total_failed: analysis.total_failed,
+            total_ignored: analysis.total_ignored,
+            invocation_duration_secs: overhead.invocation_duration_secs,
+            test_body_duration_secs: overhead.test_body_duration_secs,
+            non_test_overhead_secs: overhead.non_test_overhead_secs,
+            test_body_ratio: overhead.test_body_ratio,
+            overhead_classification: overhead.classification.to_string(),
+            host_pressure_level: host_pressure.map_or_else(
+                || "clear_or_unrecorded".to_string(),
+                |pressure| pressure.level.clone(),
+            ),
+            host_pressure_reason: host_pressure.map(|pressure| pressure.reason.clone()),
+            host_io_pressure_full_avg10_max: host_pressure
+                .and_then(|pressure| pressure.host_io_pressure_full_avg10_max),
+            host_memory_pressure_full_avg10_max: host_pressure
+                .and_then(|pressure| pressure.host_memory_pressure_full_avg10_max),
+            host_cpu_pressure_some_avg10_max: host_pressure
+                .and_then(|pressure| pressure.host_cpu_pressure_some_avg10_max),
+        }
+    }
 }
 
 impl SlowTestCandidate {
@@ -164,6 +223,15 @@ pub enum HistoryTestsSubcommand {
         #[arg(long, default_value = "latest")]
         invocation: String,
     },
+    /// Rank recent test runs by non-test runner/setup overhead and host pressure.
+    Overhead {
+        /// Number of recent completed test invocations with stored results to inspect.
+        #[arg(long, default_value = "20")]
+        runs: usize,
+        /// Number of rows to display after ranking by non-test overhead.
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
     /// Show captured output for a test (pass or fail)
     Output {
         /// Test name pattern to search for
@@ -244,6 +312,9 @@ pub(super) fn execute_tests(
         } => execute_tests_failures(db, invocation, *limit, *output, ctx),
         HistoryTestsSubcommand::Analyze { invocation } => {
             execute_tests_analyze(db, invocation, ctx)
+        }
+        HistoryTestsSubcommand::Overhead { runs, limit } => {
+            execute_tests_overhead(db, *runs, *limit, ctx)
         }
         HistoryTestsSubcommand::Output {
             pattern,
@@ -867,6 +938,99 @@ pub(super) fn execute_tests_analyze(
             Ok(result)
         }
     }
+}
+
+fn execute_tests_overhead(
+    db: &HistoryDb,
+    runs: usize,
+    limit: usize,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let test_runs = db.recent_test_runs(runs)?;
+    let mut rows = Vec::new();
+
+    for test_run in &test_runs {
+        let Some(analysis) = db.analyze_test_run(test_run.invocation_id)? else {
+            continue;
+        };
+        let Some(overhead) = analysis.run_overhead.as_ref() else {
+            continue;
+        };
+        rows.push(TestRunOverheadRow::from_analysis(
+            &analysis,
+            overhead,
+            analysis.host_pressure.as_ref(),
+        ));
+    }
+
+    rows.sort_by(|left, right| {
+        right
+            .non_test_overhead_secs
+            .partial_cmp(&left.non_test_overhead_secs)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| right.invocation_id.cmp(&left.invocation_id))
+    });
+    rows.truncate(limit);
+
+    let report = TestRunOverheadReport {
+        inspected_runs: test_runs.len(),
+        rows,
+    };
+
+    if ctx.is_human() {
+        if report.rows.is_empty() {
+            println!("No test runs with overhead data found.");
+        } else {
+            println!(
+                "{}",
+                style(format!(
+                    "Test runner/setup overhead (top {} of {} inspected runs):",
+                    report.rows.len(),
+                    report.inspected_runs
+                ))
+                .bold()
+            );
+            let mut builder = Builder::new();
+            builder.push_record([
+                "INV",
+                "STARTED",
+                "ELAPSED",
+                "TEST BODY",
+                "OVERHEAD",
+                "BODY %",
+                "CLASS",
+                "IO.FULL",
+                "MEM.FULL",
+            ]);
+            for row in &report.rows {
+                builder.push_record([
+                    row.invocation_id.to_string(),
+                    row.started_at.clone(),
+                    format!("{:.1}s", row.invocation_duration_secs),
+                    format!("{:.1}s", row.test_body_duration_secs),
+                    format!("{:.1}s", row.non_test_overhead_secs),
+                    format!("{:.1}%", row.test_body_ratio * 100.0),
+                    row.overhead_classification.clone(),
+                    format_optional_pressure(row.host_io_pressure_full_avg10_max),
+                    format_optional_pressure(row.host_memory_pressure_full_avg10_max),
+                ]);
+            }
+            let mut table = builder.build();
+            table.with(Style::rounded());
+            println!("{table}");
+        }
+    }
+
+    let mut result = CommandResult::success()
+        .with_message(format!(
+            "Ranked {} test runs by runner/setup overhead",
+            report.rows.len()
+        ))
+        .with_duration(ctx.elapsed());
+    if !ctx.is_human() {
+        result = result.with_data(serde_json::to_value(&report)?);
+    }
+    Ok(result)
 }
 
 fn execute_tests_output(

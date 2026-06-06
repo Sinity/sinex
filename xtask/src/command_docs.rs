@@ -229,6 +229,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 when: "a test surface failed and you need buckets, flaky tests, slow tests, or captured output",
                 examples: &[
                     "xtask history tests analyze",
+                    "xtask history tests overhead --runs 20",
                     "xtask history tests failures --output",
                     "xtask history tests output test_name",
                 ],
