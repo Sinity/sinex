@@ -2,6 +2,7 @@
 
 use color_eyre::eyre::Result;
 use console::style;
+use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
@@ -89,6 +90,24 @@ pub enum HistorySubcommand {
         /// How many days back to analyse
         #[arg(long, default_value = "7")]
         days: u32,
+    },
+    /// Compare command duration and pressure between two calendar days
+    CompareDays {
+        /// Day to inspect, in YYYY-MM-DD. Defaults to today in UTC.
+        #[arg(long)]
+        day: Option<String>,
+        /// Baseline day, in YYYY-MM-DD. Defaults to the previous UTC day.
+        #[arg(long)]
+        against: Option<String>,
+        /// Commands to include. Can be repeated or comma-separated.
+        #[arg(long = "command", value_delimiter = ',')]
+        commands: Vec<String>,
+        /// Number of slowest invocations from the inspected day to include.
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Include failed invocations in addition to successful invocations.
+        #[arg(long)]
+        include_failures: bool,
     },
     /// Query test result history
     Tests {
@@ -379,6 +398,21 @@ impl XtaskCommand for HistoryCommand {
                 HistorySubcommand::Cost { commands, days } => {
                     execute_cost(db, commands, *days, ctx)
                 }
+                HistorySubcommand::CompareDays {
+                    day,
+                    against,
+                    commands,
+                    limit,
+                    include_failures,
+                } => execute_compare_days(
+                    db,
+                    day.as_deref(),
+                    against.as_deref(),
+                    commands,
+                    *limit,
+                    *include_failures,
+                    ctx,
+                ),
                 HistorySubcommand::Tests { tests_cmd } => execute_tests(tests_cmd, db, ctx),
                 HistorySubcommand::Diagnostics {
                     level,
@@ -1117,6 +1151,409 @@ fn execute_cost(
         .with_message("Computed dev-loop cost summary")
         .with_duration(ctx.elapsed())
         .with_data(serde_json::to_value(summary)?))
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DayComparisonReport {
+    day: String,
+    against: String,
+    commands: Vec<String>,
+    include_failures: bool,
+    rows: Vec<CommandDayComparison>,
+    slowest: Vec<SlowInvocationSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CommandDayComparison {
+    command: String,
+    baseline: DayCommandSummary,
+    current: DayCommandSummary,
+    avg_duration_delta_secs: Option<f64>,
+    avg_duration_ratio: Option<f64>,
+    median_duration_delta_secs: Option<f64>,
+    median_duration_ratio: Option<f64>,
+    max_duration_delta_secs: Option<f64>,
+    io_full_avg_delta: Option<f64>,
+    memory_full_avg_delta: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct DayCommandSummary {
+    invocation_count: usize,
+    avg_duration_secs: Option<f64>,
+    median_duration_secs: Option<f64>,
+    min_duration_secs: Option<f64>,
+    max_duration_secs: Option<f64>,
+    avg_io_full: Option<f64>,
+    max_io_full: Option<f64>,
+    avg_memory_full: Option<f64>,
+    max_memory_full: Option<f64>,
+    avg_process_memory_mb: Option<f64>,
+    failed_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SlowInvocationSummary {
+    id: i64,
+    command: String,
+    status: String,
+    exit_code: Option<i64>,
+    started_at: String,
+    duration_secs: f64,
+    io_full: Option<f64>,
+    memory_full: Option<f64>,
+    process_memory_mb: Option<f64>,
+    args_json: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CompareInvocationRow {
+    id: i64,
+    command: String,
+    status: String,
+    exit_code: Option<i64>,
+    started_at: String,
+    duration_secs: f64,
+    io_full: Option<f64>,
+    memory_full: Option<f64>,
+    process_memory_mb: Option<f64>,
+    args_json: Option<String>,
+}
+
+fn execute_compare_days(
+    db: &HistoryDb,
+    day: Option<&str>,
+    against: Option<&str>,
+    commands: &[String],
+    limit: usize,
+    include_failures: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let today = time::OffsetDateTime::now_utc().date();
+    let day = day.map_or_else(|| today.to_string(), |value| value.trim().to_string());
+    let against = against.map_or_else(
+        || (today - time::Duration::days(1)).to_string(),
+        |value| value.trim().to_string(),
+    );
+    validate_history_day(&day, "--day")?;
+    validate_history_day(&against, "--against")?;
+
+    let commands = if commands.is_empty() {
+        vec![
+            "check".to_string(),
+            "test".to_string(),
+            "build".to_string(),
+            "fix".to_string(),
+        ]
+    } else {
+        commands.to_vec()
+    };
+    let command_list = commands
+        .iter()
+        .map(|command| sql_string_literal(command))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let status_filter = if include_failures {
+        "status IN ('success', 'failed')"
+    } else {
+        "status = 'success'"
+    };
+    let rows_sql = format!(
+        r"
+        SELECT id, command, status, exit_code, started_at, duration_secs,
+               host_io_pressure_full_avg10_max AS io_full,
+               host_memory_pressure_full_avg10_max AS memory_full,
+               process_memory_usage_max_mb AS process_memory_mb,
+               args_json
+        FROM invocations
+        WHERE command IN ({command_list})
+          AND date(started_at) IN ({}, {})
+          AND duration_secs IS NOT NULL
+          AND {status_filter}
+        ORDER BY started_at ASC
+        ",
+        sql_string_literal(&against),
+        sql_string_literal(&day)
+    );
+    let mut rows = db
+        .run_readonly_query(&rows_sql)?
+        .into_iter()
+        .map(|row| compare_row_from_json(&row))
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut comparisons = Vec::new();
+    for command in &commands {
+        let baseline_rows = rows
+            .iter()
+            .filter(|row| row.command == *command && row.started_at.starts_with(&against))
+            .collect::<Vec<_>>();
+        let current_rows = rows
+            .iter()
+            .filter(|row| row.command == *command && row.started_at.starts_with(&day))
+            .collect::<Vec<_>>();
+        let baseline = summarize_compare_rows(&baseline_rows);
+        let current = summarize_compare_rows(&current_rows);
+        comparisons.push(CommandDayComparison {
+            command: command.clone(),
+            avg_duration_delta_secs: option_delta(
+                current.avg_duration_secs,
+                baseline.avg_duration_secs,
+            ),
+            avg_duration_ratio: option_ratio(current.avg_duration_secs, baseline.avg_duration_secs),
+            median_duration_delta_secs: option_delta(
+                current.median_duration_secs,
+                baseline.median_duration_secs,
+            ),
+            median_duration_ratio: option_ratio(
+                current.median_duration_secs,
+                baseline.median_duration_secs,
+            ),
+            max_duration_delta_secs: option_delta(
+                current.max_duration_secs,
+                baseline.max_duration_secs,
+            ),
+            io_full_avg_delta: option_delta(current.avg_io_full, baseline.avg_io_full),
+            memory_full_avg_delta: option_delta(current.avg_memory_full, baseline.avg_memory_full),
+            baseline,
+            current,
+        });
+    }
+
+    rows.sort_by(|left, right| {
+        right
+            .duration_secs
+            .partial_cmp(&left.duration_secs)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let slowest = rows
+        .iter()
+        .filter(|row| row.started_at.starts_with(&day))
+        .take(limit)
+        .map(|row| SlowInvocationSummary {
+            id: row.id,
+            command: row.command.clone(),
+            status: row.status.clone(),
+            exit_code: row.exit_code,
+            started_at: row.started_at.clone(),
+            duration_secs: row.duration_secs,
+            io_full: row.io_full,
+            memory_full: row.memory_full,
+            process_memory_mb: row.process_memory_mb,
+            args_json: row.args_json.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let report = DayComparisonReport {
+        day,
+        against,
+        commands,
+        include_failures,
+        rows: comparisons,
+        slowest,
+    };
+
+    let mut result = CommandResult::success()
+        .with_message(format!(
+            "Compared {} against {}",
+            report.day, report.against
+        ))
+        .with_duration(ctx.elapsed());
+
+    if ctx.is_human() {
+        print_compare_days_report(&report);
+    } else {
+        result = result.with_data(serde_json::to_value(report)?);
+    }
+
+    Ok(result)
+}
+
+fn validate_history_day(value: &str, flag: &'static str) -> Result<()> {
+    let valid_shape = value.len() == 10
+        && value.as_bytes()[4] == b'-'
+        && value.as_bytes()[7] == b'-'
+        && value
+            .bytes()
+            .enumerate()
+            .all(|(idx, byte)| idx == 4 || idx == 7 || byte.is_ascii_digit());
+    if valid_shape {
+        Ok(())
+    } else {
+        Err(color_eyre::eyre::eyre!(
+            "{flag} must use YYYY-MM-DD format, got {value:?}"
+        ))
+    }
+}
+
+fn compare_row_from_json(
+    row: &serde_json::Map<String, serde_json::Value>,
+) -> Result<CompareInvocationRow> {
+    Ok(CompareInvocationRow {
+        id: json_i64(row, "id")?,
+        command: json_string(row, "command")?,
+        status: json_string(row, "status")?,
+        exit_code: row.get("exit_code").and_then(serde_json::Value::as_i64),
+        started_at: json_string(row, "started_at")?,
+        duration_secs: row
+            .get("duration_secs")
+            .and_then(serde_json::Value::as_f64)
+            .ok_or_else(|| color_eyre::eyre::eyre!("history compare row missing duration_secs"))?,
+        io_full: row.get("io_full").and_then(serde_json::Value::as_f64),
+        memory_full: row.get("memory_full").and_then(serde_json::Value::as_f64),
+        process_memory_mb: row
+            .get("process_memory_mb")
+            .and_then(serde_json::Value::as_f64),
+        args_json: row
+            .get("args_json")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+    })
+}
+
+fn summarize_compare_rows(rows: &[&CompareInvocationRow]) -> DayCommandSummary {
+    let mut durations = rows.iter().map(|row| row.duration_secs).collect::<Vec<_>>();
+    durations.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    DayCommandSummary {
+        invocation_count: rows.len(),
+        avg_duration_secs: average(durations.iter().copied()),
+        median_duration_secs: median_sorted(&durations),
+        min_duration_secs: durations.first().copied(),
+        max_duration_secs: durations.last().copied(),
+        avg_io_full: average(rows.iter().filter_map(|row| row.io_full)),
+        max_io_full: max_option(rows.iter().filter_map(|row| row.io_full)),
+        avg_memory_full: average(rows.iter().filter_map(|row| row.memory_full)),
+        max_memory_full: max_option(rows.iter().filter_map(|row| row.memory_full)),
+        avg_process_memory_mb: average(rows.iter().filter_map(|row| row.process_memory_mb)),
+        failed_count: rows.iter().filter(|row| row.status == "failed").count(),
+    }
+}
+
+fn average(values: impl Iterator<Item = f64>) -> Option<f64> {
+    let mut count = 0usize;
+    let mut sum = 0.0;
+    for value in values {
+        if value.is_finite() {
+            count += 1;
+            sum += value;
+        }
+    }
+    (count > 0).then_some(sum / count as f64)
+}
+
+fn max_option(values: impl Iterator<Item = f64>) -> Option<f64> {
+    values
+        .filter(|value| value.is_finite())
+        .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+fn median_sorted(values: &[f64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    let mid = values.len() / 2;
+    if values.len().is_multiple_of(2) {
+        Some((values[mid - 1] + values[mid]) / 2.0)
+    } else {
+        Some(values[mid])
+    }
+}
+
+fn option_delta(current: Option<f64>, baseline: Option<f64>) -> Option<f64> {
+    Some(current? - baseline?)
+}
+
+fn option_ratio(current: Option<f64>, baseline: Option<f64>) -> Option<f64> {
+    let baseline = baseline?;
+    if baseline.abs() < f64::EPSILON {
+        None
+    } else {
+        Some(current? / baseline)
+    }
+}
+
+fn fmt_opt_secs(value: Option<f64>) -> String {
+    value.map_or_else(|| "-".to_string(), |value| format!("{value:.1}s"))
+}
+
+fn fmt_opt_float(value: Option<f64>) -> String {
+    value.map_or_else(|| "-".to_string(), |value| format!("{value:.1}"))
+}
+
+fn fmt_opt_ratio(value: Option<f64>) -> String {
+    value.map_or_else(|| "-".to_string(), |value| format!("{value:.2}x"))
+}
+
+fn fmt_delta_secs(value: Option<f64>) -> String {
+    value.map_or_else(|| "-".to_string(), |value| format!("{value:+.1}s"))
+}
+
+fn print_compare_days_report(report: &DayComparisonReport) {
+    println!(
+        "History comparison: {} vs {}{}",
+        report.day,
+        report.against,
+        if report.include_failures {
+            " (success + failed)"
+        } else {
+            " (success only)"
+        }
+    );
+    let mut builder = Builder::new();
+    builder.push_record([
+        "COMMAND",
+        "BASE N",
+        "DAY N",
+        "AVG",
+        "AVG Δ",
+        "AVG ×",
+        "MEDIAN",
+        "MEDIAN Δ",
+        "MAX",
+        "IO.FULL AVG Δ",
+        "MEM.FULL AVG Δ",
+    ]);
+    for row in &report.rows {
+        builder.push_record([
+            row.command.clone(),
+            row.baseline.invocation_count.to_string(),
+            row.current.invocation_count.to_string(),
+            fmt_opt_secs(row.current.avg_duration_secs),
+            fmt_delta_secs(row.avg_duration_delta_secs),
+            fmt_opt_ratio(row.avg_duration_ratio),
+            fmt_opt_secs(row.current.median_duration_secs),
+            fmt_delta_secs(row.median_duration_delta_secs),
+            fmt_opt_secs(row.current.max_duration_secs),
+            fmt_opt_float(row.io_full_avg_delta),
+            fmt_opt_float(row.memory_full_avg_delta),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    println!("{table}");
+
+    if !report.slowest.is_empty() {
+        println!();
+        println!("Slowest invocations on {}:", report.day);
+        let mut builder = Builder::new();
+        builder.push_record([
+            "ID", "COMMAND", "STATUS", "DURATION", "IO.FULL", "MEM.FULL", "PROC MB", "STARTED",
+        ]);
+        for row in &report.slowest {
+            builder.push_record([
+                row.id.to_string(),
+                row.command.clone(),
+                row.status.clone(),
+                format!("{:.1}s", row.duration_secs),
+                fmt_opt_float(row.io_full),
+                fmt_opt_float(row.memory_full),
+                fmt_opt_float(row.process_memory_mb),
+                row.started_at.clone(),
+            ]);
+        }
+        let mut table = builder.build();
+        table.with(Style::rounded());
+        println!("{table}");
+    }
 }
 
 fn cost_row_from_json(
