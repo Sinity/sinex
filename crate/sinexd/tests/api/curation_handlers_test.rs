@@ -1,11 +1,5 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinexd::api::handlers::{
-    handle_curation_finalize, handle_curation_list_duplicate_candidates,
-    handle_curation_list_proposals, handle_curation_record_duplicate_judgment,
-    handle_curation_record_judgment,
-};
-use sinexd::api::rpc_server::RpcAuthContext;
 use sinex_primitives::JsonValue;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::events::payloads::{
@@ -18,6 +12,12 @@ use sinex_primitives::rpc::curation::{
     CurationListProposalsRequest, CurationRecordDuplicateJudgmentRequest,
     CurationRecordJudgmentRequest,
 };
+use sinexd::api::handlers::{
+    handle_curation_finalize, handle_curation_list_duplicate_candidates,
+    handle_curation_list_proposals, handle_curation_record_duplicate_judgment,
+    handle_curation_record_judgment,
+};
+use sinexd::api::rpc_server::RpcAuthContext;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]

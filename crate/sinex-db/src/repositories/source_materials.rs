@@ -58,7 +58,7 @@ pub mod relation_types {
 }
 /// Top-level metadata keys reserved for system use.
 ///
-/// These keys are set exclusively by the DB layer or the node SDK and must not
+/// These keys are set exclusively by the DB layer or the runtime and must not
 /// be overwritten by caller-supplied payloads passed to `update_metadata`.
 /// The `update_metadata` path re-applies existing values for these keys on top
 /// of any caller merge, so the system always wins on conflicts.
@@ -1901,7 +1901,7 @@ impl SourceMaterialRepository<'_> {
             out.push(SourceReadiness {
                 binding_id: None,
                 source_family: family.into(),
-                source_unit_id: None,
+                source_id: None,
                 parser_id: None,
                 source_identifier: display_identifier,
                 status,
@@ -1973,7 +1973,7 @@ impl SourceMaterialRepository<'_> {
 
     /// Read all temporal-ledger entries for a material.
     ///
-    /// Used by the ingestd admission stage to resolve `ts_orig` for material
+    /// Used by the event_engine admission stage to resolve `ts_orig` for material
     /// events whose timing was deferred to persistence (#1570 Prong B). Entries
     /// describe sub-material offset ranges (wrapped streams / per-chunk timing).
     pub async fn read_temporal_ledger(
@@ -2111,7 +2111,7 @@ impl SourceMaterialRepository<'_> {
 fn derive_source_family(source_identifier: &str, _material_kind: &str) -> &'static str {
     let lower = source_identifier.to_ascii_lowercase();
     if lower.starts_with("integration.") || lower.starts_with("analysis.") {
-        // External producer envelopes use dotted source-unit identifiers.
+        // External producer envelopes use dotted source identifiers.
         return "integration";
     }
     if lower.contains("atuin") || lower.contains("zsh_history") {

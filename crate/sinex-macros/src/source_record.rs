@@ -5,7 +5,7 @@
 //! fields' `#[source]` / `#[privacy]` / `#[timestamp]` / `#[occurrence_key]` /
 //! `#[suppress_if]` / `#[required]` / `#[skip]` / `#[default]` attributes.
 //!
-//! See `crate/lib/sinex-node-sdk/docs/declarative_parser.md` for the locked
+//! See `crate/sinexd/docs/declarative_parser.md` for the locked
 //! design.
 
 use proc_macro2::TokenStream;
@@ -136,10 +136,10 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
         let mut pairs = vec![]; // (event_source, event_type) tokens
         let base_event_source_lit = attrs.event_source.clone().unwrap_or_else(|| {
             attrs
-                .source_unit_id
+                .source_id
                 .split('.')
                 .next()
-                .unwrap_or(&attrs.source_unit_id)
+                .unwrap_or(&attrs.source_id)
                 .to_string()
         });
         let base_et = &attrs.event_type;
@@ -165,16 +165,16 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
     );
 
     let parser_id_lit = &attrs.id;
-    let source_unit_id_lit = &attrs.source_unit_id;
+    let source_id_lit = &attrs.source_id;
     let event_type_lit = &attrs.event_type;
     let event_source_lit = attrs.event_source.clone().unwrap_or_else(|| {
-        // Default: first dot-segment of source_unit_id (e.g.
+        // Default: first dot-segment of source_id (e.g.
         // "terminal.atuin-history" → "terminal").
         attrs
-            .source_unit_id
+            .source_id
             .split('.')
             .next()
-            .unwrap_or(&attrs.source_unit_id)
+            .unwrap_or(&attrs.source_id)
             .to_string()
     });
     let version_lit = attrs.version.clone().unwrap_or_else(|| "1.0.0".to_string());
@@ -277,7 +277,7 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                 LazyLock::new(|| _sdk_parser::DeclarativeParserSpec {
                     parser_id: _sdk_parser::ParserId::from_static(#parser_id_lit),
                     parser_version: #version_lit.into(),
-                    source_unit_id: _sdk_parser::SourceUnitId::from_static(#source_unit_id_lit),
+                    source_id: _sdk_parser::SourceId::from_static(#source_id_lit),
                     event_source: _sdk_domain::EventSource::from_static(#event_source_lit),
                     event_type: _sdk_domain::EventType::from_static(#event_type_lit),
                     default_privacy_context: _sdk_privacy::ProcessingContext::#default_privacy_context_token,
@@ -309,11 +309,10 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                         parser_id: spec.parser_id.clone(),
                         parser_version: spec.parser_version.clone(),
                         accepted_input_shapes: vec![input_format_to_kind(spec.input_format)],
-                        source_unit_id: spec.source_unit_id.clone(),
+                        source_id: spec.source_id.clone(),
                         declared_event_types: vec![ #(#all_event_type_pairs),* ],
                         privacy_contexts: collect_privacy_contexts(spec),
                         sensitivity_hints: collect_sensitivity_hints(spec),
-                        proof_obligations: Vec::new(),
                         description: format!("Declarative parser for {}", stringify!(#struct_name)),
                     }
                 }
@@ -380,7 +379,7 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
 #[derive(Debug, Default)]
 struct SourceRecordAttrs {
     id: String,
-    source_unit_id: String,
+    source_id: String,
     input_shape: String,
     event_type: String,
     event_source: Option<String>,
@@ -393,7 +392,7 @@ struct SourceRecordAttrs {
 
 fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceRecordAttrs> {
     let mut id = None;
-    let mut source_unit_id = None;
+    let mut source_id = None;
     let mut input_shape = None;
     let mut event_type = None;
     let mut event_source = None;
@@ -418,7 +417,7 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
             let s: syn::LitStr = value.parse()?;
             match key.as_str() {
                 "id" => id = Some(s.value()),
-                "source_unit_id" => source_unit_id = Some(s.value()),
+                "source_id" => source_id = Some(s.value()),
                 "input_shape" => input_shape = Some(s.value()),
                 "event_type" => event_type = Some(s.value()),
                 "event_source" => event_source = Some(s.value()),
@@ -429,7 +428,7 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
                 other => {
                     return Err(meta.error(format!(
                         "unknown source_record attribute '{other}'; expected one of: id, \
-                         source_unit_id, input_shape, event_type, event_source, \
+                         source_id, input_shape, event_type, event_source, \
                          default_privacy_context, version, discriminator, on_unknown"
                     )));
                 }
@@ -446,9 +445,8 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
     }
 
     let id = id.ok_or_else(|| Error::new_spanned(attrs.first(), "source_record: missing 'id'"))?;
-    let source_unit_id = source_unit_id.ok_or_else(|| {
-        Error::new_spanned(attrs.first(), "source_record: missing 'source_unit_id'")
-    })?;
+    let source_id = source_id
+        .ok_or_else(|| Error::new_spanned(attrs.first(), "source_record: missing 'source_id'"))?;
     let input_shape = input_shape
         .ok_or_else(|| Error::new_spanned(attrs.first(), "source_record: missing 'input_shape'"))?;
     let event_type = event_type
@@ -456,7 +454,7 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
 
     Ok(SourceRecordAttrs {
         id,
-        source_unit_id,
+        source_id,
         input_shape,
         event_type,
         event_source,

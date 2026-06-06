@@ -145,7 +145,10 @@ async fn spawn_presidio_context_capture_fixture(
             })
             .unwrap_or_default();
         let has_required = context.iter().any(|word| word == required);
-        captured.lock().expect("capture lock poisoned").push(context);
+        match captured.lock() {
+            Ok(mut captured_contexts) => captured_contexts.push(context),
+            Err(poisoned) => poisoned.into_inner().push(context),
+        }
         let matches = match (has_required, text.find("SECRET_PERSON")) {
             (true, Some(start)) => json!([{
                 "start": text[..start].chars().count(),
@@ -527,9 +530,7 @@ async fn privacy_presidio_global_rule_walks_nested_json(ctx: TestContext) -> Tes
 /// returns a span when the expected context word arrives, so successful
 /// redaction proves the words were both sent and acted upon.
 #[sinex_test]
-async fn privacy_presidio_context_words_forwarded_to_analyzer(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn privacy_presidio_context_words_forwarded_to_analyzer(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
     let repo = pool.privacy_policy();
     let (endpoint, captured) = spawn_presidio_context_capture_fixture("meeting").await?;

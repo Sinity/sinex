@@ -7,10 +7,10 @@ use sinex_primitives::parser::MaterialParser;
 use sinex_primitives::{
     Uuid,
     ids::Id,
-    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
+    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceId},
     temporal::Timestamp,
 };
-use sinexd::sources::sources::music::SpotifyHistoryParser;
+use sinexd::sources::source_contracts::music::SpotifyHistoryParser;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -18,7 +18,7 @@ use sinexd::sources::sources::music::SpotifyHistoryParser;
 
 fn test_ctx() -> ParserContext {
     ParserContext {
-        source_unit_id: SourceUnitId::from_static("spotify-extended-history"),
+        source_id: SourceId::from_static("spotify-extended-history"),
         source_material_id: Id::new(),
         record_anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
         operation_id: Uuid::new_v4(),
@@ -149,8 +149,8 @@ async fn ac_duplicate_snapshots_produce_identical_occurrence_keys() {
         "duplicate snapshot entries must produce identical occurrence key fields"
     );
     assert_eq!(
-        key_a.source_unit_id, key_b.source_unit_id,
-        "source_unit_id component of occurrence key must be stable"
+        key_a.source_id, key_b.source_id,
+        "source_id component of occurrence key must be stable"
     );
 }
 

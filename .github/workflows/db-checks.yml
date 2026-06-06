@@ -21,9 +21,9 @@ jobs:
           filters: |
             schema:
               - 'schemas/**'
-              - 'crate/lib/sinex-primitives/src/events/**'
-              - 'crate/lib/sinex-macros/**'
-              - 'crate/lib/sinex-schema/**'
+              - 'crate/sinex-primitives/src/events/**'
+              - 'crate/sinex-macros/**'
+              - 'crate/sinex-schema/**'
               - 'xtask/src/**/*.rs'
 
   schema_validation:

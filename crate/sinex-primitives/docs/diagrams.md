@@ -25,7 +25,7 @@ COORDINATION INFRASTRUCTURE
   │  │  │ Acquired: T0     │                                          │  │
   │  │  └──────────────────┘                                          │  │
   │  │                                                                 │  │
-  │  │  Lock ID: hash("terminal-node-01")                             │  │
+  │  │  Lock ID: hash("terminal-source-01")                           │  │
   │  │  ┌──────────────────┐                                          │  │
   │  │  │ Owner: conn_531  │  ← Instance B connection                 │  │
   │  │  │ Acquired: T1     │                                          │  │
@@ -264,9 +264,9 @@ Graceful Upgrade (Zero-Downtime)
   │  Format: Binary, indexed by timestamp, unit, priority               │
   └─────────────────┬───────────────────────────────────────────────────┘
                     │
-                    ↓ sinex-system-ingestor journal watcher reads
+                    ↓ system source journal watcher reads
   ┌─────────────────────────────────────────────────────────────────────┐
-  │         sinex-system-ingestor journal watcher (Event Capture)        │
+  │             sinexd system source (Event Capture)                │
   │                                                                       │
   │  1. journalctl --follow --output=json --unit=*.service              │
   │  2. Filter: MESSAGE matches heartbeat pattern                        │
@@ -276,7 +276,7 @@ Graceful Upgrade (Zero-Downtime)
                     │
                     ↓ NATS events.raw.system.heartbeat
   ┌─────────────────────────────────────────────────────────────────────┐
-  │                        sinex-ingestd                                 │
+  │                   sinexd::event_engine                               │
   │                                                                       │
   │  Standard ingestion path → core.events                               │
   └─────────────────┬───────────────────────────────────────────────────┘
@@ -291,9 +291,9 @@ Graceful Upgrade (Zero-Downtime)
   │  4. Store aggregated metrics in core.service_health                  │
   └─────────────────┬───────────────────────────────────────────────────┘
                     │
-                    ↓ Query via gateway
+                    ↓ Query via sinexd API
   ┌─────────────────────────────────────────────────────────────────────┐
-  │                      sinex-gateway (RPC)                             │
+  │                         sinexd::api                                  │
   │                                                                       │
   │  Endpoints:                                                           │
   │  - GET /health/services              (all services)                  │
@@ -310,9 +310,9 @@ Graceful Upgrade (Zero-Downtime)
   │  ┌──────────────────────────────────────────────────────────────┐   │
   │  │ Service          Status      Uptime   Events/s   Mem   CPU   │   │
   │  │ fs-watcher       ✅ Healthy  2d 4h    23.5       45MB  2.3%  │   │
-  │  │ terminal-node    ✅ Healthy  2d 4h    8.2        32MB  1.1%  │   │
-  │  │ desktop-node     ⚠️  Degraded 1d 2h    5.1        78MB  3.8%  │   │
-  │  │ ingestd          ✅ Healthy  2d 4h    31.8       125MB 8.2%  │   │
+  │  │ terminal-source  ✅ Healthy  2d 4h    8.2        32MB  1.1%  │   │
+  │  │ desktop-source   ⚠️  Degraded 1d 2h    5.1        78MB  3.8%  │   │
+  │  │ event_engine          ✅ Healthy  2d 4h    31.8       125MB 8.2%  │   │
   │  └──────────────────────────────────────────────────────────────┘   │
   └───────────────────────────────────────────────────────────────────────┘
 ```
@@ -347,6 +347,6 @@ Graceful Upgrade (Zero-Downtime)
 
 ## See Also
 
-- Patterns: `crate/lib/sinex-node-sdk/docs/distributed_patterns.md`
-- Observability: `crate/lib/sinex-node-sdk/docs/observability.md`
-- Type system: `crate/lib/sinex-primitives/docs/type_system_patterns.md`
+- Source runtime docs: `crate/sinexd/docs/sources/`
+- Transport catalog: `transport.md`
+- Type system: `type_system_patterns.md`

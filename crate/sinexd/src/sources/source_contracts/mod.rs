@@ -1,0 +1,26 @@
+//! Source modules — combine mechanisms + parsers per source.
+//!
+//! Each submodule defines one source by binding the runtime adapter to a
+//! source-specific parser and registering it with the dispatch + source factory
+//! registries via `inventory::submit!`.
+
+pub mod ai_session;
+pub mod bookmark;
+pub mod browser;
+pub mod desktop;
+pub mod document;
+pub mod email;
+pub mod finance;
+pub mod fs;
+pub mod git;
+pub mod health;
+pub mod knowledgebase;
+pub mod library;
+pub mod media;
+pub mod messaging;
+pub mod music;
+pub mod polylogue;
+pub mod social;
+pub mod system;
+pub mod terminal;
+pub mod weechat;

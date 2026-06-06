@@ -294,7 +294,7 @@ const SENSITIVE_EXTENSIONS: &[&str] = &["pem", "key", "p12", "pfx", "jks", "keys
 /// Check if a file path points to potentially sensitive content.
 ///
 /// Returns `Some(reason)` if the path matches a sensitive pattern, `None` otherwise.
-/// This is used by ingestors to skip files that could contain credentials or private keys.
+/// This is used by sources to skip files that could contain credentials or private keys.
 #[must_use]
 pub fn check_sensitive_path(path: &Path) -> Option<&'static str> {
     let path_str = path.as_str();

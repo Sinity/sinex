@@ -349,7 +349,10 @@ fn external_recognizer_rule(
 /// Extract Presidio `context` words, preferring the per-rule `matcher_config`
 /// over the backend-level `config`. Mirrors the `language`/`score_threshold`
 /// precedence: rule-specific tuning wins, backend supplies defaults.
-fn external_rule_context_words(matcher_config: &JsonValue, backend_config: &JsonValue) -> Vec<String> {
+fn external_rule_context_words(
+    matcher_config: &JsonValue,
+    backend_config: &JsonValue,
+) -> Vec<String> {
     matcher_config
         .get("context")
         .or_else(|| backend_config.get("context"))

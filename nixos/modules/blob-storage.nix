@@ -13,7 +13,7 @@ let
   blob = cfg.storage.blob;
   maintenanceCfg = cfg.lifecycle.maintenance;
   repoPath = blob.repositoryPath;
-  repositoryUser = cfg.users.nodes;
+  repositoryUser = cfg.users.runtime;
 
   maintenanceEnabled = cfg.lifecycle.maintenance.enable;
   legacyAnnexEnabled = blob.enable && blob.legacyAnnexData;

@@ -30,7 +30,7 @@ use crate::{DbResult, db_error};
 /// shape:
 ///
 /// ```text
-/// <source_unit_id>|<f1>=<v1>|<f2>=<v2>|...
+/// <source_id>|<f1>=<v1>|<f2>=<v2>|...
 /// ```
 ///
 /// The order of `key_fields` is preserved verbatim into the generated key, so
@@ -63,7 +63,7 @@ pub async fn build_occurrence_filter(
     pool: &PgPool,
     event_source: &str,
     event_type: &str,
-    source_unit_id: &str,
+    source_id: &str,
     key_fields: &[&str],
 ) -> DbResult<OccurrenceFilter> {
     // SQL-injection safety: every interpolated field name must be a valid
@@ -99,7 +99,7 @@ pub async fn build_occurrence_filter(
     }
 
     let mut key_expr = String::with_capacity(128 + 96 * key_fields.len());
-    // Source-unit-id prefix is supplied as a parameter, not interpolated.
+    // Source-id prefix is supplied as a parameter, not interpolated.
     // We still have to escape it inside SQL via the same REPLACE chain so an
     // adversarial id with `|` or `=` keeps the canonical form.
     key_expr.push_str("replace(replace(replace($3::text, '\\', '\\\\'), '|', '\\|'), '=', '\\=')");
@@ -120,7 +120,7 @@ pub async fn build_occurrence_filter(
     let rows: Vec<(String,)> = sqlx::query_as(&query)
         .bind(event_source)
         .bind(event_type)
-        .bind(source_unit_id)
+        .bind(source_id)
         .fetch_all(pool)
         .await
         .map_err(|e| db_error(e, "build_occurrence_filter"))?;

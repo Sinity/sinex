@@ -48,7 +48,7 @@ EXAMPLES:
     sinexctl tui
 
     # Start on specific tab
-    sinexctl tui --tab nodes
+    sinexctl tui --tab modules
     sinexctl tui --tab events
 
     # Custom refresh interval
@@ -65,7 +65,7 @@ KEYBOARD SHORTCUTS:
     k/↑        Previous item
 ")]
 pub struct TuiCommand {
-    /// Starting tab (dashboard, operations, nodes, sources, events, dlq)
+    /// Starting tab (dashboard, operations, modules, sources, events, dlq)
     #[arg(long, value_enum, default_value_t = Tab::Dashboard)]
     tab: Tab,
 
@@ -79,8 +79,8 @@ enum Tab {
     Dashboard,
     #[value(alias = "ops")]
     Operations,
-    #[value(alias = "node")]
-    Nodes,
+    #[value(alias = "module")]
+    Modules,
     #[value(alias = "source")]
     Sources,
     #[value(alias = "event")]
@@ -95,7 +95,7 @@ struct App {
     refresh_interval: u64,
 
     // Live data
-    nodes: Vec<InstanceInfo>,
+    modules: Vec<InstanceInfo>,
     dlq_stats: Option<DlqListResponse>,
     dlq_peek: Option<DlqPeekResponse>,
     ops_operations: Vec<OpsOperation>,
@@ -127,7 +127,7 @@ impl App {
             should_quit: false,
             client,
             refresh_interval,
-            nodes: Vec::new(),
+            modules: Vec::new(),
             dlq_stats: None,
             dlq_peek: None,
             ops_operations: Vec::new(),
@@ -156,8 +156,8 @@ impl App {
     fn next_tab(&mut self) {
         let next = match self.current_tab {
             Tab::Dashboard => Tab::Operations,
-            Tab::Operations => Tab::Nodes,
-            Tab::Nodes => Tab::Sources,
+            Tab::Operations => Tab::Modules,
+            Tab::Modules => Tab::Sources,
             Tab::Sources => Tab::Events,
             Tab::Events => Tab::Dlq,
             Tab::Dlq => Tab::Dashboard,
@@ -169,8 +169,8 @@ impl App {
         let previous = match self.current_tab {
             Tab::Dashboard => Tab::Dlq,
             Tab::Operations => Tab::Dashboard,
-            Tab::Nodes => Tab::Operations,
-            Tab::Sources => Tab::Nodes,
+            Tab::Modules => Tab::Operations,
+            Tab::Sources => Tab::Modules,
             Tab::Events => Tab::Sources,
             Tab::Dlq => Tab::Events,
         };
@@ -209,7 +209,7 @@ impl App {
         match self.current_tab {
             Tab::Dashboard => 0,
             Tab::Operations => operations_room_cards(self).len(),
-            Tab::Nodes => self.nodes.len(),
+            Tab::Modules => self.modules.len(),
             Tab::Sources => self.source_readiness.len(),
             Tab::Events => self.recent_events.len(),
             Tab::Dlq => 0, // DLQ shows stats, not a navigable list
@@ -299,7 +299,7 @@ impl App {
             }
         }
 
-        self.refresh_nodes_and_dlq().await;
+        self.refresh_runtime_and_dlq().await;
         self.refresh_operations_and_state().await;
         self.refresh_sources_and_events().await;
 
@@ -307,11 +307,11 @@ impl App {
         self.last_refresh = Instant::now();
     }
 
-    async fn refresh_nodes_and_dlq(&mut self) {
-        match self.client.list_nodes(None).await {
-            Ok(nodes) => self.nodes = nodes,
+    async fn refresh_runtime_and_dlq(&mut self) {
+        match self.client.list_runtime(None).await {
+            Ok(modules) => self.modules = modules,
             Err(e) => {
-                self.error = Some(format!("Failed to fetch nodes: {e}"));
+                self.error = Some(format!("Failed to fetch modules: {e}"));
             }
         }
         match self.client.dlq_list().await {
@@ -508,7 +508,7 @@ where
                 }
                 KeyCode::Char('1') => app.switch_tab(Tab::Dashboard),
                 KeyCode::Char('2') => app.switch_tab(Tab::Operations),
-                KeyCode::Char('3') => app.switch_tab(Tab::Nodes),
+                KeyCode::Char('3') => app.switch_tab(Tab::Modules),
                 KeyCode::Char('4') => app.switch_tab(Tab::Sources),
                 KeyCode::Char('5') => app.switch_tab(Tab::Events),
                 KeyCode::Char('6') => app.switch_tab(Tab::Dlq),
@@ -578,7 +578,7 @@ fn ui(f: &mut Frame, app: &App) {
     match app.current_tab {
         Tab::Dashboard => render_dashboard(f, chunks[1], app),
         Tab::Operations => render_operations(f, chunks[1], app),
-        Tab::Nodes => render_nodes(f, chunks[1], app),
+        Tab::Modules => render_modules(f, chunks[1], app),
         Tab::Sources => render_sources(f, chunks[1], app),
         Tab::Events => render_events(f, chunks[1], app),
         Tab::Dlq => render_dlq(f, chunks[1], app),
@@ -596,7 +596,7 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
     let tabs = [
         ("1:Dashboard", Tab::Dashboard),
         ("2:Ops", Tab::Operations),
-        ("3:Nodes", Tab::Nodes),
+        ("3:Modules", Tab::Modules),
         ("4:Sources", Tab::Sources),
         ("5:Events", Tab::Events),
         ("6:DLQ", Tab::Dlq),
@@ -669,23 +669,25 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .split(area);
 
     // Left: System overview
-    // Consider node healthy if it has a heartbeat (we'll derive active status from heartbeat age later)
-    let healthy_nodes = app
-        .nodes
+    // Consider a module healthy if it has a recent heartbeat.
+    let healthy_modules = app
+        .modules
         .iter()
         .filter(|n| {
             n.last_heartbeat
                 .is_some_and(|hb| (Timestamp::now() - hb).whole_seconds() < 60)
         })
         .count();
-    let total_nodes = app.nodes.len();
+    let total_modules = app.modules.len();
     let dlq_total = app.dlq_stats.as_ref().map_or(0, |s| s.total_messages);
     let events_count = app.recent_events.len();
 
     let overview_items = vec![
         ListItem::new(format!("Gateway Version: {}", app.gateway_version)),
         ListItem::new(""),
-        ListItem::new(format!("Healthy Nodes: {healthy_nodes}/{total_nodes}")),
+        ListItem::new(format!(
+            "Healthy Modules: {healthy_modules}/{total_modules}"
+        )),
         ListItem::new(format!("Recent Events (1h): {events_count}")),
         ListItem::new(format!(
             "DLQ Messages: {}",
@@ -706,9 +708,9 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .style(Style::default().fg(Color::White));
     f.render_widget(overview, chunks[0]);
 
-    // Right: Node list
-    let node_items: Vec<ListItem> = app
-        .nodes
+    // Right: RuntimeModule list
+    let module_items: Vec<ListItem> = app
+        .modules
         .iter()
         .map(|n| {
             let has_recent_heartbeat = n
@@ -724,19 +726,19 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
             let name = n.hostname.as_deref().unwrap_or(&n.instance_id);
             ListItem::new(format!(
                 "{} {} ({}){}",
-                status_icon, name, n.node_type, leader
+                status_icon, name, n.module_kind, leader
             ))
             .style(Style::default().fg(color))
         })
         .collect();
 
-    let nodes_list = List::new(if node_items.is_empty() {
-        vec![ListItem::new("No nodes registered")]
+    let runtime_list = List::new(if module_items.is_empty() {
+        vec![ListItem::new("No modules registered")]
     } else {
-        node_items
+        module_items
     })
-    .block(Block::default().title("Nodes").borders(Borders::ALL));
-    f.render_widget(nodes_list, chunks[1]);
+    .block(Block::default().title("Modules").borders(Borders::ALL));
+    f.render_widget(runtime_list, chunks[1]);
 }
 
 fn render_operations(f: &mut Frame, area: Rect, app: &App) {
@@ -922,7 +924,7 @@ fn operations_room_cards(app: &App) -> Vec<OperationRoomCard> {
     );
     cards.extend(app.ops_operations.iter().take(6).map(ops_operation_card));
     cards.push(dlq_operation_card(app));
-    if let Some(card) = derived_node_dlq_card(app) {
+    if let Some(card) = automaton_dlq_card(app) {
         cards.push(card);
     }
     cards.push(lifecycle_operation_card(app));
@@ -992,15 +994,15 @@ fn replay_operation_card(operation: &ReplayOperation) -> OperationRoomCard {
 
 fn replay_scope_refs(operation: &ReplayOperation) -> Vec<String> {
     let scope = &operation.scope;
-    let mut refs = vec![format!("node: {}", scope.node_id)];
+    let mut refs = vec![format!("source: {}", scope.source_name)];
     if let Some((start, end)) = &scope.time_window {
         refs.push(format!("time: {start} -> {end}"));
     }
     if let Some(materials) = &scope.material_filter {
         refs.push(format!("materials: {}", materials.len()));
     }
-    if let Some(source_unit_id) = &scope.source_unit_id {
-        refs.push(format!("source-unit: {source_unit_id}"));
+    if let Some(source_id) = &scope.source_id {
+        refs.push(format!("source: {source_id}"));
     }
     if let Some(source_material_id) = &scope.source_material_id {
         refs.push(format!("source-material: {source_material_id}"));
@@ -1102,15 +1104,15 @@ fn dlq_operation_card(app: &App) -> OperationRoomCard {
     }
 }
 
-fn derived_node_dlq_card(app: &App) -> Option<OperationRoomCard> {
+fn automaton_dlq_card(app: &App) -> Option<OperationRoomCard> {
     let message = app
         .dlq_peek
         .as_ref()?
         .messages
         .iter()
-        .find(|message| is_derived_node_material_dlq(message))?;
+        .find(|message| is_automaton_material_dlq(message))?;
     Some(OperationRoomCard {
-        title: "derived-node telemetry DLQ material gap".to_string(),
+        title: "automaton telemetry DLQ material gap".to_string(),
         authority: "admin".to_string(),
         phase: "blocked".to_string(),
         progress: format!(
@@ -1131,7 +1133,7 @@ fn derived_node_dlq_card(app: &App) -> Option<OperationRoomCard> {
         caveats: vec![
             "first-class DLQ class: likely missing source-material registration for derived telemetry".to_string(),
             "requeue will probably re-DLQ until the Source Readiness Cockpit row is fixed".to_string(),
-            "downstream projections may miss derived-node telemetry until repaired".to_string(),
+            "downstream projections may miss automaton telemetry until repaired".to_string(),
         ],
         actions: vec![
             OperationRoomAction::new(
@@ -1150,11 +1152,11 @@ fn derived_node_dlq_card(app: &App) -> Option<OperationRoomCard> {
                 "sinexctl dlq requeue --all",
             ),
         ],
-        audit_refs: vec!["Ref #1241 derived-node telemetry DLQ verification".to_string()],
+        audit_refs: vec!["Ref #1241 automaton telemetry DLQ verification".to_string()],
     })
 }
 
-fn is_derived_node_material_dlq(message: &DlqMessagePeek) -> bool {
+fn is_automaton_material_dlq(message: &DlqMessagePeek) -> bool {
     let haystack = format!(
         "{} {} {}",
         message.subject,
@@ -1339,9 +1341,9 @@ fn summarize_json_scope(scope: &serde_json::Value) -> String {
     }
 }
 
-fn render_nodes(f: &mut Frame, area: Rect, app: &App) {
+fn render_modules(f: &mut Frame, area: Rect, app: &App) {
     let items: Vec<ListItem> = app
-        .nodes
+        .modules
         .iter()
         .enumerate()
         .map(|(i, n)| {
@@ -1367,20 +1369,20 @@ fn render_nodes(f: &mut Frame, area: Rect, app: &App) {
                 .map_or_else(|| "none".to_string(), format_heartbeat_age);
             ListItem::new(format!(
                 "{} {} | Type: {} | Heartbeat: {}{}",
-                status_icon, name, n.node_type, heartbeat_str, leader
+                status_icon, name, n.module_kind, heartbeat_str, leader
             ))
             .style(style)
         })
         .collect();
 
     let list = List::new(if items.is_empty() {
-        vec![ListItem::new("No nodes registered")]
+        vec![ListItem::new("No modules registered")]
     } else {
         items
     })
     .block(
         Block::default()
-            .title(format!("Nodes ({} total)", app.nodes.len()))
+            .title(format!("Modules ({} total)", app.modules.len()))
             .borders(Borders::ALL),
     );
     f.render_widget(list, area);
@@ -2125,7 +2127,7 @@ fn action_state_label(state: ActionAvailabilityState) -> &'static str {
 fn object_kind_label(kind: &SinexObjectKind) -> &'static str {
     match kind {
         SinexObjectKind::Event => "event",
-        SinexObjectKind::SourceUnit => "source-unit",
+        SinexObjectKind::SourceDriver => "source",
         SinexObjectKind::SourceMaterial => "source-material",
         SinexObjectKind::MaterialAnchor => "material-anchor",
         SinexObjectKind::Document => "document",
@@ -2363,7 +2365,7 @@ mod tests {
             phase: "failed".to_string(),
             progress: "42 / 100 events, batch 3".to_string(),
             affected_refs: vec![
-                "node: fixture.replay".to_string(),
+                "source: fixture.replay".to_string(),
                 "source-material: material-fixture".to_string(),
             ],
             caveats: vec![
@@ -2408,7 +2410,7 @@ mod tests {
         SourceReadiness {
             binding_id: None,
             source_family: "ux-mk3".to_string(),
-            source_unit_id: None,
+            source_id: None,
             parser_id: None,
             source_identifier: id.to_string(),
             status,
@@ -2447,8 +2449,8 @@ mod tests {
             source: EventSourceView {
                 family: "ux-mk3".to_string(),
                 raw: "fixture.source".to_string(),
-                unit_ref: Some(SinexObjectRef::new(
-                    SinexObjectKind::SourceUnit,
+                source_ref: Some(SinexObjectRef::new(
+                    SinexObjectKind::SourceDriver,
                     "ux.fixture-source",
                 )),
             },

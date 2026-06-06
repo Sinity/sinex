@@ -14,27 +14,27 @@ use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
-use sinex_primitives::parser::SourceUnitId;
+use sinex_primitives::parser::SourceId;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
 use sinex_primitives::rpc::curation::CurationListProposalsRequest;
 use sinex_primitives::rpc::documents::{
     DocumentsGetChunksRequest, DocumentsGetRequest, DocumentsSearchRequest,
 };
-use sinex_primitives::rpc::ingestors::IngestorsStatusResponse;
 use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmPromptsListRequest, LlmRouteExplainRequest,
 };
 use sinex_primitives::rpc::methods;
-use sinex_primitives::rpc::nodes::{
-    NodesHealthResponse, NodesListActiveResponse, NodesListResponse,
-};
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::rpc::replay::ReplayState;
+use sinex_primitives::rpc::runtime::{
+    RuntimeHealthResponse, RuntimeListActiveResponse, RuntimeListResponse,
+};
 use sinex_primitives::rpc::semantic::{
     SemanticEpochListRequest, SemanticLaneDiffsListRequest, SemanticLaneListRequest,
     SemanticLaneOutputsListRequest,
 };
+use sinex_primitives::rpc::source_status::SourcesStatusResponse;
 use sinex_primitives::rpc::sources::{
     SourcesContinuityRequest, SourcesCoverageRequest, SourcesDriftListRequest, SourcesListRequest,
     SourcesReadinessGetRequest, SourcesReadinessListRequest, SourcesShowRequest,
@@ -43,7 +43,7 @@ use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::rpc::tasks::{
     TaskListRequest, TaskListResponse, TaskStateGetRequest, TaskStateResponse,
 };
-use sinex_primitives::rpc::telemetry::IngestdValidationSnapshot;
+use sinex_primitives::rpc::telemetry::EventEngineValidationSnapshot;
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::{
     SourcesContinuityGetRequest, SourcesContinuityListRequest, SourcesExplainGapRequest,
@@ -148,7 +148,7 @@ struct SourceReadinessArgs {
     #[serde(default)]
     source_family: Option<String>,
     #[serde(default)]
-    source_unit_id: Option<String>,
+    source_id: Option<String>,
     #[serde(default)]
     source_identifier: Option<String>,
     #[serde(default)]
@@ -168,7 +168,7 @@ struct SourceContinuityArgs {
 #[derive(Debug, Deserialize, Serialize)]
 struct SourceDriftArgs {
     #[serde(default)]
-    source_unit_id: Option<String>,
+    source_id: Option<String>,
     #[serde(default)]
     limit: Option<usize>,
 }
@@ -218,7 +218,7 @@ struct ReplayListArgs {
     #[serde(default)]
     state: Option<ReplayState>,
     #[serde(default)]
-    node: Option<String>,
+    module: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
 }
@@ -382,20 +382,14 @@ struct AuditTrailArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct GitOpsSourcesArgs {
-    #[serde(default)]
-    include_disabled: bool,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
 struct CoordinationInstancesArgs {
     #[serde(default)]
-    node_type: Option<String>,
+    module_kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CoordinationLeaderArgs {
-    node_type: String,
+    module_kind: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -444,6 +438,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             name: "sinex.search_events",
             kind: McpSurfaceKind::Tool,
             description: "Read-only search over persisted Sinex events.",
+            backing_rpc_methods: &[methods::EVENTS_QUERY],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.context_pack",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only event query projection for AI context packs.",
             backing_rpc_methods: &[methods::EVENTS_QUERY],
             read_only: true,
         },
@@ -526,7 +527,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
         McpCatalogEntry {
             name: "sinex.replay_operations",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only replay operation list with state and node filters.",
+            description: "Read-only replay operation list with state and module filters.",
             backing_rpc_methods: &[methods::REPLAY_LIST_OPERATIONS],
             read_only: true,
         },
@@ -589,50 +590,50 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
         McpCatalogEntry {
             name: "sinex.automata_status",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only derived-node automata liveness, checkpoint, and lag status.",
+            description: "Read-only automata liveness, checkpoint, and lag status.",
             backing_rpc_methods: &[methods::AUTOMATA_STATUS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.ingestors_status",
+            name: "sinex.sources_status",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only source-ingestor liveness, health, and emission status.",
-            backing_rpc_methods: &[methods::INGESTORS_STATUS],
+            description: "Read-only source liveness, health, and emission status.",
+            backing_rpc_methods: &[methods::SOURCES_STATUS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.nodes_health",
+            name: "sinex.source_health",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only aggregate runtime node health.",
-            backing_rpc_methods: &[methods::NODES_HEALTH],
+            description: "Read-only aggregate runtime module health.",
+            backing_rpc_methods: &[methods::RUNTIME_HEALTH],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.nodes_active",
+            name: "sinex.sources_active",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only active runtime node presence.",
-            backing_rpc_methods: &[methods::NODES_LIST_ACTIVE],
+            description: "Read-only active runtime module presence.",
+            backing_rpc_methods: &[methods::RUNTIME_LIST_ACTIVE],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.nodes_registry",
+            name: "sinex.sources_registry",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only persisted node state registry.",
-            backing_rpc_methods: &[methods::NODES_LIST],
+            description: "Read-only persisted runtime module state registry.",
+            backing_rpc_methods: &[methods::RUNTIME_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.ingestd_validation",
+            name: "sinex.event_engine_validation",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only latest ingestd validation and admission snapshot.",
-            backing_rpc_methods: &[methods::TELEMETRY_INGESTD_VALIDATION],
+            description: "Read-only latest event_engine validation and admission snapshot.",
+            backing_rpc_methods: &[methods::TELEMETRY_EVENT_ENGINE_VALIDATION],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.ingestd_batch_stats",
+            name: "sinex.event_engine_batch_stats",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only ingestd batch, latency, and validation telemetry buckets.",
-            backing_rpc_methods: &[methods::TELEMETRY_INGESTD_BATCH_STATS],
+            description: "Read-only event_engine batch, latency, and validation telemetry buckets.",
+            backing_rpc_methods: &[methods::TELEMETRY_EVENT_ENGINE_BATCH_STATS],
             read_only: true,
         },
         McpCatalogEntry {
@@ -713,10 +714,10 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.node_stats",
+            name: "sinex.source_stats",
             kind: McpSurfaceKind::Tool,
-            description: "Read-only node processing telemetry buckets.",
-            backing_rpc_methods: &[methods::TELEMETRY_NODE_STATS],
+            description: "Read-only source processing telemetry buckets.",
+            backing_rpc_methods: &[methods::TELEMETRY_SOURCE_STATS],
             read_only: true,
         },
         McpCatalogEntry {
@@ -822,13 +823,6 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only data lifecycle tier status.",
             backing_rpc_methods: &[methods::LIFECYCLE_STATUS],
-            read_only: true,
-        },
-        McpCatalogEntry {
-            name: "sinex.gitops_sources",
-            kind: McpSurfaceKind::Tool,
-            description: "Read-only GitOps schema source listing.",
-            backing_rpc_methods: &[methods::GITOPS_LIST_SOURCES],
             read_only: true,
         },
         McpCatalogEntry {
@@ -941,7 +935,7 @@ pub fn tools() -> Vec<McpTool> {
                 "type": "object",
                 "properties": {
                     "source_family": { "type": "string" },
-                    "source_unit_id": { "type": "string" },
+                    "source_id": { "type": "string" },
                     "source_identifier": { "type": "string" },
                     "stale_after_seconds": { "type": "integer", "minimum": 1 },
                     "include_caveats": { "type": "boolean", "default": true }
@@ -965,7 +959,7 @@ pub fn tools() -> Vec<McpTool> {
             json!({
                 "type": "object",
                 "properties": {
-                    "source_unit_id": { "type": "string" },
+                    "source_id": { "type": "string" },
                     "limit": {
                         "type": "integer",
                         "minimum": 1,
@@ -1070,7 +1064,7 @@ pub fn tools() -> Vec<McpTool> {
                             "Cancelled"
                         ]
                     },
-                    "node": { "type": "string" },
+                    "module": { "type": "string" },
                     "limit": {
                         "type": "integer",
                         "minimum": 1,
@@ -1186,12 +1180,12 @@ pub fn tools() -> Vec<McpTool> {
         mcp_tool("sinex.semantic_lane_outputs", lane_records_schema()),
         mcp_tool("sinex.semantic_lane_diffs", lane_records_schema()),
         mcp_tool("sinex.automata_status", status_window_schema()),
-        mcp_tool("sinex.ingestors_status", status_window_schema()),
-        mcp_tool("sinex.nodes_health", stale_after_schema()),
-        mcp_tool("sinex.nodes_active", stale_after_schema()),
-        mcp_tool("sinex.nodes_registry", empty_object_schema()),
-        mcp_tool("sinex.ingestd_validation", empty_object_schema()),
-        mcp_tool("sinex.ingestd_batch_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex.sources_status", status_window_schema()),
+        mcp_tool("sinex.source_health", stale_after_schema()),
+        mcp_tool("sinex.sources_active", stale_after_schema()),
+        mcp_tool("sinex.sources_registry", empty_object_schema()),
+        mcp_tool("sinex.event_engine_validation", empty_object_schema()),
+        mcp_tool("sinex.event_engine_batch_stats", telemetry_buckets_schema()),
         mcp_tool("sinex.throughput", empty_object_schema()),
         mcp_tool("sinex.recent_activity", limit_schema(20)),
         mcp_tool("sinex.command_frequency", telemetry_buckets_schema()),
@@ -1203,7 +1197,7 @@ pub fn tools() -> Vec<McpTool> {
         mcp_tool("sinex.gateway_stats", telemetry_buckets_schema()),
         mcp_tool("sinex.stream_stats", telemetry_buckets_schema()),
         mcp_tool("sinex.assembly_stats", telemetry_buckets_schema()),
-        mcp_tool("sinex.node_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex.source_stats", telemetry_buckets_schema()),
         mcp_tool("sinex.metric_counters", telemetry_buckets_schema()),
         mcp_tool(
             "sinex.llm_prompts",
@@ -1336,16 +1330,6 @@ pub fn tools() -> Vec<McpTool> {
         ),
         mcp_tool("sinex.lifecycle_status", empty_object_schema()),
         mcp_tool(
-            "sinex.gitops_sources",
-            json!({
-                "type": "object",
-                "properties": {
-                    "include_disabled": { "type": "boolean", "default": false }
-                },
-                "additionalProperties": false
-            }),
-        ),
-        mcp_tool(
             "sinex.audit_trail",
             json!({
                 "type": "object",
@@ -1361,9 +1345,9 @@ pub fn tools() -> Vec<McpTool> {
             json!({
                 "type": "object",
                 "properties": {
-                    "node_type": {
+                    "module_kind": {
                         "type": "string",
-                        "enum": ["ingestor", "automaton", "service"]
+                        "enum": ["source", "automaton", "service"]
                     }
                 },
                 "additionalProperties": false
@@ -1373,11 +1357,11 @@ pub fn tools() -> Vec<McpTool> {
             "sinex.coordination_leader",
             json!({
                 "type": "object",
-                "required": ["node_type"],
+                "required": ["module_kind"],
                 "properties": {
-                    "node_type": {
+                    "module_kind": {
                         "type": "string",
-                        "enum": ["ingestor", "automaton", "service"]
+                        "enum": ["source", "automaton", "service"]
                     }
                 },
                 "additionalProperties": false
@@ -1588,7 +1572,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
     if let Some(result) = call_tool_events_sources(client, name, arguments.clone()).await? {
         return Ok(result);
     }
-    if let Some(result) = call_tool_nodes_analytics(client, name, arguments.clone()).await? {
+    if let Some(result) = call_tool_runtime_analytics(client, name, arguments.clone()).await? {
         return Ok(result);
     }
     if let Some(result) = call_tool_ops_infra(client, name, arguments.clone()).await? {
@@ -1634,19 +1618,19 @@ async fn call_tool_events_sources(
     Ok(Some(result))
 }
 
-async fn call_tool_nodes_analytics(
+async fn call_tool_runtime_analytics(
     client: &GatewayClient,
     name: &str,
     arguments: Value,
 ) -> Result<Option<Value>> {
     let result = match name {
         "sinex.automata_status" => automata_status(client, arguments).await?,
-        "sinex.ingestors_status" => ingestors_status(client, arguments).await?,
-        "sinex.nodes_health" => nodes_health(client, arguments).await?,
-        "sinex.nodes_active" => nodes_active(client, arguments).await?,
-        "sinex.nodes_registry" => nodes_registry(client, arguments).await?,
-        "sinex.ingestd_validation" => ingestd_validation(client, arguments).await?,
-        "sinex.ingestd_batch_stats" => ingestd_batch_stats(client, arguments).await?,
+        "sinex.sources_status" => sources_status(client, arguments).await?,
+        "sinex.source_health" => runtime_health(client, arguments).await?,
+        "sinex.sources_active" => runtime_active(client, arguments).await?,
+        "sinex.sources_registry" => runtime_registry(client, arguments).await?,
+        "sinex.event_engine_validation" => event_engine_validation(client, arguments).await?,
+        "sinex.event_engine_batch_stats" => event_engine_batch_stats(client, arguments).await?,
         "sinex.system_health" => system_health(client, arguments).await?,
         "sinex.system_ping" => system_ping(client, arguments).await?,
         "sinex.system_version" => system_version(client, arguments).await?,
@@ -1661,7 +1645,7 @@ async fn call_tool_nodes_analytics(
         "sinex.gateway_stats" => gateway_stats(client, arguments).await?,
         "sinex.stream_stats" => stream_stats(client, arguments).await?,
         "sinex.assembly_stats" => assembly_stats(client, arguments).await?,
-        "sinex.node_stats" => node_stats(client, arguments).await?,
+        "sinex.source_stats" => source_stats(client, arguments).await?,
         "sinex.metric_counters" => metric_counters(client, arguments).await?,
         _ => return Ok(None),
     };
@@ -1683,7 +1667,6 @@ async fn call_tool_ops_infra(
         "sinex.ops_list" => ops_list(client, arguments).await?,
         "sinex.ops_get" => ops_get(client, arguments).await?,
         "sinex.lifecycle_status" => lifecycle_status(client, arguments).await?,
-        "sinex.gitops_sources" => gitops_sources(client, arguments).await?,
         "sinex.audit_trail" => audit_trail(client, arguments).await?,
         "sinex.coordination_instances" => coordination_instances(client, arguments).await?,
         "sinex.coordination_leader" => coordination_leader(client, arguments).await?,
@@ -1760,8 +1743,8 @@ async fn source_readiness(client: &GatewayClient, arguments: Value) -> Result<Va
         serde_json::to_value(client.sources_readiness_list(request).await?)?
     };
 
-    if let Some(source_unit_id) = args.source_unit_id.as_deref() {
-        filter_readiness_by_source_unit(&mut result, source_unit_id);
+    if let Some(source_id) = args.source_id.as_deref() {
+        filter_readiness_by_source(&mut result, source_id);
     }
 
     let mut payload = json!({ "result": result });
@@ -1799,11 +1782,7 @@ async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<V
 async fn source_drift(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: SourceDriftArgs = serde_json::from_value(arguments)?;
     let request = SourcesDriftListRequest {
-        source_unit_id: args
-            .source_unit_id
-            .as_deref()
-            .map(SourceUnitId::new)
-            .transpose()?,
+        source_id: args.source_id.as_deref().map(SourceId::new).transpose()?,
         limit: args.limit,
     };
     let result = serde_json::to_value(client.sources_drift_list(request).await?)?;
@@ -1903,7 +1882,7 @@ async fn task_state(client: &GatewayClient, arguments: Value) -> Result<Value> {
 async fn replay_operations(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: ReplayListArgs = serde_json::from_value(arguments)?;
     let operations = client
-        .replay_list_filtered(args.state, args.node.as_deref(), args.limit)
+        .replay_list_filtered(args.state, args.module.as_deref(), args.limit)
         .await?;
     Ok(envelope(
         "sinex.replay_operations",
@@ -2043,65 +2022,67 @@ async fn automata_status(client: &GatewayClient, arguments: Value) -> Result<Val
     ))
 }
 
-async fn ingestors_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
+async fn sources_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: StatusWindowArgs = serde_json::from_value(arguments)?;
-    let response: IngestorsStatusResponse = client
-        .ingestors_status(args.stale_after_secs, args.recent_window_secs)
+    let response: SourcesStatusResponse = client
+        .sources_status(args.stale_after_secs, args.recent_window_secs)
         .await?;
     Ok(envelope(
-        "sinex.ingestors_status",
+        "sinex.sources_status",
         &json!(args),
         &json!({ "result": response }),
     ))
 }
 
-async fn nodes_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
+async fn runtime_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: StaleAfterArgs = serde_json::from_value(arguments)?;
-    let response: NodesHealthResponse = client.nodes_health(args.stale_after_secs).await?;
+    let response: RuntimeHealthResponse = client.runtime_health(args.stale_after_secs).await?;
     Ok(envelope(
-        "sinex.nodes_health",
+        "sinex.source_health",
         &json!(args),
         &json!({ "result": response }),
     ))
 }
 
-async fn nodes_active(client: &GatewayClient, arguments: Value) -> Result<Value> {
+async fn runtime_active(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: StaleAfterArgs = serde_json::from_value(arguments)?;
-    let response: NodesListActiveResponse = client.nodes_list_active(args.stale_after_secs).await?;
+    let response: RuntimeListActiveResponse =
+        client.runtime_list_active(args.stale_after_secs).await?;
     Ok(envelope(
-        "sinex.nodes_active",
+        "sinex.sources_active",
         &json!(args),
         &json!({ "result": response }),
     ))
 }
 
-async fn nodes_registry(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.nodes_registry", &arguments)?;
-    let response: NodesListResponse = client.nodes_list().await?;
+async fn runtime_registry(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.sources_registry", &arguments)?;
+    let response: RuntimeListResponse = client.runtime_list().await?;
     Ok(envelope(
-        "sinex.nodes_registry",
+        "sinex.sources_registry",
         &json!({}),
         &json!({ "result": response }),
     ))
 }
 
-async fn ingestd_validation(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.ingestd_validation", &arguments)?;
-    let snapshot: Option<IngestdValidationSnapshot> = client.telemetry_ingestd_validation().await?;
+async fn event_engine_validation(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.event_engine_validation", &arguments)?;
+    let snapshot: Option<EventEngineValidationSnapshot> =
+        client.telemetry_event_engine_validation().await?;
     Ok(envelope(
-        "sinex.ingestd_validation",
+        "sinex.event_engine_validation",
         &json!({}),
         &json!({ "snapshot": snapshot }),
     ))
 }
 
-async fn ingestd_batch_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
+async fn event_engine_batch_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
     let buckets = client
-        .telemetry_ingestd_batch_stats(args.from.clone(), args.to.clone(), args.limit)
+        .telemetry_event_engine_batch_stats(args.from.clone(), args.to.clone(), args.limit)
         .await?;
     Ok(envelope(
-        "sinex.ingestd_batch_stats",
+        "sinex.event_engine_batch_stats",
         &json!(args),
         &json!({ "buckets": buckets }),
     ))
@@ -2207,9 +2188,9 @@ telemetry_bucket_tool!(
     "buckets"
 );
 telemetry_bucket_tool!(
-    node_stats,
-    "sinex.node_stats",
-    telemetry_node_stats,
+    source_stats,
+    "sinex.source_stats",
+    telemetry_source_stats,
     "buckets"
 );
 telemetry_bucket_tool!(
@@ -2393,16 +2374,6 @@ async fn lifecycle_status(client: &GatewayClient, arguments: Value) -> Result<Va
     ))
 }
 
-async fn gitops_sources(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: GitOpsSourcesArgs = serde_json::from_value(arguments)?;
-    let response = client.gitops_list(args.include_disabled).await?;
-    Ok(envelope(
-        "sinex.gitops_sources",
-        &json!(args),
-        &json!({ "result": { "sources": response } }),
-    ))
-}
-
 async fn audit_trail(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: AuditTrailArgs = serde_json::from_value(arguments)?;
     let response = client.audit_get(&args.operation_id).await?;
@@ -2416,7 +2387,7 @@ async fn audit_trail(client: &GatewayClient, arguments: Value) -> Result<Value> 
 async fn coordination_instances(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: CoordinationInstancesArgs = serde_json::from_value(arguments)?;
     let response = client
-        .coordination_list_instances(args.node_type.clone())
+        .coordination_list_instances(args.module_kind.clone())
         .await?;
     Ok(envelope(
         "sinex.coordination_instances",
@@ -2428,7 +2399,7 @@ async fn coordination_instances(client: &GatewayClient, arguments: Value) -> Res
 async fn coordination_leader(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: CoordinationLeaderArgs = serde_json::from_value(arguments)?;
     let response = client
-        .coordination_get_leader(args.node_type.clone())
+        .coordination_get_leader(args.module_kind.clone())
         .await?;
     Ok(envelope(
         "sinex.coordination_leader",
@@ -2487,24 +2458,24 @@ fn reject_non_empty_args(tool: &str, arguments: &Value) -> Result<()> {
     }
 }
 
-fn filter_readiness_by_source_unit(result: &mut Value, source_unit_id: &str) {
+fn filter_readiness_by_source(result: &mut Value, source_id: &str) {
     if let Some(sources) = result.get_mut("sources").and_then(Value::as_array_mut) {
-        sources.retain(|source| source_unit_matches(source, source_unit_id));
+        sources.retain(|source| source_matches(source, source_id));
     }
 
     if let Some(readiness) = result.get_mut("readiness")
         && !readiness.is_null()
-        && !source_unit_matches(readiness, source_unit_id)
+        && !source_matches(readiness, source_id)
     {
         *readiness = Value::Null;
     }
 }
 
-fn source_unit_matches(source: &Value, source_unit_id: &str) -> bool {
+fn source_matches(source: &Value, source_id: &str) -> bool {
     source
-        .get("source_unit_id")
+        .get("source_id")
         .and_then(Value::as_str)
-        .is_some_and(|value| value == source_unit_id)
+        .is_some_and(|value| value == source_id)
 }
 
 fn strip_caveats(value: &mut Value) {

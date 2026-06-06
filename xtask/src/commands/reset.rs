@@ -171,7 +171,13 @@ impl XtaskCommand for ResetCommand {
 
         // ── Test temp dirs ───────────────────────────────────────────────────
         if all || self.test_tmp {
+            let killed = reset_stale_test_postgres(verbose)?;
             let removed = reset_test_tmp(verbose)?;
+            if killed == 1 {
+                actions.push("stale test Postgres process killed");
+            } else if killed > 1 {
+                actions.push("stale test Postgres processes killed");
+            }
             if removed {
                 actions.push("stale test temp dirs removed");
             } else {
@@ -493,6 +499,146 @@ struct BuildProcessProbe {
 }
 
 const STALE_BUILD_PROCESS_MIN_AGE_SECS: u64 = 30 * 60;
+const STALE_TEST_POSTGRES_MIN_AGE_SECS: u64 = 30 * 60;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StaleTestPostgresProcess {
+    pid: u32,
+    ppid: u32,
+    age_secs: u64,
+    data_dir: std::path::PathBuf,
+    command: String,
+}
+
+fn reset_stale_test_postgres(verbose: bool) -> Result<usize> {
+    let candidates = stale_test_postgres_processes_for_reset(STALE_TEST_POSTGRES_MIN_AGE_SECS);
+
+    let mut killed = 0_usize;
+    for candidate in candidates {
+        if verbose {
+            println!(
+                "  killing stale test Postgres pid={} ppid={} age={}s data_dir={}: {}",
+                candidate.pid,
+                candidate.ppid,
+                candidate.age_secs,
+                candidate.data_dir.display(),
+                truncate_command_for_reset(&candidate.command, 160)
+            );
+        }
+        kill_process_for_reset(candidate.pid)?;
+        killed += 1;
+        if let Some(root) = candidate.data_dir.parent() {
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
+    Ok(killed)
+}
+
+#[cfg(target_os = "linux")]
+fn stale_test_postgres_processes_for_reset(min_age_secs: u64) -> Vec<StaleTestPostgresProcess> {
+    let uptime_secs = linux_uptime_secs().unwrap_or(0);
+    let clock_ticks = linux_clock_ticks_per_second();
+    let mut processes = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return processes;
+    };
+    let self_pid = std::process::id();
+
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == self_pid {
+            continue;
+        }
+
+        let Some((ppid, start_ticks)) = read_linux_proc_stat_for_reset(pid) else {
+            continue;
+        };
+        let Some(command) = read_linux_proc_cmdline_for_reset(pid) else {
+            continue;
+        };
+        let parent_command = read_linux_proc_cmdline_for_reset(ppid);
+        let start_secs = start_ticks / clock_ticks.max(1);
+        let age_secs = uptime_secs.saturating_sub(start_secs);
+        let probe = BuildProcessProbe {
+            pid,
+            ppid,
+            age_secs,
+            command,
+            parent_command,
+        };
+        if let Some(process) = classify_stale_test_postgres_process(&probe, min_age_secs) {
+            processes.push(process);
+        }
+    }
+
+    processes
+}
+
+#[cfg(not(target_os = "linux"))]
+fn stale_test_postgres_processes_for_reset(_min_age_secs: u64) -> Vec<StaleTestPostgresProcess> {
+    Vec::new()
+}
+
+fn classify_stale_test_postgres_process(
+    probe: &BuildProcessProbe,
+    min_age_secs: u64,
+) -> Option<StaleTestPostgresProcess> {
+    if probe.age_secs < min_age_secs {
+        return None;
+    }
+    if !orphaned_build_parent_for_reset(probe.ppid, probe.parent_command.as_deref()) {
+        return None;
+    }
+    if !postgres_command_for_reset(&probe.command) {
+        return None;
+    }
+    let data_dir = postgres_data_dir_from_command(&probe.command)?;
+    if !is_sinex_test_postgres_data_dir(&data_dir) {
+        return None;
+    }
+
+    Some(StaleTestPostgresProcess {
+        pid: probe.pid,
+        ppid: probe.ppid,
+        age_secs: probe.age_secs,
+        data_dir,
+        command: probe.command.clone(),
+    })
+}
+
+fn postgres_command_for_reset(command: &str) -> bool {
+    let argv0 = command.split_whitespace().next().unwrap_or_default();
+    let executable = std::path::Path::new(argv0)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(argv0)
+        .to_ascii_lowercase();
+    executable == "postgres" || executable == ".postgres-wrapped"
+}
+
+fn postgres_data_dir_from_command(command: &str) -> Option<std::path::PathBuf> {
+    let mut parts = command.split_whitespace();
+    while let Some(part) = parts.next() {
+        if part == "-D" {
+            return parts.next().map(std::path::PathBuf::from);
+        }
+    }
+    None
+}
+
+fn is_sinex_test_postgres_data_dir(path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    path.contains("/dev/shm/sinex-test-")
+        && path.contains("/xtask-sqlx.")
+        && path.ends_with("/pgdata")
+}
 
 fn reset_stale_build_processes(verbose: bool) -> Result<usize> {
     let target_dirs = target_dirs_for_reset(
@@ -909,6 +1055,68 @@ mod tests {
             3492,
             Some("cargo check -p xtask")
         ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_stale_test_postgres_classifier_accepts_orphaned_test_cluster() -> TestResult<()> {
+        let probe = BuildProcessProbe {
+            pid: 42,
+            ppid: 99,
+            age_secs: STALE_TEST_POSTGRES_MIN_AGE_SECS,
+            command: "/nix/store/postgresql/bin/postgres -D /dev/shm/sinex-test-sinity-hash/xtask-sqlx.ABCD/pgdata".to_string(),
+            parent_command: Some("/nix/store/systemd/lib/systemd/systemd --user".to_string()),
+        };
+
+        let classified =
+            classify_stale_test_postgres_process(&probe, STALE_TEST_POSTGRES_MIN_AGE_SECS);
+
+        assert_eq!(
+            classified,
+            Some(StaleTestPostgresProcess {
+                pid: 42,
+                ppid: 99,
+                age_secs: STALE_TEST_POSTGRES_MIN_AGE_SECS,
+                data_dir: std::path::PathBuf::from(
+                    "/dev/shm/sinex-test-sinity-hash/xtask-sqlx.ABCD/pgdata"
+                ),
+                command: probe.command.clone(),
+            })
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_stale_test_postgres_classifier_rejects_checkout_dev_postgres() -> TestResult<()> {
+        let probe = BuildProcessProbe {
+            pid: 42,
+            ppid: 99,
+            age_secs: STALE_TEST_POSTGRES_MIN_AGE_SECS,
+            command: "/nix/store/postgresql/bin/postgres -D /var/cache/sinex/sinity/hash/dev-state/data/postgres".to_string(),
+            parent_command: Some("/nix/store/systemd/lib/systemd/systemd --user".to_string()),
+        };
+
+        assert!(
+            classify_stale_test_postgres_process(&probe, STALE_TEST_POSTGRES_MIN_AGE_SECS)
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_stale_test_postgres_classifier_rejects_live_parent() -> TestResult<()> {
+        let probe = BuildProcessProbe {
+            pid: 42,
+            ppid: 99,
+            age_secs: STALE_TEST_POSTGRES_MIN_AGE_SECS,
+            command: "/nix/store/postgresql/bin/postgres -D /dev/shm/sinex-test-sinity-hash/xtask-sqlx.ABCD/pgdata".to_string(),
+            parent_command: Some("xtask test -p xtask".to_string()),
+        };
+
+        assert!(
+            classify_stale_test_postgres_process(&probe, STALE_TEST_POSTGRES_MIN_AGE_SECS)
+                .is_none()
+        );
         Ok(())
     }
 

@@ -3,7 +3,6 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
-use sinexd::api::handlers::handle_audit_get as handle_audit_get_typed;
 use sinex_primitives::Id;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::OperationStatus;
@@ -14,6 +13,7 @@ use sinex_primitives::rpc::audit::{
     AuditGetRequest, AuditGetResponse, AuditTrail, OperationRecord,
 };
 use sinex_primitives::rpc::lifecycle::LifecycleOperationSummary;
+use sinexd::api::handlers::handle_audit_get as handle_audit_get_typed;
 use xtask::sandbox::prelude::*;
 
 async fn handle_audit_get(

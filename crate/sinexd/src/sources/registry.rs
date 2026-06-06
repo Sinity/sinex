@@ -1,52 +1,52 @@
-//! Source-unit registry — validates and enumerates source units from the
-//! compile-time [`SourceUnitDescriptor`] inventory.
+//! Source registry — validates and enumerates source contracts from the
+//! compile-time [`SourceContract`] inventory.
 //!
-//! The registry wraps [`sinex_primitives::proof::all_source_units`] to provide
+//! The registry wraps [`sinex_primitives::source_contracts::all_source_contracts`] to provide
 //! a stable lookup surface. At link time, every crate that calls
-//! [`register_source_unit!`] contributes its descriptors to the inventory.
+//! [`register_source_contract!`] contributes its descriptors to the inventory.
 
-use sinex_primitives::parser::SourceUnitId;
-use sinex_primitives::proof::{self, SourceUnitDescriptor};
+use sinex_primitives::parser::SourceId;
+use sinex_primitives::source_contracts::{self, SourceContract};
 
-/// Registry of source-unit descriptors loaded from the compile-time inventory.
+/// Registry of source contracts loaded from the compile-time inventory.
 ///
 /// This is a lightweight wrapper over the global [`inventory`]-based descriptor
 /// collection. It is cheap to construct and does not allocate.
 #[derive(Debug, Default)]
-pub struct SourceUnitRegistry;
+pub struct SourceContractRegistry;
 
-impl SourceUnitRegistry {
+impl SourceContractRegistry {
     /// Create a registry from the global compile-time descriptor inventory.
     #[must_use]
     pub fn from_inventory() -> Self {
         Self
     }
 
-    /// Find a source-unit descriptor by its `id`.
+    /// Find a source contract by its `id`.
     #[must_use]
-    pub fn find(&self, id: &SourceUnitId) -> Option<&'static SourceUnitDescriptor> {
-        proof::find_source_unit(id)
+    pub fn find(&self, id: &SourceId) -> Option<&'static SourceContract> {
+        source_contracts::find_source_contract(id)
     }
 
-    /// Validate that a source-unit id is registered.
+    /// Validate that a source id is registered.
     ///
-    /// Returns the descriptor on success, or an error message listing available
-    /// source units on failure.
+    /// Returns the contract on success, or an error message listing available
+    /// source contracts on failure.
     ///
     /// # Errors
     ///
     /// Returns an error string if `id` is not found in the inventory.
-    pub fn validate(&self, id: &SourceUnitId) -> Result<&'static SourceUnitDescriptor, String> {
+    pub fn validate(&self, id: &SourceId) -> Result<&'static SourceContract, String> {
         self.find(id).ok_or_else(|| {
             let available = self.list_ids();
             if available.is_empty() {
                 format!(
-                    "source unit '{id}' not found in inventory. \
-                     No source units are registered in this binary."
+                    "source '{id}' not found in inventory. \
+                     No source contracts are registered in this binary."
                 )
             } else {
                 format!(
-                    "source unit '{id}' not found in inventory. \
+                    "source '{id}' not found in inventory. \
                      Available: {}",
                     available.join(", ")
                 )
@@ -54,16 +54,16 @@ impl SourceUnitRegistry {
         })
     }
 
-    /// List all registered source-unit descriptors.
+    /// List all registered source contracts.
     #[must_use]
-    pub fn list(&self) -> Vec<&'static SourceUnitDescriptor> {
-        proof::all_source_units().collect()
+    pub fn list(&self) -> Vec<&'static SourceContract> {
+        source_contracts::all_source_contracts().collect()
     }
 
-    /// List the ids of all registered source units.
+    /// List the ids of all registered source contracts.
     #[must_use]
     pub fn list_ids(&self) -> Vec<&'static str> {
-        proof::all_source_units()
+        source_contracts::all_source_contracts()
             .map(|descriptor| descriptor.id)
             .collect()
     }

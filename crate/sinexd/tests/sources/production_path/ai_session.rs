@@ -1,6 +1,6 @@
 //! Production-path obligation tests for AI session exports.
 //!
-//! Source units covered:
+//! Source contracts covered:
 //! - `ai-session-claude`  (static JSON export + `ClaudeSessionParser`)
 //! - `ai-session-chatgpt` (static JSON export + `ChatGptSessionParser`)
 

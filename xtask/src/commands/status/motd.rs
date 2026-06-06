@@ -1,7 +1,7 @@
 use super::output::{ServiceRunStatus, SummaryData, SummaryOutput};
 use super::{format_age, redact_runtime_target_url, runtime_target_kind_label};
 use crate::history::{InvocationStatus, VelocityTrend};
-use crate::runtime_metrics::IngestdStatus;
+use crate::runtime_metrics::EventEngineStatus;
 use console::style;
 
 pub(super) fn render(output: &SummaryOutput, data: &SummaryData) {
@@ -472,11 +472,11 @@ impl<'a> MotdRenderer<'a> {
             .iter()
             .any(|warning| warning.contains("batch latency is high"));
 
-        let status = match metrics.ingestd_status {
-            IngestdStatus::Healthy => style("ingestd ok").green().to_string(),
-            IngestdStatus::Stale => style("ingestd stale").yellow().to_string(),
-            IngestdStatus::Down => style("ingestd down").red().to_string(),
-            IngestdStatus::Unknown => style("ingestd unknown").dim().to_string(),
+        let status = match metrics.event_engine_status {
+            EventEngineStatus::Healthy => style("event_engine ok").green().to_string(),
+            EventEngineStatus::Stale => style("event_engine stale").yellow().to_string(),
+            EventEngineStatus::Down => style("event_engine down").red().to_string(),
+            EventEngineStatus::Unknown => style("event_engine unknown").dim().to_string(),
         };
 
         let lag = metrics
@@ -530,11 +530,11 @@ impl<'a> MotdRenderer<'a> {
             .last_heartbeat_age_secs
             .map(|secs| {
                 let s = format!("heartbeat {secs}s ago");
-                if matches!(metrics.ingestd_status, IngestdStatus::Healthy) {
+                if matches!(metrics.event_engine_status, EventEngineStatus::Healthy) {
                     style(s).green().to_string()
-                } else if matches!(metrics.ingestd_status, IngestdStatus::Stale) {
+                } else if matches!(metrics.event_engine_status, EventEngineStatus::Stale) {
                     style(s).yellow().to_string()
-                } else if matches!(metrics.ingestd_status, IngestdStatus::Down) {
+                } else if matches!(metrics.event_engine_status, EventEngineStatus::Down) {
                     style(s).red().to_string()
                 } else {
                     style(s).dim().to_string()

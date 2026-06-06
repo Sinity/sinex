@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Ingestd batch processing statistics\n\nEmitted after each batch is processed by the `JetStream` consumer.\nCaptures throughput, latency, and schema validation coverage data for batch processing.",
+  "description": "EventEngine batch processing statistics\n\nEmitted after each batch is processed by the `JetStream` consumer.\nCaptures throughput, latency, and schema validation coverage data for batch processing.",
   "properties": {
     "batch_size": {
       "description": "Number of events in this batch",

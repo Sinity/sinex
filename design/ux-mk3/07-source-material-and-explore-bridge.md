@@ -11,7 +11,7 @@ A material card should show:
 - format and shape
 - size/hash
 - first/last observed range
-- parser/source-unit binding
+- parser/source binding
 - timing quality
 - privacy tier and sampling policy
 - natural key/dedup status
@@ -40,10 +40,12 @@ A material card should show:
 The target `explore inspect/propose/simulate/promote` workbench should not auto-install knowledge. It should make candidate interpretation auditable:
 
 1. Inspect material shape and timestamps.
-2. Propose parser/source-unit mapping.
+2. Propose parser/source mapping.
 3. Simulate events into a sandbox result.
 4. Review event previews, anchors, privacy, dedup, timing quality, and drift risk.
 5. Promote through normal authority/issue/PR/Nix flow.
 6. Record audit evidence.
 
-This is the UX version of the staged-source parser substrate. It should respect the architecture's distinction between source material, input-shape adapter, parser, source unit, runtime topology, and replay.
+This is the UX version of the staged-source parser substrate. It should respect
+the architecture's distinction between source material, input-shape adapter,
+parser, source contract/binding, runtime topology, and replay.

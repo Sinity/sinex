@@ -27,8 +27,8 @@
 //!
 //! Ref: `.agent/scratch/071-issue-331-entity-extractor-spec.md`.
 
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, TransducerNodeAdapter};
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, TransducerAdapter};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Transducer};
 use regex::Regex;
 use sinex_primitives::domain::EntityTypeName;
 use sinex_primitives::events::payloads::EntityExtractedPayload;
@@ -49,7 +49,7 @@ static COMMAND_PATTERN: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(||
 static EMAIL_PATTERN: LazyLock<Result<Regex, regex::Error>> =
     LazyLock::new(|| Regex::new("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"));
 
-// ── Node ───────────────────────────────────────────────────────────────
+// ── RuntimeModule ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]
 pub struct EntityExtractor;
@@ -79,7 +79,7 @@ impl Transducer for EntityExtractor {
         _state: &mut Self::State,
         input: serde_json::Value,
         context: &AutomatonContext,
-    ) -> Result<Option<DerivedOutput<EntityExtractedPayload>>, NodeLogicError> {
+    ) -> Result<Option<DerivedOutput<EntityExtractedPayload>>, AutomatonLogicError> {
         // Extract text fields from the input event.
         let text = extract_text_fields(&input);
 
@@ -207,56 +207,55 @@ fn find_first_entity(text: &str) -> Option<EntityExtractedPayload> {
 
 // ── Type alias ──────────────────────────────────────────────────────────
 
-pub type EntityExtractorNode = TransducerNodeAdapter<EntityExtractor>;
+pub type EntityExtractorRuntime = TransducerAdapter<EntityExtractor>;
 
-// ── Source-unit descriptor ─────────────────────────────────────────────
+// ── Source descriptor ─────────────────────────────────────────────
 
-use sinex_primitives::proof::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitDescriptor, SubjectRef,
+use sinex_primitives::source_contracts::{
+    CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
+    OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
+    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape,
+    SourceContract, SourceRuntimeBinding, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "entity-extractor",
         namespace: "derived",
         event_types: &[
             ("entity-extractor", "entity.extracted"),
         ],
-        privacy_tier: SuPrivacyTier::Sensitive,
-        horizons: &[SuHorizon::Continuous],
-        retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
-        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
-            "(source_unit, parent_event_id, entity_type, raw_name)",
+        privacy_tier: ContractPrivacyTier::Sensitive,
+        horizons: &[ContractHorizon::Continuous],
+        retention: ContractRetentionPolicy::Forever,
+        occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
+            "(source, parent_event_id, entity_type, raw_name)",
         ),
         access_policy: "event_stream_read",
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:entity-extractor"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:entity-extractor"),
         "entity-extractor",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("entity.extracted")
     .privacy_context("inherits_from_parents")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
-    .source_unit_id("entity-extractor")
-    .runner_pack("process")
-    .checkpoint_family(SuCheckpointFamily::AppendStream)
-    .runtime_shape(SuRuntimeShape::Continuous)
+    .source_id("entity-extractor")
+    .runner_pack("sinexd")
+    .checkpoint_family(ContractCheckpointFamily::AppendStream)
+    .runtime_shape(ContractRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
-    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
+    .implementation_mode("in_process:sinexd")
+    .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }
 

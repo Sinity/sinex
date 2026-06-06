@@ -3,14 +3,14 @@
 # Location: ~/.config/sinexctl/config.toml (Linux/macOS) or %APPDATA%\sinex\sinexctl\config.toml (Windows)
 
 # Runtime connection/auth/TLS settings come from CLI flags or env vars:
-#   SINEX_RPC_URL
-#   SINEX_RPC_TOKEN
-#   SINEX_RPC_TOKEN_FILE
-#   SINEX_RPC_CA_CERT
-#   SINEX_RPC_CLIENT_CERT
-#   SINEX_RPC_CLIENT_KEY
-#   SINEX_RPC_INSECURE
-#   SINEX_RPC_TIMEOUT_SECS
+#   SINEX_API_URL
+#   SINEX_API_TOKEN
+#   SINEX_API_TOKEN_FILE
+#   SINEX_API_CA_CERT
+#   SINEX_API_CLIENT_CERT
+#   SINEX_API_CLIENT_KEY
+#   SINEX_API_INSECURE
+#   SINEX_API_TIMEOUT_SECS
 
 # Default output format: "table", "json", or "yaml"
 default_format = "table"

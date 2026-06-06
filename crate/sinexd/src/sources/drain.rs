@@ -1,6 +1,6 @@
-//! Per-unit drain controller with material tracking and crash recovery.
+//! Per-source drain controller with material tracking and crash recovery.
 //!
-//! The [`SourceWorkerDrainController`] wraps the SDK's [`RuntimeDrainController`]
+//! The [`SourceDrainController`] wraps the runtime's [`RuntimeDrainController`]
 //! and adds:
 //!
 //! - **Active-work gating**: track in-flight work units; drain waits for them
@@ -11,10 +11,10 @@
 //! - **Gap evidence**: on restart after a crash, record what was in flight
 //!   so the operator can assess data loss.
 //!
-//! The drain controller is instantiated per source unit (not process-global),
+//! The drain controller is instantiated per source (not process-global),
 //! giving each unit independent drain lifecycle management.
 
-use crate::node_sdk::runtime::stream::RuntimeDrainController;
+use crate::runtime::stream::RuntimeDrainController;
 use sinex_primitives::temporal::Timestamp;
 use std::fmt;
 use std::sync::Arc;
@@ -32,7 +32,7 @@ use tracing::{info, warn};
 pub enum DrainPhase {
     /// Normal operation; not draining.
     Idle,
-    /// Drain has been requested; source unit should stop accepting new input.
+    /// Drain has been requested; source should stop accepting new input.
     StoppingAccept,
     /// Waiting for active work to complete.
     FinishingActive,
@@ -65,11 +65,11 @@ impl fmt::Display for DrainPhase {
 
 // ── Gap evidence ──────────────────────────────────────────────────────────
 
-/// Evidence that a source unit crashed and was restarted, recording the gap
+/// Evidence that a source crashed and was restarted, recording the gap
 /// between the last known state and the restart.
 #[derive(Debug, Clone)]
 pub struct GapEvidence {
-    /// The source unit that was restarted.
+    /// The source that was restarted.
     pub unit_id: String,
     /// When the crash likely happened (if known from drain state).
     pub crashed_at: Option<Timestamp>,
@@ -97,13 +97,13 @@ impl GapEvidence {
 
 // ── Drain controller ──────────────────────────────────────────────────────
 
-/// Per-unit drain controller with phased drain protocol and crash recovery
+/// Per-source drain controller with phased drain protocol and crash recovery.
 /// evidence.
 ///
-/// Each source unit in the source-worker host gets its own controller,
+/// Each source in the source host gets its own controller,
 /// providing independent drain lifecycle management.
-pub struct SourceWorkerDrainController {
-    /// The SDK-level drain signal (broadcast to all subscribers).
+pub struct SourceDrainController {
+    /// The runtime-level drain signal (broadcast to all subscribers).
     inner: Arc<RuntimeDrainController>,
     /// Whether drain has been requested (set once, never cleared).
     draining: AtomicBool,
@@ -116,8 +116,8 @@ pub struct SourceWorkerDrainController {
     active_work: AtomicUsize,
 }
 
-impl SourceWorkerDrainController {
-    /// Create a new per-unit drain controller.
+impl SourceDrainController {
+    /// Create a new per-source drain controller.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -131,7 +131,7 @@ impl SourceWorkerDrainController {
 
     // ── Accessors ──────────────────────────────────────────────────────
 
-    /// Access the underlying SDK drain controller for signaling subscribers.
+    /// Access the underlying runtime drain controller for signaling subscribers.
     #[must_use]
     pub fn inner(&self) -> &Arc<RuntimeDrainController> {
         &self.inner
@@ -244,7 +244,7 @@ impl SourceWorkerDrainController {
     }
 
     /// Transition to `FlushingIntents`. The actual flush is performed by
-    /// the SDK event batcher during shutdown — this phase signals intent.
+    /// the runtime event batcher during shutdown — this phase signals intent.
     pub async fn flush_intents(&self, _unit_id: &str) {
         let mut phase = self.phase.lock().await;
         *phase = DrainPhase::FlushingIntents;
@@ -273,13 +273,13 @@ impl SourceWorkerDrainController {
     }
 
     /// Transition to `SavingCheckpoint`. The actual save is performed by
-    /// `SourceUnitRuntime::shutdown` via `save_state(true)`.
+    /// `SourceDriverRuntime::shutdown` via `save_state(true)`.
     pub async fn save_checkpoint(&self, _unit_id: &str) {
         let mut phase = self.phase.lock().await;
         *phase = DrainPhase::SavingCheckpoint;
     }
 
-    /// Mark the drain sequence as complete. The source unit can now exit.
+    /// Mark the drain sequence as complete. The source can now exit.
     pub async fn mark_drained(&self, unit_id: &str) {
         let mut phase = self.phase.lock().await;
         *phase = DrainPhase::Drained;
@@ -316,15 +316,15 @@ impl SourceWorkerDrainController {
     }
 }
 
-impl Default for SourceWorkerDrainController {
+impl Default for SourceDrainController {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl fmt::Debug for SourceWorkerDrainController {
+impl fmt::Debug for SourceDrainController {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SourceWorkerDrainController")
+        f.debug_struct("SourceDrainController")
             .field("draining", &self.draining.load(Ordering::Acquire))
             .field("active_work", &self.active_work.load(Ordering::Acquire))
             .finish_non_exhaustive()
@@ -335,11 +335,11 @@ impl fmt::Debug for SourceWorkerDrainController {
 
 /// RAII guard that decrements the active work counter on drop.
 ///
-/// Created by [`SourceWorkerDrainController::work_guard`]. The guard holds
+/// Created by [`SourceDrainController::work_guard`]. The guard holds
 /// a shared reference to the controller — it does not own or lock anything.
 /// The only effect is the atomic counter decrement on drop.
 pub struct ActiveWorkGuard<'a> {
-    controller: &'a SourceWorkerDrainController,
+    controller: &'a SourceDrainController,
 }
 
 impl Drop for ActiveWorkGuard<'_> {
@@ -356,7 +356,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_drain_phases_transition_in_order() -> xtask::sandbox::TestResult<()> {
-        let controller = SourceWorkerDrainController::new();
+        let controller = SourceDrainController::new();
         assert_eq!(controller.current_phase().await, DrainPhase::Idle);
 
         controller.request_drain("test-unit").await;
@@ -401,7 +401,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_work_guard_increments_and_decrements_counter() -> xtask::sandbox::TestResult<()> {
-        let controller = SourceWorkerDrainController::new();
+        let controller = SourceDrainController::new();
         assert_eq!(controller.active_work_count(), 0);
 
         {
@@ -417,7 +417,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_drain_waits_for_active_work() -> xtask::sandbox::TestResult<()> {
-        let controller = SourceWorkerDrainController::new();
+        let controller = SourceDrainController::new();
         controller.enter_work();
         assert_eq!(controller.active_work_count(), 1);
 
@@ -440,7 +440,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_double_drain_is_idempotent() -> xtask::sandbox::TestResult<()> {
-        let controller = SourceWorkerDrainController::new();
+        let controller = SourceDrainController::new();
         controller.request_drain("test-unit").await;
         assert_eq!(controller.current_phase().await, DrainPhase::StoppingAccept);
 
@@ -453,7 +453,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_gap_evidence_on_restart() -> xtask::sandbox::TestResult<()> {
-        let controller = SourceWorkerDrainController::new();
+        let controller = SourceDrainController::new();
         controller.request_drain("test-unit").await;
         // Simulate crash mid-drain
         let evidence = controller.record_gap_evidence("test-unit").await;
@@ -468,7 +468,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_clean_start_evidence() -> xtask::sandbox::TestResult<()> {
-        let controller = SourceWorkerDrainController::new();
+        let controller = SourceDrainController::new();
         let evidence = controller.clean_start_evidence("test-unit");
         assert_eq!(evidence.unit_id, "test-unit");
         assert_eq!(evidence.drain_phase_at_crash, None);

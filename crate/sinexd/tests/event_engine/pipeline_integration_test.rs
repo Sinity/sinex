@@ -192,8 +192,8 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
             "ts_orig should be populated"
         );
         assert!(
-            stored_event.source_run_id.is_none(),
-            "external pipeline events should not claim a managed node run"
+            stored_event.module_run_id.is_none(),
+            "external pipeline events should not claim a managed module run"
         );
 
         let event_id_display = stored_event
@@ -420,7 +420,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
     }
 
     // Phase 2: Simulate processing pipeline transformations
-    // In a real system, this would be done by automata/nodes
+    // In a real system, this would be done by automata.
     let mut transformed_event_ids = Vec::new();
 
     for raw_event_id in &raw_event_ids {

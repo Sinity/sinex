@@ -5,7 +5,7 @@ let
   recipients = [ user prime ethereal ];
 in {
   "secret/sinex-local-db.age".publicKeys           = recipients;
-  "secret/sinex-gateway-admin-token.age".publicKeys = recipients;
+  "secret/sinex-api-admin-token.age".publicKeys = recipients;
   "secret/sinex-remote-db.age".publicKeys           = recipients;
   "secret/sinex-remote-nats-ca.age".publicKeys      = recipients;
   "secret/sinex-remote-nats-cert.age".publicKeys    = recipients;

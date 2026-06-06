@@ -1,15 +1,15 @@
 //! Prelude module for convenient imports
 //!
 //! This module re-exports the most commonly used types and traits from the
-//! sinex-gateway crate for more ergonomic imports:
+//! sinexd crate for more ergonomic imports:
 //!
 //! ```rust
-//! use sinex_gateway::prelude::*;
+//! use sinexd::api::prelude::*;
 //!
 //! // Instead of:
-//! // use sinex_gateway::service_container::ServiceContainer;
+//! // use sinexd::api::service_container::ServiceContainer;
 //! // use sinex_db::replay::state_machine::{ReplayState, ReplayStateMachine};
-//! // use sinex_gateway::cascade_analyzer::{CascadeAnalysis, StreamingCascadeAnalyzer};
+//! // use sinexd::api::cascade_analyzer::{CascadeAnalysis, StreamingCascadeAnalyzer};
 //! ```
 
 // Service container

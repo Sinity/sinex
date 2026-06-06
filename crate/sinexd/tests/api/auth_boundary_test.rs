@@ -1,5 +1,5 @@
-use sinexd::api::{ServiceContainer, auth::Role, rpc_registry, rpc_server::RpcAuthContext};
 use sinex_primitives::temporal::Timestamp;
+use sinexd::api::{ServiceContainer, auth::Role, rpc_registry, rpc_server::RpcAuthContext};
 use xtask::sandbox::prelude::*;
 
 fn auth_with_role(role: Role) -> RpcAuthContext {

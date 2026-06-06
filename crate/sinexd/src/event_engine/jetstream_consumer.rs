@@ -4,7 +4,7 @@
 //!
 //! # Batch Atomicity Contract
 //!
-//! The ingestd consumer does NOT guarantee all-or-nothing atomicity for a NATS pull-batch.
+//! The event_engine consumer does NOT guarantee all-or-nothing atomicity for a NATS pull-batch.
 //! When persistence fails, the batch is split in half and each sub-batch is retried independently.
 //! This means a single pull-batch may result in partial persistence:
 //!
@@ -18,9 +18,9 @@
 //! The `BATCH_ATOMICITY_SCOPE` context field is attached to all related error diagnostics
 //! so operators can correlate partial-commit scenarios in logs.
 
-use crate::node_sdk::SelfObserver;
-use crate::node_sdk::heartbeat::HeartbeatCounterHandle;
-use crate::node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
+use crate::runtime::SelfObserver;
+use crate::runtime::heartbeat::HeartbeatCounterHandle;
+use crate::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use async_nats::jetstream::stream::DiscardPolicy;
 use async_nats::{Client as NatsClient, jetstream};
 use futures::future::{BoxFuture, join_all};
@@ -48,7 +48,7 @@ use tracing::{debug, error, info, instrument, warn};
 #[cfg(test)]
 use crate::event_engine::validator::ValidationResult;
 use crate::event_engine::{
-    IngestdResult, SinexError,
+    EventEngineResult, SinexError,
     admission::{
         AdmissionDecision, AdmissionRejection, AdmissionRejectionKind, AdmissionService,
         AdmittedEvent,
@@ -56,7 +56,7 @@ use crate::event_engine::{
     material_ready_set::MaterialReadySet,
     validator::IngestEventValidator,
 };
-use crate::node_sdk::ingestion_helpers::{LedgerEntry, LedgerReader, MaterialTiming};
+use crate::runtime::ingestion_helpers::{LedgerEntry, LedgerReader, MaterialTiming};
 use sinex_primitives::Id;
 use sinex_primitives::domain::SourceMaterialTimingInfoType;
 use sinex_primitives::events::Event;
@@ -65,9 +65,9 @@ use sinex_primitives::events::builder::Provenance;
 /// Confirmation message published to `prod.events.confirmations.<source>.<event_type>`.
 ///
 /// `event_id` is the **high-watermark** event id for this `(source, event_type)`
-/// kind — the latest event of this kind that ingestd has persisted. Per #1306,
+/// kind — the latest event of this kind that event_engine has persisted. Per #1306,
 /// the implied semantics is that all earlier events of the same kind are also
-/// confirmed (publish order is monotonic per kind: ingestd publishes only when
+/// confirmed (publish order is monotonic per kind: event_engine publishes only when
 /// a fresh max `event_id` is seen for that kind within or across batches).
 ///
 /// Downstream readers that watch confirmations should advance their per-kind
@@ -88,9 +88,7 @@ struct ConfirmationRetryRequest {
     /// Per #1306: confirmations are published per `(source, event_type)`
     /// watermark, not per event id. The retry path needs the kind to
     /// reconstruct the correct subject.
-    #[serde(default)]
     source: String,
-    #[serde(default)]
     event_type: String,
 }
 
@@ -188,9 +186,9 @@ fn is_source_material_fk_constraint_name(value: &str) -> bool {
             .is_some_and(|prefix| prefix.ends_with('_'))
 }
 
-/// Hard guard for node-supplied event IDs.
+/// Hard guard for producer-supplied event IDs.
 ///
-/// All node-minted event IDs must be RFC4122 `UUIDv7`. `ingestd` rejects every ID
+/// All producer-minted event IDs must be RFC4122 `UUIDv7`. `event_engine` rejects every ID
 /// that does not meet this requirement before it reaches the hypertable partition key.
 #[cfg(test)]
 fn is_uuid_v7(value: &Uuid) -> bool {
@@ -220,7 +218,7 @@ fn batch_depends_only_on_source_material_fk(batch: &[&PreparedEvent]) -> bool {
     batch.iter().all(|prepared| {
         matches!(prepared.event.provenance, Provenance::Material { .. })
             && prepared.event.payload_schema_id.is_none()
-            && prepared.event.source_run_id.is_none()
+            && prepared.event.module_run_id.is_none()
     })
 }
 
@@ -421,12 +419,12 @@ impl JetStreamConsumer {
     fn log_observer_error(
         stats: &ConsumerStats,
         metric: &'static str,
-        error: &crate::node_sdk::SelfObservationError,
+        error: &crate::runtime::SelfObservationError,
     ) {
         stats
             .telemetry_publish_failures
             .fetch_add(1, Ordering::Relaxed);
-        warn!(metric, error = %error, "Failed to emit ingestd telemetry");
+        warn!(metric, error = %error, "Failed to emit event_engine telemetry");
     }
 
     fn is_fatal_batch_processing_error(err: &SinexError) -> bool {
@@ -477,7 +475,7 @@ impl JetStreamConsumer {
     fn require_inserted_ids(
         inserted_ids: Option<Vec<Uuid>>,
         attempted_rows: usize,
-    ) -> IngestdResult<Vec<Uuid>> {
+    ) -> EventEngineResult<Vec<Uuid>> {
         inserted_ids.ok_or_else(|| {
             SinexError::invalid_state(format!(
                 "Event repository omitted inserted_ids for a non-empty stream batch of {attempted_rows} row(s)"
@@ -535,7 +533,7 @@ impl JetStreamConsumer {
     }
 
     /// Load DB-backed privacy policy and attach it to this consumer.
-    pub async fn with_policy_engine(mut self) -> IngestdResult<Self> {
+    pub async fn with_policy_engine(mut self) -> EventEngineResult<Self> {
         let engine = crate::event_engine::policy::PolicyEngine::load(self.pool.clone())
             .await
             .map_err(|e| {
@@ -666,7 +664,7 @@ impl JetStreamConsumer {
     }
 
     /// Bootstrap all required `JetStream` streams
-    async fn bootstrap_streams(&self) -> IngestdResult<()> {
+    async fn bootstrap_streams(&self) -> EventEngineResult<()> {
         // When SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true, the NixOS module owns
         // stream configuration. Skip bootstrap so the two sources of truth don't
         // conflict on stream shape or subject overlap.
@@ -777,7 +775,7 @@ impl JetStreamConsumer {
                 SinexError::network("Failed to create processing-failures stream").with_source(e)
             })?;
 
-        // Derived invalidation stream — scope invalidation signals for derived nodes.
+        // Derived invalidation stream — scope invalidation signals for automatons.
         // Short retention since invalidations are only relevant for running automata.
         self.js
             .create_or_update_stream(jetstream::stream::Config {
@@ -797,7 +795,7 @@ impl JetStreamConsumer {
         Ok(())
     }
 
-    pub async fn run(self) -> IngestdResult<()> {
+    pub async fn run(self) -> EventEngineResult<()> {
         self.run_with_ready_signal(None).await
     }
 
@@ -810,7 +808,7 @@ impl JetStreamConsumer {
     pub async fn run_with_ready_signal(
         self,
         ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         info!("Starting JetStream consumer");
 
         // Bootstrap streams
@@ -946,7 +944,7 @@ impl JetStreamConsumer {
             ))
         });
         let mut catching_up = catch_up_semaphore.is_some();
-        let mut batch_future: BoxFuture<'_, IngestdResult<()>> = Box::pin(
+        let mut batch_future: BoxFuture<'_, EventEngineResult<()>> = Box::pin(
             Self::process_batch_with_semaphore(&self, &consumer, &catch_up_semaphore, catching_up),
         );
 
@@ -960,7 +958,7 @@ impl JetStreamConsumer {
                         let failed = self.stats.events_failed.load(Ordering::Relaxed);
                         let deferred = self.stats.events_deferred.load(Ordering::Relaxed);
                         let dlq_routed = self.stats.dlq_routed.load(Ordering::Relaxed);
-                        if let Err(e) = observer.emit_node_processing_stats(
+                        if let Err(e) = observer.emit_source_processing_stats(
                             "jetstream-consumer",
                             processed,
                             deferred + dlq_routed, // events_dropped = deferred + routed to DLQ
@@ -971,18 +969,18 @@ impl JetStreamConsumer {
                             warn!("Failed to emit processing stats: {}", e);
                         }
 
-                        // Emit operational health counters not covered by emit_node_processing_stats.
+                        // Emit operational health counters not covered by source processing stats.
                         // These are monotonic cumulative totals emitted as gauges (snapshot-at-tick).
                         let operational_gauges: &[(&'static str, u64)] = &[
-                            ("ingestd.tombstoned_events_rejected_total", self.stats.tombstoned_events_rejected.load(Ordering::Relaxed)),
-                            ("ingestd.confirmation_failures_total", self.stats.confirmation_failures.load(Ordering::Relaxed)),
-                            ("ingestd.confirmation_retries_enqueued_total", self.stats.confirmation_retries_enqueued.load(Ordering::Relaxed)),
-                            ("ingestd.confirmation_retry_failures_total", self.stats.confirmation_retry_failures.load(Ordering::Relaxed)),
-                            ("ingestd.confirmation_durability_gaps_total", self.stats.confirmation_durability_gaps.load(Ordering::Relaxed)),
-                            ("ingestd.dlq_publish_failures_total", self.stats.dlq_publish_failures.load(Ordering::Relaxed)),
-                            ("ingestd.nack_failures_total", self.stats.nack_failures.load(Ordering::Relaxed)),
-                            ("ingestd.nats_errors_total", self.stats.nats_errors.load(Ordering::Relaxed)),
-                            ("ingestd.telemetry_publish_failures_total", self.stats.telemetry_publish_failures.load(Ordering::Relaxed)),
+                            ("event_engine.tombstoned_events_rejected_total", self.stats.tombstoned_events_rejected.load(Ordering::Relaxed)),
+                            ("event_engine.confirmation_failures_total", self.stats.confirmation_failures.load(Ordering::Relaxed)),
+                            ("event_engine.confirmation_retries_enqueued_total", self.stats.confirmation_retries_enqueued.load(Ordering::Relaxed)),
+                            ("event_engine.confirmation_retry_failures_total", self.stats.confirmation_retry_failures.load(Ordering::Relaxed)),
+                            ("event_engine.confirmation_durability_gaps_total", self.stats.confirmation_durability_gaps.load(Ordering::Relaxed)),
+                            ("event_engine.dlq_publish_failures_total", self.stats.dlq_publish_failures.load(Ordering::Relaxed)),
+                            ("event_engine.nack_failures_total", self.stats.nack_failures.load(Ordering::Relaxed)),
+                            ("event_engine.nats_errors_total", self.stats.nats_errors.load(Ordering::Relaxed)),
+                            ("event_engine.telemetry_publish_failures_total", self.stats.telemetry_publish_failures.load(Ordering::Relaxed)),
                         ];
                         for (metric, value) in operational_gauges {
                             self.emit_observer_gauge(metric, *value as f64, None).await;
@@ -1001,12 +999,12 @@ impl JetStreamConsumer {
                                 let mut labels = HashMap::new();
                                 labels.insert("consumer".to_string(), self.topology.consumer_durable.clone());
                                 self.emit_observer_gauge(
-                                    "ingestd.consumer.lag.pending",
+                                    "event_engine.consumer.lag.pending",
                                     info.num_pending as f64,
                                     Some(labels.clone()),
                                 ).await;
                                 self.emit_observer_gauge(
-                                    "ingestd.consumer.lag.ack_pending",
+                                    "event_engine.consumer.lag.ack_pending",
                                     info.num_ack_pending as f64,
                                     Some(labels),
                                 ).await;
@@ -1026,7 +1024,7 @@ impl JetStreamConsumer {
                     if let Err(e) = self.process_confirmation_retry_batch(&confirmation_retry_consumer).await {
                         error!(
                             target: "sinex_metrics",
-                            metric = "ingestd.confirmation_retry_failures_total",
+                            metric = "event_engine.confirmation_retry_failures_total",
                             error = %e,
                             "Confirmation retry processing error"
                         );
@@ -1037,7 +1035,7 @@ impl JetStreamConsumer {
                         if Self::is_fatal_batch_processing_error(&e) {
                             error!(
                                 target: "sinex_metrics",
-                                metric = "ingestd.fatal_batch_errors_total",
+                                metric = "event_engine.fatal_batch_errors_total",
                                 error = %e,
                                 "Fatal batch processing error"
                             );
@@ -1045,7 +1043,7 @@ impl JetStreamConsumer {
                         }
                         error!(
                             target: "sinex_metrics",
-                            metric = "ingestd.batch_errors_total",
+                            metric = "event_engine.batch_errors_total",
                             error = %e,
                             "Batch processing error"
                         );
@@ -1072,7 +1070,7 @@ impl JetStreamConsumer {
         consumer: &jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
         catch_up_semaphore: &Option<Arc<tokio::sync::Semaphore>>,
         catching_up: bool,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         if let (true, Some(sem)) = (catching_up, catch_up_semaphore.as_ref()) {
             let _permit = sem.acquire().await;
             this.process_batch(consumer).await?;
@@ -1086,7 +1084,7 @@ impl JetStreamConsumer {
     async fn process_batch(
         &self,
         consumer: &jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         let batch_start = std::time::Instant::now();
         let mut batch = Vec::new();
         let messages = pull_batch(
@@ -1144,7 +1142,7 @@ impl JetStreamConsumer {
             let suspicious_future_ts_orig =
                 self.stats.suspicious_future_ts_orig.load(Ordering::Relaxed);
             if let Err(error) = observer
-                .emit_ingestd_batch_stats(
+                .emit_event_engine_batch_stats(
                     batch_size,
                     fetch_to_ack_ms,
                     events_deferred,
@@ -1167,7 +1165,7 @@ impl JetStreamConsumer {
                 )
                 .await
             {
-                Self::log_observer_error(&self.stats, "ingestd.batch", &error);
+                Self::log_observer_error(&self.stats, "event_engine.batch", &error);
             }
         }
 
@@ -1175,7 +1173,10 @@ impl JetStreamConsumer {
     }
 
     #[instrument(skip(self, msg))]
-    async fn prepare_events(&self, msg: jetstream::Message) -> IngestdResult<Vec<PreparedEvent>> {
+    async fn prepare_events(
+        &self,
+        msg: jetstream::Message,
+    ) -> EventEngineResult<Vec<PreparedEvent>> {
         let decisions = self.admission.admit_intent_bytes(&msg.payload).await?;
         let mut prepared = Vec::with_capacity(decisions.len());
 
@@ -1203,7 +1204,10 @@ impl JetStreamConsumer {
     }
 
     #[tracing::instrument(skip(self, batch), fields(batch_size = batch.len()))]
-    async fn persist_and_confirm_batch(&self, batch: &mut Vec<PreparedEvent>) -> IngestdResult<()> {
+    async fn persist_and_confirm_batch(
+        &self,
+        batch: &mut Vec<PreparedEvent>,
+    ) -> EventEngineResult<()> {
         // Pre-filter: defer events whose source material isn't registered yet.
         // This prevents FK violations without relying on database error handling.
         // We partition by index (not reference) so that ready events can be
@@ -1299,7 +1303,7 @@ impl JetStreamConsumer {
         &self,
         batch: &mut [PreparedEvent],
         ready_indices: &[usize],
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         // Collect distinct materials that actually need resolution.
         let mut needed: Vec<Uuid> = Vec::new();
         for &idx in ready_indices {
@@ -1399,7 +1403,7 @@ impl JetStreamConsumer {
     ///
     /// Atomicity is intentionally scoped to each successful persistence attempt,
     /// not to the original `JetStream` pull batch. If a non-retryable row poisons a
-    /// mixed batch, ingestd bisects the batch to isolate the poison row. Any sibling
+    /// mixed batch, event_engine bisects the batch to isolate the poison row. Any sibling
     /// sub-batch that already persisted keeps its commit and raw-message ACKs, while
     /// the isolated row is retried or routed to the DLQ on its own. Replay and
     /// lineage therefore reason at event granularity, not at raw pull-batch
@@ -1408,7 +1412,7 @@ impl JetStreamConsumer {
     async fn persist_and_confirm_prepared_batch(
         &self,
         batch: &[&PreparedEvent],
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         let mut pending_batches = vec![batch.to_vec()];
 
         while let Some(batch) = pending_batches.pop() {
@@ -1576,7 +1580,7 @@ impl JetStreamConsumer {
                                     Err(retry_err) => {
                                         error!(
                                             target: "sinex_metrics",
-                                            metric = "ingestd.confirmation_retry_failures_total",
+                                            metric = "event_engine.confirmation_retry_failures_total",
                                             source = %source,
                                             event_type = %event_type,
                                             watermark = %max_event_id,
@@ -1753,7 +1757,7 @@ impl JetStreamConsumer {
 
                     error!(
                         target: "sinex_metrics",
-                        metric = "ingestd.batch_persistence_failures_total",
+                        metric = "event_engine.batch_persistence_failures_total",
                         error = %e,
                         "Failed to persist batch"
                     );
@@ -1864,7 +1868,7 @@ impl JetStreamConsumer {
         &self,
         msg: &jetstream::Message,
         error: String,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         self.route_to_dlq_and_ack(msg, error).await?;
         self.stats
             .validation_failures
@@ -1873,7 +1877,7 @@ impl JetStreamConsumer {
     }
 
     async fn record_admission_rejection(&self, rejection: &AdmissionRejection) {
-        // Update legacy per-kind in-memory counters for backward compatibility.
+        // Keep operator-facing rejection counters in sync with admission decisions.
         match rejection.kind {
             AdmissionRejectionKind::PastTimestamp => {
                 self.stats
@@ -1932,7 +1936,7 @@ impl JetStreamConsumer {
 
         tracing::debug!(
             target: "sinex_metrics",
-            metric = "ingestd.admission_rejections_total",
+            metric = "event_engine.admission_rejections_total",
             kind = kind_label,
             "Event rejected by admission service"
         );
@@ -1943,10 +1947,14 @@ impl JetStreamConsumer {
                 kind_label.to_string(),
             )]));
             if let Err(error) = observer
-                .emit_counter("ingestd.admission_rejections_total", 1, labels)
+                .emit_counter("event_engine.admission_rejections_total", 1, labels)
                 .await
             {
-                Self::log_observer_error(&self.stats, "ingestd.admission_rejections_total", &error);
+                Self::log_observer_error(
+                    &self.stats,
+                    "event_engine.admission_rejections_total",
+                    &error,
+                );
             }
         }
     }
@@ -1956,7 +1964,7 @@ impl JetStreamConsumer {
         batch: &[&PreparedEvent],
         duplicate_event_ids: &[Uuid],
         tombstoned_event_ids: &[Uuid],
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         if duplicate_event_ids.is_empty() && tombstoned_event_ids.is_empty() {
             return Ok(());
         }
@@ -2140,7 +2148,7 @@ impl JetStreamConsumer {
         strict_mode: bool,
         source: &sinex_primitives::domain::EventSource,
         event_type: &sinex_primitives::domain::EventType,
-    ) -> IngestdResult<Option<Uuid>> {
+    ) -> EventEngineResult<Option<Uuid>> {
         match validation {
             ValidationResult::Valid { schema_id } => Ok(Some(schema_id)),
             ValidationResult::Skipped => Ok(None),
@@ -2249,7 +2257,7 @@ impl JetStreamConsumer {
         &self,
         msg: &jetstream::Message,
         err: &SinexError,
-    ) -> IngestdResult<bool> {
+    ) -> EventEngineResult<bool> {
         let delivery_attempt = msg
             .info()
             .map(|info| info.delivered)
@@ -2257,7 +2265,7 @@ impl JetStreamConsumer {
         Self::should_route_persistence_failure(self.route_db_errors_to_dlq, delivery_attempt, err)
     }
 
-    fn source_material_delivery_attempt(&self, msg: &jetstream::Message) -> IngestdResult<i64> {
+    fn source_material_delivery_attempt(&self, msg: &jetstream::Message) -> EventEngineResult<i64> {
         msg.info().map(|info| info.delivered).map_err(|error| {
             SinexError::processing(
                 "Failed to inspect JetStream delivery metadata for source-material readiness",
@@ -2271,7 +2279,7 @@ impl JetStreamConsumer {
         prepared: &PreparedEvent,
         material_id: Option<Uuid>,
         persistence_error: Option<&SinexError>,
-    ) -> IngestdResult<SourceMaterialSettlement> {
+    ) -> EventEngineResult<SourceMaterialSettlement> {
         let delivery_attempt = if self.route_db_errors_to_dlq {
             None
         } else {
@@ -2327,7 +2335,7 @@ impl JetStreamConsumer {
         route_db_errors_to_dlq: bool,
         delivery_attempt: std::result::Result<i64, String>,
         err: &SinexError,
-    ) -> IngestdResult<bool> {
+    ) -> EventEngineResult<bool> {
         if route_db_errors_to_dlq {
             return Ok(true);
         }
@@ -2350,7 +2358,7 @@ impl JetStreamConsumer {
         event_id: Uuid,
         error: impl std::fmt::Display,
     ) -> SinexError {
-        crate::node_sdk::error_helpers::nats_settlement_error(
+        crate::runtime::error_helpers::nats_settlement_error(
             operation,
             "",
             Some(event_id.to_string().as_str()),
@@ -2361,7 +2369,7 @@ impl JetStreamConsumer {
     fn collapse_settlement_errors(
         stage: &'static str,
         mut errors: Vec<(Uuid, SinexError)>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         if errors.is_empty() {
             return Ok(());
         }
@@ -2397,7 +2405,7 @@ impl JetStreamConsumer {
         event_id: &Uuid,
         source: &str,
         event_type: &str,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         #[cfg(any(test, feature = "testing"))]
         if let Some(failures) = &self.confirmation_failures_remaining
             && failures.load(Ordering::SeqCst) > 0
@@ -2445,7 +2453,7 @@ impl JetStreamConsumer {
         event_id: &Uuid,
         source: &str,
         event_type: &str,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         let mut backoff = CONFIRM_PUBLISH_BACKOFF_BASE;
         let mut last_error: Option<SinexError> = None;
 
@@ -2483,7 +2491,7 @@ impl JetStreamConsumer {
         event_id: &Uuid,
         source: &str,
         event_type: &str,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         let event_id_str = event_id.to_string();
         let subject = format!(
             "{}{}",
@@ -2517,7 +2525,7 @@ impl JetStreamConsumer {
     async fn process_confirmation_retry_batch(
         &self,
         consumer: &jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         let messages = pull_batch(
             consumer,
             CONFIRM_RETRY_BATCH_MAX_MESSAGES,
@@ -2559,18 +2567,6 @@ impl JetStreamConsumer {
                     continue;
                 }
             };
-
-            if retry.source.is_empty() || retry.event_type.is_empty() {
-                warn!(
-                    event_id = %event_id,
-                    "Confirmation retry payload missing source/event_type (legacy pre-#1306 payload); acknowledging without re-publish — downstream will rely on next batch's watermark"
-                );
-                if let Err(ack_err) = message.ack().await {
-                    warn!(error = %ack_err, "Failed to ack legacy confirmation retry message");
-                    self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
-                }
-                continue;
-            }
 
             match self
                 .publish_confirmation_with_retry(&event_id, &retry.source, &retry.event_type)
@@ -2615,7 +2611,7 @@ impl JetStreamConsumer {
     /// Errors indicate the DLQ publish itself failed after all retries. The caller
     /// is responsible for deciding whether to NAK the original message in that case.
     #[tracing::instrument(skip(self, msg), fields(error = %error))]
-    async fn route_to_dlq(&self, msg: &jetstream::Message, error: String) -> IngestdResult<()> {
+    async fn route_to_dlq(&self, msg: &jetstream::Message, error: String) -> EventEngineResult<()> {
         let original_nats_msg_id = msg
             .headers
             .as_ref()
@@ -2699,7 +2695,7 @@ impl JetStreamConsumer {
                     Err(err) => {
                         error!(
                             target: "sinex_metrics",
-                            metric = "ingestd.dlq_confirm_failures_total",
+                            metric = "event_engine.dlq_confirm_failures_total",
                             attempt,
                             error = %err,
                             "Failed to confirm DLQ publish"
@@ -2711,7 +2707,7 @@ impl JetStreamConsumer {
                 Err(err) => {
                     error!(
                         target: "sinex_metrics",
-                        metric = "ingestd.dlq_routing_failures_total",
+                        metric = "event_engine.dlq_routing_failures_total",
                         attempt,
                         error = %err,
                         "Failed to route to DLQ"
@@ -2734,7 +2730,7 @@ impl JetStreamConsumer {
         &self,
         msg: &jetstream::Message,
         error: String,
-    ) -> IngestdResult<()> {
+    ) -> EventEngineResult<()> {
         let dlq_error = error.clone();
         match self.route_to_dlq(msg, error).await {
             Ok(()) => {
@@ -2785,7 +2781,7 @@ impl JetStreamConsumer {
                                 )
                                 .await
                         {
-                            Self::log_observer_error(&self.stats, "ingestd.stream", &error);
+                            Self::log_observer_error(&self.stats, "event_engine.stream", &error);
                         }
 
                         // Check message count capacity

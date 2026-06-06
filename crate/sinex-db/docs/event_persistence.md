@@ -13,7 +13,7 @@ Used for low-volume API calls and test helpers.
 - **Consistency**: High. Guaranteed DAG (Directed Acyclic Graph) invariants.
 
 ### 2. Stream Batch Path (`insert_stream_batch()`)
-Used by `sinex-ingestd` for high-volume JetStream consumption.
+Used by `sinexd::event_engine` for high-volume JetStream consumption.
 - **Optimization**: Uses `ON CONFLICT (id) DO NOTHING` to absorb NATS at-least-once *redelivery* of an already-minted message (transport-level dedup on the event id). This is not occurrence dedup — event ids are interpretation identity (new on replay); see the provenance model.
 - **Performance**: High. Bypasses application-level cycle checks for maximum throughput.
 - **Warning**: Batch operations risk introducing circular derived dependencies if upstream validation is bypassed.

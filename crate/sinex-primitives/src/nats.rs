@@ -486,7 +486,7 @@ impl JetStreamTopology {
             confirmation_retry_consumer: format!("{consumer_durable}_confirm_retries"),
             dlq_stream,
             dlq_subject: NatsSubject::new(namespaced("events.dlq.>")),
-            dlq_publish_subject: NatsSubject::new(namespaced("events.dlq.ingestd")),
+            dlq_publish_subject: NatsSubject::new(namespaced("events.dlq.event_engine")),
             processing_failures_stream,
             processing_failures_subject: NatsSubject::new(namespaced(
                 "events.processing_failures.>",

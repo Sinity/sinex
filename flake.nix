@@ -464,12 +464,9 @@
                   subcommand_name="$(_sinex_xtask_command_arg 1 "$@")"
 
                   case "$command_name" in
-                    source-units)
-                      return 0
-                      ;;
                     docs)
                       case "$subcommand_name" in
-                        sync|check|proof-catalog)
+                        sync|check)
                           return 0
                           ;;
                       esac
@@ -781,7 +778,6 @@
                 export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"
                 export SINEX_API_TCP_LISTEN="127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
                 export SINEX_API_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
-                export SINEX_RPC_URL="$SINEX_API_URL"
 
                 if [ -z "''${SINEX_TEST_TMPDIR:-}" ]; then
                   _sinex_test_tmp_root="$SINEX_DEV_ROOT/.sinex/test-tmp"
@@ -955,14 +951,14 @@
               { lib, ... }:
               {
                 nixpkgs.config.allowUnfree = true;
-                services.sinex.core.gateway.enable = lib.mkForce false;
+                services.sinex.core.api.enable = lib.mkForce false;
               }
             )
           ];
           monitoring = mkExampleConfig ./nixos/examples/monitoring.nix [ ];
           devSandbox = mkExampleConfig ./nixos/examples/dev-sandbox.nix [ ];
           headless = mkExampleConfig ./nixos/examples/headless.nix [ ];
-          remoteNode = mkExampleConfig ./nixos/examples/remote-node.nix [ ];
+          remoteRuntime = mkExampleConfig ./nixos/examples/remote-runtime.nix [ ];
           coordination = mkExampleConfig ./nixos/examples/coordination.nix [ ];
         };
 

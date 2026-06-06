@@ -7,8 +7,8 @@ use xtask::sandbox::{EnvGuard, sinex_test};
 
 fn reset_auth_env(env: &mut EnvGuard) {
     env.clear("SINEX_API_ADMIN_TOKEN_FILE");
-    env.clear("SINEX_RPC_TOKEN");
-    env.clear("SINEX_RPC_TOKEN_FILE");
+    env.clear("SINEX_API_TOKEN");
+    env.clear("SINEX_API_TOKEN_FILE");
 }
 
 #[sinex_test]
@@ -26,7 +26,7 @@ async fn gateway_auth_requires_token_by_default() -> TestResult<()> {
 async fn gateway_auth_accepts_env_token() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_auth_env(&mut env);
-    env.set("SINEX_RPC_TOKEN", "secret-token");
+    env.set("SINEX_API_TOKEN", "secret-token");
 
     let mode = gateway_auth_mode_from_env()?;
     assert_eq!(mode, GatewayAuthModeSnapshot::StaticToken);
@@ -45,7 +45,7 @@ async fn gateway_auth_accepts_file_token() -> TestResult<()> {
 ",
     )?;
     env.set(
-        "SINEX_RPC_TOKEN_FILE",
+        "SINEX_API_TOKEN_FILE",
         temp.path().to_str().expect("temp path utf8"),
     );
 
@@ -88,7 +88,7 @@ async fn gateway_token_file_rotation_reads_latest() -> TestResult<()> {
 ",
     )?;
     env.set(
-        "SINEX_RPC_TOKEN_FILE",
+        "SINEX_API_TOKEN_FILE",
         temp.path().to_str().expect("temp path utf8"),
     );
 

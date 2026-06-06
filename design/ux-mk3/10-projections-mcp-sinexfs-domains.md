@@ -20,7 +20,7 @@ SinexFS should be read-only by default and should expose object refs as files, n
 ```text
 /sinex/events/<event-id>.json
 /sinex/events/<event-id>.md
-/sinex/sources/<source-unit>/readiness.json
+/sinex/sources/<source>/readiness.json
 /sinex/materials/<material-id>/manifest.json
 /sinex/context-packs/<pack-id>/manifest.json
 /sinex/ops/<operation-id>.json

@@ -16,7 +16,7 @@ async fn test_token_file_deletion() -> TestResult<()> {
     // Set environment variable
     unsafe {
         std::env::set_var(
-            "SINEX_RPC_TOKEN_FILE",
+            "SINEX_API_TOKEN_FILE",
             token_file.to_str().expect("path should be valid UTF-8"),
         );
     }
@@ -32,7 +32,7 @@ async fn test_token_file_deletion() -> TestResult<()> {
     // with the file watcher active
 
     // Clean up
-    unsafe { std::env::remove_var("SINEX_RPC_TOKEN_FILE") };
+    unsafe { std::env::remove_var("SINEX_API_TOKEN_FILE") };
     Ok(())
 }
 
@@ -47,7 +47,7 @@ async fn test_token_file_recreate() -> TestResult<()> {
     // Set environment variable
     unsafe {
         std::env::set_var(
-            "SINEX_RPC_TOKEN_FILE",
+            "SINEX_API_TOKEN_FILE",
             token_file.to_str().expect("path should be valid UTF-8"),
         );
     }
@@ -73,7 +73,7 @@ async fn test_token_file_recreate() -> TestResult<()> {
     assert_eq!(new_auth, "second-token");
 
     // Clean up
-    unsafe { std::env::remove_var("SINEX_RPC_TOKEN_FILE") };
+    unsafe { std::env::remove_var("SINEX_API_TOKEN_FILE") };
     Ok(())
 }
 
@@ -85,10 +85,10 @@ async fn test_env_var_token_priority() -> TestResult<()> {
     // Write token to file
     fs::write(&token_file, "file-token").expect("Failed to write token file");
 
-    // Test priority: SINEX_API_ADMIN_TOKEN_FILE > SINEX_RPC_TOKEN_FILE > SINEX_RPC_TOKEN
+    // Test priority: SINEX_API_ADMIN_TOKEN_FILE > SINEX_API_TOKEN_FILE > SINEX_API_TOKEN
 
     // Set direct env var
-    unsafe { std::env::set_var("SINEX_RPC_TOKEN", "direct-token") };
+    unsafe { std::env::set_var("SINEX_API_TOKEN", "direct-token") };
     let auth = sinexd::api::rpc_server::read_token_from_env()
         .expect("Failed to read token")
         .expect("Token should be present");
@@ -97,7 +97,7 @@ async fn test_env_var_token_priority() -> TestResult<()> {
     // Set file path (should override direct token)
     unsafe {
         std::env::set_var(
-            "SINEX_RPC_TOKEN_FILE",
+            "SINEX_API_TOKEN_FILE",
             token_file.to_str().expect("path should be valid UTF-8"),
         );
     }
@@ -124,8 +124,8 @@ async fn test_env_var_token_priority() -> TestResult<()> {
 
     // Clean up
     unsafe {
-        std::env::remove_var("SINEX_RPC_TOKEN");
-        std::env::remove_var("SINEX_RPC_TOKEN_FILE");
+        std::env::remove_var("SINEX_API_TOKEN");
+        std::env::remove_var("SINEX_API_TOKEN_FILE");
         std::env::remove_var("SINEX_API_ADMIN_TOKEN_FILE");
     }
     Ok(())
@@ -141,7 +141,7 @@ async fn test_empty_token_file() -> TestResult<()> {
 
     unsafe {
         std::env::set_var(
-            "SINEX_RPC_TOKEN_FILE",
+            "SINEX_API_TOKEN_FILE",
             token_file.to_str().expect("path should be valid UTF-8"),
         );
     }
@@ -153,7 +153,7 @@ async fn test_empty_token_file() -> TestResult<()> {
     assert_eq!(auth, Some(String::new()));
 
     // Clean up
-    unsafe { std::env::remove_var("SINEX_RPC_TOKEN_FILE") };
+    unsafe { std::env::remove_var("SINEX_API_TOKEN_FILE") };
     Ok(())
 }
 
@@ -167,7 +167,7 @@ async fn test_whitespace_token_trimming() -> TestResult<()> {
 
     unsafe {
         std::env::set_var(
-            "SINEX_RPC_TOKEN_FILE",
+            "SINEX_API_TOKEN_FILE",
             token_file.to_str().expect("path should be valid UTF-8"),
         );
     }
@@ -179,6 +179,6 @@ async fn test_whitespace_token_trimming() -> TestResult<()> {
     assert_eq!(auth, "trimmed-token");
 
     // Clean up
-    unsafe { std::env::remove_var("SINEX_RPC_TOKEN_FILE") };
+    unsafe { std::env::remove_var("SINEX_API_TOKEN_FILE") };
     Ok(())
 }

@@ -1,22 +1,22 @@
-# Gateway Transport Security
+# API Transport Security
 
-TLS and authentication requirements for the Gateway control plane.
+TLS and authentication requirements for the `sinexd::api` control plane.
 
 ## Trust Boundaries
 
-The Gateway exposes RPC endpoints for user interaction and system control.
+The API exposes RPC endpoints for user interaction and system control.
 
-- **Localhost**: **MUST** use TLS (`https://...`); trust the local CA via `SINEX_RPC_CA_CERT` when using self-signed certs.
+- **Localhost**: **MUST** use TLS (`https://...`); trust the local CA via `SINEX_API_CA_CERT` when using self-signed certs.
 - **Network Exposed**: **MUST** be encrypted. Any TCP binding to a non-loopback interface requires TLS + mTLS (`SINEX_API_TLS_CLIENT_CA`).
 
 ## Authentication
 
-- **Bearer Token**: Required for all connections (default). Set via `SINEX_RPC_TOKEN` or `SINEX_RPC_TOKEN_FILE` in `<token>:<role>` format (`readonly|write|admin`).
+- **Bearer Token**: Required for all connections (default). Set via `SINEX_API_TOKEN` or `SINEX_API_TOKEN_FILE` in `<token>:<role>` format (`readonly|write|admin`).
 - **mTLS**: Optional high-security mode. If enabled, client certificates add transport-layer client authentication, but bearer token auth is still required for RPC requests.
 
 ## Enforcement
 
-- **TCP**: TLS is mandatory; the gateway refuses to start without `SINEX_API_TLS_CERT` and `SINEX_API_TLS_KEY`.
+- **TCP**: TLS is mandatory; `sinexd::api` refuses to start without `SINEX_API_TLS_CERT` and `SINEX_API_TLS_KEY`.
 
 ## Environment Variables
 
@@ -25,10 +25,10 @@ The Gateway exposes RPC endpoints for user interaction and system control.
 | `SINEX_API_TLS_CERT` | TLS certificate path (required) |
 | `SINEX_API_TLS_KEY` | TLS private key path (required) |
 | `SINEX_API_TLS_CLIENT_CA` | Client CA for mTLS (optional) |
-| `SINEX_RPC_TOKEN` | Bearer token (direct value) |
-| `SINEX_RPC_TOKEN_FILE` | Bearer token (file path) |
+| `SINEX_API_TOKEN` | Bearer token (direct value) |
+| `SINEX_API_TOKEN_FILE` | Bearer token (file path) |
 
 ## See Also
 
 - System-wide security model: `README.md#security`
-- Gateway overview: `docs/overview.md`
+- API overview: `crate/sinexd/docs/api/overview.md`

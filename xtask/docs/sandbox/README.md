@@ -43,7 +43,7 @@ async fn test_event_creation(ctx: TestContext) -> TestResult<()> {
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
 | **Database Isolation** | Each test gets an isolated database from a pool | [database_testing.md](database_testing.md) |
-| **Pipeline Testing** | Tests exercise real NATS → ingestd → DB flow | [pipeline_testing.md](pipeline_testing.md) |
+| **Pipeline Testing** | Tests exercise real NATS → event_engine → DB flow | [pipeline_testing.md](pipeline_testing.md) |
 | **TestContext** | Central coordination with assertions and timing | [test_context.md](test_context.md) |
 | **Property Testing** | Proptest integration with `#[sinex_prop]` | [property_testing.md](property_testing.md) |
 | **Timing Utilities** | Synchronization, barriers, adaptive polling | [timing_patterns.md](timing_patterns.md) |
@@ -55,7 +55,7 @@ Before seeding any events, call `ctx.with_nats().shared().await?` and use
 `ctx.publish_event(...)` so every test exercises the actual ingestion path.
 
 ```rust
-// PREFERRED: Pipeline-first approach (exercises NATS → ingestd → DB)
+// PREFERRED: Pipeline-first approach (exercises NATS → event_engine → DB)
 let ctx = ctx.with_nats().shared().await?;
 let event = ctx.publish_event(
     "fs-watcher",
@@ -71,7 +71,7 @@ let event = pool.events().insert_test_event(
 ).await?;
 ```
 
-Direct database insertion bypasses ingestd and should be used sparingly.
+Direct database insertion bypasses event_engine and should be used sparingly.
 
 ## Test Macros
 
@@ -215,7 +215,7 @@ async fn source_material_row_stream_preserves_anchors(ctx: TestContext) -> Resul
 Use ordinary nextest filters for exact test selection:
 
 ```bash
-xtask test -p sinex-node-sdk -E 'test(source_material_row_stream_preserves_anchors)'
+xtask test -p sinexd -E 'test(parse_listener)'
 xtask impact explain
 ```
 
@@ -225,16 +225,16 @@ limited to correctness invariants, and write measured resource profiles as JSON
 evidence artifacts:
 
 ```bash
-xtask test -p sinex-node-sdk -E 'test(source_material_scenario_batches_row_stream_records_with_stable_anchors)'
-xtask test -p sinex-node-sdk -E 'test(source_material_scenario_duplicate_content_reuses_blob_identity)'
-xtask test -p sinex-node-sdk --heavy -E 'test(source_material_resource_storage_backend_profile)'
+xtask test -p sinexd -E 'test(material_assembler)'
+xtask test -p sinex-e2e-tests -E 'test(material_idempotency)'
+xtask test -p sinex-workspace-tests -E 'test(weechat_vertical)'
 ```
 
 Those artifacts are trendable input records. They are not perf contracts unless
 a later change deliberately promotes a measured metric into a documented gate.
 
-Migration note: source-material row-stream and restart-recovery coverage lives
-in `sinex-node-sdk` Rust tests, not `xtask exercise` and not taxonomy metadata.
+Migration note: source-material, parser, and restart-recovery coverage lives
+in `sinexd`, workspace, and e2e Rust tests, not `xtask exercise` and not taxonomy metadata.
 Future `xtask exercise` entries that validate product/runtime behavior rather
 than xtask command contracts should be treated as migration-only and moved into
 ordinary `#[sinex_test]` coverage.

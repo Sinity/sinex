@@ -24,7 +24,7 @@ use sqlx::FromRow;
 /// This table is the manifest for all captured external data artifacts. It is
 /// managed by capture pipelines using the "Stage-as-you-go" pattern. An entry is
 /// created with `status = 'sensing'` before the data is
-/// fully captured, providing a stable `id` that ingestors can immediately use
+/// fully captured, providing a stable `id` that sources can immediately use
 /// for event provenance. The record is then updated to a terminal status
 /// (`completed`, `cancelled`, `recovered_partial`, or `failed`) upon finalization.
 #[derive(Iden, Copy, Clone)]
@@ -214,7 +214,7 @@ impl SourceMaterialRegistry {
             //
             // The `kind` discriminator is constrained by the named CHECK
             // `source_material_registry_coverage_contract_kind_check` listed
-            // in the convergence registry (`crate/lib/sinex-schema/src/converge.rs`).
+            // in the convergence registry (`crate/sinex-schema/src/converge.rs`).
             // Named CHECKs are reconciled by the convergence engine; inline
             // CHECKs in CREATE TABLE are not.
             .col(
@@ -263,7 +263,7 @@ impl SourceMaterialRegistry {
                 .col(SourceMaterialRegistry::SourceIdentifier)
                 .col((SourceMaterialRegistry::StagedAt, IndexOrder::Desc))
                 .to_owned(),
-            // Ingestd seeds recently staged materials on startup. Keep
+            // EventEngine seeds recently staged materials on startup. Keep
             // `staged_at` leading so restarts do not scan the registry as it
             // grows.
             Index::create()

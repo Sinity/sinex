@@ -36,7 +36,7 @@ impl ModelEffectRepository<'_> {
         sqlx::query_as(
             "SELECT id, provider, model, prompt_hash, schema_hash, input_hash, \
              composite_key, output, output_hash, replay_policy, recorded_at, \
-             recorded_by, source_node_id, source_event_id \
+             recorded_by, source_module_name, source_event_id \
              FROM core.model_effects WHERE composite_key = $1 \
              ORDER BY recorded_at DESC LIMIT 1",
         )
@@ -60,7 +60,7 @@ impl ModelEffectRepository<'_> {
         replay_policy: &str,
         recorded_at: &str,
         recorded_by: &str,
-        source_node_id: Option<&str>,
+        source_module_name: Option<&str>,
         source_event_id: Option<Uuid>,
     ) -> DbResult<Uuid> {
         let id = Uuid::now_v7();
@@ -68,7 +68,7 @@ impl ModelEffectRepository<'_> {
             "INSERT INTO core.model_effects \
              (id, provider, model, prompt_hash, schema_hash, input_hash, \
               composite_key, output, output_hash, replay_policy, \
-              recorded_at, recorded_by, source_node_id, source_event_id) \
+              recorded_at, recorded_by, source_module_name, source_event_id) \
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
         )
         .bind(id)
@@ -83,7 +83,7 @@ impl ModelEffectRepository<'_> {
         .bind(replay_policy)
         .bind(recorded_at)
         .bind(recorded_by)
-        .bind(source_node_id)
+        .bind(source_module_name)
         .bind(source_event_id)
         .execute(self.pool())
         .await

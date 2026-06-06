@@ -8,7 +8,7 @@
 //! get a cache *hit*, not a 100% miss.
 
 use sinex_db::build_occurrence_filter;
-use sinex_primitives::parser::{OccurrenceKey, SourceUnitId, occurrence_key_string};
+use sinex_primitives::parser::{OccurrenceKey, SourceId, occurrence_key_string};
 use sqlx::types::Uuid;
 use time::OffsetDateTime;
 use xtask::sandbox::prelude::*;
@@ -87,7 +87,7 @@ async fn db_filter_key_matches_in_memory_key(ctx: TestContext) -> TestResult<()>
     .await?;
 
     let expected = OccurrenceKey {
-        source_unit_id: SourceUnitId::from_static("spotify-extended-history"),
+        source_id: SourceId::from_static("spotify-extended-history"),
         fields: vec![
             ("track_uri".into(), "spotify:track:abc123".into()),
             ("started_at".into(), "2024-01-15T08:00:00Z".into()),
@@ -129,7 +129,7 @@ async fn db_filter_escapes_pipe_in_payload_values(ctx: TestContext) -> TestResul
     .await?;
 
     let expected = OccurrenceKey {
-        source_unit_id: SourceUnitId::from_static("spotify-extended-history"),
+        source_id: SourceId::from_static("spotify-extended-history"),
         fields: vec![
             ("track_name".into(), "Foo|bar".into()),
             ("started_at".into(), "2024-01-15T08:00:00Z".into()),

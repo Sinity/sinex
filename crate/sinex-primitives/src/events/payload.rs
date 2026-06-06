@@ -224,10 +224,10 @@ impl DynamicPayload {
         self.into_builder().hostname(hostname)
     }
 
-    /// Set node run ID before adding provenance.
+    /// Set runtime module run ID before adding provenance.
     #[must_use]
-    pub fn source_run_id(self, run_id: Uuid) -> EventBuilder<JsonValue, NoProvenance> {
-        self.into_builder().source_run_id(run_id)
+    pub fn module_run_id(self, run_id: Uuid) -> EventBuilder<JsonValue, NoProvenance> {
+        self.into_builder().module_run_id(run_id)
     }
 
     /// Set schema ID before adding provenance.

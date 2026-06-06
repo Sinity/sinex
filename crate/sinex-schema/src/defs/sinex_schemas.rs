@@ -3,8 +3,7 @@
 //! This module defines the tables within the `sinex_schemas` and `core` namespaces
 //! that are responsible for managing the system's "meta-layer". This includes:
 //! - Data contracts for event payloads (`event_payload_schemas`).
-//! - Manifests for the nodes that interpret data (`source_manifests`).
-//! - Sources for discovering schemas via `GitOps` (`gitops_schema_sources` - aspirational, see docs).
+//! - Runtime manifests for modules, sources, and automata (`core.manifests`).
 //! - Caching for validation results (`validation_cache`).
 
 use crate::TableDef;
@@ -25,7 +24,7 @@ use sqlx::FromRow;
 /// The central registry for all event payload JSON schemas. This table acts as the
 /// data contract registry for the entire system. It is managed by the schema
 /// toolchain that synchronizes Rust definitions into Postgres and is read by
-/// `ingestd` at runtime to perform validation on all incoming events.
+/// `event_engine` at runtime to perform validation on all incoming events.
 #[derive(Iden, Copy, Clone)]
 pub enum EventPayloadSchemas {
     Table,
@@ -40,7 +39,7 @@ pub enum EventPayloadSchemas {
     /// Retention horizon for events bound to this schema (#1172).
     ///
     /// `BIGINT NULL` — `NULL` means "never expire" (current default for all
-    /// existing schemas). When non-null, the gateway-side TTL enforcer
+    /// existing schemas). When non-null, the API-side TTL enforcer
     /// (Phase 6 follow-up) will archive events older than `retention_seconds`
     /// since `ts_orig`. This phase only lands the column; no archival logic
     /// is wired yet.
@@ -70,7 +69,7 @@ pub struct EventPayloadSchemaRecord {
     pub is_active: bool,
     pub updated_at: Timestamp,
     /// Retention horizon in seconds (#1172). `None` means "never expire".
-    /// Phase 1 lands the column; Phase 6 wires gateway-side TTL enforcement.
+    /// Phase 1 lands the column; Phase 6 wires API-side TTL enforcement.
     #[serde(default)]
     pub retention_seconds: Option<i64>,
 }
@@ -127,7 +126,7 @@ impl EventPayloadSchemas {
                     .default(Expr::current_timestamp()),
             )
             // Retention horizon (#1172). NULL = never expire (current default
-            // for every schema). Phase 6 wires gateway-side enforcement; this
+            // for every schema). Phase 6 wires API-side enforcement; this
             // phase only lands the column.
             .col(ColumnDef::new(EventPayloadSchemas::RetentionSeconds).big_integer())
             .to_owned()
@@ -285,7 +284,7 @@ impl Runs {
 
 /// **Table: `sinex_schemas.binary_schema_version`**
 ///
-/// Single-row table checked at gateway and ingestd startup. If the row is
+/// Single-row table checked at API and event_engine startup. If the row is
 /// missing it is inserted with the current expected version; if the version
 /// mismatches the service refuses to start.
 #[derive(Iden, Copy, Clone)]

@@ -109,4 +109,4 @@ pub async fn acquire_slot(&self) -> DbResult<TestDatabase> {
 
 ## See Also
 
-- Schema design: `crate/lib/sinex-schema/docs/schema_design.md`
+- Schema design: `crate/sinex-db/docs/schema/schema_design.md`

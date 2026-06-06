@@ -2,8 +2,8 @@
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinexd::node_sdk::{
-    ConfirmedEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, NodeResult,
+use sinexd::runtime::{
+    ConfirmedEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, RuntimeResult,
     ProcessingModel, ProvisionalEvent, prelude::async_trait,
 };
 use sinex_primitives::events::builder::EventId;
@@ -32,7 +32,7 @@ impl TrackingConfirmedEventHandler {
 
 #[async_trait]
 impl ConfirmedEventHandler for TrackingConfirmedEventHandler {
-    async fn handle_confirmed(&self, provisional: &ProvisionalEvent) -> NodeResult<()> {
+    async fn handle_confirmed(&self, provisional: &ProvisionalEvent) -> RuntimeResult<()> {
         self.processed_event_ids
             .write()
             .await
@@ -62,7 +62,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
         ..Default::default()
     };
     // Wait for the confirmations stream to exist before starting the automaton consumer.
-    // ingestd (started by PipelineScope) creates this stream on startup; the automaton
+    // event_engine (started by PipelineScope) creates this stream on startup; the automaton
     // consumer's run() immediately calls js.get_stream() which fails if it doesn't exist.
     let js = async_nats::jetstream::new(nats_client.clone());
     let confirmations_stream = format!(
@@ -86,7 +86,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     // None immediately (no-wait pull semantics) and the consumer task exits.
     let event_id = scope
         .publish(DynamicPayload::new(
-            "test-node",
+            "test-source",
             "test.event",
             json!({
                 "message": "E2E JetStream test event",
@@ -136,13 +136,13 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
         .get_by_id(event_id)
         .await?
         .expect("event should be persisted");
-    assert_eq!(event_from_db.source.as_str(), "test-node");
+    assert_eq!(event_from_db.source.as_str(), "test-source");
     assert_eq!(event_from_db.event_type.as_str(), "test.event");
 
     info!("🎉 E2E JetStream test PASSED");
-    info!("   ✓ Node → JetStream (events.raw)");
-    info!("   ✓ ingestd → Database persistence");
-    info!("   ✓ ingestd → JetStream (events.confirmations)");
+    info!("   ✓ RuntimeModule → JetStream (events.raw)");
+    info!("   ✓ event_engine → Database persistence");
+    info!("   ✓ event_engine → JetStream (events.confirmations)");
     info!("   ✓ Automaton → Confirmed event consumption");
 
     automaton_handle.abort();

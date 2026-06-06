@@ -1,11 +1,11 @@
 //! Required input-key declarations for the `ActivityWatch` `SQLite` parser.
 
-use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
+use sinexd::runtime::parser::{MaterialParser, SourceRecordFingerprint};
 use sinex_primitives::{
-    parser::SourceUnitId,
+    parser::SourceId,
     rpc::sources::{CaveatSeverity, caveat_codes},
 };
-use sinexd::sources::sources::desktop::activitywatch::ActivityWatchParser;
+use sinexd::sources::source_contracts::desktop::activitywatch::ActivityWatchParser;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -59,7 +59,7 @@ async fn activitywatch_required_join_column_removal_blocks_readiness() -> TestRe
     let before = SourceRecordFingerprint::from_sqlite_connection(&before)?;
     let after = SourceRecordFingerprint::from_sqlite_connection(&after)?;
     let mut drift = SourceRecordFingerprint::diff(
-        SourceUnitId::from_static("desktop.activitywatch"),
+        SourceId::from_static("desktop.activitywatch"),
         &before,
         &after,
     )

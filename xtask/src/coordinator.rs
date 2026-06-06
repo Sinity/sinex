@@ -914,23 +914,20 @@ fn tree_fingerprint() -> Result<String> {
 /// misses but never incorrect freshness. Under-inclusion would be incorrect.
 fn package_to_path(pkg: &str) -> String {
     match pkg {
-        "sinexctl" => "crate/cli/".to_string(),
+        "sinexctl" => "crate/sinexctl/".to_string(),
         "xtask" => "xtask/".to_string(),
-        "xtask-macros" => "xtask/macros/".to_string(),
         "sinex-e2e-tests" => "tests/e2e/".to_string(),
+        "sinex-workspace-tests" => "tests/workspace/".to_string(),
+        "sinex-vm-test-suite" => "tests/vm-suite/".to_string(),
         _ => {
             let name_underscore = pkg.replace('-', "_");
-            for category in &["lib", "core", "nodes", "tools"] {
-                // Try hyphenated form first (canonical package naming)
-                let path_hyphen = format!("crate/{category}/{pkg}/");
-                if std::path::Path::new(&path_hyphen).exists() {
-                    return path_hyphen;
-                }
-                // Try underscored form (directory may use underscores)
-                let path_under = format!("crate/{category}/{name_underscore}/");
-                if std::path::Path::new(&path_under).exists() {
-                    return path_under;
-                }
+            let path_hyphen = format!("crate/{pkg}/");
+            if std::path::Path::new(&path_hyphen).exists() {
+                return path_hyphen;
+            }
+            let path_under = format!("crate/{name_underscore}/");
+            if std::path::Path::new(&path_under).exists() {
+                return path_under;
             }
             // Unknown package — include crate/ broadly (over-includes, never misses)
             "crate/".to_string()
@@ -993,6 +990,55 @@ fn extract_explicit_packages(command: &str, args: &[String]) -> Vec<String> {
     packages
 }
 
+fn extract_cargo_features(command: &str, args: &[String]) -> Vec<String> {
+    if !matches!(command, "check" | "build" | "fix" | "test") {
+        return vec![];
+    }
+
+    let mut features = Vec::new();
+    let mut take_next = false;
+
+    for arg in args {
+        if command == "test" && arg == "--" {
+            break;
+        }
+        if take_next {
+            features.extend(split_cargo_features(arg));
+            take_next = false;
+            continue;
+        }
+        if arg == "--features" {
+            take_next = true;
+        } else if let Some(value) = arg.strip_prefix("--features=") {
+            features.extend(split_cargo_features(value));
+        }
+    }
+
+    features.sort();
+    features.dedup();
+    features
+}
+
+fn split_cargo_features(value: &str) -> impl Iterator<Item = String> + '_ {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|feature| !feature.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn scoped_fingerprint_packages_in(
+    cwd: &Path,
+    packages: &[String],
+    features: &[String],
+) -> Result<Vec<String>> {
+    if features.is_empty() {
+        crate::affected::active_package_dependency_closure_in(cwd, packages, &[])
+    } else {
+        crate::affected::active_package_dependency_closure_in(cwd, packages, features)
+    }
+}
+
 /// R1: Compute a scoped tree fingerprint for the given command and args.
 ///
 /// If the command targets explicit packages (via `-p`), hashes only the git diff
@@ -1003,13 +1049,13 @@ fn extract_explicit_packages(command: &str, args: &[String]) -> Vec<String> {
 /// packages are specified (affected-mode and workspace-wide invocations).
 fn scoped_tree_fingerprint_in(cwd: &Path, command: &str, args: &[String]) -> Result<String> {
     let packages = extract_explicit_packages(command, args);
+    let features = extract_cargo_features(command, args);
 
     if packages.is_empty() {
         // No -p flag: use whole-workspace fingerprint (safe, over-inclusive)
         return tree_fingerprint_in(cwd);
     }
-    let fingerprint_packages = match crate::affected::package_dependency_closure_in(cwd, &packages)
-    {
+    let fingerprint_packages = match scoped_fingerprint_packages_in(cwd, &packages, &features) {
         Ok(closure) => closure,
         Err(error) => {
             tracing::warn!(
@@ -1069,11 +1115,13 @@ fn scoped_tree_fingerprint(command: &str, args: &[String]) -> Result<String> {
 /// see the command/scope inputs before trusting a fresh-hit decision.
 pub fn explain_freshness(command: &str, args: &[String]) -> Result<FreshnessExplanation> {
     let packages = extract_explicit_packages(command, args);
+    let features = extract_cargo_features(command, args);
     let scope = if packages.is_empty() {
         FreshnessScopeExplanation::Workspace
     } else {
         let fingerprint_packages =
-            crate::affected::package_dependency_closure(&packages).unwrap_or(packages);
+            scoped_fingerprint_packages_in(Path::new("."), &packages, &features)
+                .unwrap_or(packages);
         let mut packages = fingerprint_packages
             .into_iter()
             .map(|package| PackageScopeInput {
@@ -1250,6 +1298,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                 "-E" | "--filter" => Some("--filter="),
                 "--test" => Some("--test="),
                 "--exclude" => Some("--exclude="),
+                "--features" => Some("--features="),
                 "--runtime-binary" => Some("--runtime-binary="),
                 "--threads" => Some("--threads="),
                 "--retries" => Some("--retries="),
@@ -1305,6 +1354,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                 } else if arg.starts_with("--filter=")
                     || arg.starts_with("--test=")
                     || arg.starts_with("--exclude=")
+                    || arg.starts_with("--features=")
                     || arg.starts_with("--runtime-binary=")
                     || arg.starts_with("--threads=")
                     || arg.starts_with("--retries=")
@@ -2112,6 +2162,31 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_cargo_features_are_scope_relevant() -> TestResult<()> {
+        let without_features = scope_key("test", &["-p".into(), "xtask".into()]);
+        let with_features = scope_key(
+            "test",
+            &[
+                "-p".into(),
+                "xtask".into(),
+                "--features".into(),
+                "runtime-introspection".into(),
+            ],
+        );
+        let with_features_combined = scope_key(
+            "test",
+            &[
+                "--scope=packages:xtask".into(),
+                "--features=runtime-introspection".into(),
+            ],
+        );
+
+        assert_ne!(without_features, with_features);
+        assert_eq!(with_features, with_features_combined);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_test_binary_args_preserve_order_in_scope_key() -> TestResult<()> {
         let first_order = scope_key(
             "test",
@@ -2218,7 +2293,7 @@ mod tests {
     #[sinex_test]
     async fn test_scope_key_different() -> TestResult<()> {
         let args1 = vec!["-p".into(), "sinex-db".into()];
-        let args2 = vec!["-p".into(), "sinex-gateway".into()];
+        let args2 = vec!["-p".into(), "sinexd".into()];
         assert_ne!(scope_key("test", &args1), scope_key("test", &args2));
         Ok(())
     }
@@ -2243,7 +2318,7 @@ mod tests {
     #[sinex_test]
     async fn test_scope_key_uses_semantic_scope_marker() -> TestResult<()> {
         let args1 = vec!["--scope=packages:sinex-db,xtask".into()];
-        let args2 = vec!["--scope=packages:sinex-gateway,xtask".into()];
+        let args2 = vec!["--scope=packages:sinexd,xtask".into()];
         assert_ne!(scope_key("test", &args1), scope_key("test", &args2));
         Ok(())
     }
@@ -2253,7 +2328,7 @@ mod tests {
         let args1 = vec![
             "--scope=packages:sinex-db,xtask".into(),
             "-p".into(),
-            "sinex-gateway".into(),
+            "sinexd".into(),
         ];
         let args2 = vec!["--scope=packages:sinex-db,xtask".into()];
         assert_eq!(scope_key("test", &args1), scope_key("test", &args2));
@@ -2305,7 +2380,7 @@ mod tests {
     #[sinex_test]
     async fn test_check_scope_varies_with_packages() -> TestResult<()> {
         let args_p1 = vec!["-p".into(), "sinex-db".into()];
-        let args_p2 = vec!["-p".into(), "sinex-gateway".into()];
+        let args_p2 = vec!["-p".into(), "sinexd".into()];
         let args_all = vec!["--all".into()];
         let args_lint = vec!["--lint".into()];
         let args_empty: Vec<String> = vec![];
@@ -2391,28 +2466,25 @@ mod tests {
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
 
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
         std::fs::write(
             dir.path().join("Cargo.toml"),
             r#"[workspace]
-members = ["crate/lib/sinex-db", "crate/lib/sinex-primitives"]
+members = ["crate/sinex-db", "crate/sinex-primitives"]
 "#,
         )?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/Cargo.toml"),
+            dir.path().join("crate/sinex-db/Cargo.toml"),
             r#"[package]
 name = "sinex-db"
 version = "0.0.0"
 edition = "2024"
 "#,
         )?;
+        std::fs::write(dir.path().join("crate/sinex-db/src/lib.rs"), "fn db() {}\n")?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-primitives/src"))?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
-            "fn db() {}\n",
-        )?;
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-primitives/src"))?;
-        std::fs::write(
-            dir.path().join("crate/lib/sinex-primitives/Cargo.toml"),
+            dir.path().join("crate/sinex-primitives/Cargo.toml"),
             r#"[package]
 name = "sinex-primitives"
 version = "0.0.0"
@@ -2420,17 +2492,17 @@ edition = "2024"
 "#,
         )?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-primitives/src/lib.rs"),
+            dir.path().join("crate/sinex-primitives/src/lib.rs"),
             "fn p() {}\n",
         )?;
         run_git(
             &[
                 "add",
                 "Cargo.toml",
-                "crate/lib/sinex-db/Cargo.toml",
-                "crate/lib/sinex-db/src/lib.rs",
-                "crate/lib/sinex-primitives/Cargo.toml",
-                "crate/lib/sinex-primitives/src/lib.rs",
+                "crate/sinex-db/Cargo.toml",
+                "crate/sinex-db/src/lib.rs",
+                "crate/sinex-primitives/Cargo.toml",
+                "crate/sinex-primitives/src/lib.rs",
             ],
             dir.path(),
         )?;
@@ -2464,21 +2536,18 @@ edition = "2024"
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
 
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
-        std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
-            "fn db() {}\n",
-        )?;
-        run_git(&["add", "crate/lib/sinex-db/src/lib.rs"], dir.path())?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
+        std::fs::write(dir.path().join("crate/sinex-db/src/lib.rs"), "fn db() {}\n")?;
+        run_git(&["add", "crate/sinex-db/src/lib.rs"], dir.path())?;
         run_git(&["commit", "-qm", "first"], dir.path())?;
         let args = vec!["-p".into(), "sinex-db".into()];
         let fp_first = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
 
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            dir.path().join("crate/sinex-db/src/lib.rs"),
             "fn db() { /* v2 */ }\n",
         )?;
-        run_git(&["add", "crate/lib/sinex-db/src/lib.rs"], dir.path())?;
+        run_git(&["add", "crate/sinex-db/src/lib.rs"], dir.path())?;
         run_git(&["commit", "-qm", "second"], dir.path())?;
         let fp_second = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
 
@@ -2535,22 +2604,19 @@ edition = "2024"
         run_git(&["init", "-q"], dir.path())?;
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
-        std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
-            "fn db() {}\n",
-        )?;
-        run_git(&["add", "crate/lib/sinex-db/src/lib.rs"], dir.path())?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
+        std::fs::write(dir.path().join("crate/sinex-db/src/lib.rs"), "fn db() {}\n")?;
+        run_git(&["add", "crate/sinex-db/src/lib.rs"], dir.path())?;
         run_git(&["commit", "-qm", "init"], dir.path())?;
         let args = vec!["-p".into(), "sinex-db".into()];
 
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            dir.path().join("crate/sinex-db/src/lib.rs"),
             "fn db() { let _x = 1; }\n",
         )?;
         let fp_one = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            dir.path().join("crate/sinex-db/src/lib.rs"),
             "fn db() { let _x = 2; }\n",
         )?;
         let fp_two = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
@@ -2569,15 +2635,12 @@ edition = "2024"
         run_git(&["init", "-q"], dir.path())?;
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
-        std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
-            "fn db() {}\n",
-        )?;
-        run_git(&["add", "crate/lib/sinex-db/src/lib.rs"], dir.path())?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
+        std::fs::write(dir.path().join("crate/sinex-db/src/lib.rs"), "fn db() {}\n")?;
+        run_git(&["add", "crate/sinex-db/src/lib.rs"], dir.path())?;
         run_git(&["commit", "-qm", "init"], dir.path())?;
         let args = vec!["-p".into(), "sinex-db".into()];
-        let scratch = dir.path().join("crate/lib/sinex-db/src/scratch.rs");
+        let scratch = dir.path().join("crate/sinex-db/src/scratch.rs");
 
         std::fs::write(&scratch, "const VALUE: u8 = 1;\n")?;
         let fp_one = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
@@ -2597,14 +2660,11 @@ edition = "2024"
         run_git(&["init", "-q"], dir.path())?;
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
         run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
-        std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
-            "fn db() {}\n",
-        )?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
+        std::fs::write(dir.path().join("crate/sinex-db/src/lib.rs"), "fn db() {}\n")?;
         std::fs::write(dir.path().join("Cargo.lock"), "# v1\n")?;
         run_git(
-            &["add", "crate/lib/sinex-db/src/lib.rs", "Cargo.lock"],
+            &["add", "crate/sinex-db/src/lib.rs", "Cargo.lock"],
             dir.path(),
         )?;
         run_git(&["commit", "-qm", "init"], dir.path())?;
@@ -2631,13 +2691,13 @@ edition = "2024"
         std::fs::write(
             dir.path().join("Cargo.toml"),
             r#"[workspace]
-members = ["crate/lib/sinex-primitives", "crate/lib/sinex-db"]
+members = ["crate/sinex-primitives", "crate/sinex-db"]
 resolver = "2"
 "#,
         )?;
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-primitives/src"))?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-primitives/src"))?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-primitives/Cargo.toml"),
+            dir.path().join("crate/sinex-primitives/Cargo.toml"),
             r#"[package]
 name = "sinex-primitives"
 version = "0.1.0"
@@ -2645,12 +2705,12 @@ edition = "2024"
 "#,
         )?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-primitives/src/lib.rs"),
+            dir.path().join("crate/sinex-primitives/src/lib.rs"),
             "pub fn primitive() -> u8 { 1 }\n",
         )?;
-        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::create_dir_all(dir.path().join("crate/sinex-db/src"))?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/Cargo.toml"),
+            dir.path().join("crate/sinex-db/Cargo.toml"),
             r#"[package]
 name = "sinex-db"
 version = "0.1.0"
@@ -2661,7 +2721,7 @@ sinex-primitives = { path = "../sinex-primitives" }
 "#,
         )?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            dir.path().join("crate/sinex-db/src/lib.rs"),
             "pub fn db() -> u8 { sinex_primitives::primitive() }\n",
         )?;
         run_git(&["add", "."], dir.path())?;
@@ -2669,12 +2729,12 @@ sinex-primitives = { path = "../sinex-primitives" }
         let args = vec!["-p".into(), "sinex-db".into()];
 
         std::fs::write(
-            dir.path().join("crate/lib/sinex-primitives/src/lib.rs"),
+            dir.path().join("crate/sinex-primitives/src/lib.rs"),
             "pub fn primitive() -> u8 { 2 }\n",
         )?;
         let fp_one = scoped_tree_fingerprint_in(dir.path(), "test", &args)?;
         std::fs::write(
-            dir.path().join("crate/lib/sinex-primitives/src/lib.rs"),
+            dir.path().join("crate/sinex-primitives/src/lib.rs"),
             "pub fn primitive() -> u8 { 3 }\n",
         )?;
         let fp_two = scoped_tree_fingerprint_in(dir.path(), "test", &args)?;
@@ -2711,7 +2771,7 @@ sinex-primitives = { path = "../sinex-primitives" }
             queue: vec![
                 QueuedWork {
                     command: "check".into(),
-                    args: vec!["-p".into(), "sinex-gateway".into()],
+                    args: vec!["-p".into(), "sinexd".into()],
                     is_foreground: false,
                     output_format: OutputFormat::Human,
                     tree_fingerprint: "queued-fp-1".into(),
@@ -2733,7 +2793,7 @@ sinex-primitives = { path = "../sinex-primitives" }
         let json = serde_json::to_string(&state)?;
         let deserialized: CoordinationState = serde_json::from_str(&json)?;
         assert_eq!(deserialized.queue.len(), 2);
-        assert_eq!(deserialized.queue[0].args, vec!["-p", "sinex-gateway"]);
+        assert_eq!(deserialized.queue[0].args, vec!["-p", "sinexd"]);
         assert_eq!(deserialized.queue[1].args, vec!["-p", "sinex-primitives"]);
         assert!(deserialized.queue[1].is_foreground);
         assert_eq!(deserialized.queue[0].output_format.as_cli_str(), "human");
@@ -2852,7 +2912,7 @@ sinex-primitives = { path = "../sinex-primitives" }
                 queue: vec![
                     QueuedWork {
                         command: "test".into(),
-                        args: vec!["-p".into(), "sinex-gateway".into()],
+                        args: vec!["-p".into(), "sinexd".into()],
                         is_foreground: false,
                         output_format: OutputFormat::Json,
                         tree_fingerprint: "queued-fp".into(),
@@ -2876,7 +2936,7 @@ sinex-primitives = { path = "../sinex-primitives" }
             .handle_completion("check")?
             .expect("queued work should be promoted");
         assert_eq!(next.command, "test");
-        assert_eq!(next.args, vec!["-p", "sinex-gateway"]);
+        assert_eq!(next.args, vec!["-p", "sinexd"]);
         assert_eq!(next.tree_fingerprint, "queued-fp");
         assert_eq!(next.scope_key, "queued-scope");
 
@@ -2886,7 +2946,7 @@ sinex-primitives = { path = "../sinex-primitives" }
         assert_eq!(promoted.command, "test");
         assert_eq!(promoted.job_id, -1);
         assert_eq!(promoted.pid, 0);
-        assert_eq!(promoted.args, vec!["-p", "sinex-gateway"]);
+        assert_eq!(promoted.args, vec!["-p", "sinexd"]);
         assert_eq!(promoted.tree_fingerprint, "queued-fp");
         assert_eq!(promoted.scope_key, "queued-scope");
         assert_eq!(promoted.queue.len(), 1);
@@ -3796,9 +3856,9 @@ sinex-primitives = { path = "../sinex-primitives" }
 
     #[sinex_test]
     async fn test_extract_explicit_packages_long_flag() -> TestResult<()> {
-        let args = vec!["--package".into(), "sinex-gateway".into()];
+        let args = vec!["--package".into(), "sinexd".into()];
         let pkgs = extract_explicit_packages("check", &args);
-        assert_eq!(pkgs, vec!["sinex-gateway"]);
+        assert_eq!(pkgs, vec!["sinexd"]);
         Ok(())
     }
 
@@ -3812,16 +3872,11 @@ sinex-primitives = { path = "../sinex-primitives" }
 
     #[sinex_test]
     async fn test_extract_explicit_packages_multiple() -> TestResult<()> {
-        let args = vec![
-            "-p".into(),
-            "sinex-db".into(),
-            "-p".into(),
-            "sinex-gateway".into(),
-        ];
+        let args = vec!["-p".into(), "sinex-db".into(), "-p".into(), "sinexd".into()];
         let pkgs = extract_explicit_packages("check", &args);
         assert_eq!(pkgs.len(), 2);
         assert!(pkgs.contains(&"sinex-db".to_string()));
-        assert!(pkgs.contains(&"sinex-gateway".to_string()));
+        assert!(pkgs.contains(&"sinexd".to_string()));
         Ok(())
     }
 
@@ -3845,16 +3900,17 @@ sinex-primitives = { path = "../sinex-primitives" }
 
     #[sinex_test]
     async fn test_package_to_path_well_known() -> TestResult<()> {
-        assert_eq!(package_to_path("sinexctl"), "crate/cli/");
+        assert_eq!(package_to_path("sinexctl"), "crate/sinexctl/");
         assert_eq!(package_to_path("xtask"), "xtask/");
-        assert_eq!(package_to_path("xtask-macros"), "xtask/macros/");
         assert_eq!(package_to_path("sinex-e2e-tests"), "tests/e2e/");
+        assert_eq!(package_to_path("sinex-workspace-tests"), "tests/workspace/");
+        assert_eq!(package_to_path("sinex-vm-test-suite"), "tests/vm-suite/");
         Ok(())
     }
 
     #[sinex_test]
     async fn test_package_to_path_known_crate() -> TestResult<()> {
-        // sinex-primitives should resolve to crate/lib/sinex-primitives/
+        // sinex-primitives should resolve to crate/sinex-primitives/
         let path = package_to_path("sinex-primitives");
         assert!(
             path.starts_with("crate/"),

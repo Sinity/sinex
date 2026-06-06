@@ -5,8 +5,8 @@
 //! conditions are met (status transitions, periodic intervals). During replay,
 //! invalidating a component scope recomputes all health reports for that component.
 
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, ScopeReconcilerNodeAdapter};
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconcilerAdapter};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, ScopeReconciler};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{HealthStatus, SyntheticTemporalPolicy};
 use sinex_primitives::events::{
@@ -237,11 +237,11 @@ impl ScopeReconciler for HealthAggregator {
         scope_key: &str,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         let now = context.require_ts_orig()?;
         let component = parse_component_name(&input)?.to_string();
         if component != scope_key {
-            return Err(NodeLogicError::InputParsing(format!(
+            return Err(AutomatonLogicError::InputParsing(format!(
                 "health status scope key '{scope_key}' does not match payload component '{component}'"
             )));
         }
@@ -394,12 +394,12 @@ impl HealthAggregator {
         events: &[HealthEvent],
         component: &str,
         report_kind: &str,
-    ) -> Result<Vec<Uuid>, NodeLogicError> {
+    ) -> Result<Vec<Uuid>, AutomatonLogicError> {
         events
             .iter()
             .map(|event| {
                 Uuid::parse_str(&event.event_id).map_err(|error| {
-                    NodeLogicError::Processing(format!(
+                    AutomatonLogicError::Processing(format!(
                         "health aggregator {report_kind} for component '{component}' contains invalid event_id '{}': {error}",
                         event.event_id
                     ))
@@ -519,20 +519,22 @@ impl HealthAggregator {
     }
 }
 
-/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type HealthAggregatorNode = ScopeReconcilerNodeAdapter<HealthAggregator>;
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
+pub type HealthAggregatorRuntime = ScopeReconcilerAdapter<HealthAggregator>;
 
-fn parse_component_name(input: &JsonValue) -> Result<&str, NodeLogicError> {
+fn parse_component_name(input: &JsonValue) -> Result<&str, AutomatonLogicError> {
     let component = input.get("component").ok_or_else(|| {
-        NodeLogicError::InputParsing(
+        AutomatonLogicError::InputParsing(
             "health status payload is missing required field 'component'".to_string(),
         )
     })?;
     let component = component.as_str().ok_or_else(|| {
-        NodeLogicError::InputParsing("health status field 'component' must be a string".to_string())
+        AutomatonLogicError::InputParsing(
+            "health status field 'component' must be a string".to_string(),
+        )
     })?;
     if component.trim().is_empty() {
-        return Err(NodeLogicError::InputParsing(
+        return Err(AutomatonLogicError::InputParsing(
             "health status field 'component' must not be empty".to_string(),
         ));
     }
@@ -542,72 +544,71 @@ fn parse_component_name(input: &JsonValue) -> Result<&str, NodeLogicError> {
 fn parse_health_status_field(
     input: &JsonValue,
     field: &str,
-) -> Result<HealthStatus, NodeLogicError> {
+) -> Result<HealthStatus, AutomatonLogicError> {
     let value = input.get(field).ok_or_else(|| {
-        NodeLogicError::InputParsing(format!(
+        AutomatonLogicError::InputParsing(format!(
             "health status payload is missing required field '{field}'"
         ))
     })?;
     let status = value.as_str().ok_or_else(|| {
-        NodeLogicError::InputParsing(format!("health status field '{field}' must be a string"))
+        AutomatonLogicError::InputParsing(format!("health status field '{field}' must be a string"))
     })?;
     HealthStatus::from_str(status).map_err(|_| {
-        NodeLogicError::InputParsing(format!(
+        AutomatonLogicError::InputParsing(format!(
             "health status field '{field}' has invalid value '{status}'"
         ))
     })
 }
 
-// --- Source-unit descriptor (issue #690 / #734) ---
+// --- Source descriptor (issue #690 / #734) ---
 
-use sinex_primitives::proof::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitDescriptor, SubjectRef,
+use sinex_primitives::source_contracts::{
+    CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
+    OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
+    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape,
+    SourceContract, SourceRuntimeBinding, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // Health is a ScopeReconciler over component scopes. State per-component is
 // reconciled and reported as `health.aggregated_report`.
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "health",
         namespace: "derived",
         event_types: &[
             ("health-aggregator", "health.aggregated_report"),
         ],
         // Health metrics describe component liveness, not user content.
-        privacy_tier: SuPrivacyTier::Public,
-        horizons: &[SuHorizon::Continuous],
-        retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
-        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
-            "(source_unit, component_scope, parent_event_ids)",
+        privacy_tier: ContractPrivacyTier::Public,
+        horizons: &[ContractHorizon::Continuous],
+        retention: ContractRetentionPolicy::Forever,
+        occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
+            "(source, component_scope, parent_event_ids)",
         ),
         access_policy: "event_stream_read",
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:health"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:health"),
         "health",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("health.aggregated_report")
     .privacy_context("inherits_from_parents")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
-    .source_unit_id("health")
-    .runner_pack("process")
-    .checkpoint_family(SuCheckpointFamily::AppendStream)
-    .runtime_shape(SuRuntimeShape::Continuous)
+    .source_id("health")
+    .runner_pack("sinexd")
+    .checkpoint_family(ContractCheckpointFamily::AppendStream)
+    .runtime_shape(ContractRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
-    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
+    .implementation_mode("in_process:sinexd")
+    .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }

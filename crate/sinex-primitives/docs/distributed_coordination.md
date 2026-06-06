@@ -7,15 +7,15 @@ Sinex utilizes NATS Key-Value (KV) buckets to manage cluster-wide coordination w
 The coordination layer provides three primary distributed primitives:
 
 ### 1. Instance Registration
-Nodes register themselves in the `KV_sinex_instances` bucket upon startup.
+Runtime modules register themselves in the `KV_sinex_instances` bucket upon startup.
 - **Key Format**: `{service_name}.{instance_id}`
 - **Metadata**: Includes hostname, PID, version, and capabilities.
 - **Lifecycle**: Managed via heartbeats.
 
 ### 2. Distributed Heartbeats
-Nodes must periodically update their registration key to signal health.
+Runtime modules must periodically update their registration key to signal health.
 - **Mechanism**: Atomic `PUT` operations with revision checks.
-- **Staleness**: Other nodes detect failures when an instance's heartbeat exceeds the configured threshold.
+- **Staleness**: Other runtime modules detect failures when an instance's heartbeat exceeds the configured threshold.
 
 ### 3. Leader Election
 Critical singleton tasks (like schema synchronization or scheduled maintenance) use the `CoordinationKvClient` for leader election.

@@ -68,8 +68,8 @@ pub fn empty_result(format: &OutputFormat, message: &str) {
 ///
 /// ```ignore
 /// // List output
-/// let nodes = vec![node1, node2];
-/// CommandOutput::list(nodes, "No nodes found", |nodes| format_table(nodes))
+/// let modules = vec![module1, module2];
+/// CommandOutput::list(modules, "No modules found", |modules| format_table(modules))
 ///     .display(&OutputFormat::Table)?;
 ///
 /// // Single item output

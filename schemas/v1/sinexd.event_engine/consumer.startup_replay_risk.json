@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "High-priority warning emitted when a dangerous replay is detected at ingestd startup.\n\nA dangerous replay occurs when a durable consumer is missing (e.g. renamed, environment\ndrift, or first start after schema change) and the stream contains retained messages.\nWithout intervention, the consumer would replay the entire backlog from the beginning,\nwhich can saturate I/O and destabilise the host.\n\nThe `reject_initial_replay` guard in `ensure_pull_consumer` already blocks this from\nhappening in production; this event is the pre-guard observability counterpart, emitted\neven when the guard would have prevented the consumer from starting.",
+  "description": "High-priority warning emitted when a dangerous replay is detected at event_engine startup.\n\nA dangerous replay occurs when a durable consumer is missing (e.g. renamed, environment\ndrift, or first start after schema change) and the stream contains retained messages.\nWithout intervention, the consumer would replay the entire backlog from the beginning,\nwhich can saturate I/O and destabilise the host.\n\nThe `reject_initial_replay` guard in `ensure_pull_consumer` already blocks this from\nhappening in production; this event is the pre-guard observability counterpart, emitted\neven when the guard would have prevented the consumer from starting.",
   "properties": {
     "durable_name": {
       "description": "Durable consumer name that was missing.",

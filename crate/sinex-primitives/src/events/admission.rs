@@ -2,13 +2,13 @@
 //!
 //! This module defines the `EventIntent` envelope that producers construct
 //! to declare "I've done my admission checks, here's the payload." The envelope
-//! complements (does not replace) the ingestd-side admission boundary extracted in
-//! #1056 — the producer uses the envelope type (compile-time guard), and ingestd
+//! complements (does not replace) the event-engine-side admission boundary extracted in
+//! #1056 — the producer uses the envelope type (compile-time guard), and event_engine
 //! validates it on receipt (runtime guard).
 //!
 //! # Envelope versioning
 //!
-//! The envelope carries an explicit version string. ingestd rejects unknown
+//! The envelope carries an explicit version string. event_engine rejects unknown
 //! versions, giving us a forward-compatible migration path.
 
 use crate::domain::HostName;
@@ -20,7 +20,7 @@ use serde_json::Value as JsonValue;
 /// Current envelope version emitted by all producers.
 pub const CURRENT_ENVELOPE_VERSION: &str = "1";
 
-/// Envelope versions that ingestd will accept on receipt.
+/// Envelope versions that event_engine will accept on receipt.
 pub const ACCEPTED_ENVELOPE_VERSIONS: &[&str] = &["1"];
 
 /// The kind of anchor that identifies an occurrence within source material.
@@ -102,7 +102,7 @@ impl std::str::FromStr for OccurrenceAnchorKind {
 ///
 /// This is the envelope that producers publish to NATS `JetStream` instead of raw
 /// `Event` batches. It carries:
-/// - **Envelope metadata** (version, source unit, parser identity)
+/// - **Envelope metadata** (version, source, parser identity)
 /// - **The admitted events** — one or more `Event<JsonValue>` entries
 ///
 /// The type system makes it hard to accidentally publish raw events to durable
@@ -115,9 +115,9 @@ pub struct EventIntent {
     /// Envelope version — currently "1".
     pub envelope_version: String,
 
-    /// Source unit identifier (e.g., "fs-watcher", "terminal-ingestor").
-    /// Must match a registered `SourceUnitDescriptor::source_unit_id`.
-    pub source_unit_id: String,
+    /// Source identifier (e.g., "fs-watcher", "terminal-source").
+    /// Must match a registered `SourceContract::source_id`.
+    pub source_id: String,
 
     /// Parser that interpreted the source material (e.g., "inotify-watcher",
     /// "atuin-history-parser").
@@ -140,7 +140,7 @@ pub struct EventIntent {
 impl EventIntent {
     /// Create a new admitted event intent with the current envelope version.
     pub fn new(
-        source_unit_id: impl Into<String>,
+        source_id: impl Into<String>,
         parser_id: impl Into<String>,
         parser_version: impl Into<String>,
         events: Vec<Event<JsonValue>>,
@@ -148,7 +148,7 @@ impl EventIntent {
     ) -> Self {
         Self {
             envelope_version: CURRENT_ENVELOPE_VERSION.to_string(),
-            source_unit_id: source_unit_id.into(),
+            source_id: source_id.into(),
             parser_id: parser_id.into(),
             parser_version: parser_version.into(),
             events,
@@ -157,7 +157,7 @@ impl EventIntent {
         }
     }
 
-    /// Check whether this envelope version is accepted by ingestd.
+    /// Check whether this envelope version is accepted by event_engine.
     #[must_use]
     pub fn is_version_accepted(&self) -> bool {
         ACCEPTED_ENVELOPE_VERSIONS.contains(&self.envelope_version.as_str())
@@ -170,9 +170,9 @@ impl EventIntent {
                 "admitted event intent missing envelope_version",
             ));
         }
-        if self.source_unit_id.trim().is_empty() {
+        if self.source_id.trim().is_empty() {
             return Err(crate::SinexError::validation(
-                "admitted event intent missing source_unit_id",
+                "admitted event intent missing source_id",
             ));
         }
         if self.parser_id.trim().is_empty() {
@@ -221,7 +221,7 @@ mod tests {
     async fn envelope_validation_rejects_empty_version() -> TestResult<()> {
         let mut intent = EventIntent {
             envelope_version: String::new(),
-            source_unit_id: "test".into(),
+            source_id: "test".into(),
             parser_id: "test-parser".into(),
             parser_version: "1.0.0".into(),
             events: vec![minimal_event()],
@@ -239,7 +239,7 @@ mod tests {
     async fn envelope_validation_rejects_empty_events() -> TestResult<()> {
         let intent = EventIntent {
             envelope_version: "1".into(),
-            source_unit_id: "test".into(),
+            source_id: "test".into(),
             parser_id: "test-parser".into(),
             parser_version: "1.0.0".into(),
             events: vec![],
@@ -254,7 +254,7 @@ mod tests {
     async fn envelope_validation_passes_for_valid_intent() -> TestResult<()> {
         let intent = EventIntent {
             envelope_version: "1".into(),
-            source_unit_id: "test-unit".into(),
+            source_id: "test-unit".into(),
             parser_id: "test-parser".into(),
             parser_version: "1.0.0".into(),
             events: vec![minimal_event()],
@@ -269,7 +269,7 @@ mod tests {
     async fn is_version_accepted_returns_true_for_v1() -> TestResult<()> {
         let intent = EventIntent {
             envelope_version: "1".into(),
-            source_unit_id: "test".into(),
+            source_id: "test".into(),
             parser_id: "test-parser".into(),
             parser_version: "1.0.0".into(),
             events: vec![minimal_event()],
@@ -284,7 +284,7 @@ mod tests {
     async fn is_version_accepted_rejects_unknown_version() -> TestResult<()> {
         let intent = EventIntent {
             envelope_version: "999".into(),
-            source_unit_id: "test".into(),
+            source_id: "test".into(),
             parser_id: "test-parser".into(),
             parser_version: "1.0.0".into(),
             events: vec![minimal_event()],
@@ -306,7 +306,7 @@ mod tests {
 
         let intent = EventIntent {
             envelope_version: "1".into(),
-            source_unit_id: "test".into(),
+            source_id: "test".into(),
             parser_id: "test-parser".into(),
             parser_version: "1.0.0".into(),
             events: vec![ev1, ev2],
@@ -360,7 +360,7 @@ mod tests {
             ts_orig: Some(Timestamp::now()),
             ts_quality: None,
             host: crate::domain::HostName::from_static("test-host"),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,
@@ -369,7 +369,7 @@ mod tests {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             anchor_payload_hash: None,
         }
     }

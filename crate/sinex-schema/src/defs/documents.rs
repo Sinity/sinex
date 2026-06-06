@@ -2,10 +2,10 @@
 //! derived events emitted by the document-layer parser (`#733`).
 //!
 //! Both tables are application-managed projections of the
-//! `document.parsed` / `document.chunked` events; rebuild semantics live
-//! in `docs/architecture/document-layer-v1.md`. The Rust definitions
-//! here participate in declarative schema convergence (`apply.rs`) and
-//! the `schema-strict-diff` covered drift surface.
+//! `document.parsed` / `document.chunked` events; the current contract is
+//! documented in `crate/sinex-schema/docs/document_layer.md`. The Rust
+//! definitions here participate in declarative schema convergence
+//! (`apply.rs`) and the `schema-strict-diff` covered drift surface.
 
 use crate::TableDef;
 use crate::primitives::{Timestamp, Uuid};
@@ -63,7 +63,7 @@ pub struct DocumentRecord {
 
 impl Documents {
     /// `CREATE TABLE` for `core.documents`. The deterministic `id`
-    /// is set by the parser (`UUIDv5` over `(NS_DOCUMENTS, source_unit ||
+    /// is set by the parser (`UUIDv5` over `(NS_DOCUMENTS, source ||
     /// natural_key)`) and is *not* defaulted to `uuidv7()` — the
     /// projection writer always supplies it.
     #[must_use]

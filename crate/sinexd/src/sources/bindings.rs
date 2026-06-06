@@ -1,16 +1,15 @@
 //! Source-binding manifest loader and in-process spawner.
 //!
-//! Replaces the per-binding `sinex-source-worker` systemd unit fleet with
+//! Replaces the old per-binding source systemd fleet with
 //! one tokio task per binding under the `sinexd` supervisor. The supervisor
 //! reads `SINEX_SOURCE_BINDINGS_PATH`, deserializes the manifest, and
-//! dispatches each enabled binding through the existing node-factory
-//! registry — the same factory the deleted `sinex-source-worker` binary
-//! used, just invoked in-process.
+//! dispatches each enabled binding through the source-factory
+//! registry in-process.
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::error::{Result, SinexError};
-use sinex_primitives::parser::SourceUnitId;
+use sinex_primitives::parser::SourceId;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -19,8 +18,8 @@ use std::task::{Context, Poll};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{info, warn};
 
-use crate::sources::node_factory;
-use crate::sources::registry::SourceUnitRegistry;
+use crate::sources::registry::SourceContractRegistry;
+use crate::sources::source_factory;
 
 /// Process-global mutex guarding bindings that mutate environment variables.
 ///
@@ -33,7 +32,7 @@ use crate::sources::registry::SourceUnitRegistry;
 /// lock is released and the `EnvRestore` guard restores the prior env.
 ///
 /// The lock is held only across the **first poll** of the factory future, not
-/// for its entire lifetime. Source-unit factories are continuous and never
+/// for its entire lifetime. Source factories are continuous and never
 /// resolve under normal operation, so a lock held for the full future would
 /// permanently block every later env-mutating binding (e.g. a second display
 /// scope using `DISPLAY=:1`). Releasing the lock after the first poll lets
@@ -41,7 +40,7 @@ use crate::sources::registry::SourceUnitRegistry;
 /// prefix, and proceed without blocking each other.
 ///
 /// Bindings with empty `extra_env` (the common case — RUST_LOG-only bindings
-/// and source units that don't read env) take the fast path: no mutation, no
+/// and source contracts that don't read env) take the fast path: no mutation, no
 /// serialization, no lock contention.
 ///
 /// Residual hazard: a factory that reads `std::env::var` *after* its first
@@ -51,39 +50,37 @@ use crate::sources::registry::SourceUnitRegistry;
 /// `baseline_adapter_config` invoked before the runtime yields). A fully
 /// sound fix threads per-binding env through the factory as data and removes
 /// `std::env::var` from adapters; that is tracked as a follow-up because it
-/// requires extending `MaterialParser::baseline_adapter_config` on the SDK
-/// trait, which ripples through every source unit.
+/// requires extending `MaterialParser::baseline_adapter_config` on the runtime
+/// trait, which ripples through every source.
 static BINDING_ENV_LOCK: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mutex::new(())));
 
 /// One row in the manifest file at `SINEX_SOURCE_BINDINGS_PATH`.
 ///
-/// The NixOS module generates this from `services.sinex.generatedBindings.*`
-/// at activation time and writes it into the Nix store. The Rust side
-/// validates the manifest structure but defers source-unit-id validity
-/// checking to the descriptor registry (so an unknown source unit fails
+/// The NixOS module generates this from the enabled source binding options at
+/// activation time and writes it into the Nix store. The Rust side
+/// validates the manifest structure but defers source-id validity
+/// checking to the source contract registry (so an unknown source fails
 /// loudly at startup with a list of registered alternatives).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceBinding {
-    /// Source-unit id (e.g. `terminal.atuin-history`). Must be registered
-    /// in the descriptor registry via `register_source_unit!`.
-    pub source_unit_id: String,
+    /// Source id (e.g. `terminal.atuin-history`). Must be registered
+    /// in the source contract registry via `register_source_contract!`.
+    pub source_id: String,
 
-    /// 1-based instance index. Preserved from the historical
-    /// `sinex-source-worker-<id>-<idx>.service` unit name convention so
-    /// log output and checkpoint identities stay comparable across the
-    /// collapse.
+    /// 1-based instance index used to derive a stable per-binding service
+    /// label.
     #[serde(default = "default_instance_idx")]
     pub instance_idx: u32,
 
-    /// Optional service-name override. Defaults to
-    /// `sinex-source-worker-<id>-<idx>` when absent.
+    /// Optional runtime label override. Defaults to
+    /// `source-driver-<id>-<idx>` when absent.
     #[serde(default)]
     pub service_name: Option<String>,
 
-    /// JSON object passed verbatim to the source unit via `--node-config`.
+    /// JSON object passed verbatim to the source via `--runtime-config`.
     /// Empty / null skips the flag.
     #[serde(default)]
-    pub node_config: Option<serde_json::Value>,
+    pub runtime_config: Option<serde_json::Value>,
 
     /// Extra CLI arguments. In continuous mode (empty `extra_args`) the
     /// `service` subcommand is appended automatically. When non-empty,
@@ -93,8 +90,8 @@ pub struct SourceBinding {
     pub extra_args: Vec<String>,
 
     /// Environment variables injected into the binding's process scope.
-    /// Replaces the per-unit `EnvironmentFile` overlays that existed when
-    /// each source-worker was a separate systemd unit. Keys set here
+    /// Replaces the per-source `EnvironmentFile` overlays that existed when
+    /// each source was a separate systemd unit. Keys set here
     /// override the daemon's inherited environment for the duration of
     /// the binding's lifecycle.
     #[serde(default)]
@@ -129,29 +126,29 @@ impl SourceBindingsManifest {
     }
 }
 
-/// Validate every binding's `source_unit_id` against the descriptor
+/// Validate every binding's `source_id` against the descriptor
 /// registry, returning an error listing every offending entry. Fail-fast
 /// on startup so a malformed manifest cannot silently shrink the active
 /// capture surface.
 pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
-    let registry = SourceUnitRegistry::from_inventory();
+    let registry = SourceContractRegistry::from_inventory();
     let mut errors = Vec::new();
     for binding in bindings {
-        let unit_id = SourceUnitId::new(&binding.source_unit_id).map_err(|error| {
+        let unit_id = SourceId::new(&binding.source_id).map_err(|error| {
             SinexError::configuration(format!(
-                "binding has invalid source_unit_id '{}': {error}",
-                binding.source_unit_id
+                "binding has invalid source_id '{}': {error}",
+                binding.source_id
             ))
         })?;
         if let Err(error) = registry.validate(&unit_id) {
-            errors.push(format!("{}: {error}", binding.source_unit_id));
+            errors.push(format!("{}: {error}", binding.source_id));
             continue;
         }
-        if node_factory::find_node_factory(&unit_id).is_none() {
+        if source_factory::find_source_factory(&unit_id).is_none() {
             errors.push(format!(
-                "{}: descriptor registered but no node factory \
-                 (missing register_node_factory! / register_adapter_ingestor! call)",
-                binding.source_unit_id
+                "{}: source contract registered but no source factory \
+                 (missing register_source! factory call)",
+                binding.source_id
             ));
         }
     }
@@ -165,52 +162,51 @@ pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
     Ok(())
 }
 
-/// Drive one binding through the standard SDK lifecycle.
+/// Drive one binding through the standard runtime lifecycle.
 ///
-/// Mirrors the deleted `sinex-source-worker` trampoline: look up the
-/// node factory for the source-unit id, then call it with a synthesized
-/// argv equivalent to the old systemd `ExecStart`.
+/// Look up the source factory for the source id, then call it with a
+/// synthesized argv equivalent to the old per-source `ExecStart`.
 pub async fn run_binding(binding: SourceBinding) -> Result<()> {
-    let unit_id = SourceUnitId::new(&binding.source_unit_id).map_err(|error| {
+    let unit_id = SourceId::new(&binding.source_id).map_err(|error| {
         SinexError::configuration(format!(
-            "invalid source_unit_id '{}': {error}",
-            binding.source_unit_id
+            "invalid source_id '{}': {error}",
+            binding.source_id
         ))
     })?;
-    let factory = node_factory::find_node_factory(&unit_id).ok_or_else(|| {
+    let factory = source_factory::find_source_factory(&unit_id).ok_or_else(|| {
         SinexError::configuration(format!(
-            "no node factory registered for source unit '{}'",
-            binding.source_unit_id
+            "no source factory registered for source '{}'",
+            binding.source_id
         ))
     })?;
 
     let service_name = binding.service_name.clone().unwrap_or_else(|| {
         format!(
-            "sinex-source-worker-{}-{}",
-            binding.source_unit_id, binding.instance_idx
+            "source-driver-{}-{}",
+            binding.source_id, binding.instance_idx
         )
     });
 
     let mut argv: Vec<std::ffi::OsString> = vec![
-        std::ffi::OsString::from("sinexd-source-worker"),
-        std::ffi::OsString::from("--source-unit"),
-        std::ffi::OsString::from(&binding.source_unit_id),
+        std::ffi::OsString::from("sinexd-source"),
+        std::ffi::OsString::from("--source"),
+        std::ffi::OsString::from(&binding.source_id),
         std::ffi::OsString::from("--service-name"),
         std::ffi::OsString::from(&service_name),
     ];
-    if let Some(config) = &binding.node_config {
+    if let Some(config) = &binding.runtime_config {
         // Skip if explicitly null or an empty object — clap rejects empty
         // values and an empty {} is operationally identical to "use defaults".
         let is_empty_object = config.as_object().is_some_and(serde_json::Map::is_empty);
         if !config.is_null() && !is_empty_object {
             let encoded = serde_json::to_string(config).map_err(|error| {
                 SinexError::configuration(format!(
-                    "failed to encode node_config for '{}'",
-                    binding.source_unit_id
+                    "failed to encode runtime_config for '{}'",
+                    binding.source_id
                 ))
                 .with_std_error(&error)
             })?;
-            argv.push(std::ffi::OsString::from("--node-config"));
+            argv.push(std::ffi::OsString::from("--runtime-config"));
             argv.push(std::ffi::OsString::from(encoded));
         }
     }
@@ -222,10 +218,10 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
     }
 
     info!(
-        source_unit = %binding.source_unit_id,
+        source = %binding.source_id,
         instance_idx = binding.instance_idx,
         service_name = %service_name,
-        "starting in-process source-worker binding"
+        "starting in-process source binding"
     );
 
     // Per-binding environment variables (#1562 item 1).
@@ -245,8 +241,8 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
     if binding.extra_env.is_empty() {
         factory(argv).await.map_err(|error| {
             SinexError::service(format!(
-                "source-worker binding '{}' exited with error: {error}",
-                binding.source_unit_id
+                "source binding '{}' exited with error: {error}",
+                binding.source_id
             ))
         })
     } else {
@@ -258,8 +254,8 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
         };
         locked.await.map_err(|error| {
             SinexError::service(format!(
-                "source-worker binding '{}' exited with error: {error}",
-                binding.source_unit_id
+                "source binding '{}' exited with error: {error}",
+                binding.source_id
             ))
         })
     }
@@ -269,7 +265,7 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
 /// first poll of the inner factory future, then drops both so concurrent
 /// env-mutating bindings can proceed.
 ///
-/// Continuous source-unit factories never resolve under normal operation;
+/// Continuous source factories never resolve under normal operation;
 /// holding the lock for the full future lifetime would deadlock every
 /// subsequent env-mutating binding. Restricting the lock to the first poll
 /// gives each binding's sync prefix a chance to snapshot env values into

@@ -141,7 +141,7 @@ fn config_show(format: OutputFormat) -> Result<()> {
     println!("---");
     println!("# Config sources (in priority order):");
     println!("#   1. CLI arguments (highest)");
-    println!("#   2. Runtime environment variables (SINEX_RPC_*, DATABASE_URL)");
+    println!("#   2. Runtime environment variables (SINEX_API_*, DATABASE_URL)");
     if config_path.exists() {
         println!(
             "#   3. User preference file (format/theme/editor/aliases only): {}",

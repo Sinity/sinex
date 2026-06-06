@@ -14,7 +14,7 @@ async fn event_validator_rejects_future_ts_orig() -> xtask::sandbox::TestResult<
         ts_orig: Some(Timestamp::now() + ::time::Duration::hours(2)),
         ts_quality: None,
         host: HostName::from_static("validator"),
-        source_run_id: None,
+        module_run_id: None,
         payload_schema_id: None,
         anchor_payload_hash: None,
         provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
@@ -24,7 +24,7 @@ async fn event_validator_rejects_future_ts_orig() -> xtask::sandbox::TestResult<
         scope_key: None,
         equivalence_key: None,
         created_by_operation_id: None,
-        node_model: None,
+        automaton_model: None,
     };
 
     let error = validator

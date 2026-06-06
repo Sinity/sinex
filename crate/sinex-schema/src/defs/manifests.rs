@@ -1,12 +1,12 @@
-//! The canonical database schema for runtime process/source manifests.
+//! The canonical database schema for runtime module/source manifests.
 //!
 //! `core.manifests` records the immutable identity of every runtime entity:
-//! nodes (ingestd, gateway), sources (weechat-parser, atuin-history), and
+//! modules (event_engine, api), sources (weechat-parser, atuin-history), and
 //! automata (canonicalizer, health-aggregator).
 //!
 //! Each manifest declares what the entity IS — its type, version, parent,
 //! and the event types it consumes and emits. This is the runtime counterpart
-//! to the compile-time `register_source_unit!` inventory.
+//! to the compile-time `register_source_contract!` inventory.
 
 use crate::TableDef;
 use crate::primitives::Timestamp;
@@ -72,7 +72,7 @@ impl Manifests {
             )
             .col(ColumnDef::new(Manifests::Name).text().not_null())
             // The CHECK constraint on manifest_type is converged by the
-            // schema-apply engine from the `NodeType` enum's
+            // schema-apply engine from the `ModuleKind` enum's
             // `#[derive(DbCheck)]` spec (issue #1236). Do NOT add an inline
             // `.check(...)` here — it would survive only on first table
             // creation and prevent the apply engine from owning the rename.

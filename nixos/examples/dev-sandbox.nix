@@ -7,7 +7,7 @@
 
 # Comprehensive developer sandbox configuration for Sinex.
 #
-# This example turns on every major subsystem (nodes, maintenance, monitoring,
+# This example turns on every major subsystem (runtime, maintenance, monitoring,
 # coordination) on a single host so engineers can explore behaviour locally. It
 # also provisions helper tooling and a sample data generator.
 {
@@ -35,8 +35,24 @@
     };
 
     # Developer sandbox runtime policy: deactivate auto-restart on NixOS
-    # switch and bound restart loops so a buggy node can't spin forever.
+    # switch and bound restart loops so a buggy runtime can't spin forever.
+    bootstrap.restartPolicy = "no";
+
+    lifecycle.maintenance.enable = true;
+
+    core = {
+      enable = true;
+      api.autoGenerateTls = true;
+      event_engine = {
+        batch = {
+          size = 500;
+          timeoutSec = 3;
+        };
+      };
+    };
+
     runtime = {
+      enable = true;
       target = {
         attachToMultiUser = false;
         manualStartOnly = true;
@@ -47,25 +63,6 @@
         burst = 5;
         backoffSec = 15;
       };
-    };
-
-    bootstrap.restartPolicy = "no";
-
-    lifecycle.maintenance.enable = true;
-
-    core = {
-      enable = true;
-      gateway.autoGenerateTls = true;
-      ingestd = {
-        batch = {
-          size = 500;
-          timeoutSec = 3;
-        };
-      };
-    };
-
-    nodes = {
-      enable = true;
       defaults.logLevel = "debug";
 
       coordination = {
@@ -74,7 +71,9 @@
         leadershipTimeoutSec = 60;
         handoffTimeoutSec = 30;
       };
+    };
 
+    sources = {
       filesystem = {
         enable = true;
         instances = 2;
@@ -120,14 +119,14 @@
           cpuQuota = "60%";
         };
       };
+    };
 
-      automata = {
-        enable = true;
-        canonicalizer.enable = true;
-        healthAggregator.enable = true;
-        analyticsAutomaton.enable = true;
-        sessionDetector.enable = true;
-      };
+    automata = {
+      enable = true;
+      canonicalizer.enable = true;
+      healthAggregator.enable = true;
+      analyticsAutomaton.enable = true;
+      sessionDetector.enable = true;
     };
 
     observability = {
@@ -158,7 +157,7 @@
     };
   };
 
-  environment.etc."sinex/gateway-admin-token".text = "dev-sandbox-admin:admin";
+  environment.etc."sinex/api-admin-token".text = "dev-sandbox-admin:admin";
 
   users.users.developer = {
     isNormalUser = true;

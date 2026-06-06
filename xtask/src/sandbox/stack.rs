@@ -1,6 +1,6 @@
 //! `TestCoreStack` — unified test fixture for the full sinex service stack.
 //!
-//! Composes NATS + ingestd + gateway into a single fixture with proper
+//! Composes NATS + event engine + API into a single fixture with proper
 //! startup ordering, readiness checks, and coordinated shutdown. Designed
 //! for integration tests that need to exercise the full request path
 //! (publish → ingest → persist → query via RPC).
@@ -9,8 +9,8 @@ use crate::sandbox::context::Sandbox;
 use crate::sandbox::coordination::PipelineNamespace;
 use crate::sandbox::nats::acquire_pipeline_permit;
 use crate::sandbox::orchestrator::{
-    TestGatewayConfig, TestGatewayHandle, TestIngestdConfig, TestIngestdHandle, start_test_gateway,
-    start_test_ingestd_with_config,
+    TestEventEngineConfig, TestEventEngineHandle, TestGatewayConfig, TestGatewayHandle,
+    start_test_event_engine_with_config, start_test_gateway,
 };
 use crate::sandbox::prelude::*;
 use sinex_primitives::events::{OffsetKind, Publishable, SourceMaterial};
@@ -26,7 +26,7 @@ use tracing::{info, warn};
 pub const TEST_RPC_TOKEN: &str = "test-stack-token:admin";
 
 /// Unified test fixture that starts the full sinex service stack:
-/// NATS (shared ephemeral) + ingestd (subprocess) + gateway (subprocess).
+/// NATS (shared ephemeral) + event_engine (subprocess) + gateway (subprocess).
 ///
 /// # Lifecycle
 ///
@@ -35,7 +35,7 @@ pub const TEST_RPC_TOKEN: &str = "test-stack-token:admin";
 ///   1. Ensure shared NATS
 ///   2. Reset DB slot
 ///   3. Generate self-signed TLS certs
-///   4. Start ingestd subprocess (with consumer readiness wait)
+///   4. Start event_engine subprocess (with consumer readiness wait)
 ///   5. Start gateway subprocess (with TCP readiness wait)
 ///   → Ready: publish events, query via RPC
 /// ```
@@ -61,7 +61,7 @@ pub const TEST_RPC_TOKEN: &str = "test-stack-token:admin";
 /// ```
 pub struct TestCoreStack<'ctx> {
     ctx: &'ctx Sandbox,
-    ingestd: Option<TestIngestdHandle>,
+    event_engine: Option<TestEventEngineHandle>,
     gateway: Option<TestGatewayHandle>,
     pipeline_permit: Option<OwnedSemaphorePermit>,
     _work_dir: TempDir,
@@ -88,7 +88,7 @@ impl<'ctx> TestCoreStack<'ctx> {
         let namespace = ctx.pipeline_namespace().prefix().to_string();
         let pipeline_permit = Some(acquire_pipeline_permit(&namespace).await?);
 
-        // Isolated work dir for ingestd WAL files
+        // Isolated work dir for event_engine WAL files
         let work_dir = tempfile::tempdir()?;
 
         // ── Step 1: Generate self-signed TLS certificates ──────────────
@@ -99,8 +99,8 @@ impl<'ctx> TestCoreStack<'ctx> {
         tokio::fs::write(cert_file.path(), cert.cert.pem()).await?;
         tokio::fs::write(key_file.path(), cert.key_pair.serialize_pem()).await?;
 
-        // ── Step 2: Start ingestd ──────────────────────────────────────
-        let ingestd_config = TestIngestdConfig {
+        // ── Step 2: Start event_engine ──────────────────────────────────────
+        let event_engine_config = TestEventEngineConfig {
             nats: nats.connection_config(),
             database_url: ctx.database_url().to_string(),
             work_dir: Some(work_dir.path().to_path_buf()),
@@ -110,7 +110,8 @@ impl<'ctx> TestCoreStack<'ctx> {
             database_pool_size: 10,
             reject_initial_replay: false,
         };
-        let ingestd = start_test_ingestd_with_config(ingestd_config, Some(ctx)).await?;
+        let event_engine =
+            start_test_event_engine_with_config(event_engine_config, Some(ctx)).await?;
 
         // ── Step 3: Start gateway ──────────────────────────────────────
         let gateway_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
@@ -122,23 +123,23 @@ impl<'ctx> TestCoreStack<'ctx> {
             tls_key: key_file.path().to_path_buf(),
             rpc_token: Some(rpc_token.clone()),
             rpc_rate_limit_disabled: true,
-            // MUST match the ingestd namespace above: the SSE SubscriptionBus
+            // MUST match the event_engine namespace above: the SSE SubscriptionBus
             // subscribes to `{namespace}.events.confirmations.>`, so without this
-            // the bus never sees the namespaced ingestd's confirmations and the
-            // real ingestd → bus → SSE delivery path silently never completes.
+            // the bus never sees the namespaced event_engine's confirmations and the
+            // real event_engine → bus → SSE delivery path silently never completes.
             namespace: Some(namespace.clone()),
         };
         let gateway = start_test_gateway(gateway_config).await?;
 
         info!(
             gateway_addr = %gateway.addr,
-            ingestd_stream = %ingestd.stream_name,
+            event_engine_stream = %event_engine.stream_name,
             "TestCoreStack ready"
         );
 
         Ok(Self {
             ctx,
-            ingestd: Some(ingestd),
+            event_engine: Some(event_engine),
             gateway: Some(gateway),
             pipeline_permit,
             _work_dir: work_dir,
@@ -200,11 +201,11 @@ impl<'ctx> TestCoreStack<'ctx> {
         self.ctx.pipeline_namespace()
     }
 
-    /// The ingestd's JetStream stream name.
+    /// The event_engine's JetStream stream name.
     #[must_use]
     pub fn stream_name(&self) -> &str {
         &self
-            .ingestd
+            .event_engine
             .as_ref()
             .expect("stack not shut down")
             .stream_name
@@ -214,7 +215,7 @@ impl<'ctx> TestCoreStack<'ctx> {
     // Publishing (delegates to PipelineScope-style helpers)
     // ════════════════════════════════════════════════════════════════════
 
-    /// Publish a typed event through NATS and wait for ingestd to persist it.
+    /// Publish a typed event through NATS and wait for event_engine to persist it.
     pub async fn publish<P: Publishable>(&self, payload: P) -> TestResult<EventId> {
         let source = payload.source();
         let event_type = payload.event_type();
@@ -233,7 +234,7 @@ impl<'ctx> TestCoreStack<'ctx> {
             payload: json,
             ts_orig: Some(Timestamp::now()),
             host: crate::sandbox::local_test_host(),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             anchor_payload_hash: None,
             provenance: sinex_primitives::events::Provenance::Material {
@@ -249,7 +250,7 @@ impl<'ctx> TestCoreStack<'ctx> {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
             ts_quality: None,
         };
 
@@ -335,7 +336,7 @@ impl<'ctx> TestCoreStack<'ctx> {
                 payload: serde_json::json!({ "index": i, "seeded": true }),
                 ts_orig: Some(Timestamp::now()),
                 host: crate::sandbox::local_test_host(),
-                source_run_id: None,
+                module_run_id: None,
                 payload_schema_id: None,
                 anchor_payload_hash: None,
                 provenance: sinex_primitives::events::Provenance::Material {
@@ -351,7 +352,7 @@ impl<'ctx> TestCoreStack<'ctx> {
                 scope_key: Some(format!("{source}:{event_type}")),
                 equivalence_key: Some(format!("{source}:{event_type}:{i}")),
                 created_by_operation_id: None,
-                node_model: None,
+                automaton_model: None,
                 ts_quality: None,
             };
 
@@ -386,8 +387,8 @@ impl<'ctx> TestCoreStack<'ctx> {
         if let Some(mut gw) = self.gateway.take() {
             gw.stop().await?;
         }
-        if let Some(mut ingestd) = self.ingestd.take() {
-            ingestd.stop().await?;
+        if let Some(mut event_engine) = self.event_engine.take() {
+            event_engine.stop().await?;
         }
         self.pipeline_permit.take();
         Ok(())
@@ -401,9 +402,9 @@ impl Drop for TestCoreStack<'_> {
 
         // Best-effort async cleanup
         let gateway = self.gateway.take();
-        let ingestd = self.ingestd.take();
+        let event_engine = self.event_engine.take();
 
-        if gateway.is_some() || ingestd.is_some() {
+        if gateway.is_some() || event_engine.is_some() {
             if let Ok(handle) = Handle::try_current() {
                 handle.spawn(async move {
                     if let Some(mut gw) = gateway
@@ -411,10 +412,10 @@ impl Drop for TestCoreStack<'_> {
                     {
                         warn!(error = %error, "Failed to stop sandbox gateway during drop cleanup");
                     }
-                    if let Some(mut ing) = ingestd
+                    if let Some(mut ing) = event_engine
                         && let Err(error) = ing.stop().await
                     {
-                        warn!(error = %error, "Failed to stop sandbox ingestd during drop cleanup");
+                        warn!(error = %error, "Failed to stop sandbox event_engine during drop cleanup");
                     }
                 });
             } else {
@@ -424,10 +425,10 @@ impl Drop for TestCoreStack<'_> {
                 {
                     warn!(error = %error, "Failed to stop sandbox gateway during sync drop cleanup");
                 }
-                if let Some(mut ing) = ingestd
+                if let Some(mut ing) = event_engine
                     && let Err(error) = futures::executor::block_on(ing.stop())
                 {
-                    warn!(error = %error, "Failed to stop sandbox ingestd during sync drop cleanup");
+                    warn!(error = %error, "Failed to stop sandbox event_engine during sync drop cleanup");
                 }
             }
         }

@@ -37,7 +37,7 @@ pub async fn spawn_consumer_and_wait_ready(
     js: &jetstream::Context,
     topology: &JetStreamTopology,
     consumer: JetStreamConsumer,
-) -> TestResult<JoinHandle<sinexd::event_engine::IngestdResult<()>>> {
+) -> TestResult<JoinHandle<sinexd::event_engine::EventEngineResult<()>>> {
     let nats = ctx.nats_handle()?;
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let handle = tokio::spawn(async move { consumer.run_with_ready_signal(Some(ready_tx)).await });

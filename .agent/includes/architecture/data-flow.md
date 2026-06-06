@@ -3,7 +3,7 @@
 ### Data Flow
 
 ```
-Nodes (Sources)            Nodes (Automata)           Clients
+Sources                    Automata                   Clients
   fs, terminal,              canonicalizer,             CLI (sinexctl),
   desktop, system,           analytics, health          browser extension
   document                        |                         |
@@ -49,16 +49,15 @@ sinex-primitives         Foundation: types, validation, errors, domain enums, ID
     |   |                 sinex_db::schema: DB schema + declarative convergence
     |   |
     |   +-- sinex-macros      #[derive(EventPayload)]
-    |   |
-    |   +-- sinex-node-sdk    Node runtime + CLI: lifecycle, checkpoints, replay
-    |           |
-    |           +-- sinexd    Unified daemon
-    |                   |
-    |                   +-- sinexd::sources   Source-unit adapters
-    |                   +-- sinexd::automata  All automata
-    |                   +-- sinexd::event_engine  Persistence pipeline
-    |                   +-- sinexd::api       API layer
-    |                   +-- sinexd::supervisor  Orchestration
+
+sinexd                  Unified daemon
+    |
+    +-- sinexd::runtime     Inline runtime support: lifecycle, checkpoints, replay
+    +-- sinexd::sources      Source contracts and adapters
+    +-- sinexd::automata     All automata
+    +-- sinexd::event_engine Persistence pipeline
+    +-- sinexd::api          API layer
+    +-- sinexd::supervisor   Orchestration
 
 sinexctl                 Unified CLI (query, trace, telemetry, context, report, import)
 
@@ -74,7 +73,7 @@ Subjects:
   sinex.events.dlq.>                    Dead-letter queue
   sinex.derived.invalidation            Scope invalidation (replay)
   sinex.telemetry                       Self-observation events
-  sinex.control.nodes.{id}.scan         Replay scan commands
+  sinex.control.sources.{id}.scan         Replay scan commands
   sinex.control.replay.progress.{op}    Replay progress updates
 ```
 
@@ -97,9 +96,10 @@ Three processing models for derived events:
 
 All share `AutomatonRuntime<N>` for: NATS consumer, checkpoint persistence, health reporting, self-observation, shutdown, scope invalidation.
 
-Each derived event carries `node_model`, `temporal_policy`, and `semantics_version` — self-documenting provenance metadata.
+Each derived event carries `automaton_model`, `temporal_policy`, and `semantics_version` — self-documenting provenance metadata.
 
-**Current automata** (in `sinexd::automata`, deployed as per-automaton systemd services via `sinexd`):
+**Current automata** (in `sinexd::automata`, hosted by `sinexd` and enabled
+through the NixOS `services.sinex.automata` configuration):
 - Command canonicalizer — Transducer, `command.canonical`
 - Analytics — Windowed (250-event window), `analytics.insight`
 - Health aggregator — ScopeReconciler, `health.aggregated_report`
@@ -129,7 +129,7 @@ impl Windowed for SessionDetector {
 
     // Accumulate events into the window state.
     async fn accumulate(&mut self, state: &mut Self::State, input: Self::Input,
-        ctx: &AutomatonContext) -> Result<(), NodeLogicError>
+        ctx: &AutomatonContext) -> Result<(), AutomatonLogicError>
     {
         let ts = ctx.event_timestamp();
         state.events.push(input);
@@ -147,7 +147,7 @@ impl Windowed for SessionDetector {
 
     // Emit session boundary event from accumulated state.
     async fn emit(&mut self, state: &mut Self::State)
-        -> Result<Option<DerivedOutput>, NodeLogicError>
+        -> Result<Option<DerivedOutput>, AutomatonLogicError>
     {
         Ok(Some(DerivedOutput::windowed(json!({
             "start_time": state.start_ts,

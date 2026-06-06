@@ -47,10 +47,10 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 ///
 /// # Struct attribute
 ///
-/// `#[source_record(id, source_unit_id, input_shape, event_type, ...)]`
+/// `#[source_record(id, source_id, input_shape, event_type, ...)]`
 ///
-/// Required keys: `id`, `source_unit_id`, `input_shape`, `event_type`.
-/// Optional keys: `event_source` (defaults to first segment of `source_unit_id`),
+/// Required keys: `id`, `source_id`, `input_shape`, `event_type`.
+/// Optional keys: `event_source` (defaults to first segment of `source_id`),
 /// `default_privacy_context` (defaults to `Metadata`), `version` (defaults to `"1.0.0"`).
 ///
 /// `input_shape` ∈ `json | tab_separated | csv_row | sqlite_row | raw_line`.
@@ -85,7 +85,7 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 /// #[derive(SourceRecord)]
 /// #[source_record(
 ///     id = "atuin-history",
-///     source_unit_id = "terminal.atuin-history",
+///     source_id = "terminal.atuin-history",
 ///     input_shape = "sqlite_row",
 ///     event_type = "command.executed",
 ///     default_privacy_context = "Command",
@@ -110,7 +110,7 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// See `crate/lib/sinex-node-sdk/docs/declarative_parser.md` for the locked
+/// See `crate/sinexd/docs/declarative_parser.md` for the locked
 /// design.
 #[proc_macro_derive(
     SourceRecord,
@@ -179,7 +179,7 @@ pub fn derive_sinex_config(input: TokenStream) -> TokenStream {
 /// ```ignore
 /// #[derive(DbCheck)]
 /// #[db_check(table = "manifests", column = "manifest_type", version = 1)]
-/// pub enum NodeType {
+/// pub enum ModuleKind {
 ///     Ingestor,
 ///     Automaton,
 ///     Service,
@@ -200,8 +200,8 @@ pub fn derive_sinex_config(input: TokenStream) -> TokenStream {
 /// `Display` impl emits something else (e.g. `OperationStatus::Failed` →
 /// `"failure"`).
 ///
-/// See `crate/lib/sinex-primitives/src/schema_constraints.rs` for the
-/// generated spec type and `crate/lib/sinex-schema/src/apply.rs` for the
+/// See `crate/sinex-primitives/src/schema_constraints.rs` for the
+/// generated spec type and `crate/sinex-schema/src/apply.rs` for the
 /// schema-apply convergence integration.
 #[proc_macro_derive(DbCheck, attributes(db_check))]
 pub fn derive_db_check(input: TokenStream) -> TokenStream {

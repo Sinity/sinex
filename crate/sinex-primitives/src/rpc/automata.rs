@@ -1,6 +1,6 @@
 //! Operator-facing automata status RPC types.
 
-use crate::domain::NodeName;
+use crate::domain::ModuleName;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::{Timestamp, Uuid};
 use serde::{Deserialize, Serialize};
@@ -54,7 +54,7 @@ pub struct AutomataStatusResponse {
 /// Operator-visible state for one registered automaton.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutomatonStatus {
-    pub node_name: NodeName,
+    pub module_name: ModuleName,
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -65,7 +65,7 @@ pub struct AutomatonStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_run_id: Option<Uuid>,
+    pub module_run_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -2,8 +2,8 @@
 //!
 //! `DevOrchestrator`, `RunArgs`, and `run_binary` live in `crate::orchestrator`
 //! (the canonical, non-sandbox location). This module re-exports them and adds
-//! sandbox-only helpers: `TestIngestdConfig`, `TestIngestdHandle`, and
-//! `start_test_ingestd_with_config`.
+//! sandbox-only helpers: `TestEventEngineConfig`, `TestEventEngineHandle`, and
+//! `start_test_event_engine_with_config`.
 
 use crate::sandbox::prelude::*;
 use color_eyre::eyre::WrapErr;
@@ -20,25 +20,25 @@ use walkdir::WalkDir;
 
 pub use crate::orchestrator::{DevOrchestrator, RunArgs, run_binary};
 
-/// Configuration for test ingestd instance
+/// Configuration for test event_engine instance
 #[derive(Debug, Clone)]
-pub struct TestIngestdConfig {
+pub struct TestEventEngineConfig {
     pub nats: sinex_primitives::nats::NatsConnectionConfig,
     pub database_url: String,
     pub work_dir: Option<std::path::PathBuf>,
     pub namespace: Option<String>,
     pub consumer_fetch_max_messages: usize,
     pub consumer_fetch_timeout_ms: u64,
-    /// Database connection pool size for the spawned ingestd.
+    /// Database connection pool size for the spawned event_engine.
     /// Defaults to 4 (test-appropriate; production default is 50).
     pub database_pool_size: u32,
-    /// Whether the spawned ingestd should reject missing durable consumers on
+    /// Whether the spawned event_engine should reject missing durable consumers on
     /// non-empty raw-event streams. Tests default this off because catch-up
     /// from pre-seeded messages is a normal harness pattern.
     pub reject_initial_replay: bool,
 }
 
-impl Default for TestIngestdConfig {
+impl Default for TestEventEngineConfig {
     fn default() -> Self {
         let database_url = crate::infra::stack::StackConfig::for_current_checkout().map_or_else(
             |_| "postgresql:///sinex_test?host=/run/postgresql".to_string(),
@@ -57,23 +57,23 @@ impl Default for TestIngestdConfig {
     }
 }
 
-/// Configuration for a test `sinex-source-worker` instance.
+/// Configuration for a test source host instance.
 #[derive(Debug, Clone)]
-pub struct TestSourceWorkerConfig {
-    pub source_unit_id: String,
+pub struct TestSourceDriverConfig {
+    pub source_id: String,
     pub nats: sinex_primitives::nats::NatsConnectionConfig,
     pub database_url: String,
     pub work_dir: Option<std::path::PathBuf>,
     pub namespace: Option<String>,
-    pub node_config: Option<String>,
+    pub runtime_config: Option<String>,
     pub service_name: Option<String>,
 }
 
-impl TestSourceWorkerConfig {
+impl TestSourceDriverConfig {
     #[must_use]
-    pub fn new(source_unit_id: impl Into<String>) -> Self {
+    pub fn new(source_id: impl Into<String>) -> Self {
         Self {
-            source_unit_id: source_unit_id.into(),
+            source_id: source_id.into(),
             nats: sinex_primitives::nats::NatsConnectionConfig::default(),
             database_url: crate::infra::stack::StackConfig::for_current_checkout().map_or_else(
                 |_| "postgresql:///sinex_test?host=/run/postgresql".to_string(),
@@ -81,21 +81,21 @@ impl TestSourceWorkerConfig {
             ),
             work_dir: None,
             namespace: None,
-            node_config: None,
+            runtime_config: None,
             service_name: None,
         }
     }
 }
 
-pub struct TestIngestdHandle {
+pub struct TestEventEngineHandle {
     child: tokio::process::Child,
     pub stream_name: String,
 }
 
-/// Handle to a running test `sinex-source-worker` instance.
-pub struct TestSourceWorkerHandle {
+/// Handle to a running test source host instance.
+pub struct TestSourceDriverHandle {
     child: tokio::process::Child,
-    pub source_unit_id: String,
+    pub source_id: String,
 }
 
 async fn terminate_test_child(child: &mut tokio::process::Child, process_name: &str) -> Result<()> {
@@ -121,73 +121,73 @@ async fn terminate_test_child(child: &mut tokio::process::Child, process_name: &
     Ok(())
 }
 
-impl TestIngestdHandle {
+impl TestEventEngineHandle {
     pub async fn stop(&mut self) -> Result<()> {
-        let stop_result = terminate_test_child(&mut self.child, "test ingestd").await;
+        let stop_result = terminate_test_child(&mut self.child, "test event_engine").await;
         // Dump debug log file
-        let debug_log = ingestd_debug_log_path_for_test_process();
-        match read_ingestd_debug_log(&debug_log) {
+        let debug_log = event_engine_debug_log_path_for_test_process();
+        match read_event_engine_debug_log(&debug_log) {
             Ok(None) => {
-                eprintln!("📋 ingestd log: EMPTY");
+                eprintln!("📋 event_engine log: EMPTY");
             }
             Ok(Some(content)) => {
                 let end = content.floor_char_boundary(3000);
                 let truncated = &content[..end];
-                eprintln!("📋 ingestd log ({} bytes):\n{truncated}", content.len());
-            }
-            Err(error) => eprintln!("📋 ingestd log unavailable: {error:#}"),
-        }
-        stop_result
-    }
-}
-
-impl Drop for TestIngestdHandle {
-    fn drop(&mut self) {
-        let _ = self.child.start_kill();
-    }
-}
-
-impl TestSourceWorkerHandle {
-    pub async fn stop(&mut self) -> Result<()> {
-        let stop_result = terminate_test_child(&mut self.child, "test source-worker").await;
-        let debug_log = source_worker_debug_log_path_for_test_process(&self.source_unit_id);
-        match std::fs::read_to_string(&debug_log) {
-            Ok(content) if content.is_empty() => eprintln!("📋 source-worker log: EMPTY"),
-            Ok(content) => {
-                let end = content.floor_char_boundary(3000);
-                let truncated = &content[..end];
                 eprintln!(
-                    "📋 source-worker log ({} bytes):\n{truncated}",
+                    "📋 event_engine log ({} bytes):\n{truncated}",
                     content.len()
                 );
             }
-            Err(error) => eprintln!("📋 source-worker log unavailable: {error:#}"),
+            Err(error) => eprintln!("📋 event_engine log unavailable: {error:#}"),
         }
         stop_result
     }
 }
 
-impl Drop for TestSourceWorkerHandle {
+impl Drop for TestEventEngineHandle {
     fn drop(&mut self) {
         let _ = self.child.start_kill();
     }
 }
 
-pub(crate) fn ingestd_debug_log_path_for_test_process() -> PathBuf {
+impl TestSourceDriverHandle {
+    pub async fn stop(&mut self) -> Result<()> {
+        let stop_result = terminate_test_child(&mut self.child, "test source host").await;
+        let debug_log = source_driver_debug_log_path_for_test_process(&self.source_id);
+        match std::fs::read_to_string(&debug_log) {
+            Ok(content) if content.is_empty() => eprintln!("📋 source host log: EMPTY"),
+            Ok(content) => {
+                let end = content.floor_char_boundary(3000);
+                let truncated = &content[..end];
+                eprintln!("📋 source host log ({} bytes):\n{truncated}", content.len());
+            }
+            Err(error) => eprintln!("📋 source host log unavailable: {error:#}"),
+        }
+        stop_result
+    }
+}
+
+impl Drop for TestSourceDriverHandle {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+    }
+}
+
+pub(crate) fn event_engine_debug_log_path_for_test_process() -> PathBuf {
     PathBuf::from(format!("/tmp/sinexd-{}.log", std::process::id()))
 }
 
-pub(crate) fn source_worker_debug_log_path_for_test_process(source_unit_id: &str) -> PathBuf {
-    let safe_unit = source_unit_id.replace(['/', ':'], "_");
+pub(crate) fn source_driver_debug_log_path_for_test_process(source_id: &str) -> PathBuf {
+    let safe_unit = source_id.replace(['/', ':'], "_");
     PathBuf::from(format!(
-        "/tmp/sinex-source-worker-{safe_unit}-{}.log",
+        "/tmp/sinex-source-driver-{safe_unit}-{}.log",
         std::process::id()
     ))
 }
 
-pub(crate) fn read_ingestd_debug_log(path: &std::path::Path) -> Result<Option<String>> {
+pub(crate) fn read_event_engine_debug_log(path: &std::path::Path) -> Result<Option<String>> {
     let content = std::fs::read_to_string(path)
-        .wrap_err_with(|| format!("failed to read ingestd debug log '{}'", path.display()))?;
+        .wrap_err_with(|| format!("failed to read event_engine debug log '{}'", path.display()))?;
     if content.is_empty() {
         Ok(None)
     } else {
@@ -212,29 +212,32 @@ fn trailing_log_excerpt(content: &str, max_bytes: usize) -> (&str, bool) {
     (&content[start..], true)
 }
 
-fn format_ingestd_debug_context(debug_log: &std::path::Path) -> String {
-    match read_ingestd_debug_log(debug_log) {
+fn format_event_engine_debug_context(debug_log: &std::path::Path) -> String {
+    match read_event_engine_debug_log(debug_log) {
         Ok(Some(content)) => {
             let (excerpt, truncated) = trailing_log_excerpt(&content, 3000);
             if truncated {
                 format!(
-                    "ingestd debug log at {} ({} bytes, trailing excerpt):\n{}",
+                    "event_engine debug log at {} ({} bytes, trailing excerpt):\n{}",
                     debug_log.display(),
                     content.len(),
                     excerpt
                 )
             } else {
                 format!(
-                    "ingestd debug log at {} ({} bytes):\n{}",
+                    "event_engine debug log at {} ({} bytes):\n{}",
                     debug_log.display(),
                     content.len(),
                     excerpt
                 )
             }
         }
-        Ok(None) => format!("ingestd debug log at {} was empty", debug_log.display()),
+        Ok(None) => format!(
+            "event_engine debug log at {} was empty",
+            debug_log.display()
+        ),
         Err(log_error) => format!(
-            "ingestd debug log at {} unavailable: {log_error:#}",
+            "event_engine debug log at {} unavailable: {log_error:#}",
             debug_log.display()
         ),
     }
@@ -382,12 +385,12 @@ pub struct TestGatewayConfig {
     pub rpc_token: Option<String>,
     /// Disable RPC rate limiting (default: true — rate limiting disabled in tests).
     pub rpc_rate_limit_disabled: bool,
-    /// Pipeline namespace (`SINEX_NAMESPACE`). MUST match the ingestd it pairs
+    /// Pipeline namespace (`SINEX_NAMESPACE`). MUST match the event_engine it pairs
     /// with: NATS subjects are namespace-prefixed, so the gateway's SSE
-    /// SubscriptionBus only sees ingestd confirmations when both use the same
+    /// SubscriptionBus only sees event_engine confirmations when both use the same
     /// namespace. Leaving this unset makes the bus subscribe to the default
-    /// namespace while a namespaced ingestd publishes elsewhere (real
-    /// ingestd → bus → SSE delivery then silently never completes).
+    /// namespace while a namespaced event_engine publishes elsewhere (real
+    /// event_engine → bus → SSE delivery then silently never completes).
     pub namespace: Option<String>,
 }
 
@@ -500,10 +503,10 @@ async fn start_test_gateway_inner(
         .env_remove("SINEX_API_TLS_CLIENT_CA")
         .env("NOTIFY_SOCKET", &notify_socket_path);
     if config.rpc_rate_limit_disabled {
-        cmd.env("SINEX_RPC_RATE_LIMIT_ENABLED", "false");
+        cmd.env("SINEX_API_RATE_LIMIT_ENABLED", "false");
     }
     if let Some(token) = &config.rpc_token {
-        cmd.env("SINEX_RPC_TOKEN", token);
+        cmd.env("SINEX_API_TOKEN", token);
     }
     if let Some(ns) = &config.namespace {
         cmd.env("SINEX_NAMESPACE", ns);
@@ -668,14 +671,13 @@ pub(crate) fn runtime_binary_path(workspace_root: &std::path::Path, binary_name:
         .join(binary_name)
 }
 
-/// Return the expected `sinex-source-worker` binary path for this workspace.
+/// Return the expected source host binary path for this workspace.
 ///
-/// This mirrors the runtime-binary path convention used by gateway and ingestd
-/// launchers while giving production-path tests a source-worker-specific
-/// public helper.
+/// Source contracts are hosted by `sinexd`; there is no separate
+/// `sinexd` binary after the runtime fold.
 #[must_use]
-pub fn source_worker_binary_path(workspace_root: &std::path::Path) -> PathBuf {
-    runtime_binary_path(workspace_root, "sinex-source-worker")
+pub fn source_driver_host_binary_path(workspace_root: &std::path::Path) -> PathBuf {
+    runtime_binary_path(workspace_root, "sinexd")
 }
 
 pub(crate) fn check_runtime_binary_freshness(
@@ -741,8 +743,8 @@ fn collect_runtime_binary_input_paths(
     //     binary's dependency closure.
     //   - workspace `Cargo.lock`: touched by `cargo build` / `cargo update`
     //     for any package in the workspace; a `cargo build -p sinex-db` run
-    //     bumps the lockfile mtime past the `sinex-ingestd` binary's mtime,
-    //     marking ingestd "stale" even though nothing in its dependency
+    //     bumps the lockfile mtime past the `sinexd` binary's mtime,
+    //     marking event_engine "stale" even though nothing in its dependency
     //     closure changed.
     //
     // If a real dependency-graph change does happen, the per-crate
@@ -885,27 +887,23 @@ fn system_time_epoch_secs(time: Option<SystemTime>) -> Option<u64> {
         .map(|duration| duration.as_secs())
 }
 
-pub async fn start_test_source_worker(
-    config: TestSourceWorkerConfig,
+pub async fn start_test_source(
+    config: TestSourceDriverConfig,
     ctx: Option<&crate::sandbox::context::Sandbox>,
-) -> Result<TestSourceWorkerHandle> {
+) -> Result<TestSourceDriverHandle> {
     let workspace_root = find_workspace_root()?;
-    let freshness = check_runtime_binary_freshness(
-        &workspace_root,
-        "sinex-source-worker",
-        "sinex-source-worker",
-    )?;
+    let freshness = check_runtime_binary_freshness(&workspace_root, "sinexd", "sinexd")?;
     if let Some(sandbox) = ctx {
         sandbox.record_evidence_event(
             "runtime_binary.freshness",
-            "checked runtime binary freshness before launching test source-worker",
+            "checked runtime binary freshness before launching test source host",
             freshness.to_json(),
         );
     }
     freshness.ensure_fresh()?;
     let binary_path = freshness.binary_path.clone();
 
-    let debug_log = source_worker_debug_log_path_for_test_process(&config.source_unit_id);
+    let debug_log = source_driver_debug_log_path_for_test_process(&config.source_id);
     let notify_socket_path = notify_socket_path("sw")?;
     let _ = std::fs::remove_file(&notify_socket_path);
     let notify_listener = UnixDatagram::bind(&notify_socket_path)
@@ -919,16 +917,12 @@ pub async fn start_test_source_worker(
 
     let mut cmd = Command::new(&binary_path);
     crate::process::configure_managed_child_tokio(&mut cmd);
-    cmd.args([
-        "--source-unit",
-        &config.source_unit_id,
-        "--runner-pack",
-        "source-worker",
-    ]);
+    cmd.arg("scan-source");
+    cmd.args(["--source", &config.source_id]);
     cmd.env("DATABASE_URL", &config.database_url);
     cmd.env("SINEX_NATS_URL", &config.nats.url);
-    cmd.env("SINEX_SOURCE_UNIT", &config.source_unit_id);
-    cmd.env("SINEX_RUNNER_PACK", "source-worker");
+    cmd.env("SINEX_SOURCE", &config.source_id);
+    cmd.env("SINEX_RUNNER_PACK", "sinexd-source");
     if config.nats.require_tls {
         cmd.env("SINEX_NATS_REQUIRE_TLS", "true");
     }
@@ -945,28 +939,28 @@ pub async fn start_test_source_worker(
         cmd.env("SINEX_NAMESPACE", ns);
     }
     if let Some(wd) = &config.work_dir {
-        cmd.arg("--work-dir").arg(wd);
+        cmd.env("SINEX_WORK_DIR", wd);
     }
     if let Some(service_name) = &config.service_name {
         cmd.arg("--service-name").arg(service_name);
     }
-    if let Some(node_config) = &config.node_config {
-        cmd.arg("--node-config").arg(node_config);
+    if let Some(runtime_config) = &config.runtime_config {
+        cmd.arg("--runtime-config").arg(runtime_config);
     }
     cmd.env("NOTIFY_SOCKET", &notify_socket_path);
-    cmd.arg("service");
+    cmd.arg("--extra-arg").arg("service");
     cmd.stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(log_file_for_stderr))
         .kill_on_drop(true);
 
     let mut child = cmd.spawn()?;
-    crate::process::register_tokio_child_process_group(&child, "sandbox source-worker");
+    crate::process::register_tokio_child_process_group(&child, "sandbox source host");
 
     if let Some(sandbox) = ctx
         && sandbox.nats_handle().is_ok()
         && let Err(error) = wait_for_ready_notify(
-            "sinex-source-worker",
+            "sinexd scan-source",
             &notify_listener,
             &mut child,
             Duration::from_secs(Timeouts::STANDARD),
@@ -974,45 +968,44 @@ pub async fn start_test_source_worker(
         .await
     {
         let _ = std::fs::remove_file(&notify_socket_path);
-        let mut handle = TestSourceWorkerHandle {
+        let mut handle = TestSourceDriverHandle {
             child,
-            source_unit_id: config.source_unit_id,
+            source_id: config.source_id,
         };
         if let Err(stop_error) = handle.stop().await {
             return Err(error).wrap_err(format!(
-                "source-worker failed to become ready and cleanup failed: {stop_error:#}"
+                "source host failed to become ready and cleanup failed: {stop_error:#}"
             ));
         }
-        return Err(error).wrap_err("source-worker failed to become ready");
+        return Err(error).wrap_err("source host failed to become ready");
     }
     let _ = std::fs::remove_file(&notify_socket_path);
 
-    Ok(TestSourceWorkerHandle {
+    Ok(TestSourceDriverHandle {
         child,
-        source_unit_id: config.source_unit_id,
+        source_id: config.source_id,
     })
 }
 
-/// Run a one-shot `sinex-source-worker scan` subprocess and capture its output.
+/// Run a one-shot `sinexd scan-source` subprocess and capture its output.
 ///
 /// Use this for production-path tests that need to exercise the real binary
 /// path without keeping a long-running service process alive.
-pub async fn run_test_source_worker_scan(
-    config: TestSourceWorkerConfig,
+pub async fn run_test_source_scan(
+    config: TestSourceDriverConfig,
     targets: &[PathBuf],
     ctx: Option<&crate::sandbox::context::Sandbox>,
 ) -> Result<CapturedOutput> {
     let workspace_root = find_workspace_root()?;
-    // Post-fold: the deleted `sinex-source-worker` trampoline now lives inside the
-    // `sinexd` binary as the `scan-source-unit` subcommand. The SDK subcommand
+    // The source host is the `sinexd scan-source` subcommand. The SDK subcommand
     // (`scan --until snapshot --targets …`) is forwarded via repeated `--extra-arg`,
     // exactly as the NixOS source-binding units invoke it
-    // (see `nixos/modules/source-workers.nix`).
+    // (see `nixos/modules/sources.nix`).
     let freshness = check_runtime_binary_freshness(&workspace_root, "sinexd", "sinexd")?;
     if let Some(sandbox) = ctx {
         sandbox.record_evidence_event(
             "runtime_binary.freshness",
-            "checked runtime binary freshness before running test source-worker scan",
+            "checked runtime binary freshness before running test source scan",
             freshness.to_json(),
         );
     }
@@ -1020,17 +1013,17 @@ pub async fn run_test_source_worker_scan(
 
     let mut cmd = Command::new(&freshness.binary_path);
     crate::process::configure_managed_child_tokio(&mut cmd);
-    cmd.arg("scan-source-unit");
-    cmd.args(["--source-unit", &config.source_unit_id]);
+    cmd.arg("scan-source");
+    cmd.args(["--source", &config.source_id]);
     if let Some(wd) = &config.work_dir {
-        // `scan-source-unit` has no --work-dir flag; the runner reads SINEX_WORK_DIR.
+        // `scan-source` has no --work-dir flag; the runner reads SINEX_WORK_DIR.
         cmd.env("SINEX_WORK_DIR", wd);
     }
     if let Some(service_name) = &config.service_name {
         cmd.arg("--service-name").arg(service_name);
     }
-    if let Some(node_config) = &config.node_config {
-        cmd.arg("--node-config").arg(node_config);
+    if let Some(runtime_config) = &config.runtime_config {
+        cmd.arg("--runtime-config").arg(runtime_config);
     }
     cmd.arg("--extra-arg")
         .arg("scan")
@@ -1045,8 +1038,8 @@ pub async fn run_test_source_worker_scan(
 
     cmd.env("DATABASE_URL", &config.database_url);
     cmd.env("SINEX_NATS_URL", &config.nats.url);
-    cmd.env("SINEX_SOURCE_UNIT", &config.source_unit_id);
-    cmd.env("SINEX_RUNNER_PACK", "source-worker");
+    cmd.env("SINEX_SOURCE", &config.source_id);
+    cmd.env("SINEX_RUNNER_PACK", "sinexd-source");
     if config.nats.require_tls {
         cmd.env("SINEX_NATS_REQUIRE_TLS", "true");
     }
@@ -1068,14 +1061,14 @@ pub async fn run_test_source_worker_scan(
         .kill_on_drop(true);
 
     let child = cmd.spawn()?;
-    crate::process::register_tokio_child_process_group(&child, "sandbox source-worker scan");
+    crate::process::register_tokio_child_process_group(&child, "sandbox source scan");
     let output = tokio::time::timeout(
         Duration::from_secs(Timeouts::STANDARD),
         child.wait_with_output(),
     )
     .await
-    .wrap_err("source-worker scan timed out")?
-    .wrap_err("failed to wait for source-worker scan")?;
+    .wrap_err("source scan timed out")?
+    .wrap_err("failed to wait for source scan")?;
 
     let captured = CapturedOutput {
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -1084,8 +1077,8 @@ pub async fn run_test_source_worker_scan(
     };
     if !output.status.success() {
         bail!(
-            "source-worker scan for '{}' exited with {}.\nstdout:\n{}\nstderr:\n{}",
-            config.source_unit_id,
+            "source scan for '{}' exited with {}.\nstdout:\n{}\nstderr:\n{}",
+            config.source_id,
             captured.exit_code,
             captured.stdout,
             captured.stderr
@@ -1094,16 +1087,16 @@ pub async fn run_test_source_worker_scan(
     Ok(captured)
 }
 
-pub async fn start_test_ingestd_with_config(
-    config: TestIngestdConfig,
+pub async fn start_test_event_engine_with_config(
+    config: TestEventEngineConfig,
     ctx: Option<&crate::sandbox::context::Sandbox>,
-) -> Result<TestIngestdHandle> {
+) -> Result<TestEventEngineHandle> {
     let workspace_root = find_workspace_root()?;
     let freshness = check_runtime_binary_freshness(&workspace_root, "sinexd", "sinexd")?;
     if let Some(sandbox) = ctx {
         sandbox.record_evidence_event(
             "runtime_binary.freshness",
-            "checked runtime binary freshness before launching test ingestd",
+            "checked runtime binary freshness before launching test event_engine",
             freshness.to_json(),
         );
     }
@@ -1112,7 +1105,7 @@ pub async fn start_test_ingestd_with_config(
 
     // Capture both stdout and stderr to a debug log file.
     // tracing_subscriber::fmt() defaults to stdout in 0.3.x, so we need >{file} 2>&1.
-    let debug_log = ingestd_debug_log_path_for_test_process();
+    let debug_log = event_engine_debug_log_path_for_test_process();
     let notify_socket_path = notify_socket_path("in")?;
     let _ = std::fs::remove_file(&notify_socket_path);
     let notify_listener = UnixDatagram::bind(&notify_socket_path)
@@ -1151,9 +1144,9 @@ pub async fn start_test_ingestd_with_config(
         // Set assembler state and content-store roots to the per-test work directory.
         // These env vars are part of the canonical env-first runtime contract;
         // the binary reads them directly into its typed config.
-        // Do NOT use SINEX_EVENT_ENGINE_WORK_DIR here: ingestd's effective config
-        // surface is SINEX_ASSEMBLER_STATE_DIR plus SINEX_CONTENT_STORE_PATH.
-        cmd.env("SINEX_ASSEMBLER_STATE_DIR", wd.join("assembler_state"));
+        // Do NOT use SINEX_EVENT_ENGINE_WORK_DIR here: event_engine's effective config
+        // surface is SINEX_MATERIAL_ASSEMBLER_DIR plus SINEX_CONTENT_STORE_PATH.
+        cmd.env("SINEX_MATERIAL_ASSEMBLER_DIR", wd.join("assembler_state"));
         cmd.env("SINEX_CONTENT_STORE_PATH", wd.join("content-store"));
         cmd.env(
             "SINEX_CONTENT_STORE_PROCESS_COUNTERS_PATH",
@@ -1182,9 +1175,9 @@ pub async fn start_test_ingestd_with_config(
     cmd.stdin(Stdio::null()).kill_on_drop(true);
 
     let mut child = cmd.spawn()?;
-    crate::process::register_tokio_child_process_group(&child, "sandbox ingestd");
+    crate::process::register_tokio_child_process_group(&child, "sandbox event_engine");
 
-    // Compute the stream name using the same logic as ingestd:
+    // Compute the stream name using the same logic as event_engine:
     // environment-prefixed base name, with optional namespace suffix.
     let env = sinex_primitives::environment::environment();
     let stream_name = env.nats_stream_name_with_namespace(
@@ -1192,7 +1185,7 @@ pub async fn start_test_ingestd_with_config(
         &env.nats_stream_name("SINEX_RAW_EVENTS"),
     );
 
-    // Wait for ingestd's own readiness signal. The binary emits READY=1 only
+    // Wait for event_engine's own readiness signal. The binary emits READY=1 only
     // after the JetStream consumer and MaterialAssembler have both completed
     // setup, which is the same readiness contract production systemd uses.
     if let Some(sandbox) = ctx {
@@ -1212,14 +1205,14 @@ pub async fn start_test_ingestd_with_config(
                 let _ = std::fs::remove_file(&notify_socket_path);
                 let _ = child.start_kill();
                 return Err(error)
-                    .wrap_err(format_ingestd_debug_context(&debug_log))
-                    .wrap_err("ingestd did not reach systemd READY state");
+                    .wrap_err(format_event_engine_debug_context(&debug_log))
+                    .wrap_err("event_engine did not reach systemd READY state");
             }
         }
     }
     let _ = std::fs::remove_file(&notify_socket_path);
 
-    Ok(TestIngestdHandle { child, stream_name })
+    Ok(TestEventEngineHandle { child, stream_name })
 }
 
 #[cfg(test)]
@@ -1241,18 +1234,18 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn source_worker_binary_path_uses_runtime_target_dir() -> TestResult<()> {
+    async fn source_driver_host_binary_path_uses_runtime_target_dir() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
-        let path = source_worker_binary_path(tempdir.path());
+        let path = source_driver_host_binary_path(tempdir.path());
 
-        assert!(path.ends_with("sinex-source-worker"));
+        assert!(path.ends_with("sinexd"));
         assert!(path.starts_with(crate::orchestrator::get_target_dir(tempdir.path())));
         Ok(())
     }
 
     #[sinex_test]
-    async fn source_worker_debug_log_path_includes_sanitized_unit() -> TestResult<()> {
-        let path = source_worker_debug_log_path_for_test_process("browser.history:test");
+    async fn source_driver_debug_log_path_includes_sanitized_unit() -> TestResult<()> {
+        let path = source_driver_debug_log_path_for_test_process("browser.history:test");
         let rendered = path.display().to_string();
 
         assert!(rendered.contains("browser.history_test"));
@@ -1264,34 +1257,34 @@ mod tests {
     async fn runtime_binary_freshness_reports_missing_binary() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
         let report = runtime_binary_freshness_from_inputs(
-            "sinex-ingestd",
-            "sinex-ingestd",
-            tempdir.path().join("target/debug/sinex-ingestd"),
+            "sinexd",
+            "sinexd",
+            tempdir.path().join("target/debug/sinexd"),
             &[],
-            "xtask build -p sinex-ingestd".to_string(),
+            "xtask build -p sinexd".to_string(),
         )?;
 
         assert_eq!(report.status, RuntimeBinaryFreshnessStatus::Missing);
         let message = report.error_message();
-        assert!(message.contains("sinex-ingestd binary not found"));
-        assert!(message.contains("xtask build -p sinex-ingestd"));
+        assert!(message.contains("sinexd binary not found"));
+        assert!(message.contains("xtask build -p sinexd"));
         Ok(())
     }
 
     #[sinex_test]
     async fn runtime_binary_freshness_reports_stale_binary() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
-        let binary = tempdir.path().join("sinex-ingestd");
+        let binary = tempdir.path().join("sinexd");
         let source = tempdir.path().join("src.rs");
         write_file_at(&binary, "binary", UNIX_EPOCH + Duration::from_secs(1_000))?;
         write_file_at(&source, "source", UNIX_EPOCH + Duration::from_secs(2_000))?;
 
         let report = runtime_binary_freshness_from_inputs(
-            "sinex-ingestd",
-            "sinex-ingestd",
+            "sinexd",
+            "sinexd",
             binary,
             std::slice::from_ref(&source),
-            "xtask build -p sinex-ingestd".to_string(),
+            "xtask build -p sinexd".to_string(),
         )?;
 
         assert_eq!(report.status, RuntimeBinaryFreshnessStatus::Stale);
@@ -1305,17 +1298,17 @@ mod tests {
     #[sinex_test]
     async fn runtime_binary_freshness_accepts_newer_binary() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
-        let binary = tempdir.path().join("sinex-ingestd");
+        let binary = tempdir.path().join("sinexd");
         let source = tempdir.path().join("src.rs");
         write_file_at(&source, "source", UNIX_EPOCH + Duration::from_secs(1_000))?;
         write_file_at(&binary, "binary", UNIX_EPOCH + Duration::from_secs(2_000))?;
 
         let report = runtime_binary_freshness_from_inputs(
-            "sinex-ingestd",
-            "sinex-ingestd",
+            "sinexd",
+            "sinexd",
             binary,
             &[source],
-            "xtask build -p sinex-ingestd".to_string(),
+            "xtask build -p sinexd".to_string(),
         )?;
 
         assert_eq!(report.status, RuntimeBinaryFreshnessStatus::Fresh);
@@ -1425,40 +1418,40 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn read_ingestd_debug_log_reports_missing_file() -> TestResult<()> {
+    async fn read_event_engine_debug_log_reports_missing_file() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
-        let error = read_ingestd_debug_log(&tempdir.path().join("missing.log")).unwrap_err();
-        assert!(format!("{error:#}").contains("failed to read ingestd debug log"));
+        let error = read_event_engine_debug_log(&tempdir.path().join("missing.log")).unwrap_err();
+        assert!(format!("{error:#}").contains("failed to read event_engine debug log"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn read_ingestd_debug_log_treats_empty_file_as_empty() -> TestResult<()> {
+    async fn read_event_engine_debug_log_treats_empty_file_as_empty() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
-        let debug_log = tempdir.path().join("ingestd.log");
+        let debug_log = tempdir.path().join("event_engine.log");
         fs::write(&debug_log, "")?;
-        assert!(read_ingestd_debug_log(&debug_log)?.is_none());
+        assert!(read_event_engine_debug_log(&debug_log)?.is_none());
         Ok(())
     }
 
     #[sinex_test]
-    async fn read_ingestd_debug_log_preserves_non_empty_content() -> TestResult<()> {
+    async fn read_event_engine_debug_log_preserves_non_empty_content() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
-        let debug_log = tempdir.path().join("ingestd.log");
+        let debug_log = tempdir.path().join("event_engine.log");
         fs::write(&debug_log, "line one\nline two\n")?;
         assert_eq!(
-            read_ingestd_debug_log(&debug_log)?,
+            read_event_engine_debug_log(&debug_log)?,
             Some("line one\nline two\n".to_string())
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn format_ingestd_debug_context_includes_path_size_and_content() -> TestResult<()> {
+    async fn format_event_engine_debug_context_includes_path_size_and_content() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
-        let debug_log = tempdir.path().join("ingestd.log");
+        let debug_log = tempdir.path().join("event_engine.log");
         fs::write(&debug_log, "startup failed\nmissing stream\n")?;
-        let context = format_ingestd_debug_context(&debug_log);
+        let context = format_event_engine_debug_context(&debug_log);
 
         assert!(context.contains(debug_log.display().to_string().as_str()));
         assert!(context.contains("(30 bytes)"));
@@ -1467,12 +1460,12 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn format_ingestd_debug_context_uses_tail_for_long_logs() -> TestResult<()> {
+    async fn format_event_engine_debug_context_uses_tail_for_long_logs() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
-        let debug_log = tempdir.path().join("ingestd.log");
+        let debug_log = tempdir.path().join("event_engine.log");
         let content = format!("{}\nFINAL ROOT CAUSE\n", "startup chatter\n".repeat(400));
         fs::write(&debug_log, &content)?;
-        let context = format_ingestd_debug_context(&debug_log);
+        let context = format_event_engine_debug_context(&debug_log);
 
         assert!(context.contains(debug_log.display().to_string().as_str()));
         assert!(context.contains("trailing excerpt"));

@@ -41,7 +41,7 @@ pub struct GatewayRpcCallPayload {
     pub method: String,
     /// Authenticated role on the request, lowercased: `readonly`, `write`,
     /// or `admin`. (We use a string here rather than a typed enum because
-    /// `Role` lives in `sinex-gateway` and can't be imported by primitives
+    /// `Role` lives in `sinexd` and can't be imported by primitives
     /// without inverting the dependency direction.)
     pub role: String,
     /// Wall-clock dispatch latency in milliseconds.

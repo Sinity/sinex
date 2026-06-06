@@ -1,12 +1,12 @@
 //! Required input-key declarations for system JSON-line parsers.
 
 use serde_json::json;
-use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
+use sinexd::runtime::parser::{MaterialParser, SourceRecordFingerprint};
 use sinex_primitives::{
-    parser::SourceUnitId,
+    parser::SourceId,
     rpc::sources::{CaveatSeverity, caveat_codes},
 };
-use sinexd::sources::sources::system::{journald::JournaldParser, systemd::SystemdParser};
+use sinexd::sources::source_contracts::system::{journald::JournaldParser, systemd::SystemdParser};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -43,7 +43,7 @@ async fn journald_required_cursor_removal_blocks_readiness() -> TestResult<()> {
     }));
 
     let mut drift = SourceRecordFingerprint::diff(
-        SourceUnitId::from_static("system.journald"),
+        SourceId::from_static("system.journald"),
         &before,
         &after,
     )
@@ -81,7 +81,7 @@ async fn systemd_required_unit_removal_blocks_readiness() -> TestResult<()> {
     }));
 
     let mut drift =
-        SourceRecordFingerprint::diff(SourceUnitId::from_static("system.systemd"), &before, &after)
+        SourceRecordFingerprint::diff(SourceId::from_static("system.systemd"), &before, &after)
             .expect("removing _SYSTEMD_UNIT should produce JSON shape drift");
     drift.required_input_keys = SystemdParser.required_input_keys();
 

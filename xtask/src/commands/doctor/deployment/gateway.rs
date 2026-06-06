@@ -31,14 +31,14 @@ pub(in crate::commands::doctor) fn resolve_gateway_probe_tls_paths(
         trust_anchor: descriptor
             .and_then(|value| value.secrets.gateway_tls_trust_anchor_file.clone())
             .or_else(|| {
-                path_from_env_or_default("SINEX_RPC_CA_CERT", default_tls_dir.join("ca.pem"))
+                path_from_env_or_default("SINEX_API_CA_CERT", default_tls_dir.join("ca.pem"))
             }),
         client_cert: path_from_env_or_default(
-            "SINEX_RPC_CLIENT_CERT",
+            "SINEX_API_CLIENT_CERT",
             default_tls_dir.join("client.pem"),
         ),
         client_key: path_from_env_or_default(
-            "SINEX_RPC_CLIENT_KEY",
+            "SINEX_API_CLIENT_KEY",
             default_tls_dir.join("client-key.pem"),
         ),
     }
@@ -97,7 +97,7 @@ pub(in crate::commands::doctor) async fn build_gateway_probe_client(
         }
         (Some(_), None) | (None, Some(_)) => {
             color_eyre::eyre::bail!(
-                "SINEX_RPC_CLIENT_CERT and SINEX_RPC_CLIENT_KEY must both be set for gateway mTLS probing"
+                "SINEX_API_CLIENT_CERT and SINEX_API_CLIENT_KEY must both be set for gateway mTLS probing"
             );
         }
         (None, None) => None,
@@ -148,7 +148,7 @@ pub(crate) async fn check_gateway_ready(
                 "gateway-ready",
                 if mtls_expected && probe_client.client_identity_path.is_none() {
                     format!(
-                        "Cannot reach {ready_url}: {error}; gateway mTLS appears enabled, but no RPC client identity was available from SINEX_RPC_CLIENT_CERT/SINEX_RPC_CLIENT_KEY or .sinex/tls/client.pem + client-key.pem"
+                        "Cannot reach {ready_url}: {error}; gateway mTLS appears enabled, but no RPC client identity was available from SINEX_API_CLIENT_CERT/SINEX_API_CLIENT_KEY or .sinex/tls/client.pem + client-key.pem"
                     )
                 } else {
                     format!("Cannot reach {ready_url}: {error}")

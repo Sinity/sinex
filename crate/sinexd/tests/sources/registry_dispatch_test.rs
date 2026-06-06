@@ -1,23 +1,23 @@
-//! Integration tests for the registry-driven parser dispatch and node factory.
+//! Integration tests for the registry-driven parser dispatch and source factory.
 //!
 //! Verifies:
 //! 1. `default_parser_dispatch()` is registry-driven (no match arms) and routes
 //!    `WeeChat` log lines to the correct parser.
 //! 2. The declarative `WeeChatMessageRecord` parser is registered and reachable.
-//! 3. Unknown source units produce a clear error.
-//! 4. The node factory registry has "noop" registered.
+//! 3. Unknown source contracts produce a clear error.
+//! 4. The source factory registry has "noop" registered.
 //! 5. The fs source exposes one adapter-backed factory plus parser dispatch.
-//! 6. Grep probe: no source-unit match arms in dispatch.rs or main.rs.
+//! 6. Grep probe: no source match arms in dispatch.rs or main.rs.
 
-use sinex_primitives::parser::SourceUnitId;
+use sinex_primitives::parser::SourceId;
 use sinexd::sources::{
     dispatch::{default_parser_dispatch, find_parser_factory},
-    node_factory::{find_node_factory, registered_node_factory_ids},
+    source_factory::{find_source_factory, registered_source_factory_ids},
 };
 use xtask::sandbox::prelude::*;
 
-fn sui(s: &'static str) -> SourceUnitId {
-    SourceUnitId::from_static(s)
+fn sui(s: &'static str) -> SourceId {
+    SourceId::from_static(s)
 }
 
 // ---------------------------------------------------------------------------
@@ -95,37 +95,37 @@ async fn weechat_message_declarative_registered() -> TestResult<()> {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Unknown source unit — registry-driven error (no match arm fallback)
+// 3. Unknown source — registry-driven error (no match arm fallback)
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
 async fn unknown_source_produces_registry_error() -> TestResult<()> {
     let dispatch = default_parser_dispatch();
-    let result = dispatch("no-such-source-unit-xyz", b"data", None);
+    let result = dispatch("no-such-source-xyz", b"data", None);
     assert!(result.is_err(), "unknown source must produce an error");
     let err = result.unwrap_err();
     assert!(
-        err.contains("unknown source_id 'no-such-source-unit-xyz'"),
+        err.contains("unknown source_id 'no-such-source-xyz'"),
         "error must name the unknown source_id, got: {err}"
     );
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// 4. Node factory registry — "noop" is registered
+// 4. Source factory registry — "noop" is registered
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn noop_node_factory_registered() -> TestResult<()> {
+async fn noop_source_factory_registered() -> TestResult<()> {
     assert!(
-        find_node_factory(&sui("noop")).is_some(),
-        "node factory for 'noop' must be registered"
+        find_source_factory(&sui("noop")).is_some(),
+        "source factory for 'noop' must be registered"
     );
 
-    let ids = registered_node_factory_ids();
+    let ids = registered_source_factory_ids();
     assert!(
         ids.iter().any(|id| id.as_str() == "noop"),
-        "registered_node_factory_ids() must include 'noop', got: {ids:?}"
+        "registered_source_factory_ids() must include 'noop', got: {ids:?}"
     );
     Ok(())
 }
@@ -137,8 +137,8 @@ async fn noop_node_factory_registered() -> TestResult<()> {
 #[sinex_test]
 async fn fs_adapter_factory_and_parser_bridge_registered() -> TestResult<()> {
     assert!(
-        find_node_factory(&sui("fs")).is_some(),
-        "adapter-backed node factory for 'fs' must be registered"
+        find_source_factory(&sui("fs")).is_some(),
+        "adapter-backed source factory for 'fs' must be registered"
     );
     assert!(
         find_parser_factory(&sui("fs")).is_some(),
@@ -148,20 +148,20 @@ async fn fs_adapter_factory_and_parser_bridge_registered() -> TestResult<()> {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Source unit registry — descriptor lookup works for weechat
+// 6. Source registry — descriptor lookup works for weechat
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
 async fn weechat_descriptor_registered() -> TestResult<()> {
-    use sinexd::sources::SourceUnitRegistry;
-    let registry = SourceUnitRegistry::from_inventory();
+    use sinexd::sources::SourceContractRegistry;
+    let registry = SourceContractRegistry::from_inventory();
     assert!(
         registry.find(&sui("weechat")).is_some(),
-        "SourceUnitDescriptor for 'weechat' must be registered"
+        "SourceContract for 'weechat' must be registered"
     );
     assert!(
         registry.find(&sui("weechat.message")).is_some(),
-        "SourceUnitDescriptor for 'weechat.message' must be registered"
+        "SourceContract for 'weechat.message' must be registered"
     );
     Ok(())
 }

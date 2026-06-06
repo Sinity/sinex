@@ -78,7 +78,7 @@ pub fn arb_json_payload() -> impl Strategy<Value = Value> {
 
     leaf.prop_recursive(
         4,  // max depth
-        64, // max nodes
+        64, // max graph nodes
         10, // max items per collection
         |inner| {
             prop_oneof![
@@ -106,16 +106,16 @@ pub fn arb_json_payload_compact() -> impl Strategy<Value = Value> {
     ]
 }
 
-/// Strategy for generating node names
+/// Strategy for generating runtime module names
 ///
 /// Used for checkpoint and automation testing.
-pub fn arb_node_name() -> impl Strategy<Value = String> {
+pub fn arb_module_name() -> impl Strategy<Value = String> {
     prop_oneof![
         Just("command-canonicalizer".to_string()),
         Just("health-aggregator".to_string()),
         Just("analytics-automaton".to_string()),
         Just("session-detector".to_string()),
-        Just("document-ingestor".to_string()),
+        Just("document-source".to_string()),
         Just("fs-watcher".to_string()),
         Just("test-automaton".to_string()),
         "[a-z][a-z0-9-]{4,30}".prop_map(|s| format!("{s}-automaton")),

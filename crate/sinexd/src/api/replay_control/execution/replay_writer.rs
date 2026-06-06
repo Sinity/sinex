@@ -6,9 +6,9 @@ use super::{
     ScopeInvalidationBucket, StreamExt, replay_scope_drift_error,
     stale_preview_missing_root_ids_error,
 };
-use crate::node_sdk::runtime::stream::{
-    Checkpoint, MaterialReplayContext, NodeScanAck, NodeScanCommand, NodeScanProgress,
-    ReplayScopeFilters as NodeReplayScopeFilters, ScanArgs, TimeHorizon,
+use crate::runtime::stream::{
+    Checkpoint, MaterialReplayContext, ReplayScopeFilters as SourceReplayScopeFilters, ScanArgs,
+    SourceScanAck, SourceScanCommand, SourceScanProgress, TimeHorizon,
 };
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::ControlSubject;
@@ -236,13 +236,13 @@ impl ReplayExecutionEngine {
         Ok(())
     }
 
-    /// Dispatch a replay by telling the ingestor node to re-scan source material.
+    /// Dispatch a replay by telling the source runtime to re-scan source material.
     ///
     /// Instead of republishing stored event rows to NATS (reinjection), this:
     /// 1. Archives the affected cascade (existing events + derivatives)
-    /// 2. Sends a `NodeScanCommand` to the running ingestor via NATS request-reply
-    /// 3. Waits for the node to acknowledge and complete the scan
-    /// 4. The node re-reads source material and emits fresh events through normal flow
+    /// 2. Sends a `SourceScanCommand` to the running source via NATS request-reply
+    /// 3. Waits for the source to acknowledge and complete the scan
+    /// 4. The source re-reads source material and emits fresh events through normal flow
     /// 5. Downstream automatons process the new events naturally via `JetStream`
     ///
     /// ## Transaction-boundary note (known-accepted race window)
@@ -346,7 +346,7 @@ impl ReplayExecutionEngine {
             operation_id = %operation_id,
             material_roots = material_roots.len(),
             archived_count,
-            "Archived replay cascade, dispatching scan to node"
+            "Archived replay cascade, dispatching scan to source"
         );
 
         // This DB commit -> NATS publish boundary is intentionally handled as a
@@ -394,9 +394,9 @@ impl ReplayExecutionEngine {
 
         checkpoint.total_events = material_roots.len() as u64;
 
-        // Step 2: Route staged-source scopes through source-worker, not node scan.
-        // Node scan publishes a NodeScanCommand to sinex.control.nodes.{node}.scan;
-        // staged-source replay creates a source_run and dispatches to the source-worker
+        // Step 2: Route staged-source scopes through source, not live source scan.
+        // RuntimeModule scan publishes a SourceScanCommand to sinex.control.sources.{source}.scan;
+        // staged-source replay creates a source_run and dispatches to the source
         // host (#1081) via a parse command. The routing decision is made here so both
         // paths share the archive + invalidation + checkpoint machinery above.
         if scope.is_staged_source_scope() {
@@ -412,10 +412,10 @@ impl ReplayExecutionEngine {
                 .await;
         }
 
-        // Step 2: Build and send the scan command to the ingestor node
+        // Step 2: Build and send the scan command to the source runtime
         let scan_subject = self
             .env
-            .nats_subject(&ControlSubject::node_scan(&scope.node_id));
+            .nats_subject(&ControlSubject::source_scan(&scope.source_name));
         let progress_subject = self
             .env
             .nats_subject(&ControlSubject::replay_progress(operation_id));
@@ -436,24 +436,24 @@ impl ReplayExecutionEngine {
             }
         };
 
-        // Build MaterialReplayContext so the node knows this is a replay scan
+        // Build MaterialReplayContext so the source knows this is a replay scan
         let replay_context = MaterialReplayContext {
             operation_id,
             materials: replay_materials,
-            replay_scope: NodeReplayScopeFilters {
+            replay_scope: SourceReplayScopeFilters {
                 material_ids: normalized.material_ids,
                 event_types: normalized.event_types,
             },
         };
 
-        let scan_command = NodeScanCommand {
+        let scan_command = SourceScanCommand {
             operation_id,
             from: Checkpoint::None,
             until: TimeHorizon::Historical {
                 end_time: execution_window.1,
             },
             args: ScanArgs {
-                targets: vec![scope.node_id.clone()],
+                targets: vec![scope.source_name.clone()],
                 dry_run: false,
                 interactive: false,
                 max_events: 0,
@@ -464,7 +464,7 @@ impl ReplayExecutionEngine {
         };
 
         let command_payload = serde_json::to_vec(&scan_command).map_err(|err| {
-            SinexError::serialization("Failed to serialize NodeScanCommand").with_std_error(&err)
+            SinexError::serialization("Failed to serialize SourceScanCommand").with_std_error(&err)
         })?;
 
         // Step 3: Send via NATS request-reply and wait for acknowledgement
@@ -496,8 +496,8 @@ impl ReplayExecutionEngine {
                         &scope_metadata,
                         operation_id,
                         SinexError::timeout(format!(
-                            "Timed out waiting for scan ack from node '{}' after {:?}. Is the node running?",
-                            scope.node_id,
+                            "Timed out waiting for scan ack from source '{}' after {:?}. Is the source running?",
+                            scope.source_name,
                             self.scan_ack_timeout
                         )),
                     )
@@ -505,7 +505,7 @@ impl ReplayExecutionEngine {
             }
         };
 
-        let ack: NodeScanAck = match serde_json::from_slice(&ack_msg.payload) {
+        let ack: SourceScanAck = match serde_json::from_slice(&ack_msg.payload) {
             Ok(ack) => ack,
             Err(error) => {
                 return self
@@ -514,7 +514,7 @@ impl ReplayExecutionEngine {
                         &cascade_ids,
                         &scope_metadata,
                         operation_id,
-                        SinexError::serialization("Failed to deserialize NodeScanAck")
+                        SinexError::serialization("Failed to deserialize SourceScanAck")
                             .with_std_error(&error),
                     )
                     .await;
@@ -529,8 +529,8 @@ impl ReplayExecutionEngine {
                     &scope_metadata,
                     operation_id,
                     SinexError::invalid_state(format!(
-                        "Node '{}' rejected scan command: {}",
-                        ack.node_name,
+                        "RuntimeModule '{}' rejected scan command: {}",
+                        ack.module_name,
                         ack.error.unwrap_or_else(|| "unknown reason".to_string())
                     )),
                 )
@@ -539,8 +539,8 @@ impl ReplayExecutionEngine {
 
         info!(
             operation_id = %operation_id,
-            node = %ack.node_name,
-            "Node accepted scan command, waiting for completion"
+            source = %ack.module_name,
+            "RuntimeModule accepted scan command, waiting for completion"
         );
 
         let replay = self.replay.clone();
@@ -553,7 +553,7 @@ impl ReplayExecutionEngine {
             restore_archived_cascade: bool,
         }
 
-        let target_node_name = ack.node_name.clone();
+        let target_source_name = ack.module_name.clone();
         let completion = match tokio::time::timeout(self.scan_completion_timeout, async {
             loop {
                 tokio::select! {
@@ -561,22 +561,22 @@ impl ReplayExecutionEngine {
                         let Some(msg) = maybe_msg else {
                             return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
                                 error: SinexError::nats(format!(
-                                    "Replay progress stream closed before node '{target_node_name}' reported completion"
+                                    "Replay progress stream closed before source '{target_source_name}' reported completion"
                                 )),
                                 emitted_count: events_emitted,
                                 restore_archived_cascade: events_emitted == 0,
                             });
                         };
 
-                        match serde_json::from_slice::<NodeScanProgress>(&msg.payload) {
+                        match serde_json::from_slice::<SourceScanProgress>(&msg.payload) {
                             Ok(progress) => {
                                 events_processed = progress.events_processed;
                                 events_emitted = progress.events_emitted;
                                 if let Some(error) = progress.error {
                                     return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
                                         error: SinexError::processing(format!(
-                                            "Node '{}' failed replay scan: {}",
-                                            progress.node_name,
+                                            "RuntimeModule '{}' failed replay scan: {}",
+                                            progress.module_name,
                                             error
                                         )),
                                         emitted_count: progress.events_emitted,
@@ -614,7 +614,7 @@ impl ReplayExecutionEngine {
                                     info!(
                                         operation_id = %operation_id,
                                         events_processed = report.events_processed,
-                                        "Node scan completed"
+                                        "RuntimeModule scan completed"
                                     );
                                     return Ok::<u64, ReplayScanFailure>(report.events_processed);
                                 }
@@ -672,8 +672,8 @@ impl ReplayExecutionEngine {
             Ok(result) => result,
             Err(_timeout) => Err(ReplayScanFailure {
                 error: SinexError::timeout(format!(
-                    "Replay scan timed out waiting for node '{}' to report completion after {:?}",
-                    target_node_name,
+                    "Replay scan timed out waiting for source '{}' to report completion after {:?}",
+                    target_source_name,
                     self.scan_completion_timeout
                 )),
                 emitted_count: events_emitted,
@@ -743,11 +743,10 @@ impl ReplayExecutionEngine {
         }
     }
 
-    /// Dispatches a staged-source replay through the source-worker host (#1081)
-    /// instead of the legacy node scan path.
+    /// Dispatches a staged-source replay through the source host.
     ///
-    /// Publishes a parse command to the source-worker NATS control subject
-    /// and polls for operation completion. The source-worker is responsible for
+    /// Publishes a parse command to the source NATS control subject
+    /// and polls for operation completion. The source is responsible for
     /// invoking the parser capability and publishing admitted event intents.
     async fn dispatch_staged_source_replay(
         &self,
@@ -780,7 +779,7 @@ impl ReplayExecutionEngine {
             operation_id = %operation_id,
             source_id = source_id,
             subject = %parse_subject,
-            "Dispatching staged-source replay to source-worker"
+            "Dispatching staged-source replay to source"
         );
 
         let ack_msg = match tokio::time::timeout(
@@ -811,7 +810,7 @@ impl ReplayExecutionEngine {
                         scope_metadata,
                         operation_id,
                         SinexError::timeout(format!(
-                            "Timed out waiting for source-worker parse ack from '{source_id}' after {:?}",
+                            "Timed out waiting for source parse ack from '{source_id}' after {:?}",
                             self.scan_ack_timeout
                         )),
                     )
@@ -835,7 +834,7 @@ impl ReplayExecutionEngine {
                     scope_metadata,
                     operation_id,
                     SinexError::invalid_state(format!(
-                        "Source-worker '{source_id}' rejected parse command: {error_msg}"
+                        "Source '{source_id}' rejected parse command: {error_msg}"
                     )),
                 )
                 .await;
@@ -844,11 +843,11 @@ impl ReplayExecutionEngine {
         info!(
             operation_id = %operation_id,
             source_id = source_id,
-            "Source-worker accepted parse command, waiting for completion"
+            "Source accepted parse command, waiting for completion"
         );
 
-        // Poll replay operation state for terminal status. The source-worker
-        // processes the parse, publishes event intents through NATS → ingestd,
+        // Poll replay operation state for terminal status. The source
+        // processes the parse, publishes event intents through NATS → event_engine,
         // and the operation state machine transitions to Completed/Failed/Cancelled.
         let replay = self.replay.clone();
         loop {

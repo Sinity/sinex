@@ -9,8 +9,8 @@
 //! | File extension | `file.path` payload field ends with `.nix` | `sys.inferred.file-type.nix` |
 //! | File extension | `file.path` payload field ends with `.md` | `sys.inferred.file-type.markdown` |
 //! | MIME type | `document.ingested` with `mime_type = text/markdown` | `sys.mime.text-markdown` |
-//! | Event source | event source = `terminal-ingestor` | `sys.source.terminal` |
-//! | Event source | event source = `browser-ingestor` | `sys.source.browser` |
+//! | Event source | event source = `terminal-source` | `sys.source.terminal` |
+//! | Event source | event source = `browser-source` | `sys.source.browser` |
 //!
 //! ## Input
 //!
@@ -23,9 +23,9 @@
 //! Entity ID is the source event ID — tags are applied to the event
 //! that triggered them, not to a resolved entity.
 //!
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, TransducerNodeAdapter};
-use crate::node_sdk::tags;
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, TransducerAdapter};
+use crate::runtime::tags;
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Transducer};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
 
@@ -61,7 +61,7 @@ impl Transducer for TagApplier {
         _state: &mut Self::State,
         input: serde_json::Value,
         context: &AutomatonContext,
-    ) -> Result<Option<DerivedOutput<KnowledgeTagAppliedPayload>>, NodeLogicError> {
+    ) -> Result<Option<DerivedOutput<KnowledgeTagAppliedPayload>>, AutomatonLogicError> {
         let rules = evaluate_rules(&input, context);
         // v1: emit first matching tag only. v2: emit all matches.
         if let Some(tag_name) = rules.into_iter().next() {
@@ -92,12 +92,16 @@ fn evaluate_rules(input: &serde_json::Value, context: &AutomatonContext) -> Vec<
     // Source-based rules
     let source = context.source.as_str();
     match source {
-        "terminal-ingestor" => tags.push(tags::system::SOURCE_TERMINAL.into()),
-        "browser-ingestor" | "browser.history" => {
+        "terminal" | "terminal.zsh-history" | "terminal-source" => {
+            tags.push(tags::system::SOURCE_TERMINAL.into());
+        }
+        "browser.history" | "browser-source" => {
             tags.push(tags::system::SOURCE_BROWSER.into());
         }
-        "desktop-ingestor" => tags.push(tags::system::SOURCE_DESKTOP.into()),
-        "fs-ingestor" | "fs-watcher" => tags.push(tags::system::SOURCE_FILE.into()),
+        "desktop" | "desktop.activitywatch" | "desktop-source" => {
+            tags.push(tags::system::SOURCE_DESKTOP.into());
+        }
+        "fs" | "fs-watcher" | "fs-source" => tags.push(tags::system::SOURCE_FILE.into()),
         _ => {}
     }
 
@@ -138,56 +142,55 @@ fn evaluate_rules(input: &serde_json::Value, context: &AutomatonContext) -> Vec<
     tags
 }
 
-pub type TagApplierNode = TransducerNodeAdapter<TagApplier>;
+pub type TagApplierRuntime = TransducerAdapter<TagApplier>;
 
-// ── Source-unit descriptor ─────────────────────────────────────────────
+// ── Source descriptor ─────────────────────────────────────────────
 
-use sinex_primitives::proof::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitDescriptor, SubjectRef,
+use sinex_primitives::source_contracts::{
+    CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
+    OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
+    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape,
+    SourceContract, SourceRuntimeBinding, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "tag-applier",
         namespace: "derived",
         event_types: &[
             ("knowledge-graph", "knowledge.tag_applied"),
         ],
-        privacy_tier: SuPrivacyTier::Sensitive,
-        horizons: &[SuHorizon::Continuous],
-        retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
-        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
-            "(source_unit, parent_event_id, tag_name)",
+        privacy_tier: ContractPrivacyTier::Sensitive,
+        horizons: &[ContractHorizon::Continuous],
+        retention: ContractRetentionPolicy::Forever,
+        occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
+            "(source, parent_event_id, tag_name)",
         ),
         access_policy: "event_stream_read",
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:tag-applier"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:tag-applier"),
         "tag-applier",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("knowledge.tag_applied")
     .privacy_context("inherits_from_parents")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
-    .source_unit_id("tag-applier")
-    .runner_pack("process")
-    .checkpoint_family(SuCheckpointFamily::AppendStream)
-    .runtime_shape(SuRuntimeShape::Continuous)
+    .source_id("tag-applier")
+    .runner_pack("sinexd")
+    .checkpoint_family(ContractCheckpointFamily::AppendStream)
+    .runtime_shape(ContractRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
-    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
+    .implementation_mode("in_process:sinexd")
+    .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }
 

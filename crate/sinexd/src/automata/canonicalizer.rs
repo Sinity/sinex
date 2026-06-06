@@ -10,8 +10,8 @@
 //! that should be a downstream scope reconciler keyed by session/activity scope
 //! rather than widening `command.canonical` itself into a reconciled object.
 
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, TransducerNodeAdapter};
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, TransducerAdapter};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Transducer};
 use sinex_primitives::JsonValue;
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;
@@ -60,7 +60,7 @@ impl Transducer for TerminalCommandCanonicalizer {
         _state: &mut Self::State,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         if !is_accepted_source(context.source.as_str()) {
             return Ok(None);
         }
@@ -81,7 +81,7 @@ impl Transducer for TerminalCommandCanonicalizer {
     }
 }
 
-/// Returns `true` for sources whose `command.executed` events this node canonicalizes.
+/// Returns `true` for sources whose `command.executed` events this automaton canonicalizes.
 fn is_accepted_source(source: &str) -> bool {
     source == KittyCommandExecutedPayload::SOURCE.as_static_str()
         || source == AtuinCommandExecutedPayload::SOURCE.as_static_str()
@@ -94,7 +94,7 @@ fn canonicalize_payload(
     source: &str,
     input: JsonValue,
     ts_orig: sinex_primitives::Timestamp,
-) -> Result<Option<CanonicalCommandPayload>, NodeLogicError> {
+) -> Result<Option<CanonicalCommandPayload>, AutomatonLogicError> {
     match source {
         source if source == KittyCommandExecutedPayload::SOURCE.as_static_str() => {
             let payload = parse_payload::<KittyCommandExecutedPayload>(input, source)?;
@@ -147,12 +147,12 @@ fn canonicalize_payload(
     }
 }
 
-fn parse_payload<T>(input: JsonValue, source: &str) -> Result<T, NodeLogicError>
+fn parse_payload<T>(input: JsonValue, source: &str) -> Result<T, AutomatonLogicError>
 where
     T: serde::de::DeserializeOwned,
 {
     serde_json::from_value(input).map_err(|error| {
-        NodeLogicError::InputParsing(format!(
+        AutomatonLogicError::InputParsing(format!(
             "failed to parse {source} command.executed payload: {error}"
         ))
     })
@@ -165,7 +165,7 @@ where
 fn canonicalize_kitty(
     payload: KittyCommandExecutedPayload,
     ts_orig: sinex_primitives::Timestamp,
-) -> Result<Option<CanonicalCommandPayload>, NodeLogicError> {
+) -> Result<Option<CanonicalCommandPayload>, AutomatonLogicError> {
     let command = payload.command.to_string();
     if command.trim().is_empty() {
         return Ok(None);
@@ -188,7 +188,7 @@ fn canonicalize_kitty(
 
 fn canonicalize_atuin(
     payload: AtuinCommandExecutedPayload,
-) -> Result<Option<CanonicalCommandPayload>, NodeLogicError> {
+) -> Result<Option<CanonicalCommandPayload>, AutomatonLogicError> {
     let command = payload.command_string.to_string();
     if command.trim().is_empty() {
         return Ok(None);
@@ -196,7 +196,7 @@ fn canonicalize_atuin(
 
     let duration_nanos = payload.duration_ns.as_nanos();
     let duration_ms = u64::try_from(duration_nanos / 1_000_000).map_err(|error| {
-        NodeLogicError::InputParsing(format!(
+        AutomatonLogicError::InputParsing(format!(
             "shell.atuin command duration is too large to represent in milliseconds: {error}"
         ))
     })?;
@@ -236,7 +236,7 @@ fn canonicalize_history(
     session_id: Option<String>,
     environment_hash: Option<String>,
     ts_orig: sinex_primitives::Timestamp,
-) -> Result<Option<CanonicalCommandPayload>, NodeLogicError> {
+) -> Result<Option<CanonicalCommandPayload>, AutomatonLogicError> {
     if command.trim().is_empty() {
         return Ok(None);
     }
@@ -256,58 +256,57 @@ fn canonicalize_history(
     }))
 }
 
-/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type TerminalCommandCanonicalizerNode = TransducerNodeAdapter<TerminalCommandCanonicalizer>;
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
+pub type TerminalCommandCanonicalizerRuntime = TransducerAdapter<TerminalCommandCanonicalizer>;
 
-// --- Source-unit descriptor (issue #690 / #734) ---
+// --- Source descriptor (issue #690 / #734) ---
 
-use sinex_primitives::proof::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitDescriptor, SubjectRef,
+use sinex_primitives::source_contracts::{
+    CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
+    OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
+    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape,
+    SourceContract, SourceRuntimeBinding, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // The terminal canonicalizer transduces shell-history events into normalized
 // `command.canonical` outputs.
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "terminal-canonicalizer",
         namespace: "derived",
         event_types: &[
             ("canonical.terminal", "command.canonical"),
         ],
-        privacy_tier: SuPrivacyTier::Sensitive,
-        horizons: &[SuHorizon::Continuous],
-        retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
-        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
-            "(source_unit, parent_event_id)",
+        privacy_tier: ContractPrivacyTier::Sensitive,
+        horizons: &[ContractHorizon::Continuous],
+        retention: ContractRetentionPolicy::Forever,
+        occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
+            "(source, parent_event_id)",
         ),
         access_policy: "event_stream_read",
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:terminal-canonicalizer"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:terminal-canonicalizer"),
         "terminal-canonicalizer",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("command.canonical")
     .privacy_context("inherits_from_parents")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
-    .source_unit_id("terminal-canonicalizer")
-    .runner_pack("process")
-    .checkpoint_family(SuCheckpointFamily::AppendStream)
-    .runtime_shape(SuRuntimeShape::Continuous)
+    .source_id("terminal-canonicalizer")
+    .runner_pack("sinexd")
+    .checkpoint_family(ContractCheckpointFamily::AppendStream)
+    .runtime_shape(ContractRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
-    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
+    .implementation_mode("in_process:sinexd")
+    .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }

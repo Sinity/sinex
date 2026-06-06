@@ -1,10 +1,8 @@
 //! Test entrypoint for the orphan automata test files.
 //!
-//! These tests were authored against `sinex_process::automata::*` and got
-//! orphaned when sinex-process was folded into `sinexd::automata` (commit
-//! 567266c29). They were not wired back into the test harness during the
-//! fold. This module declaration restores them; the individual files have
-//! been updated to import from `sinexd::automata::*` instead.
+//! These tests were authored against the old split automata crate and were
+//! orphaned during the `sinexd::automata` fold. This module declaration restores
+//! them; the individual files import from `sinexd::automata::*`.
 
 mod automata {
     mod aggregation_test;

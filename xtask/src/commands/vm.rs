@@ -34,7 +34,7 @@ const SMOKE_TESTS: &[&str] = &["basic", "replay-smoke"];
 const INTEGRATION_TESTS: &[&str] = &[
     "preflight",
     "maintenance",
-    "node-matrix",
+    "runtime-matrix",
     "multi-source",
     "failure-recovery",
     "kitty-eventsource",
@@ -51,7 +51,7 @@ const CHAOS_TESTS: &[&str] = &[
     "chaos-clock-skew",
     "xtask-concurrency",
 ];
-/// End-to-end production-shape proof (#1135): real source-worker → NATS → ingestd → DB → gateway.
+/// End-to-end production-shape proof (#1135): source -> NATS -> event engine -> DB -> API.
 const PRODUCTION_SHAPE_TESTS: &[&str] = &["production-shape"];
 
 /// Default timeout per test in seconds (15 minutes).
@@ -63,7 +63,7 @@ const EXTENDED_TIMEOUT_SECS: u64 = 3600;
 const EXTENDED_TIMEOUT_TESTS: &[&str] = &[
     "basic",
     "maintenance",
-    "node-matrix",
+    "runtime-matrix",
     "multi-source",
     "performance",
     "production-scale",
@@ -1114,10 +1114,10 @@ fn run_vm_validation_probe(
             "pkgs",
             "import <nixpkgs> {}",
             "--arg",
-            "sinex-ingestd",
+            "sinexd",
             VM_VALIDATION_DUMMY_PACKAGE_EXPR,
             "--arg",
-            "sinex-gateway",
+            "sinexd",
             VM_VALIDATION_DUMMY_PACKAGE_EXPR,
             "--arg",
             "sinex",
@@ -1561,7 +1561,7 @@ mod tests {
                 keep_failed: false,
                 list: false,
                 validate: true,
-                tests: vec!["node-matrix".to_string()],
+                tests: vec!["runtime-matrix".to_string()],
             },
         };
 
@@ -1657,9 +1657,9 @@ mod tests {
         let temp = tempfile::tempdir()?;
         init_git_repo(temp.path())?;
 
-        let new_crate = temp.path().join("crate/core/sinex-process/Cargo.toml");
+        let new_crate = temp.path().join("crate/sinexd-extra/Cargo.toml");
         std::fs::create_dir_all(new_crate.parent().expect("new crate parent"))?;
-        std::fs::write(&new_crate, "[package]\nname = \"sinex-process\"\n")?;
+        std::fs::write(&new_crate, "[package]\nname = \"sinexd-extra\"\n")?;
 
         let mut input = prepare_vm_flake_input(temp.path())?;
         let staged_root = input
@@ -1670,7 +1670,7 @@ mod tests {
         assert!(input.flake_ref().starts_with("path:"));
         assert!(
             Path::new(&staged_root)
-                .join("crate/core/sinex-process/Cargo.toml")
+                .join("crate/sinexd-extra/Cargo.toml")
                 .is_file(),
             "staged checkout should include untracked crate files"
         );

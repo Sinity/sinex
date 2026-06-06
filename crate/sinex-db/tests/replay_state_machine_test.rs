@@ -46,7 +46,7 @@ async fn replay_preview_nulls_cascade_impact_when_metadata_queries_fail(
     let machine = ReplayStateMachine::new(ctx.pool().clone());
     let preview = machine
         .generate_preview_summary(&ReplayScope {
-            node_id: root.source.to_string(),
+            source_name: root.source.to_string(),
             time_window: Some((
                 Timestamp::now() - time::Duration::minutes(5),
                 Timestamp::now() + time::Duration::minutes(5),
@@ -80,7 +80,7 @@ async fn replay_preview_nulls_cascade_impact_when_metadata_queries_fail(
 }
 
 #[sinex_test]
-async fn replay_preview_maps_watcher_node_ids_to_emitted_event_sources(
+async fn replay_preview_maps_watcher_source_ids_to_emitted_event_sources(
     ctx: TestContext,
 ) -> TestResult<()> {
     let material_id = ctx
@@ -103,7 +103,7 @@ async fn replay_preview_maps_watcher_node_ids_to_emitted_event_sources(
     let machine = ReplayStateMachine::new(ctx.pool().clone());
     let preview = machine
         .generate_preview_summary(&ReplayScope {
-            node_id: "filesystem-watcher".to_string(),
+            source_name: "filesystem-watcher".to_string(),
             time_window: Some((
                 root_id.timestamp() - time::Duration::minutes(1),
                 root_id.timestamp() + time::Duration::minutes(1),
@@ -117,7 +117,7 @@ async fn replay_preview_maps_watcher_node_ids_to_emitted_event_sources(
     assert_eq!(
         preview["total_events"],
         serde_json::json!(1),
-        "watcher node ids should match the emitted fs-watcher event source during replay preview"
+        "watcher source names should match the emitted fs-watcher event source during replay preview"
     );
     assert_eq!(
         preview["root_event_ids"],

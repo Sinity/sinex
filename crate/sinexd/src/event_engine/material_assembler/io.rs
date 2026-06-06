@@ -20,8 +20,8 @@ use super::{
         parse_material_started_at,
     },
 };
-use crate::event_engine::{IngestdResult, SinexError};
-use crate::node_sdk::content_store::ContentStoreKey;
+use crate::event_engine::{EventEngineResult, SinexError};
+use crate::runtime::content_store::ContentStoreKey;
 use blake3::Hasher;
 use camino::Utf8PathBuf;
 use sinex_primitives::Timestamp;
@@ -43,7 +43,7 @@ use uuid::Uuid;
 /// - **Terminal materials with incomplete state**: If a material is marked terminal in the
 ///   database but the WAL shows incomplete assembly (missing end or buffered slices), the
 ///   state is cleaned up as stale.
-pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResult<()> {
+pub(super) async fn restore_state(assembler: &MaterialAssembler) -> EventEngineResult<()> {
     let mut entries = match fs::read_dir(&assembler.state_root).await {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -120,7 +120,7 @@ struct RestoredAssemblerState {
     should_finalize_pending_end: bool,
 }
 
-fn parse_material_state_folder(path: &std::path::Path) -> IngestdResult<Uuid> {
+fn parse_material_state_folder(path: &std::path::Path) -> EventEngineResult<Uuid> {
     let folder_name = path.file_name().ok_or_else(|| {
         SinexError::invalid_state(format!(
             "Assembler state folder {} is missing a file name",
@@ -166,7 +166,7 @@ fn log_restore_plan(plan: &RestorePlan) {
 async fn apply_non_restoring_plan(
     assembler: &MaterialAssembler,
     plan: &RestorePlan,
-) -> IngestdResult<Option<RestoredAssemblerState>> {
+) -> EventEngineResult<Option<RestoredAssemblerState>> {
     match &plan.classification {
         RestoreClassification::Discard { .. } if plan.cleanup_state() => {
             cleanup_state(assembler, plan.material_id).await;
@@ -188,7 +188,7 @@ async fn restore_state_params(
     assembler: &MaterialAssembler,
     material_id: Uuid,
     state_dir: &std::path::Path,
-) -> IngestdResult<Option<RestoredAssemblerState>> {
+) -> EventEngineResult<Option<RestoredAssemblerState>> {
     let wal_path = state_dir.join(WAL_FILE_NAME);
     let temp_path = state_dir.join(TEMP_FILE_NAME);
 
@@ -459,7 +459,7 @@ fn restore_last_slice_received(
     material_id: Uuid,
     wal_path: &Path,
     persisted_last_slice_received: Option<&str>,
-) -> IngestdResult<Timestamp> {
+) -> EventEngineResult<Timestamp> {
     if let Some(last_slice_received) = persisted_last_slice_received {
         return Timestamp::parse_rfc3339(last_slice_received).map_err(|error| {
             SinexError::invalid_state(format!(
@@ -576,7 +576,7 @@ async fn reconcile_replayed_file_progress(
     material_id: Uuid,
     temp_path: &Path,
     state_snapshot: &mut ReplayedState,
-) -> IngestdResult<()> {
+) -> EventEngineResult<()> {
     let actual_size = staged_file_size_bytes(temp_path).await?;
 
     if let Some(pending_write) = state_snapshot.pending_write.clone() {
@@ -644,7 +644,7 @@ async fn reconcile_replayed_file_progress(
     Ok(())
 }
 
-async fn staged_file_size_bytes(temp_path: &Path) -> IngestdResult<i64> {
+async fn staged_file_size_bytes(temp_path: &Path) -> EventEngineResult<i64> {
     match fs::metadata(temp_path).await {
         Ok(metadata) => i64::try_from(metadata.len()).map_err(|error| {
             SinexError::invalid_state("staged file length exceeds i64 range")
@@ -676,7 +676,7 @@ fn checkpoint_snapshot(state: &AssemblerState) -> PersistedState {
     }
 }
 
-async fn rebuild_hasher(temp_path: &PathBuf) -> IngestdResult<Hasher> {
+async fn rebuild_hasher(temp_path: &PathBuf) -> EventEngineResult<Hasher> {
     let mut hasher = Hasher::new();
     if temp_path.exists() {
         let mut file = fs::File::open(&temp_path).await.map_err(|e| {
@@ -706,7 +706,7 @@ async fn rebuild_hasher(temp_path: &PathBuf) -> IngestdResult<Hasher> {
     Ok(hasher)
 }
 
-async fn load_buffered_slices(buffers_dir: &PathBuf) -> IngestdResult<BTreeMap<i64, PathBuf>> {
+async fn load_buffered_slices(buffers_dir: &PathBuf) -> EventEngineResult<BTreeMap<i64, PathBuf>> {
     let mut buffered_slices = BTreeMap::new();
     if !buffers_dir.exists() {
         return Ok(buffered_slices);
@@ -743,7 +743,7 @@ async fn load_buffered_slices(buffers_dir: &PathBuf) -> IngestdResult<BTreeMap<i
     Ok(buffered_slices)
 }
 
-fn parse_buffered_slice_offset(path: &std::path::Path) -> IngestdResult<i64> {
+fn parse_buffered_slice_offset(path: &std::path::Path) -> EventEngineResult<i64> {
     let stem = path.file_stem().ok_or_else(|| {
         SinexError::invalid_state("Buffered slice is missing a file stem")
             .with_context("path", path.display().to_string())
@@ -760,7 +760,7 @@ fn parse_buffered_slice_offset(path: &std::path::Path) -> IngestdResult<i64> {
     })
 }
 
-async fn buffered_slice_bytes(buffered_slices: &BTreeMap<i64, PathBuf>) -> IngestdResult<i64> {
+async fn buffered_slice_bytes(buffered_slices: &BTreeMap<i64, PathBuf>) -> EventEngineResult<i64> {
     let mut total = 0i64;
     for path in buffered_slices.values() {
         let metadata = fs::metadata(path).await.map_err(|e| {
@@ -773,7 +773,7 @@ async fn buffered_slice_bytes(buffered_slices: &BTreeMap<i64, PathBuf>) -> Inges
     Ok(total)
 }
 
-fn buffered_slice_file_len_bytes(path: &Path, len: u64) -> IngestdResult<i64> {
+fn buffered_slice_file_len_bytes(path: &Path, len: u64) -> EventEngineResult<i64> {
     i64::try_from(len).map_err(|error| {
         SinexError::processing("buffered slice length exceeds i64 range")
             .with_context("path", path.display().to_string())
@@ -782,7 +782,11 @@ fn buffered_slice_file_len_bytes(path: &Path, len: u64) -> IngestdResult<i64> {
     })
 }
 
-fn checked_buffered_slice_total(total: i64, slice_bytes: i64, path: &Path) -> IngestdResult<i64> {
+fn checked_buffered_slice_total(
+    total: i64,
+    slice_bytes: i64,
+    path: &Path,
+) -> EventEngineResult<i64> {
     total.checked_add(slice_bytes).ok_or_else(|| {
         SinexError::processing("buffered slice byte total overflowed")
             .with_context("path", path.display().to_string())
@@ -795,7 +799,7 @@ async fn prune_stale_buffered_slices(
     material_id: Uuid,
     expected_offset: i64,
     buffered_slices: &mut BTreeMap<i64, PathBuf>,
-) -> IngestdResult<()> {
+) -> EventEngineResult<()> {
     let stale_offsets = buffered_slices
         .keys()
         .copied()
@@ -840,7 +844,7 @@ pub(super) async fn append_wal_entry(
     assembler: &MaterialAssembler,
     state: &mut AssemblerState,
     entry: WalEntry,
-) -> IngestdResult<()> {
+) -> EventEngineResult<()> {
     let force_sync = matches!(entry, WalEntry::Begin(_) | WalEntry::End(_));
 
     // Ensure WAL file is open
@@ -900,7 +904,7 @@ pub(super) async fn sync_staged_file_for_finalization(
     assembler: &MaterialAssembler,
     state: &mut AssemblerState,
     material_id: Uuid,
-) -> IngestdResult<()> {
+) -> EventEngineResult<()> {
     assembler
         .durability_policy
         .sync_staged_file_if_needed(state, material_id, true)
@@ -951,7 +955,7 @@ async fn cleanup_state_path(path: &Path) {
 /// # Edge Cases
 ///
 /// - **Early slice arrival**: Slices may arrive before local begin state after WAL restore,
-///   redelivery, or non-SDK publishers. A placeholder state is created to buffer slices until
+///   redelivery, or non-runtime publishers. A placeholder state is created to buffer slices until
 ///   begin arrives.
 /// - **Race condition on placeholder creation**: Multiple slices arriving concurrently for
 ///   a new material may attempt to create placeholders. `insert_state_handle` handles this
@@ -964,7 +968,7 @@ pub(super) async fn handle_slice(
     material_id: Uuid,
     offset: i64,
     data: Vec<u8>,
-) -> IngestdResult<()> {
+) -> EventEngineResult<()> {
     let state_handle = if let Some(existing) = assembler.get_state_handle(&material_id) {
         existing
     } else {
@@ -1197,7 +1201,7 @@ async fn append_slice_data(
     state: &mut AssemblerState,
     material_id: Uuid,
     data: &[u8],
-) -> IngestdResult<()> {
+) -> EventEngineResult<()> {
     let pending_write = if let Some(existing) = state.pending_write.clone() {
         if existing.offset != state.expected_offset || existing.len != data.len() {
             return Err(
@@ -1316,7 +1320,7 @@ async fn flush_buffered_slices(
     assembler: &MaterialAssembler,
     state: &mut AssemblerState,
     material_id: Uuid,
-) -> IngestdResult<()> {
+) -> EventEngineResult<()> {
     while let Some(&next_offset) = state.buffered_slices.keys().next() {
         if next_offset != state.expected_offset {
             break;
@@ -1370,7 +1374,7 @@ async fn persist_buffered_slice(
     state: &mut AssemblerState,
     offset: i64,
     data: &[u8],
-) -> IngestdResult<PathBuf> {
+) -> EventEngineResult<PathBuf> {
     let buffers_dir = state.buffers_dir();
     fs::create_dir_all(&buffers_dir)
         .await
@@ -1398,11 +1402,11 @@ async fn persist_buffered_slice(
     Ok(buffer_path)
 }
 
-/// Import the assembled material into the SDK content store.
+/// Import the assembled material into the runtime content store.
 pub(super) async fn import_into_content_store(
     assembler: &MaterialAssembler,
     state: &FinalizationState,
-) -> IngestdResult<ContentStoreKey> {
+) -> EventEngineResult<ContentStoreKey> {
     let staging_path = Utf8PathBuf::from_path_buf(state.temp_path.clone()).map_err(|path| {
         SinexError::io(format!(
             "Staging path is not valid utf-8 for content-store import: {}",
@@ -1628,7 +1632,7 @@ mod tests {
                 .build(&ctx)
                 .await?;
 
-        let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
+        let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.event_engine");
         let mut dlq_sub = ctx.nats_client().subscribe(dlq_subject).await?;
         let material_id = Uuid::now_v7();
 

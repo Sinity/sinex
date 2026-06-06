@@ -13,12 +13,12 @@
 //! Earlier versions of this file isolated trybuild's `CARGO_TARGET_DIR` to
 //! `.sinex/trybuild-target` to avoid claimed nextest deadlocks. Empirical
 //! data from xtask history (2026-05-11): zero deadlock/lock failures across
-//! 96 runs of this test + the sibling `proof_descriptor_compile_failures`
+//! 96 runs of this test + the sibling `source_contract_compile_failures`
 //! test. The isolation forced a cold rebuild of sinex-primitives' dep graph
 //! every run (mean 59.5s; min 1.4s only when trybuild's stderr cache hit).
 //! Letting trybuild share the workspace target dir gets warm-cache hits and
 //! relies on cargo's own per-target locking — the same pattern
-//! `proof_compile_fail_test.rs` uses without issue.
+//! `source_contract_compile_fail_test.rs` uses without issue.
 
 // Ignored by default because trybuild compile-failure tests spawn their own
 // rustc and dominate sinex-primitives wallclock (90–280 s each). Run via

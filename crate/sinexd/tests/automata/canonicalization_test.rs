@@ -10,8 +10,8 @@ use sinex_primitives::events::payloads::CanonicalCommandPayload;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::canonicalizer::TerminalCommandCanonicalizer;
-use sinexd::node_sdk::derived_node::AutomatonContext;
-use sinexd::node_sdk::{NodeLogicError, Transducer};
+use sinexd::runtime::automaton::AutomatonContext;
+use sinexd::runtime::{AutomatonLogicError, Transducer};
 use xtask::sandbox::prelude::*;
 
 fn make_context_with_optional_ts(
@@ -166,7 +166,7 @@ async fn test_missing_ts_orig_is_rejected() -> TestResult<()> {
         .expect_err("missing ts_orig must be rejected");
 
     assert!(
-        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("missing ts_orig")),
+        matches!(&error, AutomatonLogicError::InputParsing(msg) if msg.contains("missing ts_orig")),
         "expected InputParsing with 'missing ts_orig', got: {error:?}"
     );
     Ok(())

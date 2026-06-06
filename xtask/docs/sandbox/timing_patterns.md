@@ -257,31 +257,31 @@ async fn test_event_ordering(ctx: TestContext) -> Result<()> {
 ### Architecture (as of Jan 2025)
 
 - **Checkpoints**: ALWAYS stored in NATS KV (`KV_sinex_checkpoints`)
-- **DATABASE_URL**: Optional — only needed for nodes that query events
+- **DATABASE_URL**: Optional — only needed for runtime modules that query events
 - **`SINEX_EDGE_MODE=1`**: Suppresses DATABASE_URL requirement + enables schema cache
 
-### Database Dependency by Node Type
+### Database Dependency by RuntimeModule Type
 
 | Type | Needs DATABASE_URL? | Example |
 |------|---------------------|---------|
-| **Ingestors** | No | fs-watcher, terminal-node, desktop-node |
+| **Sources** | No | fs-watcher, terminal-source, desktop-source |
 | **Automata** | Usually yes | analytics-automaton, health-aggregator |
 
-**Ingestors** only capture and publish events to NATS. **Automata** query historical events.
+**Sources** only capture and publish events to NATS. **Automata** query historical events.
 
-### Testing Ingestors Without Database
+### Testing Sources Without Database
 
 ```rust
 #[sinex_test]
-async fn test_ingestor_without_database(ctx: TestContext) -> Result<()> {
+async fn test_source_without_database(ctx: TestContext) -> Result<()> {
     std::env::set_var("SINEX_EDGE_MODE", "1");
     std::env::remove_var("DATABASE_URL");
 
     let ctx = ctx.with_nats().shared().await?;
 
-    // Initialize ingestor - works without DATABASE_URL
-    let node = MyIngestor::new(/* ... */);
-    let runner = NodeRunner::new(/* ... */).await?;
+    // Initialize source - works without DATABASE_URL
+    let source = MySource::new(/* ... */);
+    let runner = RuntimeRunner::new(/* ... */).await?;
 
     // Checkpoints work (always NATS KV)
     let checkpoint = runner.current_checkpoint().await?;
@@ -300,8 +300,8 @@ async fn test_automaton_queries_events(ctx: TestContext) -> Result<()> {
     // DATABASE_URL present via TestContext
     let ctx = ctx.with_nats().shared().await?;
 
-    let node = MyAutomaton::new(/* ... */);
-    let runner = NodeRunner::new(/* ... */).await?;
+    let automaton = MyAutomaton::new(/* ... */);
+    let runner = RuntimeRunner::new(/* ... */).await?;
 
     // Automaton can query events via db_pool handle
     Ok(())

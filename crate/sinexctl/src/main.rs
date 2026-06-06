@@ -8,10 +8,10 @@ use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
     ConfigCommands, ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand,
-    DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
-    IngestorsCommand, InstructionsCommand, LifecycleCommands, LlmCommand, NodeCommands,
-    NodesCommand, NowCommand, OpsCommands, PrivacyCommand, QueryCommand, RecentCommand,
-    ReplayCommands, ReportCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
+    DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands,
+    InstructionsCommand, LifecycleCommands, LlmCommand, NowCommand, OpsCommands, PrivacyCommand,
+    QueryCommand, RecentCommand, ReplayCommands, ReportCommands, RuntimeCommands,
+    RuntimePresenceCommand, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
     TasksCommand, TelemetryCommands, ThroughputCommand, TimelineCommand, TraceCommand, TuiCommand,
     VerifyCommand, WatchCommand,
 };
@@ -22,7 +22,7 @@ use sinexctl::{
     CommandCatalogEntry, Config, command_catalog, default_rpc_url, render_format_matrix_terminal,
     validate_format,
 };
-use sinexd::node_sdk::service_runtime;
+use sinexd::runtime::service_runtime;
 use std::path::PathBuf;
 
 /// Sinex control CLI
@@ -30,11 +30,11 @@ use std::path::PathBuf;
 #[command(name = "sinexctl", about = "Sinex control CLI", version)]
 struct Cli {
     /// Gateway RPC URL
-    #[arg(long, env = "SINEX_RPC_URL", global = true)]
+    #[arg(long, env = "SINEX_API_URL", global = true)]
     rpc_url: Option<String>,
 
     /// Authentication token
-    #[arg(long, env = "SINEX_RPC_TOKEN", global = true)]
+    #[arg(long, env = "SINEX_API_TOKEN", global = true)]
     token: Option<String>,
 
     /// Token file path
@@ -112,17 +112,14 @@ enum Commands {
         cmd: CoreCommands,
     },
 
-    /// Node operations
-    Node {
+    /// Runtime module operations
+    Runtime {
         #[command(subcommand)]
-        cmd: NodeCommands,
+        cmd: RuntimeCommands,
     },
 
-    /// Derived-node and automata status
+    /// Automata status
     Automata(AutomataCommand),
-
-    /// Ingestor runtime status (run, health, recent emissions)
-    Ingestors(IngestorsCommand),
 
     /// Replay operations
     Replay {
@@ -205,12 +202,6 @@ enum Commands {
         cmd: LifecycleCommands,
     },
 
-    /// `GitOps` schema source management
-    GitOps {
-        #[command(subcommand)]
-        cmd: GitOpsCommands,
-    },
-
     /// Telemetry data from event-time activity views and operator read models
     Telemetry {
         #[command(subcommand)]
@@ -248,8 +239,8 @@ enum Commands {
     /// Show what's happening right now — dashboard view
     Now(NowCommand),
 
-    /// List running nodes with status and health
-    Nodes(NodesCommand),
+    /// List running modules with status and health
+    Modules(RuntimePresenceCommand),
 
     /// Per-source / per-component event throughput (#1172 AC-8)
     Throughput(ThroughputCommand),
@@ -351,12 +342,12 @@ async fn main() -> color_eyre::Result<()> {
         // `sinexctl state` snapshot/restore commands are local filesystem,
         // database, and service operations that do not use gateway RPC.
         Commands::State { cmd } => cmd.execute(format)?,
-        // `sinexctl verify --source-units` (alone) is a static descriptor /
+        // `sinexctl verify --sources` (alone) is a static descriptor /
         // payload coverage check that does not need a gateway connection
         // or auth token. Short-circuit so it can be run in CI without
         // requiring a live deployment.
-        Commands::Verify(cmd) if cmd.is_source_units_only() => {
-            cmd.execute_source_units_only(format)?;
+        Commands::Verify(cmd) if cmd.is_source_contracts_only() => {
+            cmd.execute_source_contracts_only(format)?;
         }
         other => {
             let client_config = ClientConfig::from(&config);
@@ -365,9 +356,8 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Gateway { cmd } => cmd.execute(&client, format).await?,
                 Commands::Blob { .. } => unreachable!("Blob command handled above"),
                 Commands::Core { cmd } => cmd.execute(&client, format).await?,
-                Commands::Node { cmd } => cmd.execute(&client, format).await?,
+                Commands::Runtime { cmd } => cmd.execute(&client, format).await?,
                 Commands::Automata(cmd) => cmd.execute(&client, format).await?,
-                Commands::Ingestors(cmd) => cmd.execute(&client, format).await?,
                 Commands::Replay { cmd } => cmd.execute(&client, format).await?,
                 Commands::Dlq { cmd } => cmd.execute(&client, format).await?,
                 Commands::Query(cmd) => cmd.execute(&client, format).await?,
@@ -389,7 +379,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Llm(cmd) => cmd.execute(&client, format).await?,
                 Commands::Documents(cmd) => cmd.execute(&client, format).await?,
                 Commands::Lifecycle { cmd } => cmd.execute(&client, format).await?,
-                Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
                 Commands::Telemetry { cmd } => cmd.execute(&client, format).await?,
                 Commands::Report { cmd } => cmd.execute(&client, format).await?,
                 Commands::Status(cmd) => {
@@ -403,7 +392,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Explain(cmd) => cmd.execute(&client, format).await?,
                 Commands::Verify(cmd) => cmd.execute(&client, format).await?,
                 Commands::Now(cmd) => cmd.execute(&client, format).await?,
-                Commands::Nodes(cmd) => cmd.execute(&client, format).await?,
+                Commands::Modules(cmd) => cmd.execute(&client, format).await?,
                 Commands::Throughput(cmd) => cmd.execute(&client, format).await?,
                 Commands::Annotate(cmd) => cmd.execute(&client, format).await?,
                 Commands::Completions(_) => unreachable!("Completions command handled above"),
@@ -489,8 +478,8 @@ fn operator_surface_catalog() -> OperatorSurfaceCatalog {
 fn command_path(cmd: &Commands) -> String {
     use sinexctl::commands::lifecycle::TombstoneCommands;
     use sinexctl::commands::{
-        ConfigCommands, DlqCommands, GatewayCommands, GitOpsCommands, LifecycleCommands,
-        NodeCommands, OpsCommands, ReplayCommands, ReportCommands, TelemetryCommands,
+        ConfigCommands, DlqCommands, GatewayCommands, LifecycleCommands, OpsCommands,
+        ReplayCommands, ReportCommands, RuntimeCommands, TelemetryCommands,
     };
     match cmd {
         Commands::Gateway { cmd } => match cmd {
@@ -504,15 +493,14 @@ fn command_path(cmd: &Commands) -> String {
             BlobCommands::VerifyIntegrity(_) => "blob verify-integrity".to_string(),
         },
         Commands::Core { .. } => "core health".to_string(),
-        Commands::Node { cmd } => match cmd {
-            NodeCommands::List { .. } => "node list".to_string(),
-            NodeCommands::Status { .. } => "node status".to_string(),
-            NodeCommands::Drain { .. } => "node drain".to_string(),
-            NodeCommands::Resume { .. } => "node resume".to_string(),
-            NodeCommands::SetHorizon { .. } => "node set-horizon".to_string(),
+        Commands::Runtime { cmd } => match cmd {
+            RuntimeCommands::List { .. } => "runtime list".to_string(),
+            RuntimeCommands::Status { .. } => "runtime status".to_string(),
+            RuntimeCommands::Drain { .. } => "runtime drain".to_string(),
+            RuntimeCommands::Resume { .. } => "runtime resume".to_string(),
+            RuntimeCommands::SetHorizon { .. } => "runtime set-horizon".to_string(),
         },
         Commands::Automata(_) => "automata".to_string(),
-        Commands::Ingestors(_) => "ingestors".to_string(),
         Commands::Replay { cmd } => match cmd {
             ReplayCommands::Plan { .. } => "replay plan".to_string(),
             ReplayCommands::Preview { .. } => "replay preview".to_string(),
@@ -572,6 +560,7 @@ fn command_path(cmd: &Commands) -> String {
                 SourcesSubcommand::Drift(_) => "sources drift".to_string(),
                 SourcesSubcommand::ExplainGap(_) => "sources explain-gap".to_string(),
                 SourcesSubcommand::Cockpit(_) => "sources cockpit".to_string(),
+                SourcesSubcommand::Status(_) => "sources status".to_string(),
             }
         }
         Commands::State { cmd } => match cmd {
@@ -672,12 +661,6 @@ fn command_path(cmd: &Commands) -> String {
                 TombstoneCommands::Status(_) => "lifecycle tombstone status".to_string(),
             },
         },
-        Commands::GitOps { cmd } => match cmd {
-            GitOpsCommands::List { .. } => "git-ops list".to_string(),
-            GitOpsCommands::Create { .. } => "git-ops create".to_string(),
-            GitOpsCommands::Delete { .. } => "git-ops delete".to_string(),
-            GitOpsCommands::Sync { .. } => "git-ops sync".to_string(),
-        },
         Commands::Telemetry { cmd } => match cmd {
             TelemetryCommands::CurrentHealth { .. } => "telemetry current-health".to_string(),
             TelemetryCommands::CurrentDeviceState { .. } => {
@@ -691,12 +674,14 @@ fn command_path(cmd: &Commands) -> String {
             TelemetryCommands::GatewayStats { .. } => "telemetry gateway-stats".to_string(),
             TelemetryCommands::StreamStats { .. } => "telemetry stream-stats".to_string(),
             TelemetryCommands::AssemblyStats { .. } => "telemetry assembly-stats".to_string(),
-            TelemetryCommands::NodeStats { .. } => "telemetry node-stats".to_string(),
+            TelemetryCommands::SourceStats { .. } => "telemetry source-stats".to_string(),
             TelemetryCommands::MetricCounters { .. } => "telemetry metric-counters".to_string(),
-            TelemetryCommands::IngestdBatchStats { .. } => {
-                "telemetry ingestd-batch-stats".to_string()
+            TelemetryCommands::EventEngineBatchStats { .. } => {
+                "telemetry event-engine-batch-stats".to_string()
             }
-            TelemetryCommands::IngestdValidation => "telemetry ingestd-validation".to_string(),
+            TelemetryCommands::EventEngineValidation => {
+                "telemetry event-engine-validation".to_string()
+            }
         },
         Commands::Report { cmd } => match cmd {
             ReportCommands::Today => "report today".to_string(),
@@ -711,7 +696,7 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Explain(_) => "explain".to_string(),
         Commands::Verify(cmd) => cmd.command_path().to_string(),
         Commands::Now(_) => "now".to_string(),
-        Commands::Nodes(_) => "nodes".to_string(),
+        Commands::Modules(_) => "modules".to_string(),
         Commands::Throughput(_) => "throughput".to_string(),
         Commands::Annotate(_) => "annotate".to_string(),
         Commands::Completions(_) => "completions".to_string(),
@@ -782,7 +767,7 @@ mod tests {
     #[sinex_serial_test]
     async fn env_token_is_not_treated_as_explicit_cli_override() -> TestResult<()> {
         let mut env = EnvGuard::new();
-        env.set("SINEX_RPC_TOKEN", "env-token");
+        env.set("SINEX_API_TOKEN", "env-token");
 
         let (matches, cli) = parse_cli(&["sinexctl", "status"])?;
         let token_override = cli_value_is_explicit(&matches, "token")
@@ -816,7 +801,7 @@ mod tests {
     #[sinex_serial_test]
     async fn rpc_url_is_only_explicit_when_passed_on_command_line() -> TestResult<()> {
         let mut env = EnvGuard::new();
-        env.clear("SINEX_RPC_URL");
+        env.clear("SINEX_API_URL");
 
         let (default_matches, default_cli) = parse_cli(&["sinexctl", "status"])?;
         assert!(
@@ -851,20 +836,9 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn ingestors_command_is_registered() -> TestResult<()> {
-        let (_matches, cli) = parse_cli(&["sinexctl", "ingestors"])?;
-
-        assert!(
-            matches!(cli.command, Some(Commands::Ingestors(_))),
-            "ingestors command must remain exposed as a top-level operator surface"
-        );
-        Ok(())
-    }
-
-    #[sinex_serial_test]
     async fn env_provided_rpc_url_is_not_treated_as_cli_override() -> TestResult<()> {
         let mut env = EnvGuard::new();
-        env.set("SINEX_RPC_URL", "https://env-only:9443");
+        env.set("SINEX_API_URL", "https://env-only:9443");
 
         let (matches, cli) = parse_cli(&["sinexctl", "status"])?;
         assert!(
@@ -925,7 +899,7 @@ mod tests {
               "kind": "deployed_host",
               "gateway": {
                 "base_url": "https://127.0.0.1:9999",
-                "token_file": "/run/agenix/sinex-gateway-admin-token",
+                "token_file": "/run/agenix/sinex-api-admin-token",
                 "token_role": "admin",
                 "ca_cert_file": "/var/lib/sinex/run/gateway-ca.pem"
               }
@@ -940,7 +914,7 @@ mod tests {
         assert_eq!(config.rpc_url, "https://127.0.0.1:9999");
         assert_eq!(
             config.token_file.as_deref(),
-            Some("/run/agenix/sinex-gateway-admin-token")
+            Some("/run/agenix/sinex-api-admin-token")
         );
         assert_eq!(
             config.token_role,

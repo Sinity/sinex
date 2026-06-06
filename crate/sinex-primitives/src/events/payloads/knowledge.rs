@@ -3,7 +3,7 @@
 //! Two groups:
 //!
 //! - **Vault observation** — material-provenance events emitted by the
-//!   `knowledgebase-vault` source unit when it mirrors an Obsidian-style PKM
+//!   `knowledgebase-vault` source when it mirrors an Obsidian-style PKM
 //!   vault into sinex. Each `.md` file becomes one `knowledgebase`/`note.observed`
 //!   event.
 //!

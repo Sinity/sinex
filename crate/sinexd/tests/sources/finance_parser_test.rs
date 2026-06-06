@@ -7,10 +7,10 @@ use sinex_primitives::parser::MaterialParser;
 use sinex_primitives::{
     Uuid,
     ids::Id,
-    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
+    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceId},
     temporal::Timestamp,
 };
-use sinexd::sources::sources::finance::HledgerJournalParser;
+use sinexd::sources::source_contracts::finance::HledgerJournalParser;
 
 // ---------------------------------------------------------------------------
 // Fixture data
@@ -62,7 +62,7 @@ const WITH_FILE_COMMENT: &str = "; vim:filetype=ledger\n\
 
 fn test_ctx() -> ParserContext {
     ParserContext {
-        source_unit_id: SourceUnitId::from_static("hledger-journal"),
+        source_id: SourceId::from_static("hledger-journal"),
         source_material_id: Id::new(),
         record_anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
         operation_id: Uuid::new_v4(),

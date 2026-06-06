@@ -1,6 +1,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use serde_json::json;
+use sinex_primitives::Result;
 use sinexd::api::{
     ServiceContainer,
     native_messaging::{
@@ -8,7 +9,6 @@ use sinexd::api::{
         run_with_transport,
     },
 };
-use sinex_primitives::Result;
 use tokio::sync::Mutex;
 use xtask::sandbox::{EnvGuard, sinex_test};
 

@@ -1,4 +1,5 @@
 # Reference
 
-@./docs-map.md
-@./configuration.md
+@docs-map.md
+@glossary.md
+@../../../crate/sinexd/docs/runtime_configuration.md

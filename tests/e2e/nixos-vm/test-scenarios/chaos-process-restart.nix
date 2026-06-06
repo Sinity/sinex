@@ -1,0 +1,52 @@
+# Chaos test: sinexd process kill during batch ingestion — Rust-driven.
+#
+# SIGKILLs event_engine mid-batch and verifies:
+#   - event_engine restarts (via systemd) and resumes from its checkpoint
+#   - no duplicate events in Postgres (idempotent re-processing)
+#   - the total event count is monotonically non-decreasing (no data loss)
+{ pkgs
+, pg_jsonschema
+, sinexVmTestSuite ? null
+, sinex ? null
+, sinexCli ? null
+, ...
+}:
+
+let
+  inherit (pkgs) lib;
+in
+pkgs.testers.nixosTest {
+  name = "sinex-chaos-process-restart";
+  skipLint = true;
+
+  nodes.machine = { config, pkgs, lib, ... }: {
+    imports = [
+      (import ../common/test-base.nix {
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
+      })
+    ];
+
+    services.sinex.sources.filesystem = {
+      enable = true;
+      watchPaths = [ "/var/lib/sinex/watched" ];
+    };
+
+    # event_engine must restart automatically after SIGKILL
+    systemd.services.sinexd.serviceConfig.Restart = lib.mkForce "always";
+    systemd.services.sinexd.serviceConfig.RestartSec = lib.mkForce "2s";
+
+    environment.systemPackages = with pkgs; [ procps ];
+  };
+
+  testScript = ''
+    start_all()
+    machine.wait_for_unit("multi-user.target")
+    machine.wait_for_unit("postgresql.service", timeout=60)
+    machine.wait_for_unit("sinexd.service", timeout=60)
+
+    with subtest("Rust-driven chaos-process-restart suite"):
+      machine.succeed(
+        "${sinexVmTestSuite}/bin/run-suite --category chaos-process-restart"
+      )
+  '';
+}

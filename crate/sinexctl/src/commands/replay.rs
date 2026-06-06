@@ -17,11 +17,11 @@ LIFECYCLE:
     plan → preview → approve → execute
 
 EXAMPLES:
-    # Create a replay plan for a node
-    sinexctl replay plan --node terminal-ingestor
+    # Create a replay plan for a source
+    sinexctl replay plan --source terminal.zsh-history
 
     # Create with scope filters
-    sinexctl replay plan --node fs-ingestor --since 1h --material <UUID>
+    sinexctl replay plan --source fs --since 1h --material <UUID>
 
     # Preview what will be replayed. When the scope crosses material
     # boundaries (more than one source_material_id), the preview adds a
@@ -39,7 +39,7 @@ EXAMPLES:
     sinexctl replay submit <OPERATION_ID>
 
     # Full convenience: plan+preview+approve+execute
-    sinexctl replay run --node terminal-ingestor --since 24h
+    sinexctl replay run --source terminal.zsh-history --since 24h
 
     # Watch progress
     sinexctl replay watch <OPERATION_ID>
@@ -54,9 +54,9 @@ EXAMPLES:
 pub enum ReplayCommands {
     /// Create a replay plan (planning state)
     Plan {
-        /// Node ID to replay events for
+        /// Source ID to replay events for
         #[arg(long)]
-        node: String,
+        source: String,
 
         /// Start time (RFC3339 or relative like "1h", "24h", "7d")
         #[arg(long)]
@@ -164,9 +164,9 @@ pub enum ReplayCommands {
         #[arg(long, value_enum)]
         state: Option<ReplayStateFilter>,
 
-        /// Filter by node ID
+        /// Filter by source ID
         #[arg(long)]
-        node: Option<String>,
+        source: Option<String>,
 
         /// Maximum number of results
         #[arg(long, default_value = "50")]
@@ -175,9 +175,9 @@ pub enum ReplayCommands {
 
     /// Full lifecycle: plan + preview + approve + execute (convenience)
     Run {
-        /// Node ID to replay events for
+        /// Source ID to replay events for
         #[arg(long)]
-        node: String,
+        source: String,
 
         /// Start time (RFC3339 or relative like "1h", "24h", "7d")
         #[arg(long)]
@@ -251,7 +251,7 @@ impl ReplayCommands {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
             Self::Plan {
-                node,
+                source,
                 since,
                 until,
                 materials,
@@ -259,7 +259,7 @@ impl ReplayCommands {
             } => {
                 let operation = client
                     .replay_plan(
-                        node,
+                        source,
                         since.as_deref(),
                         until.as_deref(),
                         materials,
@@ -383,9 +383,13 @@ impl ReplayCommands {
                 execute_watch(client, operation_id, *interval, &format).await?;
             }
 
-            Self::List { state, node, limit } => {
+            Self::List {
+                state,
+                source,
+                limit,
+            } => {
                 let operations = client
-                    .replay_list_filtered(state.map(Into::into), node.as_deref(), Some(*limit))
+                    .replay_list_filtered(state.map(Into::into), source.as_deref(), Some(*limit))
                     .await?;
                 CommandOutput::list(
                     operations,
@@ -396,7 +400,7 @@ impl ReplayCommands {
             }
 
             Self::Run {
-                node,
+                source,
                 since,
                 until,
                 materials,
@@ -409,7 +413,7 @@ impl ReplayCommands {
             } => {
                 execute_run(
                     client,
-                    node,
+                    source,
                     since.as_deref(),
                     until.as_deref(),
                     materials,
@@ -486,7 +490,7 @@ async fn execute_watch(
 
 async fn execute_run(
     client: &GatewayClient,
-    node: &str,
+    source: &str,
     since: Option<&str>,
     until: Option<&str>,
     materials: &[String],
@@ -495,9 +499,9 @@ async fn execute_run(
     gate_overrides: ReplayGateOverrides,
     format: &OutputFormat,
 ) -> Result<()> {
-    eprintln!("Creating replay plan for node '{node}'...");
+    eprintln!("Creating replay plan for source '{source}'...");
     let operation = client
-        .replay_plan(node, since, until, materials, event_types)
+        .replay_plan(source, since, until, materials, event_types)
         .await?;
     let op_id = operation.operation_id.clone();
     eprintln!("  Operation: {op_id}");
@@ -521,8 +525,8 @@ async fn execute_run(
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             eprintln!("  Cascade: {cascade_total} total ({total} direct + {derived} derived)");
-            if let Some(nodes) = cascade.get("affected_nodes").and_then(|v| v.as_array()) {
-                let names: Vec<&str> = nodes.iter().filter_map(|n| n.as_str()).collect();
+            if let Some(modules) = cascade.get("affected_modules").and_then(|v| v.as_array()) {
+                let names: Vec<&str> = modules.iter().filter_map(|n| n.as_str()).collect();
                 if !names.is_empty() {
                     eprintln!("  Affected: {}", names.join(", "));
                 }
@@ -589,7 +593,10 @@ fn format_replay_plan_table(operation: &ReplayOperation) -> String {
     output.push_str("Replay Plan Created:\n");
     output.push_str(&format!("  Operation ID: {}\n", operation.operation_id));
     output.push_str(&format!("  State:        {:?}\n", operation.state));
-    output.push_str(&format!("  Node:         {}\n", operation.scope.node_id));
+    output.push_str(&format!(
+        "  Source:         {}\n",
+        operation.scope.source_name
+    ));
     if let Some(ref window) = operation.scope.time_window {
         output.push_str(&format!("  Time Window:  {} to {}\n", window.0, window.1));
     }
@@ -616,7 +623,10 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
     output.push_str("Replay Preview:\n");
     output.push_str(&format!("  Operation ID: {}\n", operation.operation_id));
     output.push_str(&format!("  State:        {:?}\n", operation.state));
-    output.push_str(&format!("  Node:         {}\n", operation.scope.node_id));
+    output.push_str(&format!(
+        "  Source:         {}\n",
+        operation.scope.source_name
+    ));
 
     if let Some(total) = preview
         .get("total_events")
@@ -703,10 +713,10 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
                 "  Cascade Total: {cascade_total} ({direct} direct + {derived} derived)\n"
             ));
 
-            if let Some(nodes) = cascade.get("affected_nodes").and_then(|v| v.as_array()) {
-                let names: Vec<&str> = nodes.iter().filter_map(|n| n.as_str()).collect();
+            if let Some(modules) = cascade.get("affected_modules").and_then(|v| v.as_array()) {
+                let names: Vec<&str> = modules.iter().filter_map(|n| n.as_str()).collect();
                 if !names.is_empty() {
-                    output.push_str(&format!("  Affected Nodes: {}\n", names.join(", ")));
+                    output.push_str(&format!("  Affected Modules: {}\n", names.join(", ")));
                 }
             }
 
@@ -805,7 +815,10 @@ fn format_replay_status_table(operation: &ReplayOperation) -> String {
     output.push_str("Replay Operation:\n");
     output.push_str(&format!("  Operation ID: {}\n", operation.operation_id));
     output.push_str(&format!("  State:        {:?}\n", operation.state));
-    output.push_str(&format!("  Node:         {}\n", operation.scope.node_id));
+    output.push_str(&format!(
+        "  Source:         {}\n",
+        operation.scope.source_name
+    ));
     output.push_str(&format!("  Actor:        {}\n", operation.actor));
     output.push_str(&format!(
         "  Progress:     {}/{}\n",
@@ -844,7 +857,7 @@ fn format_replay_list_table(operations: &[ReplayOperation]) -> String {
             "{:<28} {:<12} {:<20} {:<10} {:<10}\n",
             op.operation_id,
             format!("{:?}", op.state),
-            op.scope.node_id,
+            op.scope.source_name,
             progress,
             created,
         ));
@@ -856,7 +869,7 @@ fn format_replay_list_table(operations: &[ReplayOperation]) -> String {
 /// referenced by the replay scope.
 ///
 /// Returns an empty vec when:
-///   - the scope has no material filter (replay covers a node-wide window),
+///   - the scope has no material filter (replay covers a module-wide window),
 ///   - the filter resolves to a single material (the aggregate scorecard
 ///     already represents the same content; per-row breakdown is noise),
 ///   - or `sources.show` cannot resolve a UUID — that material's row is
@@ -1112,11 +1125,11 @@ mod tests {
             operation_id: "op-1".to_string(),
             state: ReplayState::Previewed,
             scope: ReplayScope {
-                node_id: "terminal-ingestor".to_string(),
+                source_name: "terminal.zsh-history".to_string(),
                 time_window: None,
                 material_filter: None,
                 filters: std::collections::HashMap::new(),
-                source_unit_id: None,
+                source_id: None,
                 source_material_id: None,
                 parser_id: None,
                 parser_version: None,
@@ -1134,7 +1147,7 @@ mod tests {
             created_at: "2026-04-04T00:00:00Z".to_string(),
             approved_by: None,
             approved_at: None,
-            executor_node: None,
+            executor_module: None,
             started_at: None,
             finished_at: None,
             outcome: None,

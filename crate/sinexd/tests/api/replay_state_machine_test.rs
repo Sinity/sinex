@@ -1,6 +1,6 @@
-use sinexd::api::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
 use sinex_primitives::domain::ReplayOutcome;
 use sinex_primitives::{Uuid, temporal::Timestamp};
+use sinexd::api::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
 use std::collections::HashMap;
 use time::{Date, Month, Time};
 use xtask::sandbox::prelude::*;
@@ -82,7 +82,7 @@ async fn scope_serialization_round_trips() -> Result<()> {
     filters.insert("max_size".to_string(), serde_json::json!(1024));
 
     let scope = ReplayScope {
-        node_id: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: Some((
             Timestamp::new(time::OffsetDateTime::new_utc(
                 Date::from_calendar_date(2024, Month::January, 1).unwrap(),
@@ -101,7 +101,7 @@ async fn scope_serialization_round_trips() -> Result<()> {
     let json = serde_json::to_string(&scope)?;
     let deserialized: ReplayScope = serde_json::from_str(&json)?;
 
-    assert_eq!(scope.node_id, deserialized.node_id);
+    assert_eq!(scope.source_name, deserialized.source_name);
     assert_eq!(scope.time_window, deserialized.time_window);
     assert_eq!(
         scope.material_filter.as_ref().map(std::vec::Vec::len),
@@ -118,7 +118,7 @@ async fn scope_serialization_round_trips() -> Result<()> {
 #[sinex_test]
 async fn scope_normalized_filters_drop_empty_and_dedupe() -> Result<()> {
     let scope = ReplayScope {
-        node_id: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: Some(vec![
             Uuid::parse_str("018f3dd0-6ab6-7dd9-a0f2-2c6f99b67ed7")?,
@@ -147,7 +147,7 @@ async fn scope_normalized_filters_drop_empty_and_dedupe() -> Result<()> {
 #[sinex_test]
 async fn operations_default_to_planning() -> Result<()> {
     let scope = ReplayScope {
-        node_id: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: Some(vec![Uuid::now_v7()]),
         filters: HashMap::new(),
@@ -164,7 +164,7 @@ async fn operations_default_to_planning() -> Result<()> {
         created_at: sinex_primitives::temporal::now(),
         approved_by: None,
         approved_at: None,
-        executor_node: None,
+        executor_module: None,
         started_at: None,
         finished_at: None,
         outcome: None,
@@ -172,7 +172,7 @@ async fn operations_default_to_planning() -> Result<()> {
     };
 
     assert_eq!(operation.state, ReplayState::Planning);
-    assert_eq!(operation.scope.node_id, scope.node_id);
+    assert_eq!(operation.scope.source_name, scope.source_name);
     assert!(operation.approved_by.is_none());
     assert!(operation.finished_at.is_none());
 
@@ -183,7 +183,7 @@ async fn operations_default_to_planning() -> Result<()> {
 async fn create_operation_persists_loadable_metadata_atomically(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        node_id: "atomic-create-node".to_string(),
+        source_name: "atomic-create-source".to_string(),
         time_window: None,
         material_filter: Some(vec![Uuid::now_v7()]),
         filters: HashMap::from([(
@@ -199,7 +199,7 @@ async fn create_operation_persists_loadable_metadata_atomically(ctx: TestContext
     let loaded = replay.load_operation(created.operation_id).await?;
 
     assert_eq!(loaded.state, ReplayState::Planning);
-    assert_eq!(loaded.scope.node_id, scope.node_id);
+    assert_eq!(loaded.scope.source_name, scope.source_name);
     assert_eq!(loaded.scope.time_window, scope.time_window);
     assert_eq!(loaded.scope.material_filter, scope.material_filter);
     assert_eq!(loaded.scope.filters, scope.filters);
@@ -207,7 +207,7 @@ async fn create_operation_persists_loadable_metadata_atomically(ctx: TestContext
     assert_eq!(loaded.checkpoint.processed_events, 0);
     assert!(loaded.preview_summary.is_none());
     assert!(loaded.approved_by.is_none());
-    assert!(loaded.executor_node.is_none());
+    assert!(loaded.executor_module.is_none());
 
     let persisted = sqlx::query!(
         r#"
@@ -230,7 +230,7 @@ async fn create_operation_persists_loadable_metadata_atomically(ctx: TestContext
 async fn preview_updates_do_not_regress_approved_state(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        node_id: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -277,7 +277,7 @@ async fn submit_previewed_operation_sets_execution_metadata_atomically(
 ) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        node_id: "submit-node".to_string(),
+        source_name: "submit-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -308,7 +308,7 @@ async fn submit_previewed_operation_sets_execution_metadata_atomically(
         .submit_previewed_for_execution(
             operation.operation_id,
             "admin:submitter".to_string(),
-            sinex_primitives::domain::NodeName::new("gateway-node"),
+            sinex_primitives::domain::ModuleName::new("gateway-module"),
         )
         .await?;
 
@@ -316,14 +316,14 @@ async fn submit_previewed_operation_sets_execution_metadata_atomically(
     assert_eq!(submitted.approved_by.as_deref(), Some("admin:submitter"));
     assert!(submitted.approved_at.is_some());
     assert!(submitted.started_at.is_some());
-    assert_eq!(submitted.executor_node.as_deref(), Some("gateway-node"));
+    assert_eq!(submitted.executor_module.as_deref(), Some("gateway-module"));
     assert_eq!(submitted.outcome, None);
     assert_eq!(submitted.error_details, None);
 
     let loaded = replay.load_operation(operation.operation_id).await?;
     assert_eq!(loaded.state, ReplayState::Executing);
     assert_eq!(loaded.approved_by.as_deref(), Some("admin:submitter"));
-    assert_eq!(loaded.executor_node.as_deref(), Some("gateway-node"));
+    assert_eq!(loaded.executor_module.as_deref(), Some("gateway-module"));
     assert_eq!(loaded.approved_at, submitted.approved_at);
     assert_eq!(loaded.started_at, submitted.started_at);
 
@@ -334,7 +334,7 @@ async fn submit_previewed_operation_sets_execution_metadata_atomically(
 async fn begin_execution_sets_execution_metadata_atomically(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        node_id: "execute-node".to_string(),
+        source_name: "execute-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -364,14 +364,14 @@ async fn begin_execution_sets_execution_metadata_atomically(ctx: TestContext) ->
     replay
         .begin_execution(
             operation.operation_id,
-            sinex_primitives::domain::NodeName::new("gateway-node"),
+            sinex_primitives::domain::ModuleName::new("gateway-module"),
         )
         .await?;
 
     let loaded = replay.load_operation(operation.operation_id).await?;
     assert_eq!(loaded.state, ReplayState::Executing);
     assert!(loaded.started_at.is_some());
-    assert_eq!(loaded.executor_node.as_deref(), Some("gateway-node"));
+    assert_eq!(loaded.executor_module.as_deref(), Some("gateway-module"));
     assert_eq!(loaded.outcome, None);
     assert_eq!(loaded.error_details, None);
 
@@ -382,7 +382,7 @@ async fn begin_execution_sets_execution_metadata_atomically(ctx: TestContext) ->
 async fn mark_failed_persists_pre_execution_and_execution_failures(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        node_id: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -423,12 +423,12 @@ async fn mark_failed_persists_pre_execution_and_execution_failures(ctx: TestCont
         failed_before_execution.error_details.as_deref(),
         Some("pre-execution error")
     );
-    assert!(failed_before_execution.executor_node.is_none());
+    assert!(failed_before_execution.executor_module.is_none());
 
     let second_operation = replay
         .create_operation(
             ReplayScope {
-                node_id: "test-node-2".to_string(),
+                source_name: "test-source-2".to_string(),
                 time_window: None,
                 material_filter: None,
                 filters: HashMap::new(),
@@ -468,7 +468,7 @@ async fn mark_failed_persists_pre_execution_and_execution_failures(ctx: TestCont
 async fn cancel_enforces_state_transition_rules(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        node_id: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -527,7 +527,7 @@ async fn cancel_marks_executing_operation_as_cancelling_until_finalized(
 ) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        node_id: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -584,7 +584,7 @@ async fn cancel_marks_executing_operation_as_cancelling_until_finalized(
 async fn execution_lock_is_released_when_guard_drops(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        node_id: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -601,7 +601,7 @@ async fn execution_lock_is_released_when_guard_drops(ctx: TestContext) -> Result
     assert!(first_guard.is_some());
     let locked = replay.load_operation(operation.operation_id).await?;
     assert!(
-        locked.executor_node.is_none(),
+        locked.executor_module.is_none(),
         "taking the advisory lock must not fabricate executor metadata"
     );
 
@@ -632,10 +632,10 @@ async fn execution_lock_is_released_when_guard_drops(ctx: TestContext) -> Result
 }
 
 #[sinex_test]
-async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Result<()> {
+async fn recover_stale_executing_clears_executor_module(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        node_id: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -667,7 +667,7 @@ async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Resul
     }
 
     let stale_started_at = sinex_primitives::temporal::now() - time::Duration::hours(2);
-    let executor_node = serde_json::to_value("node-a")?;
+    let executor_module = serde_json::to_value("executor-a")?;
     sqlx::query!(
         r#"
         UPDATE core.operations_log
@@ -678,7 +678,7 @@ async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Resul
                     to_jsonb($2::timestamptz),
                     true
                 ),
-                '{executor_node}',
+                '{executor_module}',
                 $3::jsonb,
                 true
             )
@@ -686,7 +686,7 @@ async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Resul
         "#,
         operation.operation_id,
         *stale_started_at,
-        executor_node
+        executor_module
     )
     .execute(&ctx.pool)
     .await?;
@@ -699,7 +699,7 @@ async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Resul
     let failed = replay.load_operation(operation.operation_id).await?;
     assert_eq!(failed.state, ReplayState::Failed);
     assert_eq!(failed.outcome, Some(ReplayOutcome::Failed));
-    assert!(failed.executor_node.is_none());
+    assert!(failed.executor_module.is_none());
     assert!(
         failed
             .error_details
@@ -711,10 +711,10 @@ async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Resul
 }
 
 #[sinex_test]
-async fn recover_stale_committing_clears_executor_node(ctx: TestContext) -> Result<()> {
+async fn recover_stale_committing_clears_executor_module(ctx: TestContext) -> Result<()> {
     let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {
-        node_id: "test-node".to_string(),
+        source_name: "test-source".to_string(),
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
@@ -737,9 +737,9 @@ async fn recover_stale_committing_clears_executor_node(ctx: TestContext) -> Resu
         .transition(operation.operation_id, ReplayState::Executing)
         .await?;
     replay
-        .set_executor_node(
+        .set_executor_module(
             operation.operation_id,
-            sinex_primitives::domain::NodeName::new("node-a"),
+            sinex_primitives::domain::ModuleName::new("executor-a"),
         )
         .await?;
     replay
@@ -772,7 +772,7 @@ async fn recover_stale_committing_clears_executor_node(ctx: TestContext) -> Resu
     let failed = replay.load_operation(operation.operation_id).await?;
     assert_eq!(failed.state, ReplayState::Failed);
     assert_eq!(failed.outcome, Some(ReplayOutcome::Failed));
-    assert!(failed.executor_node.is_none());
+    assert!(failed.executor_module.is_none());
     assert!(
         failed
             .error_details

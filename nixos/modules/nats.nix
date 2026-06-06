@@ -39,30 +39,30 @@ let
     "sinex-nats-client-ca"
     "nats-client-ca"
   ];
-  effectiveSharedClientCaFile = resolveSecretPath sinexCfg.nodes.nats.tls.caCertFile [
+  effectiveSharedClientCaFile = resolveSecretPath sinexCfg.runtime.nats.tls.caCertFile [
     "sinex-nats-ca"
     "nats-ca"
     "sinex-remote-nats-ca"
   ];
-  effectiveSharedClientCertFile = resolveSecretPath sinexCfg.nodes.nats.tls.clientCertFile [
+  effectiveSharedClientCertFile = resolveSecretPath sinexCfg.runtime.nats.tls.clientCertFile [
     "sinex-nats-client-cert"
     "nats-client-cert"
     "sinex-remote-nats-cert"
   ];
-  effectiveSharedClientKeyFile = resolveSecretPath sinexCfg.nodes.nats.tls.clientKeyFile [
+  effectiveSharedClientKeyFile = resolveSecretPath sinexCfg.runtime.nats.tls.clientKeyFile [
     "sinex-nats-client-key"
     "nats-client-key"
     "sinex-remote-nats-key"
   ];
-  effectiveSharedClientTokenFile = resolveSecretPath sinexCfg.nodes.nats.auth.tokenFile [
+  effectiveSharedClientTokenFile = resolveSecretPath sinexCfg.runtime.nats.auth.tokenFile [
     "sinex-nats-token"
     "nats-token"
   ];
-  effectiveSharedClientCredsFile = resolveSecretPath sinexCfg.nodes.nats.auth.credsFile [
+  effectiveSharedClientCredsFile = resolveSecretPath sinexCfg.runtime.nats.auth.credsFile [
     "sinex-nats-client-creds"
     "nats-client-creds"
   ];
-  effectiveSharedClientNkeySeedFile = resolveSecretPath sinexCfg.nodes.nats.auth.nkeySeedFile [
+  effectiveSharedClientNkeySeedFile = resolveSecretPath sinexCfg.runtime.nats.auth.nkeySeedFile [
     "sinex-nats-client-nkey"
     "nats-client-nkey"
   ];
@@ -347,7 +347,7 @@ in
                   description = ''
                     Public NKey assigned to the shared Sinex client user on the managed NATS
                     server. The matching seed should be provided via
-                    <literal>services.sinex.nodes.nats.auth.nkeySeedFile</literal> or an agenix
+                    <literal>services.sinex.runtime.nats.auth.nkeySeedFile</literal> or an agenix
                     secret named <literal>sinex-nats-client-nkey</literal> /
                     <literal>nats-client-nkey</literal>, including declarative
                     <literal>/etc/sinex/nats-client.nk</literal>.
@@ -531,7 +531,7 @@ in
         assertion = (!cfg.authorization.sharedClient.enable) || effectiveSharedClientNkeySeedFile != null;
         message = ''
           Managed NATS shared-client authorization requires
-          services.sinex.nodes.nats.auth.nkeySeedFile, sinex-nats-client-nkey,
+          services.sinex.runtime.nats.auth.nkeySeedFile, sinex-nats-client-nkey,
           or declarative /etc/sinex/nats-client.nk.
         '';
       }

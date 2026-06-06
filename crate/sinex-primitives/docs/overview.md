@@ -4,7 +4,7 @@
 
 - strong types that encode Sinex invariants;
 - the canonical event model and transport-facing payload helpers;
-- validation, namespace, and utility helpers shared by binaries and nodes.
+- validation, namespace, and utility helpers shared by binaries and runtime modules.
 
 It does not own database repositories or runtime services.
 
@@ -27,9 +27,9 @@ Reach for `sinex-db` when you need persistence, repositories, or transaction hel
 
 ## Related Documents
 
-- `crate/lib/sinex-db/docs/db_repositories.md` – repository pattern and usage examples.
+- `crate/sinex-db/docs/db_repositories.md` – repository pattern and usage examples.
 - `README.md#architecture` – the system-level flow that these abstractions support.
-- `crate/lib/sinex-primitives/docs/type_system_patterns.md` – richer doctrine for domain typing, validation, and state machines.
-- `crate/lib/sinex-primitives/docs/newtypes.md` – typed units, config wrappers, and validation notes.
-- `crate/lib/sinex-primitives/docs/nats_subjects.md` – subject naming and transport contracts.
+- `type_system_patterns.md` – richer doctrine for domain typing, validation, and state machines.
+- `newtypes.md` – typed units, config wrappers, and validation notes.
+- `nats_subjects.md` – subject naming and transport contracts.
 - `README.md#development` – workspace development loop and validation entrypoints.

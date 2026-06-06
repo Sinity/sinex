@@ -1,2 +1,2 @@
 @../../../xtask/docs/command-guide.md
-@./sinexctl.md
+@../../../crate/sinexctl/README.md

@@ -9,7 +9,7 @@ use sinex_primitives::RuntimeTargetGatewayTokenRole;
 ///
 /// Tries in order:
 /// 1. Explicit token value (if provided)
-/// 2. `SINEX_RPC_TOKEN` environment variable
+/// 2. `SINEX_API_TOKEN` environment variable
 /// 3. Token file path (if provided)
 /// 4. Default token file (~/.config/sinex/token)
 pub fn load_token(
@@ -23,7 +23,7 @@ pub fn load_token(
     }
 
     // 2. Environment variable
-    if let Ok(token) = env::var("SINEX_RPC_TOKEN")
+    if let Ok(token) = env::var("SINEX_API_TOKEN")
         && !token.is_empty()
     {
         return Ok(apply_runtime_role(&token, token_role));
@@ -51,7 +51,7 @@ pub fn load_token(
     }
 
     Err(color_eyre::eyre::eyre!(
-        "No authentication token found. Set SINEX_RPC_TOKEN environment variable or provide --token"
+        "No authentication token found. Set SINEX_API_TOKEN environment variable or provide --token"
     ))
 }
 

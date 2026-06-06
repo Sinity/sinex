@@ -12,15 +12,15 @@ use serde::Serialize;
 use sinex_primitives::{DeploymentReadinessDescriptor, privacy::load_private_mode_state};
 use std::path::{Path, PathBuf};
 // Only the gated `deployment` submodule needs `Duration` (for DEPLOYMENT_READY_TIMEOUT).
-#[cfg(any(feature = "runtime-introspection", test))]
+#[cfg(feature = "runtime-introspection")]
 use std::time::Duration;
 use walkdir::WalkDir;
 
 // Consumed only by the real `deployment` submodule, which is gated behind the
 // same cfg; without the gate these are dead code in the default (non-introspection) build.
-#[cfg(any(feature = "runtime-introspection", test))]
+#[cfg(feature = "runtime-introspection")]
 const DEPLOYMENT_READY_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(any(feature = "runtime-introspection", test))]
+#[cfg(feature = "runtime-introspection")]
 const RECOMMENDED_INOTIFY_MAX_USER_WATCHES: u64 = 524_288;
 
 /// Probe developer-environment health and deployment readiness.
@@ -34,7 +34,7 @@ pub struct DoctorCommand {
     #[arg(long)]
     pub fix: bool,
 
-    /// Check runtime health (ingestd heartbeat, consumer lag, batch latency)
+    /// Check runtime health (event_engine heartbeat, consumer lag, batch latency)
     #[arg(long)]
     pub runtime: bool,
 
@@ -580,8 +580,10 @@ fn execute_reclaim(ctx: &CommandContext, result: &mut CommandResult) {
         Ok(report) => {
             if ctx.is_human() {
                 let total = report.cargo_sweep_reclaimed_bytes + report.incremental_bytes_reclaimed;
+                let incremental_keep =
+                    crate::cache_hygiene::configured_incremental_keep_per_crate();
                 println!(
-                    "Reclaimed {:.2} GB (cargo-sweep: {:.2} GB; incremental keep-3: {} dirs / {:.2} GB).",
+                    "Reclaimed {:.2} GB (cargo-sweep: {:.2} GB; incremental keep-{incremental_keep}: {} dirs / {:.2} GB).",
                     total as f64 / 1e9,
                     report.cargo_sweep_reclaimed_bytes as f64 / 1e9,
                     report.incremental_dirs_deleted,
@@ -910,7 +912,7 @@ fn rust_analyzer_manifest_walk_entry(root: &Path, path: &Path) -> bool {
     };
     !matches!(
         name,
-        ".git" | ".direnv" | ".sinex" | "target" | "node_modules"
+        ".git" | ".direnv" | ".sinex" | ".claude" | "target" | "node_modules"
     ) && !name.starts_with("result")
 }
 
@@ -1345,6 +1347,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         "test_tmp_dir": cfg.test_tmp_dir.as_ref().map(|p| p.display().to_string()),
         "toolchain": cfg.toolchain,
         "in_dev_shell": cfg.in_dev_shell,
+        "build_cache_policy": build_cache_policy_summary(),
     }));
 
     let report = DoctorReport {
@@ -1418,6 +1421,9 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
             print_env_field(env_data, "test_results_dir", "Test results:");
             print_env_field(env_data, "test_tmp_dir", "Test temp:");
             print_env_field(env_data, "toolchain", "Toolchain:");
+            if let Some(policy) = env_data.get("build_cache_policy") {
+                print_build_cache_policy(policy);
+            }
             if let Some(in_dev_shell) = env_data
                 .get("in_dev_shell")
                 .and_then(serde_json::Value::as_bool)
@@ -1531,7 +1537,7 @@ fn pipeline_smoke_invocation(
 ) -> (String, [&'static str; 5], String) {
     (
         xtask_program.into(),
-        ["test", "--debug", "-p", "sinex-ingestd", "-E"],
+        ["test", "--debug", "-p", "sinexd", "-E"],
         "test(test_pipeline_smoke)".to_string(),
     )
 }
@@ -1573,6 +1579,54 @@ fn print_env_field(env_data: &serde_json::Value, key: &str, label: &str) {
         };
         println!("  {label:<20} {display}");
     }
+}
+
+fn build_cache_policy_summary() -> serde_json::Value {
+    let rustc_wrapper = std::env::var("RUSTC_WRAPPER").ok();
+    let cargo_incremental = std::env::var("CARGO_INCREMENTAL").ok();
+    let wrapper_is_sccache = rustc_wrapper
+        .as_deref()
+        .is_some_and(|wrapper| wrapper == "sccache" || wrapper.ends_with("/sccache"));
+    let xtask_cargo_incremental = if wrapper_is_sccache && cargo_incremental.is_none() {
+        "forced-off-for-sccache"
+    } else if cargo_incremental.as_deref() == Some("1") && !wrapper_is_sccache {
+        "explicit-incremental-edit-loop"
+    } else if cargo_incremental.is_some() {
+        "explicit-env"
+    } else {
+        "cargo-profile-default"
+    };
+
+    serde_json::json!({
+        "rustc_wrapper": rustc_wrapper,
+        "cargo_incremental": cargo_incremental,
+        "xtask_cargo_incremental": xtask_cargo_incremental,
+        "incremental_prune_keep_per_crate": crate::cache_hygiene::configured_incremental_keep_per_crate(),
+    })
+}
+
+fn print_build_cache_policy(policy: &serde_json::Value) {
+    let wrapper = policy
+        .get("rustc_wrapper")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unset");
+    let incremental = policy
+        .get("cargo_incremental")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unset");
+    let xtask_policy = policy
+        .get("xtask_cargo_incremental")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let keep = policy
+        .get("incremental_prune_keep_per_crate")
+        .and_then(serde_json::Value::as_u64)
+        .map_or_else(|| "unknown".to_string(), |value| value.to_string());
+
+    println!("  {:<20} {wrapper}", "RUSTC_WRAPPER:");
+    println!("  {:<20} {incremental}", "CARGO_INCREMENTAL:");
+    println!("  {:<20} {xtask_policy}", "Cargo policy:");
+    println!("  {:<20} keep-{keep}", "Incremental prune:");
 }
 
 fn print_check(name: &str, ok: bool, detail: Option<&str>) {
@@ -1838,7 +1892,7 @@ struct RuntimeCheckReport {
 
 async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckReport> {
     use crate::config::config;
-    use crate::runtime_metrics::{IngestdStatus, RuntimeAssessment, RuntimeHealthStatus};
+    use crate::runtime_metrics::{EventEngineStatus, RuntimeAssessment, RuntimeHealthStatus};
 
     let cfg = config();
     let descriptor = match DeploymentReadinessDescriptor::load() {
@@ -1908,12 +1962,12 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
     if ctx.is_human() {
         println!("\n{}", style("Runtime Health:").bold());
 
-        // Ingestd heartbeat
-        let status_icon = match metrics.ingestd_status {
-            IngestdStatus::Healthy => style("✓").green(),
-            IngestdStatus::Stale => style("⚠").yellow(),
-            IngestdStatus::Down => style("✗").red(),
-            IngestdStatus::Unknown => style("?").dim(),
+        // EventEngine heartbeat
+        let status_icon = match metrics.event_engine_status {
+            EventEngineStatus::Healthy => style("✓").green(),
+            EventEngineStatus::Stale => style("⚠").yellow(),
+            EventEngineStatus::Down => style("✗").red(),
+            EventEngineStatus::Unknown => style("?").dim(),
         };
         let age_str = metrics
             .last_heartbeat_age_secs
@@ -1922,7 +1976,7 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
         println!(
             "  {} {:<20} {}",
             status_icon,
-            format!("ingestd: {}", metrics.ingestd_status),
+            format!("event_engine: {}", metrics.event_engine_status),
             style(age_str).dim()
         );
 
@@ -2017,9 +2071,9 @@ where
     warnings
 }
 
-#[cfg(any(feature = "runtime-introspection", test))]
+#[cfg(feature = "runtime-introspection")]
 mod deployment;
-#[cfg(not(any(feature = "runtime-introspection", test)))]
+#[cfg(not(feature = "runtime-introspection"))]
 mod deployment {
     use crate::command::CommandContext;
     use color_eyre::eyre::{Result, bail};
@@ -2074,7 +2128,7 @@ mod deployment {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "runtime-introspection"))]
 use deployment::*;
 pub(crate) use deployment::{DeploymentReadinessItem, check_gateway_ready};
 use deployment::{
@@ -2083,4 +2137,48 @@ use deployment::{
 };
 
 #[cfg(test)]
+mod build_cache_policy_tests {
+    use super::*;
+    use crate::sandbox::{EnvGuard, sinex_test};
+
+    #[sinex_test]
+    async fn test_build_cache_policy_reports_sccache_forced_nonincremental()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::with_keys(&[
+            "RUSTC_WRAPPER",
+            "CARGO_INCREMENTAL",
+            "SINEX_INCREMENTAL_KEEP_PER_CRATE",
+        ]);
+        env.set("RUSTC_WRAPPER", "/nix/store/hash/bin/sccache");
+        env.clear("CARGO_INCREMENTAL");
+        env.set("SINEX_INCREMENTAL_KEEP_PER_CRATE", "2");
+
+        let policy = build_cache_policy_summary();
+
+        assert_eq!(
+            policy["xtask_cargo_incremental"].as_str(),
+            Some("forced-off-for-sccache")
+        );
+        assert_eq!(policy["incremental_prune_keep_per_crate"].as_u64(), Some(2));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_build_cache_policy_reports_explicit_incremental_edit_loop()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::with_keys(&["RUSTC_WRAPPER", "CARGO_INCREMENTAL"]);
+        env.clear("RUSTC_WRAPPER");
+        env.set("CARGO_INCREMENTAL", "1");
+
+        let policy = build_cache_policy_summary();
+
+        assert_eq!(
+            policy["xtask_cargo_incremental"].as_str(),
+            Some("explicit-incremental-edit-loop")
+        );
+        Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "runtime-introspection"))]
 mod tests;

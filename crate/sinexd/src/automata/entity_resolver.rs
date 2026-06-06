@@ -13,8 +13,8 @@
 //! resolution exists) gives exactly the 1:1 semantics with full state
 //! persistence without widening to a `ScopeReconciler`.
 
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, WindowedNodeAdapter};
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, WindowedAdapter};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, SyntheticTemporalPolicy};
@@ -24,7 +24,7 @@ use std::collections::HashMap;
 
 /// Persistent resolver state: the deduplication map of `canonical_key` → `entity_id`.
 ///
-/// Checkpointed by the SDK so restarts do not re-compute the same `UUIDv5`
+/// Checkpointed by the runtime so restarts do not re-compute the same `UUIDv5`
 /// identities from scratch.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResolverState {
@@ -71,7 +71,7 @@ impl Windowed for EntityResolver {
         state: &mut Self::State,
         input: Self::Input,
         _context: &AutomatonContext,
-    ) -> Result<(), NodeLogicError> {
+    ) -> Result<(), AutomatonLogicError> {
         // ── Type-aware canonicalization ──────────────────────────────────
         let canonical_name = canonicalize_name(&input.entity_type, &input.raw_name);
 
@@ -106,7 +106,7 @@ impl Windowed for EntityResolver {
         &mut self,
         state: &mut Self::State,
         _context: &AutomatonContext,
-    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         let Some(payload) = state.pending.take() else {
             return Ok(None);
         };
@@ -123,8 +123,8 @@ impl Windowed for EntityResolver {
     }
 }
 
-/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type EntityResolverNode = WindowedNodeAdapter<EntityResolver>;
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
+pub type EntityResolverRuntime = WindowedAdapter<EntityResolver>;
 
 // ── Canonicalization logic ──────────────────────────────────────────────────
 
@@ -164,53 +164,52 @@ fn normalize_url_host(raw: &str) -> String {
     host.strip_prefix("www.").unwrap_or(host).to_string()
 }
 
-// ── Source-unit descriptor (issue #690 / #734) ──────────────────────────────
+// ── Source descriptor (issue #690 / #734) ──────────────────────────────
 
-use sinex_primitives::proof::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitDescriptor, SubjectRef,
+use sinex_primitives::source_contracts::{
+    CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
+    OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
+    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape,
+    SourceContract, SourceRuntimeBinding, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "entity-resolver",
         namespace: "derived",
         event_types: &[
             ("entity-resolver", "entity.resolved"),
         ],
-        privacy_tier: SuPrivacyTier::Sensitive,
-        horizons: &[SuHorizon::Continuous],
-        retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
-        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+        privacy_tier: ContractPrivacyTier::Sensitive,
+        horizons: &[ContractHorizon::Continuous],
+        retention: ContractRetentionPolicy::Forever,
+        occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
             "(entity_type, canonical_name)",
         ),
         access_policy: "event_stream_read",
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:entity-resolver"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:entity-resolver"),
         "entity-resolver",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("entity.resolved")
     .privacy_context("inherits_from_parents")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
-    .source_unit_id("entity-resolver")
-    .runner_pack("process")
-    .checkpoint_family(SuCheckpointFamily::AppendStream)
-    .runtime_shape(SuRuntimeShape::Continuous)
+    .source_id("entity-resolver")
+    .runner_pack("sinexd")
+    .checkpoint_family(ContractCheckpointFamily::AppendStream)
+    .runtime_shape(ContractRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
-    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
+    .implementation_mode("in_process:sinexd")
+    .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }

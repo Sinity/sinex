@@ -8,7 +8,7 @@ This document preserves the valuable concepts from the pipeline.rs implementatio
 
 The event pipeline pattern provides a composable, stage-based approach to event processing. While not immediately necessary, it could become valuable for:
 
-1. **Post-provenance processing** in ingestd
+1. **Post-provenance processing** in event_engine
 2. **Complex event derived** in automata
 3. **Declarative transformations** (SQL-as-Automaton)
 
@@ -69,7 +69,7 @@ pub trait PipelineStage: Send + Sync {
 
 ## Use Cases
 
-### 1. Ingestd Event Processing
+### 1. EventEngine Event Processing
 
 After events have proper provenance from StreamingIngestorFramework:
 

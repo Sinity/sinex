@@ -22,7 +22,7 @@ use time::OffsetDateTime;
 ///
 /// An append-only ledger providing a high-precision, immutable record of when
 /// each chunk of data was physically acquired. This table is the ground truth
-/// for the *capture time* of all information. Ingestors **MUST** consult this
+/// for the *capture time* of all information. Sources **MUST** consult this
 /// table to derive the `ts_orig` for the events they produce.
 #[derive(Iden, Copy, Clone)]
 pub enum TemporalLedger {
@@ -106,7 +106,7 @@ impl TemporalLedger {
                 .col(TemporalLedger::SourceType)
                 .unique()
                 .to_owned(),
-            // The primary query pattern for ingestors is to look up the capture time for a given byte range.
+            // The primary query pattern for sources is to look up the capture time for a given byte range.
             Index::create()
                 .if_not_exists()
                 .name("ix_tl_material_offsets")

@@ -1,7 +1,7 @@
 # Pipeline Testing
 
-Pipeline tests exercise the same flow that production uses: nodes publish to NATS JetStream,
-sinex-ingestd consumes, and the database observes the persisted events. This ensures tests
+Pipeline tests exercise the same flow that production uses: source runtimes publish to NATS JetStream,
+the in-process `sinexd::event_engine` consumer persists events, and the database observes them. This ensures tests
 validate real behavior, not just mock wiring.
 
 ## The Pipeline-First Rule
@@ -70,14 +70,14 @@ names. This is the only safe way to share NATS across parallel tests.
 
 ## PipelineScope
 
-PipelineScope provides full pipeline testing with in-process ingestd:
+PipelineScope provides full pipeline testing with an in-process event-engine consumer:
 
 ```rust
 #[sinex_test]
 async fn test_full_pipeline(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
 
-    // Start in-process ingestd
+    // Start in-process event_engine
     let scope = ctx.pipeline_scope().await?;
 
     // Publish events
@@ -98,9 +98,9 @@ async fn test_full_pipeline(ctx: TestContext) -> TestResult<()> {
 ### PipelineScope Lifecycle
 
 1. **Creation**: Calls `ctx.reset_database_slot()` to ensure clean state
-2. **Ingestd**: Starts in-process using test's database URL and NATS context
-3. **Work Directory**: Reuses per-database directory under `/tmp/sinex-ingestd-shared/`
-4. **Cleanup**: Stops ingestd on drop
+2. **Event engine**: Starts in-process using the test database URL and NATS context
+3. **Work Directory**: Reuses the per-database pipeline work directory
+4. **Cleanup**: Stops the in-process consumer on drop
 
 ### PipelineScope API
 
@@ -127,7 +127,7 @@ impl PipelineScope {
 
 ## Manual JetStream Provisioning
 
-PipelineScope provisions ingestd streams automatically. For additional streams or custom
+PipelineScope provisions event-engine streams automatically. For additional streams or custom
 consumers, use the namespace helper:
 
 ```rust
@@ -150,28 +150,28 @@ js.get_or_create_stream(jetstream::stream::Config {
 
 **Do not** call `env.nats_stream_name(...)` or construct stream names manually.
 
-## TestNodePublisher
+## TestSourcePublisher
 
-For tests that need to simulate node behavior directly:
+For tests that need to simulate source-publisher behavior directly:
 
 ```rust
-use xtask::sandbox::TestNodePublisher;
+use xtask::sandbox::TestSourcePublisher;
 
 let ctx = ctx.with_nats().shared().await?;
 let namespace = ctx.pipeline_namespace().prefix().to_string();
 
-let publisher = TestNodePublisher::with_namespace(
+let publisher = TestSourcePublisher::with_namespace(
     ctx.nats_client(),
     "fs-watcher",          // source name
     Some(namespace),       // namespace for isolation
 );
 
-// Publish like a real node would
+// Publish like a real source runtime would
 publisher.publish_event("file.created", json!({"path": "/tmp/demo"})).await?;
 ```
 
-TestNodePublisher wraps the node SDK with test defaults. It publishes slices, payloads, and
-confirmations just like a production node.
+TestSourcePublisher wraps the runtime with test defaults. It publishes slices, payloads, and
+confirmations just like a production source runtime.
 
 ## NATS Client Access
 
@@ -196,7 +196,7 @@ A process-wide semaphore caps how many PipelineScope instances run in parallel:
 Default limit = available_parallelism / 6, clamped to 1..6
 ```
 
-This prevents JetStream-heavy suites from starving ingestd. Additional pipeline tests wait
+This prevents JetStream-heavy suites from starving event_engine. Additional pipeline tests wait
 for a permit instead of hitting timeouts.
 
 **Note**: If `jetstream_dlq_test` or `jetstream_e2e_integration_test` exceed 30s, check the
@@ -258,8 +258,8 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
 | Stream name | `namespace.stream("STREAM")` |
 | Subject pattern | `namespace.subject("subject.>")` |
 | Publish event | `ctx.publish_event(...)` |
-| Full pipeline + ingestd | `ctx.pipeline_scope().await?` |
-| Node-style publisher | `TestNodePublisher::with_namespace(...)` |
+| Full pipeline + event_engine | `ctx.pipeline_scope().await?` |
+| Runtime module-style publisher | `TestSourcePublisher::with_namespace(...)` |
 | Wait for persistence | `scope.wait_for_event_count(n)` |
 
 ## When to Use What
@@ -268,8 +268,8 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
 |----------|----------|
 | Unit test, no pipeline | Direct repository: `ctx.pool.events().insert()` |
 | Integration test | `ctx.publish_event()` |
-| Full pipeline with ingestd | `ctx.pipeline_scope()` |
-| Simulating node behavior | `TestNodePublisher` |
+| Full pipeline with event_engine | `ctx.pipeline_scope()` |
+| Simulating source-publisher behavior | `TestSourcePublisher` |
 | Custom JetStream setup | `ctx.jetstream()` + namespace |
 
 ## Troubleshooting
@@ -288,7 +288,7 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
 
 ### "Pipeline test timeout"
 
-**Cause**: Ingestd not consuming fast enough, or too many concurrent pipeline tests.
+**Cause**: EventEngine not consuming fast enough, or too many concurrent pipeline tests.
 
 **Solutions**:
 - Check concurrency guard (max 6 concurrent PipelineScope instances)

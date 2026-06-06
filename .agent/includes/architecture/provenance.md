@@ -9,7 +9,7 @@ Material provenance (source_material_id set, source_event_ids NULL):
   "I translated this byte range of this source file into this event."
   - Can be replayed by re-reading the source material
   - The source material is the ground truth; the event is interpretation
-  - Created by: ingestors (fs, terminal, desktop, system, document)
+  - Created by: source contracts (fs, terminal, desktop, system, document)
 
 Derived provenance (source_material_id NULL, source_event_ids set):
   "I derived this conclusion from these parent events."
@@ -62,7 +62,7 @@ Two different relations over an event row. Conflating them is the single most co
 Replay is not a special mode and is **not idempotent** — an idempotent replay would be a noop, which is pointless. It deliberately produces *new records*:
 1. Archive cascade: old events + derived descendants move to `audit.archived_events`
 2. Publish scope invalidation signals to downstream automata
-3. NATS request-reply to the source unit: "re-read this source material"
+3. NATS request-reply to the source: "re-read this source material"
 4. Fresh events flow through the NORMAL pipeline — **new `id`, new `ts_coided`**, same `(material_id, anchor_byte)` and `ts_orig`
 5. Automata process naturally via JetStream subscription
 

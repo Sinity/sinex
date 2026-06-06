@@ -200,7 +200,7 @@ pub struct DeploymentSecrets {
     #[serde(default)]
     pub database_password_file: Option<PathBuf>,
     #[serde(default)]
-    pub gateway_admin_token_file: Option<PathBuf>,
+    pub api_admin_token_file: Option<PathBuf>,
     #[serde(default)]
     pub gateway_tls_cert_file: Option<PathBuf>,
     #[serde(default)]

@@ -18,7 +18,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().build().await?;
     let scope = ctx.pipeline().await?;
 
-    // All timestamps must be within [2000-01-01, now+1h] or ingestd routes them to DLQ.
+    // All timestamps must be within [2000-01-01, now+1h] or event_engine routes them to DLQ.
     // TS_ORIG_LOWER_BOUND = 2000-01-01; SUSPICIOUS_TS_ORIG_FUTURE_SKEW = 1 hour.
     let current = now();
     let timestamp_cases = &[

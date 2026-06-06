@@ -69,7 +69,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
     })
     .await?;
     let (scan_command_rx, scan_handle) =
-        spawn_fake_scan_node(nats_client.clone(), env.clone(), "fs-test", 1).await?;
+        spawn_fake_scan_source_runtime(nats_client.clone(), env.clone(), "fs-test", 1).await?;
     let replay_output_handle = spawn_replay_output_inserter(
         ctx.pool.clone(),
         scan_command_rx,
@@ -106,7 +106,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         preview
             .get("replay_semantics")
             .and_then(serde_json::Value::as_str),
-        Some("reexecute_material_roots_via_node_scan")
+        Some("reexecute_material_roots_via_source_scan")
     );
 
     let approved = client
@@ -115,7 +115,11 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
     assert_eq!(approved.state, ReplayState::Approved);
 
     let executed = client
-        .execute(planned.operation_id, "service:executor-node".into(), false)
+        .execute(
+            planned.operation_id,
+            "service:executor-runtime".into(),
+            false,
+        )
         .await?;
     assert_eq!(executed.state, ReplayState::Completed);
     assert_eq!(executed.checkpoint.processed_events, 1);
@@ -240,7 +244,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
     assert_eq!(nonmatch_archived, 0);
 
     let material_root_id = ctx
-        .create_source_material(Some("replay-node-scan-parity"))
+        .create_source_material(Some("replay-source-runtime-scan-parity"))
         .await?;
     let root = DynamicPayload::new(
         "reexecution-test",
@@ -266,7 +270,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         .to_uuid();
     let reexecution_root_ts = root_event_id.timestamp();
     let reexecution_scope = ReplayScope {
-        node_id: "reexecution-test".to_string(),
+        source_name: "reexecution-test".to_string(),
         time_window: Some((
             reexecution_root_ts - time::Duration::seconds(1),
             reexecution_root_ts + time::Duration::seconds(1),
@@ -284,13 +288,14 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
             .get("total_events")
             .and_then(serde_json::Value::as_i64),
         Some(1),
-        "preview must count only material roots for node-scan replay semantics"
+        "preview must count only material roots for source-runtime scan replay semantics"
     );
     client
         .approve(planned_reexecution.operation_id, "admin:approver".into())
         .await?;
     let (reexecution_command_rx, reexecution_handle) =
-        spawn_fake_scan_node(ctx.nats_client(), env.clone(), "reexecution-test", 1).await?;
+        spawn_fake_scan_source_runtime(ctx.nats_client(), env.clone(), "reexecution-test", 1)
+            .await?;
     let reexecution_output_handle = spawn_replay_output_inserter(
         ctx.pool.clone(),
         reexecution_command_rx,
@@ -301,7 +306,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
     let reexecution_executed = client
         .execute(
             planned_reexecution.operation_id,
-            "service:executor-node".into(),
+            "service:executor-runtime".into(),
             false,
         )
         .await?;
@@ -341,10 +346,12 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
 
     scan_handle
         .await
-        .map_err(|e| test_error(format!("fake fs-test node task failed: {e}")))?;
-    reexecution_handle
-        .await
-        .map_err(|e| test_error(format!("fake reexecution-test node task failed: {e}")))?;
+        .map_err(|e| test_error(format!("fake fs-test source runtime task failed: {e}")))?;
+    reexecution_handle.await.map_err(|e| {
+        test_error(format!(
+            "fake reexecution-test source runtime task failed: {e}"
+        ))
+    })?;
 
     Ok(())
 }

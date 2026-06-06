@@ -26,12 +26,12 @@ pub mod evidence;
 pub mod fs;
 pub mod hooks;
 pub mod nats;
-#[cfg(any(feature = "runtime-introspection", test))]
-pub mod node_runtime;
 pub mod orchestrator;
 pub mod postgres;
 pub mod preflight;
 pub mod prelude;
+#[cfg(feature = "runtime-introspection")]
+pub mod runtime;
 pub mod slog;
 pub mod snapshot;
 pub mod snapshot_helper;
@@ -61,16 +61,16 @@ pub use events::EventPublisher;
 pub use fs::{EnvGuard, TestTempEnv, prepare_test_temp_env};
 pub use hooks::TestHooks;
 pub use nats::EventOverrides;
-#[cfg(any(feature = "runtime-introspection", test))]
-pub use node_runtime::{TestRuntime, TestRuntimeBuilder};
 pub use orchestrator::{
-    CapturedOutput, TestGatewayConfig, TestGatewayHandle, TestIngestdConfig, TestIngestdHandle,
-    TestSourceWorkerConfig, TestSourceWorkerHandle, run_test_source_worker_scan,
-    source_worker_binary_path, start_test_gateway, start_test_ingestd_with_config,
-    start_test_source_worker,
+    CapturedOutput, TestEventEngineConfig, TestEventEngineHandle, TestGatewayConfig,
+    TestGatewayHandle, TestSourceDriverConfig, TestSourceDriverHandle, run_test_source_scan,
+    source_driver_host_binary_path, start_test_event_engine_with_config, start_test_gateway,
+    start_test_source,
 };
 pub use prelude::SinexError;
 pub use prelude::TestContext;
+#[cfg(feature = "runtime-introspection")]
+pub use runtime::{TestRuntime, TestRuntimeBuilder};
 pub use snapshot::TestSnapshot;
 pub use stack::{TEST_RPC_TOKEN, TestCoreStack};
 pub use workspace::EphemeralWorkspace;

@@ -716,17 +716,17 @@ async fn test_workspace_baseline_velocity_prefers_canonical_workspace_suite()
 async fn test_reliability_stable_when_rates_identical() -> ::xtask::sandbox::TestResult<()> {
     let (_dir, db) = temp_db()?;
     // Register package in build_diagnostics so get_known_packages() finds it
-    seed_check_with_diagnostics(&db, "sinex-node-sdk", 0, 1, 0, 2.0)?;
-    // 8 pass + 2 fail for "sinex-node-sdk" (80% pass rate, same in both windows)
+    seed_check_with_diagnostics(&db, "sinexd", 0, 1, 0, 2.0)?;
+    // 8 pass + 2 fail for "sinexd" (80% pass rate, same in both windows)
     let inv = seed_invocation(&db, "test", InvocationStatus::Failed, 5.0)?;
-    seed_tests(&db, inv, "sinex-node-sdk", 8, 2)?;
+    seed_tests(&db, inv, "sinexd", 8, 2)?;
 
     let analysis = HistoryAnalysis::new(&db);
     let reliability = analysis.package_reliability(10)?;
     let pkg = reliability
         .iter()
-        .find(|r| r.package == "sinex-node-sdk")
-        .expect("sinex-node-sdk should appear (registered via build_diagnostics)");
+        .find(|r| r.package == "sinexd")
+        .expect("sinexd should appear (registered via build_diagnostics)");
     assert_eq!(
         pkg.trend, "stable",
         "same data in 7d and 30d windows → stable"
@@ -801,7 +801,7 @@ async fn test_recommendations_empty_on_clean_workspace() -> ::xtask::sandbox::Te
 async fn test_package_reliability_surfaces_flaky_query_failures() -> ::xtask::sandbox::TestResult<()>
 {
     let (dir, db) = temp_db()?;
-    seed_check_with_diagnostics(&db, "sinex-node-sdk", 0, 1, 0, 2.0)?;
+    seed_check_with_diagnostics(&db, "sinexd", 0, 1, 0, 2.0)?;
     let conn = rusqlite::Connection::open(dir.path().join("test.db"))?;
     conn.execute("DROP TABLE test_results", rusqlite::params![])?;
 

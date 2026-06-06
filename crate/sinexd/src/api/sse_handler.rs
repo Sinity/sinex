@@ -59,7 +59,7 @@ pub(crate) async fn handle_sse_stream(
         );
         return (
             StatusCode::UNAUTHORIZED,
-            "Authentication required. Provide SINEX_RPC_TOKEN via Authorization header.",
+            "Authentication required. Provide SINEX_API_TOKEN via Authorization header.",
         )
             .into_response();
     };

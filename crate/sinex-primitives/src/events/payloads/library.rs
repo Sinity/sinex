@@ -6,7 +6,7 @@
 //! `DocumentParsedPayload` / `DocumentChunkedPayload` in `document.rs`.
 //!
 //! One `document.indexed` event is emitted per file discovered by the
-//! `docs-library-index` source unit.  Fields are derived from filename
+//! `docs-library-index` source.  Fields are derived from filename
 //! heuristics and filesystem metadata; no document bytes are read.
 
 use schemars::JsonSchema;
