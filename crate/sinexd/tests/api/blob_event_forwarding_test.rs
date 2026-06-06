@@ -1,8 +1,8 @@
 use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
-use sinexd::api::ServiceContainer;
-use sinexd::node_sdk::content_store::MaterialContentStore;
 use sinex_primitives::SinexError;
+use sinexd::api::ServiceContainer;
+use sinexd::runtime::content_store::MaterialContentStore;
 use tempfile::TempDir;
 use which::which;
 use xtask::sandbox::timing::WaitHelpers;
@@ -74,7 +74,7 @@ async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
 
     assert_eq!(
         after_count, initial_count,
-        "Gateway helpers must never write blob.ingested events; ingestd is the single writer"
+        "Gateway helpers must never write blob.ingested events; event_engine is the single writer"
     );
 
     Ok(())

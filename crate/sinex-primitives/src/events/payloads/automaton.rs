@@ -1,6 +1,6 @@
 //! Automaton event payloads.
 //!
-//! Keep this module tied to event types emitted by real derived-node crates.
+//! Keep this module tied to event types emitted by real automaton crates.
 //! Future automata should add payload contracts when their emitters land, not
 //! ahead of implementation.
 
@@ -84,7 +84,7 @@ pub struct HealthAggregatedComponentReportPayload {
     pub window_seconds: u64,
 }
 
-/// Reports emitted by `sinex-health-automaton`.
+/// Reports emitted by the health automaton.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[serde(untagged)]
 #[event_payload(

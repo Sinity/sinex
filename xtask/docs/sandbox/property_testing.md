@@ -120,7 +120,7 @@ fn json_payload_strategy() -> BoxedStrategy<Value> {
 
     leaf.prop_recursive(
         8,   // max depth
-        256, // max nodes
+        256, // max graph nodes
         10,  // max items per collection
         |inner| {
             prop_oneof![

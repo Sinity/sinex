@@ -122,7 +122,7 @@ let stream_name = namespace.stream("MY_STREAM");  // Not "MY_STREAM" directly
 **Symptoms**: `wait_for_event_count()` times out.
 
 **Causes**:
-- Ingestd not consuming fast enough
+- EventEngine not consuming fast enough
 - Too many concurrent pipeline tests (>6)
 - Events not being published correctly
 

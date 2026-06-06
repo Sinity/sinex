@@ -21,13 +21,13 @@ use crate::AdapterKind;
 use sinex_primitives::Uuid;
 use sinexd::sources::dispatch::default_parser_dispatch;
 
-/// Run the replay obligation for a source unit.
+/// Run the replay obligation for a source.
 ///
 /// # Errors
 ///
 /// Returns an error if either dispatch run fails or the event types diverge.
 pub async fn run(
-    source_unit_id: &str,
+    source_id: &str,
     _adapter_kind: AdapterKind,
     fixture_data: &[u8],
     expected_event_types: &[&str],
@@ -36,13 +36,13 @@ pub async fn run(
 
     // First run — simulates original ingestion.
     let material_id_1 = Uuid::now_v7();
-    let outcome_1 = dispatch(source_unit_id, fixture_data, Some(material_id_1))
-        .map_err(|e| format!("replay first dispatch error for '{source_unit_id}': {e}"))?;
+    let outcome_1 = dispatch(source_id, fixture_data, Some(material_id_1))
+        .map_err(|e| format!("replay first dispatch error for '{source_id}': {e}"))?;
 
     // Second run — simulates replay with new material id.
     let material_id_2 = Uuid::now_v7();
-    let outcome_2 = dispatch(source_unit_id, fixture_data, Some(material_id_2))
-        .map_err(|e| format!("replay second dispatch error for '{source_unit_id}': {e}"))?;
+    let outcome_2 = dispatch(source_id, fixture_data, Some(material_id_2))
+        .map_err(|e| format!("replay second dispatch error for '{source_id}': {e}"))?;
 
     // Material IDs must differ (replay uses new IDs).
     assert_ne!(
@@ -63,7 +63,7 @@ pub async fn run(
         .collect();
     if types_1 != types_2 {
         return Err(format!(
-            "replay for '{source_unit_id}': event types differ between runs. \
+            "replay for '{source_id}': event types differ between runs. \
              run1={types_1:?} run2={types_2:?}"
         ));
     }
@@ -72,7 +72,7 @@ pub async fn run(
     for &expected in expected_event_types {
         if !types_1.contains(&expected) {
             return Err(format!(
-                "replay for '{source_unit_id}': expected event type '{expected}' \
+                "replay for '{source_id}': expected event type '{expected}' \
                  missing from replay output. Got: {types_1:?}"
             ));
         }

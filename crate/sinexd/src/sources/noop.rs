@@ -1,76 +1,73 @@
-//! Noop source unit — minimal `SourceUnit` serving as a template and test vehicle.
+//! Noop source — minimal `SourceDriver` serving as a template and test vehicle.
 //!
-//! This source unit emits no events and idles in continuous mode until shutdown.
-//! It exists to prove the source-worker host dispatch infrastructure works
-//! without depending on external ingestor crates. Real source units follow the
+//! This source emits no events and idles in continuous mode until shutdown.
+//! It exists to prove the source host dispatch infrastructure works
+//! without depending on external source crates. Real source contracts follow the
 //! same pattern with actual ingestion logic.
 
-use crate::node_sdk::{
-    NodeResult, SourceUnit,
-    runtime::stream::{
-        Checkpoint, ContinuousStart, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
-    },
+use crate::register_source;
+use crate::runtime::{
+    RuntimeResult, SourceDriver,
+    stream::{Checkpoint, ContinuousStart, RuntimeCapabilities, ScanArgs, ScanReport, TimeHorizon},
 };
-use crate::register_node_factory;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::proof::{
+use sinex_primitives::source_contracts::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 use std::collections::HashMap;
 use std::time::Instant;
 use tokio::sync::watch;
 
-register_node_factory!("noop", NoopSourceUnit);
+register_source!(source_id: "noop", driver: NoopSourceDriver);
 
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "noop",
         namespace: "sinex",
         event_types: &[],
         privacy_tier: PrivacyTier::Public,
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,
-        proof_obligations: &[],
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(source_unit)"),
+        occurrence_identity: OccurrenceIdentity::Uuid5From("(source)"),
         access_policy: "none",
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:noop"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:noop"),
         "noop",
         "sinex",
     )
-    .implementation("sinex-source-worker")
-    .adapter("SourceUnitRuntime")
+    .implementation("sinexd")
+    .adapter("SourceDriverRuntime")
     .output_event_type("noop")
     .privacy_context("none")
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
-    .source_unit_id("noop")
-    .runner_pack("source-worker")
+    .source_id("noop")
+    .runner_pack("sinexd-source")
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("noop_source_unit")
-    .implementation_mode("rust_in_pack:source-worker")
-    .build_impact(SourceUnitBuildImpact::ZERO)
+    .package_impact("noop_source")
+    .implementation_mode("sinexd:source")
+    .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
 
-/// State for the noop source unit.
+/// State for the noop source.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NoopState;
 
-/// A source unit that emits no events. Used as a template for real
-/// implementations and as a test vehicle for the source-worker host.
+/// A source that emits no events. Used as a template for real
+/// implementations and as a test vehicle for the source host.
 #[derive(Default)]
-pub struct NoopSourceUnit;
+pub struct NoopSourceDriver;
 
-impl SourceUnit for NoopSourceUnit {
+impl SourceDriver for NoopSourceDriver {
     type Config = serde_json::Value;
     type State = NoopState;
 
@@ -78,8 +75,8 @@ impl SourceUnit for NoopSourceUnit {
         "noop"
     }
 
-    fn capabilities(&self) -> NodeCapabilities {
-        NodeCapabilities {
+    fn capabilities(&self) -> RuntimeCapabilities {
+        RuntimeCapabilities {
             supports_snapshot: true,
             supports_historical: false,
             supports_continuous: true,
@@ -94,10 +91,10 @@ impl SourceUnit for NoopSourceUnit {
     async fn initialize(
         &mut self,
         _config: Self::Config,
-        _runtime: &crate::node_sdk::runtime::stream::NodeRuntimeState,
+        _runtime: &crate::runtime::stream::RuntimeContext,
         _state: &mut Self::State,
-    ) -> NodeResult<()> {
-        tracing::info!("Noop source unit initialized");
+    ) -> RuntimeResult<()> {
+        tracing::info!("Noop source initialized");
         Ok(())
     }
 
@@ -105,7 +102,7 @@ impl SourceUnit for NoopSourceUnit {
         &mut self,
         _state: &mut Self::State,
         _args: ScanArgs,
-    ) -> NodeResult<ScanReport> {
+    ) -> RuntimeResult<ScanReport> {
         Ok(empty_scan_report(
             std::time::Duration::ZERO,
             Checkpoint::None,
@@ -118,7 +115,7 @@ impl SourceUnit for NoopSourceUnit {
         _from: Checkpoint,
         _until: TimeHorizon,
         _args: ScanArgs,
-    ) -> NodeResult<ScanReport> {
+    ) -> RuntimeResult<ScanReport> {
         Ok(empty_scan_report(
             std::time::Duration::ZERO,
             Checkpoint::None,
@@ -130,8 +127,8 @@ impl SourceUnit for NoopSourceUnit {
         _state: &mut Self::State,
         start: ContinuousStart,
         mut shutdown_rx: watch::Receiver<bool>,
-    ) -> NodeResult<ScanReport> {
-        tracing::info!("Noop source unit entering continuous mode");
+    ) -> RuntimeResult<ScanReport> {
+        tracing::info!("Noop source entering continuous mode");
 
         let started_at = Instant::now();
         loop {
@@ -162,7 +159,7 @@ fn empty_scan_report(duration: std::time::Duration, final_checkpoint: Checkpoint
         duration,
         final_checkpoint,
         time_range: None,
-        node_stats: HashMap::new(),
+        runtime_stats: HashMap::new(),
         failed_targets: Vec::new(),
         successful_targets: Vec::new(),
         warnings: Vec::new(),
@@ -178,21 +175,23 @@ mod tests {
         assert_eq!(report.events_processed, 0);
         assert_eq!(report.final_checkpoint, expected_checkpoint);
         assert!(report.time_range.is_none());
-        assert!(report.node_stats.is_empty());
+        assert!(report.runtime_stats.is_empty());
         assert!(report.failed_targets.is_empty());
         assert!(report.successful_targets.is_empty());
         assert!(report.warnings.is_empty());
     }
 
     #[sinex_test]
-    async fn noop_source_unit_reports_zero_work() -> TestResult<()> {
-        let mut node = NoopSourceUnit;
+    async fn noop_source_reports_zero_work() -> TestResult<()> {
+        let mut source = NoopSourceDriver;
         let mut state = NoopState;
 
-        let snapshot = node.scan_snapshot(&mut state, ScanArgs::default()).await?;
+        let snapshot = source
+            .scan_snapshot(&mut state, ScanArgs::default())
+            .await?;
         assert_noop_report(&snapshot, Checkpoint::None);
 
-        let historical = node
+        let historical = source
             .scan_historical(
                 &mut state,
                 Checkpoint::external(serde_json::json!(42), "unused start"),
@@ -204,7 +203,7 @@ mod tests {
 
         let (tx, rx) = watch::channel(false);
         tx.send(true)?;
-        let continuous = node
+        let continuous = source
             .run_continuous(
                 &mut state,
                 ContinuousStart::from_checkpoint(Checkpoint::external(

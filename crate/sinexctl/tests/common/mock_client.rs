@@ -5,7 +5,7 @@
 use serde_json::Value;
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::rpc::{
-    coordination::InstanceInfo, dlq::*, nodes::*, replay::*, system::SystemHealthResponse,
+    coordination::InstanceInfo, dlq::*, replay::*, runtime::*, system::SystemHealthResponse,
 };
 use sinex_primitives::temporal;
 use std::collections::HashMap;
@@ -31,8 +31,8 @@ struct MockClientInner {
 pub enum MockResponse {
     String(String),
     Health(SystemHealthResponse),
-    Nodes(Vec<InstanceInfo>),
-    NodeStatus(NodeStatus),
+    RuntimeModules(Vec<InstanceInfo>),
+    RuntimeStatus(RuntimeStatus),
     ReplayOperation(ReplayOperation),
     ReplayOperations(Vec<ReplayOperation>),
     DlqList(DlqListResponse),
@@ -178,13 +178,13 @@ impl MockGatewayClient {
             }))
     }
 
-    pub(crate) async fn list_nodes(&self) -> Result<Vec<InstanceInfo>> {
-        self.record_call("list_nodes", vec![]);
+    pub(crate) async fn list_runtime(&self) -> Result<Vec<InstanceInfo>> {
+        self.record_call("list_runtime", vec![]);
         Ok(self
-            .get_response("list_nodes")
+            .get_response("list_runtime")
             .and_then(|r| {
-                if let MockResponse::Nodes(nodes) = r {
-                    Some(nodes)
+                if let MockResponse::RuntimeModules(modules) = r {
+                    Some(modules)
                 } else {
                     None
                 }
@@ -192,44 +192,48 @@ impl MockGatewayClient {
             .unwrap_or_default())
     }
 
-    pub(crate) async fn node_status(&self, node_id: &str) -> Result<NodeStatus> {
-        use sinex_primitives::domain::{NodeId, NodeState};
+    pub(crate) async fn runtime_status(&self, module_name: &str) -> Result<RuntimeStatus> {
+        use sinex_primitives::domain::{ModuleName, ModuleState};
 
-        self.record_call("node_status", vec![node_id.to_string()]);
+        self.record_call("runtime_status", vec![module_name.to_string()]);
         Ok(self
-            .get_response("node_status")
+            .get_response("runtime_status")
             .and_then(|r| {
-                if let MockResponse::NodeStatus(status) = r {
+                if let MockResponse::RuntimeStatus(status) = r {
                     Some(status)
                 } else {
                     None
                 }
             })
-            .unwrap_or_else(|| NodeStatus {
-                node_id: NodeId::new(node_id),
-                state: NodeState::Running,
+            .unwrap_or_else(|| RuntimeStatus {
+                module_name: ModuleName::new(module_name),
+                state: ModuleState::Running,
                 last_heartbeat: None,
                 processing_horizon: None,
             }))
     }
 
-    pub(crate) async fn drain_node(&self, node_id: &str, reason: Option<&str>) -> Result<()> {
+    pub(crate) async fn drain_runtime(
+        &self,
+        module_name: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
         self.record_call(
-            "drain_node",
-            vec![node_id.to_string(), reason.unwrap_or("").to_string()],
+            "drain_runtime",
+            vec![module_name.to_string(), reason.unwrap_or("").to_string()],
         );
         Ok(())
     }
 
-    pub(crate) async fn resume_node(&self, node_id: &str) -> Result<()> {
-        self.record_call("resume_node", vec![node_id.to_string()]);
+    pub(crate) async fn resume_runtime(&self, module_name: &str) -> Result<()> {
+        self.record_call("resume_runtime", vec![module_name.to_string()]);
         Ok(())
     }
 
-    pub(crate) async fn set_node_horizon(&self, node_id: &str, horizon: &str) -> Result<()> {
+    pub(crate) async fn set_runtime_horizon(&self, module_name: &str, horizon: &str) -> Result<()> {
         self.record_call(
-            "set_node_horizon",
-            vec![node_id.to_string(), horizon.to_string()],
+            "set_runtime_horizon",
+            vec![module_name.to_string(), horizon.to_string()],
         );
         Ok(())
     }
@@ -266,11 +270,11 @@ impl MockGatewayClient {
                 operation_id: operation_id.to_string(),
                 state: ReplayState::Planning,
                 scope: ReplayScope {
-                    node_id: "test-node".to_string(),
+                    source_name: "test-source".to_string(),
                     time_window: None,
                     material_filter: None,
                     filters: HashMap::new(),
-                    source_unit_id: None,
+                    source_id: None,
                     source_material_id: None,
                     parser_id: None,
                     parser_version: None,
@@ -288,7 +292,7 @@ impl MockGatewayClient {
                 created_at: temporal::now().format_rfc3339(),
                 approved_by: None,
                 approved_at: None,
-                executor_node: None,
+                executor_module: None,
                 started_at: None,
                 finished_at: None,
                 outcome: None,
@@ -446,27 +450,27 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_mock_client_node_operations() -> TestResult<()> {
+    async fn test_mock_client_runtime_operations() -> TestResult<()> {
         let client = MockGatewayClient::new();
 
         client
-            .drain_node("node-1", Some("maintenance"))
+            .drain_runtime("module-1", Some("maintenance"))
             .await
-            .expect("drain_node request failed");
+            .expect("drain_runtime request failed");
         client
-            .resume_node("node-1")
+            .resume_runtime("module-1")
             .await
-            .expect("resume_node request failed");
+            .expect("resume_runtime request failed");
         client
-            .set_node_horizon("node-1", "2024-01-01T00:00:00Z")
+            .set_runtime_horizon("module-1", "2024-01-01T00:00:00Z")
             .await
-            .expect("set_node_horizon request failed");
+            .expect("set_runtime_horizon request failed");
 
         let calls = client.get_calls();
         assert_eq!(calls.len(), 3);
-        assert_eq!(calls[0].0, "drain_node");
-        assert_eq!(calls[1].0, "resume_node");
-        assert_eq!(calls[2].0, "set_node_horizon");
+        assert_eq!(calls[0].0, "drain_runtime");
+        assert_eq!(calls[1].0, "resume_runtime");
+        assert_eq!(calls[2].0, "set_runtime_horizon");
         Ok(())
     }
 }

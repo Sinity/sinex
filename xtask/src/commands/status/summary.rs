@@ -17,7 +17,7 @@ use crate::command::{CommandContext, CommandResult};
 use crate::config::config;
 use crate::history::InvocationStatus;
 use crate::infra::probe::{NatsProbe, PostgresProbe, probe_nats, probe_postgres};
-use crate::runtime_metrics::{IngestdStatus, RuntimeMetrics};
+use crate::runtime_metrics::{EventEngineStatus, RuntimeMetrics};
 use crate::runtime_target::{RuntimeTargetSummary, checkout_runtime_target};
 use color_eyre::eyre::Result;
 use std::time::{Duration, Instant};
@@ -32,8 +32,8 @@ pub(super) enum SummaryRuntimeImpact {
 pub(super) fn classify_runtime_summary_impact(metrics: &RuntimeMetrics) -> SummaryRuntimeImpact {
     if metrics.query_error.is_some()
         || matches!(
-            metrics.ingestd_status,
-            IngestdStatus::Down | IngestdStatus::Unknown
+            metrics.event_engine_status,
+            EventEngineStatus::Down | EventEngineStatus::Unknown
         )
     {
         SummaryRuntimeImpact::Unhealthy

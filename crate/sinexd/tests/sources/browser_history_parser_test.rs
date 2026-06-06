@@ -7,16 +7,16 @@ use camino::Utf8PathBuf;
 use sinex_primitives::{
     Uuid,
     ids::Id,
-    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
+    parser::{MaterialAnchor, ParserContext, SourceId, SourceRecord},
     rpc::sources::{CaveatSeverity, caveat_codes},
     temporal::Timestamp,
 };
-use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
-use sinexd::sources::source_units::browser::history::BrowserHistoryParser;
+use sinexd::runtime::parser::{MaterialParser, SourceRecordFingerprint};
+use sinexd::sources::source_contracts::browser::history::BrowserHistoryParser;
 
 fn test_ctx() -> ParserContext {
     ParserContext {
-        source_unit_id: SourceUnitId::from_static("browser.history"),
+        source_id: SourceId::from_static("browser.history"),
         source_material_id: Id::new(),
         record_anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
         operation_id: Uuid::new_v4(),
@@ -117,12 +117,9 @@ async fn qutebrowser_required_schema_removal_blocks_readiness() {
 
     let before = SourceRecordFingerprint::from_sqlite_connection(&before).unwrap();
     let after = SourceRecordFingerprint::from_sqlite_connection(&after).unwrap();
-    let mut drift = SourceRecordFingerprint::diff(
-        SourceUnitId::from_static("browser.history"),
-        &before,
-        &after,
-    )
-    .expect("removing atime should produce SQLite schema drift");
+    let mut drift =
+        SourceRecordFingerprint::diff(SourceId::from_static("browser.history"), &before, &after)
+            .expect("removing atime should produce SQLite schema drift");
     drift.required_input_keys = BrowserHistoryParser.required_input_keys();
 
     let caveats = drift.readiness_caveats();

@@ -23,4 +23,6 @@ pub use config::{Config, default_rpc_url};
 pub use model::format_registry::{
     command_catalog, registry as format_registry, render_format_matrix_terminal, validate_format,
 };
-pub use model::{CommandCatalogEntry, CommandFamily, FormatCapability, NodeRole, OutputFormat};
+pub use model::{
+    CommandCatalogEntry, CommandFamily, FormatCapability, OutputFormat, RuntimeModuleRole,
+};

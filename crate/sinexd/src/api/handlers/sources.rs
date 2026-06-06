@@ -149,7 +149,7 @@ pub async fn handle_sources_stage(
     // ── Byte-backed staging via ContentStoreManager ─────────────
     let (blob_id, checksum_blake3) = if req.with_bytes && material_class.allows_byte_storage() {
         let content_store = services.content.content_store();
-        let verified_path = crate::node_sdk::content_store::VerifiedPath::parse(&canonical)
+        let verified_path = crate::runtime::content_store::VerifiedPath::parse(&canonical)
             .map_err(|error| {
                 SinexError::validation("Invalid file path for content store")
                     .with_context("file_path", &canonical)
@@ -955,8 +955,8 @@ pub async fn handle_sources_drift_list(
     req: SourcesDriftListRequest,
 ) -> Result<SourcesDriftListResponse> {
     let mut drifts = load_checkpoint_drifts(services).await?;
-    if let Some(source_unit_id) = req.source_unit_id {
-        drifts.retain(|drift| drift.source_unit_id == source_unit_id);
+    if let Some(source_id) = req.source_id {
+        drifts.retain(|drift| drift.source_id == source_id);
     }
     drifts.sort_by(compare_drift_observations_newest_first);
     let limit = req.limit.unwrap_or(50).min(500);
@@ -972,7 +972,7 @@ async fn load_checkpoint_drifts(
         .nats_client()
         .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let js = async_nats::jetstream::new(nats_client.clone());
-    let bucket = crate::node_sdk::checkpoint::checkpoint_bucket_name(None);
+    let bucket = crate::runtime::checkpoint::checkpoint_bucket_name(None);
     let kv = match js.get_key_value(&bucket).await {
         Ok(kv) => kv,
         Err(error) if is_missing_checkpoint_bucket(&error) => {
@@ -1056,7 +1056,7 @@ struct CheckpointEnvelope {
 
 #[derive(Debug, Deserialize)]
 struct RawDriftEvent {
-    source_unit_id: sinex_primitives::parser::SourceUnitId,
+    source_id: sinex_primitives::parser::SourceId,
     previous_hash: String,
     current_hash: String,
     format: String,
@@ -1113,10 +1113,10 @@ fn extract_checkpoint_drifts(
         return Ok(Vec::new());
     };
 
-    let parsed_key = crate::node_sdk::checkpoint::parse_checkpoint_key(checkpoint_key);
+    let parsed_key = crate::runtime::checkpoint::parse_checkpoint_key(checkpoint_key);
     let (_, consumer_group, consumer_name) = parsed_key.as_ref().map_or(
         ("", String::new(), String::new()),
-        |(node, group, consumer)| (node.as_str(), group.clone(), consumer.clone()),
+        |(module, group, consumer)| (module.as_str(), group.clone(), consumer.clone()),
     );
 
     raw_drifts
@@ -1129,7 +1129,7 @@ fn extract_checkpoint_drifts(
             })?;
             Ok(SourceShapeDriftObservation {
                 checkpoint_key: checkpoint_key.to_string(),
-                source_unit_id: raw.source_unit_id,
+                source_id: raw.source_id,
                 consumer_group: (!consumer_group.is_empty()).then_some(consumer_group.clone()),
                 consumer_name: (!consumer_name.is_empty()).then_some(consumer_name.clone()),
                 previous_hash: raw.previous_hash,
@@ -1220,12 +1220,12 @@ fn drift_matches_readiness_source(
     drift: &SourceShapeDriftObservation,
     source: &SourceReadiness,
 ) -> bool {
-    if let Some(source_unit_id) = source.source_unit_id.as_ref() {
-        return &drift.source_unit_id == source_unit_id;
+    if let Some(source_id) = source.source_id.as_ref() {
+        return &drift.source_id == source_id;
     }
 
     drift
-        .source_unit_id
+        .source_id
         .as_str()
         .split_once('.')
         .is_some_and(|(family, _)| family == source.source_family)
@@ -1278,9 +1278,9 @@ fn private_mode_applies_to_readiness(
         || state.affected_source_classes.iter().any(|scope| {
             scope == &source.source_family
                 || source
-                    .source_unit_id
+                    .source_id
                     .as_ref()
-                    .is_some_and(|source_unit_id| scope == source_unit_id.as_str())
+                    .is_some_and(|source_id| scope == source_id.as_str())
                 || scope == &source.source_identifier
         })
 }
@@ -1541,7 +1541,7 @@ mod tests {
         SourceReadiness {
             binding_id: None,
             source_family: source_family.to_string(),
-            source_unit_id: None,
+            source_id: None,
             parser_id: None,
             source_identifier: source_identifier.to_string(),
             status: SourceReadinessStatus::Available,
@@ -1673,12 +1673,12 @@ mod tests {
     async fn source_shape_drift_extraction_reads_checkpoint_user_state()
     -> xtask::sandbox::TestResult<()> {
         let drifts = extract_checkpoint_drifts(
-            "source-worker.default.host-a",
+            "source.default.host-a",
             Some(&json!({
                 "user_state": {
                     "recent_input_drifts": [
                         {
-                            "source_unit_id": "browser.history",
+                            "source_id": "browser.history",
                             "previous_hash": "old",
                             "current_hash": "new",
                             "format": "csv",
@@ -1702,8 +1702,8 @@ mod tests {
 
         assert_eq!(drifts.len(), 1);
         let drift = &drifts[0];
-        assert_eq!(drift.checkpoint_key, "source-worker.default.host-a");
-        assert_eq!(drift.source_unit_id.as_str(), "browser.history");
+        assert_eq!(drift.checkpoint_key, "source.default.host-a");
+        assert_eq!(drift.source_id.as_str(), "browser.history");
         assert_eq!(drift.consumer_group.as_deref(), Some("default"));
         assert_eq!(drift.consumer_name.as_deref(), Some("host-a"));
         assert_eq!(drift.added_keys, ["url"]);
@@ -1722,7 +1722,7 @@ mod tests {
     async fn source_shape_drift_extraction_ignores_checkpoints_without_drift()
     -> xtask::sandbox::TestResult<()> {
         let drifts = extract_checkpoint_drifts(
-            "source-worker.default.host-a",
+            "source.default.host-a",
             Some(&json!({ "user_state": { "other": [] } })),
         )?;
 
@@ -1733,14 +1733,14 @@ mod tests {
     #[sinex_test]
     async fn source_shape_drift_readiness_overlay_adds_latest_degraded_caveats()
     -> xtask::sandbox::TestResult<()> {
-        let source_unit_id = sinex_primitives::parser::SourceUnitId::new("browser.history")?;
+        let source_id = sinex_primitives::parser::SourceId::new("browser.history")?;
         let mut sources = vec![readiness("browser", "history.sqlite")];
-        sources[0].source_unit_id = Some(source_unit_id.clone());
+        sources[0].source_id = Some(source_id.clone());
 
         let drifts = vec![
             SourceShapeDriftObservation {
-                checkpoint_key: "source-worker.default.host-a".to_string(),
-                source_unit_id: source_unit_id.clone(),
+                checkpoint_key: "source.default.host-a".to_string(),
+                source_id: source_id.clone(),
                 consumer_group: Some("default".to_string()),
                 consumer_name: Some("host-a".to_string()),
                 previous_hash: "old-1".to_string(),
@@ -1753,8 +1753,8 @@ mod tests {
                 observed_at: "2026-05-21T09:00:00Z".to_string(),
             },
             SourceShapeDriftObservation {
-                checkpoint_key: "source-worker.default.host-a".to_string(),
-                source_unit_id,
+                checkpoint_key: "source.default.host-a".to_string(),
+                source_id,
                 consumer_group: Some("default".to_string()),
                 consumer_name: Some("host-a".to_string()),
                 previous_hash: "old-2".to_string(),
@@ -1805,13 +1805,13 @@ mod tests {
     #[sinex_test]
     async fn source_shape_drift_readiness_overlay_keeps_additive_drift_available()
     -> xtask::sandbox::TestResult<()> {
-        let source_unit_id = sinex_primitives::parser::SourceUnitId::new("browser.history")?;
+        let source_id = sinex_primitives::parser::SourceId::new("browser.history")?;
         let mut sources = vec![readiness("browser", "history.csv")];
-        sources[0].source_unit_id = Some(source_unit_id.clone());
+        sources[0].source_id = Some(source_id.clone());
 
         let drifts = vec![SourceShapeDriftObservation {
-            checkpoint_key: "source-worker.default.host-a".to_string(),
-            source_unit_id,
+            checkpoint_key: "source.default.host-a".to_string(),
+            source_id,
             consumer_group: Some("default".to_string()),
             consumer_name: Some("host-a".to_string()),
             previous_hash: "old".to_string(),
@@ -1845,8 +1845,8 @@ mod tests {
         ];
 
         let drifts = vec![SourceShapeDriftObservation {
-            checkpoint_key: "source-worker.default.host-a".to_string(),
-            source_unit_id: sinex_primitives::parser::SourceUnitId::new("browser.history")?,
+            checkpoint_key: "source.default.host-a".to_string(),
+            source_id: sinex_primitives::parser::SourceId::new("browser.history")?,
             consumer_group: Some("default".to_string()),
             consumer_name: Some("host-a".to_string()),
             previous_hash: "old".to_string(),
@@ -1874,13 +1874,13 @@ mod tests {
     #[sinex_test]
     async fn source_shape_drift_readiness_overlay_blocks_required_input_removal()
     -> xtask::sandbox::TestResult<()> {
-        let source_unit_id = sinex_primitives::parser::SourceUnitId::new("browser.history")?;
+        let source_id = sinex_primitives::parser::SourceId::new("browser.history")?;
         let mut sources = vec![readiness("browser", "history.sqlite")];
-        sources[0].source_unit_id = Some(source_unit_id.clone());
+        sources[0].source_id = Some(source_id.clone());
 
         let drifts = vec![SourceShapeDriftObservation {
-            checkpoint_key: "source-worker.default.host-a".to_string(),
-            source_unit_id,
+            checkpoint_key: "source.default.host-a".to_string(),
+            source_id,
             consumer_group: Some("default".to_string()),
             consumer_name: Some("host-a".to_string()),
             previous_hash: "old".to_string(),

@@ -164,7 +164,7 @@ async fn nats_subject_validation_rejects_invalid_patterns() -> TestResult<()> {
 
 #[sinex_test]
 async fn service_name_and_job_id_accept_standard_inputs() -> TestResult<()> {
-    assert!(ServiceName::from_str("sinex-ingestd").is_ok());
+    assert!(ServiceName::from_str("sinexd").is_ok());
     assert!(ServiceName::from_str("fs-watcher").is_ok());
     assert!(JobId::from_str("job_12345").is_ok());
     assert!(JobId::from_str("background-task-001").is_ok());

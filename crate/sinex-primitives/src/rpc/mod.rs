@@ -2,7 +2,7 @@
 //!
 //! This module provides typed request/response structures for all RPC methods
 //! exposed by the gateway. Using these types ensures compile-time safety for
-//! API contracts between CLI/nodes and the gateway.
+//! API contracts between CLI/runtime modules and the sinexd API.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -50,13 +50,11 @@ pub enum RpcDomain {
     Dlq,
     Documents,
     Events,
-    GitOps,
     Health,
-    Ingestors,
     Instructions,
     Lifecycle,
     Llm,
-    Nodes,
+    Runtime,
     Ops,
     Pkm,
     Privacy,
@@ -156,20 +154,19 @@ pub mod curation;
 pub mod dlq;
 pub mod documents;
 pub mod events;
-pub mod gitops;
 pub mod health;
-pub mod ingestors;
 pub mod instructions;
 pub mod lifecycle;
 pub mod llm;
 pub mod methods;
-pub mod nodes;
 pub mod ops;
 pub mod pkm;
 pub mod privacy;
 pub mod replay;
+pub mod runtime;
 pub mod semantic;
 pub mod shadow;
+pub mod source_status;
 pub mod sources;
 pub mod system;
 pub mod tasks;
@@ -202,13 +199,9 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         events::EVENTS_ANNOTATE_METHOD.info(),
         events::EVENTS_LINEAGE_METHOD.info(),
         events::EVENTS_QUERY_METHOD.info(),
-        gitops::GITOPS_CREATE_SOURCE_METHOD.info(),
-        gitops::GITOPS_DELETE_SOURCE_METHOD.info(),
-        gitops::GITOPS_LIST_SOURCES_METHOD.info(),
-        gitops::GITOPS_TRIGGER_SYNC_METHOD.info(),
         health::HEALTH_EFFECT_RECORD_METHOD.info(),
         health::HEALTH_INTAKE_RECORD_METHOD.info(),
-        ingestors::INGESTORS_STATUS_METHOD.info(),
+        source_status::SOURCES_STATUS_METHOD.info(),
         instructions::INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD.info(),
         lifecycle::LIFECYCLE_ARCHIVE_METHOD.info(),
         lifecycle::LIFECYCLE_RESTORE_METHOD.info(),
@@ -222,12 +215,12 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         llm::LLM_BUDGET_REPORT_METHOD.info(),
         llm::LLM_PROMPTS_LIST_METHOD.info(),
         llm::LLM_ROUTE_EXPLAIN_METHOD.info(),
-        nodes::NODES_DRAIN_METHOD.info(),
-        nodes::NODES_HEALTH_METHOD.info(),
-        nodes::NODES_LIST_ACTIVE_METHOD.info(),
-        nodes::NODES_LIST_METHOD.info(),
-        nodes::NODES_RESUME_METHOD.info(),
-        nodes::NODES_SET_HORIZON_METHOD.info(),
+        runtime::RUNTIME_DRAIN_METHOD.info(),
+        runtime::RUNTIME_HEALTH_METHOD.info(),
+        runtime::RUNTIME_LIST_ACTIVE_METHOD.info(),
+        runtime::RUNTIME_LIST_METHOD.info(),
+        runtime::RUNTIME_RESUME_METHOD.info(),
+        runtime::RUNTIME_SET_HORIZON_METHOD.info(),
         ops::OPS_CANCEL_METHOD.info(),
         ops::OPS_GET_METHOD.info(),
         ops::OPS_LIST_METHOD.info(),
@@ -299,10 +292,10 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         telemetry::TELEMETRY_CURRENT_HEALTH_METHOD.info(),
         telemetry::TELEMETRY_FILE_ACTIVITY_METHOD.info(),
         telemetry::TELEMETRY_GATEWAY_STATS_METHOD.info(),
-        telemetry::TELEMETRY_INGESTD_BATCH_STATS_METHOD.info(),
-        telemetry::TELEMETRY_INGESTD_VALIDATION_METHOD.info(),
+        telemetry::TELEMETRY_EVENT_ENGINE_BATCH_STATS_METHOD.info(),
+        telemetry::TELEMETRY_EVENT_ENGINE_VALIDATION_METHOD.info(),
         telemetry::TELEMETRY_METRIC_COUNTERS_METHOD.info(),
-        telemetry::TELEMETRY_NODE_STATS_METHOD.info(),
+        telemetry::TELEMETRY_SOURCE_STATS_METHOD.info(),
         telemetry::TELEMETRY_RECENT_ACTIVITY_METHOD.info(),
         telemetry::TELEMETRY_STREAM_STATS_METHOD.info(),
         telemetry::TELEMETRY_SYSTEM_STATE_METHOD.info(),
@@ -321,19 +314,18 @@ pub mod prelude {
     pub use super::dlq::*;
     pub use super::documents::*;
     pub use super::events::*;
-    pub use super::gitops::*;
     pub use super::health::*;
-    pub use super::ingestors::*;
     pub use super::lifecycle::*;
     pub use super::llm::*;
     pub use super::methods;
-    pub use super::nodes::*;
     pub use super::ops::*;
     pub use super::pkm::*;
     pub use super::privacy::*;
     pub use super::replay::*;
+    pub use super::runtime::*;
     pub use super::semantic::*;
     pub use super::shadow::*;
+    pub use super::source_status::*;
     pub use super::sources::*;
     pub use super::system::*;
     pub use super::tasks::*;

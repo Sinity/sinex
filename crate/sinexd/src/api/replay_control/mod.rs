@@ -69,7 +69,7 @@ pub async fn spawn_replay_control(
     let env = environment().clone();
     let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
 
-    // Create execution engine with NATS client for node-dispatch replay control
+    // Create execution engine with NATS client for source-dispatch replay control.
     let executor = ReplayExecutionEngine::new(replay.clone(), client.clone());
     ReplayTelemetry::new(replay.clone()).spawn();
 

@@ -1,6 +1,6 @@
-//! Wave B production-path obligation tests for system source units.
+//! Wave B production-path obligation tests for system source contracts.
 //!
-//! Source units covered:
+//! Source contracts covered:
 //! - `system.journald`
 //! - `system.systemd`
 //! - `system.dbus`
@@ -107,7 +107,7 @@ async fn test_system_udev_initial_ingestion() -> TestResult<()> {
     // parser classifies it as `device.other` rather than guessing a connect (see
     // UdevParser: "emitting Other action instead of guessing kind"). Real udev
     // events carry an ACTION and classify as connected/disconnected — covered by
-    // the unit tests in `sources/source_units/system/udev.rs`.
+    // the unit tests in `sources/source_contracts/system/udev.rs`.
     super::obligations::initial_ingestion::run(
         "system.udev",
         super::AdapterKind::FileDrop,
@@ -125,12 +125,12 @@ async fn test_system_udev_initial_ingestion() -> TestResult<()> {
 #[sinex_test]
 async fn test_system_monitor_descriptor_registered() -> TestResult<()> {
     // system.monitor is a fire-once lifecycle event, not dispatch-driven.
-    // Verify the source unit descriptor is in the inventory.
-    use sinex_primitives::parser::SourceUnitId;
-    use sinexd::sources::registry::SourceUnitRegistry;
+    // Verify the source descriptor is in the inventory.
+    use sinex_primitives::parser::SourceId;
+    use sinexd::sources::registry::SourceContractRegistry;
 
-    let registry = SourceUnitRegistry::from_inventory();
-    let id = SourceUnitId::new("system.monitor").unwrap();
+    let registry = SourceContractRegistry::from_inventory();
+    let id = SourceId::new("system.monitor").unwrap();
     let descriptor = registry.find(&id);
 
     assert!(
@@ -145,18 +145,18 @@ async fn test_system_monitor_descriptor_registered() -> TestResult<()> {
     Ok(())
 }
 
-// Verify the node factory for system.monitor is registered.
+// Verify the source factory for system.monitor is registered.
 #[sinex_test]
 async fn test_system_monitor_factory_registered() -> TestResult<()> {
-    use sinex_primitives::parser::SourceUnitId;
-    use sinexd::sources::node_factory::find_node_factory;
+    use sinex_primitives::parser::SourceId;
+    use sinexd::sources::source_factory::find_source_factory;
 
-    let id = SourceUnitId::new("system.monitor").unwrap();
-    let factory = find_node_factory(&id);
+    let id = SourceId::new("system.monitor").unwrap();
+    let factory = find_source_factory(&id);
 
     assert!(
         factory.is_some(),
-        "system.monitor must have a node factory registered"
+        "system.monitor must have a source factory registered"
     );
 
     Ok(())

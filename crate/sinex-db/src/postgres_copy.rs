@@ -171,7 +171,7 @@ const EVENT_COPY_COLUMNS: [EventCopyColumn; 24] = [
         copy_type: EventCopyColumnType::Uuid,
     },
     EventCopyColumn {
-        event: Events::SourceRunId,
+        event: Events::ModuleRunId,
         copy_type: EventCopyColumnType::Uuid,
     },
     EventCopyColumn {
@@ -203,7 +203,7 @@ const EVENT_COPY_COLUMNS: [EventCopyColumn; 24] = [
         copy_type: EventCopyColumnType::Uuid,
     },
     EventCopyColumn {
-        event: Events::NodeModel,
+        event: Events::AutomatonModel,
         copy_type: EventCopyColumnType::Text,
     },
     EventCopyColumn {
@@ -507,8 +507,8 @@ impl ToPostgresCopy for Event<JsonValue> {
         writer.field(Events::SourceEventIds, source_event_ids_str.as_deref())?;
         writer.field(Events::PayloadSchemaId, payload_schema_id.as_deref())?;
         {
-            let source_run_id_str = self.source_run_id.map(|id| id.to_string());
-            writer.field(Events::SourceRunId, source_run_id_str.as_deref())?;
+            let module_run_id_str = self.module_run_id.map(|id| id.to_string());
+            writer.field(Events::ModuleRunId, module_run_id_str.as_deref())?;
         }
         writer.bytea_field(
             Events::AnchorPayloadHash,
@@ -533,8 +533,8 @@ impl ToPostgresCopy for Event<JsonValue> {
             writer.field(Events::CreatedByOperationId, created_by_str.as_deref())?;
         }
         writer.field(
-            Events::NodeModel,
-            self.node_model
+            Events::AutomatonModel,
+            self.automaton_model
                 .as_ref()
                 .map(std::string::ToString::to_string)
                 .as_deref(),
@@ -600,8 +600,8 @@ impl ToPostgresCopy for StreamBatchRow {
         writer.field(Events::SourceEventIds, source_event_ids_str.as_deref())?;
         writer.field(Events::PayloadSchemaId, payload_schema_id_str.as_deref())?;
         {
-            let source_run_id_str = self.source_run_id.map(|id| id.to_string());
-            writer.field(Events::SourceRunId, source_run_id_str.as_deref())?;
+            let module_run_id_str = self.module_run_id.map(|id| id.to_string());
+            writer.field(Events::ModuleRunId, module_run_id_str.as_deref())?;
         }
         writer.bytea_field(
             Events::AnchorPayloadHash,
@@ -619,7 +619,7 @@ impl ToPostgresCopy for StreamBatchRow {
             let created_by_str = self.created_by_operation_id.map(|id| id.to_string());
             writer.field(Events::CreatedByOperationId, created_by_str.as_deref())?;
         }
-        writer.field(Events::NodeModel, self.node_model.as_deref())?;
+        writer.field(Events::AutomatonModel, self.automaton_model.as_deref())?;
         writer.field(Events::TsQuality, self.ts_quality.as_deref())?;
 
         writer.finish()
@@ -722,7 +722,7 @@ mod tests {
             offset_kind: None,
             source_event_ids: None,
             payload_schema_id: None,
-            source_run_id: None,
+            module_run_id: None,
             anchor_payload_hash: None,
             associated_blob_ids: None,
             temporal_policy: None,
@@ -730,7 +730,7 @@ mod tests {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
         }
     }
 
@@ -778,7 +778,7 @@ mod tests {
             Events::OffsetKind,
             Events::SourceEventIds,
             Events::PayloadSchemaId,
-            Events::SourceRunId,
+            Events::ModuleRunId,
             Events::AnchorPayloadHash,
             Events::AssociatedBlobIds,
             Events::TemporalPolicy,
@@ -786,7 +786,7 @@ mod tests {
             Events::ScopeKey,
             Events::EquivalenceKey,
             Events::CreatedByOperationId,
-            Events::NodeModel,
+            Events::AutomatonModel,
         ] {
             let idx = event_copy_column_index(event);
             assert_eq!(
@@ -808,7 +808,7 @@ mod tests {
             ts_orig: None,
             ts_quality: None,
             host: sinex_primitives::domain::HostName::from_static("localhost"),
-            source_run_id: None,
+            module_run_id: None,
             payload_schema_id: None,
             anchor_payload_hash: None,
             provenance: crate::Provenance::Material {
@@ -824,7 +824,7 @@ mod tests {
             scope_key: None,
             equivalence_key: None,
             created_by_operation_id: None,
-            node_model: None,
+            automaton_model: None,
         };
 
         let mut buf = Vec::new();

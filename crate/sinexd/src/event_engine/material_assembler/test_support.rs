@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use crate::node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
+use crate::runtime::content_store::{ContentStoreConfig, MaterialContentStore};
 use camino::Utf8PathBuf;
 use xtask::sandbox::prelude::*;
 

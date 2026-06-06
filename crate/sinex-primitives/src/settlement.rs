@@ -1,7 +1,7 @@
 //! Settlement types for receipt-gated runtime contracts.
 //!
 //! These types enable the runtime to mechanically execute failure handling
-//! decisions instead of guessing. Nodes return a `Settlement`; the runtime
+//! decisions instead of guessing. Runtime modules return a `Settlement`; the runtime
 //! executes it. DLQ is a settlement variant, not a catch-all fallback.
 
 use crate::error::{ErrorClass, SinexError};
@@ -26,7 +26,7 @@ pub enum ParkReason {
 pub enum HaltReason {
     /// Checkpoint CAS revision conflict — permanent.
     CheckpointCasConflict,
-    /// Output bridge closed while node is live.
+    /// Output bridge closed while the module is live.
     OutputChannelClosed,
     /// Configuration is invalid or permissions denied.
     ConfigurationOrPermission,
@@ -114,7 +114,7 @@ pub enum Settlement {
     Quarantine {
         reason: String,
     },
-    HaltNode {
+    HaltModule {
         reason: HaltReason,
     },
     DrainRuntimeUnit {
@@ -139,7 +139,7 @@ pub struct RetryBudget {
     pub terminal: Box<Settlement>,
 }
 
-/// A progress proposal from a node to the runtime.
+/// A progress proposal from a runtime module to the runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressProposal {
     pub advance_checkpoint: bool,
@@ -163,7 +163,7 @@ impl FailurePolicy for DefaultFailurePolicy {
     fn settle(&self, err: &SinexError, ctx: &FailureContext) -> Settlement {
         match err.error_class() {
             ErrorClass::DataError => Settlement::SendToProcessingFailure,
-            ErrorClass::NodeFatal => Settlement::HaltNode {
+            ErrorClass::RuntimeFatal => Settlement::HaltModule {
                 reason: match err {
                     SinexError::Checkpoint(_) => HaltReason::CheckpointCasConflict,
                     SinexError::Lifecycle(_) => HaltReason::LifecycleCorruption,
@@ -192,14 +192,14 @@ impl FailurePolicy for DefaultFailurePolicy {
                                 base: Duration::from_millis(200),
                                 max: Duration::from_secs(30),
                             },
-                            terminal: Box::new(Settlement::HaltNode {
+                            terminal: Box::new(Settlement::HaltModule {
                                 reason: HaltReason::EscalateOperator,
                             }),
                         },
                     }
                 }
             }
-            ErrorClass::TransportDegraded => Settlement::HaltNode {
+            ErrorClass::TransportDegraded => Settlement::HaltModule {
                 reason: HaltReason::TransportDegraded,
             },
         }

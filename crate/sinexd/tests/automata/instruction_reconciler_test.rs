@@ -9,8 +9,8 @@ use sinex_primitives::{Id, JsonValue, Uuid};
 use sinexd::automata::instruction_reconciler::{
     InstructionExpectationReconciler, InstructionExpectationState,
 };
-use sinexd::node_sdk::ScopeReconciler;
-use sinexd::node_sdk::derived_node::AutomatonContext;
+use sinexd::runtime::ScopeReconciler;
+use sinexd::runtime::automaton::AutomatonContext;
 use xtask::sandbox::prelude::*;
 
 fn context(source: &str, event_type: &str, ts_orig: Timestamp) -> AutomatonContext {

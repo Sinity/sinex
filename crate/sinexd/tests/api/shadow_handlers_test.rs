@@ -1,9 +1,9 @@
 mod common;
 
 use common::{NatsHarness, admin_auth, ensure_events_stream};
-use sinexd::api::handlers::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
 use sinex_primitives::error::ErrorClass;
 use sinex_primitives::rpc::shadow::{ShadowCreateRequest, ShadowDeleteRequest, ShadowListRequest};
+use sinexd::api::handlers::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]

@@ -3,10 +3,10 @@
 //! Model classification: **Windowed** -- accumulates bounded
 //! `activity.window.summary` events into completed activity sessions.
 
-use crate::node_sdk::derived_node::{
-    AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedNodeAdapter,
+use crate::runtime::automaton::{
+    AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedAdapter,
 };
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
@@ -107,7 +107,7 @@ impl Windowed for SessionDetector {
         state: &mut Self::State,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> Result<(), NodeLogicError> {
+    ) -> Result<(), AutomatonLogicError> {
         if state.session_start.is_none() {
             state.session_start = Some(input.window_start);
         }
@@ -131,7 +131,7 @@ impl Windowed for SessionDetector {
         // 4.5 GB bug). Silent truncation is forbidden; warn on force-close.
         if !gap_closed && state.window_count >= MAX_SESSION_WINDOW_COUNT {
             warn!(
-                node = "session-detector",
+                module = "session-detector",
                 window_count = state.window_count,
                 max = MAX_SESSION_WINDOW_COUNT,
                 session_start = ?state.session_start,
@@ -153,7 +153,7 @@ impl Windowed for SessionDetector {
         &mut self,
         state: &mut Self::State,
         _context: &AutomatonContext,
-    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         let Some(start_time) = state.session_start else {
             return Ok(None);
         };
@@ -201,58 +201,57 @@ impl Windowed for SessionDetector {
     }
 }
 
-/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type SessionDetectorNode = WindowedNodeAdapter<SessionDetector>;
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
+pub type SessionDetectorRuntime = WindowedAdapter<SessionDetector>;
 
-// --- Source-unit descriptor (issue #690 / #734) ---
+// --- Source descriptor (issue #690 / #734) ---
 
-use sinex_primitives::proof::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitDescriptor, SubjectRef,
+use sinex_primitives::source_contracts::{
+    CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
+    OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
+    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape,
+    SourceContract, SourceRuntimeBinding, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // Session detector consumes activity-window summaries and emits session
 // boundary events when the inactivity gap closes the current window.
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "session-detector",
         namespace: "derived",
         event_types: &[
             ("derived.session-detector", "activity.session.boundary"),
         ],
-        privacy_tier: SuPrivacyTier::Sensitive,
-        horizons: &[SuHorizon::Continuous],
-        retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
-        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
-            "(source_unit, parent_event_ids)",
+        privacy_tier: ContractPrivacyTier::Sensitive,
+        horizons: &[ContractHorizon::Continuous],
+        retention: ContractRetentionPolicy::Forever,
+        occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
+            "(source, parent_event_ids)",
         ),
         access_policy: "event_stream_read",
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:session-detector"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:session-detector"),
         "session-detector",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("activity.session.boundary")
     .privacy_context("inherits_from_parents")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
-    .source_unit_id("session-detector")
-    .runner_pack("process")
-    .checkpoint_family(SuCheckpointFamily::AppendStream)
-    .runtime_shape(SuRuntimeShape::Continuous)
+    .source_id("session-detector")
+    .runner_pack("sinexd")
+    .checkpoint_family(ContractCheckpointFamily::AppendStream)
+    .runtime_shape(ContractRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
-    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
+    .implementation_mode("in_process:sinexd")
+    .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }

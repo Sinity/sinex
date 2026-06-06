@@ -1,13 +1,13 @@
-# Ingestd Environment Variables
+# sinexd Event Engine Environment Variables
 
-Environment variables specific to direct `sinex-ingestd` runs.
+Environment variables specific to direct `sinexd` event-engine runs.
 
-If ingestd is managed through the NixOS module, prefer typed `services.sinex.*` options for
+If `sinexd` is managed through the NixOS module, prefer typed `services.sinex.*` options for
 shared transport wiring and secrets. In particular, NATS TLS on NixOS should use:
 
-- `services.sinex.nodes.nats.servers`
-- `services.sinex.nodes.nats.tls.*`
-- `services.sinex.nodes.nats.auth.*`
+- `services.sinex.runtime.nats.servers`
+- `services.sinex.runtime.nats.tls.*`
+- `services.sinex.runtime.nats.auth.*`
 
 instead of ad hoc env injection.
 
@@ -54,5 +54,5 @@ SINEX_EVENT_ENGINE_DISK_THRESHOLD_PERCENT=90
 
 ## See Also
 
-- Transport security: `docs/transport_security.md`
+- Transport security: `transport_security.md`
 - NixOS module surface: `nixos/modules/README.md`

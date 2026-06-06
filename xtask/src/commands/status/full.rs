@@ -15,7 +15,7 @@ use crate::command::{CommandContext, CommandResult};
 use crate::config::config;
 use crate::history::InvocationStatus;
 use crate::infra::probe::{NatsProbe, PostgresProbe, probe_nats, probe_postgres};
-use crate::runtime_metrics::{IngestdStatus, RuntimeMetrics};
+use crate::runtime_metrics::{EventEngineStatus, RuntimeMetrics};
 use crate::runtime_target::{RuntimeTargetSummary, checkout_runtime_target};
 use crate::session::{WatchAction, WatchLoop};
 use color_eyre::eyre::Result;
@@ -339,11 +339,11 @@ fn print_status_tick(d: &StatusDisplay<'_>) {
 /// Print the Runtime section of the status display.
 fn print_runtime_section(runtime_metrics: Option<&RuntimeMetrics>, runtime_configured: bool) {
     if let Some(metrics) = runtime_metrics {
-        let status_icon = match metrics.ingestd_status {
-            IngestdStatus::Healthy => style("✓").green(),
-            IngestdStatus::Stale => style("⚠").yellow(),
-            IngestdStatus::Down => style("✗").red(),
-            IngestdStatus::Unknown => style("?").dim(),
+        let status_icon = match metrics.event_engine_status {
+            EventEngineStatus::Healthy => style("✓").green(),
+            EventEngineStatus::Stale => style("⚠").yellow(),
+            EventEngineStatus::Down => style("✗").red(),
+            EventEngineStatus::Unknown => style("?").dim(),
         };
         let heartbeat = metrics
             .last_heartbeat_age_secs
@@ -352,7 +352,7 @@ fn print_runtime_section(runtime_metrics: Option<&RuntimeMetrics>, runtime_confi
         println!(
             "  {} {:<20}{}",
             status_icon,
-            format!("ingestd: {}", metrics.ingestd_status),
+            format!("event_engine: {}", metrics.event_engine_status),
             style(heartbeat).dim()
         );
         if let Some(lag) = metrics.fresh_consumer_lag_pending() {

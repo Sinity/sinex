@@ -469,7 +469,7 @@ pub fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     // Wait for it and force a new start by changing the tree.
     if first_is_fresh {
         // Touch a file to change tree fingerprint, then start a real job
-        if let Err(e) = guard.touch_file("crate/lib/sinex-primitives/src/lib.rs") {
+        if let Err(e) = guard.touch_file("crate/sinex-primitives/src/lib.rs") {
             steps.push(StepOutcome {
                 label: "touch_for_start".into(),
                 passed: false,
@@ -508,7 +508,7 @@ pub fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
         steps.push(outcome);
 
         // Now touch a DIFFERENT file to change tree fingerprint again
-        if let Err(e) = guard.touch_file("crate/lib/sinex-primitives/docs/error.md") {
+        if let Err(e) = guard.touch_file("crate/sinex-primitives/docs/error.md") {
             steps.push(StepOutcome {
                 label: "touch_for_supersede".into(),
                 passed: false,
@@ -521,7 +521,7 @@ pub fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
         }
     } else {
         // First build is running — touch a file to change tree fingerprint
-        if let Err(e) = guard.touch_file("crate/lib/sinex-primitives/src/lib.rs") {
+        if let Err(e) = guard.touch_file("crate/sinex-primitives/src/lib.rs") {
             steps.push(StepOutcome {
                 label: "touch".into(),
                 passed: false,

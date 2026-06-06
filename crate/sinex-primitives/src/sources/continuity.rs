@@ -60,7 +60,7 @@ pub enum CoverageContract {
 /// Persisted as a `TEXT`-shaped string inside the `coverage_contract` JSONB
 /// column on `raw.source_material_registry`; the named CHECK constraint
 /// `source_material_registry_coverage_contract_kind_check` keeps the column
-/// in sync with this enum (see `crate/lib/sinex-schema/src/converge.rs`).
+/// in sync with this enum (see `crate/sinex-schema/src/converge.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "PascalCase")]
 pub enum DeclaredCoverageContractKind {

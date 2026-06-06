@@ -725,14 +725,14 @@ mod tests {
     #[sinex_test]
     async fn impact_plan_uses_test_level_evidence_when_available() -> TestResult<()> {
         let plan = plan_from_changed_files(
-            vec!["crate/sinexd/src/node_sdk/stage_as_you_go.rs".to_string()],
+            vec!["crate/sinexd/src/runtime/stage_as_you_go.rs".to_string()],
             vec!["sinexd".to_string()],
             vec![ImpactedTest {
                 package: Some("sinexd".to_string()),
                 test_name: "stage_as_you_go_records_material".to_string(),
                 evidence: vec![ImpactEvidence {
                     source: ImpactEvidenceSource::CoverageRegion,
-                    subject: "crate/sinexd/src/node_sdk/stage_as_you_go.rs".to_string(),
+                    subject: "crate/sinexd/src/runtime/stage_as_you_go.rs".to_string(),
                     reason: "covered line range".to_string(),
                     line_start: None,
                     line_end: None,

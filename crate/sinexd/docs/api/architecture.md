@@ -1,16 +1,19 @@
-# Gateway Architecture
+# sinexd API Architecture
 
 ## Service Role
 
-sinex-gateway is the **hardened external interface** for Sinex. It handles:
+`sinexd::api` is the **hardened external interface** for Sinex. It handles:
 
 - Low-throughput, high-complexity request/response workloads
 - External client communication (CLI tools, browser extensions)
 - Zero-trust security boundary
 
-## Why Gateway is Separate from Ingestd
+## Why API and Event Engine Stay Separated
 
-| Dimension | Gateway | Ingestd |
+The old split admission/API binaries have been folded into `sinexd`, but the
+module boundary remains load-bearing.
+
+| Dimension | API module | Event engine module |
 |-----------|---------|---------|
 | **Workload** | Low-throughput, complex queries | High-throughput, simple writes |
 | **Protocol** | JSON-RPC/HTTP/S, native messaging | NATS JetStream (internal) |
@@ -20,7 +23,8 @@ sinex-gateway is the **hardened external interface** for Sinex. It handles:
 
 ## Security Posture
 
-Gateway is the *only* component exposed to potentially untrusted clients:
+The API module is the *only* `sinexd` surface exposed to potentially untrusted
+clients:
 
 - **Authentication**: Bearer token verification
 - **Authorization**: Request-level access control
@@ -31,9 +35,9 @@ Forcing high-volume ingestion through these security layers would create massive
 
 ## Failure Isolation
 
-If gateway fails:
+If the API module fails:
 - Users cannot query or interact
-- Data collection continues uninterrupted via ingestd
+- Data collection should continue through the event engine and source contracts
 - System degrades gracefully
 
 ## Protocol Stack

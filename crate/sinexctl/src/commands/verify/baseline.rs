@@ -1,7 +1,7 @@
 //! `sinexctl verify baseline` — comprehensive verification battery (#1565).
 //!
 //! Runs a set of weighted checks across schema integrity, closure hygiene,
-//! source-unit coverage, privacy invariants, replay integrity, drift-guard
+//! source coverage, privacy invariants, replay integrity, drift-guard
 //! bypass frequency, and workspace compilation. Produces a machine-readable
 //! score (0-100) and a human-readable report with per-check status.
 
@@ -75,19 +75,6 @@ impl CheckStatus {
             Self::Degraded => 0.5,
             Self::Fail => 0.0,
             Self::Skipped => 0.0,
-        }
-    }
-
-    /// Severity ranking for worst-wins combination of sub-check results.
-    /// Higher = worse. Skipped is treated as a soft warning between Pass
-    /// and Degraded so a sub-check that could not run does not mask a
-    /// downstream Degraded/Fail signal.
-    fn severity(self) -> u8 {
-        match self {
-            Self::Pass => 0,
-            Self::Skipped => 1,
-            Self::Degraded => 2,
-            Self::Fail => 3,
         }
     }
 
@@ -208,7 +195,6 @@ async fn run_all_checks(per_check_timeout: Duration, strict: bool) -> Vec<CheckR
     let mut checks = vec![
         check_schema_strict_diff(per_check_timeout).await,
         check_closure_health(per_check_timeout, strict).await,
-        check_source_unit_contracts(per_check_timeout).await,
         check_privacy_invariants(per_check_timeout).await,
         check_replay_integrity(per_check_timeout).await,
         check_workspace_check(per_check_timeout).await,
@@ -395,47 +381,7 @@ async fn discover_and_verify_recent_closures() -> Result<(usize, usize), String>
 }
 
 // ---------------------------------------------------------------------------
-// 3. Source-unit contract coverage (weight: medium)
-// ---------------------------------------------------------------------------
-
-async fn check_source_unit_contracts(check_timeout: Duration) -> CheckResult {
-    let mut result = CheckResult::new(
-        "source-unit-contracts",
-        "Source-unit contract coverage",
-        CheckWeight::Medium,
-    );
-
-    let outcome = timeout(check_timeout, run_xtask(&["source-units", "check"])).await;
-
-    match outcome {
-        Ok(Ok(xtask_result)) => {
-            if xtask_result.success {
-                result.status = CheckStatus::Pass;
-                result.detail = Some("All source-unit contracts valid".into());
-            } else {
-                result.status = CheckStatus::Degraded;
-                result.detail = Some(format!(
-                    "Source-unit contract issues: {}",
-                    xtask_result.stderr_summary()
-                ));
-                result.recommendation = Some("Run `xtask source-units check` for details".into());
-            }
-        }
-        Ok(Err(error)) => {
-            result.status = CheckStatus::Degraded;
-            result.detail = Some(format!("xtask invocation failed: {error}"));
-        }
-        Err(_elapsed) => {
-            result.status = CheckStatus::Degraded;
-            result.detail = Some("Source-unit check timed out".into());
-        }
-    }
-
-    result
-}
-
-// ---------------------------------------------------------------------------
-// 4. Privacy invariants (weight: high)
+// 3. Privacy invariants (weight: high)
 // ---------------------------------------------------------------------------
 
 async fn check_privacy_invariants(check_timeout: Duration) -> CheckResult {
@@ -476,51 +422,11 @@ async fn check_privacy_invariants(check_timeout: Duration) -> CheckResult {
         Err(_elapsed) => (CheckStatus::Degraded, "privacy tests timed out".into()),
     };
 
-    // Sub-check 2: source-worker privacy gate.
-    let (sw_status, sw_msg) =
-        match timeout(check_timeout, run_xtask(&["verify", "source-worker"])).await {
-            Ok(Ok(xtask_result)) => {
-                if xtask_result.success {
-                    (
-                        CheckStatus::Pass,
-                        "source-worker privacy gate passing".to_string(),
-                    )
-                } else {
-                    (
-                        CheckStatus::Fail,
-                        format!(
-                            "source-worker privacy gate failing: {}",
-                            xtask_result.stderr_summary()
-                        ),
-                    )
-                }
-            }
-            Ok(Err(error)) => (
-                CheckStatus::Degraded,
-                format!("source-worker privacy gate invocation failed: {error}"),
-            ),
-            Err(_elapsed) => (
-                CheckStatus::Degraded,
-                "source-worker privacy gate timed out".into(),
-            ),
-        };
-
-    // Worst-wins combine: the final status is the worse of the two
-    // sub-checks so a source-worker Fail can never be masked by a
-    // primary Pass. Detail concatenates both messages so the operator
-    // sees every signal that fed into the composite.
-    let combined_status = if primary_status.severity() >= sw_status.severity() {
-        primary_status
-    } else {
-        sw_status
-    };
-    result.status = combined_status;
-    result.detail = Some(format!("primary: {primary_msg}; source-worker: {sw_msg}"));
-    if matches!(combined_status, CheckStatus::Fail | CheckStatus::Degraded) {
-        result.recommendation = Some(
-            "Run `xtask test -p sinex-primitives -E 'test(privacy)'` and `xtask verify source-worker` to inspect failures"
-                .into(),
-        );
+    result.status = primary_status;
+    result.detail = Some(primary_msg);
+    if matches!(primary_status, CheckStatus::Fail | CheckStatus::Degraded) {
+        result.recommendation =
+            Some("Run `xtask test -p sinex-primitives -E 'test(privacy)'` to inspect".into());
     }
 
     result
@@ -539,7 +445,7 @@ async fn check_replay_integrity(check_timeout: Duration) -> CheckResult {
         run_xtask(&[
             "test",
             "-p",
-            "sinex-node-sdk",
+            "sinexd",
             "-E",
             "test(replay)",
             "--impact-mode=off",
@@ -559,7 +465,7 @@ async fn check_replay_integrity(check_timeout: Duration) -> CheckResult {
                     xtask_result.stderr_summary()
                 ));
                 result.recommendation =
-                    Some("Run `xtask test -p sinex-node-sdk -E 'test(replay)'` to inspect".into());
+                    Some("Run `xtask test -p sinexd -E 'test(replay)'` to inspect".into());
             }
         }
         Ok(Err(error)) => {

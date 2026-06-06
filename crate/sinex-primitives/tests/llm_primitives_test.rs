@@ -119,10 +119,14 @@ fn model_effect_record_output_hash_matches() {
         schema_hash: None,
         input_hash: "ih".into(),
     };
-    let record =
-        ModelEffectRecord::new(req, "test output", ReplayPolicy::ReuseRecorded, "test-node");
+    let record = ModelEffectRecord::new(
+        req,
+        "test output",
+        ReplayPolicy::ReuseRecorded,
+        "test-module",
+    );
     assert!(!record.effect_id.is_empty());
     assert!(!record.output_hash.is_empty());
-    assert_eq!(record.recorded_by, "test-node");
+    assert_eq!(record.recorded_by, "test-module");
     assert_eq!(record.recorded_policy, ReplayPolicy::ReuseRecorded);
 }

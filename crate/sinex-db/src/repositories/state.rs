@@ -1,7 +1,7 @@
 //! State repository for managing system state including checkpoints and operations log
 //!
 //! This repository combines management of:
-//! - Node checkpoints (tracking progress of event processing)
+//! - runtime module checkpoints (tracking progress of event processing)
 //! - Operations log (audit trail of system operations)
 
 use super::common::{DbResult, EnhancedRepository, Repository, db_error};
@@ -11,7 +11,9 @@ use crate::{Id, JsonValue};
 use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::domain::{HealthStatus, NodeName, NodeState, NodeType, OperationStatus};
+use sinex_primitives::domain::{
+    HealthStatus, ModuleKind, ModuleName, ModuleState, OperationStatus,
+};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::lifecycle::{TombstoneOperation, TombstoneOperationState};
 use sinex_primitives::{Seconds, Timestamp};
@@ -59,16 +61,16 @@ pub struct StateRepository<'a> {
     pool: &'a PgPool,
 }
 
-const DEFAULT_NODE_HEARTBEAT_STALE_SECS: Seconds = Seconds::from_secs(120);
+const DEFAULT_MODULE_HEARTBEAT_STALE_SECS: Seconds = Seconds::from_secs(120);
 const SQLSTATE_UNDEFINED_FUNCTION: &str = "42883";
 const MANAGED_OPERATION_TYPES: &[&str] = &["replay", "archive", "restore", "purge", "tombstone"];
 
-fn node_heartbeat_stale_after() -> DbResult<Duration> {
-    match std::env::var("SINEX_NODE_HEARTBEAT_STALE_SECS") {
+fn module_heartbeat_stale_after() -> DbResult<Duration> {
+    match std::env::var("SINEX_MODULE_HEARTBEAT_STALE_SECS") {
         Ok(raw) => {
             let value = raw.parse::<u64>().map_err(|error| {
                 SinexError::configuration(
-                    "SINEX_NODE_HEARTBEAT_STALE_SECS must be a positive integer",
+                    "SINEX_MODULE_HEARTBEAT_STALE_SECS must be a positive integer",
                 )
                 .with_std_error(&error)
                 .with_context("value", raw.clone())
@@ -76,7 +78,7 @@ fn node_heartbeat_stale_after() -> DbResult<Duration> {
 
             if value == 0 {
                 return Err(SinexError::configuration(
-                    "SINEX_NODE_HEARTBEAT_STALE_SECS must be greater than zero",
+                    "SINEX_MODULE_HEARTBEAT_STALE_SECS must be greater than zero",
                 )
                 .with_context("value", raw));
             }
@@ -84,10 +86,10 @@ fn node_heartbeat_stale_after() -> DbResult<Duration> {
             Ok(Duration::from_secs(value))
         }
         Err(std::env::VarError::NotPresent) => Ok(Duration::from_secs(
-            DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs(),
+            DEFAULT_MODULE_HEARTBEAT_STALE_SECS.as_secs(),
         )),
         Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(
-            "SINEX_NODE_HEARTBEAT_STALE_SECS must be valid UTF-8",
+            "SINEX_MODULE_HEARTBEAT_STALE_SECS must be valid UTF-8",
         )),
     }
 }
@@ -356,6 +358,40 @@ impl StateRepository<'_> {
     {
         Self::validate_log_operation(&operation)?;
         Self::insert_operation_with_executor(executor, operation).await
+    }
+
+    /// Update an operation's terminal/result status and message.
+    pub async fn update_operation_result(
+        &self,
+        id: &Id<Operation>,
+        status: OperationStatus,
+        result_message: Option<String>,
+    ) -> DbResult<OperationRecord> {
+        Self::validate_operation_id(id)?;
+        sqlx::query_as!(
+            OperationRecord,
+            r#"
+            UPDATE core.operations_log
+            SET result_status = $2,
+                result_message = $3
+            WHERE id = $1::uuid
+            RETURNING
+                id as "id!: Id<Operation>",
+                operation_type,
+                operator,
+                scope,
+                result_status,
+                result_message,
+                preview_summary,
+                duration_ms
+            "#,
+            id.to_uuid(),
+            status.to_string(),
+            result_message
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "update operation result"))
     }
 
     fn validate_log_operation(operation: &Operation) -> DbResult<()> {
@@ -766,15 +802,15 @@ impl StateRepository<'_> {
             .ok_or_else(|| SinexError::database("operation disappeared after cancel"))
     }
 
-    // ========== Node Manifests ==========
+    // ========== Runtime module manifests ==========
 
     /// Register a manifest row. Idempotent per (name, version); updates description on
     /// conflict so re-registration with a new description is reflected. Returns the
     /// persisted row.
-    pub async fn register_node(
+    pub async fn register_module(
         &self,
-        node_name: &NodeName,
-        node_type: NodeType,
+        module_name: &ModuleName,
+        module_kind: ModuleKind,
         version: &str,
         description: Option<&str>,
     ) -> DbResult<ManifestRow> {
@@ -788,14 +824,14 @@ impl StateRepository<'_> {
             RETURNING id, name, manifest_type, version, description,
                       created_at as "created_at: sinex_primitives::temporal::Timestamp"
             "#,
-            node_name.to_string(),
-            node_type.to_string(),
+            module_name.to_string(),
+            module_kind.to_string(),
             version,
             description,
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "register node"))?;
+        .map_err(|e| db_error(e, "register module"))?;
         Ok(row)
     }
 
@@ -809,9 +845,9 @@ impl StateRepository<'_> {
         host: &str,
         effective_config_hash: Option<&str>,
         effective_config: Option<&JsonValue>,
-    ) -> DbResult<NodeRun> {
+    ) -> DbResult<ModuleRun> {
         sqlx::query_as!(
-            NodeRun,
+            ModuleRun,
             r#"
             INSERT INTO core.runs (manifest_id, service_name, instance_id, host, started_at, status, effective_config_hash, effective_config)
             VALUES ($1, $2, $3, $4, now(), 'running', $5, $6)
@@ -844,15 +880,15 @@ impl StateRepository<'_> {
         ))
     }
 
-    /// Get all nodes in the manifest
-    pub async fn get_all_nodes(&self) -> DbResult<Vec<NodeManifest>> {
+    /// Get all modules in the manifest
+    pub async fn get_all_modules(&self) -> DbResult<Vec<ModuleManifest>> {
         sqlx::query_as!(
-            NodeManifest,
+            ModuleManifest,
             r#"
             SELECT
                 m.id,
-                m.name as "node_name!: NodeName",
-                m.manifest_type::text as "node_type!: NodeType",
+                m.name as "module_name!: ModuleName",
+                m.manifest_type::text as "module_kind!: ModuleKind",
                 m.version,
                 m.description,
                 NULL::int4 as "anchor_rule_version?: i32",
@@ -873,18 +909,21 @@ impl StateRepository<'_> {
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "get all nodes"))
+        .map_err(|e| db_error(e, "get all modules"))
     }
 
-    /// Get nodes by type
-    pub async fn get_nodes_by_type(&self, node_type: NodeType) -> DbResult<Vec<NodeManifest>> {
+    /// Get modules by type
+    pub async fn get_modules_by_type(
+        &self,
+        module_kind: ModuleKind,
+    ) -> DbResult<Vec<ModuleManifest>> {
         sqlx::query_as!(
-            NodeManifest,
+            ModuleManifest,
             r#"
             SELECT
                 m.id,
-                m.name as "node_name!: NodeName",
-                m.manifest_type::text as "node_type!: NodeType",
+                m.name as "module_name!: ModuleName",
+                m.manifest_type::text as "module_kind!: ModuleKind",
                 m.version,
                 m.description,
                 NULL::int4 as "anchor_rule_version?: i32",
@@ -903,33 +942,33 @@ impl StateRepository<'_> {
             WHERE m.manifest_type = $1
             ORDER BY m.name, m.version
             "#,
-            node_type.to_string()
+            module_kind.to_string()
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "get nodes by type"))
+        .map_err(|e| db_error(e, "get modules by type"))
     }
 
     /// Refresh the heartbeat timestamp on the most recent live run for a
-    /// `(node_name, version)` pair.
+    /// `(module_name, version)` pair.
     ///
     /// Status is intentionally NOT modified by this path. `start_run` inserts
     /// rows with `status = 'running'`; lifecycle transitions to terminal
-    /// states go through `update_node_run_status`. Previously this method
+    /// states go through `update_module_run_status`. Previously this method
     /// wrote `status = 'active'`, which collided with
-    /// `update_node_run_heartbeat`'s `WHERE status = 'running'` filter and
-    /// silently disabled per-run heartbeats for every node — see
+    /// `update_module_run_heartbeat`'s `WHERE status = 'running'` filter and
+    /// silently disabled per-run heartbeats for every module — see
     /// the regression test `heartbeat_paths_do_not_collide_on_status` and
-    /// the production symptom "Heartbeat did not persist because the node
+    /// the production symptom "Heartbeat did not persist because the module
     /// run row is missing".
     ///
     /// Returns whether a matching manifest row was updated. The query
-    /// targets only non-terminal rows so a re-launched node after a crash
+    /// targets only non-terminal rows so a re-launched module after a crash
     /// will create a fresh row via `start_run` rather than refresh a
     /// `failed`/`stopped` one.
-    pub async fn update_node_heartbeat_for_version(
+    pub async fn update_module_heartbeat_for_version(
         &self,
-        node_name: &NodeName,
+        module_name: &ModuleName,
         version: &str,
     ) -> DbResult<bool> {
         let result = sqlx::query!(
@@ -945,26 +984,26 @@ impl StateRepository<'_> {
                 LIMIT 1
             )
             "#,
-            node_name as &NodeName,
+            module_name as &ModuleName,
             version,
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "update node heartbeat"))?;
+        .map_err(|e| db_error(e, "update module heartbeat"))?;
         if result.rows_affected() > 0 {
             return Ok(true);
         }
 
-        self.insert_manifest_presence_run(node_name, version, "active", true)
+        self.insert_manifest_presence_run(module_name, version, "active", true)
             .await
     }
 
-    /// Mark a specific node's latest run as inactive.
+    /// Mark a specific module's latest run as inactive.
     ///
     /// Returns whether a matching run row was updated.
-    pub async fn mark_node_inactive_for_version(
+    pub async fn mark_module_inactive_for_version(
         &self,
-        node_name: &NodeName,
+        module_name: &ModuleName,
         version: &str,
     ) -> DbResult<bool> {
         let result = sqlx::query!(
@@ -979,23 +1018,23 @@ impl StateRepository<'_> {
                 LIMIT 1
             )
             "#,
-            node_name as &NodeName,
+            module_name as &ModuleName,
             version,
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "mark node inactive"))?;
+        .map_err(|e| db_error(e, "mark module inactive"))?;
         if result.rows_affected() > 0 {
             return Ok(true);
         }
 
-        self.insert_manifest_presence_run(node_name, version, "inactive", false)
+        self.insert_manifest_presence_run(module_name, version, "inactive", false)
             .await
     }
 
     async fn insert_manifest_presence_run(
         &self,
-        node_name: &NodeName,
+        module_name: &ModuleName,
         version: &str,
         status: &str,
         heartbeat_now: bool,
@@ -1026,7 +1065,7 @@ impl StateRepository<'_> {
                   SELECT 1 FROM core.runs r WHERE r.manifest_id = m.id
               )
             "#,
-            node_name as &NodeName,
+            module_name as &ModuleName,
             version,
             host,
             status,
@@ -1038,8 +1077,8 @@ impl StateRepository<'_> {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Insert a concrete node-run row for a single process execution.
-    pub async fn start_node_run(
+    /// Insert a concrete module-run row for a single process execution.
+    pub async fn start_module_run(
         &self,
         manifest_id: i32,
         service_name: &str,
@@ -1047,9 +1086,9 @@ impl StateRepository<'_> {
         host: &str,
         effective_config_hash: Option<&str>,
         effective_config: Option<&JsonValue>,
-    ) -> DbResult<NodeRun> {
+    ) -> DbResult<ModuleRun> {
         sqlx::query_as!(
-            NodeRun,
+            ModuleRun,
             r#"
             INSERT INTO core.runs (
                 manifest_id,
@@ -1071,7 +1110,7 @@ impl StateRepository<'_> {
                 $6
             )
             RETURNING
-                id as "id!: Id<NodeRun>",
+                id as "id!: Id<ModuleRun>",
                 manifest_id,
                 service_name,
                 instance_id,
@@ -1092,10 +1131,10 @@ impl StateRepository<'_> {
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "start node run"))
+        .map_err(|e| db_error(e, "start module run"))
     }
 
-    /// Refresh the heartbeat timestamp for a node run that is still alive.
+    /// Refresh the heartbeat timestamp for a module run that is still alive.
     ///
     /// Filters on `status NOT IN ('failed', 'stopped')` rather than the
     /// narrower `status = 'running'` so this path tolerates rows that the
@@ -1103,7 +1142,10 @@ impl StateRepository<'_> {
     /// might have left in a non-terminal-but-non-'running' state. Terminal
     /// rows are still excluded so a crashed run does not silently
     /// resurrect via heartbeats.
-    pub async fn update_node_run_heartbeat(&self, source_run_id: Id<NodeRun>) -> DbResult<bool> {
+    pub async fn update_module_run_heartbeat(
+        &self,
+        module_run_id: Id<ModuleRun>,
+    ) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
             UPDATE core.runs
@@ -1111,27 +1153,27 @@ impl StateRepository<'_> {
             WHERE id = $1::uuid
               AND status NOT IN ('failed', 'stopped')
             "#,
-            source_run_id.as_uuid(),
+            module_run_id.as_uuid(),
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "update node run heartbeat"))?;
+        .map_err(|e| db_error(e, "update module run heartbeat"))?;
         Ok(result.rows_affected() > 0)
     }
 
-    /// Mark a node run as terminal or transitional.
-    pub async fn update_node_run_status(
+    /// Mark a module run as terminal or transitional.
+    pub async fn update_module_run_status(
         &self,
-        source_run_id: Id<NodeRun>,
-        status: NodeState,
+        module_run_id: Id<ModuleRun>,
+        status: ModuleState,
     ) -> DbResult<bool> {
-        let ended_at = matches!(status, NodeState::Failed | NodeState::Stopped)
+        let ended_at = matches!(status, ModuleState::Failed | ModuleState::Stopped)
             .then(Timestamp::now)
             .map(|timestamp| timestamp.inner());
 
         // Guard against resurrecting a terminal row. Once a run is failed or
         // stopped the row is immutable — new runs create new rows via
-        // `start_node_run`. Setting last_heartbeat_at on a terminal row would
+        // `start_module_run`. Setting last_heartbeat_at on a terminal row would
         // also transiently make it appear live to the presence query.
         let result = sqlx::query!(
             r#"
@@ -1145,35 +1187,35 @@ impl StateRepository<'_> {
             WHERE id = $1::uuid
               AND status NOT IN ('failed', 'stopped')
             "#,
-            source_run_id.as_uuid(),
+            module_run_id.as_uuid(),
             status.to_string(),
             ended_at,
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "update node run status"))?;
+        .map_err(|e| db_error(e, "update module run status"))?;
         Ok(result.rows_affected() > 0)
     }
 
-    /// List live node presence, preferring concrete run rows and falling back
+    /// List live module presence, preferring concrete run rows and falling back
     /// to manifest heartbeats for services that do not yet register runs.
-    pub async fn list_live_node_presence(
+    pub async fn list_live_runtime_presence(
         &self,
         stale_after: Duration,
-    ) -> DbResult<Vec<LiveNodePresence>> {
+    ) -> DbResult<Vec<LiveModulePresence>> {
         let stale_secs = stale_after.as_secs() as f64;
         sqlx::query_as!(
-            LiveNodePresence,
+            LiveModulePresence,
             r#"
             WITH active_runs AS (
                 SELECT
                     nm.name,
-                    nm.manifest_type::text as node_type,
+                    nm.manifest_type::text as module_kind,
                     nm.version,
                     nm.description,
                     nr.service_name,
                     nr.instance_id,
-                    nr.id as source_run_id,
+                    nr.id as module_run_id,
                     nr.host,
                     nr.status,
                     nr.last_heartbeat_at,
@@ -1185,27 +1227,27 @@ impl StateRepository<'_> {
                   AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
             )
             SELECT
-                live_nodes.name as "node_name!: NodeName",
-                live_nodes.node_type as "node_type!: NodeType",
-                live_nodes.version as "version!",
+                live_modules.name as "module_name!: ModuleName",
+                live_modules.module_kind as "module_kind!: ModuleKind",
+                live_modules.version as "version!",
                 description,
                 service_name,
                 instance_id,
-                source_run_id as "source_run_id: uuid::Uuid",
+                module_run_id as "module_run_id: uuid::Uuid",
                 host,
-                live_nodes.status as "status!",
+                live_modules.status as "status!",
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
                 started_at as "started_at: sinex_primitives::temporal::Timestamp",
-                live_nodes.heartbeat_source as "heartbeat_source!"
+                live_modules.heartbeat_source as "heartbeat_source!"
             FROM (
                 SELECT
                     name,
-                    node_type,
+                    module_kind,
                     version,
                     description,
                     service_name,
                     instance_id,
-                    source_run_id,
+                    module_run_id,
                     host,
                     status,
                     last_heartbeat_at,
@@ -1217,12 +1259,12 @@ impl StateRepository<'_> {
 
                 SELECT
                     nm.name::text,
-                    nm.manifest_type::text as node_type,
+                    nm.manifest_type::text as module_kind,
                     nm.version,
                     nm.description,
                     NULL::text as service_name,
                     NULL::text as instance_id,
-                    NULL::uuid as source_run_id,
+                    NULL::uuid as module_run_id,
                     NULL::text as host,
                     nr.status,
                     nr.last_heartbeat_at,
@@ -1238,29 +1280,29 @@ impl StateRepository<'_> {
                       WHERE ar.name = nm.name::text
                         AND ar.version = nm.version
                   )
-            ) live_nodes
+            ) live_modules
             "#,
             stale_secs
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "list live node presence"))
-        .map(|mut nodes| {
-            nodes.sort_by(|left, right| {
-                left.node_name
+        .map_err(|e| db_error(e, "list live module presence"))
+        .map(|mut modules| {
+            modules.sort_by(|left, right| {
+                left.module_name
                     .as_ref()
-                    .cmp(right.node_name.as_ref())
+                    .cmp(right.module_name.as_ref())
                     .then_with(|| left.version.cmp(&right.version))
                     .then_with(|| left.service_name.cmp(&right.service_name))
                     .then_with(|| left.instance_id.cmp(&right.instance_id))
                     .then_with(|| left.started_at.cmp(&right.started_at))
             });
-            nodes
+            modules
         })
     }
 
-    /// Get node health status
-    pub async fn get_node_health(&self, stale_after: Duration) -> DbResult<NodeHealthSummary> {
+    /// Get runtime health status
+    pub async fn get_runtime_health(&self, stale_after: Duration) -> DbResult<ModuleHealthSummary> {
         let cutoff = Timestamp::now()
             - sinex_primitives::temporal::Duration::seconds(stale_after.as_secs() as i64);
 
@@ -1294,7 +1336,7 @@ impl StateRepository<'_> {
                   )
                 GROUP BY nm.name
             ),
-            node_inventory AS (
+            module_inventory AS (
                 SELECT DISTINCT name
                 FROM core.manifests
 
@@ -1304,34 +1346,34 @@ impl StateRepository<'_> {
                 FROM core.runs nr
                 JOIN core.manifests nm ON nm.id = nr.manifest_id
             ),
-            node_status AS (
+            module_status AS (
                 SELECT
                     ni.name,
                     COALESCE(ar.active_run_count, 0) AS active_run_count,
                     COALESCE(ar.latest_heartbeat_at, mol.latest_heartbeat_at) AS latest_heartbeat_at,
                     (ar.name IS NOT NULL OR mol.name IS NOT NULL) AS has_live_instance
-                FROM node_inventory ni
+                FROM module_inventory ni
                 LEFT JOIN active_runs ar ON ar.name = ni.name
                 LEFT JOIN manifest_only_live mol ON mol.name = ni.name
             )
             SELECT
                 COUNT(*) FILTER (WHERE has_live_instance) as "active_count!",
                 COUNT(*) FILTER (WHERE NOT has_live_instance) as "inactive_count!",
-                COUNT(*) as "unique_nodes!",
+                COUNT(*) as "unique_modules!",
                 COALESCE(SUM(active_run_count), 0)::bigint as "active_run_count!",
                 MIN(latest_heartbeat_at) FILTER (WHERE has_live_instance) as "oldest_heartbeat: sinex_primitives::temporal::Timestamp"
-            FROM node_status
+            FROM module_status
             "#,
             *cutoff
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "get node health"))?;
+        .map_err(|e| db_error(e, "get runtime health"))?;
 
-        Ok(NodeHealthSummary {
+        Ok(ModuleHealthSummary {
             active_count: row.active_count,
             inactive_count: row.inactive_count,
-            unique_nodes: row.unique_nodes,
+            unique_modules: row.unique_modules,
             active_run_count: row.active_run_count,
             oldest_heartbeat: row.oldest_heartbeat,
         })
@@ -1339,9 +1381,10 @@ impl StateRepository<'_> {
 
     /// List operator-facing status for registered automata.
     ///
-    /// The durable base is the node registry (`node_manifests` + latest
-    /// `source_runs`). Derived-node-specific runtime details come from SDK
-    /// self-observation events in `core.events`, keyed by node/run labels.
+    /// The durable base is the runtime registry (`core.manifests` + latest
+    /// `core.runs`). Automaton-specific runtime details come from runtime
+    /// self-observation events in `core.events`, keyed by persisted telemetry
+    /// label names.
     pub async fn list_automata_status(
         &self,
         stale_after: Duration,
@@ -1354,7 +1397,7 @@ impl StateRepository<'_> {
             AutomataStatusRow,
             r#"
             SELECT
-                nm.name::text as "node_name!: NodeName",
+                nm.name::text as "module_name!: ModuleName",
                 nm.version as "version!",
                 nm.description,
                 nr.status as "manifest_status?",
@@ -1370,7 +1413,7 @@ impl StateRepository<'_> {
                 ) as "live!",
                 nr.service_name,
                 nr.instance_id,
-                nr.id as "source_run_id: uuid::Uuid",
+                nr.id as "module_run_id: uuid::Uuid",
                 nr.host,
                 nr.status as run_status,
                 nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
@@ -1404,7 +1447,7 @@ impl StateRepository<'_> {
                 FROM core.runs nr
                 WHERE nr.manifest_id = nm.id
                 -- Prefer an active (running/draining/paused) run over a more-recently-started
-                -- terminal run, so a restarted node doesn't immediately appear as failed/stopped.
+                -- terminal run, so a restarted module doesn't immediately appear as failed/stopped.
                 ORDER BY (CASE WHEN nr.status IN ('running', 'draining', 'paused') THEN 1 ELSE 0 END) DESC,
                          nr.started_at DESC
                 LIMIT 1
@@ -1417,8 +1460,8 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.events_processed.run'
-                  AND e.payload->'labels'->>'node' = nm.name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
+                  AND e.payload->'labels'->>'module' = nm.name::text
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) processed ON true
@@ -1432,8 +1475,8 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.checkpoint.revision'
-                  AND e.payload->'labels'->>'node' = nm.name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
+                  AND e.payload->'labels'->>'module' = nm.name::text
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) checkpoint ON true
@@ -1445,8 +1488,8 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.invalidations.pending'
-                  AND e.payload->'labels'->>'node' = nm.name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
+                  AND e.payload->'labels'->>'module' = nm.name::text
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) pending ON true
@@ -1457,25 +1500,25 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.error_rate_5m'
-                  AND e.payload->'labels'->>'node' = nm.name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
+                  AND e.payload->'labels'->>'module' = nm.name::text
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) error_rate ON true
             LEFT JOIN LATERAL (
                 -- Per-event latency snapshot collapses the four percentile/eps
                 -- gauges (event_lag_p50/p99, tick_runtime_p99, throughput_eps)
-                -- into one event. See issue #1556 and DerivedNodeLatencySnapshotPayload.
+                -- into one event. See issue #1556 and AutomatonLatencySnapshotPayload.
                 SELECT
                     (e.payload->>'event_lag_p50_ms')::float8 AS event_lag_p50_ms,
                     (e.payload->>'event_lag_p99_ms')::float8 AS event_lag_p99_ms,
                     (e.payload->>'tick_runtime_p99_ms')::float8 AS tick_runtime_p99_ms,
                     (e.payload->>'throughput_eps')::float8 AS throughput_eps
                 FROM core.events e
-                WHERE e.source = 'sinex.node'
-                  AND e.event_type = 'derived.latency_snapshot'
-                  AND e.payload->>'node_name' = nm.name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
+                WHERE e.source = 'sinexd.automaton'
+                  AND e.event_type = 'latency_snapshot'
+                  AND e.payload->>'module_name' = nm.name::text
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'module_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) latency ON true
@@ -1489,7 +1532,7 @@ impl StateRepository<'_> {
                         AS last_replay_at
                 FROM core.events e
                 WHERE nr.id IS NOT NULL
-                  AND e.source_run_id = nr.id
+                  AND e.module_run_id = nr.id
                   AND e.source_event_ids IS NOT NULL
             ) outputs ON true
             WHERE nm.manifest_type = 'automaton'
@@ -1503,25 +1546,25 @@ impl StateRepository<'_> {
         .map_err(|e| db_error(e, "list automata status"))
     }
 
-    /// List registered ingestor manifests with run + health + recent-output stats.
+    /// List registered source manifests with run + health + recent-output stats.
     ///
     /// Sibling to [`list_automata_status`](Self::list_automata_status), filtered on
-    /// `manifest_type = 'ingestor'`. Ingestors emit on-change `health.status` events
-    /// (not continuous `metric.gauge` like derived nodes), so per-node telemetry is
+    /// `manifest_type = 'source'`. Sources emit on-change `health.status` events
+    /// (not continuous `metric.gauge` like derived modules), so per-module telemetry is
     /// narrower: latest `current_status` + reason + recent output count by source-run-id.
-    pub async fn list_ingestors_status(
+    pub async fn list_sources_status(
         &self,
         stale_after: Duration,
         recent_window: Duration,
-    ) -> DbResult<Vec<IngestorsStatusRow>> {
+    ) -> DbResult<Vec<SourcesStatusRow>> {
         let stale_secs = stale_after.as_secs() as f64;
         let recent_secs = recent_window.as_secs() as f64;
 
         sqlx::query_as!(
-            IngestorsStatusRow,
+            SourcesStatusRow,
             r#"
             SELECT
-                nm.name::text as "node_name!: NodeName",
+                nm.name::text as "module_name!: ModuleName",
                 nm.version as "version!",
                 nm.description,
                 nr.status as "manifest_status?",
@@ -1537,7 +1580,7 @@ impl StateRepository<'_> {
                 ) as "live!",
                 nr.service_name,
                 nr.instance_id,
-                nr.id as "source_run_id: uuid::Uuid",
+                nr.id as "module_run_id: uuid::Uuid",
                 nr.host,
                 nr.status as run_status,
                 nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
@@ -1584,10 +1627,10 @@ impl StateRepository<'_> {
                     MAX(e.ts_coided) AS last_output_at
                 FROM core.events e
                 WHERE nr.id IS NOT NULL
-                  AND e.source_run_id = nr.id
+                  AND e.module_run_id = nr.id
                   AND e.source_material_id IS NOT NULL
             ) outputs ON true
-            WHERE nm.manifest_type = 'ingestor'
+            WHERE nm.manifest_type = 'source'
             ORDER BY nm.name, nm.version
             "#,
             stale_secs,
@@ -1595,7 +1638,7 @@ impl StateRepository<'_> {
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "list ingestors status"))
+        .map_err(|e| db_error(e, "list sources status"))
     }
 
     // ========== System Verification Methods ==========
@@ -1703,7 +1746,7 @@ impl StateRepository<'_> {
 
     /// Run basic system health checks
     pub async fn run_system_health_checks(&self) -> DbResult<SystemHealthReport> {
-        let stale_after = node_heartbeat_stale_after()?;
+        let stale_after = module_heartbeat_stale_after()?;
 
         // Check database connectivity
         let (db_connected, db_connect_error) =
@@ -1727,9 +1770,9 @@ impl StateRepository<'_> {
         let (events_table_exists, events_table_error) =
             probe_health_bool(self.table_exists("core", "events").await);
 
-        // Get node health
-        let (node_health, node_health_error) =
-            probe_health(self.get_node_health(stale_after).await);
+        // Get runtime health
+        let (module_health, module_health_error) =
+            probe_health(self.get_runtime_health(stale_after).await);
 
         Ok(SystemHealthReport {
             db_connected,
@@ -1742,13 +1785,13 @@ impl StateRepository<'_> {
             json_schema_error,
             events_table_exists,
             events_table_error,
-            node_health,
-            node_health_error,
+            module_health,
+            module_health_error,
         })
     }
 }
 
-/// Manifest row returned by `register_node` — lightweight projection of `core.manifests`.
+/// Manifest row returned by `register_module` — lightweight projection of `core.manifests`.
 #[derive(Debug, sqlx::FromRow)]
 pub struct ManifestRow {
     pub id: i32,
@@ -1759,12 +1802,12 @@ pub struct ManifestRow {
     pub created_at: sinex_primitives::temporal::Timestamp,
 }
 
-/// Node manifest record
+/// runtime module manifest record
 #[derive(Debug, sqlx::FromRow)]
-pub struct NodeManifest {
+pub struct ModuleManifest {
     pub id: i32,
-    pub node_name: NodeName,
-    pub node_type: NodeType,
+    pub module_name: ModuleName,
+    pub module_kind: ModuleKind,
     pub version: String,
     pub description: Option<String>,
     pub anchor_rule_version: Option<i32>,
@@ -1774,10 +1817,10 @@ pub struct NodeManifest {
     pub last_heartbeat_at: Option<Timestamp>,
 }
 
-/// Node run record
+/// runtime module run record
 #[derive(Debug, sqlx::FromRow)]
-pub struct NodeRun {
-    pub id: Id<NodeRun>,
+pub struct ModuleRun {
+    pub id: Id<ModuleRun>,
     pub manifest_id: Option<i32>,
     pub service_name: String,
     pub instance_id: String,
@@ -1790,16 +1833,16 @@ pub struct NodeRun {
     pub effective_config: Option<JsonValue>,
 }
 
-/// Live node presence for operator-facing status surfaces.
+/// Live module presence for operator-facing status surfaces.
 #[derive(Debug, sqlx::FromRow)]
-pub struct LiveNodePresence {
-    pub node_name: NodeName,
-    pub node_type: NodeType,
+pub struct LiveModulePresence {
+    pub module_name: ModuleName,
+    pub module_kind: ModuleKind,
     pub version: String,
     pub description: Option<String>,
     pub service_name: Option<String>,
     pub instance_id: Option<String>,
-    pub source_run_id: Option<Uuid>,
+    pub module_run_id: Option<Uuid>,
     pub host: Option<String>,
     pub status: String,
     pub last_heartbeat_at: Option<Timestamp>,
@@ -1807,12 +1850,12 @@ pub struct LiveNodePresence {
     pub heartbeat_source: String,
 }
 
-/// Node health summary
+/// Runtime module health summary
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NodeHealthSummary {
+pub struct ModuleHealthSummary {
     pub active_count: i64,
     pub inactive_count: i64,
-    pub unique_nodes: i64,
+    pub unique_modules: i64,
     pub active_run_count: i64,
     pub oldest_heartbeat: Option<Timestamp>,
 }
@@ -1820,7 +1863,7 @@ pub struct NodeHealthSummary {
 /// Operator-facing automaton status row.
 #[derive(Debug, sqlx::FromRow)]
 pub struct AutomataStatusRow {
-    pub node_name: NodeName,
+    pub module_name: ModuleName,
     pub version: String,
     pub description: Option<String>,
     /// Status of the latest run for this manifest. `None` when no run row
@@ -1829,7 +1872,7 @@ pub struct AutomataStatusRow {
     pub live: bool,
     pub service_name: Option<String>,
     pub instance_id: Option<String>,
-    pub source_run_id: Option<Uuid>,
+    pub module_run_id: Option<Uuid>,
     pub host: Option<String>,
     pub run_status: Option<String>,
     pub started_at: Option<Timestamp>,
@@ -1850,10 +1893,10 @@ pub struct AutomataStatusRow {
     pub last_replay_at: Option<Timestamp>,
 }
 
-/// Operator-facing ingestor status row.
+/// Operator-facing source status row.
 #[derive(Debug, sqlx::FromRow)]
-pub struct IngestorsStatusRow {
-    pub node_name: NodeName,
+pub struct SourcesStatusRow {
+    pub module_name: ModuleName,
     pub version: String,
     pub description: Option<String>,
     /// Status of the latest run for this manifest. `None` when no run row
@@ -1862,7 +1905,7 @@ pub struct IngestorsStatusRow {
     pub live: bool,
     pub service_name: Option<String>,
     pub instance_id: Option<String>,
-    pub source_run_id: Option<Uuid>,
+    pub module_run_id: Option<Uuid>,
     pub host: Option<String>,
     pub run_status: Option<String>,
     pub started_at: Option<Timestamp>,
@@ -1898,8 +1941,8 @@ pub struct SystemHealthReport {
     pub events_table_exists: bool,
     pub events_table_error: Option<String>,
 
-    pub node_health: Option<NodeHealthSummary>,
-    pub node_health_error: Option<String>,
+    pub module_health: Option<ModuleHealthSummary>,
+    pub module_health_error: Option<String>,
 }
 
 // ============================================================================
@@ -2218,35 +2261,36 @@ impl StateRepository<'_> {
 #[cfg(test)]
 mod tests {
     // Inline because this covers local env/default and report helper semantics.
-    use super::{node_heartbeat_stale_after, probe_health, probe_health_bool};
+    use super::{module_heartbeat_stale_after, probe_health, probe_health_bool};
     use sinex_primitives::error::SinexError;
     use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
     #[sinex_serial_test]
-    async fn node_heartbeat_stale_after_defaults_invalid_override() -> xtask::sandbox::TestResult<()>
-    {
+    async fn module_heartbeat_stale_after_defaults_invalid_override()
+    -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
-        env.set("SINEX_NODE_HEARTBEAT_STALE_SECS", "bogus");
+        env.set("SINEX_MODULE_HEARTBEAT_STALE_SECS", "bogus");
 
-        let error = node_heartbeat_stale_after().expect_err("invalid override should fail");
+        let error = module_heartbeat_stale_after().expect_err("invalid override should fail");
         assert!(
             error
                 .to_string()
-                .contains("SINEX_NODE_HEARTBEAT_STALE_SECS must be a positive integer")
+                .contains("SINEX_MODULE_HEARTBEAT_STALE_SECS must be a positive integer")
         );
         Ok(())
     }
 
     #[sinex_serial_test]
-    async fn node_heartbeat_stale_after_defaults_zero_override() -> xtask::sandbox::TestResult<()> {
+    async fn module_heartbeat_stale_after_defaults_zero_override() -> xtask::sandbox::TestResult<()>
+    {
         let mut env = EnvGuard::new();
-        env.set("SINEX_NODE_HEARTBEAT_STALE_SECS", "0");
+        env.set("SINEX_MODULE_HEARTBEAT_STALE_SECS", "0");
 
-        let error = node_heartbeat_stale_after().expect_err("zero override should fail");
+        let error = module_heartbeat_stale_after().expect_err("zero override should fail");
         assert!(
             error
                 .to_string()
-                .contains("SINEX_NODE_HEARTBEAT_STALE_SECS must be greater than zero")
+                .contains("SINEX_MODULE_HEARTBEAT_STALE_SECS must be greater than zero")
         );
         Ok(())
     }

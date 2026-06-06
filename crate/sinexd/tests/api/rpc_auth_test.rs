@@ -24,7 +24,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     // Configure environment for gateway
     let token = "test-secret-token-123:admin";
     unsafe {
-        env::set_var("SINEX_RPC_TOKEN", token);
+        env::set_var("SINEX_API_TOKEN", token);
         env::set_var(
             "SINEX_API_TLS_CERT",
             cert_file.path().to_string_lossy().to_string(),
@@ -39,7 +39,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
         env::set_var("SINEX_NATS_URL", &nats_url);
         // Disable rate limiting — this test validates auth behavior, not rate limits.
         // Shared NATS KV may have stale counters from parallel tests.
-        env::set_var("SINEX_RPC_RATE_LIMIT_ENABLED", "false");
+        env::set_var("SINEX_API_RATE_LIMIT_ENABLED", "false");
     }
 
     // Initialize ServiceContainer
@@ -114,11 +114,11 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     let _ = shutdown_tx.send(true);
     let _ = handle.await;
     unsafe {
-        env::remove_var("SINEX_RPC_TOKEN");
+        env::remove_var("SINEX_API_TOKEN");
         env::remove_var("SINEX_API_TLS_CERT");
         env::remove_var("SINEX_API_TLS_KEY");
         env::remove_var("SINEX_NATS_URL");
-        env::remove_var("SINEX_RPC_RATE_LIMIT_ENABLED");
+        env::remove_var("SINEX_API_RATE_LIMIT_ENABLED");
     }
 
     Ok(())

@@ -1,6 +1,6 @@
 {
   "envelope_version": "1",
-  "source_unit_id": "external-producer",
+  "source_id": "external-producer",
   "parser_id": "python-parser",
   "parser_version": "0.5.0",
   "events": [

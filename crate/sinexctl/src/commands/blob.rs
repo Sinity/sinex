@@ -6,7 +6,7 @@ use sinex_db::create_pool;
 use sinex_primitives::Id;
 use sinex_primitives::Uuid;
 use sinex_primitives::events::{Event, SourceMaterial};
-use sinexd::node_sdk::content_store::{
+use sinexd::runtime::content_store::{
     CasFsckReport, ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
     cas_fsck::check_cas,
     gc::{BlobGcReport, sweep_orphans_detailed},
@@ -699,69 +699,57 @@ async fn archive_mismatches(
     pool: &sqlx::PgPool,
     mismatches: &[BlobVerifyIntegrityMismatch],
 ) -> Result<usize> {
-    use sinex_db::DbPoolExt;
+    use sinex_db::{DbPoolExt, repositories::Operation};
+    use sinex_primitives::domain::OperationStatus;
+
     let ids: Vec<Uuid> = mismatches.iter().map(|m| *m.event_id.as_uuid()).collect();
-    let operation_id = Uuid::now_v7();
 
     // Log the operation so the cascade has an audit trail. Match the
     // operation_type pattern used elsewhere in the codebase: snake_case,
     // namespaced by intent.
-    sqlx::query(
-        r"
-        INSERT INTO core.operations_log (
-            operation_type, operator, scope, result_status, result_message
-        ) VALUES ($1, $2, $3, 'running', $4)
-        ",
-    )
-    .bind("archive.integrity_mismatch")
-    .bind("sinexctl:blob-verify-integrity")
-    .bind(serde_json::json!({
-        "event_count": ids.len(),
-        "reason": "anchor_payload_hash mismatch",
-    }))
-    .bind(format!(
-        "blob verify-integrity --apply-mismatches: archiving {} mismatched event(s)",
-        ids.len()
-    ))
-    .execute(pool)
-    .await
-    .wrap_err("log archive.integrity_mismatch operation")?;
+    let operation = pool
+        .state()
+        .log_operation(Operation {
+            id: None,
+            operation_type: "archive.integrity_mismatch".to_string(),
+            operator: "sinexctl:blob-verify-integrity".to_string(),
+            scope: Some(serde_json::json!({
+                "event_count": ids.len(),
+                "reason": "anchor_payload_hash mismatch",
+            })),
+            result_status: OperationStatus::Running,
+            result_message: Some(format!(
+                "blob verify-integrity --apply-mismatches: archiving {} mismatched event(s)",
+                ids.len()
+            )),
+            preview_summary: None,
+            duration_ms: None,
+        })
+        .await
+        .wrap_err("log archive.integrity_mismatch operation")?;
 
     let count = pool
         .events()
         .execute_cascade_archive(
             &ids,
             "anchor_payload_hash mismatch",
-            &operation_id.to_string(),
+            &operation.id.to_string(),
             "sinexctl:blob-verify-integrity",
         )
         .await
         .wrap_err("execute archive cascade for integrity mismatches")?;
 
-    sqlx::query(
-        r"
-        UPDATE core.operations_log
-        SET result_status = 'success',
-            result_message = $1
-        WHERE operator = 'sinexctl:blob-verify-integrity'
-          AND result_status = 'running'
-          AND scope->>'reason' = 'anchor_payload_hash mismatch'
-          AND id = (
-            SELECT id FROM core.operations_log
-            WHERE operator = 'sinexctl:blob-verify-integrity'
-              AND result_status = 'running'
-              AND scope->>'reason' = 'anchor_payload_hash mismatch'
-            ORDER BY id DESC LIMIT 1
-          )
-        ",
-    )
-    .bind(format!(
-        "archived {count} of {} mismatched events via cascade",
-        ids.len()
-    ))
-    .execute(pool)
-    .await
-    .wrap_err("update operations_log success status")?;
+    pool.state()
+        .update_operation_result(
+            &operation.id,
+            OperationStatus::Success,
+            Some(format!(
+                "archived {count} of {} mismatched events via cascade",
+                ids.len()
+            )),
+        )
+        .await
+        .wrap_err("update operations_log success status")?;
 
     Ok(count as usize)
 }

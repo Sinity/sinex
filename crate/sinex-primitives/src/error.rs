@@ -100,10 +100,10 @@ pub enum ErrorClass {
     /// A transient infrastructure hiccup — retry with finite backoff.
     /// Network timeouts, brief NATS disconnections, CAS races on first attempt.
     TransientInfra,
-    /// The node or runtime is permanently broken — halt, do NOT retry.
+    /// The runtime module is permanently broken — halt, do NOT retry.
     /// Checkpoint CAS failure (stale revision), lifecycle state corruption,
     /// output channel closed, invalid runtime configuration, permission denied.
-    NodeFatal,
+    RuntimeFatal,
     /// Transport is degraded — pause consumption, circuit-break, alert.
     /// DLQ stream unavailable, confirmation stream unavailable,
     /// `JetStream` publish failing beyond retry budget.
@@ -113,7 +113,7 @@ pub enum ErrorClass {
 impl ErrorClass {
     #[must_use]
     pub fn is_fatal(self) -> bool {
-        matches!(self, Self::NodeFatal | Self::TransportDegraded)
+        matches!(self, Self::RuntimeFatal | Self::TransportDegraded)
     }
 
     #[must_use]
@@ -129,11 +129,11 @@ impl SinexError {
     #[must_use]
     pub fn error_class(&self) -> ErrorClass {
         match self {
-            SinexError::Checkpoint(_) => ErrorClass::NodeFatal,
-            SinexError::Lifecycle(_) => ErrorClass::NodeFatal,
-            SinexError::Configuration(_) => ErrorClass::NodeFatal,
-            SinexError::PermissionDenied(_) => ErrorClass::NodeFatal,
-            SinexError::ChannelSend(_) => ErrorClass::NodeFatal,
+            SinexError::Checkpoint(_) => ErrorClass::RuntimeFatal,
+            SinexError::Lifecycle(_) => ErrorClass::RuntimeFatal,
+            SinexError::Configuration(_) => ErrorClass::RuntimeFatal,
+            SinexError::PermissionDenied(_) => ErrorClass::RuntimeFatal,
+            SinexError::ChannelSend(_) => ErrorClass::RuntimeFatal,
             SinexError::Validation(_) => ErrorClass::DataError,
             SinexError::Parse(_) => ErrorClass::DataError,
             SinexError::Serialization(_) => ErrorClass::DataError,
@@ -528,7 +528,7 @@ impl SinexError {
 
     #[must_use]
     pub fn is_permanent(&self) -> bool {
-        self.error_class() == ErrorClass::NodeFatal
+        self.error_class() == ErrorClass::RuntimeFatal
     }
 
     /// Returns a message safe for client consumption.
@@ -839,7 +839,7 @@ mod retryability_tests {
             let class = err.error_class();
             assert_eq!(
                 err.is_permanent(),
-                class == ErrorClass::NodeFatal,
+                class == ErrorClass::RuntimeFatal,
                 "is_permanent disagrees with error_class for {err:?}: class={class:?}"
             );
         }

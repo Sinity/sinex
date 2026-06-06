@@ -1,7 +1,7 @@
 //! Isolation obligation.
 //!
-//! Verifies that an error in one source unit's dispatch does not affect
-//! concurrent dispatches for other source units.
+//! Verifies that an error in one source's dispatch does not affect
+//! concurrent dispatches for other source contracts.
 //!
 //! ## What this obligation proves
 //!
@@ -15,14 +15,14 @@ use crate::AdapterKind;
 use sinex_primitives::Uuid;
 use sinexd::sources::dispatch::default_parser_dispatch;
 
-/// Run the isolation obligation for a source unit.
+/// Run the isolation obligation for a source.
 ///
 /// # Errors
 ///
 /// Returns an error if an error in the subject unit's dispatch bleeds into the
 /// known-good units' dispatches.
 pub async fn run(
-    source_unit_id: &str,
+    source_id: &str,
     _adapter_kind: AdapterKind,
     _fixture_data: &[u8],
 ) -> Result<(), String> {
@@ -35,7 +35,7 @@ pub async fn run(
     // Inject obviously bad payload for the subject unit.
     let bad_payload = b"<THIS IS NOT VALID FOR ANY PARSER>";
     let bad_material = Uuid::now_v7();
-    let subject_result = dispatch(source_unit_id, bad_payload, Some(bad_material));
+    let subject_result = dispatch(source_id, bad_payload, Some(bad_material));
 
     // The subject may succeed or fail — both are fine. What matters is that
     // the peers are unaffected.
@@ -45,14 +45,14 @@ pub async fn run(
     let peer_material = Uuid::now_v7();
     let peer_outcome = dispatch(PEER_UNIT, PEER_FIXTURE, Some(peer_material)).map_err(|e| {
         format!(
-            "isolation: error in subject unit '{source_unit_id}' may have corrupted registry — \
+            "isolation: error in subject unit '{source_id}' may have corrupted registry — \
                  peer '{PEER_UNIT}' dispatch failed: {e}"
         )
     })?;
 
     if peer_outcome.events.is_empty() {
         return Err(format!(
-            "isolation: peer unit '{PEER_UNIT}' returned no events after subject '{source_unit_id}' error"
+            "isolation: peer unit '{PEER_UNIT}' returned no events after subject '{source_id}' error"
         ));
     }
 

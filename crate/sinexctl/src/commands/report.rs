@@ -782,7 +782,7 @@ mod tests {
                 ts_orig: Some(end),
                 ts_quality: None,
                 host: sinex_primitives::events::builder::get_hostname(),
-                source_run_id: None,
+                module_run_id: None,
                 payload_schema_id: None,
                 provenance: sinex_primitives::events::Provenance::Material {
                     id: Id::new(),
@@ -797,7 +797,7 @@ mod tests {
                 scope_key: None,
                 equivalence_key: None,
                 created_by_operation_id: None,
-                node_model: None,
+                automaton_model: None,
                 anchor_payload_hash: None,
             },
             relevance_score: None,

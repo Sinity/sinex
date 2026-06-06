@@ -100,8 +100,8 @@ impl ExplainCommand {
             }
         }
 
-        if let Some(model) = &event.node_model {
-            print_field("Node Model", &format!("{model:?}"));
+        if let Some(model) = &event.automaton_model {
+            print_field("RuntimeModule Model", &format!("{model:?}"));
         }
         if let Some(scope) = &event.scope_key {
             print_field("Scope Key", scope);

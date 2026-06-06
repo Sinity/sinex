@@ -18,7 +18,7 @@ The system defines over 20 specialized enums across several domains:
 - **Content backend**: Identifies the storage/hash backend used by a content key (e.g., `SHA256E`).
 
 ### System & Lifecycle
-- **ShutdownReason**: Documents why a node or system stopped (`requested`, `crashed`, `signal`).
+- **ShutdownReason**: Documents why a runtime module or system stopped (`requested`, `crashed`, `signal`).
 - **SystemdActiveState**: Maps to official systemd unit states (`active`, `inactive`, `failed`).
 - **SystemdUnitType**: Identifies unit categories like `service`, `socket`, or `mount`.
 

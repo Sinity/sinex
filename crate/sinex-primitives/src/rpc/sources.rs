@@ -4,8 +4,8 @@
 //!
 //! Non-Rust producers (Python, shell scripts, external tools) can publish
 //! [`EventIntent`] envelopes to NATS `JetStream` without depending on the
-//! Rust SDK. The contract below is the minimum a producer must satisfy for
-//! ingestd to accept the payload.
+//! Rust runtime. The contract below is the minimum a producer must satisfy for
+//! event_engine to accept the payload.
 //!
 //! ## Envelope format
 //!
@@ -18,7 +18,7 @@
 //! ```json
 //! {
 //!   "envelope_version": "1",
-//!   "source_unit_id": "integration.polylogue",
+//!   "source_id": "integration.polylogue",
 //!   "parser_id": "polylogue-bridge",
 //!   "parser_version": "0.1.0",
 //!   "events": [
@@ -46,7 +46,7 @@
 //! | Field | Type | Required | Notes |
 //! |-------|------|----------|-------|
 //! | `envelope_version` | `"1"` | yes | Must be `"1"` (only accepted version) |
-//! | `source_unit_id` | string | yes | Producer identifier, e.g. `"integration.polylogue"` |
+//! | `source_id` | string | yes | Producer identifier, e.g. `"integration.polylogue"` |
 //! | `parser_id` | string | yes | Parser that interpreted the material, e.g. `"polylogue-bridge"` |
 //! | `parser_version` | string | yes | Semver, e.g. `"0.1.0"` |
 //! | `events` | array | yes | At least one event (see Event shape below) |
@@ -58,7 +58,7 @@
 //! | Field | Type | Required | Notes |
 //! |-------|------|----------|-------|
 //! | `id` | `UUIDv7` | yes | Event identifier — a random `UUIDv7` minted at creation (interpretation identity; new on replay, not content-derived) |
-//! | `source` | string | yes | Event source, typically matching `source_unit_id` |
+//! | `source` | string | yes | Event source, typically matching `source_id` |
 //! | `event_type` | string | yes | Dotted event type, e.g. `"integration.polylogue.conversation_indexed"` |
 //! | `payload` | JSON object | yes | Free-form event payload |
 //! | `ts_orig` | ISO 8601 | no | Real-world occurrence timestamp |
@@ -89,8 +89,8 @@
 //!
 //! ## Known external producer identifiers
 //!
-//! These are the `source_unit_id` / `source` values for producers that are not
-//! Rust ingestors inside the sinex workspace:
+//! These are the `source_id` / `source` values for producers that are not
+//! Rust sources inside the sinex workspace:
 //!
 //! | Identifier | Project | Description |
 //! |------------|---------|-------------|
@@ -98,7 +98,7 @@
 //! | `analysis.lynchpin` | [lynchpin](https://github.com/sinity/sinity-lynchpin) | Analysis artifact staging |
 
 use crate::domain::{MaterialStatus, SourceMaterialFormat, SourceMaterialTimingInfoType};
-use crate::parser::{ParserId, SourceBindingId, SourceUnitId};
+use crate::parser::{ParserId, SourceBindingId, SourceId};
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::sources::continuity::{
     SourcesContinuityGetRequest, SourcesContinuityGetResponse, SourcesContinuityListRequest,
@@ -1000,7 +1000,7 @@ pub struct SourceCaveat {
 
 /// A readiness report for one source.
 ///
-/// Sources are identified by `(source_family, source_unit_id)` when both are
+/// Sources are identified by `(source_family, source_id)` when both are
 /// known; the readiness derivation may also report at the `source_identifier`
 /// level when only material registry data is available.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -1011,9 +1011,9 @@ pub struct SourceReadiness {
     pub binding_id: Option<SourceBindingId>,
     /// Source family (e.g. "terminal", "browser", "desktop", "chat").
     pub source_family: String,
-    /// Source unit identifier when known.
+    /// Source identifier when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_unit_id: Option<SourceUnitId>,
+    pub source_id: Option<SourceId>,
     /// Parser ID when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parser_id: Option<ParserId>,
@@ -1092,9 +1092,9 @@ pub struct SourcesReadinessGetResponse {
 /// Request: `sources.drift.list`
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SourcesDriftListRequest {
-    /// Optional source-unit filter.
+    /// Optional source filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_unit_id: Option<SourceUnitId>,
+    pub source_id: Option<SourceId>,
     /// Maximum drift observations to return. Defaults to 50.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
@@ -1108,13 +1108,13 @@ pub struct SourceShapeTypeChange {
     pub current_type: String,
 }
 
-/// Checkpointed source-shape drift observed by an adapter-backed source unit.
+/// Checkpointed source-shape drift observed by an adapter-backed source.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SourceShapeDriftObservation {
     /// Checkpoint KV key that supplied this observation.
     pub checkpoint_key: String,
-    /// Source unit that reported the drift.
-    pub source_unit_id: SourceUnitId,
+    /// Source that reported the drift.
+    pub source_id: SourceId,
     /// Checkpoint consumer group, when recoverable from the KV key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consumer_group: Option<String>,
@@ -1155,7 +1155,7 @@ impl SourceShapeDriftObservation {
         required_input_keys: &[String],
     ) -> Vec<SourceCaveat> {
         source_shape_drift_readiness_caveats_with_required_fields(
-            &self.source_unit_id,
+            &self.source_id,
             &self.current_hash,
             self.added_keys.len(),
             &self.removed_keys,
@@ -1172,7 +1172,7 @@ impl SourceShapeDriftObservation {
 /// the shapes most likely to produce missing/defaulted parsed values.
 #[must_use]
 pub fn source_shape_drift_readiness_caveats(
-    source_unit_id: &SourceUnitId,
+    source_id: &SourceId,
     current_hash: &str,
     added_key_count: usize,
     removed_key_count: usize,
@@ -1186,9 +1186,9 @@ pub fn source_shape_drift_readiness_caveats(
             code: caveat_codes::PARSER_FIELD_TYPE_CHANGED.to_string(),
             severity: CaveatSeverity::Degraded,
             message: format!(
-                "{} input field type(s) changed for source unit {}.",
+                "{} input field type(s) changed for source {}.",
                 type_change_count,
-                source_unit_id.as_str()
+                source_id.as_str()
             ),
             evidence_ref: evidence_ref.clone(),
         });
@@ -1199,9 +1199,9 @@ pub fn source_shape_drift_readiness_caveats(
             code: caveat_codes::PARSER_REQUIRED_FIELD_MISSING.to_string(),
             severity: CaveatSeverity::Degraded,
             message: format!(
-                "{} previously observed input field(s) are missing for source unit {}.",
+                "{} previously observed input field(s) are missing for source {}.",
                 removed_key_count,
-                source_unit_id.as_str()
+                source_id.as_str()
             ),
             evidence_ref: evidence_ref.clone(),
         });
@@ -1212,9 +1212,9 @@ pub fn source_shape_drift_readiness_caveats(
             code: caveat_codes::SOURCE_SHAPE_CHANGED.to_string(),
             severity: CaveatSeverity::Info,
             message: format!(
-                "{} new input field(s) observed for source unit {}.",
+                "{} new input field(s) observed for source {}.",
                 added_key_count,
-                source_unit_id.as_str()
+                source_id.as_str()
             ),
             evidence_ref,
         });
@@ -1231,7 +1231,7 @@ pub fn source_shape_drift_readiness_caveats(
 /// that the parser declares as required block readiness.
 #[must_use]
 pub fn source_shape_drift_readiness_caveats_with_required_fields(
-    source_unit_id: &SourceUnitId,
+    source_id: &SourceId,
     current_hash: &str,
     added_key_count: usize,
     removed_keys: &[String],
@@ -1247,9 +1247,9 @@ pub fn source_shape_drift_readiness_caveats_with_required_fields(
             code: caveat_codes::PARSER_FIELD_TYPE_CHANGED.to_string(),
             severity: CaveatSeverity::Degraded,
             message: format!(
-                "{} input field type(s) changed for source unit {}.",
+                "{} input field type(s) changed for source {}.",
                 type_change_count,
-                source_unit_id.as_str()
+                source_id.as_str()
             ),
             evidence_ref: evidence_ref.clone(),
         });
@@ -1260,18 +1260,18 @@ pub fn source_shape_drift_readiness_caveats_with_required_fields(
             (
                 CaveatSeverity::Degraded,
                 format!(
-                    "{} previously observed input field(s) are missing for source unit {}.",
+                    "{} previously observed input field(s) are missing for source {}.",
                     removed_keys.len(),
-                    source_unit_id.as_str()
+                    source_id.as_str()
                 ),
             )
         } else {
             (
                 CaveatSeverity::Blocking,
                 format!(
-                    "{} required input field(s) are missing for source unit {}: {}.",
+                    "{} required input field(s) are missing for source {}: {}.",
                     required_missing.len(),
-                    source_unit_id.as_str(),
+                    source_id.as_str(),
                     summarize_field_names(&required_missing)
                 ),
             )
@@ -1289,9 +1289,9 @@ pub fn source_shape_drift_readiness_caveats_with_required_fields(
             code: caveat_codes::SOURCE_SHAPE_CHANGED.to_string(),
             severity: CaveatSeverity::Info,
             message: format!(
-                "{} new input field(s) observed for source unit {}.",
+                "{} new input field(s) observed for source {}.",
                 added_key_count,
-                source_unit_id.as_str()
+                source_id.as_str()
             ),
             evidence_ref,
         });

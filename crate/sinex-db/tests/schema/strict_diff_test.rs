@@ -920,7 +920,7 @@ async fn db_check_constraints_landed_after_apply(ctx: TestContext) -> TestResult
     sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // The `core.manifests.manifest_type_check_v1` constraint should now
-    // exist and reflect every `NodeType` Display rendering.
+    // exist and reflect every `ModuleKind` Display rendering.
     let def: Option<String> = sqlx::query_scalar(
         r"
         SELECT pg_get_constraintdef(c.oid)
@@ -934,17 +934,17 @@ async fn db_check_constraints_landed_after_apply(ctx: TestContext) -> TestResult
     .fetch_optional(&ctx.pool)
     .await?;
     let def = def.expect("manifest_type_check_v1 must exist after apply");
-    for value in &["ingestor", "automaton", "service"] {
+    for value in &["source", "automaton", "service"] {
         assert!(
             def.contains(&format!("'{value}'")),
             "manifest_type_check_v1 missing value {value}: {def}"
         );
     }
 
-    // No `'source'` (legacy stale value pre-#1236) should be referenced.
+    // No `'ingestor'` (legacy stale value pre-sinexd collapse) should be referenced.
     assert!(
-        !def.contains("'source'"),
-        "manifest_type_check_v1 should not contain stale 'source' value: {def}"
+        !def.contains("'ingestor'"),
+        "manifest_type_check_v1 should not contain stale 'ingestor' value: {def}"
     );
 
     // OperationStatus → result_status_check_v1.
@@ -978,7 +978,7 @@ async fn strict_diff_clean_after_apply_for_db_check(ctx: TestContext) -> TestRes
     let dbcheck_drifts: Vec<_> = drifts
         .iter()
         .filter(|d| {
-            d.location.contains("::NodeType")
+            d.location.contains("::ModuleKind")
                 || d.location.contains("::OperationStatus")
                 || d.location.contains("::DataTier")
                 || d.location.contains("::HealthStatus")
@@ -996,7 +996,7 @@ async fn strict_diff_clean_after_apply_for_db_check(ctx: TestContext) -> TestRes
 async fn apply_replaces_legacy_unversioned_check_constraint(ctx: TestContext) -> TestResult<()> {
     // Simulate the Wave-B production state: apply once, then drop the
     // versioned constraint and re-install the legacy unversioned one with
-    // a stale variant set ('node' instead of 'ingestor').
+    // a stale variant set ('node' instead of 'source').
     sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     sqlx::query(
@@ -1048,8 +1048,8 @@ async fn apply_replaces_legacy_unversioned_check_constraint(ctx: TestContext) ->
     .fetch_one(&ctx.pool)
     .await?;
     assert!(
-        def.contains("'ingestor'"),
-        "renamed back to 'ingestor': {def}"
+        def.contains("'source'"),
+        "renamed back to 'source': {def}"
     );
     assert!(
         !def.contains("'node'"),
@@ -1069,7 +1069,7 @@ async fn diff_detects_stale_versioned_check_constraint(ctx: TestContext) -> Test
         "ALTER TABLE core.manifests \
          DROP CONSTRAINT IF EXISTS manifest_type_check_v1, \
          ADD CONSTRAINT manifest_type_check_v1 \
-         CHECK (manifest_type IN ('ingestor', 'automaton', 'service', 'misc'))",
+         CHECK (manifest_type IN ('source', 'automaton', 'service', 'misc'))",
     )
     .execute(&ctx.pool)
     .await?;

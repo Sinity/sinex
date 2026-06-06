@@ -2,7 +2,10 @@
 
 ## Current TUI
 
-The current TUI is a useful seed: tabs, status bar, refresh, simple gateway data fetching, recent events, nodes, and DLQ. It should not be discarded. It should be upgraded into a workbench with the same low-dependency terminal-native posture.
+The current TUI is a useful seed: tabs, status bar, refresh, simple API data
+fetching, recent events, runtime status, and DLQ. It should not be discarded.
+It should be upgraded into a workbench with the same low-dependency
+terminal-native posture.
 
 ## Workbench shell v2
 
@@ -24,7 +27,7 @@ The Event Inspector is the key deliverable. It should include:
 - header: event id, source, type, time, severity/privacy/caveat chips
 - summary line that is human-readable but never replaces raw payload
 - payload renderer with type-aware rows and JSON toggle
-- source material anchor, parser/source unit, timing quality
+- source material anchor, parser/source binding, timing quality
 - provenance/trace tree
 - related events and descendants when available
 - domain projections, e.g. task/document/semantic labels if derived

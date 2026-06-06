@@ -50,7 +50,7 @@
       "type": "string"
     },
     "role": {
-      "description": "Authenticated role on the request, lowercased: `readonly`, `write`,\nor `admin`. (We use a string here rather than a typed enum because\n`Role` lives in `sinex-gateway` and can't be imported by primitives\nwithout inverting the dependency direction.)",
+      "description": "Authenticated role on the request, lowercased: `readonly`, `write`,\nor `admin`. (We use a string here rather than a typed enum because\n`Role` lives in `sinexd` and can't be imported by primitives\nwithout inverting the dependency direction.)",
       "type": "string"
     },
     "status": {

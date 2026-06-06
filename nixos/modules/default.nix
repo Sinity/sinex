@@ -45,7 +45,7 @@ let
     shell_integration no-title
   '';
 
-  terminalSourceUnitIdForShell = shell:
+  terminalSourceIdForShell = shell:
     let
       normalized = toLower shell;
     in
@@ -65,9 +65,8 @@ in
     ./monitoring.nix
     ./preflight-verification.nix
     ./kitty-shell-integration.nix
-    ./source-workers.nix
+    ./sources.nix
     ./source-bindings.nix
-    ./source-bindings-generated.nix
   ];
 
   options.services.sinex = with types; let
@@ -174,13 +173,13 @@ in
           type = str;
           description = "Shell identifier (`bash`, `zsh`, `fish`, etc.).";
         };
-        sourceUnitId = mkOption {
+        sourceId = mkOption {
           type = nullOr str;
           default = null;
           description = ''
-            Optional stable source-unit identity. When null, the module derives
+            Optional stable source identity. When null, the module derives
             one from <option>shell</option> and passes it through
-            <literal>--source-unit</literal>.
+            <literal>--source</literal>.
           '';
         };
       };
@@ -247,7 +246,7 @@ in
             description = "Interactive user whose environment is captured (optional).";
           };
 
-          nodes = mkOption {
+          runtime = mkOption {
             type = str;
             default = "sinex";
             description = "System account used to run Sinex services.";
@@ -667,10 +666,10 @@ in
           enable = mkOption {
             type = bool;
             default = true;
-            description = "Enable core Sinex services (ingestd and gateway).";
+            description = "Enable core Sinex services (event engine and API).";
           };
 
-          ingestd = mkOption {
+          event_engine = mkOption {
             type = submodule {
               options = {
                 enable = mkOption {
@@ -680,25 +679,25 @@ in
                 };
                 spoolDir = mkOption {
                   type = path;
-                  default = cfg.stateRoot + "/spool/ingestd";
-                  defaultText = literalExpression "config.services.sinex.stateRoot + \"/spool/ingestd\"";
-                  description = "Spool directory for ingestd.";
+                  default = cfg.stateRoot + "/spool/event_engine";
+                  defaultText = literalExpression "config.services.sinex.stateRoot + \"/spool/event_engine\"";
+                  description = "Spool directory for event_engine.";
                 };
                 logLevel = mkOption {
                   type = str;
                   default = cfg.logLevel;
                   defaultText = literalExpression "config.services.sinex.logLevel";
-                  description = "Log level for ingestd.";
+                  description = "Log level for event_engine.";
                 };
                 batch = mkOption {
                   type = batchModule { defaultSize = 50; defaultTimeout = 2; };
                   default = { };
-                  description = "Batch settings for ingestd. Defaults tuned for desktop workloads (low latency). Increase size/timeout for high-throughput server deployments.";
+                  description = "Batch settings for event_engine. Defaults tuned for desktop workloads (low latency). Increase size/timeout for high-throughput server deployments.";
                 };
                 consumerMaxAckPending = mkOption {
                   type = positive;
                   default = 100;
-                  description = "JetStream max_ack_pending for the main ingestd consumer.";
+                  description = "JetStream max_ack_pending for the main event_engine consumer.";
                 };
                 materialSlicesMaxAckPending = mkOption {
                   type = positive;
@@ -712,16 +711,7 @@ in
                     defaultOpenFiles = 524288;
                   };
                   default = { };
-                  description = "Resource limits for ingestd.";
-                };
-                gitopsEnabled = mkOption {
-                  type = bool;
-                  default = false;
-                  description = ''
-                    Enable GitOps schema sync service.
-                    When enabled, ingestd periodically fetches configured Git repositories
-                    and registers discovered JSON schema files in the database.
-                  '';
+                  description = "Resource limits for event_engine.";
                 };
                 skipSchemaSync = mkOption {
                   type = bool;
@@ -752,10 +742,10 @@ in
                     Lower values make schema updates take effect faster at the cost of more DB queries.
                   '';
                 };
-                statsLogIntervalSecs = mkOption {
+                telemetryIntervalSecs = mkOption {
                   type = positive;
                   default = 60;
-                  description = "Interval in seconds between processing statistics log entries.";
+                  description = "Interval in seconds between event_engine processing telemetry emissions.";
                 };
                 blobGcIntervalSecs = mkOption {
                   type = nullOr positive;
@@ -764,13 +754,13 @@ in
                     Interval in seconds between automatic blob garbage collection sweeps.
                     When null (default), automatic GC is disabled and orphans must be
                     reclaimed manually via `sinexctl blob sweep-orphans --apply`.
-                    Minimum effective value is 60 seconds (validated by ingestd).
+                    Minimum effective value is 60 seconds (validated by event_engine).
                   '';
                 };
                 extraArgs = mkOption {
                   type = strList;
                   default = [ ];
-                  description = "Additional command-line arguments for ingestd.";
+                  description = "Additional command-line arguments for event_engine.";
                 };
               };
             };
@@ -778,29 +768,29 @@ in
             description = "Ingestion daemon configuration.";
           };
 
-          gateway = mkOption {
+          api = mkOption {
             type = submodule {
               options = {
                 enable = mkOption {
                   type = bool;
                   default = true;
-                  description = "Enable the RPC gateway.";
+                  description = "Enable the API.";
                 };
                 logLevel = mkOption {
                   type = str;
                   default = cfg.logLevel;
                   defaultText = literalExpression "config.services.sinex.logLevel";
-                  description = "Log level for the gateway.";
+                  description = "Log level for the API.";
                 };
                 resources = mkOption {
                   type = resourceModule { defaultMemory = "8G"; defaultCpu = "75%"; };
                   default = { };
-                  description = "Resource limits for the gateway.";
+                  description = "Resource limits for the API.";
                 };
                 listenAddress = mkOption {
                   type = str;
                   default = "127.0.0.1:9999";
-                  description = "TCP listen address for the RPC gateway (host:port).";
+                  description = "TCP listen address for the API (host:port).";
                 };
                 requireClientTLS = mkOption {
                   type = bool;
@@ -813,7 +803,7 @@ in
                       maxConcurrency = mkOption {
                         type = positive;
                         default = 100;
-                        description = "Max concurrent RPC requests enforced by the gateway.";
+                        description = "Max concurrent RPC requests enforced by the API.";
                       };
                       requestTimeoutSec = mkOption {
                         type = positive;
@@ -837,7 +827,7 @@ in
                             enable = mkOption {
                               type = bool;
                               default = true;
-                              description = "Enable per-token rate limiting on the gateway.";
+                              description = "Enable per-token rate limiting on the API.";
                             };
                             requestsPerSec = mkOption {
                               type = positive;
@@ -859,7 +849,7 @@ in
                               default = 6000;
                               description = ''
                                 Distributed rate limiter: max requests per minute per token,
-                                enforced across all gateway instances via NATS KV.
+                                enforced across all API instances via NATS KV.
                                 Default 6000 = 100 req/s sustained.
                               '';
                             };
@@ -871,26 +861,26 @@ in
                           };
                         };
                         default = { };
-                        description = "Per-token rate limiting. Two complementary limiters operate in tandem: a local token-bucket (fast, in-process) and a distributed NATS KV limiter (consistent across gateway replicas).";
+                        description = "Per-token rate limiting. Two complementary limiters operate in tandem: a local token-bucket (fast, in-process) and a distributed NATS KV limiter (consistent across API replicas).";
                       };
                     };
                   };
                   default = { };
-                  description = "RPC resource guard configuration for the gateway.";
+                  description = "RPC resource guard configuration for the API.";
                 };
                 tlsCertFile = mkOption {
                   type = nullOr path;
-                  default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/server.pem" else null;
+                  default = if cfg.core.api.autoGenerateTls then cfg.stateRoot + "/tls/server.pem" else null;
                   description = ''
-                    Path to the gateway TLS certificate. Required unless autoGenerateTls is enabled.
+                    Path to the API TLS certificate. Required unless autoGenerateTls is enabled.
                     Exported as <literal>SINEX_API_TLS_CERT</literal>.
                   '';
                 };
                 tlsKeyFile = mkOption {
                   type = nullOr path;
-                  default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/server-key.pem" else null;
+                  default = if cfg.core.api.autoGenerateTls then cfg.stateRoot + "/tls/server-key.pem" else null;
                   description = ''
-                    Path to the gateway TLS private key. Required unless autoGenerateTls is enabled.
+                    Path to the API TLS private key. Required unless autoGenerateTls is enabled.
                     Exported as <literal>SINEX_API_TLS_KEY</literal>.
                   '';
                 };
@@ -898,7 +888,7 @@ in
                   type = nullOr path;
                   default = null;
                   description = ''
-                    Client CA bundle for gateway mTLS. Required for non-loopback binds
+                    Client CA bundle for API mTLS. Required for non-loopback binds
                     and whenever requireClientTLS is enabled. Exported as
                     <literal>SINEX_API_TLS_CLIENT_CA</literal>.
                   '';
@@ -907,11 +897,11 @@ in
                   type = bool;
                   default = false;
                   description = ''
-                    Automatically generate an rcgen-backed local PKI for the gateway on first boot.
+                    Automatically generate an rcgen-backed local PKI for the API on first boot.
                     Stores credentials at
                     <literal>''${stateRoot}/tls/{server.pem,server-key.pem,ca.pem,client.pem,client-key.pem}</literal>
                     and sets <option>tlsCertFile</option>/<option>tlsKeyFile</option> accordingly.
-                    The generated CA becomes the gateway trust anchor for deployment-readiness checks.
+                    The generated CA becomes the API trust anchor for deployment-readiness checks.
                     Suitable for single-host deployments. For production clusters, provide real certs.
                   '';
                 };
@@ -919,7 +909,7 @@ in
                   type = nullOr str;
                   default = null;
                   description = ''
-                    Comma-separated list of allowed CORS origins for the gateway HTTP interface.
+                    Comma-separated list of allowed CORS origins for the API HTTP interface.
                     Set to "*" to allow all origins (not recommended for production).
                     Null disables CORS headers entirely.
                   '';
@@ -934,12 +924,12 @@ in
                 extraArgs = mkOption {
                   type = strList;
                   default = [ ];
-                  description = "Additional command-line arguments for the gateway.";
+                  description = "Additional command-line arguments for the API.";
                 };
               };
             };
             default = { };
-            description = "Gateway configuration.";
+            description = "API configuration.";
           };
         };
       };
@@ -947,13 +937,13 @@ in
       description = "Core service configuration.";
     };
 
-    nodes = mkOption {
+    runtime = mkOption {
       type = submodule {
         options = {
           enable = mkOption {
             type = bool;
             default = true;
-            description = "Enable node services.";
+            description = "Enable runtime services.";
           };
 
           nats = mkOption {
@@ -963,7 +953,7 @@ in
                   type = strList;
                   default = [ "nats://127.0.0.1:4222" ];
                   description = ''
-                    List of NATS server URLs shared by core services and nodes.
+                    List of NATS server URLs shared by core services and runtime modules.
                     Rendered as <literal>SINEX_NATS_URL</literal> for managed services.
                   '';
                 };
@@ -1022,7 +1012,7 @@ in
                     };
                   };
                   default = { };
-                  description = "Typed TLS configuration for the shared NATS client connection; exported automatically to core services and nodes.";
+                  description = "Typed TLS configuration for the shared NATS client connection; exported automatically to core services and runtime modules.";
                 };
                 auth = mkOption {
                   type = submodule {
@@ -1067,13 +1057,13 @@ in
                   default = { };
                   description = ''
                     Typed shared NATS authentication configuration exported automatically to
-                    core services and nodes. Configure at most one auth mode.
+                    core services and runtime modules. Configure at most one auth mode.
                   '';
                 };
               };
             };
             default = { };
-            description = "Shared NATS client configuration used by core services and nodes.";
+            description = "Shared NATS client configuration used by core services and runtime modules.";
           };
 
           defaults = mkOption {
@@ -1082,18 +1072,18 @@ in
                 instances = mkOption {
                   type = positive;
                   default = 1;
-                  description = "Default number of instances per node.";
+                  description = "Default number of instances per runtime.";
                 };
                 logLevel = mkOption {
                   type = str;
                   default = cfg.logLevel;
                   defaultText = literalExpression "config.services.sinex.logLevel";
-                  description = "Default log level for nodes.";
+                  description = "Default log level for runtime modules.";
                 };
                 batch = mkOption {
                   type = batchModule { defaultSize = 100; defaultTimeout = 2; };
                   default = { };
-                  description = "Default batching configuration for nodes.";
+                  description = "Default batching configuration for runtime modules.";
                 };
                 resources = mkOption {
                   type = resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; };
@@ -1103,613 +1093,18 @@ in
                 env = mkOption {
                   type = envModule;
                   default = { };
-                  description = "Environment variables applied to every node.";
+                  description = "Environment variables applied to every runtime module.";
                 };
               };
             };
             default = { };
-            description = "Node defaults.";
-          };
-
-          filesystem = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption { type = bool; default = true; description = "Enable filesystem node. Watches large directory trees; needs more memory than other nodes."; };
-                watchPaths = mkOption {
-                  type = strList;
-                  default = [ ];
-                  description = ''
-                    Absolute paths for the filesystem node to watch.
-                    When empty and <option>services.sinex.users.target</option> is set,
-                    defaults to the target user's home directory.
-                  '';
-                };
-                maxWatches = mkOption {
-                  type = positive;
-                  default = 524288;
-                  description = ''
-                    Filesystem watch-budget threshold passed to the node config.
-                    When the recursive tree exceeds this value, the node now tries a
-                    filtered native watch plan before failing honestly instead of
-                    switching to recursive poll mode.
-                  '';
-                };
-                ignoredDirectoryNames = mkOption {
-                  type = strList;
-                  default = [
-                    ".btrfs"
-                    ".cache"
-                    ".direnv"
-                    ".git"
-                    ".hg"
-                    ".jj"
-                    ".sinex"
-                    ".svn"
-                    ".Trash-1000"
-                    "__pycache__"
-                    "node_modules"
-                    "target"
-                  ];
-                  description = ''
-                    Directory names excluded from recursive filesystem watch planning
-                    and historical scans. This trims heavy local tooling trees that
-                    otherwise consume watch budget without adding useful user signal.
-                  '';
-                };
-                ignoredFileSuffixes = mkOption {
-                  type = strList;
-                  default = [
-                    # SQLite write-ahead and shared-memory companions; rewritten
-                    # on every commit by the owning database, never useful as a
-                    # standalone capture.
-                    "-wal"
-                    "-shm"
-                    "-journal"
-                    ".wal"
-                    # pytest's testmondata WAL; same churn pattern as SQLite WAL.
-                    ".testmondata"
-                    ".testmondata-wal"
-                    # Editor swap / lock / temp files.
-                    ".swp"
-                    ".swx"
-                    ".swo"
-                    "~"
-                    ".tmp"
-                    ".part"
-                    ".crdownload"
-                  ];
-                  description = ''
-                    File-name suffixes excluded from fs source-worker records.
-                    Volatile files (SQLite -wal/-shm, pytest testmondata,
-                    editor swap/temp files) produce per-write churn with no
-                    standalone capture value and bloat the CAS — issue #1543
-                    saw 449 GB accumulate from substrate.duckdb.wal and
-                    .testmondata-wal alone. Matched as case-sensitive suffix
-                    on the file basename.
-                  '';
-                };
-                instances = mkOption { type = nullOr positive; default = null; description = "Instance override (null ⇒ inherit defaults)."; };
-                batch = mkOption {
-                  type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; });
-                  default = null;
-                  description = "Batch override (null ⇒ inherit defaults).";
-                };
-                resources = mkOption {
-                  type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; });
-                  default = { };
-                  description = "Filesystem node resource limits. Defaults to an 8G soft MemoryHigh watermark; hard caps remain opt-in.";
-                };
-                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
-              };
-            };
-            default = { };
-            description = "Filesystem node.";
-          };
-
-          terminal = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption { type = bool; default = true; description = "Enable terminal node."; };
-                instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
-                batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
-                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
-                historySources = mkOption {
-                  type = listOf terminalHistorySourceModule;
-                  default = [ ];
-                  description = ''
-                    Structured history sources passed to the terminal node through
-                    <literal>--node-config</literal>. When empty, the node falls back to its
-                    built-in defaults (the service user's home directory), which is usually not
-                    what workstation deployments want.
-                  '';
-                };
-                access = mkOption {
-                  type = submodule {
-                    options = {
-                      bindReadOnlyPaths = mkOption {
-                        type = listOf bindReadOnlyPathModule;
-                        default = [ ];
-                        description = ''
-                          Optional <literal>BindReadOnlyPaths</literal> entries for exposing
-                          target-user history files into the service namespace.
-                        '';
-                      };
-                    };
-                  };
-                  default = { };
-                  description = "Terminal node host-access configuration.";
-                };
-                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
-              };
-            };
-            default = { };
-            description = "Terminal node.";
-          };
-
-          browser = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption { type = bool; default = true; description = "Enable browser history node."; };
-                instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
-                batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
-                resources = mkOption {
-                  type = nullOr (resourceModule { defaultMemory = "384M"; defaultCpu = "50%"; });
-                  default = null;
-                  description = "Resource override.";
-                };
-                dumpSources = mkOption {
-                  type = strList;
-                  default = [ ];
-                  description = ''
-                    Absolute paths to browser export roots (`json`, `jsonl`, `ndjson`, `csv`)
-                    scanned by the browser history node.
-                  '';
-                };
-                sqliteSources = mkOption {
-                  type = listOf browserSqliteSourceModule;
-                  default = [ ];
-                  description = ''
-                    Typed browser SQLite sources passed to the browser history node through
-                    <literal>--node-config</literal>.
-                  '';
-                };
-                pollIntervalSec = mkOption {
-                  type = positive;
-                  default = 30;
-                  description = "Polling interval for browser dump roots and SQLite sources.";
-                };
-                access = mkOption {
-                  type = submodule {
-                    options = {
-                      bindReadOnlyPaths = mkOption {
-                        type = listOf bindReadOnlyPathModule;
-                        default = [ ];
-                        description = ''
-                          Optional <literal>BindReadOnlyPaths</literal> entries for exposing
-                          browser history files into the service namespace.
-                        '';
-                      };
-                    };
-                  };
-                  default = { };
-                  description = "Browser node host-access configuration.";
-                };
-                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
-              };
-            };
-            default = { };
-            description = "Browser history node.";
-          };
-
-          desktop = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption { type = bool; default = true; description = "Enable desktop node."; };
-                instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
-                batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
-                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
-                session = mkOption {
-                  type = submodule {
-                    options = {
-                      runtimeDir = mkOption {
-                        type = nullOr str;
-                        default = null;
-                        description = ''
-                          Runtime directory presented to the desktop node. When set, the module
-                          exports both <literal>SINEX_HYPRLAND_RUNTIME_DIR</literal> and
-                          <literal>XDG_RUNTIME_DIR</literal>.
-                        '';
-                      };
-                      waylandDisplay = mkOption {
-                        type = nullOr str;
-                        default = null;
-                        description = "Explicit `WAYLAND_DISPLAY` value for clipboard access.";
-                      };
-                      hyprlandInstanceSignature = mkOption {
-                        type = nullOr str;
-                        default = null;
-                        description = "Explicit Hyprland instance signature for socket discovery.";
-                      };
-                      hyprlandEventSocket = mkOption {
-                        type = nullOr str;
-                        default = null;
-                        description = "Explicit path to the Hyprland event socket (.socket2.sock).";
-                      };
-                      hyprlandCommandSocket = mkOption {
-                        type = nullOr str;
-                        default = null;
-                        description = "Explicit path to the Hyprland command socket (.socket.sock).";
-                      };
-                    };
-                  };
-                  default = { };
-                  description = "Desktop node session/runtime wiring.";
-                };
-                access = mkOption {
-                  type = submodule {
-                    options = {
-                      bindReadOnlyPaths = mkOption {
-                        type = listOf bindReadOnlyPathModule;
-                        default = [ ];
-                        description = ''
-                          Optional <literal>BindReadOnlyPaths</literal> entries for exposing
-                          user-runtime sockets (Hyprland, Wayland) into the service namespace.
-                        '';
-                      };
-                    };
-                  };
-                  default = { };
-                  description = "Desktop node host-access configuration.";
-                };
-                history = mkOption {
-                  type = submodule {
-                    options = {
-                      activitywatchDbPath = mkOption {
-                        type = nullOr path;
-                        default = null;
-                        description = ''
-                          Optional ActivityWatch SQLite database path used for desktop historical
-                          import. Exported as <literal>SINEX_ACTIVITYWATCH_DB_PATH</literal>.
-                        '';
-                      };
-                    };
-                  };
-                  default = { };
-                  description = "Desktop historical-import configuration.";
-                };
-                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
-                clipboard = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption {
-                        type = bool;
-                        default = true;
-                        description = "Enable clipboard integration.";
-                      };
-                    };
-                  };
-                  default = { };
-                  description = "Desktop clipboard integration.";
-                };
-              };
-            };
-            default = { };
-            description = "Desktop node.";
-          };
-
-          system = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption { type = bool; default = true; description = "Enable system node."; };
-                instances = mkOption { type = nullOr positive; default = 1; description = "Instance override (default 1)."; };
-                batch = mkOption {
-                  type = nullOr (batchModule { defaultSize = 200; defaultTimeout = 10; });
-                  default = { size = 200; timeoutSec = 10; };
-                  description = "Batch override (defaults to a slower cadence).";
-                };
-                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
-                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
-              };
-            };
-            default = { };
-            description = "System node.";
-          };
-
-          document = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption {
-                  type = bool;
-                  default = true;
-                  description = ''
-                    Enable managed document snapshot ingestion. This node runs as a
-                    scheduled scan service rather than a long-running daemon.
-                  '';
-                };
-                allowedRoots = mkOption {
-                  type = pathList;
-                  default = [ ];
-                  description = ''
-                    Root directories scanned by the managed document-ingestion service.
-                    When left empty and <option>services.sinex.users.target</option> is
-                    set, the module derives a default root of <literal>$HOME/Documents</literal>.
-                  '';
-                };
-                supportedMimeTypes = mkOption {
-                  type = strList;
-                  default = [
-                    "text/plain"
-                    "text/markdown"
-                    "application/pdf"
-                    "application/json"
-                    "text/html"
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                  ];
-                  description = "MIME types accepted by the document ingestor.";
-                };
-                maxDocumentSize = mkOption {
-                  type = unsigned;
-                  default = 25 * 1024 * 1024;
-                  description = "Maximum document size in bytes.";
-                };
-                runOnBoot = mkOption {
-                  type = bool;
-                  default = true;
-                  description = "Run a full document snapshot once during boot.";
-                };
-                schedule = mkOption {
-                  type = nullOr str;
-                  default = "hourly";
-                  description = ''
-                    Optional <literal>systemd.timer</literal> OnCalendar schedule for
-                    recurring document scans. Set to <literal>null</literal> to disable
-                    the timer while keeping the boot scan.
-                  '';
-                };
-                persistentTimer = mkOption {
-                  type = bool;
-                  default = true;
-                  description = "Set <literal>Persistent=true</literal> on the document scan timer.";
-                };
-                resources = mkOption {
-                  type = nullOr (resourceModule {
-                    defaultMemory = "8G";
-                    defaultCpu = "100%";
-                    defaultShutdownSec = 600;
-                  });
-                  default = null;
-                  description = "Resource limits for managed document snapshot scans.";
-                };
-                env = mkOption {
-                  type = envModule;
-                  default = { };
-                  description = "Extra environment variables.";
-                };
-                extraArgs = mkOption {
-                  type = strList;
-                  default = [ ];
-                  description = "Extra CLI args.";
-                };
-              };
-            };
-            default = { };
-            description = "Managed document snapshot ingestion.";
-          };
-
-          automata = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption { type = bool; default = true; description = "Enable automata services."; };
-
-                canonicalizer = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable canonical command synthesizer."; };
-                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                    };
-                  };
-                  default = { };
-                  description = "Canonical command synthesizer automaton.";
-                };
-
-                healthAggregator = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable health aggregator automaton."; };
-                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                    };
-                  };
-                  default = { };
-                  description = "Health aggregator automaton.";
-                };
-
-                analyticsAutomaton = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable analytics automaton."; };
-                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                    };
-                  };
-                  default = { };
-                  description = "Analytics automaton. Emits bounded `activity.window.summary` rollups from trusted activity signals.";
-                };
-
-                sessionDetector = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable session detector automaton. Groups events by temporal proximity into session boundaries."; };
-                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                    };
-                  };
-                  default = { };
-                  description = "Session detector automaton. Rolls bounded `activity.window.summary` inputs into `activity.session.boundary` outputs.";
-                };
-
-                hourlySummarizer = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable hourly activity summarizer automaton."; };
-                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                    };
-                  };
-                  default = { };
-                  description = "Hourly summarizer automaton. Rolls bounded `activity.window.summary` inputs into UTC-hour `activity.summary.hourly` outputs.";
-                };
-
-                dailySummarizer = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable daily activity summarizer automaton."; };
-                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                    };
-                  };
-                  default = { };
-                  description = "Daily summarizer automaton. Rolls hourly `activity.summary.hourly` inputs into UTC-day `activity.summary.daily` outputs.";
-                };
-
-                documentParser = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable document parser automaton."; };
-                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                    };
-                  };
-                  default = { };
-                  description = "Document parser automaton. Consumes `document.ingested` and `command.canonical` events, emits `document.parsed` + `document.chunked` derived events.";
-                };
-
-                tagApplier = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable tag applier automaton."; };
-                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                    };
-                  };
-                  default = { };
-                  description = "Rule-based tag automaton. Applies source, file-type, and MIME tags to events — emits `knowledge.tag_applied`.";
-                };
-
-                instructionReconciler = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable instruction expectation reconciler automaton."; };
-                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                    };
-                  };
-                  default = { };
-                  description = "Instruction expectation reconciler. Compares desired-state instruction events with ordinary observations — emits `runtime.instruction/expectation.status`.";
-                };
-
-                entityExtractor = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable entity extractor automaton."; };
-                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                    };
-                  };
-                  default = { };
-                  description = "Entity extractor automaton (Stage 1). Scans events for URLs, file paths, commands, emails — emits `entity.extracted`.";
-                };
-
-                entityResolver = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable entity resolver automaton."; };
-                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                    };
-                  };
-                  default = { };
-                  description = "Entity resolver automaton. Consumes `entity.extracted` events, emits `entity.resolved` with UUIDv5 deterministic IDs.";
-                };
-
-                relationExtractor = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable relation extractor automaton."; };
-                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                    };
-                  };
-                  default = { };
-                  description = "Relation extractor automaton. Consumes `entity.resolved`, emits `entity.related` from co-occurrence within source events.";
-                };
-
-                entityEnricher = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable entity enricher automaton."; };
-                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
-                    };
-                  };
-                  default = { };
-                  description = "Entity enricher automaton. Consumes `entity.resolved`, emits `entity.enriched` with temporal stats and category refinement.";
-                };
-
-                profiles = mkOption {
-                  type = attrsOf (submodule {
-                    options = {
-                      batch = mkOption {
-                        type = batchModule { defaultSize = 100; defaultTimeout = 5; };
-                        default = { };
-                        description = "Batch parameters for this automata profile.";
-                      };
-                      resources = mkOption {
-                        type = resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; };
-                        default = { };
-                        description = "Resource limits for this automata profile.";
-                      };
-                    };
-                  });
-                  default = {
-                    light = {
-                      batch = { size = 50; timeoutSec = 2; };
-                      # memoryMax is 1.5x memoryHigh — soft pressure throttles
-                      # the process; hard cap kills it before a runaway leak
-                      # can saturate the host. 2026-05-15 forensic observed
-                      # sinex-relation-extractor at 4.5G RSS leaking ~70MB/min
-                      # past the (memoryHigh-only) 4G threshold. Root cause
-                      # was the heartbeat collision in #1284; the absence of
-                      # a hard cap turned a per-node leak into a host risk.
-                      resources = { memoryHigh = "2G"; memoryMax = "3G"; };
-                    };
-                    standard = {
-                      batch = { size = 100; timeoutSec = 5; };
-                      resources = { memoryHigh = "4G"; memoryMax = "6G"; };
-                    };
-                    heavy = {
-                      batch = { size = 500; timeoutSec = 5; };
-                      resources = { memoryHigh = "8G"; memoryMax = "12G"; };
-                    };
-                  };
-                  description = "Named automata performance profiles.";
-                };
-              };
-            };
-            default = { };
-            description = "Automata configuration.";
+            description = "Source runtime defaults.";
           };
 
           coordination = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = false; description = "Enable node coordination."; };
+                enable = mkOption { type = bool; default = false; description = "Enable runtime coordination."; };
                 heartbeatSec = mkOption { type = positive; default = 5; description = "Heartbeat interval in seconds."; };
                 leadershipTimeoutSec = mkOption { type = positive; default = 30; description = "Leadership timeout in seconds."; };
                 handoffTimeoutSec = mkOption { type = positive; default = 10; description = "Handoff timeout in seconds."; };
@@ -1719,219 +1114,7 @@ in
             description = "Coordination settings.";
           };
 
-        };
-      };
-      default = { };
-      description = "Node ecosystem configuration.";
-    };
 
-    observability = mkOption {
-      type = submodule {
-        options = {
-          enable = mkOption { type = bool; default = true; description = "Enable observability features."; };
-          logDir = mkOption {
-            type = path;
-            default = cfg.stateRoot + "/logs";
-            defaultText = literalExpression "config.services.sinex.stateRoot + \"/logs\"";
-            description = "Directory used for log files.";
-          };
-
-          monitoring = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption { type = bool; default = true; description = "Enable Prometheus/Grafana stack."; };
-
-                prometheus = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = true; description = "Enable Prometheus."; };
-                      listen = mkOption { type = str; default = "127.0.0.1"; description = "Prometheus bind address."; };
-                      port = mkOption { type = port; default = 9090; description = "Prometheus port."; };
-                      retention = mkOption { type = str; default = "30d"; description = "Prometheus retention window."; };
-                      extraScrapeConfigs = mkOption { type = listOf attrs; default = [ ]; description = "Additional scrape configs merged in."; };
-                    };
-                  };
-                  default = { };
-                  description = "Prometheus configuration.";
-                };
-
-                grafana = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption { type = bool; default = false; description = "Enable Grafana."; };
-                      port = mkOption { type = port; default = 3000; description = "Grafana port."; };
-                      secretKey = mkOption {
-                        type = nullOr str;
-                        default = null;
-                        description = ''
-                          Optional literal Grafana secret key.
-                          When unset, the module first looks for the conventional secret sources
-                          <literal>sinex-grafana-secret-key</literal> or
-                          <literal>grafana-secret-key</literal> (including
-                          <literal>/etc/sinex/grafana-secret-key</literal> when declared via
-                          <literal>environment.etc</literal>), and otherwise derives a stable
-                          host-local key automatically.
-                        '';
-                      };
-                      secretKeyFile = mkOption {
-                        type = nullOr path;
-                        default = null;
-                        description = ''
-                          Optional path to a Grafana secret key file.
-                          This is only needed when you want the module to read the key from a
-                          specific file instead of using the agenix convention or the derived
-                          declarative default.
-                        '';
-                      };
-                    };
-                  };
-                  default = { };
-                  description = "Grafana configuration.";
-                };
-
-                exporters = mkOption {
-                  type = submodule {
-                    options = {
-                      node = mkOption { type = bool; default = true; description = "Enable node exporter."; };
-                      postgres = mkOption { type = bool; default = true; description = "Enable postgres exporter."; };
-                      nats = mkOption {
-                        type = bool;
-                        default = true;
-                        description = ''
-                          Enable the NATS Prometheus exporter (prometheus-nats-exporter).
-                          Requires pkgs.prometheus-nats-exporter to be available.
-                          Scrapes the NATS HTTP monitoring endpoint and re-exposes metrics
-                          in Prometheus format on port 7777.
-                        '';
-                      };
-                    };
-                  };
-                  default = { };
-                  description = "Exporter configuration.";
-                };
-              };
-            };
-            default = { };
-            description = "Monitoring stack.";
-          };
-
-          logging = mkOption {
-            type = submodule {
-              options = {
-                structured = mkOption { type = bool; default = true; description = "Enable structured JSON logging."; };
-                retention = mkOption {
-                  type = submodule {
-                    options = {
-                      files = mkOption { type = positive; default = 10; description = "Max rotated files."; };
-                      size = mkOption { type = str; default = "100M"; description = "Max size per log file."; };
-                      age = mkOption { type = str; default = "30d"; description = "Maximum log age."; };
-                    };
-                  };
-                  default = { };
-                  description = "Log retention policy.";
-                };
-              };
-            };
-            default = { };
-            description = "Logging configuration.";
-          };
-
-          alerts = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption { type = bool; default = false; description = "Enable Prometheus alert rules."; };
-                rulesFiles = mkOption { type = pathList; default = [ ]; description = "Alert rule files to include."; };
-              };
-            };
-            default = { };
-            description = "Alerting configuration.";
-          };
-        };
-      };
-      default = { };
-      description = "Observability configuration.";
-    };
-
-    lifecycle = mkOption {
-      type = submodule {
-        options = {
-          preflight = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption { type = bool; default = true; description = "Enable preflight verification gates."; };
-                timeoutSec = mkOption { type = positive; default = 120; description = "Preflight timeout in seconds."; };
-                schemaApplyTimeoutSec = mkOption {
-                  type = positive;
-                  default = 600;
-                  description = "Schema-apply timeout in seconds.";
-                };
-                skip = mkOption {
-                  type = listOf (enum [
-                    "database"
-                    "extensions"
-                    "migrations"
-                    "resources"
-                    "configuration"
-                    "services"
-                    "integration"
-                  ]);
-                  default = [ ];
-                  description = "Phases to skip during preflight verification.";
-                };
-                failureAction = mkOption {
-                  type = enum [ "abort" "warn" "ignore" ];
-                  default = "abort";
-                  description = "Action when preflight fails.";
-                };
-              };
-            };
-            default = { };
-            description = "Preflight verification configuration.";
-          };
-
-          updates = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption { type = bool; default = true; description = "Enable coordinated updates."; };
-                gracePeriodSec = mkOption { type = positive; default = 30; description = "Grace period before restarting units."; };
-                healthCheckTimeoutSec = mkOption { type = positive; default = 60; description = "Time to wait for units to become healthy."; };
-                rollbackOnFailure = mkOption { type = bool; default = true; description = "Rollback units if update fails."; };
-                units = mkOption { type = strList; default = [ ]; description = "Explicit list of units to manage (empty derives)."; };
-              };
-            };
-            default = { };
-            description = "Coordinated update configuration.";
-          };
-
-          maintenance = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption { type = bool; default = true; description = "Enable maintenance timers."; };
-                tasks = mkOption {
-                  type = submodule {
-                    options = {
-                      blobGc = mkOption { type = bool; default = true; description = "Run blob garbage collection."; };
-                      blobFsck = mkOption { type = bool; default = true; description = "Run blob fsck timer."; };
-                      custom = mkOption { type = strList; default = [ ]; description = "Additional maintenance units to start."; };
-                    };
-                  };
-                  default = { };
-                  description = "Maintenance task selection.";
-                };
-              };
-            };
-            default = { };
-            description = "Maintenance configuration.";
-          };
-        };
-      };
-      default = { };
-      description = "Lifecycle management configuration.";
-    };
-
-    runtime = mkOption {
-      type = submodule {
-        options = {
           target = mkOption {
             type = submodule {
               options = {
@@ -2097,11 +1280,816 @@ in
                 };
             '';
           };
+                };
+      };
+      default = { };
+      description = "Sinex runtime lifecycle and shared client configuration.";
+    };
+
+    sources = {
+      enable = mkOption {
+        type = bool;
+        default = true;
+        description = "Enable source drivers hosted by sinexd.";
+      };
+
+      filesystem = mkOption {
+        type = submodule {
+          options = {
+            enable = mkOption { type = bool; default = true; description = "Enable filesystem source. Watches large directory trees; needs more memory than other runtime modules."; };
+            watchPaths = mkOption {
+              type = strList;
+              default = [ ];
+              description = ''
+                Absolute paths for the filesystem source to watch.
+                When empty and <option>services.sinex.users.target</option> is set,
+                defaults to the target user's home directory.
+              '';
+            };
+            maxWatches = mkOption {
+              type = positive;
+              default = 524288;
+              description = ''
+                Filesystem watch-budget threshold passed to the runtime config.
+                When the recursive tree exceeds this value, the runtime now tries a
+                filtered native watch plan before failing honestly instead of
+                switching to recursive poll mode.
+              '';
+            };
+            ignoredDirectoryNames = mkOption {
+              type = strList;
+              default = [
+                ".btrfs"
+                ".cache"
+                ".direnv"
+                ".git"
+                ".hg"
+                ".jj"
+                ".sinex"
+                ".svn"
+                ".Trash-1000"
+                "__pycache__"
+                "node_modules"
+                "target"
+              ];
+              description = ''
+                Directory names excluded from recursive filesystem watch planning
+                and historical scans. This trims heavy local tooling trees that
+                otherwise consume watch budget without adding useful user signal.
+              '';
+            };
+            ignoredFileSuffixes = mkOption {
+              type = strList;
+              default = [
+                # SQLite write-ahead and shared-memory companions; rewritten
+                # on every commit by the owning database, never useful as a
+                # standalone capture.
+                "-wal"
+                "-shm"
+                "-journal"
+                ".wal"
+                # pytest's testmondata WAL; same churn pattern as SQLite WAL.
+                ".testmondata"
+                ".testmondata-wal"
+                # Editor swap / lock / temp files.
+                ".swp"
+                ".swx"
+                ".swo"
+                "~"
+                ".tmp"
+                ".part"
+                ".crdownload"
+              ];
+              description = ''
+                File-name suffixes excluded from fs source host records.
+                Volatile files (SQLite -wal/-shm, pytest testmondata,
+                editor swap/temp files) produce per-write churn with no
+                standalone capture value and bloat the CAS — issue #1543
+                saw 449 GB accumulate from substrate.duckdb.wal and
+                .testmondata-wal alone. Matched as case-sensitive suffix
+                on the file basename.
+              '';
+            };
+            instances = mkOption { type = nullOr positive; default = null; description = "Instance override (null ⇒ inherit defaults)."; };
+            batch = mkOption {
+              type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; });
+              default = null;
+              description = "Batch override (null ⇒ inherit defaults).";
+            };
+            resources = mkOption {
+              type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; });
+              default = { };
+              description = "Filesystem source runtime resource limits. Defaults to an 8G soft MemoryHigh watermark; hard caps remain opt-in.";
+            };
+            env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+            extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
+          };
+        };
+        default = { };
+        description = "Filesystem source runtime.";
+      };
+
+      terminal = mkOption {
+        type = submodule {
+          options = {
+            enable = mkOption { type = bool; default = true; description = "Enable terminal source runtime."; };
+            instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
+            batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
+            resources = mkOption { type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
+            historySources = mkOption {
+              type = listOf terminalHistorySourceModule;
+              default = [ ];
+              description = ''
+                Structured history sources passed to the terminal source runtime through
+                <literal>--runtime-config</literal>. When empty, the runtime falls back to its
+                built-in defaults (the service user's home directory), which is usually not
+                what workstation deployments want.
+              '';
+            };
+            access = mkOption {
+              type = submodule {
+                options = {
+                  bindReadOnlyPaths = mkOption {
+                    type = listOf bindReadOnlyPathModule;
+                    default = [ ];
+                    description = ''
+                      Optional <literal>BindReadOnlyPaths</literal> entries for exposing
+                      target-user history files into the service namespace.
+                    '';
+                  };
+                };
+              };
+              default = { };
+              description = "Terminal source runtime host-access configuration.";
+            };
+            env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+            extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
+          };
+        };
+        default = { };
+        description = "Terminal source runtime.";
+      };
+
+      browser = mkOption {
+        type = submodule {
+          options = {
+            enable = mkOption { type = bool; default = true; description = "Enable browser history source runtime."; };
+            instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
+            batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
+            resources = mkOption {
+              type = nullOr (resourceModule { defaultMemory = "384M"; defaultCpu = "50%"; });
+              default = null;
+              description = "Resource override.";
+            };
+            dumpSources = mkOption {
+              type = strList;
+              default = [ ];
+              description = ''
+                Absolute paths to browser export roots (`json`, `jsonl`, `ndjson`, `csv`)
+                scanned by the browser history source runtime.
+              '';
+            };
+            sqliteSources = mkOption {
+              type = listOf browserSqliteSourceModule;
+              default = [ ];
+              description = ''
+                Typed browser SQLite sources passed to the browser history source runtime through
+                <literal>--runtime-config</literal>.
+              '';
+            };
+            pollIntervalSec = mkOption {
+              type = positive;
+              default = 30;
+              description = "Polling interval for browser dump roots and SQLite sources.";
+            };
+            access = mkOption {
+              type = submodule {
+                options = {
+                  bindReadOnlyPaths = mkOption {
+                    type = listOf bindReadOnlyPathModule;
+                    default = [ ];
+                    description = ''
+                      Optional <literal>BindReadOnlyPaths</literal> entries for exposing
+                      browser history files into the service namespace.
+                    '';
+                  };
+                };
+              };
+              default = { };
+              description = "Browser source runtime host-access configuration.";
+            };
+            env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+            extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
+          };
+        };
+        default = { };
+        description = "Browser history source runtime.";
+      };
+
+      desktop = mkOption {
+        type = submodule {
+          options = {
+            enable = mkOption { type = bool; default = true; description = "Enable desktop source runtime."; };
+            instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
+            batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
+            resources = mkOption { type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
+            session = mkOption {
+              type = submodule {
+                options = {
+                  runtimeDir = mkOption {
+                    type = nullOr str;
+                    default = null;
+                    description = ''
+                      Runtime directory presented to the desktop source runtime. When set, the module
+                      exports both <literal>SINEX_HYPRLAND_RUNTIME_DIR</literal> and
+                      <literal>XDG_RUNTIME_DIR</literal>.
+                    '';
+                  };
+                  waylandDisplay = mkOption {
+                    type = nullOr str;
+                    default = null;
+                    description = "Explicit `WAYLAND_DISPLAY` value for clipboard access.";
+                  };
+                  hyprlandInstanceSignature = mkOption {
+                    type = nullOr str;
+                    default = null;
+                    description = "Explicit Hyprland instance signature for socket discovery.";
+                  };
+                  hyprlandEventSocket = mkOption {
+                    type = nullOr str;
+                    default = null;
+                    description = "Explicit path to the Hyprland event socket (.socket2.sock).";
+                  };
+                  hyprlandCommandSocket = mkOption {
+                    type = nullOr str;
+                    default = null;
+                    description = "Explicit path to the Hyprland command socket (.socket.sock).";
+                  };
+                };
+              };
+              default = { };
+              description = "Desktop source runtime session wiring.";
+            };
+            access = mkOption {
+              type = submodule {
+                options = {
+                  bindReadOnlyPaths = mkOption {
+                    type = listOf bindReadOnlyPathModule;
+                    default = [ ];
+                    description = ''
+                      Optional <literal>BindReadOnlyPaths</literal> entries for exposing
+                      user-runtime sockets (Hyprland, Wayland) into the service namespace.
+                    '';
+                  };
+                };
+              };
+              default = { };
+              description = "Desktop source runtime host-access configuration.";
+            };
+            history = mkOption {
+              type = submodule {
+                options = {
+                  activitywatchDbPath = mkOption {
+                    type = nullOr path;
+                    default = null;
+                    description = ''
+                      Optional ActivityWatch SQLite database path used for desktop historical
+                      import. Exported as <literal>SINEX_ACTIVITYWATCH_DB_PATH</literal>.
+                    '';
+                  };
+                };
+              };
+              default = { };
+              description = "Desktop historical-import configuration.";
+            };
+            env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+            extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
+            clipboard = mkOption {
+              type = submodule {
+                options = {
+                  enable = mkOption {
+                    type = bool;
+                    default = true;
+                    description = "Enable clipboard integration.";
+                  };
+                };
+              };
+              default = { };
+              description = "Desktop clipboard integration.";
+            };
+          };
+        };
+        default = { };
+        description = "Desktop source runtime.";
+      };
+
+      system = mkOption {
+        type = submodule {
+          options = {
+            enable = mkOption { type = bool; default = true; description = "Enable system source runtime."; };
+            instances = mkOption { type = nullOr positive; default = 1; description = "Instance override (default 1)."; };
+            batch = mkOption {
+              type = nullOr (batchModule { defaultSize = 200; defaultTimeout = 10; });
+              default = { size = 200; timeoutSec = 10; };
+              description = "Batch override (defaults to a slower cadence).";
+            };
+            resources = mkOption { type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
+            env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+            extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
+          };
+        };
+        default = { };
+        description = "System source runtime.";
+      };
+
+      document = mkOption {
+        type = submodule {
+          options = {
+            enable = mkOption {
+              type = bool;
+              default = true;
+              description = ''
+                Enable managed document snapshot ingestion. This source runtime runs as a
+                scheduled scan service rather than a long-running daemon.
+              '';
+            };
+            allowedRoots = mkOption {
+              type = pathList;
+              default = [ ];
+              description = ''
+                Root directories scanned by the managed document-ingestion service.
+                When left empty and <option>services.sinex.users.target</option> is
+                set, the module derives a default root of <literal>$HOME/Documents</literal>.
+              '';
+            };
+            supportedMimeTypes = mkOption {
+              type = strList;
+              default = [
+                "text/plain"
+                "text/markdown"
+                "application/pdf"
+                "application/json"
+                "text/html"
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              ];
+              description = "MIME types accepted by the document source.";
+            };
+            maxDocumentSize = mkOption {
+              type = unsigned;
+              default = 25 * 1024 * 1024;
+              description = "Maximum document size in bytes.";
+            };
+            runOnBoot = mkOption {
+              type = bool;
+              default = true;
+              description = "Run a full document snapshot once during boot.";
+            };
+            schedule = mkOption {
+              type = nullOr str;
+              default = "hourly";
+              description = ''
+                Optional <literal>systemd.timer</literal> OnCalendar schedule for
+                recurring document scans. Set to <literal>null</literal> to disable
+                the timer while keeping the boot scan.
+              '';
+            };
+            persistentTimer = mkOption {
+              type = bool;
+              default = true;
+              description = "Set <literal>Persistent=true</literal> on the document scan timer.";
+            };
+            resources = mkOption {
+              type = nullOr (resourceModule {
+                defaultMemory = "8G";
+                defaultCpu = "100%";
+                defaultShutdownSec = 600;
+              });
+              default = null;
+              description = "Resource limits for managed document snapshot scans.";
+            };
+            env = mkOption {
+              type = envModule;
+              default = { };
+              description = "Extra environment variables.";
+            };
+            extraArgs = mkOption {
+              type = strList;
+              default = [ ];
+              description = "Extra CLI args.";
+            };
+          };
+        };
+        default = { };
+        description = "Managed document snapshot ingestion.";
+      };
+    };
+
+
+    automata = mkOption {
+      type = submodule {
+        options = {
+          enable = mkOption { type = bool; default = true; description = "Enable automata services."; };
+
+          canonicalizer = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable canonical command synthesizer."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Canonical command synthesizer automaton.";
+          };
+
+          healthAggregator = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable health aggregator automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Health aggregator automaton.";
+          };
+
+          analyticsAutomaton = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable analytics automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Analytics automaton. Emits bounded `activity.window.summary` rollups from trusted activity signals.";
+          };
+
+          sessionDetector = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable session detector automaton. Groups events by temporal proximity into session boundaries."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Session detector automaton. Rolls bounded `activity.window.summary` inputs into `activity.session.boundary` outputs.";
+          };
+
+          hourlySummarizer = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable hourly activity summarizer automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Hourly summarizer automaton. Rolls bounded `activity.window.summary` inputs into UTC-hour `activity.summary.hourly` outputs.";
+          };
+
+          dailySummarizer = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable daily activity summarizer automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Daily summarizer automaton. Rolls hourly `activity.summary.hourly` inputs into UTC-day `activity.summary.daily` outputs.";
+          };
+
+          documentParser = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable document parser automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Document parser automaton. Consumes `document.ingested` and `command.canonical` events, emits `document.parsed` + `document.chunked` derived events.";
+          };
+
+          tagApplier = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable tag applier automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Rule-based tag automaton. Applies source, file-type, and MIME tags to events — emits `knowledge.tag_applied`.";
+          };
+
+          instructionReconciler = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable instruction expectation reconciler automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Instruction expectation reconciler. Compares desired-state instruction events with ordinary observations — emits `runtime.instruction/expectation.status`.";
+          };
+
+          entityExtractor = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable entity extractor automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Entity extractor automaton (Stage 1). Scans events for URLs, file paths, commands, emails — emits `entity.extracted`.";
+          };
+
+          entityResolver = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable entity resolver automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Entity resolver automaton. Consumes `entity.extracted` events, emits `entity.resolved` with UUIDv5 deterministic IDs.";
+          };
+
+          relationExtractor = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable relation extractor automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Relation extractor automaton. Consumes `entity.resolved`, emits `entity.related` from co-occurrence within source events.";
+          };
+
+          entityEnricher = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable entity enricher automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Entity enricher automaton. Consumes `entity.resolved`, emits `entity.enriched` with temporal stats and category refinement.";
+          };
+
+          profiles = mkOption {
+            type = attrsOf (submodule {
+              options = {
+                batch = mkOption {
+                  type = batchModule { defaultSize = 100; defaultTimeout = 5; };
+                  default = { };
+                  description = "Batch parameters for this automata profile.";
+                };
+                resources = mkOption {
+                  type = resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; };
+                  default = { };
+                  description = "Resource limits for this automata profile.";
+                };
+              };
+            });
+            default = {
+              light = {
+                batch = { size = 50; timeoutSec = 2; };
+                # memoryMax is 1.5x memoryHigh — soft pressure throttles
+                # the process; hard cap kills it before a runaway leak
+                # can saturate the host. 2026-05-15 forensic observed
+                # sinex-relation-extractor at 4.5G RSS leaking ~70MB/min
+                # past the (memoryHigh-only) 4G threshold. Root cause
+                # was the heartbeat collision in #1284; the absence of
+                # a hard cap turned a per-runtime-module leak into a host risk.
+                resources = { memoryHigh = "2G"; memoryMax = "3G"; };
+              };
+              standard = {
+                batch = { size = 100; timeoutSec = 5; };
+                resources = { memoryHigh = "4G"; memoryMax = "6G"; };
+              };
+              heavy = {
+                batch = { size = 500; timeoutSec = 5; };
+                resources = { memoryHigh = "8G"; memoryMax = "12G"; };
+              };
+            };
+            description = "Named automata performance profiles.";
+          };
         };
       };
       default = { };
-      description = "Runtime systemd integration policy.";
+      description = "Automata configuration.";
     };
+
+
+    observability = mkOption {
+      type = submodule {
+        options = {
+          enable = mkOption { type = bool; default = true; description = "Enable observability features."; };
+          logDir = mkOption {
+            type = path;
+            default = cfg.stateRoot + "/logs";
+            defaultText = literalExpression "config.services.sinex.stateRoot + \"/logs\"";
+            description = "Directory used for log files.";
+          };
+
+          monitoring = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable Prometheus/Grafana stack."; };
+
+                prometheus = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable Prometheus."; };
+                      listen = mkOption { type = str; default = "127.0.0.1"; description = "Prometheus bind address."; };
+                      port = mkOption { type = port; default = 9090; description = "Prometheus port."; };
+                      retention = mkOption { type = str; default = "30d"; description = "Prometheus retention window."; };
+                      extraScrapeConfigs = mkOption { type = listOf attrs; default = [ ]; description = "Additional scrape configs merged in."; };
+                    };
+                  };
+                  default = { };
+                  description = "Prometheus configuration.";
+                };
+
+                grafana = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = false; description = "Enable Grafana."; };
+                      port = mkOption { type = port; default = 3000; description = "Grafana port."; };
+                      secretKey = mkOption {
+                        type = nullOr str;
+                        default = null;
+                        description = ''
+                          Optional literal Grafana secret key.
+                          When unset, the module first looks for the conventional secret sources
+                          <literal>sinex-grafana-secret-key</literal> or
+                          <literal>grafana-secret-key</literal> (including
+                          <literal>/etc/sinex/grafana-secret-key</literal> when declared via
+                          <literal>environment.etc</literal>), and otherwise derives a stable
+                          host-local key automatically.
+                        '';
+                      };
+                      secretKeyFile = mkOption {
+                        type = nullOr path;
+                        default = null;
+                        description = ''
+                          Optional path to a Grafana secret key file.
+                          This is only needed when you want the module to read the key from a
+                          specific file instead of using the agenix convention or the derived
+                          declarative default.
+                        '';
+                      };
+                    };
+                  };
+                  default = { };
+                  description = "Grafana configuration.";
+                };
+
+                exporters = mkOption {
+                  type = submodule {
+                    options = {
+                      node = mkOption { type = bool; default = true; description = "Enable node exporter."; };
+                      postgres = mkOption { type = bool; default = true; description = "Enable postgres exporter."; };
+                      nats = mkOption {
+                        type = bool;
+                        default = true;
+                        description = ''
+                          Enable the NATS Prometheus exporter (prometheus-nats-exporter).
+                          Requires pkgs.prometheus-nats-exporter to be available.
+                          Scrapes the NATS HTTP monitoring endpoint and re-exposes metrics
+                          in Prometheus format on port 7777.
+                        '';
+                      };
+                    };
+                  };
+                  default = { };
+                  description = "Exporter configuration.";
+                };
+              };
+            };
+            default = { };
+            description = "Monitoring stack.";
+          };
+
+          logging = mkOption {
+            type = submodule {
+              options = {
+                structured = mkOption { type = bool; default = true; description = "Enable structured JSON logging."; };
+                retention = mkOption {
+                  type = submodule {
+                    options = {
+                      files = mkOption { type = positive; default = 10; description = "Max rotated files."; };
+                      size = mkOption { type = str; default = "100M"; description = "Max size per log file."; };
+                      age = mkOption { type = str; default = "30d"; description = "Maximum log age."; };
+                    };
+                  };
+                  default = { };
+                  description = "Log retention policy.";
+                };
+              };
+            };
+            default = { };
+            description = "Logging configuration.";
+          };
+
+          alerts = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = false; description = "Enable Prometheus alert rules."; };
+                rulesFiles = mkOption { type = pathList; default = [ ]; description = "Alert rule files to include."; };
+              };
+            };
+            default = { };
+            description = "Alerting configuration.";
+          };
+        };
+      };
+      default = { };
+      description = "Observability configuration.";
+    };
+
+    lifecycle = mkOption {
+      type = submodule {
+        options = {
+          preflight = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable preflight verification gates."; };
+                timeoutSec = mkOption { type = positive; default = 120; description = "Preflight timeout in seconds."; };
+                skip = mkOption {
+                  type = listOf (enum [
+                    "database"
+                    "extensions"
+                    "migrations"
+                    "resources"
+                    "configuration"
+                    "services"
+                    "integration"
+                  ]);
+                  default = [ ];
+                  description = "Phases to skip during preflight verification.";
+                };
+                failureAction = mkOption {
+                  type = enum [ "abort" "warn" "ignore" ];
+                  default = "abort";
+                  description = "Action when preflight fails.";
+                };
+              };
+            };
+            default = { };
+            description = "Preflight verification configuration.";
+          };
+
+          updates = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable coordinated updates."; };
+                gracePeriodSec = mkOption { type = positive; default = 30; description = "Grace period before restarting units."; };
+                healthCheckTimeoutSec = mkOption { type = positive; default = 60; description = "Time to wait for units to become healthy."; };
+                rollbackOnFailure = mkOption { type = bool; default = true; description = "Rollback units if update fails."; };
+                units = mkOption { type = strList; default = [ ]; description = "Explicit list of units to manage (empty derives)."; };
+              };
+            };
+            default = { };
+            description = "Coordinated update configuration.";
+          };
+
+          maintenance = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable maintenance timers."; };
+                tasks = mkOption {
+                  type = submodule {
+                    options = {
+                      blobGc = mkOption { type = bool; default = true; description = "Run blob garbage collection."; };
+                      blobFsck = mkOption { type = bool; default = true; description = "Run blob fsck timer."; };
+                      custom = mkOption { type = strList; default = [ ]; description = "Additional maintenance units to start."; };
+                    };
+                  };
+                  default = { };
+                  description = "Maintenance task selection.";
+                };
+              };
+            };
+            default = { };
+            description = "Maintenance configuration.";
+          };
+        };
+      };
+      default = { };
+      description = "Lifecycle management configuration.";
+    };
+
 
     bootstrap = mkOption {
       type = submodule {
@@ -2185,15 +2173,15 @@ in
             '';
           };
 
-          gatewayAdminTokenFile = mkOption {
+          apiAdminTokenFile = mkOption {
             type = nullOr str;
             default = null;
             description = ''
-              Optional path to the gateway admin token file.
+              Optional path to the API admin token file.
               When unset, the module first looks for the conventional secret sources
-              <literal>sinex-gateway-admin-token</literal> (agenix) and
-              <literal>/etc/sinex/gateway-admin-token</literal> (declarative environment.etc),
-              and the gateway refuses to start only if none of those exist.
+              <literal>sinex-api-admin-token</literal> (agenix) and
+              <literal>/etc/sinex/api-admin-token</literal> (declarative environment.etc),
+              and the API refuses to start only if none of those exist.
             '';
           };
         };
@@ -2208,11 +2196,12 @@ in
       stateRoot = cfg.stateRoot;
       runtimeDir = "${stateRoot}/run";
       spoolBase = "${stateRoot}/spool";
-      nodesSpool = "${spoolBase}/nodes";
-      ingestSpool = cfg.core.ingestd.spoolDir;
+      runtimeSpool = "${spoolBase}/runtime modules";
+      ingestSpool = cfg.core.event_engine.spoolDir;
       logDir = cfg.observability.logDir;
       blobDir = cfg.storage.blob.repositoryPath;
-      sinexUser = cfg.users.nodes;
+      sinexUser = cfg.users.runtime;
+      sourcesEnabled = cfg.enable && cfg.runtime.enable && cfg.sources.enable;
       targetUser = cfg.users.target;
       targetHome =
         if targetUser == null then null
@@ -2224,7 +2213,7 @@ in
         if targetUser == null then null
         else lib.attrByPath [ "users" "users" targetUser "uid" ] null config;
       effectiveDocumentRoots =
-        if cfg.nodes.document.allowedRoots != [ ] then cfg.nodes.document.allowedRoots
+        if cfg.sources.document.allowedRoots != [ ] then cfg.sources.document.allowedRoots
         else if targetHome == null then [ ]
         else [ "${targetHome}/Documents" ];
       dbUser = cfg.database.user;
@@ -2232,16 +2221,16 @@ in
       databaseUrl = renderDatabaseUrl dbCfg;
       secretPaths = config.sinex.secrets.paths or { };
       resolveSecretPath = resolveNamedSecretPath secretPaths;
-      gatewayAdminTokenFile =
-        resolveSecretPath cfg.secrets.gatewayAdminTokenFile [
-          "sinex-gateway-admin-token"
+      apiAdminTokenFile =
+        resolveSecretPath cfg.secrets.apiAdminTokenFile [
+          "sinex-api-admin-token"
         ];
       effectiveDatabasePasswordFile = resolveSecretPath cfg.database.passwordFile [
         "sinex-local-db"
         "sinex-remote-db"
       ];
-      natsTlsCfg = cfg.nodes.nats.tls;
-      natsAuthCfg = cfg.nodes.nats.auth;
+      natsTlsCfg = cfg.runtime.nats.tls;
+      natsAuthCfg = cfg.runtime.nats.auth;
       effectiveNatsCaCertFile = resolveSecretPath natsTlsCfg.caCertFile [
         "sinex-nats-ca"
         "nats-ca"
@@ -2269,35 +2258,35 @@ in
         "sinex-nats-client-nkey"
         "nats-client-nkey"
       ];
-      gatewayTlsCertFile = cfg.core.gateway.tlsCertFile;
-      gatewayTlsKeyFile = cfg.core.gateway.tlsKeyFile;
-      gatewayTlsTrustAnchorFile =
-        if cfg.core.gateway.autoGenerateTls then runtimeDir + "/gateway-ca.pem" else null;
-      gatewayTlsClientCAFile = cfg.core.gateway.tlsClientCAFile;
-      gatewayProbeListenAddress =
-        if hasPrefix "0.0.0.0:" cfg.core.gateway.listenAddress then
-          "127.0.0.1:${removePrefix "0.0.0.0:" cfg.core.gateway.listenAddress}"
-        else if hasPrefix "[::]:" cfg.core.gateway.listenAddress then
-          "[::1]:${removePrefix "[::]:" cfg.core.gateway.listenAddress}"
+      apiTlsCertFile = cfg.core.api.tlsCertFile;
+      apiTlsKeyFile = cfg.core.api.tlsKeyFile;
+      apiTlsTrustAnchorFile =
+        if cfg.core.api.autoGenerateTls then runtimeDir + "/api-ca.pem" else null;
+      apiTlsClientCAFile = cfg.core.api.tlsClientCAFile;
+      apiProbeListenAddress =
+        if hasPrefix "0.0.0.0:" cfg.core.api.listenAddress then
+          "127.0.0.1:${removePrefix "0.0.0.0:" cfg.core.api.listenAddress}"
+        else if hasPrefix "[::]:" cfg.core.api.listenAddress then
+          "[::1]:${removePrefix "[::]:" cfg.core.api.listenAddress}"
         else
-          cfg.core.gateway.listenAddress;
-      gatewayProbeBaseUrl =
-        if cfg.core.enable && cfg.core.gateway.enable then
-          "https://${gatewayProbeListenAddress}"
+          cfg.core.api.listenAddress;
+      apiProbeBaseUrl =
+        if cfg.core.enable && cfg.core.api.enable then
+          "https://${apiProbeListenAddress}"
         else
           null;
       deploymentManagedUnits = lib.unique (
         (lib.optionals (cfg.enable && cfg.core.enable) [ "sinexd.service" ])
         ++ lib.optionals cfg.enable (map (name: "${name}.service") (config.sinex._generatedUnits or [ ]))
       );
-      resolveNodeInstances = nodeInstances:
+      resolveRuntimeInstances = nodeInstances:
         if nodeInstances == null then
-          if cfg.enable then cfg.nodes.defaults.instances else 1
+          if cfg.enable then cfg.runtime.defaults.instances else 1
         else
           nodeInstances;
       mkDeploymentSurface = enabled: instances: {
         inherit enabled;
-        instances = if enabled then resolveNodeInstances instances else null;
+        instances = if enabled then resolveRuntimeInstances instances else null;
       };
       deploymentReadinessDescriptor = {
         version = 1;
@@ -2321,97 +2310,97 @@ in
           password_required = dbCfg.localAuth != "trust";
         };
         gateway = {
-          base_url = gatewayProbeBaseUrl;
-          require_client_tls = cfg.core.gateway.requireClientTLS;
+          base_url = apiProbeBaseUrl;
+          require_client_tls = cfg.core.api.requireClientTLS;
         };
         nats = {
-          servers = cfg.nodes.nats.servers;
+          servers = cfg.runtime.nats.servers;
         };
-        filesystem = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.filesystem.enable) cfg.nodes.filesystem.instances;
+        filesystem = mkDeploymentSurface (sourcesEnabled && cfg.sources.filesystem.enable) cfg.sources.filesystem.instances;
         terminal =
-          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.terminal.enable) cfg.nodes.terminal.instances)
+          (mkDeploymentSurface (sourcesEnabled && cfg.sources.terminal.enable) cfg.sources.terminal.instances)
           // {
             kitty_enabled = cfg.shell.kitty.enable;
             history_sources = map
               (source: {
                 path = source.path;
                 shell = source.shell;
-                source_unit_id =
-                  if source.sourceUnitId != null then source.sourceUnitId
-                  else terminalSourceUnitIdForShell source.shell;
+                source_id =
+                  if source.sourceId != null then source.sourceId
+                  else terminalSourceIdForShell source.shell;
                 runner_pack = "terminal";
                 runner_binary = "sinexd";
                 service = "sinexd.service";
               })
-              cfg.nodes.terminal.historySources;
+              cfg.sources.terminal.historySources;
           };
         browser =
-          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.browser.enable) cfg.nodes.browser.instances)
+          (mkDeploymentSurface (sourcesEnabled && cfg.sources.browser.enable) cfg.sources.browser.instances)
           // {
-            dump_sources = cfg.nodes.browser.dumpSources;
+            dump_sources = cfg.sources.browser.dumpSources;
             sqlite_sources = map
               (source: {
                 path = source.path;
                 browser = source.browser;
                 format = source.format;
               })
-              cfg.nodes.browser.sqliteSources;
-            polling_interval_secs = cfg.nodes.browser.pollIntervalSec;
+              cfg.sources.browser.sqliteSources;
+            polling_interval_secs = cfg.sources.browser.pollIntervalSec;
           };
         desktop =
-          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.desktop.enable) cfg.nodes.desktop.instances)
+          (mkDeploymentSurface (sourcesEnabled && cfg.sources.desktop.enable) cfg.sources.desktop.instances)
           // {
-            clipboard_enabled = cfg.nodes.desktop.clipboard.enable;
-            activitywatch_db_path = cfg.nodes.desktop.history.activitywatchDbPath;
-            runtime_dir = cfg.nodes.desktop.session.runtimeDir;
-            wayland_display = cfg.nodes.desktop.session.waylandDisplay;
-            hyprland_instance_signature = cfg.nodes.desktop.session.hyprlandInstanceSignature;
-            hyprland_event_socket = cfg.nodes.desktop.session.hyprlandEventSocket;
-            hyprland_command_socket = cfg.nodes.desktop.session.hyprlandCommandSocket;
+            clipboard_enabled = cfg.sources.desktop.clipboard.enable;
+            activitywatch_db_path = cfg.sources.desktop.history.activitywatchDbPath;
+            runtime_dir = cfg.sources.desktop.session.runtimeDir;
+            wayland_display = cfg.sources.desktop.session.waylandDisplay;
+            hyprland_instance_signature = cfg.sources.desktop.session.hyprlandInstanceSignature;
+            hyprland_event_socket = cfg.sources.desktop.session.hyprlandEventSocket;
+            hyprland_command_socket = cfg.sources.desktop.session.hyprlandCommandSocket;
           };
-        system = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.system.enable) cfg.nodes.system.instances;
+        system = mkDeploymentSurface (sourcesEnabled && cfg.sources.system.enable) cfg.sources.system.instances;
         document =
-          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.document.enable) null)
+          (mkDeploymentSurface (sourcesEnabled && cfg.sources.document.enable) null)
           // {
             allowed_roots = effectiveDocumentRoots;
             scan_service_unit =
-              if cfg.nodes.enable && cfg.nodes.document.enable then
+              if sourcesEnabled && cfg.sources.document.enable then
                 "sinex-document-scan.service"
               else
                 null;
             timer_unit =
-              if cfg.nodes.enable && cfg.nodes.document.enable && cfg.nodes.document.schedule != null then
+              if sourcesEnabled && cfg.sources.document.enable && cfg.sources.document.schedule != null then
                 "sinex-document-scan.timer"
               else
                 null;
-            schedule = cfg.nodes.document.schedule;
-            run_on_boot = cfg.nodes.document.runOnBoot;
+            schedule = cfg.sources.document.schedule;
+            run_on_boot = cfg.sources.document.runOnBoot;
           };
         automata =
-          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.automata.enable) null)
+          (mkDeploymentSurface (cfg.runtime.enable && cfg.automata.enable) null)
           // listToAttrs (
             map
               (spec:
                 nameValuePair spec.surfaceName (
-                  cfg.nodes.enable
-                  && cfg.nodes.automata.enable
-                  && cfg.nodes.automata.${spec.optionName}.enable
+                  cfg.runtime.enable
+                  && cfg.automata.enable
+                  && cfg.automata.${spec.optionName}.enable
                 )
               )
               automataLib.specs
           );
         expectations = {
           schema_apply = cfg.database.enable && cfg.database.autoSetup;
-          nats_streams = cfg.enable && (cfg.core.enable || cfg.nodes.enable);
-          gateway_ready = cfg.enable && cfg.core.enable && cfg.core.gateway.enable;
+          nats_streams = cfg.enable && (cfg.core.enable || cfg.runtime.enable);
+          gateway_ready = cfg.enable && cfg.core.enable && cfg.core.api.enable;
         };
         secrets = {
           database_password_file = effectiveDatabasePasswordFile;
-          gateway_admin_token_file = gatewayAdminTokenFile;
-          gateway_tls_cert_file = gatewayTlsCertFile;
-          gateway_tls_key_file = gatewayTlsKeyFile;
-          gateway_tls_trust_anchor_file = gatewayTlsTrustAnchorFile;
-          gateway_tls_client_ca_file = gatewayTlsClientCAFile;
+          api_admin_token_file = apiAdminTokenFile;
+          gateway_tls_cert_file = apiTlsCertFile;
+          gateway_tls_key_file = apiTlsKeyFile;
+          gateway_tls_trust_anchor_file = apiTlsTrustAnchorFile;
+          gateway_tls_client_ca_file = apiTlsClientCAFile;
           nats_ca_cert_file = effectiveNatsCaCertFile;
           nats_client_cert_file = effectiveNatsClientCertFile;
           nats_client_key_file = effectiveNatsClientKeyFile;
@@ -2442,17 +2431,17 @@ in
           password_required = dbCfg.localAuth != "trust";
         };
         gateway = {
-          base_url = gatewayProbeBaseUrl;
-          token_file = gatewayAdminTokenFile;
+          base_url = apiProbeBaseUrl;
+          token_file = apiAdminTokenFile;
           token_role = "admin";
-          ca_cert_file = gatewayTlsTrustAnchorFile;
+          ca_cert_file = apiTlsTrustAnchorFile;
           client_cert_file = null;
           client_key_file = null;
-          require_client_tls = cfg.core.gateway.requireClientTLS;
+          require_client_tls = cfg.core.api.requireClientTLS;
           insecure = false;
         };
         nats = {
-          servers = cfg.nodes.nats.servers;
+          servers = cfg.runtime.nats.servers;
           environment = cfg.nats.environment;
           token_file = effectiveNatsTokenFile;
           creds_file = effectiveNatsCredsFile;
@@ -2485,17 +2474,17 @@ in
           { path = stateRoot; mode = "0755"; user = "root"; group = "root"; }
           { path = runtimeDir; mode = "0755"; }
           { path = spoolBase; mode = "0755"; }
-          { path = nodesSpool; mode = "0755"; }
+          { path = runtimeSpool; mode = "0755"; }
           { path = ingestSpool; mode = "0755"; }
-          # ingestd writes its working directory under ${stateRoot}/ingestd/work
-          # (see SINEX_EVENT_ENGINE_WORK_DIR). Pre-create so ingestd does not need
+          # event_engine writes its working directory under ${stateRoot}/event_engine/work
+          # (see SINEX_EVENT_ENGINE_WORK_DIR). Pre-create so event_engine does not need
           # write access to stateRoot itself.
-          { path = "${stateRoot}/ingestd"; mode = "0750"; }
-          { path = "${stateRoot}/ingestd/work"; mode = "0750"; }
+          { path = "${stateRoot}/event_engine"; mode = "0750"; }
+          { path = "${stateRoot}/event_engine/work"; mode = "0750"; }
           { path = logDir; mode = "0755"; }
         ]
         ++ optionals (cfg.storage.blob.enable) [{ path = blobDir; mode = "0750"; }]
-        ++ optionals (cfg.core.enable && cfg.core.gateway.autoGenerateTls) [{ path = "${stateRoot}/tls"; mode = "0750"; }]
+        ++ optionals (cfg.core.enable && cfg.core.api.autoGenerateTls) [{ path = "${stateRoot}/tls"; mode = "0750"; }]
         ++ optionals (cfg.shell.asciinema.autoRecord && targetUser != null && hasPrefix "/" asciiPath) [
           { path = asciiPath; mode = "0770"; user = targetUser; group = targetGroup; }
         ];
@@ -2508,7 +2497,7 @@ in
 
       # Auxiliary sinex-owned units that should be gated alongside the
       # long-running runtime services. Long-running services
-      # (sinexd, source workers, automata) already wire their own wantedBy
+      # (sinexd, hosted source bindings, automata) already wire their own wantedBy
       # from cfg.runtime.target.attachToMultiUser and publish their service
       # names via config.sinex._generatedUnits. The auxiliary list here
       # covers the one-shots, the standalone sinex-document-scan and its
@@ -2521,17 +2510,14 @@ in
       generatedRuntimeUnitNames =
         lib.optionals cfg.enable (config.sinex._generatedUnits or [ ]);
       bootstrapAuxUnitNames =
-        lib.optionals (cfg.database.enable && cfg.database.autoSetup) [
-          "sinex-schema-apply"
-        ]
-        ++ lib.optionals (cfg.nats.enable || cfg.nats.autoSetup) [
+        lib.optionals (cfg.nats.enable || cfg.nats.autoSetup) [
           "nats"
         ]
         ++ lib.optionals (
           (cfg.nats.enable || cfg.nats.autoSetup)
           && cfg.nats.bootstrapStreams.enable
         ) [ "sinex-nats-bootstrap" ]
-        ++ lib.optionals (cfg.core.enable && cfg.core.gateway.enable && cfg.core.gateway.autoGenerateTls) [
+        ++ lib.optionals (cfg.core.enable && cfg.core.api.enable && cfg.core.api.autoGenerateTls) [
           "sinex-tls-init"
         ]
         ++ lib.optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData && cfg.storage.blob.autoInit) [
@@ -2543,11 +2529,11 @@ in
         ++ lib.optionals (cfg.enable && cfg.lifecycle.preflight.enable) [
           "sinex-preflight"
         ]
-        ++ lib.optionals (cfg.enable && cfg.nodes.enable && cfg.nodes.document.enable) [
+        ++ lib.optionals (cfg.enable && sourcesEnabled && cfg.sources.document.enable) [
           "sinex-document-scan"
         ];
       # Auxiliary units = bootstrap + standalone oneshots + the long-running
-      # core/automata/source-worker services. The runtime target wants the
+      # core/automata/source host services. The runtime target wants the
       # whole graph so that pulling the target reliably brings the runtime
       # online (and stopping it tears the runtime down cleanly).
       runtimeAuxiliaryUnitNames = lib.unique (
@@ -2559,9 +2545,9 @@ in
       runtimeAuxiliaryTimerNames =
         lib.optionals (
           cfg.enable
-          && cfg.nodes.enable
-          && cfg.nodes.document.enable
-          && cfg.nodes.document.schedule != null
+          && sourcesEnabled
+          && cfg.sources.document.enable
+          && cfg.sources.document.schedule != null
         ) [ "sinex-document-scan" ];
       runtimeDatabaseUnits =
         lib.optionals cfg.runtime.target.includeDatabase [
@@ -2579,39 +2565,39 @@ in
             message = "services.sinex.package must be set when services.sinex.enable = true.";
           }
           {
-            assertion = (!cfg.core.enable || !cfg.core.gateway.enable) || gatewayAdminTokenFile != null;
+            assertion = (!cfg.core.enable || !cfg.core.api.enable) || apiAdminTokenFile != null;
             message = ''
-              Gateway requires an admin token file. Set services.sinex.secrets.gatewayAdminTokenFile,
-              provide an agenix secret named sinex-gateway-admin-token, or define
-              environment.etc."sinex/gateway-admin-token".
+              API requires an admin token file. Set services.sinex.secrets.apiAdminTokenFile,
+              provide an agenix secret named sinex-api-admin-token, or define
+              environment.etc."sinex/api-admin-token".
             '';
           }
           {
             assertion =
-              (!cfg.core.enable || !cfg.core.gateway.enable)
-              || (gatewayTlsCertFile != null && gatewayTlsKeyFile != null);
-            message = "Gateway TCP/TLS requires tlsCertFile and tlsKeyFile when gateway is enabled.";
+              (!cfg.core.enable || !cfg.core.api.enable)
+              || (apiTlsCertFile != null && apiTlsKeyFile != null);
+            message = "API TCP/TLS requires tlsCertFile and tlsKeyFile when API is enabled.";
           }
           {
             # Non-loopback bindings must enforce mTLS; loopback-only listeners are trusted.
             assertion =
-              (!cfg.core.enable || !cfg.core.gateway.enable)
-              || (hasPrefix "127." cfg.core.gateway.listenAddress)
-              || (hasPrefix "[::1]" cfg.core.gateway.listenAddress)
-              || cfg.core.gateway.requireClientTLS;
-            message = "Gateway binds to non-loopback address '${cfg.core.gateway.listenAddress}'; set services.sinex.core.gateway.requireClientTLS = true and configure tlsClientCAFile.";
+              (!cfg.core.enable || !cfg.core.api.enable)
+              || (hasPrefix "127." cfg.core.api.listenAddress)
+              || (hasPrefix "[::1]" cfg.core.api.listenAddress)
+              || cfg.core.api.requireClientTLS;
+            message = "API binds to non-loopback address '${cfg.core.api.listenAddress}'; set services.sinex.core.api.requireClientTLS = true and configure tlsClientCAFile.";
           }
           {
             # mTLS requires a client CA bundle to verify the certificates presented by clients.
             assertion =
-              (!cfg.core.enable || !cfg.core.gateway.enable)
-              || (!cfg.core.gateway.requireClientTLS)
-              || (gatewayTlsClientCAFile != null);
-            message = "Gateway mTLS (requireClientTLS = true) requires tlsClientCAFile. Set services.sinex.core.gateway.tlsClientCAFile.";
+              (!cfg.core.enable || !cfg.core.api.enable)
+              || (!cfg.core.api.requireClientTLS)
+              || (apiTlsClientCAFile != null);
+            message = "API mTLS (requireClientTLS = true) requires tlsClientCAFile. Set services.sinex.core.api.tlsClientCAFile.";
           }
           {
             assertion = (effectiveNatsClientCertFile == null) == (effectiveNatsClientKeyFile == null);
-            message = "NATS mutual TLS requires both services.sinex.nodes.nats.tls.clientCertFile/clientKeyFile or matching agenix secrets named sinex-nats-client-cert and sinex-nats-client-key.";
+            message = "NATS mutual TLS requires both services.sinex.runtime.nats.tls.clientCertFile/clientKeyFile or matching agenix secrets named sinex-nats-client-cert and sinex-nats-client-key.";
           }
           {
             assertion =
@@ -2621,30 +2607,30 @@ in
                   effectiveNatsCredsFile
                   effectiveNatsNkeySeedFile
                 ]) <= 1;
-            message = "Configure at most one NATS auth mode under services.sinex.nodes.nats.auth: tokenFile, credsFile, or nkeySeedFile.";
+            message = "Configure at most one NATS auth mode under services.sinex.runtime.nats.auth: tokenFile, credsFile, or nkeySeedFile.";
           }
           {
             assertion =
               (!(cfg.nats.enable || cfg.nats.autoSetup))
               || (!cfg.nats.tls.verifyClients && !cfg.nats.tls.verifyAndMap)
               || (effectiveNatsClientCertFile != null && effectiveNatsClientKeyFile != null);
-            message = "Managed NATS client-certificate verification requires services.sinex.nodes.nats.tls.clientCertFile/clientKeyFile or matching agenix secrets named sinex-nats-client-cert and sinex-nats-client-key.";
+            message = "Managed NATS client-certificate verification requires services.sinex.runtime.nats.tls.clientCertFile/clientKeyFile or matching agenix secrets named sinex-nats-client-cert and sinex-nats-client-key.";
           }
           {
             assertion =
-              (!cfg.nodes.enable || !cfg.nodes.document.enable)
+              (!sourcesEnabled || !cfg.sources.document.enable)
               || effectiveDocumentRoots != [ ];
             message = ''
               Document ingestion is enabled but no allowed roots resolved. Set
-              services.sinex.nodes.document.allowedRoots explicitly or configure
+              services.sinex.sources.document.allowedRoots explicitly or configure
               services.sinex.users.target so the module can derive $HOME/Documents.
             '';
           }
           {
             assertion =
-              (!cfg.nodes.enable || !cfg.nodes.document.enable)
-              || cfg.nodes.document.runOnBoot
-              || cfg.nodes.document.schedule != null;
+              (!sourcesEnabled || !cfg.sources.document.enable)
+              || cfg.sources.document.runOnBoot
+              || cfg.sources.document.schedule != null;
             message = ''
               Document ingestion is enabled but neither runOnBoot nor schedule is set.
               Enable at least one so the managed document scan surface actually runs.
@@ -2748,7 +2734,7 @@ in
         };
       })
 
-      (mkIf ((cfg.enable || cfg.storage.blob.enable || cfg.lifecycle.maintenance.enable) && cfg.users.nodes != dbUser) {
+      (mkIf ((cfg.enable || cfg.storage.blob.enable || cfg.lifecycle.maintenance.enable) && cfg.users.runtime != dbUser) {
         users.groups.${sinexUser} = { };
         users.users.${sinexUser} = {
           isSystemUser = true;
@@ -2800,17 +2786,17 @@ in
       # When a target user is configured with no explicit watchPaths, default to
       # watching that user's home directory. Keeping these defaults live in
       # prepared mode makes the deployment descriptor honest before first enable.
-      # NB: guard only on cfg.users.target — reading cfg.nodes.* while writing to
-      # services.sinex.nodes.* creates an evaluation cycle.
+      # NB: guard only on cfg.users.target — reading cfg.runtime.* while writing to
+      # services.sinex.runtime.* creates an evaluation cycle.
       # mkDefault ensures explicit watchPaths override this fallback.
       (mkIf (cfg.users.target != null) {
-        services.sinex.nodes.filesystem.watchPaths = mkDefault [
+        services.sinex.sources.filesystem.watchPaths = mkDefault [
           targetHome
         ];
       })
 
       (mkIf (targetHome != null) {
-        services.sinex.nodes.terminal.historySources = mkDefault [
+        services.sinex.sources.terminal.historySources = mkDefault [
           {
             path = "${targetHome}/.bash_history";
             shell = "bash";
@@ -2831,8 +2817,8 @@ in
       })
 
       (mkIf (targetHome != null) {
-        services.sinex.nodes.browser.dumpSources = mkDefault [ ];
-        services.sinex.nodes.browser.sqliteSources = mkDefault [
+        services.sinex.sources.browser.dumpSources = mkDefault [ ];
+        services.sinex.sources.browser.sqliteSources = mkDefault [
           {
             path = "${targetHome}/.local/share/qutebrowser/history.sqlite";
             browser = "qutebrowser";
@@ -2852,25 +2838,25 @@ in
       })
 
       (mkIf (targetUser != null) {
-        services.sinex.nodes.filesystem.instances = mkDefault 1;
-        services.sinex.nodes.terminal.instances = mkDefault 1;
-        services.sinex.nodes.browser.instances = mkDefault 1;
-        services.sinex.nodes.desktop.instances = mkDefault 1;
-        services.sinex.nodes.system.instances = mkDefault 1;
+        services.sinex.sources.filesystem.instances = mkDefault 1;
+        services.sinex.sources.terminal.instances = mkDefault 1;
+        services.sinex.sources.browser.instances = mkDefault 1;
+        services.sinex.sources.desktop.instances = mkDefault 1;
+        services.sinex.sources.system.instances = mkDefault 1;
       })
 
       (mkIf (targetUid != null) {
-        services.sinex.nodes.desktop.session.runtimeDir =
+        services.sinex.sources.desktop.session.runtimeDir =
           mkDefault "/run/user/${toString targetUid}";
       })
 
       (mkIf (targetHome != null) {
-        services.sinex.nodes.desktop.history.activitywatchDbPath =
+        services.sinex.sources.desktop.history.activitywatchDbPath =
           mkDefault "${targetHome}/.local/share/activitywatch/aw-server-rust/sqlite.db";
       })
 
       (mkIf (cfg.nats.enable || cfg.nats.autoSetup) {
-        services.sinex.nodes.nats.servers = mkDefault [
+        services.sinex.runtime.nats.servers = mkDefault [
           "${if cfg.nats.tls.enable then "tls" else "nats"}://${cfg.nats.host}:${toString cfg.nats.port}"
         ];
       })

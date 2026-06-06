@@ -31,7 +31,7 @@ async fn replay_execute_rejects_zero_event_preview_before_execution(
     let err = client
         .execute(
             operation.operation_id,
-            "service:executor-node".into(),
+            "service:executor-runtime".into(),
             false,
         )
         .await
@@ -51,7 +51,7 @@ async fn replay_execute_rejects_zero_event_preview_before_execution(
         stored.error_details.as_deref(),
         Some(err.to_string().as_str())
     );
-    assert!(stored.executor_node.is_none());
+    assert!(stored.executor_module.is_none());
 
     Ok(())
 }
@@ -93,7 +93,7 @@ async fn replay_execute_rejects_target_canonical_gate_without_override(
     let err = client
         .execute(
             operation.operation_id,
-            "service:executor-node".into(),
+            "service:executor-runtime".into(),
             false,
         )
         .await
@@ -105,7 +105,7 @@ async fn replay_execute_rejects_target_canonical_gate_without_override(
 
     let stored = replay.load_operation(operation.operation_id).await?;
     assert_eq!(stored.state, ReplayState::Failed);
-    assert!(stored.executor_node.is_none());
+    assert!(stored.executor_module.is_none());
 
     Ok(())
 }
@@ -151,7 +151,11 @@ async fn replay_execute_dry_run_is_rejected_without_state_changes(ctx: TestConte
         .await?;
 
     let err = client
-        .execute(approved.operation_id, "service:executor-node".into(), true)
+        .execute(
+            approved.operation_id,
+            "service:executor-runtime".into(),
+            true,
+        )
         .await
         .expect_err("dry-run execute should redirect callers back to preview");
     assert!(
@@ -225,7 +229,11 @@ async fn replay_execute_fails_when_live_scope_disappears_after_approval(
         .await?;
 
     let err = client
-        .execute(approved.operation_id, "service:executor-node".into(), false)
+        .execute(
+            approved.operation_id,
+            "service:executor-runtime".into(),
+            false,
+        )
         .await
         .expect_err("execution should fail once the approved live scope has vanished");
     assert!(
@@ -317,7 +325,11 @@ async fn replay_execute_fails_when_live_scope_drifts_after_approval(
         .await?;
 
     let err = client
-        .execute(approved.operation_id, "service:executor-node".into(), false)
+        .execute(
+            approved.operation_id,
+            "service:executor-runtime".into(),
+            false,
+        )
         .await
         .expect_err("execution should fail once the approved live scope drifts");
     assert!(
@@ -535,7 +547,8 @@ async fn replay_execution_returns_cancelled_operation_when_cancelled_midflight(
     let nats_client = ctx.nats_client();
     let env = sinex_primitives::environment::environment();
     let (_scan_command_rx, scan_handle) =
-        spawn_fake_scan_node_ack_only(nats_client.clone(), env.clone(), "cancel-test").await?;
+        spawn_fake_scan_source_runtime_ack_only(nats_client.clone(), env.clone(), "cancel-test")
+            .await?;
 
     let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
         .with_scan_completion_timeout(Duration::from_secs(5));
@@ -564,7 +577,7 @@ async fn replay_execution_returns_cancelled_operation_when_cancelled_midflight(
     );
 
     let mut scope = sample_scope();
-    scope.node_id = "cancel-test".to_string();
+    scope.source_name = "cancel-test".to_string();
     scope.time_window = Some((
         target_ts - time::Duration::milliseconds(1),
         target_ts + time::Duration::milliseconds(1),
@@ -581,7 +594,7 @@ async fn replay_execution_returns_cancelled_operation_when_cancelled_midflight(
     let operation_id = approved.operation_id;
     let execute_task = tokio::spawn(async move {
         execute_client
-            .execute(operation_id, "service:executor-node".into(), false)
+            .execute(operation_id, "service:executor-runtime".into(), false)
             .await
     });
 
@@ -649,7 +662,7 @@ async fn replay_execution_returns_cancelled_operation_when_cancelled_midflight(
 
     scan_handle
         .await
-        .map_err(|e| test_error(format!("fake cancel-test node task failed: {e}")))?;
+        .map_err(|e| test_error(format!("fake cancel-test source runtime task failed: {e}")))?;
 
     Ok(())
 }

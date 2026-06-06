@@ -211,7 +211,7 @@ pub struct ModelEffectRecord {
     pub recorded_policy: ReplayPolicy,
     /// ISO-8601 timestamp of recording.
     pub recorded_at: String,
-    /// Provenance: which node/automaton recorded this.
+    /// Provenance: which runtime module or automaton recorded this.
     pub recorded_by: String,
     /// BLAKE3 hash of the output for integrity verification.
     pub output_hash: String,

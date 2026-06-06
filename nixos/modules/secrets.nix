@@ -18,7 +18,7 @@ let
   available = builtins.pathExists secretDir;
   files = if available then builtins.readDir secretDir else {};
   ageFiles = filterAttrs (name: kind: kind == "regular" && hasSuffix ".age" name) files;
-  serviceUser = cfg.users.nodes;
+  serviceUser = cfg.users.runtime;
   targetUser = cfg.users.target;
   targetUserHome =
     if targetUser == null
@@ -37,7 +37,7 @@ let
   specs = mapAttrs' (filename: _: nameValuePair (removeSuffix ".age" filename) (mkSpec filename)) ageFiles;
 
   conventionalEtcEntries = {
-    sinex-gateway-admin-token = "sinex/gateway-admin-token";
+    sinex-api-admin-token = "sinex/api-admin-token";
     sinex-local-db = "sinex/db-password";
     sinex-remote-db = "sinex/remote-db-password";
     sinex-grafana-secret-key = "sinex/grafana-secret-key";
@@ -88,7 +88,7 @@ let
 
   nonExport = [
     "sinex-local-db"
-    "sinex-gateway-admin-token"  # gateway reads via SINEX_API_ADMIN_TOKEN_FILE (file path, not raw content)
+    "sinex-api-admin-token"  # sinexd::api reads via SINEX_API_ADMIN_TOKEN_FILE (file path, not raw content)
     "sinex-grafana-secret-key"
     "sinex-nats-ca"
     "sinex-nats-client-ca"

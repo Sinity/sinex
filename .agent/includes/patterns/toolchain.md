@@ -63,7 +63,7 @@ surface you want — that's a missing flag, extend xtask. Don't fall back to bar
 
 | Feature | Use for |
 |---------|---------|
-| `async fn` in traits (1.75) | All node/SDK traits (native, no `#[async_trait]` needed) |
+| `async fn` in traits (1.75) | Runtime/source/automaton traits (native, no `#[async_trait]` needed) |
 | `AsyncFnOnce()` (1.85) | Single-call async closures: `F: AsyncFnOnce() -> T` |
 | `LazyLock` (1.80) | Replace `lazy_static!` |
 | `OnceLock` (1.80) | Replace `once_cell::OnceCell` |

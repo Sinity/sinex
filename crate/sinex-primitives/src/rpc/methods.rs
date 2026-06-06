@@ -76,19 +76,19 @@ pub const DLQ_PEEK: &str = "dlq.peek";
 pub const DLQ_REQUEUE: &str = "dlq.requeue";
 pub const DLQ_PURGE: &str = "dlq.purge";
 
-// Nodes
-pub const NODES_LIST: &str = "nodes.list";
-pub const NODES_LIST_ACTIVE: &str = "nodes.list_active";
-pub const NODES_HEALTH: &str = "nodes.health";
-pub const NODES_DRAIN: &str = "nodes.drain";
-pub const NODES_RESUME: &str = "nodes.resume";
-pub const NODES_SET_HORIZON: &str = "nodes.set_horizon";
+// Runtime
+pub const RUNTIME_LIST: &str = "runtime.list";
+pub const RUNTIME_LIST_ACTIVE: &str = "runtime.list_active";
+pub const RUNTIME_HEALTH: &str = "runtime.health";
+pub const RUNTIME_DRAIN: &str = "runtime.drain";
+pub const RUNTIME_RESUME: &str = "runtime.resume";
+pub const RUNTIME_SET_HORIZON: &str = "runtime.set_horizon";
 
 // Automata
 pub const AUTOMATA_STATUS: &str = "automata.status";
 
-// Ingestors
-pub const INGESTORS_STATUS: &str = "ingestors.status";
+// SourceStatus
+pub const SOURCES_STATUS: &str = "sources.status";
 
 // Instructions
 pub const INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH: &str = "instructions.hyprland.workspace_switch";
@@ -129,12 +129,6 @@ pub const LIFECYCLE_STATUS: &str = "lifecycle.status";
 pub const LIFECYCLE_ARCHIVE: &str = "lifecycle.archive";
 pub const LIFECYCLE_RESTORE: &str = "lifecycle.restore";
 
-// GitOps
-pub const GITOPS_LIST_SOURCES: &str = "gitops.list_sources";
-pub const GITOPS_CREATE_SOURCE: &str = "gitops.create_source";
-pub const GITOPS_DELETE_SOURCE: &str = "gitops.delete_source";
-pub const GITOPS_TRIGGER_SYNC: &str = "gitops.trigger_sync";
-
 // Telemetry
 pub const TELEMETRY_CURRENT_HEALTH: &str = "telemetry.current_health";
 pub const TELEMETRY_CURRENT_DEVICE_STATE: &str = "telemetry.current_device_state";
@@ -146,10 +140,10 @@ pub const TELEMETRY_SYSTEM_STATE: &str = "telemetry.system_state";
 pub const TELEMETRY_GATEWAY_STATS: &str = "telemetry.gateway_stats";
 pub const TELEMETRY_STREAM_STATS: &str = "telemetry.stream_stats";
 pub const TELEMETRY_ASSEMBLY_STATS: &str = "telemetry.assembly_stats";
-pub const TELEMETRY_NODE_STATS: &str = "telemetry.node_stats";
+pub const TELEMETRY_SOURCE_STATS: &str = "telemetry.source_stats";
 pub const TELEMETRY_METRIC_COUNTERS: &str = "telemetry.metric_counters";
-pub const TELEMETRY_INGESTD_BATCH_STATS: &str = "telemetry.ingestd_batch_stats";
-pub const TELEMETRY_INGESTD_VALIDATION: &str = "telemetry.ingestd_validation";
+pub const TELEMETRY_EVENT_ENGINE_BATCH_STATS: &str = "telemetry.event_engine_batch_stats";
+pub const TELEMETRY_EVENT_ENGINE_VALIDATION: &str = "telemetry.event_engine_validation";
 pub const TELEMETRY_THROUGHPUT: &str = "telemetry.throughput";
 
 // Annotations

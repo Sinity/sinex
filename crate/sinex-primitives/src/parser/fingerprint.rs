@@ -17,7 +17,7 @@
 //!
 //! # Drift Detection
 //!
-//! `DriftAccumulator` tracks the last-seen fingerprint per source unit and emits
+//! `DriftAccumulator` tracks the last-seen fingerprint per source and emits
 //! `DriftEvent` when:
 //! 1. First observation (always returns `None`)
 //! 2. Identical fingerprint (returns `None`)
@@ -37,7 +37,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::parser::SourceUnitId;
+use crate::parser::SourceId;
 use crate::rpc::sources::{
     SourceCaveat, source_shape_drift_readiness_caveats_with_required_fields,
 };
@@ -525,7 +525,7 @@ impl SourceRecordFingerprint {
     /// checkpoint state rather than keeping a live [`DriftAccumulator`].
     #[must_use]
     pub fn diff(
-        source_unit_id: SourceUnitId,
+        source_id: SourceId,
         previous: &SourceRecordFingerprint,
         current: &SourceRecordFingerprint,
     ) -> Option<DriftEvent> {
@@ -534,7 +534,7 @@ impl SourceRecordFingerprint {
         }
 
         Some(build_drift_event_from_parts(
-            source_unit_id,
+            source_id,
             previous.hash().to_string(),
             previous.keys.clone(),
             &previous.type_map,
@@ -547,13 +547,13 @@ impl SourceRecordFingerprint {
 // DriftAccumulator
 // =============================================================================
 
-/// Rate-limited drift detector for a source unit.
+/// Rate-limited drift detector for a source.
 ///
 /// Tracks the last-seen fingerprint and emits `DriftEvent` when the
 /// structure changes, subject to configurable rate limits.
 #[derive(Debug, Clone)]
 pub struct DriftAccumulator {
-    source_unit_id: SourceUnitId,
+    source_id: SourceId,
 
     /// Last fingerprint hash observed.
     last_hash: Option<String>,
@@ -575,11 +575,11 @@ pub struct DriftAccumulator {
 }
 
 impl DriftAccumulator {
-    /// Creates a new drift accumulator for a source unit.
+    /// Creates a new drift accumulator for a source.
     #[must_use]
-    pub fn new(source_unit_id: SourceUnitId) -> Self {
+    pub fn new(source_id: SourceId) -> Self {
         Self {
-            source_unit_id,
+            source_id,
             last_hash: None,
             record_count_since_last_emit: 0,
             emit_every_n_records: 10_000,
@@ -673,7 +673,7 @@ impl DriftAccumulator {
         let previous_hash = self.last_hash.clone().unwrap_or_default();
 
         build_drift_event_from_parts(
-            self.source_unit_id.clone(),
+            self.source_id.clone(),
             previous_hash,
             previous_keys,
             &previous_types,
@@ -683,7 +683,7 @@ impl DriftAccumulator {
 }
 
 fn build_drift_event_from_parts(
-    source_unit_id: SourceUnitId,
+    source_id: SourceId,
     previous_hash: String,
     previous_keys: Vec<String>,
     previous_types: &BTreeMap<String, String>,
@@ -723,7 +723,7 @@ fn build_drift_event_from_parts(
     }
 
     DriftEvent {
-        source_unit_id,
+        source_id,
         previous_hash,
         current_hash: current.hash().to_string(),
         format: current.format.clone(),
@@ -747,8 +747,8 @@ fn build_drift_event_from_parts(
 /// what changed and when.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriftEvent {
-    /// The source unit that drifted.
-    pub source_unit_id: SourceUnitId,
+    /// The source that drifted.
+    pub source_id: SourceId,
 
     /// The previous structural hash.
     pub previous_hash: String,
@@ -801,7 +801,7 @@ impl DriftEvent {
         required_input_keys: &[String],
     ) -> Vec<SourceCaveat> {
         source_shape_drift_readiness_caveats_with_required_fields(
-            &self.source_unit_id,
+            &self.source_id,
             &self.current_hash,
             self.added_keys.len(),
             &self.removed_keys,
@@ -824,7 +824,7 @@ impl DriftEvent {
     #[must_use]
     pub fn to_payload(&self) -> serde_json::Value {
         serde_json::json!({
-            "source_unit_id": self.source_unit_id.as_str(),
+            "source_id": self.source_id.as_str(),
             "previous_hash": self.previous_hash,
             "current_hash": self.current_hash,
             "format": self.format,
@@ -936,7 +936,7 @@ mod tests {
     use crate::SinexError;
     use crate::domain::{EventSource, EventType};
     use crate::parser::{FieldSource, FieldSpec, FieldType, InputFormat};
-    use crate::parser::{ParserId, SourceUnitId};
+    use crate::parser::{ParserId, SourceId};
     use crate::privacy::ProcessingContext;
     use crate::rpc::sources::{CaveatSeverity, caveat_codes};
     use serde_json::json;
@@ -1105,8 +1105,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_csv_drift_reports_header_and_type_changes() -> xtask::sandbox::TestResult<()> {
-        let source_unit = SourceUnitId::from_static("test.csv");
-        let mut acc = DriftAccumulator::new(source_unit)
+        let source = SourceId::from_static("test.csv");
+        let mut acc = DriftAccumulator::new(source)
             .with_emit_every_n_records(1)
             .with_cooldown_secs(0);
         let fp1 = SourceRecordFingerprint::from_csv_bytes(b"id,name,score\n42,Alice,98.5\n")?;
@@ -1156,8 +1156,8 @@ mod tests {
     #[cfg(feature = "rusqlite")]
     #[sinex_test]
     async fn test_sqlite_schema_drift_reports_column_change() -> xtask::sandbox::TestResult<()> {
-        let source_unit = SourceUnitId::from_static("test.sqlite");
-        let mut acc = DriftAccumulator::new(source_unit)
+        let source = SourceId::from_static("test.sqlite");
+        let mut acc = DriftAccumulator::new(source)
             .with_emit_every_n_records(1)
             .with_cooldown_secs(0);
 
@@ -1198,8 +1198,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_drift_accumulator_first_observation() -> xtask::sandbox::TestResult<()> {
-        let source_unit = SourceUnitId::from_static("test.unit");
-        let mut acc = DriftAccumulator::new(source_unit);
+        let source = SourceId::from_static("test.unit");
+        let mut acc = DriftAccumulator::new(source);
 
         let fp = SourceRecordFingerprint::from_json(&json!({"id": 1, "name": "test"}));
         let event = acc.observe(&fp);
@@ -1211,8 +1211,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_drift_accumulator_same_fingerprint() -> xtask::sandbox::TestResult<()> {
-        let source_unit = SourceUnitId::from_static("test.unit");
-        let mut acc = DriftAccumulator::new(source_unit);
+        let source = SourceId::from_static("test.unit");
+        let mut acc = DriftAccumulator::new(source);
 
         let fp = SourceRecordFingerprint::from_json(&json!({"id": 1, "name": "test"}));
 
@@ -1227,8 +1227,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_drift_accumulator_detects_drift() -> xtask::sandbox::TestResult<()> {
-        let source_unit = SourceUnitId::from_static("test.unit");
-        let mut acc = DriftAccumulator::new(source_unit)
+        let source = SourceId::from_static("test.unit");
+        let mut acc = DriftAccumulator::new(source)
             .with_emit_every_n_records(2) // Low threshold for testing.
             .with_cooldown_secs(0);
 
@@ -1257,8 +1257,8 @@ mod tests {
     #[sinex_test]
     async fn test_drift_accumulator_respects_record_count_limit() -> xtask::sandbox::TestResult<()>
     {
-        let source_unit = SourceUnitId::from_static("test.unit");
-        let mut acc = DriftAccumulator::new(source_unit)
+        let source = SourceId::from_static("test.unit");
+        let mut acc = DriftAccumulator::new(source)
             .with_emit_every_n_records(100)
             .with_cooldown_secs(0);
 
@@ -1275,8 +1275,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_drift_accumulator_respects_cooldown() -> xtask::sandbox::TestResult<()> {
-        let source_unit = SourceUnitId::from_static("test.unit");
-        let mut acc = DriftAccumulator::new(source_unit)
+        let source = SourceId::from_static("test.unit");
+        let mut acc = DriftAccumulator::new(source)
             .with_emit_every_n_records(1)
             .with_cooldown_secs(1000); // 1000 seconds between emissions.
 
@@ -1299,8 +1299,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_drift_event_construction() -> xtask::sandbox::TestResult<()> {
-        let source_unit = SourceUnitId::from_static("test.unit");
-        let mut acc = DriftAccumulator::new(source_unit.clone())
+        let source = SourceId::from_static("test.unit");
+        let mut acc = DriftAccumulator::new(source.clone())
             .with_emit_every_n_records(1)
             .with_cooldown_secs(0);
 
@@ -1310,7 +1310,7 @@ mod tests {
         acc.observe(&fp1);
         let event = acc.observe(&fp2).unwrap();
 
-        assert_eq!(event.source_unit_id, source_unit);
+        assert_eq!(event.source_id, source);
         assert_eq!(event.added_keys, vec!["/c"]);
         assert_eq!(event.removed_keys, vec!["/b"]);
         // "a" should have no type change (integer -> integer).
@@ -1320,8 +1320,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_drift_event_type_changes() -> xtask::sandbox::TestResult<()> {
-        let source_unit = SourceUnitId::from_static("test.unit");
-        let mut acc = DriftAccumulator::new(source_unit)
+        let source = SourceId::from_static("test.unit");
+        let mut acc = DriftAccumulator::new(source)
             .with_emit_every_n_records(1)
             .with_cooldown_secs(0);
 
@@ -1347,14 +1347,14 @@ mod tests {
 
     #[sinex_test]
     async fn test_fingerprint_diff_matches_drift_payload() -> xtask::sandbox::TestResult<()> {
-        let source_unit = SourceUnitId::from_static("test.unit");
+        let source = SourceId::from_static("test.unit");
         let fp1 = SourceRecordFingerprint::from_json(&json!({"count": 42, "name": "old"}));
         let fp2 = SourceRecordFingerprint::from_json(&json!({"count": "42", "enabled": true}));
 
-        let drift = SourceRecordFingerprint::diff(source_unit.clone(), &fp1, &fp2)
+        let drift = SourceRecordFingerprint::diff(source.clone(), &fp1, &fp2)
             .expect("different fingerprints should report drift");
 
-        assert_eq!(drift.source_unit_id, source_unit);
+        assert_eq!(drift.source_id, source);
         assert_eq!(drift.previous_hash, fp1.hash());
         assert_eq!(drift.current_hash, fp2.hash());
         assert_eq!(drift.added_keys, vec!["/enabled"]);
@@ -1368,8 +1368,7 @@ mod tests {
             )]
         );
         assert!(
-            SourceRecordFingerprint::diff(SourceUnitId::from_static("test.unit"), &fp1, &fp1)
-                .is_none()
+            SourceRecordFingerprint::diff(SourceId::from_static("test.unit"), &fp1, &fp1).is_none()
         );
         Ok(())
     }
@@ -1377,10 +1376,10 @@ mod tests {
     #[sinex_test]
     async fn drift_readiness_caveats_classify_advisory_and_degraded_shapes()
     -> xtask::sandbox::TestResult<()> {
-        let source_unit = SourceUnitId::from_static("test.unit");
+        let source = SourceId::from_static("test.unit");
 
         let additive = SourceRecordFingerprint::diff(
-            source_unit.clone(),
+            source.clone(),
             &SourceRecordFingerprint::from_json(&json!({"id": 1})),
             &SourceRecordFingerprint::from_json(&json!({"id": 1, "optional": true})),
         )
@@ -1397,7 +1396,7 @@ mod tests {
         );
 
         let degraded = SourceRecordFingerprint::diff(
-            source_unit,
+            source,
             &SourceRecordFingerprint::from_json(&json!({"id": 1, "name": "old"})),
             &SourceRecordFingerprint::from_json(&json!({"id": "1"})),
         )
@@ -1433,7 +1432,7 @@ mod tests {
         let spec = DeclarativeParserSpec {
             parser_id: ParserId::from_static("test-parser"),
             parser_version: "1.0.0".to_string(),
-            source_unit_id: SourceUnitId::from_static("test.unit"),
+            source_id: SourceId::from_static("test.unit"),
             event_source: EventSource::from_static("test"),
             event_type: EventType::from_static("test.event"),
             default_privacy_context: ProcessingContext::Metadata,
@@ -1469,8 +1468,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_drift_event_to_payload() -> xtask::sandbox::TestResult<()> {
-        let source_unit = SourceUnitId::from_static("test.unit");
-        let mut acc = DriftAccumulator::new(source_unit)
+        let source = SourceId::from_static("test.unit");
+        let mut acc = DriftAccumulator::new(source)
             .with_emit_every_n_records(1)
             .with_cooldown_secs(0);
 
@@ -1573,8 +1572,8 @@ mod tests {
         // so that a third schema requires another emit_every_n_records before
         // emitting again. Without this contract, every record after a drift
         // would re-emit.
-        use crate::parser::SourceUnitId;
-        let mut acc = DriftAccumulator::new(SourceUnitId::from_static("test.unit"))
+        use crate::parser::SourceId;
+        let mut acc = DriftAccumulator::new(SourceId::from_static("test.unit"))
             .with_emit_every_n_records(1)
             .with_cooldown_secs(0);
         let fp1 = SourceRecordFingerprint::from_json(&json!({"a": 1}));

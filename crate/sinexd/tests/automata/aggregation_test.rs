@@ -6,8 +6,8 @@ use sinex_primitives::events::Event;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::health::{HealthAggregator, HealthAggregatorConfig, HealthState};
-use sinexd::node_sdk::derived_node::{AutomatonContext, DerivedOutput};
-use sinexd::node_sdk::{NodeLogicError, ScopeReconciler};
+use sinexd::runtime::automaton::{AutomatonContext, DerivedOutput};
+use sinexd::runtime::{AutomatonLogicError, ScopeReconciler};
 use time::Duration;
 use xtask::sandbox::prelude::*;
 
@@ -36,14 +36,14 @@ async fn process(
     state: &mut HealthState,
     input: JsonValue,
     ctx: &AutomatonContext,
-) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
+) -> Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError> {
     let scope_keys = aggregator.scope_keys(&input, ctx);
     let mut outputs = Vec::new();
     for key in &scope_keys {
         let typed_outputs = aggregator.reconcile(state, key, input.clone(), ctx).await?;
         for output in typed_outputs {
             let payload = serde_json::to_value(output.payload).map_err(|error| {
-                NodeLogicError::Processing(format!("failed to serialize test output: {error}"))
+                AutomatonLogicError::Processing(format!("failed to serialize test output: {error}"))
             })?;
             outputs.push(DerivedOutput {
                 payload,
@@ -112,7 +112,7 @@ async fn health_aggregator_rejects_missing_ts_orig(ctx: TestContext) -> TestResu
     .expect_err("missing ts_orig must be rejected");
 
     assert!(
-        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("missing ts_orig")),
+        matches!(&error, AutomatonLogicError::InputParsing(msg) if msg.contains("missing ts_orig")),
         "expected InputParsing with 'missing ts_orig', got: {error:?}"
     );
     Ok(())
@@ -697,7 +697,7 @@ async fn health_aggregator_rejects_invalid_event_ids_in_system_reports(
     .expect_err("corrupt persisted event ids must fail honestly");
 
     assert!(
-        matches!(&error, NodeLogicError::Processing(msg) if msg.contains("invalid event_id") && msg.contains("system status")),
+        matches!(&error, AutomatonLogicError::Processing(msg) if msg.contains("invalid event_id") && msg.contains("system status")),
         "expected Processing with 'invalid event_id' and 'system status', got: {error:?}"
     );
     Ok(())
@@ -755,7 +755,7 @@ async fn health_aggregator_rejects_invalid_event_ids_in_component_reports(
     .expect_err("corrupt persisted event ids must fail honestly");
 
     assert!(
-        matches!(&error, NodeLogicError::Processing(msg) if msg.contains("invalid event_id") && msg.contains("component report")),
+        matches!(&error, AutomatonLogicError::Processing(msg) if msg.contains("invalid event_id") && msg.contains("component report")),
         "expected Processing with 'invalid event_id' and 'component report', got: {error:?}"
     );
     Ok(())
@@ -778,7 +778,7 @@ async fn health_aggregator_rejects_invalid_status_values(ctx: TestContext) -> Te
         .expect_err("invalid health statuses must fail honestly");
 
     assert!(
-        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("current_status") && msg.contains("mystery-state")),
+        matches!(&error, AutomatonLogicError::InputParsing(msg) if msg.contains("current_status") && msg.contains("mystery-state")),
         "expected InputParsing with 'current_status' and 'mystery-state', got: {error:?}"
     );
     Ok(())
@@ -800,7 +800,7 @@ async fn health_aggregator_rejects_missing_component(ctx: TestContext) -> TestRe
         .expect_err("missing component names must fail honestly");
 
     assert!(
-        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("missing required field 'component'")),
+        matches!(&error, AutomatonLogicError::InputParsing(msg) if msg.contains("missing required field 'component'")),
         "expected InputParsing with missing component message, got: {error:?}"
     );
     Ok(())

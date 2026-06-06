@@ -5925,9 +5925,9 @@ mod tests {
             r#"[
               {
                 "test_name": "stage_as_you_go_records_material",
-                "package": "sinex-node-sdk",
+                "package": "sinexd",
                 "edge_kind": "file",
-                "subject": "crate/lib/sinex-node-sdk/src/stage_as_you_go.rs",
+                "subject": "crate/sinexd/src/stage_as_you_go.rs",
                 "fingerprint": null,
                 "origin": "unit-test"
               }
@@ -5937,11 +5937,11 @@ mod tests {
         let imported = db.import_test_dependency_artifacts(invocation_id, &artifact_dir)?;
         assert_eq!(imported, 1);
         let impacted = db.impacted_tests_for_changed_files(&[String::from(
-            "crate/lib/sinex-node-sdk/src/stage_as_you_go.rs",
+            "crate/sinexd/src/stage_as_you_go.rs",
         )])?;
 
         assert_eq!(impacted.len(), 1);
-        assert_eq!(impacted[0].package.as_deref(), Some("sinex-node-sdk"));
+        assert_eq!(impacted[0].package.as_deref(), Some("sinexd"));
         assert_eq!(impacted[0].test_name, "stage_as_you_go_records_material");
         assert_eq!(
             impacted[0].evidence[0].source,
@@ -7844,7 +7844,7 @@ mod tests {
                 level: "warning".into(),
                 code: Some("W0042".into()),
                 message: "unused import".into(),
-                file_path: Some("crate/lib/sinex-db/src/lib.rs".into()),
+                file_path: Some("crate/sinex-db/src/lib.rs".into()),
                 line: Some(10),
                 column: Some(1),
                 rendered: Some("warning[W0042]: unused import".into()),
@@ -7898,7 +7898,7 @@ mod tests {
             level: "warning".into(),
             code: Some("async_fn_in_trait".into()),
             message: "duplicate warning".into(),
-            file_path: Some("crate/lib/sinex-db/src/repositories/common.rs".into()),
+            file_path: Some("crate/sinex-db/src/repositories/common.rs".into()),
             line: Some(112),
             column: Some(5),
             package: Some("sinex-db".into()),
@@ -8198,7 +8198,7 @@ mod tests {
         db.record_test_result(
             id,
             "health_aggregator_tracks_component_status",
-            "sinex-process",
+            "sinex-automata-extra",
             "pass",
             1.0,
             None,
@@ -8210,7 +8210,7 @@ mod tests {
             "health_aggregator_tracks_component_status".to_string(),
             crate::nextest::junit::JunitTestMeta {
                 output: None,
-                classname: Some("sinex-process::aggregation_test".to_string()),
+                classname: Some("sinex_automata_extra::aggregation_test".to_string()),
                 failure_message: None,
                 failure_type: None,
             },
@@ -8224,7 +8224,7 @@ mod tests {
             params![id],
             |row| row.get(0),
         )?;
-        assert_eq!(pkg, "sinex-process");
+        assert_eq!(pkg, "sinex-automata-extra");
 
         Ok(())
     }

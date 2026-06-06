@@ -1,11 +1,4 @@
 use sinex_db::{DbPoolExt, Event, Provenance};
-use sinexd::api::handlers::{
-    handle_semantic_epoch_create, handle_semantic_lane_create,
-    handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_discard,
-    handle_semantic_lane_outputs_list, handle_semantic_lane_outputs_seed_canonical_graph,
-    handle_semantic_lane_outputs_seed_entity_events, handle_semantic_lane_outputs_write,
-};
-use sinexd::api::rpc_server::RpcAuthContext;
 use sinex_primitives::domain::{EntityTypeName, RelationType};
 use sinex_primitives::events::{EntityRelatedPayload, EntityResolvedPayload};
 use sinex_primitives::rpc::semantic::{
@@ -18,6 +11,13 @@ use sinex_primitives::{
     EntityRelationLaneOutputs, SemanticComponentVersion, SemanticEntityOutput, SemanticLaneKind,
     SemanticRelationOutput, SemanticScope, Uuid,
 };
+use sinexd::api::handlers::{
+    handle_semantic_epoch_create, handle_semantic_lane_create,
+    handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_discard,
+    handle_semantic_lane_outputs_list, handle_semantic_lane_outputs_seed_canonical_graph,
+    handle_semantic_lane_outputs_seed_entity_events, handle_semantic_lane_outputs_write,
+};
+use sinexd::api::rpc_server::RpcAuthContext;
 use xtask::sandbox::prelude::*;
 
 fn semantic_scope() -> SemanticScope {

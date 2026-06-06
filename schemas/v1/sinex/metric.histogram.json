@@ -30,7 +30,7 @@
       "type": "number"
     },
     "name": {
-      "description": "Metric name (e.g., \"`gateway.request_latency_ms`\")",
+      "description": "Metric name (e.g., \"`api.request_latency_ms`\")",
       "type": "string"
     },
     "p50": {

@@ -1,19 +1,19 @@
-//! Wave B production-path obligation tests for the `fs` source unit.
+//! Wave B production-path obligation tests for the `fs` source.
 //!
 //! `fs` runs through the SDK's content-materializing file-drop adapter for
 //! continuous capture. These tests pin the production registration surface so
-//! the source unit cannot silently drift back to a raw node factory or lose its
+//! the source cannot silently drift back to a raw source factory or lose its
 //! replay/parser bridge.
 
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_fs_descriptor_registered() -> TestResult<()> {
-    use sinex_primitives::parser::SourceUnitId;
-    use sinexd::sources::registry::SourceUnitRegistry;
+    use sinex_primitives::parser::SourceId;
+    use sinexd::sources::registry::SourceContractRegistry;
 
-    let registry = SourceUnitRegistry::from_inventory();
-    let id = SourceUnitId::new("fs").unwrap();
+    let registry = SourceContractRegistry::from_inventory();
+    let id = SourceId::new("fs").unwrap();
     let descriptor = registry.find(&id);
 
     assert!(
@@ -43,17 +43,17 @@ async fn test_fs_descriptor_registered() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_fs_adapter_factory_and_parser_registered() -> TestResult<()> {
-    use sinex_primitives::parser::SourceUnitId;
+    use sinex_primitives::parser::SourceId;
     use sinexd::sources::dispatch::find_parser_factory;
-    use sinexd::sources::node_factory::find_node_factory;
+    use sinexd::sources::source_factory::find_source_factory;
 
-    let id = SourceUnitId::new("fs").unwrap();
-    let factory = find_node_factory(&id);
+    let id = SourceId::new("fs").unwrap();
+    let factory = find_source_factory(&id);
     let parser = find_parser_factory(&id);
 
     assert!(
         factory.is_some(),
-        "fs must have an adapter-backed node factory registered"
+        "fs must have an adapter-backed source factory registered"
     );
     assert!(
         parser.is_some(),
@@ -65,31 +65,31 @@ async fn test_fs_adapter_factory_and_parser_registered() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_fs_binding_uses_content_drop_adapter() -> TestResult<()> {
-    let binding = sinex_primitives::proof::source_unit_bindings()
-        .find(|binding| binding.source_unit_id == "fs")
-        .expect("fs source-unit binding must be registered");
+    let binding = sinex_primitives::source_contracts::source_runtime_bindings()
+        .find(|binding| binding.source_id == "fs")
+        .expect("fs source binding must be registered");
 
     assert_eq!(binding.adapter, "FileContentDropAdapter");
     assert_eq!(binding.material_policy, "inotify_anchor");
     assert_eq!(binding.checkpoint_policy, "append_stream");
     assert_eq!(
         binding.runtime_shape,
-        sinex_primitives::proof::RuntimeShape::Continuous
+        sinex_primitives::source_contracts::RuntimeShape::Continuous
     );
     assert_eq!(
         binding.checkpoint_family,
-        sinex_primitives::proof::CheckpointFamily::AppendStream
+        sinex_primitives::source_contracts::CheckpointFamily::AppendStream
     );
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_fs_source_worker_config_deserializes_as_file_content_drop() -> TestResult<()> {
+async fn test_fs_source_config_deserializes_as_file_content_drop() -> TestResult<()> {
     use camino::Utf8PathBuf;
-    use sinexd::node_sdk::parser::{AdapterNodeConfig, FileContentDropConfig};
+    use sinexd::runtime::parser::{AdapterSourceConfig, FileContentDropConfig};
 
-    let node_config: AdapterNodeConfig = serde_json::from_value(serde_json::json!({
+    let runtime_config: AdapterSourceConfig = serde_json::from_value(serde_json::json!({
         "watch_paths": ["/realm/project/sinex", "/realm/data/captures"],
         "max_depth": 10,
         "follow_symlinks": false,
@@ -98,7 +98,7 @@ async fn test_fs_source_worker_config_deserializes_as_file_content_drop() -> Tes
         "ignored_directory_names": [".git", ".direnv", "target"],
     }))?;
 
-    let adapter_config: FileContentDropConfig = serde_json::from_value(node_config.adapter)?;
+    let adapter_config: FileContentDropConfig = serde_json::from_value(runtime_config.adapter)?;
 
     assert_eq!(
         adapter_config.file_drop.watch_paths,

@@ -9,7 +9,7 @@
 //!
 //! Uses #[`sinex_test`] for automatic transaction isolation and `TestContext`
 //! for unified database access patterns. All events flow through `PipelineScope`
-//! (NATS → ingestd → `PostgreSQL`) for realistic end-to-end validation.
+//! (NATS → event_engine → `PostgreSQL`) for realistic end-to-end validation.
 
 use serde_json::json;
 use sinex_db::{DbPoolExt, DynamicPayload};

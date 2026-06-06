@@ -45,17 +45,6 @@ fn make_fake_state_dir() -> TestResult<TempDir> {
     fs::create_dir_all(&spool)?;
     fs::write(spool.join("checkpoint.bin"), b"checkpoint-data")?;
 
-    fs::write(
-        root.join("source-units.json"),
-        r#"{
-          "source_units": [
-            { "id": "terminal.atuin-history" },
-            { "id": "desktop.clipboard" },
-            { "id": "desktop.clipboard" }
-          ]
-        }"#,
-    )?;
-
     Ok(dir)
 }
 
@@ -97,10 +86,6 @@ fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
         staging.join("state").join("checkpoint.bin"),
         b"checkpoint-data",
     )?;
-    fs::write(
-        staging.join("state").join("source-units.json"),
-        r#"{"source_units":[{"id":"terminal.atuin-history"}]}"#,
-    )?;
     fs::create_dir_all(staging.join("state").join("private-mode"))?;
     fs::write(
         staging
@@ -118,7 +103,7 @@ fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
-        source_unit_ids: vec!["terminal.atuin-history".to_string()],
+        source_ids: vec!["terminal.atuin-history".to_string()],
         components: vec![ComponentRecord {
             name: "state".to_string(),
             path: "state/".to_string(),
@@ -166,7 +151,7 @@ fn make_postgres_snapshot_archive() -> TestResult<(TempDir, PathBuf)> {
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
-        source_unit_ids: vec![],
+        source_ids: vec![],
         components: vec![ComponentRecord {
             name: "postgres".to_string(),
             path: "postgres/sinex_prod.dump".to_string(),
@@ -210,7 +195,7 @@ fn make_nats_snapshot_archive_with_summary() -> TestResult<(TempDir, PathBuf)> {
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
-        source_unit_ids: vec![],
+        source_ids: vec![],
         components: vec![ComponentRecord {
             name: "nats".to_string(),
             path: "nats/jetstream/".to_string(),
@@ -435,12 +420,15 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
         "archive should contain every non-empty manifest component path: {:?}",
         inspect.missing_component_paths
     );
-    assert_eq!(inspect.state_source_unit_count, Some(2));
+    assert!(
+        inspect.state_source_count.is_some_and(|count| count > 0),
+        "state extras should carry compiled source inventory"
+    );
     assert_eq!(inspect.state_private_mode_state_present, Some(false));
     let inspect_table = sinexctl::admin::snapshot::format_snapshot_inspect_result(&inspect);
     assert!(
-        inspect_table.contains("State source units: 2"),
-        "inspect table should summarize state source units\n{inspect_table}"
+        inspect_table.contains("State source contracts: "),
+        "inspect table should summarize state source contracts\n{inspect_table}"
     );
     assert!(
         inspect_table.contains("Private-mode state: absent"),
@@ -480,12 +468,11 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
             ));
         }
     };
-    assert_eq!(
-        state_extras.source_unit_ids,
-        vec![
-            "desktop.clipboard".to_string(),
-            "terminal.atuin-history".to_string()
-        ]
+    assert!(
+        state_extras
+            .source_ids
+            .contains(&"desktop.clipboard".to_string()),
+        "state extras should include compiled source descriptor ids"
     );
     assert!(!state_extras.private_mode_state_present);
 
@@ -627,7 +614,7 @@ async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox
     let result = cmd.execute()?;
 
     assert_eq!(result.snapshot_id, "01970a7f-391b-7000-8000-000000000001");
-    assert_eq!(result.source_unit_count, 1);
+    assert_eq!(result.source_count, 1);
     assert_eq!(result.component_count, 1);
     assert!(
         result.missing_component_paths.is_empty(),
@@ -799,7 +786,7 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
     );
     assert!(observed.private_mode_state_present);
     assert!(observed.private_mode_state_matches_manifest);
-    assert!(observed.source_unit_ids_match);
+    assert!(observed.source_ids_match);
     assert_eq!(
         observed.component_blake3_matches.get("state"),
         Some(&true),
@@ -1159,12 +1146,9 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
         !result.components_captured.is_empty(),
         "dry-run must return at least one component record"
     );
-    assert_eq!(
-        result.source_unit_ids,
-        vec![
-            "desktop.clipboard".to_string(),
-            "terminal.atuin-history".to_string()
-        ]
+    assert!(
+        result.source_ids.contains(&"desktop.clipboard".to_string()),
+        "snapshot should report compiled source descriptor ids"
     );
 
     // Nats, CAS, and state should all appear.
@@ -1245,7 +1229,7 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
-        source_unit_ids: vec![
+        source_ids: vec![
             "desktop.clipboard".to_string(),
             "terminal.atuin-history".to_string(),
         ],
@@ -1270,7 +1254,7 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
                 bytes: 256,
                 blake3: "c".repeat(64),
                 extras: Some(ComponentExtras::State(StateExtras {
-                    source_unit_ids: vec!["desktop.clipboard".to_string()],
+                    source_ids: vec!["desktop.clipboard".to_string()],
                     private_mode_state_present: true,
                 })),
             },
@@ -1285,7 +1269,7 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
     let back: SnapshotManifest = serde_json::from_str(&json)?;
 
     assert_eq!(back.snapshot_id, "test-id");
-    assert_eq!(back.source_unit_ids.len(), 2);
+    assert_eq!(back.source_ids.len(), 2);
     assert_eq!(back.components.len(), 3);
     let state = back
         .components
@@ -1294,7 +1278,7 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
         .expect("state component should round-trip");
     match &state.extras {
         Some(ComponentExtras::State(extras)) => {
-            assert_eq!(extras.source_unit_ids, ["desktop.clipboard"]);
+            assert_eq!(extras.source_ids, ["desktop.clipboard"]);
             assert!(extras.private_mode_state_present);
         }
         other => panic!("state component extras should round-trip, got {other:?}"),

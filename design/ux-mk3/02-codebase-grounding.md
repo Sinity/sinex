@@ -6,8 +6,8 @@ This pack was grounded against the attached Sinex repository snapshot and materi
 
 The repository already has enough UI substrate to justify an implementation wave:
 
-- `crate/cli/src/commands/tui.rs` implements a Ratatui dashboard with Dashboard, Nodes, Events, and DLQ tabs; refresh; basic navigation; loading/error states; and recent events from gateway queries.
-- `sinexctl now` fetches gateway health, node list, recent activity, and automata status, then renders table/json/yaml.
+- `crate/sinexctl/src/commands/tui.rs` implements a Ratatui dashboard with Dashboard, Runtime, Events, and DLQ tabs; refresh; basic navigation; loading/error states; and recent events from API queries.
+- `sinexctl now` fetches API health, runtime status, recent activity, and automata status, then renders table/json/yaml.
 - `sinexctl context` answers “what was I doing?” by querying recent events, grouping by source, and rendering concise source summaries.
 - `sinexctl query`, `trace`, and `explain` form the read path for events, provenance, and payload detail.
 - `sinexctl sources` already covers stage/list/show/coverage/annotate/archive/continuity/readiness/drift/explain-gap.
@@ -18,8 +18,8 @@ The repository already has enough UI substrate to justify an implementation wave
 
 The current TUI is intentionally modest. It is a dashboard, not a workbench. The implementation currently renders:
 
-- Dashboard overview: gateway version, healthy nodes, recent event count, DLQ count
-- Nodes list: heartbeat, type, leader flag
+- Dashboard overview: API version, healthy runtime modules, recent event count, DLQ count
+- Runtime list: heartbeat, module type, leader flag
 - Events list: recent events, timestamp/source/type/snippet
 - DLQ stats
 

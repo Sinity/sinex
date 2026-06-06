@@ -7,8 +7,8 @@ use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::daily::{DailySummarizer, DailySummaryState};
-use sinexd::node_sdk::derived_node::{AutomatonContext, DerivedOutput};
-use sinexd::node_sdk::{NodeLogicError, Windowed};
+use sinexd::runtime::automaton::{AutomatonContext, DerivedOutput};
+use sinexd::runtime::{AutomatonLogicError, Windowed};
 use xtask::sandbox::prelude::*;
 
 fn make_context(ts_orig: Timestamp) -> AutomatonContext {
@@ -71,7 +71,7 @@ async fn process(
     state: &mut DailySummaryState,
     payload: ActivityHourlySummaryPayload,
     context: &AutomatonContext,
-) -> Result<Option<DerivedOutput<ActivityDailySummaryPayload>>, NodeLogicError> {
+) -> Result<Option<DerivedOutput<ActivityDailySummaryPayload>>, AutomatonLogicError> {
     summarizer.accumulate(state, payload, context).await?;
     if summarizer.window_complete(state) {
         summarizer.emit(state, context).await

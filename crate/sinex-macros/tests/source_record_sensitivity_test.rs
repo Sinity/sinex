@@ -12,7 +12,7 @@ use xtask::sandbox::prelude::*;
 #[derive(Debug, Clone, Serialize, Deserialize, sinex_macros::SourceRecord)]
 #[source_record(
     id = "sensitivity-fixture",
-    source_unit_id = "test.sensitivity-fixture",
+    source_id = "test.sensitivity-fixture",
     input_shape = "json",
     event_type = "test.sensitive"
 )]

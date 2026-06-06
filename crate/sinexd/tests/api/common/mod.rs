@@ -4,9 +4,9 @@ use async_nats::{Client, jetstream};
 use color_eyre::eyre::bail;
 use futures::StreamExt;
 use serde_json::json;
+use sinex_primitives::{environment, environment::SinexEnvironment, temporal};
 use sinexd::api::{auth::Role, rpc_server::RpcAuthContext};
 use sinexd::api::{config::GatewayConfig, rpc_server, service_container::ServiceContainer};
-use sinex_primitives::{environment, environment::SinexEnvironment, temporal};
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
@@ -176,7 +176,7 @@ impl LiveGateway {
             key_file.path().to_string_lossy().to_string(),
         );
         env_guard.clear("SINEX_API_TLS_CLIENT_CA");
-        env_guard.set("SINEX_RPC_TOKEN", token);
+        env_guard.set("SINEX_API_TOKEN", token);
         env_guard.set("DATABASE_URL", database_url);
         if let Some(nats_url) = nats_url {
             env_guard.set("SINEX_NATS_URL", nats_url);

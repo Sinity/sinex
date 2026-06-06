@@ -1,7 +1,7 @@
 
 # Minimal Sinex configuration example
 #
-# Defines a single-node deployment with the node architecture and
+# Defines a single-runtime deployment with the runtime architecture and
 # filesystem/terminal/browser capture enabled. Update the REQUIRED fields for your host.
 
 { config, lib, pkgs, ... }:
@@ -36,9 +36,18 @@
     };
 
     # Workstation runtime policy: keep the runtime out of automatic activation
-    # restarts and bound the restart loop so a misbehaving capture node can't
+    # restarts and bound the restart loop so a misbehaving capture runtime can't
     # spin forever under interactive load.
+    # Surface bootstrap failures instead of looping silently on a workstation.
+    bootstrap.restartPolicy = "no";
+
+    core = {
+      enable = true;
+      api.autoGenerateTls = true;
+    };
+
     runtime = {
+      enable = true;
       target = {
         attachToMultiUser = false;
         manualStartOnly = true;
@@ -49,21 +58,11 @@
         burst = 3;
         backoffSec = 30;
       };
-    };
-
-    # Surface bootstrap failures instead of looping silently on a workstation.
-    bootstrap.restartPolicy = "no";
-
-    core = {
-      enable = true;
-      gateway.autoGenerateTls = true;
-    };
-
-    nodes = {
-      enable = true;
       coordination.enable = false;
       defaults.logLevel = "info";
+    };
 
+    sources = {
       filesystem = {
         enable = true;
         instances = 1;
@@ -78,14 +77,14 @@
       };
       desktop.enable = false;
       system.enable = false;
+    };
 
-      automata = {
-        enable = true;
-        canonicalizer.enable = true;
-        healthAggregator.enable = true;
-        analyticsAutomaton.enable = true;
-        sessionDetector.enable = true;
-      };
+    automata = {
+      enable = true;
+      canonicalizer.enable = true;
+      healthAggregator.enable = true;
+      analyticsAutomaton.enable = true;
+      sessionDetector.enable = true;
     };
 
     observability = {
@@ -106,5 +105,5 @@
     extraGroups = [ "wheel" ];
   };
 
-  environment.etc."sinex/gateway-admin-token".text = "workstation-admin:admin";
+  environment.etc."sinex/api-admin-token".text = "workstation-admin:admin";
 }

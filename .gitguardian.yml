@@ -14,4 +14,4 @@ secret:
     - name: privacy engine jwt fixture
       match: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
       paths:
-        - crate/lib/sinex-primitives/src/privacy/engine.rs
+        - crate/sinex-primitives/src/privacy/engine.rs

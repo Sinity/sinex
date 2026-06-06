@@ -1,10 +1,10 @@
 use sinex_db::{DbPoolExt, SourceMaterialRecord};
-use sinexd::api::handlers::handle_hyprland_workspace_switch;
-use sinexd::api::rpc_server::RpcAuthContext;
 use sinex_primitives::Id;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{ActuationStatus, HyprlandWorkspaceSwitchedPayload};
 use sinex_primitives::rpc::instructions::HyprlandWorkspaceSwitchRequest;
+use sinexd::api::handlers::handle_hyprland_workspace_switch;
+use sinexd::api::rpc_server::RpcAuthContext;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixListener,

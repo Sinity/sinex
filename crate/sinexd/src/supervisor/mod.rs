@@ -1,17 +1,17 @@
 //! Module lifecycle, cancellation, and startup/shutdown ordering.
 //!
 //! `sinexd` is a single daemon hosting the event engine (admission +
-//! persistence + confirmation), the operator API, the enabled derived-node
-//! automata, and the configured source-worker bindings. Each module starts
+//! persistence + confirmation), the operator API, the enabled
+//! automata, and the configured source bindings. Each module starts
 //! as a tokio task under the supervisor. The shutdown signal is sourced from
-//! `crate::node_sdk::service_runtime::spawn_shutdown_task` which handles
+//! `crate::runtime::service_runtime::spawn_shutdown_task` which handles
 //! SIGINT/SIGTERM; tasks observe it via a shared `watch` receiver and unwind
 //! in reverse start order.
 
 use std::time::Duration;
 
-use crate::node_sdk::service_runtime;
-use crate::node_sdk::systemd_notify;
+use crate::runtime::service_runtime;
+use crate::runtime::systemd_notify;
 use sinex_primitives::error::{Result, SinexError};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -21,7 +21,7 @@ use crate::api::config::GatewayConfig;
 use crate::api::rpc_server;
 use crate::api::service_container::ServiceContainer;
 use crate::automata::registry::{self as automata_registry, AutomatonSpec};
-use crate::event_engine::{IngestService, IngestdConfig};
+use crate::event_engine::{EventEngineConfig, IngestService};
 use crate::sources::bindings::{self as source_bindings, SourceBinding};
 
 /// Environment variable selecting which automata `sinexd` hosts.
@@ -32,9 +32,9 @@ const ENV_AUTOMATA_ENABLED: &str = "SINEX_AUTOMATA_ENABLED";
 
 /// Environment variable pointing at the source-bindings manifest JSON.
 ///
-/// Unset / empty means no source workers are hosted in this `sinexd`
+/// Unset / empty means no source bindings are hosted in this `sinexd`
 /// instance (used during single-binary local development against an
-/// out-of-band source unit, for example).
+/// out-of-band source, for example).
 const ENV_SOURCE_BINDINGS_PATH: &str = "SINEX_SOURCE_BINDINGS_PATH";
 
 #[derive(Debug)]
@@ -60,13 +60,13 @@ impl Supervisor {
 
     pub async fn run(
         self,
-        event_engine_config: IngestdConfig,
+        event_engine_config: EventEngineConfig,
         api_config: GatewayConfig,
     ) -> Result<()> {
         info!("sinexd starting");
 
         // Set hosted mode BEFORE spawning any subsystem tasks. In-process
-        // nodes and source-unit bindings must NOT send sd_notify messages
+        // automata and source bindings must NOT send sd_notify messages
         // to systemd — only this top-level supervisor speaks for the unit.
         // Notably, fire-once monitor bindings emit STOPPING=1 on clean
         // exit; without this latch they would tell systemd the whole sinexd
@@ -80,7 +80,7 @@ impl Supervisor {
 
         // Separate in-process escalation channel for event-engine / API
         // task failures. The OS shutdown channel is Receiver-only and shared
-        // across all SDK consumers; rather than extending that API (which
+        // across all runtime consumers; rather than extending that API (which
         // would propagate through every callsite), we keep a local `watch`
         // whose Sender lives here and whose Receiver is selected alongside
         // the OS receiver in the wait loop. When event-engine or API exits,
@@ -143,7 +143,7 @@ impl Supervisor {
         // single automaton crash does not take down siblings or the daemon.
         let automaton_handles = start_automata(shutdown_rx.clone())?;
 
-        // Hosted source-worker bindings. Same isolation property: one
+        // Hosted source bindings. Same isolation property: one
         // binding crash is logged and contained, sibling captures continue.
         let source_binding_handles = start_source_bindings(shutdown_rx.clone())?;
 
@@ -229,7 +229,7 @@ impl Supervisor {
 }
 
 fn start_event_engine(
-    config: IngestdConfig,
+    config: EventEngineConfig,
     shutdown_rx: watch::Receiver<bool>,
     escalate_tx: watch::Sender<bool>,
 ) -> tokio::task::JoinHandle<()> {
@@ -399,12 +399,12 @@ fn start_source_bindings(
 
     info!(
         count = manifest.bindings.len(),
-        "starting hosted source-worker bindings"
+        "starting hosted source bindings"
     );
 
     let mut handles = Vec::with_capacity(manifest.bindings.len());
     for binding in manifest.bindings {
-        let label = format!("{}-{}", binding.source_unit_id, binding.instance_idx);
+        let label = format!("{}-{}", binding.source_id, binding.instance_idx);
         let handle = spawn_source_binding(binding, shutdown_rx.clone());
         handles.push((label, handle));
     }
@@ -415,15 +415,15 @@ fn spawn_source_binding(
     binding: SourceBinding,
     shutdown_rx: watch::Receiver<bool>,
 ) -> JoinHandle<()> {
-    let label = format!("{}-{}", binding.source_unit_id, binding.instance_idx);
+    let label = format!("{}-{}", binding.source_id, binding.instance_idx);
     tokio::spawn(async move {
         let _shutdown_rx = shutdown_rx;
         match source_bindings::run_binding(binding).await {
-            Ok(()) => info!(source_binding = %label, "source-worker exited"),
+            Ok(()) => info!(source_binding = %label, "source host exited"),
             Err(error) => warn!(
                 source_binding = %label,
                 ?error,
-                "source-worker exited with error"
+                "source host exited with error"
             ),
         }
     })

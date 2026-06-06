@@ -34,9 +34,9 @@ pub use super::evidence::{
 pub use super::fs::{EnvGuard, TestTempEnv, prepare_test_temp_env};
 pub use super::nats::{EphemeralNats, EphemeralNatsBuilder, TlsConfig};
 pub use super::orchestrator::{
-    TestIngestdConfig, TestIngestdHandle, TestSourceWorkerConfig, TestSourceWorkerHandle,
-    run_test_source_worker_scan, source_worker_binary_path, start_test_ingestd_with_config,
-    start_test_source_worker,
+    TestEventEngineConfig, TestEventEngineHandle, TestSourceDriverConfig, TestSourceDriverHandle,
+    run_test_source_scan, source_driver_host_binary_path, start_test_event_engine_with_config,
+    start_test_source,
 };
 pub use super::preflight::*;
 pub use super::timing::{Timeouts, TimingUtils, WaitHelpers};

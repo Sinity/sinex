@@ -12,8 +12,8 @@ use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::relation_extractor::{RelationExtractor, RelationExtractorState};
-use sinexd::node_sdk::ScopeReconciler;
-use sinexd::node_sdk::derived_node::AutomatonContext;
+use sinexd::runtime::ScopeReconciler;
+use sinexd::runtime::automaton::AutomatonContext;
 use xtask::sandbox::prelude::*;
 
 const CO_OCCURRENCE_SCOPE: &str = "co-occurrence-window";

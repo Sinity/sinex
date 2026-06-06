@@ -21,9 +21,12 @@ async fn replay_execution_surfaces_operation_state_corruption_after_failure(
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
     let env = sinex_primitives::environment::environment();
-    let (_scan_command_rx, scan_handle) =
-        spawn_fake_scan_node_ack_only(nats_client.clone(), env.clone(), "corrupt-failure-test")
-            .await?;
+    let (_scan_command_rx, scan_handle) = spawn_fake_scan_source_runtime_ack_only(
+        nats_client.clone(),
+        env.clone(),
+        "corrupt-failure-test",
+    )
+    .await?;
 
     let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
         .with_scan_completion_timeout(Duration::from_millis(200));
@@ -52,7 +55,7 @@ async fn replay_execution_surfaces_operation_state_corruption_after_failure(
     );
 
     let mut scope = sample_scope();
-    scope.node_id = "corrupt-failure-test".to_string();
+    scope.source_name = "corrupt-failure-test".to_string();
 
     let planned = control_client
         .plan("test:replay-user".into(), scope)
@@ -65,7 +68,7 @@ async fn replay_execution_surfaces_operation_state_corruption_after_failure(
     let operation_id = approved.operation_id;
     let execute_task = tokio::spawn(async move {
         execute_client
-            .execute(operation_id, "service:executor-node".into(), false)
+            .execute(operation_id, "service:executor-runtime".into(), false)
             .await
     });
 
@@ -87,9 +90,11 @@ async fn replay_execution_surfaces_operation_state_corruption_after_failure(
         "unexpected error: {err:#}"
     );
 
-    scan_handle
-        .await
-        .map_err(|e| test_error(format!("fake corrupt-failure-test node task failed: {e}")))?;
+    scan_handle.await.map_err(|e| {
+        test_error(format!(
+            "fake corrupt-failure-test source runtime task failed: {e}"
+        ))
+    })?;
 
     Ok(())
 }
@@ -120,9 +125,12 @@ async fn replay_execution_surfaces_cancellation_bookkeeping_corruption(
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
     let env = sinex_primitives::environment::environment();
-    let (_scan_command_rx, scan_handle) =
-        spawn_fake_scan_node_ack_only(nats_client.clone(), env.clone(), "corrupt-cancel-test")
-            .await?;
+    let (_scan_command_rx, scan_handle) = spawn_fake_scan_source_runtime_ack_only(
+        nats_client.clone(),
+        env.clone(),
+        "corrupt-cancel-test",
+    )
+    .await?;
 
     let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
         .with_scan_completion_timeout(Duration::from_secs(5));
@@ -151,7 +159,7 @@ async fn replay_execution_surfaces_cancellation_bookkeeping_corruption(
     );
 
     let mut scope = sample_scope();
-    scope.node_id = "corrupt-cancel-test".to_string();
+    scope.source_name = "corrupt-cancel-test".to_string();
     scope.time_window = Some((
         target_ts - time::Duration::milliseconds(1),
         target_ts + time::Duration::milliseconds(1),
@@ -168,7 +176,7 @@ async fn replay_execution_surfaces_cancellation_bookkeeping_corruption(
     let operation_id = approved.operation_id;
     let execute_task = tokio::spawn(async move {
         execute_client
-            .execute(operation_id, "service:executor-node".into(), false)
+            .execute(operation_id, "service:executor-runtime".into(), false)
             .await
     });
 
@@ -200,9 +208,11 @@ async fn replay_execution_surfaces_cancellation_bookkeeping_corruption(
         "unexpected error: {err:#}"
     );
 
-    scan_handle
-        .await
-        .map_err(|e| test_error(format!("fake corrupt-cancel-test node task failed: {e}")))?;
+    scan_handle.await.map_err(|e| {
+        test_error(format!(
+            "fake corrupt-cancel-test source runtime task failed: {e}"
+        ))
+    })?;
 
     Ok(())
 }

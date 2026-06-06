@@ -71,13 +71,12 @@ sinex-primitives = { path = "../crate/sinex-primitives", default-features = fals
     "nats",
     "testing",
 ] }
-# Database and node SDK (for test sandbox)
+# Database and runtime (for test sandbox)
 sinex-db = { path = "../crate/sinex-db" }
 
-# Source-unit inventory links. xtask source-unit/proof tooling must see the
-# descriptors declared by shipped node crates, not only descriptors hardcoded in
-# sinex-primitives. Post-Wave-B fold (#1081), every per-domain source unit is
-# registered from sinex-source-worker, so a single dep covers all of them.
+# Source inventory links. xtask verification surfaces must see descriptors
+# declared by the shipped sinexd source contracts, not only descriptors hardcoded in
+# sinex-primitives.
 url = { workspace = true }
 fastrand = { workspace = true }
 tokio-stream = { workspace = true }
@@ -115,9 +114,6 @@ shadow-rs = { workspace = true }
 
 [dev-dependencies]
 vt100 = "0.16"
-
-[dev-dependencies.sinexd]
-path = "../crate/sinexd"
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
 //! Compile-time database CHECK constraint specifications derived from Rust enums.
 //!
-//! See `crate/lib/sinex-macros/docs/db_check.md` for the macro grammar.
+//! See `crate/sinex-macros/docs/db_check.md` for the macro grammar.
 //!
 //! # Architecture
 //!
@@ -133,8 +133,8 @@ mod tests {
             table: "manifests",
             column: "manifest_type",
             version: 1,
-            allowed_values: &["ingestor"],
-            enum_name: "NodeType",
+            allowed_values: &["source"],
+            enum_name: "ModuleKind",
         };
         assert_eq!(spec.constraint_name(), "manifest_type_check_v1");
         assert_eq!(spec.constraint_name_prefix(), "manifest_type_check_v");

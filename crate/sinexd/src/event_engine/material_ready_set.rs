@@ -1,7 +1,7 @@
 //! Shared coordination set for material→event ordering.
 //!
 //! The `MaterialReadySet` solves a cross-stream ordering problem between two independent
-//! ingestion flows within the same ingestd process:
+//! ingestion flows within the same event_engine process:
 //!
 //! - **`MaterialAssembler`** consumes material begin frames and registers materials in Postgres.
 //! - **`JetStreamConsumer`** consumes `events.raw.>` and INSERTs events that reference materials via FK.
@@ -17,7 +17,7 @@
 //! - `mark_ready()`: ~100ns + `Notify::notify_waiters()` (no heap allocation)
 //! - Memory: bounded by TTL-based eviction rather than monotonic growth
 //!
-//! In the ingestd service path, boundedness comes from two layers:
+//! In the event_engine service path, boundedness comes from two layers:
 //! opportunistic eviction on `mark_ready()`/`is_ready()` and a background
 //! maintenance task that calls `purge_stale()` even when the process goes idle
 //! after a burst.
@@ -33,17 +33,17 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info};
 use uuid::Uuid;
 
-use crate::event_engine::{IngestdResult, SinexError};
+use crate::event_engine::{EventEngineResult, SinexError};
 
 /// Seed query window: load material IDs registered in the last hour.
-/// This prevents FK violations for materials registered before this ingestd instance started.
+/// This prevents FK violations for materials registered before this event_engine instance started.
 const SEED_WINDOW_HOURS: f64 = 1.0;
 /// Retain ready material IDs for long enough to cover cross-stream lag and short restarts,
 /// then evict them so the coordination set does not grow forever.
 const READY_RETENTION: Duration = Duration::from_hours(6);
 /// Opportunistic sweep cadence. Eviction is O(n), so keep it infrequent.
 const SWEEP_INTERVAL: u64 = 1024;
-/// Background maintenance cadence used by ingestd to keep the ready-set bounded
+/// Background maintenance cadence used by event_engine to keep the ready-set bounded
 /// even when the process goes quiet after a burst.
 const MAINTENANCE_INTERVAL: Duration = Duration::from_mins(5);
 
@@ -116,7 +116,7 @@ impl MaterialReadySet {
     /// This closes the gap between materials registered outside the in-process
     /// assembler path (for example by gateway helpers or tests) and the in-memory
     /// coordination set used by the event consumer.
-    pub async fn ensure_ready(&self, pool: &PgPool, material_id: Uuid) -> IngestdResult<bool> {
+    pub async fn ensure_ready(&self, pool: &PgPool, material_id: Uuid) -> EventEngineResult<bool> {
         if self.is_ready(&material_id) {
             return Ok(true);
         }
@@ -161,8 +161,8 @@ impl MaterialReadySet {
     ///
     /// Loads material IDs registered within the last [`SEED_WINDOW_HOURS`] hours so that
     /// events referencing recently-registered materials don't get unnecessarily deferred
-    /// after an ingestd restart.
-    pub async fn seed_from_db(&self, pool: &PgPool) -> IngestdResult<()> {
+    /// after an event_engine restart.
+    pub async fn seed_from_db(&self, pool: &PgPool) -> EventEngineResult<()> {
         let rows = sqlx::query_scalar!(
             r#"
             SELECT id AS "id: uuid::Uuid"

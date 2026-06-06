@@ -72,12 +72,13 @@ cargo install --locked cargo-nextest || log "cargo-nextest install skipped"
 #
 # Skip silently if docker is unavailable — agents on docker-less surfaces
 # need to surface that themselves rather than fail boot.
-if command -v docker >/dev/null 2>&1 && [[ -f docker-compose.cloud.yml ]]; then
+cloud_compose="xtask/cloud/docker-compose.yml"
+if command -v docker >/dev/null 2>&1 && [[ -f "${cloud_compose}" ]]; then
   log "pulling docker sidecars"
-  docker compose -f docker-compose.cloud.yml pull || \
+  docker compose -f "${cloud_compose}" pull || \
     log "docker compose pull failed (ignored)"
   log "starting docker sidecars (postgres + nats)"
-  docker compose -f docker-compose.cloud.yml up -d || \
+  docker compose -f "${cloud_compose}" up -d || \
     log "docker compose up failed (ignored — agent must start sidecars manually)"
 else
   log "docker unavailable or compose file missing — skipping sidecar boot"

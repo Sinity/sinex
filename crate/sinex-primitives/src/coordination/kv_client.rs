@@ -113,7 +113,7 @@ fn timing_override_from_env(key: &'static str) -> Option<u64> {
 }
 
 /// Client for interacting with the Coordination KV Store.
-/// Handles node registration, heartbeats, and leader election.
+/// Handles runtime-module registration, heartbeats, and leader election.
 #[derive(Clone)]
 pub struct CoordinationKvClient {
     js: Context,
@@ -243,7 +243,7 @@ impl CoordinationKvClient {
         .await
     }
 
-    /// Register a node instance in the KV store.
+    /// Register a runtime-module instance in the KV store.
     /// Key: `{service}.{instance}`
     pub async fn register_instance(&self, metadata: &InstanceMetadata) -> Result<(), SinexError> {
         self.put_instance_metadata(metadata, "register").await?;
@@ -626,8 +626,8 @@ mod tests {
     #[sinex_test]
     async fn parse_leader_id_accepts_valid_utf8() -> ::xtask::sandbox::TestResult<()> {
         let leader =
-            CoordinationKvClient::parse_leader_id(b"node-a", "coordination leadership entry")?;
-        assert_eq!(leader, "node-a");
+            CoordinationKvClient::parse_leader_id(b"module-a", "coordination leadership entry")?;
+        assert_eq!(leader, "module-a");
         Ok(())
     }
 

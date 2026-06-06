@@ -25,7 +25,6 @@ mod help_tests {
             .stdout(predicate::str::contains("Usage: sinexctl"))
             .stdout(predicate::str::contains("Commands:"))
             .stdout(predicate::str::contains("query"))
-            .stdout(predicate::str::contains("node"))
             .stdout(predicate::str::contains("dlq"))
             .stdout(predicate::str::contains("replay"))
             .stdout(predicate::str::contains("ops"))
@@ -53,12 +52,12 @@ mod help_tests {
     }
 
     #[sinex_test]
-    async fn test_node_help() -> TestResult<()> {
+    async fn test_runtime_help() -> TestResult<()> {
         sinexctl()
-            .args(["node", "--help"])
+            .args(["runtime", "--help"])
             .assert()
             .success()
-            .stdout(predicate::str::contains("Node operations"))
+            .stdout(predicate::str::contains("Runtime module operations"))
             .stdout(predicate::str::contains("list"))
             .stdout(predicate::str::contains("status"))
             .stdout(predicate::str::contains("drain"))
@@ -359,9 +358,9 @@ mod error_handling_tests {
 
     #[sinex_test]
     async fn test_missing_required_args() -> TestResult<()> {
-        // node status requires a node name
+        // runtime status requires a module name
         sinexctl()
-            .args(["node", "status"])
+            .args(["runtime", "status"])
             .assert()
             .failure()
             .stderr(predicate::str::contains("required"));
@@ -423,7 +422,7 @@ mod environment_tests {
     async fn test_rpc_url_env_recognized() -> TestResult<()> {
         // Help should mention the environment variable
         sinexctl().args(["--help"]).assert().success().stdout(
-            predicate::str::contains("SINEX_RPC_URL").or(predicate::str::contains("rpc-url")),
+            predicate::str::contains("SINEX_API_URL").or(predicate::str::contains("rpc-url")),
         );
         Ok(())
     }

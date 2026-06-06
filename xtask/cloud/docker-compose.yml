@@ -1,0 +1,41 @@
+# Cloud-agent sidecar stack.
+#
+# Brings up Postgres 18 (with timescaledb + pgvector + pg_jsonschema) and
+# NATS 2 (with JetStream) inside a cloud sandbox so focused DB/NATS tests
+# can run against ephemeral infrastructure.
+#
+# Usage from a cloud-agent sandbox:
+#   docker compose -f xtask/cloud/docker-compose.yml up -d
+#   DATABASE_URL="postgres://sinex:dev@localhost:5432/sinex_dev" \
+#     NATS_URL="nats://localhost:4222" \
+#     cargo test -p <crate>
+#   docker compose -f xtask/cloud/docker-compose.yml down
+#
+# Both images live at ghcr.io/sinity/. See xtask/cloud/docker/README.md for the
+# build/push workflow.
+
+services:
+  postgres:
+    image: ghcr.io/sinity/sinex-pg18:latest
+    environment:
+      POSTGRES_USER: sinex
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: sinex_dev
+    ports:
+      - "5432:5432"
+    # Ephemeral data — each sandbox boot is a clean DB.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sinex -d sinex_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: ghcr.io/sinity/sinex-nats:latest
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    tmpfs:
+      - /data/jetstream

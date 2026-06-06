@@ -363,9 +363,13 @@ impl ReplayControlServer {
                 let op = replay.load_operation(operation_id).await?;
                 ReplayControlResponse::success(Some(op), None, None)
             }
-            ReplayControlRequest::List { state, node, limit } => {
+            ReplayControlRequest::List {
+                state,
+                module,
+                limit,
+            } => {
                 let ops = replay
-                    .list_operations(state, node.as_deref(), limit)
+                    .list_operations(state, module.as_deref(), limit)
                     .await?;
                 ReplayControlResponse::success(None, None, Some(ops))
             }

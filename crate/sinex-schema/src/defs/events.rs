@@ -30,11 +30,11 @@ use sqlx::FromRow;
 /// Synthesized events carry 6 nullable metadata columns directly on `core.events`:
 ///
 /// - `temporal_policy` — which `SyntheticTemporalPolicy` governed `ts_orig`
-/// - `semantics_version` — node logic version for deterministic replay
+/// - `semantics_version` — producer logic version for deterministic replay
 /// - `scope_key` — scope identifier for scope-reconciler replacement
 /// - `equivalence_key` — output slot identifier for targeted replacement
 /// - `created_by_operation_id` — FK to the replay/operation that spawned this event
-/// - `node_model` — which derived node model produced this event
+/// - `automaton_model` — which automaton model produced this event
 ///
 /// ### Rationale for inline columns (not a junction table):
 /// 1. **Query efficiency**: Scope recomputation needs `WHERE scope_key = ? AND source = ?`
@@ -74,7 +74,7 @@ pub enum Events {
 
     // Metadata
     PayloadSchemaId,
-    SourceRunId,
+    ModuleRunId,
 
     // Synthetic event metadata (nullable — only set for derived/synthesized events)
     TemporalPolicy,
@@ -82,7 +82,7 @@ pub enum Events {
     ScopeKey,
     EquivalenceKey,
     CreatedByOperationId,
-    NodeModel,
+    AutomatonModel,
 
     /// Quality rung of the resolved `ts_orig` (TemporalSourceType display string).
     TsQuality,
@@ -136,7 +136,7 @@ pub struct EventRecord {
 
     // Metadata
     pub payload_schema_id: Option<Uuid>,
-    pub source_run_id: Option<Uuid>,
+    pub module_run_id: Option<Uuid>,
 
     // Synthetic event metadata (nullable — only set for derived/synthesized events)
     pub temporal_policy: Option<String>,
@@ -144,7 +144,7 @@ pub struct EventRecord {
     pub scope_key: Option<String>,
     pub equivalence_key: Option<String>,
     pub created_by_operation_id: Option<Uuid>,
-    pub node_model: Option<String>,
+    pub automaton_model: Option<String>,
 
     /// Quality rung of the resolved `ts_orig` (`TemporalSourceType` display
     /// string, e.g. `intrinsic_content` / `staged_at`). Nullable for legacy
@@ -156,7 +156,7 @@ impl Events {
     /// Generates the `CREATE TABLE` statement for `core.events`.
     #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
-        let mut node_run_foreign_key = Self::create_node_run_foreign_key();
+        let mut module_run_foreign_key = Self::create_module_run_foreign_key();
 
         Table::create()
             .table((Alias::new("core"), Events::Table))
@@ -204,7 +204,7 @@ impl Events {
             .col(ColumnDef::new(Events::AnchorPayloadHash).custom(Alias::new("bytea")).check(Expr::cust("anchor_payload_hash IS NULL OR length(anchor_payload_hash) = 32")))
             .col(ColumnDef::new(Events::AssociatedBlobIds).array(ColumnType::Custom(Alias::new("UUID").into_iden())))
             .col(ColumnDef::new(Events::PayloadSchemaId).custom(Alias::new("UUID")))
-            .col(ColumnDef::new(Events::SourceRunId).custom(Alias::new("UUID")))
+            .col(ColumnDef::new(Events::ModuleRunId).custom(Alias::new("UUID")))
             // Synthetic event metadata (nullable — only populated for derived/synthesized events)
             .col(ColumnDef::new(Events::TemporalPolicy).text().check(
                 Expr::cust("temporal_policy IS NULL OR temporal_policy IN ('inherit_parent', 'latest_input', 'window_boundary', 'declared_effective')")
@@ -213,8 +213,8 @@ impl Events {
             .col(ColumnDef::new(Events::ScopeKey).text())
             .col(ColumnDef::new(Events::EquivalenceKey).text())
             .col(ColumnDef::new(Events::CreatedByOperationId).custom(Alias::new("UUID")))
-            .col(ColumnDef::new(Events::NodeModel).text().check(
-                Expr::cust("node_model IS NULL OR node_model IN ('transducer', 'windowed', 'scope_reconciler')")
+            .col(ColumnDef::new(Events::AutomatonModel).text().check(
+                Expr::cust("automaton_model IS NULL OR automaton_model IN ('transducer', 'windowed', 'scope_reconciler')")
             ))
             // #1570 Prong B: resolved ts_orig quality rung (TemporalSourceType display string).
             .col(ColumnDef::new(Events::TsQuality).text().check(
@@ -250,7 +250,7 @@ impl Events {
             // more than 1 second. UUIDv7 timestamp extraction has millisecond
             // precision, so ts_coided can lag ts_orig by up to 999 microseconds
             // when the UUID encodes ts_orig directly. The 1-second tolerance also
-            // covers clock skew between ingestor hosts. (#751 F34)
+            // covers clock skew between source-runtime hosts. (#751 F34)
             .check(Expr::cust(
                 "ts_orig <= ts_coided + INTERVAL '1 second'",
             ))
@@ -265,19 +265,19 @@ impl Events {
                     .to(EventPayloadSchemas::table_iden(), Alias::new("id"))
                     .on_delete(ForeignKeyAction::SetNull)
             )
-            .foreign_key(&mut node_run_foreign_key)
+            .foreign_key(&mut module_run_foreign_key)
             .to_owned()
     }
 
-    /// Generates the named foreign key for `events.source_run_id`.
+    /// Generates the named foreign key for `events.module_run_id`.
     ///
     /// Fresh databases receive this during `CREATE TABLE`; existing databases
     /// converge the same named constraint via the schema convergence engine.
     #[must_use]
-    pub fn create_node_run_foreign_key() -> ForeignKeyCreateStatement {
+    pub fn create_module_run_foreign_key() -> ForeignKeyCreateStatement {
         ForeignKey::create()
-            .name("events_source_run_id_fkey")
-            .from(Self::table_iden(), Events::SourceRunId)
+            .name("events_module_run_id_fkey")
+            .from(Self::table_iden(), Events::ModuleRunId)
             .to(Runs::table_iden(), Alias::new("id"))
             .to_owned()
     }

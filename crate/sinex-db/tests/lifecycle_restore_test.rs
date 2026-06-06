@@ -1,5 +1,5 @@
 use sinex_db::DbPoolExt;
-use sinex_primitives::domain::{DerivedNodeModel, RecordedPath, SyntheticTemporalPolicy};
+use sinex_primitives::domain::{AutomatonModel, RecordedPath, SyntheticTemporalPolicy};
 use sinex_primitives::events::{Event, EventPayload, payloads::FileCreatedPayload};
 use sinex_primitives::{Timestamp, Uuid};
 use xtask::sandbox::prelude::*;
@@ -40,7 +40,7 @@ async fn cascade_restore_preserves_synthetic_metadata_columns(ctx: TestContext) 
     derived.scope_key = Some("scope:lifecycle-restore".to_string());
     derived.equivalence_key = Some("equiv:lifecycle-restore".to_string());
     derived.created_by_operation_id = Some(replay_operation_id);
-    derived.node_model = Some(DerivedNodeModel::ScopeReconciler);
+    derived.automaton_model = Some(AutomatonModel::ScopeReconciler);
 
     let inserted = ctx.pool().events().insert(derived).await?;
     let event_id = inserted
@@ -85,7 +85,10 @@ async fn cascade_restore_preserves_synthetic_metadata_columns(ctx: TestContext) 
         Some("equiv:lifecycle-restore")
     );
     assert_eq!(restored.created_by_operation_id, Some(replay_operation_id));
-    assert_eq!(restored.node_model, Some(DerivedNodeModel::ScopeReconciler));
+    assert_eq!(
+        restored.automaton_model,
+        Some(AutomatonModel::ScopeReconciler)
+    );
 
     Ok(())
 }

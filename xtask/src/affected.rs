@@ -16,8 +16,15 @@ use walkdir::WalkDir;
 #[derive(Clone, Debug)]
 struct WorkspaceMetadata {
     packages: Vec<String>,
-    forward_deps: HashMap<String, HashSet<String>>,
     reverse_deps: HashMap<String, HashSet<String>>,
+    dependency_specs: HashMap<String, Vec<DependencySpec>>,
+    features: HashMap<String, HashMap<String, Vec<String>>>,
+}
+
+#[derive(Clone, Debug)]
+struct DependencySpec {
+    name: String,
+    optional: bool,
 }
 
 /// Process-lifetime cache for workspace metadata (R3 accepted).
@@ -36,6 +43,8 @@ impl WorkspaceMetadata {
 
         let mut packages = Vec::with_capacity(packages_array.len());
         let mut forward_deps: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut dependency_specs_by_package: HashMap<String, Vec<DependencySpec>> = HashMap::new();
+        let mut features_by_package: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
 
         for (package_index, pkg) in packages_array.iter().enumerate() {
             let name = pkg["name"].as_str().with_context(|| {
@@ -44,21 +53,50 @@ impl WorkspaceMetadata {
             let deps = pkg["dependencies"].as_array().with_context(|| {
                 format!("cargo metadata package[{name}] is missing dependencies array")
             })?;
-            let deps = deps
+            let package_dependency_specs = deps
                 .iter()
                 .enumerate()
                 .map(|(dependency_index, dep)| {
-                    dep["name"].as_str().map(str::to_owned).with_context(|| {
+                    let name = dep["name"].as_str().map(str::to_owned).with_context(|| {
                         format!(
                             "cargo metadata package[{name}] dependency[{dependency_index}] is missing a string name"
                         )
-                    })
+                    })?;
+                    let optional = dep["optional"].as_bool().unwrap_or(false);
+                    Ok(DependencySpec { name, optional })
                 })
-                .collect::<Result<HashSet<_>>>()?;
+                .collect::<Result<Vec<_>>>()?;
+            let deps = package_dependency_specs
+                .iter()
+                .map(|dep| dep.name.clone())
+                .collect::<HashSet<_>>();
+
+            let feature_map = pkg["features"]
+                .as_object()
+                .map(|features| {
+                    features
+                        .iter()
+                        .map(|(feature, members)| {
+                            let members = members
+                                .as_array()
+                                .map(|members| {
+                                    members
+                                        .iter()
+                                        .filter_map(|member| member.as_str().map(str::to_owned))
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
+                            (feature.clone(), members)
+                        })
+                        .collect::<HashMap<_, _>>()
+                })
+                .unwrap_or_default();
 
             let name = name.to_owned();
             packages.push(name.clone());
-            forward_deps.insert(name, deps);
+            forward_deps.insert(name.clone(), deps);
+            dependency_specs_by_package.insert(name.clone(), package_dependency_specs);
+            features_by_package.insert(name, feature_map);
         }
 
         // Build reverse dependency map
@@ -74,8 +112,9 @@ impl WorkspaceMetadata {
 
         Ok(Self {
             packages,
-            forward_deps,
             reverse_deps,
+            dependency_specs: dependency_specs_by_package,
+            features: features_by_package,
         })
     }
 
@@ -99,26 +138,19 @@ impl WorkspaceMetadata {
     }
 }
 
-/// Return the requested workspace packages plus their transitive workspace dependencies.
-pub fn package_dependency_closure(packages: &[String]) -> Result<Vec<String>> {
-    let metadata = if let Some(m) = WORKSPACE_METADATA.get() {
-        m
-    } else {
-        let m = WorkspaceMetadata::load()?;
-        WORKSPACE_METADATA.get_or_init(|| m)
-    };
-    Ok(package_dependency_closure_from_forward(
-        packages,
-        &metadata.forward_deps,
-    ))
-}
-
-/// Return the dependency closure using metadata loaded from a specific workspace root.
-pub fn package_dependency_closure_in(cwd: &Path, packages: &[String]) -> Result<Vec<String>> {
+/// Return the requested workspace packages plus dependencies active for the
+/// selected packages' default features and explicitly requested Cargo features.
+pub fn active_package_dependency_closure_in(
+    cwd: &Path,
+    packages: &[String],
+    requested_features: &[String],
+) -> Result<Vec<String>> {
     let metadata = WorkspaceMetadata::load_in(cwd)?;
-    Ok(package_dependency_closure_from_forward(
+    Ok(active_package_dependency_closure_from_metadata(
         packages,
-        &metadata.forward_deps,
+        requested_features,
+        &metadata.dependency_specs,
+        &metadata.features,
     ))
 }
 
@@ -171,20 +203,17 @@ pub fn infer_packages_for_test_filter(filter: &str) -> Result<Vec<String>> {
     infer_packages_for_test_filter_in(&repo_root, filter)
 }
 
-/// Infer nextest integration-test binary targets from a simple test-name filter.
-///
-/// This is intentionally conservative. It only returns targets for tests found
-/// in integration-test files (`*/tests/*.rs`). If any matched test lives in an
-/// inline/unit-test module, the returned set omits it and the caller should run
-/// without adding `--test` unless all intended matches are covered.
-pub fn infer_test_binaries_for_test_filter(filter: &str) -> Result<Vec<String>> {
+/// Infer `(package, test_binary)` pairs from a simple test-name filter.
+pub(crate) fn infer_test_binary_packages_for_test_filter(
+    filter: &str,
+) -> Result<Vec<(String, String)>> {
     let repo_root = crate::config::workspace_root();
-    infer_test_binaries_for_test_filter_in(&repo_root, filter)
+    infer_test_binary_packages_for_test_filter_in(&repo_root, filter)
 }
 
 /// Infer whether a simple test-name filter targets only library unit tests.
 ///
-/// This complements [`infer_test_binaries_for_test_filter`]. Inline tests in
+/// This complements [`infer_test_binary_packages_for_test_filter`]. Inline tests in
 /// `src/` do not have a nextest `--test` target, but nextest can narrow them
 /// with `--lib`; doing so avoids enumerating every integration-test binary in a
 /// package for a single library unit test.
@@ -226,12 +255,27 @@ fn infer_packages_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<V
     Ok(packages)
 }
 
+#[cfg(test)]
 fn infer_test_binaries_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<Vec<String>> {
+    let binary_packages = infer_test_binary_packages_for_test_filter_in(repo_root, filter)?;
+    let mut binaries: Vec<String> = binary_packages
+        .into_iter()
+        .map(|(_package, binary)| binary)
+        .collect();
+    binaries.sort();
+    binaries.dedup();
+    Ok(binaries)
+}
+
+fn infer_test_binary_packages_for_test_filter_in(
+    repo_root: &Path,
+    filter: &str,
+) -> Result<Vec<(String, String)>> {
     let Some(test_names) = extract_simple_test_name_terms(filter) else {
         return Ok(Vec::new());
     };
 
-    let mut binaries = HashSet::new();
+    let mut binary_packages = HashSet::new();
     let mut covered_test_names = HashSet::new();
     for relative_path in candidate_rust_paths(repo_root)? {
         let full_path = repo_root.join(&relative_path);
@@ -251,8 +295,10 @@ fn infer_test_binaries_for_test_filter_in(repo_root: &Path, filter: &str) -> Res
             };
 
             if let Some(binary) = binary {
-                covered_test_names.extend(matched_test_names.into_iter().cloned());
-                binaries.insert(binary);
+                if let Some(package) = package_for_path(&relative_path) {
+                    covered_test_names.extend(matched_test_names.into_iter().cloned());
+                    binary_packages.insert((package, binary));
+                }
             }
         }
     }
@@ -264,9 +310,9 @@ fn infer_test_binaries_for_test_filter_in(repo_root: &Path, filter: &str) -> Res
         return Ok(Vec::new());
     }
 
-    let mut binaries: Vec<String> = binaries.into_iter().collect();
-    binaries.sort();
-    Ok(binaries)
+    let mut binary_packages: Vec<(String, String)> = binary_packages.into_iter().collect();
+    binary_packages.sort();
+    Ok(binary_packages)
 }
 
 fn infer_lib_target_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<bool> {
@@ -419,11 +465,8 @@ fn files_to_packages(files: &[String]) -> HashSet<String> {
 pub(crate) fn package_for_path(path: &str) -> Option<String> {
     let parts: Vec<&str> = path.split('/').collect();
 
-    // Post-fold flat layout: every workspace crate lives directly at
-    // crate/<package>/... (crate/sinexd, crate/sinex-db, crate/sinexctl,
-    // crate/sinex-e2e-tests, crate/sinex-workspace-tests, ...). The pre-fold
-    // crate/{lib,core,nodes,cli}/<name> grouping and the top-level tests/e2e,
-    // tests/workspace crates no longer exist (#1559 gateway/source-worker fold).
+    // Runtime crates live under crate/<package>/... while workspace-member
+    // test crates live under tests/<kind>/....
     if parts.len() >= 2 && parts[0] == "crate" {
         let name = parts[1];
         if name.starts_with('.') {
@@ -432,14 +475,23 @@ pub(crate) fn package_for_path(path: &str) -> Option<String> {
         return Some(name.replace('_', "-"));
     }
 
+    if parts.len() >= 2 && parts[0] == "tests" {
+        return match parts[1] {
+            "e2e" => Some("sinex-e2e-tests".to_string()),
+            "workspace" => Some("sinex-workspace-tests".to_string()),
+            "vm-suite" => Some("sinex-vm-test-suite".to_string()),
+            _ => None,
+        };
+    }
+
     // xtask/ changes affect xtask itself
     if parts.first() == Some(&"xtask") {
         return Some("xtask".to_string());
     }
 
-    // Workspace-level files (Cargo.toml, Cargo.lock, .config/) and the
-    // top-level tests/ fixture tree are handled upstream as workspace-wide
-    // changes rather than mapped to a single package.
+    // Workspace-level files (Cargo.toml, Cargo.lock, .config/) and shared
+    // test fixtures are handled upstream as workspace-wide changes rather
+    // than mapped to a single package.
     None
 }
 
@@ -458,8 +510,8 @@ fn test_binary_for_path(path: &str) -> Option<String> {
         return Some(stem.to_string());
     }
 
-    // Crate-local integration tests: crate/<category>/<crate>/tests/foo.rs.
-    if parts.len() == 5 && parts[0] == "crate" && parts[3] == "tests" {
+    // Crate-local integration tests: crate/<crate>/tests/foo.rs.
+    if parts.len() == 4 && parts[0] == "crate" && parts[2] == "tests" {
         return Some(stem.to_string());
     }
 
@@ -475,6 +527,10 @@ fn test_binary_for_nested_integration_module(
     repo_root: &Path,
     path: &str,
 ) -> Result<Option<String>> {
+    if let Some(binary) = test_binary_from_crate_manifest(repo_root, path)? {
+        return Ok(Some(binary));
+    }
+
     let parts: Vec<&str> = path.split('/').collect();
     let Some(file_name) = parts.last() else {
         return Ok(None);
@@ -498,6 +554,42 @@ fn test_binary_for_nested_integration_module(
     }
 
     Ok(Some(binary))
+}
+
+fn test_binary_from_crate_manifest(repo_root: &Path, path: &str) -> Result<Option<String>> {
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() < 4 || parts.first().copied() != Some("crate") {
+        return Ok(None);
+    }
+
+    let crate_root = format!("{}/{}", parts[0], parts[1]);
+    let relative_test_path = parts[2..].join("/");
+    let manifest_path = repo_root.join(&crate_root).join("Cargo.toml");
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+
+    let manifest = fs::read_to_string(&manifest_path)
+        .wrap_err_with(|| format!("failed to read {}", manifest_path.display()))?;
+    let manifest: toml::Value = toml::from_str(&manifest)
+        .wrap_err_with(|| format!("failed to parse {}", manifest_path.display()))?;
+    let Some(tests) = manifest.get("test").and_then(toml::Value::as_array) else {
+        return Ok(None);
+    };
+
+    for test in tests {
+        let Some(configured_path) = test.get("path").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        if configured_path != relative_test_path {
+            continue;
+        }
+        if let Some(name) = test.get("name").and_then(toml::Value::as_str) {
+            return Ok(Some(name.to_string()));
+        }
+    }
+
+    Ok(None)
 }
 
 fn nested_integration_aggregator(
@@ -541,17 +633,17 @@ fn nested_integration_root(parts: &[&str]) -> Option<(String, String, String)> {
         ));
     }
 
-    // Crate-local integration tests: crate/<category>/<crate>/tests/foo/bar.rs
+    // Crate-local integration tests: crate/<crate>/tests/foo/bar.rs
     // belongs to nextest target `foo` when tests/foo.rs includes it.
-    if parts.len() > 5
+    if parts.len() > 4
         && parts.first().copied() == Some("crate")
-        && parts.get(3).copied() == Some("tests")
+        && parts.get(2).copied() == Some("tests")
     {
-        let root = *parts.get(4)?;
+        let root = *parts.get(3)?;
         return Some((
-            format!("{}/{}/{}/tests/{root}.rs", parts[0], parts[1], parts[2]),
+            format!("{}/{}/tests/{root}.rs", parts[0], parts[1]),
             root.to_string(),
-            parts[4..].join("/"),
+            parts[3..].join("/"),
         ));
     }
 
@@ -574,10 +666,10 @@ fn nested_integration_root(parts: &[&str]) -> Option<(String, String, String)> {
 fn is_library_unit_test_path(path: &str) -> bool {
     let parts: Vec<&str> = path.split('/').collect();
 
-    // Crate library unit tests: crate/<category>/<crate>/src/*.rs, excluding
-    // binary entrypoints and src/bin targets which are not covered by --lib.
-    if parts.len() >= 5 && parts[0] == "crate" && parts[3] == "src" {
-        return parts.get(4).copied() != Some("bin")
+    // Crate library unit tests: crate/<crate>/src/*.rs, excluding binary
+    // entrypoints and src/bin targets which are not covered by --lib.
+    if parts.len() >= 4 && parts[0] == "crate" && parts[2] == "src" {
+        return parts.get(3).copied() != Some("bin")
             && parts.last().copied() != Some("main.rs")
             && parts.last().copied() != Some("bin.rs");
     }
@@ -667,21 +759,44 @@ fn candidate_rust_paths(repo_root: &Path) -> Result<Vec<String>> {
 }
 
 fn content_mentions_test_name(content: &str, test_name: &str) -> bool {
-    signature_mentions_test_name(content, &format!("fn {test_name}"))
-        || signature_mentions_test_name(content, &format!("async fn {test_name}"))
+    test_function_names(content).any(|name| name.contains(test_name))
 }
 
-fn signature_mentions_test_name(content: &str, needle: &str) -> bool {
-    let mut offset = 0usize;
-    while let Some(relative_index) = content[offset..].find(needle) {
-        let index = offset + relative_index;
-        let after = content[index + needle.len()..].chars().next();
-        if after.is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_')) {
-            return true;
-        }
-        offset = index + needle.len();
-    }
-    false
+fn test_function_names(content: &str) -> impl Iterator<Item = &str> {
+    content
+        .lines()
+        .scan(false, |pending_test_attr, line| {
+            let trimmed = line.trim_start();
+            if is_test_attr_line(trimmed) {
+                *pending_test_attr = true;
+                return Some(None);
+            }
+
+            let test_name = if *pending_test_attr {
+                function_name_from_line(trimmed)
+            } else {
+                None
+            };
+
+            if !trimmed.is_empty() && !trimmed.starts_with("#[") {
+                *pending_test_attr = false;
+            }
+            Some(test_name)
+        })
+        .flatten()
+}
+
+fn is_test_attr_line(line: &str) -> bool {
+    line.starts_with("#[test")
+        || line.starts_with("#[tokio::test")
+        || line.starts_with("#[sinex_test")
+}
+
+fn function_name_from_line(line: &str) -> Option<&str> {
+    let (_, after_fn) = line.split_once("fn ")?;
+    let name_end =
+        after_fn.find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))?;
+    Some(&after_fn[..name_end])
 }
 
 /// Compute transitive dependents of the given packages.
@@ -705,21 +820,35 @@ fn transitive_dependents(
     affected
 }
 
-fn package_dependency_closure_from_forward(
+fn active_package_dependency_closure_from_metadata(
     packages: &[String],
-    forward_deps: &HashMap<String, HashSet<String>>,
+    requested_features: &[String],
+    dependency_specs: &HashMap<String, Vec<DependencySpec>>,
+    features: &HashMap<String, HashMap<String, Vec<String>>>,
 ) -> Vec<String> {
-    let workspace_packages: HashSet<&str> = forward_deps.keys().map(String::as_str).collect();
+    let workspace_packages: HashSet<&str> = dependency_specs.keys().map(String::as_str).collect();
+    let root_packages: HashSet<&str> = packages.iter().map(String::as_str).collect();
     let mut closure: HashSet<String> = packages.iter().cloned().collect();
     let mut to_process: Vec<String> = packages.to_vec();
 
     while let Some(pkg) = to_process.pop() {
-        let Some(deps) = forward_deps.get(&pkg) else {
+        let Some(deps) = dependency_specs.get(&pkg) else {
             continue;
         };
+        let requested = if root_packages.contains(pkg.as_str()) {
+            requested_features
+        } else {
+            &[]
+        };
+        let active_optional_deps =
+            active_optional_dependencies(deps, features.get(&pkg), requested);
+
         for dep in deps {
-            if workspace_packages.contains(dep.as_str()) && closure.insert(dep.clone()) {
-                to_process.push(dep.clone());
+            if dep.optional && !active_optional_deps.contains(dep.name.as_str()) {
+                continue;
+            }
+            if workspace_packages.contains(dep.name.as_str()) && closure.insert(dep.name.clone()) {
+                to_process.push(dep.name.clone());
             }
         }
     }
@@ -729,9 +858,62 @@ fn package_dependency_closure_from_forward(
     closure
 }
 
+fn active_optional_dependencies(
+    deps: &[DependencySpec],
+    features: Option<&HashMap<String, Vec<String>>>,
+    requested_features: &[String],
+) -> HashSet<String> {
+    let optional_deps: HashSet<&str> = deps
+        .iter()
+        .filter(|dep| dep.optional)
+        .map(|dep| dep.name.as_str())
+        .collect();
+    if optional_deps.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut active_features = HashSet::new();
+    let mut to_process = vec!["default".to_string()];
+    to_process.extend(requested_features.iter().cloned());
+    let mut active_deps = HashSet::new();
+
+    while let Some(feature) = to_process.pop() {
+        if !active_features.insert(feature.clone()) {
+            continue;
+        }
+        let Some(members) = features.and_then(|features| features.get(&feature)) else {
+            if optional_deps.contains(feature.as_str()) {
+                active_deps.insert(feature);
+            }
+            continue;
+        };
+
+        for member in members {
+            if let Some(dep) = member.strip_prefix("dep:") {
+                if optional_deps.contains(dep) {
+                    active_deps.insert(dep.to_string());
+                }
+            } else if let Some((dep, _feature)) = member.split_once('/') {
+                let dep = dep.strip_suffix('?').unwrap_or(dep);
+                if optional_deps.contains(dep) {
+                    active_deps.insert(dep.to_string());
+                } else {
+                    to_process.push(member.clone());
+                }
+            } else if optional_deps.contains(member.as_str()) {
+                active_deps.insert(member.clone());
+            } else {
+                to_process.push(member.clone());
+            }
+        }
+    }
+
+    active_deps
+}
+
 /// Returns true when any `nixos/**/*.nix` or `flake.nix`/`flake.lock` file is dirty.
 ///
-/// Used by `xtask check --full` to suggest running the NixOS compatibility gate:
+/// Used by `xtask check --full` to suggest running the NixOS VM deployment gate:
 ///   `xtask test vm --category smoke`
 pub fn nixos_modules_dirty() -> Result<bool> {
     let repo_root =
@@ -813,13 +995,13 @@ mod tests {
             Some("xtask".to_string())
         );
 
-        // Test crates are flat workspace members too
+        // Test crates are workspace members under the top-level tests/ tree.
         assert_eq!(
-            package_for_path("crate/sinex-e2e-tests/tests/some_test.rs"),
+            package_for_path("tests/e2e/tests/some_test.rs"),
             Some("sinex-e2e-tests".to_string())
         );
         assert_eq!(
-            package_for_path("crate/sinex-workspace-tests/Cargo.toml"),
+            package_for_path("tests/workspace/Cargo.toml"),
             Some("sinex-workspace-tests".to_string())
         );
 
@@ -828,7 +1010,7 @@ mod tests {
         assert_eq!(package_for_path("Cargo.toml"), None);
         assert_eq!(package_for_path("Cargo.lock"), None);
         assert_eq!(package_for_path(".config/nextest.toml"), None);
-        // Top-level tests/ holds shared fixtures, not a package.
+        // Other top-level tests/ entries are shared fixtures, not packages.
         assert_eq!(package_for_path("tests/fixtures/tls/ca.pem"), None);
         // A dotfile directly under crate/ is not a package.
         assert_eq!(
@@ -918,11 +1100,9 @@ mod tests {
         let repo = tempfile::tempdir()?;
         let graceful = repo
             .path()
-            .join("crate/sinex-e2e-tests/tests/graceful_shutdown_test.rs");
+            .join("tests/e2e/tests/graceful_shutdown_test.rs");
         let xtask_test = repo.path().join("xtask/src/example_test.rs");
-        let workspace_test = repo
-            .path()
-            .join("crate/sinex-workspace-tests/tests/smoke.rs");
+        let workspace_test = repo.path().join("tests/workspace/tests/smoke.rs");
         fs::create_dir_all(graceful.parent().expect("graceful parent"))?;
         fs::create_dir_all(xtask_test.parent().expect("xtask parent"))?;
         fs::create_dir_all(workspace_test.parent().expect("workspace parent"))?;
@@ -982,6 +1162,34 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_infer_test_binaries_maps_flat_crate_integration_tests() -> TestResult<()> {
+        let repo = tempfile::tempdir()?;
+        let registry = repo
+            .path()
+            .join("crate/sinexd/tests/sources/registry_dispatch_test.rs");
+        fs::create_dir_all(registry.parent().expect("registry parent"))?;
+        fs::write(
+            repo.path().join("crate/sinexd/Cargo.toml"),
+            r#"
+[[test]]
+name = "registry_dispatch_test"
+path = "tests/sources/registry_dispatch_test.rs"
+"#,
+        )?;
+        fs::write(
+            &registry,
+            "#[sinex_test]\nasync fn weechat_descriptor_registered() {}\n",
+        )?;
+
+        let inferred = infer_test_binaries_for_test_filter_in(
+            repo.path(),
+            "test(weechat_descriptor_registered)",
+        )?;
+        assert_eq!(inferred, vec!["registry_dispatch_test".to_string()]);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_infer_test_binaries_for_test_filter_requires_complete_coverage() -> TestResult<()>
     {
         let repo = tempfile::tempdir()?;
@@ -1009,9 +1217,7 @@ mod tests {
     #[sinex_test]
     async fn test_infer_lib_target_for_test_filter_maps_inline_unit_tests() -> TestResult<()> {
         let repo = tempfile::tempdir()?;
-        let inline_test = repo
-            .path()
-            .join("crate/lib/sinex-node-sdk/src/coordination.rs");
+        let inline_test = repo.path().join("crate/sinexd/src/coordination.rs");
         fs::create_dir_all(inline_test.parent().expect("inline parent"))?;
         fs::write(
             &inline_test,
@@ -1021,6 +1227,45 @@ mod tests {
         assert!(infer_lib_target_for_test_filter_in(
             repo.path(),
             "test(leader_maintenance_heartbeat_refreshes_registered_metadata)",
+        )?);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infer_lib_target_accepts_nextest_name_fragments() -> TestResult<()> {
+        let repo = tempfile::tempdir()?;
+        let inline_test = repo.path().join("xtask/src/config.rs");
+        fs::create_dir_all(inline_test.parent().expect("inline parent"))?;
+        fs::write(
+            &inline_test,
+            "\
+pub fn workspace_state_dir_for() {}\n\
+\n\
+#[sinex_test]\n\
+async fn test_workspace_state_dir_rejects_sinnix_dev_cache_state() {}\n\
+\n\
+#[sinex_test]\n\
+async fn test_workspace_state_dir_honors_explicit_temp_override() {}\n\
+",
+        )?;
+
+        assert!(infer_lib_target_for_test_filter_in(
+            repo.path(),
+            "test(workspace_state_dir)",
+        )?);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infer_lib_target_ignores_non_test_function_fragments() -> TestResult<()> {
+        let repo = tempfile::tempdir()?;
+        let source = repo.path().join("xtask/src/config.rs");
+        fs::create_dir_all(source.parent().expect("source parent"))?;
+        fs::write(&source, "pub fn workspace_state_dir_for() {}\n")?;
+
+        assert!(!infer_lib_target_for_test_filter_in(
+            repo.path(),
+            "test(workspace_state_dir)",
         )?);
         Ok(())
     }
@@ -1064,10 +1309,10 @@ mod tests {
         let repo = tempfile::tempdir()?;
         let root = repo
             .path()
-            .join("crate/core/sinex-source-worker/tests/production_path.rs");
+            .join("crate/sinexd/tests/sources/production_path.rs");
         let nested = repo
             .path()
-            .join("crate/core/sinex-source-worker/tests/production_path/browser.rs");
+            .join("crate/sinexd/tests/sources/production_path/browser.rs");
         fs::create_dir_all(nested.parent().expect("nested parent"))?;
         fs::write(
             &root,
@@ -1091,10 +1336,10 @@ mod tests {
         let repo = tempfile::tempdir()?;
         let root = repo
             .path()
-            .join("crate/core/sinex-source-worker/tests/production_path.rs");
-        let nested = repo.path().join(
-            "crate/core/sinex-source-worker/tests/production_path/obligations/initial_ingestion.rs",
-        );
+            .join("crate/sinexd/tests/sources/production_path.rs");
+        let nested = repo
+            .path()
+            .join("crate/sinexd/tests/sources/production_path/obligations/initial_ingestion.rs");
         fs::create_dir_all(nested.parent().expect("nested parent"))?;
         fs::write(
             &root,
@@ -1102,12 +1347,12 @@ mod tests {
         )?;
         fs::write(
             &nested,
-            "#[sinex_test]\nasync fn source_worker_binary_scan_private_mode_matrix() {}\n",
+            "#[sinex_test]\nasync fn source_driver_host_scan_private_mode_matrix() {}\n",
         )?;
 
         let inferred = infer_test_binaries_for_test_filter_in(
             repo.path(),
-            "test(source_worker_binary_scan_private_mode_matrix)",
+            "test(source_driver_host_scan_private_mode_matrix)",
         )?;
         assert_eq!(inferred, vec!["production_path".to_string()]);
         Ok(())
@@ -1117,24 +1362,77 @@ mod tests {
     async fn test_infer_test_binaries_maps_aggregated_nested_integration_modules() -> TestResult<()>
     {
         let repo = tempfile::tempdir()?;
-        let root = repo
-            .path()
-            .join("crate/lib/sinex-node-sdk/tests/integration_tests.rs");
+        let root = repo.path().join("crate/sinexd/tests/integration_tests.rs");
         let nested = repo
             .path()
-            .join("crate/lib/sinex-node-sdk/tests/integration/node_lifecycle_test.rs");
+            .join("crate/sinexd/tests/integration/runtime_lifecycle_test.rs");
         fs::create_dir_all(nested.parent().expect("nested parent"))?;
         fs::write(&root, "mod integration;\nmod support;\n")?;
         fs::write(
             &nested,
-            "#[sinex_test]\nasync fn test_node_concurrent_lifecycle() {}\n",
+            "#[sinex_test]\nasync fn test_runtime_concurrent_lifecycle() {}\n",
         )?;
 
         let inferred = infer_test_binaries_for_test_filter_in(
             repo.path(),
-            "test(test_node_concurrent_lifecycle)",
+            "test(test_runtime_concurrent_lifecycle)",
         )?;
         assert_eq!(inferred, vec!["integration_tests".to_string()]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_active_dependency_closure_respects_optional_feature_deps() -> TestResult<()> {
+        let mut dependency_specs = HashMap::new();
+        dependency_specs.insert(
+            "xtask".to_string(),
+            vec![
+                DependencySpec {
+                    name: "sinex-db".to_string(),
+                    optional: false,
+                },
+                DependencySpec {
+                    name: "sinexd".to_string(),
+                    optional: true,
+                },
+            ],
+        );
+        dependency_specs.insert("sinex-db".to_string(), Vec::new());
+        dependency_specs.insert("sinexd".to_string(), Vec::new());
+
+        let mut xtask_features = HashMap::new();
+        xtask_features.insert(
+            "runtime-introspection".to_string(),
+            vec!["dep:sinexd".to_string()],
+        );
+        let mut features = HashMap::new();
+        features.insert("xtask".to_string(), xtask_features);
+
+        let default_closure = active_package_dependency_closure_from_metadata(
+            &["xtask".to_string()],
+            &[],
+            &dependency_specs,
+            &features,
+        );
+        assert_eq!(
+            default_closure,
+            vec!["sinex-db".to_string(), "xtask".to_string()]
+        );
+
+        let feature_closure = active_package_dependency_closure_from_metadata(
+            &["xtask".to_string()],
+            &["runtime-introspection".to_string()],
+            &dependency_specs,
+            &features,
+        );
+        assert_eq!(
+            feature_closure,
+            vec![
+                "sinex-db".to_string(),
+                "sinexd".to_string(),
+                "xtask".to_string()
+            ]
+        );
         Ok(())
     }
 
@@ -1256,35 +1554,11 @@ mod tests {
             Some(&HashSet::from(["xtask".to_string()]))
         );
         assert_eq!(
-            parsed.forward_deps.get("xtask"),
-            Some(&HashSet::from(["sinex-primitives".to_string()]))
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_package_dependency_closure_includes_transitive_workspace_deps() -> TestResult<()>
-    {
-        let forward_deps = HashMap::from([
-            (
-                "sinex-db".to_string(),
-                HashSet::from(["sinex-primitives".to_string(), "sqlx".to_string()]),
-            ),
-            (
-                "sinex-primitives".to_string(),
-                HashSet::from(["sinex-macros".to_string()]),
-            ),
-            ("sinex-macros".to_string(), HashSet::new()),
-        ]);
-
-        assert_eq!(
-            package_dependency_closure_from_forward(&["sinex-db".to_string()], &forward_deps),
-            vec![
-                "sinex-db".to_string(),
-                "sinex-macros".to_string(),
-                "sinex-primitives".to_string(),
-            ],
-            "package-scoped proof fingerprints must include dirty workspace dependencies but not external crates"
+            parsed
+                .dependency_specs
+                .get("xtask")
+                .map(|deps| deps.iter().map(|dep| dep.name.as_str()).collect::<Vec<_>>()),
+            Some(vec!["sinex-primitives"])
         );
         Ok(())
     }

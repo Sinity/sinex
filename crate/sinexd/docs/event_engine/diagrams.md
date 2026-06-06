@@ -1,7 +1,7 @@
-# Ingestd Architecture Diagrams
+# sinexd Event Engine Architecture Diagrams
 
 > Note: these diagrams are conceptual. For exact stream/consumer settings,
-> use `crate/core/sinex-ingestd/src/jetstream_consumer.rs`.
+> use `crate/sinexd/src/event_engine/jetstream_consumer.rs`.
 
 ## Event Sourcing & CQRS Flow
 
@@ -13,10 +13,10 @@
 │                      Provisional → Confirmed Pipeline                         │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-PHASE 1: CAPTURE (Node)
+PHASE 1: CAPTURE (RuntimeModule)
 ────────────────────────────
   ┌──────────────────────────┐
-  │   Node detects           │
+  │   RuntimeModule detects           │
   │   filesystem change      │
   └────────────┬─────────────┘
                │
@@ -59,7 +59,7 @@ PHASE 2: TRANSPORT (NATS JetStream)
                ↓
 ═══════════════════════════════════════════════════════════════════════════════
 
-PHASE 3: INGESTION (sinex-ingestd)
+PHASE 3: INGESTION (`sinexd::event_engine`)
 ───────────────────────────────────
   ┌──────────────────────────┐
   │ JetStreamConsumer        │
@@ -80,7 +80,7 @@ PHASE 3: INGESTION (sinex-ingestd)
                ↓                         ↓ (validation failure)
   ┌──────────────────────────┐  ┌─────────────────────────┐
   │ Persist to Postgres       │  │ Route to DLQ            │
-  │ - INSERT INTO core.events │  │ events.dlq.ingestd      │
+  │ - INSERT INTO core.events │  │ events.dlq.event_engine │
   │ - ts_coided = NOW()       │  │ - Original message      │
   │ - RETURNING *             │  │ - Error details         │
   └────────────┬─────────────┘  │ - Retry count           │
@@ -148,7 +148,7 @@ PHASE 4: CONSUMPTION (Automata)
 │                    3 Streams + Key-Value Buckets                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-STREAM 1: events.raw (Raw Events from Nodes)
+STREAM 1: events.raw (Raw Events from Sources)
 ═══════════════════════════════════════════════════════════════════════════════
 
   Subjects: events.raw.{source}.{event_type}
@@ -167,26 +167,26 @@ STREAM 1: events.raw (Raw Events from Nodes)
   │  │ - Max Age: 90 days                                                ││
   │  │ - Max Msgs: 10,000,000                                           ││
   │  │ - Max Bytes: (not explicitly limited here)                        ││
-  │  │ - Replicas: 1 (single-node)                                      ││
+  │  │ - Replicas: 1 (single NATS server)                               ││
   │  │ - Discard: Old (FIFO when full)                                  ││
   │  └─────────────────────────────────────────────────────────────────┘│
   │                                                                       │
   │  Consumers:                                                           │
   │  ┌────────────────────────────────────────────┐                     │
-  │  │ Consumer: ingestd-begin                    │                     │
+  │  │ Consumer: event-engine-begin                    │                     │
   │  │ - Filter: events.raw.>.material_begin      │                     │
   │  │ - Batch: configurable (default 100)       │                     │
   │  │ - Ack Wait: 30s                            │                     │
   │  │ - Max Deliver: 3                           │                     │
   │  └────────────────────────────────────────────┘                     │
   │  ┌────────────────────────────────────────────┐                     │
-  │  │ Consumer: ingestd-slices                   │                     │
+  │  │ Consumer: event-engine-slices                   │                     │
   │  │ - Filter: events.raw.>.material_slice      │                     │
   │  │ - Batch: configurable (default 100)        │                     │
   │  │ - Ack Wait: 30s                            │                     │
   │  └────────────────────────────────────────────┘                     │
   │  ┌────────────────────────────────────────────┐                     │
-  │  │ Consumer: ingestd-end                      │                     │
+  │  │ Consumer: event-engine-end                      │                     │
   │  │ - Filter: events.raw.>.material_end        │                     │
   │  │ - Batch: configurable (default 100)       │                     │
   │  └────────────────────────────────────────────┘                     │
@@ -257,7 +257,7 @@ STREAM 3: events.dlq (Raw-Ingest Dead Letter Queue)
   │  {                                                                    │
   │    "original_message": { ... },                                       │
   │    "error": "Validation failed: payload too large",                   │
-  │    "component": "ingestd",                                            │
+  │    "component": "event_engine",                                            │
   │    "timestamp": "2025-01-15T12:00:00Z",                               │
   │    "retry_count": 3,                                                  │
   │    "metadata": { ... }                                                │
@@ -274,7 +274,7 @@ KEY-VALUE BUCKETS
 
   Bucket: sinex_checkpoints
   ┌─────────────────────────────────────────────────────────────────────┐
-  │  Key format: {node_name}.{consumer_group}.{consumer_name}       │
+  │  Key format: {module_name}.{consumer_group}.{consumer_name}       │
   │  Value: JSON checkpoint state                                        │
   │                                                                       │
   │  {                                                                    │
@@ -375,4 +375,4 @@ Critical Invariant: Confirmations published AFTER commit, ACKs AFTER confirmatio
 
 - Patterns: [patterns.md](./patterns.md)
 - Architecture: [architecture.md](./architecture.md)
-- Database diagrams: `crate/lib/sinex-db/docs/diagrams.md`
+- Database diagrams: `crate/sinex-db/docs/diagrams.md`

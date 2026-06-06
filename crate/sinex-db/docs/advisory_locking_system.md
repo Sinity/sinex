@@ -1,12 +1,14 @@
 # Distributed Advisory Locking
 
-Sinex utilizes PostgreSQL advisory locks for cross-process coordination, ensuring that critical operations like schema migrations or single-writer tasks are executed by only one node at a time.
+Sinex utilizes PostgreSQL advisory locks for cross-process coordination,
+ensuring that critical operations like schema convergence or single-writer
+tasks are executed by only one runtime instance at a time.
 
 ## Core Mechanism
 
 Advisory locks are application-level locks tied to a 64-bit identifier. Unlike row or table locks, they do not lock any physical database objects but instead act as a signaling mechanism that multiple system instances agree to respect.
 
-- **Key-to-ID Mapping**: String-based lock keys (e.g., `"ingestd:migrations"`) are deterministically hashed to 64-bit integers using the **BLAKE3** algorithm.
+- **Key-to-ID Mapping**: String-based lock keys (e.g., `"event_engine:migrations"`) are deterministically hashed to 64-bit integers using the **BLAKE3** algorithm.
 - **Session Scoping**: All advisory locks in Sinex are session-scoped. They are tied to a specific database connection and are automatically released by PostgreSQL if that connection is closed, protecting the system against deadlocks caused by process crashes or network partitions.
 
 ## RAII & Automatic Cleanup
@@ -25,8 +27,10 @@ The system employs an **RAII (Resource Acquisition Is Initialization)** pattern 
 ## Usage Patterns
 
 Advisory locks are primarily used for:
-- **Migration Coordination**: Ensuring that only one instance of `sinex-ingestd` applies schema updates at a time.
-- **Singleton Services**: Coordinating tasks that should only run on a single node in a cluster (e.g., certain maintenance or archival jobs).
+- **Migration Coordination**: Ensuring that only one `sinexd::event_engine`
+  instance applies schema updates at a time.
+- **Singleton Services**: Coordinating tasks that should only run on a single
+  runtime instance (e.g., certain maintenance or archival jobs).
 
 ## Observability
 

@@ -29,5 +29,5 @@ To prevent leaking sensitive information into logs or across service boundaries,
 
 - **Fluent API**: Errors are constructed using a builder-like pattern: `SinexError::database("Query failed").with_context("table", "events")`.
 - **Type Alias**: A global `Result<T>` alias simplifies method signatures across the codebase.
-- **Categorization Methods**: Errors provide boolean checks like `is_retryable()` and `is_client_error()`, which are used by the `node-sdk` to drive automatic retry logic and circuit breaking.
+- **Categorization Methods**: Errors provide boolean checks like `is_retryable()` and `is_client_error()`, which are used by the `runtime` to drive automatic retry logic and circuit breaking.
 - **HTTP Mapping**: The `status_code()` method automatically maps error variants to appropriate HTTP status codes (e.g., 404 for `NotFound`), ensuring consistent API behavior.

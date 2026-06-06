@@ -314,7 +314,7 @@ impl EventAnnotations {
             // `FOREIGN KEY (event_id) REFERENCES core.events(id)` declaration
             // is silently absent after apply. Cascade-on-event-delete is
             // enforced by the `core.fn_archive_before_delete` trigger
-            // (see crate/lib/sinex-schema/src/schema/events.rs), which
+            // (see crate/sinex-schema/src/schema/events.rs), which
             // archives + deletes matching annotation rows in the same
             // transaction as the parent event delete.
             .to_owned()

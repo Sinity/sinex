@@ -135,7 +135,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT bucket AS time, avg_batch_size AS \"Average batch size\", max_batch_size AS \"Max batch size\" FROM sinex_telemetry.ingestd_batch_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "rawSql": "SELECT bucket AS time, avg_batch_size AS \"Average batch size\", max_batch_size AS \"Max batch size\" FROM sinex_telemetry.event_engine_batch_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
           "refId": "A"
         }
       ],
@@ -180,7 +180,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT bucket AS time, avg_latency_ms AS \"Average latency\", max_latency_ms AS \"Max latency\" FROM sinex_telemetry.ingestd_batch_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "rawSql": "SELECT bucket AS time, avg_latency_ms AS \"Average latency\", max_latency_ms AS \"Max latency\" FROM sinex_telemetry.event_engine_batch_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
           "refId": "A"
         }
       ],
@@ -270,11 +270,11 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT bucket AS time, node_type, total_events_processed FROM sinex_telemetry.node_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "rawSql": "SELECT bucket AS time, module_kind, total_events_processed FROM sinex_telemetry.node_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
           "refId": "A"
         }
       ],
-      "title": "Node Throughput",
+      "title": "RuntimeModule Throughput",
       "type": "timeseries"
     },
     {
@@ -350,7 +350,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT aggregate, latest_bucket, ROUND(EXTRACT(EPOCH FROM (NOW() - latest_bucket)) / 60.0, 2) AS minutes_behind FROM (SELECT 'gateway_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.gateway_stats_1h UNION ALL SELECT 'stream_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.stream_stats_1h UNION ALL SELECT 'assembly_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.assembly_stats_1h UNION ALL SELECT 'node_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.node_stats_1h UNION ALL SELECT 'metric_counters_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.metric_counters_1h UNION ALL SELECT 'ingestd_batch_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.ingestd_batch_stats_1h) freshness ORDER BY aggregate ASC",
+          "rawSql": "SELECT aggregate, latest_bucket, ROUND(EXTRACT(EPOCH FROM (NOW() - latest_bucket)) / 60.0, 2) AS minutes_behind FROM (SELECT 'gateway_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.gateway_stats_1h UNION ALL SELECT 'stream_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.stream_stats_1h UNION ALL SELECT 'assembly_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.assembly_stats_1h UNION ALL SELECT 'node_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.node_stats_1h UNION ALL SELECT 'metric_counters_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.metric_counters_1h UNION ALL SELECT 'event_engine_batch_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.event_engine_batch_stats_1h) freshness ORDER BY aggregate ASC",
           "refId": "A"
         }
       ],

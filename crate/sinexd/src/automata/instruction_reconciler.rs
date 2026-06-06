@@ -5,8 +5,8 @@
 //! Hyprland workspace-switch instructions and `wm.hyprland/workspace.switched`
 //! observations.
 
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, ScopeReconcilerNodeAdapter};
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconcilerAdapter};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, ScopeReconciler};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;
@@ -15,14 +15,14 @@ use sinex_primitives::events::payloads::{
     InstructionExpectationStatus, InstructionExpectationStatusPayload,
     evaluate_hyprland_workspace_expectation,
 };
-use sinex_primitives::proof::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitDescriptor, SubjectRef,
+use sinex_primitives::source_contracts::{
+    CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
+    OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
+    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape,
+    SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{
-    JsonValue, Timestamp, Uuid, register_source_unit, register_source_unit_binding,
+    JsonValue, Timestamp, Uuid, register_source_contract, register_source_runtime_binding,
 };
 
 const HYPRLAND_WORKSPACE_SCOPE: &str = "desktop.hyprland.workspace";
@@ -81,9 +81,9 @@ impl ScopeReconciler for InstructionExpectationReconciler {
         scope_key: &str,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         if scope_key != HYPRLAND_WORKSPACE_SCOPE {
-            return Err(NodeLogicError::InputParsing(format!(
+            return Err(AutomatonLogicError::InputParsing(format!(
                 "instruction expectation scope key '{scope_key}' is not supported"
             )));
         }
@@ -115,10 +115,10 @@ fn record_pending_instruction(
     state: &mut InstructionExpectationState,
     input: JsonValue,
     context: &AutomatonContext,
-) -> Result<Vec<DerivedOutput<InstructionExpectationStatusPayload>>, NodeLogicError> {
+) -> Result<Vec<DerivedOutput<InstructionExpectationStatusPayload>>, AutomatonLogicError> {
     let instruction: DesktopWorkspaceSwitchInstructionPayload = serde_json::from_value(input)
         .map_err(|error| {
-            NodeLogicError::InputParsing(format!(
+            AutomatonLogicError::InputParsing(format!(
                 "failed to parse Hyprland workspace instruction: {error}"
             ))
         })?;
@@ -139,7 +139,7 @@ fn reconcile_workspace_observation(
     state: &mut InstructionExpectationState,
     input: JsonValue,
     context: &AutomatonContext,
-) -> Result<Vec<DerivedOutput<InstructionExpectationStatusPayload>>, NodeLogicError> {
+) -> Result<Vec<DerivedOutput<InstructionExpectationStatusPayload>>, AutomatonLogicError> {
     if state.pending_hyprland_workspace.is_empty() {
         return Ok(Vec::new());
     }
@@ -147,7 +147,7 @@ fn reconcile_workspace_observation(
     let observed_at = context.require_ts_orig()?;
     let observation: HyprlandWorkspaceSwitchedPayload =
         serde_json::from_value(input).map_err(|error| {
-            NodeLogicError::InputParsing(format!(
+            AutomatonLogicError::InputParsing(format!(
                 "failed to parse Hyprland workspace observation: {error}"
             ))
         })?;
@@ -210,46 +210,45 @@ fn evaluate_pending_workspace_instruction(
     )
 }
 
-pub type InstructionExpectationReconcilerNode =
-    ScopeReconcilerNodeAdapter<InstructionExpectationReconciler>;
+pub type InstructionExpectationReconcilerRuntime =
+    ScopeReconcilerAdapter<InstructionExpectationReconciler>;
 
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "instruction-expectation-reconciler",
         namespace: "derived",
         event_types: &[
             ("runtime.instruction", "expectation.status"),
         ],
-        privacy_tier: SuPrivacyTier::Sensitive,
-        horizons: &[SuHorizon::Continuous],
-        retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
-        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+        privacy_tier: ContractPrivacyTier::Sensitive,
+        horizons: &[ContractHorizon::Continuous],
+        retention: ContractRetentionPolicy::Forever,
+        occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
             "(instruction_id, desired_event_source, desired_event_type)",
         ),
         access_policy: "event_stream_read",
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:instruction-expectation-reconciler"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:instruction-expectation-reconciler"),
         "instruction-expectation-reconciler",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("expectation.status")
     .privacy_context("metadata")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
-    .source_unit_id("instruction-expectation-reconciler")
-    .runner_pack("process")
-    .checkpoint_family(SuCheckpointFamily::AppendStream)
-    .runtime_shape(SuRuntimeShape::Continuous)
+    .source_id("instruction-expectation-reconciler")
+    .runner_pack("sinexd")
+    .checkpoint_family(ContractCheckpointFamily::AppendStream)
+    .runtime_shape(ContractRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
-    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
+    .implementation_mode("in_process:sinexd")
+    .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }

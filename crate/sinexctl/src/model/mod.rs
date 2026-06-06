@@ -21,21 +21,21 @@ pub enum OutputFormat {
     Dot,
 }
 
-/// Node role enum (matches backend)
+/// RuntimeModule role enum (matches backend)
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
-pub enum NodeRole {
-    /// Capture nodes (filesystem, terminal, system, etc.)
+pub enum RuntimeModuleRole {
+    /// Capture modules (filesystem, terminal, system, etc.)
     Capture,
-    /// Derived nodes (analytics, search, etc.)
+    /// Derived modules (analytics, search, etc.)
     Derived,
-    /// Core services (ingestd)
+    /// Core services (event_engine)
     Core,
     /// Gateway
     Gateway,
 }
 
-impl std::fmt::Display for NodeRole {
+impl std::fmt::Display for RuntimeModuleRole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Capture => write!(f, "capture"),

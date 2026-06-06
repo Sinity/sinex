@@ -41,7 +41,7 @@ const HELP_CATEGORIES: &[HelpCategory] = &[
     },
     HelpCategory {
         title: "Diagnostics",
-        command_paths: &["doctor", "ra-diagnose", "privacy", "schema"],
+        command_paths: &["doctor", "ra-diagnose", "ra", "privacy", "schema"],
     },
     HelpCategory {
         title: "Documentation",
@@ -92,7 +92,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 path: "build",
                 fallback_summary: "Build workspace packages",
                 when: "you need binaries or build artifacts",
-                examples: &["xtask build", "xtask build -p sinex-gateway"],
+                examples: &["xtask build", "xtask build -p sinexd"],
                 notes: &[],
             },
         ],
@@ -127,11 +127,8 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
             GuideEntry {
                 path: "run",
                 fallback_summary: "Run sinex binaries",
-                when: "you need to launch a node, ingest daemon, or gateway process during development",
-                examples: &[
-                    "xtask run node terminal-ingestor --watch",
-                    "xtask run gateway",
-                ],
+                when: "you need to launch sinexd or a source/automaton runtime target during development",
+                examples: &["xtask run module terminal-source --watch", "xtask run core"],
                 notes: &[],
             },
             GuideEntry {
@@ -164,6 +161,20 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 notes: &[
                     "This command reuses the rust-analyzer contract checks surfaced by `xtask doctor --rust-analyzer`.",
                     "Use --collect-diagnostics only when you want rust-analyzer's batch diagnostics subcommand; the default remains a cheap process/config probe.",
+                ],
+            },
+            GuideEntry {
+                path: "ra",
+                fallback_summary: "Run rust-analyzer search and refactor helpers",
+                when: "you need rust-analyzer structured search, structured search-replace, or batch diagnostics during refactors",
+                examples: &[
+                    "xtask ra search 'register_module(\\$a)'",
+                    "xtask ra ssr '\\$a.into_builder() ==>> EventBuilder::from(\\$a)' --apply",
+                    "xtask ra diagnostics --severity error --disable-build-scripts",
+                ],
+                notes: &[
+                    "`xtask ra ssr` is dry-run by default; pass `--apply` to let rust-analyzer edit files.",
+                    "This wraps rust-analyzer's available CLI primitives. rust-analyzer does not expose a stable standalone rename-at-position CLI.",
                 ],
             },
             GuideEntry {
@@ -237,7 +248,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 path: "deps impact",
                 fallback_summary: "Analyze rebuild impact",
                 when: "a dependency change might widen the rebuild/test blast radius",
-                examples: &["xtask deps impact", "xtask deps impact sinex-gateway"],
+                examples: &["xtask deps impact", "xtask deps impact --package sinexd"],
                 notes: &[],
             },
             GuideEntry {
@@ -398,7 +409,7 @@ pub fn render_commands_help(commands: &[CommandInfo]) -> String {
         }
     }
 
-    out
+    final_newline(out)
 }
 
 #[must_use]
@@ -453,7 +464,7 @@ pub fn render_command_guide(commands: &[CommandInfo]) -> String {
         out.push('\n');
     }
 
-    out
+    final_newline(out)
 }
 
 #[must_use]
@@ -500,7 +511,17 @@ pub fn render_command_reference(commands: &[CommandInfo]) -> String {
         render_command_section(&mut out, command, 2, &command.name);
     }
 
-    out
+    final_newline(out)
+}
+
+fn final_newline(mut output: String) -> String {
+    while output.ends_with("\n\n") {
+        output.pop();
+    }
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output
 }
 
 fn render_command_section(

@@ -71,10 +71,7 @@ impl Config {
     /// Load configuration from environment variables.
     pub(crate) fn from_env() -> Self {
         let workspace_root = workspace_root();
-        let repo_state_root = workspace_root.join(".sinex");
-        let state_dir = workspace_pinned_env_path("SINEX_STATE_DIR", &workspace_root, || {
-            repo_state_root.join("state")
-        });
+        let state_dir = workspace_state_dir_for(&workspace_root);
 
         let cache_dir = workspace_pinned_env_path("SINEX_CACHE_DIR", &workspace_root, || {
             workspace_cache_root_for(&workspace_root)
@@ -87,7 +84,7 @@ impl Config {
             nats_url: env::var("SINEX_NATS_URL").ok(),
             gateway_url: env::var("SINEX_API_URL")
                 .ok()
-                .or_else(|| env::var("SINEX_RPC_URL").ok())
+                .or_else(|| env::var("SINEX_API_URL").ok())
                 .or_else(|| {
                     env::var("SINEX_API_TCP_LISTEN")
                         .ok()
@@ -159,6 +156,24 @@ impl Default for Config {
 #[must_use]
 pub fn workspace_state_root() -> PathBuf {
     workspace_root().join(".sinex")
+}
+
+/// Durable state directory for this checkout.
+///
+/// `SINEX_STATE_DIR` is honored for explicit test/sandbox overrides, but not
+/// when it points at the sinnix dev-cache `dev-state/state` tree. That tree is
+/// for disposable runtime scratch; accepting it for xtask history repeatedly
+/// forked the durable history DB away from `.sinex/state`.
+#[must_use]
+pub fn workspace_state_dir_for(workspace_root: &Path) -> PathBuf {
+    let candidate = workspace_pinned_env_path("SINEX_STATE_DIR", workspace_root, || {
+        workspace_root.join(".sinex/state")
+    });
+    if is_sinnix_dev_cache_state_dir(&candidate) {
+        workspace_root.join(".sinex/state")
+    } else {
+        candidate
+    }
 }
 
 /// Cargo target directory for this checkout.
@@ -429,6 +444,20 @@ where
     }
 }
 
+fn is_sinnix_dev_cache_state_dir(path: &Path) -> bool {
+    let components: Vec<_> = path
+        .components()
+        .map(|component| component.as_os_str())
+        .collect();
+
+    components
+        .windows(2)
+        .any(|window| window[0] == "dev-state" && window[1] == "state")
+        && components
+            .windows(3)
+            .any(|window| window[0] == "var" && window[1] == "cache" && window[2] == "sinex")
+}
+
 /// Optional variant of [`workspace_pinned_env_path`] — returns `None` when the
 /// env var is unset, while still rejecting cross-checkout values.
 fn workspace_pinned_env_path_opt(var: &str, workspace_root: &Path) -> Option<PathBuf> {
@@ -498,6 +527,31 @@ mod tests {
         let config = Config::from_env();
         let path = config.history_db_path();
         assert_eq!(path, override_path);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_state_dir_rejects_sinnix_dev_cache_state() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let stale_state = PathBuf::from("/var/cache/sinex/sinity/hash/dev-state/state");
+        let mut env = EnvGuard::with_keys(&["SINEX_STATE_DIR"]);
+        env.set("SINEX_STATE_DIR", &stale_state);
+
+        assert_eq!(
+            workspace_state_dir_for(workspace.path()),
+            workspace.path().join(".sinex/state")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_state_dir_honors_explicit_temp_override() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let state = tempfile::tempdir()?;
+        let mut env = EnvGuard::with_keys(&["SINEX_STATE_DIR"]);
+        env.set("SINEX_STATE_DIR", state.path());
+
+        assert_eq!(workspace_state_dir_for(workspace.path()), state.path());
         Ok(())
     }
 
@@ -667,9 +721,9 @@ mod tests {
     async fn test_workspace_root_discovery_prefers_enclosing_checkout() -> TestResult<()> {
         let checkout = tempfile::tempdir()?;
         write_synthetic_checkout(checkout.path())?;
-        std::fs::create_dir_all(checkout.path().join("crate/lib/sinex-primitives"))?;
+        std::fs::create_dir_all(checkout.path().join("crate/sinex-primitives"))?;
 
-        let nested = checkout.path().join("crate/lib/sinex-primitives");
+        let nested = checkout.path().join("crate/sinex-primitives");
         let root = workspace_root_from_current_dir(&nested)
             .expect("nested checkout path should resolve to workspace root");
         assert_eq!(root, checkout.path());

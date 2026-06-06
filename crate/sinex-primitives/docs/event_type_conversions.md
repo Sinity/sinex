@@ -28,7 +28,7 @@ When persisting events, the rich domain model is flattened back into a database-
 The `extract_provenance` utility maps the `Provenance` enum variants back to the appropriate nullable columns for SQL insertion.
 
 ### Metadata Extraction
-Metadata such as `ingestor_version` and `host` are captured during the conversion to ensure that every persisted event has a complete audit trail of its origin.
+Metadata such as source implementation version and `host` are captured during the conversion to ensure that every persisted event has a complete audit trail of its origin.
 
 ## Search Result Mapping
 For full-text search, a specialized `EventSearchRow` provides a lightweight mapping that includes search-specific metadata like ranking scores and highlighted snippets without the overhead of the full provenance chain.

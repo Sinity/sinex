@@ -23,7 +23,7 @@ Sinex partitions its relational surface across seven namespaces, each with a dis
 
 | Schema | Key Tables / Views | Purpose |
 |--------|---------------------|---------|
-| `core` | `events`, `blobs`, `node_manifests`, `entities`, `entity_relations`, `event_annotations`, `tags` | Primary storage + knowledge graph |
+| `core` | `events`, `blobs`, `manifests`, `runs`, `entities`, `entity_relations`, `event_annotations`, `tags` | Primary storage + knowledge graph |
 | `raw` | `source_material_registry`, `temporal_ledger` | Provenance roots + observation timestamps |
 | `audit` | `archived_events` | Immutable archive (replay target) |
 | `sinex_schemas` | `event_payload_schemas`, `validation_cache`, `dlq_events` | Schema registry + DLQ |
@@ -31,7 +31,7 @@ Sinex partitions its relational surface across seven namespaces, each with a dis
 | `metrics` | via schema registry | Operational metrics |
 | `public` | default | `PostgreSQL` default schema |
 
-Schema evolution uses **declarative convergence** (`sinex-schema apply`), not migrations. The apply engine diffs desired state against actual DB state and converges. Schema-source status and gitops integration details: [`gitops-schema-sources-status.md`](gitops-schema-sources-status.md); apply-engine mechanics: [`apply.md`](apply.md).
+Schema evolution uses **declarative convergence** (`sinex-schema apply`), not migrations. The apply engine diffs desired state against actual DB state and converges. Apply-engine mechanics are documented in [`apply.md`](apply.md).
 
 ## Event Storage Model
 

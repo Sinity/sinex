@@ -7,8 +7,8 @@ use sinex_primitives::events::payloads::{ActivityWindowCloseReason, ActivityWind
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::analytics::{AnalyticsAutomaton, AnalyticsState};
-use sinexd::node_sdk::derived_node::{AutomatonContext, DerivedAggregationMeta, DerivedOutput};
-use sinexd::node_sdk::{NodeLogicError, Windowed};
+use sinexd::runtime::automaton::{AutomatonContext, DerivedAggregationMeta, DerivedOutput};
+use sinexd::runtime::{AutomatonLogicError, Windowed};
 use xtask::sandbox::prelude::*;
 
 fn make_context_with_optional_ts(
@@ -37,7 +37,7 @@ async fn process(
     automaton: &mut AnalyticsAutomaton,
     state: &mut AnalyticsState,
     ctx: &AutomatonContext,
-) -> Result<Option<DerivedOutput<ActivityWindowSummaryPayload>>, NodeLogicError> {
+) -> Result<Option<DerivedOutput<ActivityWindowSummaryPayload>>, AutomatonLogicError> {
     automaton
         .accumulate(state, serde_json::json!({}), ctx)
         .await?;
@@ -59,7 +59,7 @@ async fn missing_ts_orig_is_rejected() -> TestResult<()> {
         .expect_err("missing ts_orig must be rejected");
 
     assert!(
-        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("missing ts_orig")),
+        matches!(&error, AutomatonLogicError::InputParsing(msg) if msg.contains("missing ts_orig")),
         "expected InputParsing with 'missing ts_orig', got: {error:?}"
     );
     Ok(())

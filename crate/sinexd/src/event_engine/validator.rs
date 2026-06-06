@@ -1,9 +1,9 @@
 #![doc = include_str!("../../docs/event_engine/validator.md")]
 
 //! Event validation wrapper that reuses sinex-db's shared validator logic while
-//! keeping ingestd-specific ergonomics (stats, enum result, etc.).
+//! keeping event-engine-specific ergonomics (stats, enum result, etc.).
 
-use crate::event_engine::IngestdResult;
+use crate::event_engine::EventEngineResult;
 use sinex_db::validation::{
     EventValidator as DbEventValidator, SchemaInfo, SchemaValidationOutcome,
 };
@@ -80,11 +80,11 @@ impl ValidationStatsSnapshot {
     }
 }
 
-/// Ingestd-specific event validator that wraps `sinex_db::validation::EventValidator`.
+/// EventEngine-specific event validator that wraps `sinex_db::validation::EventValidator`.
 ///
 /// Renamed from `EventValidator` to `IngestEventValidator` to avoid name collision with
-/// the underlying DB validator — see issue #746 (A7). Ingestd-specific concerns are:
-/// `strict_mode` (reject events with no registered schema) and per-node `ValidationStats`.
+/// the underlying DB validator — see issue #746 (A7). EventEngine-specific concerns are:
+/// `strict_mode` (reject events with no registered schema) and per-producer `ValidationStats`.
 #[derive(Clone)]
 pub struct IngestEventValidator {
     inner: DbEventValidator,
@@ -128,7 +128,7 @@ impl IngestEventValidator {
     pub async fn load_schemas_from_db(
         pool: &PgPool,
         validation_enabled: bool,
-    ) -> IngestdResult<Self> {
+    ) -> EventEngineResult<Self> {
         let inner = DbEventValidator::load_from_db_with_options(pool, validation_enabled)
             .await
             .map_err(|e| {
@@ -148,7 +148,7 @@ impl IngestEventValidator {
     pub async fn load_schemas_from_db_strict(
         pool: &PgPool,
         validation_enabled: bool,
-    ) -> IngestdResult<Self> {
+    ) -> EventEngineResult<Self> {
         let inner = DbEventValidator::load_from_db_with_options(pool, validation_enabled)
             .await
             .map_err(|e| {
@@ -165,7 +165,7 @@ impl IngestEventValidator {
     }
 
     /// Reload schemas while keeping the existing validation toggle.
-    pub async fn reload_schemas(&mut self, pool: &PgPool) -> IngestdResult<usize> {
+    pub async fn reload_schemas(&mut self, pool: &PgPool) -> EventEngineResult<usize> {
         self.inner.reload_schemas(pool).await.map_err(|e| {
             SinexError::database(format!("Failed to reload schemas: {e}"))
                 .with_operation("validator.reload_schemas")
@@ -183,7 +183,7 @@ impl IngestEventValidator {
     /// // Swap under a brief write lock (no I/O):
     /// validator.write().await.swap_inner(new_inner);
     /// ```
-    pub async fn load_fresh_schemas(&self, pool: &PgPool) -> IngestdResult<DbEventValidator> {
+    pub async fn load_fresh_schemas(&self, pool: &PgPool) -> EventEngineResult<DbEventValidator> {
         DbEventValidator::load_from_db_with_options(pool, self.validation_enabled)
             .await
             .map_err(|e| {
@@ -208,7 +208,7 @@ impl IngestEventValidator {
     pub async fn load_fresh_schemas_with_options(
         pool: &PgPool,
         validation_enabled: bool,
-    ) -> IngestdResult<DbEventValidator> {
+    ) -> EventEngineResult<DbEventValidator> {
         DbEventValidator::load_from_db_with_options(pool, validation_enabled)
             .await
             .map_err(|e| {
@@ -223,7 +223,7 @@ impl IngestEventValidator {
         self.inner = new_inner;
     }
 
-    /// Use the shared validator to check payloads and convert into ingestd-specific outcomes.
+    /// Use the shared validator to check payloads and convert into event-engine-specific outcomes.
     #[must_use]
     pub fn validate_payload_for(
         &self,
@@ -328,7 +328,7 @@ impl IngestEventValidator {
     }
 
     /// Load all schema versions (used by replay tooling).
-    pub async fn load_all_schema_versions(&mut self, pool: &PgPool) -> IngestdResult<()> {
+    pub async fn load_all_schema_versions(&mut self, pool: &PgPool) -> EventEngineResult<()> {
         self.inner
             .load_all_schema_versions(pool)
             .await

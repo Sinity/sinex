@@ -243,10 +243,8 @@ mod tests {
         for relative in [
             Path::new(".git/config"),
             Path::new(".sinex/run/.s.PGSQL.5432"),
-            Path::new(
-                "crate/lib/sinex-macros/.sinex/trybuild-target/tests/trybuild/foo/Cargo.toml",
-            ),
-            Path::new("crate/lib/sinex-primitives/target/debug/deps/libfoo.rmeta"),
+            Path::new("crate/sinex-macros/.sinex/trybuild-target/tests/trybuild/foo/Cargo.toml"),
+            Path::new("crate/sinex-primitives/target/debug/deps/libfoo.rmeta"),
             Path::new(".direnv/flake-input"),
             Path::new(".devenv/state"),
             Path::new("target/debug/xtask"),
@@ -262,7 +260,7 @@ mod tests {
 
         for relative in [
             Path::new("Cargo.toml"),
-            Path::new("crate/core/sinex-process/Cargo.toml"),
+            Path::new("crate/sinexd-extra/Cargo.toml"),
             Path::new("docs/README.md"),
         ] {
             assert!(
@@ -279,10 +277,10 @@ mod tests {
         let output = tempfile::tempdir()?;
 
         fs::write(source.path().join("flake.nix"), "{ }\n")?;
-        fs::create_dir_all(source.path().join("crate/nodes/new-node"))?;
+        fs::create_dir_all(source.path().join("crate/sinexd/src/sources"))?;
         fs::write(
-            source.path().join("crate/nodes/new-node/Cargo.toml"),
-            "[package]\nname = \"new-node\"\nversion = \"0.1.0\"\n",
+            source.path().join("crate/sinexd/src/sources/new_source.rs"),
+            "// source fixture\n",
         )?;
 
         fs::create_dir_all(source.path().join(".sinex/run"))?;
@@ -290,7 +288,7 @@ mod tests {
         let _listener = UnixListener::bind(&socket_path)?;
 
         let nested_trybuild_manifest = source.path().join(
-            "crate/lib/sinex-macros/.sinex/trybuild-target/tests/trybuild/sinex-macros/Cargo.toml",
+            "crate/sinex-macros/.sinex/trybuild-target/tests/trybuild/sinex-macros/Cargo.toml",
         );
         fs::create_dir_all(
             nested_trybuild_manifest
@@ -315,7 +313,7 @@ mod tests {
         assert!(
             output
                 .path()
-                .join("crate/nodes/new-node/Cargo.toml")
+                .join("crate/sinexd/src/sources/new_source.rs")
                 .is_file(),
             "new source files must survive staging"
         );
@@ -324,7 +322,7 @@ mod tests {
             "runtime state directory must be excluded"
         );
         assert!(
-            !output.path().join("crate/lib/sinex-macros/.sinex").exists(),
+            !output.path().join("crate/sinex-macros/.sinex").exists(),
             "nested crate-local runtime state must be excluded"
         );
         assert!(
@@ -344,8 +342,8 @@ mod tests {
         );
         assert!(
             report.excluded_paths.iter().any(|path| {
-                path == "crate/lib/sinex-macros/.sinex"
-                    || path.starts_with("crate/lib/sinex-macros/.sinex/")
+                path == "crate/sinex-macros/.sinex"
+                    || path.starts_with("crate/sinex-macros/.sinex/")
             }),
             "excluded paths should mention nested crate-local runtime state"
         );

@@ -32,7 +32,7 @@ Timeline states:
 - private-mode suppressed interval
 - replay overlay
 - late evidence changed window
-- stale source unit
+- stale source
 - disconnected gateway
 
 ## Query builder/results
@@ -49,7 +49,7 @@ The query UI should mirror CLI semantics. It should show:
 
 ## Source readiness cockpit
 
-This should be a workbench, not a health grid. For each source unit/material family, show:
+This should be a workbench, not a health grid. For each source/material family, show:
 
 - readiness status and reason
 - latest event time
@@ -68,7 +68,7 @@ Backed command surfaces include `sources readiness`, `sources continuity`, `sour
 A gap should show:
 
 - time range
-- affected source unit/material
+- affected source/material
 - expected vs observed coverage
 - candidate causes: private mode, source not running, parser drift, permissions, host sleep, material missing, late replay, retention
 - evidence supporting each cause

@@ -10,7 +10,6 @@ on:
       - master
     paths:
       - 'crate/sinex-db/**'
-      - 'crate/lib/sinex-node-sdk/**'
       - 'crate/sinex-primitives/**'
       - 'crate/sinexd/**'
       - 'xtask/config/perf-contracts.toml'

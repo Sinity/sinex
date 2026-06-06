@@ -38,11 +38,11 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `git-stack` | Plan and materialize PR-sized git branch stacks from the current commit graph |
 | `doctor` | Probe developer-environment health and deployment readiness |
 | `ra-diagnose` | Diagnose rust-analyzer process footprint and local workspace contract |
+| `ra` | Rust-analyzer refactor/search helpers |
 | `privacy` | Run privacy-engine catalog, test, key, and config utilities |
 | `schema` | Schema verification command group |
 | `verify` | Verify phase plans and performance contracts |
 | `docs` | Generate and verify repo documentation surfaces |
-| `source-units` | Source-unit manifest operations |
 | `exercise` | Full surface area validation for xtask commands |
 | `reset` | Reset developer state for a fresh start |
 | `__reap` | Internal detached process watchdog — not for human use |
@@ -109,6 +109,7 @@ Run the repo's primary nextest-backed test workflows
 | `--exclude` | yes | no | Exclude workspace package(s) from --all/workspace test runs |
 | `--test` | yes | no | Run tests from specific test binary target(s) (nextest --test) |
 | `--lib` | no | no | Run only library unit tests (nextest --lib) |
+| `--features` | yes | no | Cargo features to enable for the selected test packages |
 | `--dry-run` | no | no | Print what would happen |
 | `--skip-preflight` | no | no | Skip automatic infrastructure setup (preflight is ON by default) |
 | `--ephemeral-postgres` | no | no | Run DB-backed tests inside a fresh throwaway Postgres cluster |
@@ -241,52 +242,28 @@ Run command for binary lifecycle management
 
 | Command | Purpose |
 |---|---|
-| `ingestd` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
-| `gateway` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
-| `node` | Run a specific node by name |
-| `core` | Run core services bundle (ingestd + gateway) |
-| `all-ingestors` | Run all ingestors |
+| `module` | Run a specific runtime module target by name |
+| `core` | Run core services bundle (event engine + API) |
+| `all-sources` | Run all source scan targets |
 | `all-automatons` | Run all automatons |
 | `list` | List available binaries |
 | `tether` | Connect to a remote environment via The Tether |
 
-### `xtask run ingestd`
+### `xtask run module`
 
-Run sinexd (alias preserved post-collapse; runs the full supervisor)
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--instance-id` | yes | no | Instance ID for multi-instance coordination |
-
-
-### `xtask run gateway`
-
-Run sinexd (alias preserved post-collapse; runs the full supervisor)
+Run a specific runtime module target by name
 
 **Arguments**
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `--instance-id` | yes | no | Instance ID for multi-instance coordination |
-
-
-### `xtask run node`
-
-Run a specific node by name
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `name` | yes | yes | Node name (e.g., fs-ingestor, analytics-automaton) |
+| `name` | yes | yes | RuntimeModule target name (e.g., fs-source, analytics-automaton) |
 | `--instance-id` | yes | no | Instance ID for multi-instance coordination |
 
 
 ### `xtask run core`
 
-Run core services bundle (ingestd + gateway)
+Run core services bundle (event engine + API)
 
 **Arguments**
 
@@ -295,9 +272,9 @@ Run core services bundle (ingestd + gateway)
 | `--instance-id` | yes | no | Instance ID prefix |
 
 
-### `xtask run all-ingestors`
+### `xtask run all-sources`
 
-Run all ingestors
+Run all source scan targets
 
 **Arguments**
 
@@ -1435,7 +1412,7 @@ Probe developer-environment health and deployment readiness
 |---|---|---|---|
 | `--pipelines` | no | no | Run pipeline smoke tests in addition to health checks |
 | `--fix` | no | no | Auto-remediate: restart stale processes, invalidate stale preflight cache |
-| `--runtime` | no | no | Check runtime health (ingestd heartbeat, consumer lag, batch latency) |
+| `--runtime` | no | no | Check runtime health (event_engine heartbeat, consumer lag, batch latency) |
 | `--deployment-readiness` | no | no | Check deployment readiness (schema, services, permissions) |
 | `--reclaim` | no | no | Reclaim stale target-dir artifacts (cargo-sweep + incremental/ prune) |
 | `--test-db` | no | no | Inspect managed test database footprint and /dev/shm headroom |
@@ -1452,6 +1429,54 @@ Diagnose rust-analyzer process footprint and local workspace contract
 |---|---|---|---|
 | `--collect-diagnostics` | no | no | Also run rust-analyzer's batch diagnostics subcommand |
 | `--severity` | yes | no | Minimum severity for --collect-diagnostics |
+
+
+## `xtask ra`
+
+Rust-analyzer refactor/search helpers
+
+**Subcommands**
+
+| Command | Purpose |
+|---|---|
+| `search` | Run rust-analyzer structured search |
+| `ssr` | Run rust-analyzer structured search replace |
+| `diagnostics` | Run rust-analyzer batch diagnostics |
+
+### `xtask ra search`
+
+Run rust-analyzer structured search
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `pattern` | yes | no | Structured search pattern, e.g. `$a.foo($b)` |
+
+
+### `xtask ra ssr`
+
+Run rust-analyzer structured search replace
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `rule` | yes | no | Structured search-replace rule, e.g. `$a.foo($b) ==>> bar($a, $b)` |
+| `--apply` | no | no | Apply edits. Without this flag, only print the command that would run |
+
+
+### `xtask ra diagnostics`
+
+Run rust-analyzer batch diagnostics
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--severity` | yes | no | Minimum severity accepted by rust-analyzer |
+| `--disable-build-scripts` | no | no | Do not run build scripts or load OUT_DIR values |
+| `--disable-proc-macros` | no | no | Do not expand proc macros |
 
 
 ## `xtask privacy`
@@ -1559,9 +1584,7 @@ Verify phase plans and performance contracts
 | `report` | Print summary from a perf report JSON |
 | `compare` | Compare two perf reports |
 | `all` | Run perf only |
-| `source-worker` | Source-worker evidence gate: NixOS binding drift, parser registration, and privacy metadata |
 | `closure` | Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command |
-| `claims` | Summarize executable verification claims, runner commands, and deferrals |
 
 ### `xtask verify plan`
 
@@ -1634,18 +1657,6 @@ Run perf only
 | `--history-db` | yes | no |  |
 
 
-### `xtask verify source-worker`
-
-Source-worker evidence gate: NixOS binding drift, parser registration, and privacy metadata
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--bindings-json` | yes | no | Path to the JSON file exported by `config.services.sinex.sources.exportedJson` (from the NixOS module) |
-| `--json` | no | no | Emit JSON output |
-
-
 ### `xtask verify closure`
 
 Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command
@@ -1657,19 +1668,6 @@ Operationalize the 2026-05-11 closure-verification policy: fetch an issue body v
 | `issue` | yes | yes | GitHub issue number to verify |
 | `--json` | no | no | Emit JSON output |
 | `--dry-run` | no | no | Dry-run: parse and print commands without executing them |
-
-
-### `xtask verify claims`
-
-Summarize executable verification claims, runner commands, and deferrals
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--json` | no | no | Emit JSON output |
-| `--advisory` | no | no | Show advisory obligations as well as required obligations |
-| `--deferrals` | no | no | Include deferred obligations and exemptions |
 
 
 ## `xtask docs`
@@ -1686,8 +1684,6 @@ Generate and verify repo documentation surfaces
 | `command-guide` | Generate the concise xtask command guide used for agent memory and humans |
 | `command-reference` | Generate the exhaustive xtask public command reference from the live clap tree |
 | `schema-bundle` | Generate the checked-in JSON schema bundle from the Rust EventPayload registry |
-| `proof-catalog` | Generate the proof catalog from Rust descriptors, payloads, commands, and scenarios |
-| `rpc-catalog` | Generate the public RPC method catalog from typed descriptors |
 | `ast-grep-catalog` | Generate the live ast-grep rule catalog from `.config/ast-grep/rules/` |
 | `sync` | Refresh all generated repo surfaces tracked in the repo |
 | `check` | Verify that all generated repo surfaces are up to date |
@@ -1770,32 +1766,6 @@ Generate the checked-in JSON schema bundle from the Rust EventPayload registry
 | `--check` | no | no | Exit non-zero if the generated bundle would change |
 
 
-### `xtask docs proof-catalog`
-
-Generate the proof catalog from Rust descriptors, payloads, commands, and scenarios
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--output` | yes | no | Output file (default: docs/proof-catalog.json) |
-| `--stdout` | no | no | Print to stdout instead of writing a file |
-| `--check` | no | no | Exit non-zero if the generated output would change |
-
-
-### `xtask docs rpc-catalog`
-
-Generate the public RPC method catalog from typed descriptors
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--output` | yes | no | Output file (default: docs/rpc-catalog.json) |
-| `--stdout` | no | no | Print to stdout instead of writing a file |
-| `--check` | no | no | Exit non-zero if the generated output would change |
-
-
 ### `xtask docs ast-grep-catalog`
 
 Generate the live ast-grep rule catalog from `.config/ast-grep/rules/`
@@ -1836,41 +1806,7 @@ Generate a codebase snapshot for AI context (via repomix)
 | `--changed` | no | no | U2: Include files changed since HEAD (staged + unstaged) |
 | `--context` | no | no | U3: Inject structured xtask state (recent checks, diagnostics, jobs) into the snapshot |
 | `--project-memory` | no | no | U4: Include CLAUDE.md and .agent/includes/ (project memory) in the snapshot |
-| `--scope` | yes | no | U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests) |
-
-
-## `xtask source-units`
-
-Source-unit manifest operations
-
-**Subcommands**
-
-| Command | Purpose |
-|---|---|
-| `render` | Render the source-unit manifest |
-| `check` | Validate source-unit descriptors and the generated manifest |
-
-### `xtask source-units render`
-
-Render the source-unit manifest
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--output` | yes | no | Output file (default: docs/source-units.json) |
-| `--stdout` | no | no | Print to stdout instead of writing a file |
-
-
-### `xtask source-units check`
-
-Validate source-unit descriptors and the generated manifest
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--output` | yes | no | Manifest path to check (default: docs/source-units.json) |
+| `--scope` | yes | no | U5: Scope to a crate or directory group (e.g., sinex-db, sinexd, sources, tests) |
 
 
 ## `xtask exercise`
@@ -1949,4 +1885,3 @@ Internal: record drift guard bypass events from the pre-push hook (#1565)
 |---|---|---|---|
 | `--branch` | yes | no | The git branch being pushed |
 | `--sha` | yes | no | The HEAD commit SHA at the time of bypass |
-

@@ -752,7 +752,7 @@ mod tests {
     #[sinex_test]
     async fn test_extract_package_name_local_dir_equals_name() -> TestResult<()> {
         // Format 2: local workspace, directory name = crate name — "#version" only
-        let id = "path+file:///realm/project/sinex/crate/lib/sinex-primitives#0.1.0";
+        let id = "path+file:///realm/project/sinex/crate/sinex-primitives#0.1.0";
         assert_eq!(extract_package_name(id), Some("sinex-primitives".into()));
 
         let id = "path+file:///realm/project/sinex/xtask#0.1.0";

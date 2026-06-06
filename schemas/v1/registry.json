@@ -55,7 +55,7 @@
       "event_type": "ai.message",
       "version": "1.0.0",
       "path": "chatgpt/ai.message.json",
-      "content_hash": "eeeeb681442844a037755d95b2f51f9242267e9992da1d53f4f4edc78c18bef3"
+      "content_hash": "747da738aab33cdf535d16ea4b7e577a2d521bb877947f121717e82444ef623f"
     },
     {
       "source": "claude",
@@ -205,25 +205,25 @@
       "content_hash": "72351d4cd232e6458bf529fbb034454a74dcc0c6e90ff19525c4bfeab1ed514d"
     },
     {
-      "source": "document-ingestor",
-      "event_type": "document.ingested",
-      "version": "1.0.0",
-      "path": "document-ingestor/document.ingested.json",
-      "content_hash": "55eebee2a647cb4ce08a191ff922d9cfce7104571e5e30603b801ce70041f62a"
-    },
-    {
       "source": "document-parser",
       "event_type": "document.chunked",
       "version": "1.0.0",
       "path": "document-parser/document.chunked.json",
-      "content_hash": "0e9089894b90fee49a15821d4fbb176b9222d3ed8dbece54c8b5c51c0e66a8bb"
+      "content_hash": "d4c0ccee06a0d81c351283f860fcd354ef2b00ef650839b73d4e455c7e8f358c"
     },
     {
       "source": "document-parser",
       "event_type": "document.parsed",
       "version": "1.0.0",
       "path": "document-parser/document.parsed.json",
-      "content_hash": "dcb86c5c915e526337251c866996f535bf04262c28df6d425735b8bcd7583117"
+      "content_hash": "b98961dd916c0d0f475c4280016f4388c330d9dfb044b1fe8e921bdd8e5cc305"
+    },
+    {
+      "source": "document-source",
+      "event_type": "document.ingested",
+      "version": "1.0.0",
+      "path": "document-source/document.ingested.json",
+      "content_hash": "6a7a664807b9ca51634a533e6426d76e8960dfb1884c249e1b041f9fce2e2f9c"
     },
     {
       "source": "entity-enricher",
@@ -300,7 +300,7 @@
       "event_type": "health.aggregated_report",
       "version": "1.0.0",
       "path": "health-aggregator/health.aggregated_report.json",
-      "content_hash": "c5c7317c7bf32a3824c3c7efdbfebbdf0be5d870023da35956023e2d606285da"
+      "content_hash": "25b2ef08e6e1cd9880603e3391acc6aee44b99c446a74b279f2678dad3742188"
     },
     {
       "source": "integration.polylogue",
@@ -580,7 +580,7 @@
       "event_type": "metric.counter",
       "version": "1.0.0",
       "path": "sinex/metric.counter.json",
-      "content_hash": "66305eb6910d3f466aa7a93ab7853dc6d200dcd6147d36d1a22ee8de38e7b290"
+      "content_hash": "e62be9fc1de7454837a4a18f7a9ba4957919111f20c0905da57ef2b6fbfab42c"
     },
     {
       "source": "sinex",
@@ -594,7 +594,7 @@
       "event_type": "metric.histogram",
       "version": "1.0.0",
       "path": "sinex/metric.histogram.json",
-      "content_hash": "1c02faafabf345b1632f28b57871c330723ef2fb0b0bfeaa36dac9be6edb4759"
+      "content_hash": "49010f157569ea7dac6bcd2376058049092e01c3eaa35c76ea7177853d72032f"
     },
     {
       "source": "sinex",
@@ -615,28 +615,14 @@
       "event_type": "process.shutdown",
       "version": "1.0.0",
       "path": "sinex/process.shutdown.json",
-      "content_hash": "879fbf5716ac3c93be2d606066796641cd02f75da3e4110c8ad5e228c9c540bc"
+      "content_hash": "548f160bd963714faa9ab59fa3fbcc5bd6fa66af4b27e3db3080d5f0546ace1d"
     },
     {
       "source": "sinex",
       "event_type": "process.started",
       "version": "1.0.0",
       "path": "sinex/process.started.json",
-      "content_hash": "08cfcbac816b184af91a25348cb7796c8cd7172876cfaffc4128af24bff73742"
-    },
-    {
-      "source": "sinex.node",
-      "event_type": "derived.latency_snapshot",
-      "version": "1.0.0",
-      "path": "sinex.node/derived.latency_snapshot.json",
-      "content_hash": "ca5780b146e663bd6cead2349a73a019842bfc22d481b94d4a1a47b3eb7898ce"
-    },
-    {
-      "source": "sinex.node",
-      "event_type": "processing.stats",
-      "version": "1.0.0",
-      "path": "sinex.node/processing.stats.json",
-      "content_hash": "e85825ea99b556d896bfb56949879808b7c1fd4d70a68f8ab224d4094c058479"
+      "content_hash": "99f4569f0fd179c54a5026711eb17008bddc733876da8753de33637cdf74d5c0"
     },
     {
       "source": "sinexctl",
@@ -664,7 +650,7 @@
       "event_type": "gateway.rpc.call",
       "version": "1.0.0",
       "path": "sinexd.api/gateway.rpc.call.json",
-      "content_hash": "a08a9010a1522cd456bdd8a42bb3a203a1e660f302e4bb018e33f9323ff044f7"
+      "content_hash": "cc5c98a560671be11b54001987efa51efcb4ed8380c5c84ee48a7d27cada7aae"
     },
     {
       "source": "sinexd.api",
@@ -695,6 +681,13 @@
       "content_hash": "f5a86f07dac8a7a1dbc51a55bc6dea9301e48ed3b99da67b5660bda774344fb6"
     },
     {
+      "source": "sinexd.automaton",
+      "event_type": "latency_snapshot",
+      "version": "1.0.0",
+      "path": "sinexd.automaton/latency_snapshot.json",
+      "content_hash": "8fa7bcee925749acfff87544e44924da6c1fd15965302b9a09ccdac640f2ccf5"
+    },
+    {
       "source": "sinexd.event_engine",
       "event_type": "assembly.stats",
       "version": "1.0.0",
@@ -706,14 +699,14 @@
       "event_type": "consumer.startup_replay_risk",
       "version": "1.0.0",
       "path": "sinexd.event_engine/consumer.startup_replay_risk.json",
-      "content_hash": "099dc39d79ae861336680b47e71eb57ecc3c007a3d24d84b34cebc5a36e43f3e"
+      "content_hash": "3ab3b9ef081511b8d763702693b6ef338be2e6f8dcdb26a9aac0ce04bde733a7"
     },
     {
       "source": "sinexd.event_engine",
       "event_type": "consumer.startup_snapshot",
       "version": "1.0.0",
       "path": "sinexd.event_engine/consumer.startup_snapshot.json",
-      "content_hash": "bcad461f5915464e1e50386e4e4923f3c14ccc472f33b8ad5181468a05966db5"
+      "content_hash": "08dfeb06defa2c801c2ec4130128bd45e799ee99e370187eb76efec7c71d7786"
     },
     {
       "source": "sinexd.event_engine",
@@ -721,6 +714,13 @@
       "version": "1.0.0",
       "path": "sinexd.event_engine/stream.stats.json",
       "content_hash": "5da9a3f2ed816407750144699822ef835e553e45f177cd97443f18eb98bcc0a7"
+    },
+    {
+      "source": "sinexd.source",
+      "event_type": "processing.stats",
+      "version": "1.0.0",
+      "path": "sinexd.source/processing.stats.json",
+      "content_hash": "06d540c974b6654af8cb05b09c3e1d9250ba397c68726270c35268d0cae791b8"
     },
     {
       "source": "spotify",

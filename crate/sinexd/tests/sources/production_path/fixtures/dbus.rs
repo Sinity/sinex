@@ -4,7 +4,7 @@
 //! The `data` bytes are interpreted as newline-delimited JSON-encoded objects
 //! with fields matching `DbusMessage` (interface, member, path, sender, `body_json`).
 
-use sinexd::node_sdk::parser::DbusMessage;
+use sinexd::runtime::parser::DbusMessage;
 
 use super::{FixtureBinding, FixtureHandle};
 

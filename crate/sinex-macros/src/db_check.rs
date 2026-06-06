@@ -1,8 +1,8 @@
 //! `#[derive(DbCheck)]` — emit a `DbCheckSpec` for an enum's `Display`-rendered
 //! DB column.
 //!
-//! See `crate/lib/sinex-primitives/src/schema_constraints.rs` for the runtime
-//! consumer surface and `crate/lib/sinex-schema/src/apply.rs` for how the
+//! See `crate/sinex-primitives/src/schema_constraints.rs` for the runtime
+//! consumer surface and `crate/sinex-schema/src/apply.rs` for how the
 //! schema-apply engine reconciles the live DB against these specs.
 //!
 //! # Grammar
@@ -15,7 +15,7 @@
 //!     column = "manifest_type",
 //!     version = 1,
 //! )]
-//! pub enum NodeType {
+//! pub enum ModuleKind {
 //!     Ingestor,
 //!     Automaton,
 //!     Service,

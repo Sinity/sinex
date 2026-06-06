@@ -1,14 +1,15 @@
 //! Document ingestion + derived event payloads.
 //!
 //! `DocumentIngestedPayload` is the material-provenance event emitted by
-//! `sinex-document-ingestor` when a file is staged into the source-material
+//! the document source when a file is staged into the source-material
 //! registry. The `DocumentParsedPayload` and `DocumentChunkedPayload` events
-//! are derived-provenance outputs of the document-layer parser (issue
-//! [#733], design doc `docs/architecture/document-layer-v1.md`): a document
+//! are derived-provenance outputs of the document-layer parser (issues
+//! [#332]/[#733], `crate/sinex-schema/docs/document_layer.md`): a document
 //! is the queryable text unit derived from one source — for v1, either a
 //! Dendron markdown file or a single terminal command's canonicalized
 //! output.
 //!
+//! [#332]: https://github.com/Sinity/sinex/issues/332
 //! [#733]: https://github.com/Sinity/sinex/issues/733
 
 use schemars::JsonSchema;
@@ -19,7 +20,7 @@ use sinex_macros::EventPayload;
 use crate::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "document-ingestor", event_type = "document.ingested")]
+#[event_payload(source = "document-source", event_type = "document.ingested")]
 pub struct DocumentIngestedPayload {
     pub file_path: String,
     pub source_material_id: String,
@@ -43,8 +44,8 @@ impl DocumentIngestedPayload {
     }
 }
 
-/// Corpus that produced a document. v1 ships exactly two — see the document
-/// layer design doc's "Two corpora, no more" table.
+/// Corpus that produced a document. v1 ships exactly two; see
+/// `crate/sinex-schema/docs/document_layer.md`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentKind {
@@ -78,7 +79,7 @@ impl DocumentKind {
 #[event_payload(source = "document-parser", event_type = "document.parsed")]
 pub struct DocumentParsedPayload {
     /// Deterministic document identity. `UUIDv5` over `(NS_DOCUMENTS,
-    /// source_unit || "/" || natural_key)` — replay against the same source
+    /// source || "/" || natural_key)` — replay against the same source
     /// produces the same id.
     pub document_id: Uuid,
     /// Which corpus this document belongs to (see `DocumentKind`).
@@ -98,8 +99,8 @@ pub struct DocumentParsedPayload {
     pub text_byte_len: u64,
     /// Kind-specific structured fields. For Dendron: `{ frontmatter,
     /// wikilinks, title }`. For terminal: `{ command, exit_code, shell }`.
-    /// Schema-less by design — see the design doc's "Open questions" item
-    /// on frontmatter schema.
+    /// Schema-less by design; corpus-specific consumers validate the fields
+    /// they depend on.
     pub side_data: JsonValue,
 }
 
@@ -130,8 +131,7 @@ impl DocumentParsedPayload {
 /// `text` column of `core.document_chunks`), suitable for in-document chunk
 /// navigation. `source_anchor_*` are pre-redaction byte offsets into the
 /// raw source material — populated for Dendron, `None` for terminal output
-/// (which has no byte-stream source). See the design doc's "Anchor-byte
-/// semantics" section.
+/// (which has no byte-stream source).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "document-parser", event_type = "document.chunked")]
 pub struct DocumentChunkedPayload {

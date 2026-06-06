@@ -4,10 +4,10 @@ use color_eyre::eyre::{Result, WrapErr, eyre};
 use console::style;
 use serde::Serialize;
 use sinex_primitives::{DeploymentReadinessDescriptor, DeploymentReadinessMode};
-use sinexd::node_sdk::preflight::configuration::{
+use sinexd::runtime::preflight::configuration::{
     validate_activitywatch_db, validate_terminal_history_source,
 };
-use sinexd::node_sdk::preflight::services::{SystemdServiceDetails, inspect_systemd_service};
+use sinexd::runtime::preflight::services::{SystemdServiceDetails, inspect_systemd_service};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -402,12 +402,12 @@ fn current_process_uid() -> Result<u32> {
         .wrap_err_with(|| format!("failed to parse `id -u` output as a UID: {uid}"))
 }
 
-pub(super) async fn check_node_entrypoints(
+pub(super) async fn check_runtime_entrypoints(
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
     let Some(descriptor) = descriptor else {
         return DeploymentReadinessItem::fail(
-            "node-entrypoints",
+            "runtime-entrypoints",
             "Deployment readiness requires a descriptor-declared managed unit set",
         );
     };
@@ -416,11 +416,11 @@ pub(super) async fn check_node_entrypoints(
     if units.is_empty() {
         return match descriptor.mode {
             DeploymentReadinessMode::Prepared => DeploymentReadinessItem::skip(
-                "node-entrypoints",
+                "runtime-entrypoints",
                 "Prepared deployment descriptor does not declare any managed units yet",
             ),
             _ => DeploymentReadinessItem::fail(
-                "node-entrypoints",
+                "runtime-entrypoints",
                 "Deployment descriptor does not declare managed units",
             ),
         };
@@ -434,7 +434,7 @@ pub(super) async fn check_node_entrypoints(
             Ok(service_data) => service_data,
             Err(error) => {
                 return DeploymentReadinessItem::fail(
-                    "node-entrypoints",
+                    "runtime-entrypoints",
                     format!("Could not query systemd for {unit}: {error}"),
                 );
             }
@@ -453,7 +453,7 @@ pub(super) async fn check_node_entrypoints(
 
     if !unavailable.is_empty() {
         return DeploymentReadinessItem::fail(
-            "node-entrypoints",
+            "runtime-entrypoints",
             format!(
                 "Managed Sinex units are missing or not loaded: {}",
                 unavailable.join(", ")
@@ -463,7 +463,7 @@ pub(super) async fn check_node_entrypoints(
 
     if !notify_contract_violations.is_empty() {
         return DeploymentReadinessItem::fail(
-            "node-entrypoints",
+            "runtime-entrypoints",
             format!(
                 "Managed units violate the notify service contract: {}",
                 notify_contract_violations.join(", ")
@@ -472,7 +472,7 @@ pub(super) async fn check_node_entrypoints(
     }
 
     DeploymentReadinessItem::pass(
-        "node-entrypoints",
+        "runtime-entrypoints",
         format!(
             "Managed Sinex units are present in systemd with notify/watchdog contract intact: {}",
             units.join(", ")
@@ -525,7 +525,7 @@ pub(super) fn check_realm_accessible(target: &TargetIdentity) -> DeploymentReadi
     }
 }
 
-/// Check 3: terminal history sources currently consumed by the node are readable.
+/// Check 3: terminal history sources currently consumed by the runtime are readable.
 pub(super) fn check_terminal_sources(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
@@ -1086,13 +1086,13 @@ pub(super) fn check_singleton_workstation_topology(
     if offenders.is_empty() {
         DeploymentReadinessItem::pass(
             "singleton-workstation-topology",
-            "Workstation capture nodes are pinned to single-instance startup",
+            "Workstation capture sources are pinned to single-instance startup",
         )
     } else {
         DeploymentReadinessItem::fail(
             "singleton-workstation-topology",
             format!(
-                "Workstation capture nodes must stay singleton for first enable: {}",
+                "Workstation capture sources must stay singleton for first enable: {}",
                 offenders.join(", ")
             ),
         )
@@ -1154,9 +1154,9 @@ pub(super) fn check_secret_materials(
     let descriptor_present = descriptor.is_some();
     let admin_token = descriptor_secret_path(
         descriptor,
-        |value| value.secrets.gateway_admin_token_file.clone(),
+        |value| value.secrets.api_admin_token_file.clone(),
         "SINEX_API_ADMIN_TOKEN_FILE",
-        PathBuf::from("/run/agenix/sinex-gateway-admin-token"),
+        PathBuf::from("/run/agenix/sinex-api-admin-token"),
     );
     let db_password = descriptor_secret_path(
         descriptor,
@@ -1179,7 +1179,7 @@ pub(super) fn check_secret_materials(
     let gateway_trust_anchor = descriptor_secret_path(
         descriptor,
         |value| value.secrets.gateway_tls_trust_anchor_file.clone(),
-        "SINEX_RPC_CA_CERT",
+        "SINEX_API_CA_CERT",
         default_tls_dir.join("ca.pem"),
     );
     let gateway_client_ca = descriptor_secret_path(
@@ -1242,10 +1242,10 @@ pub(super) fn check_secret_materials(
     let mut present = Vec::new();
 
     if let Some(path) = admin_token {
-        record_secret_file("gateway-admin-token", &path, &mut present, &mut missing);
+        record_secret_file("api-admin-token", &path, &mut present, &mut missing);
     } else if !descriptor_present {
         missing.push(
-            "gateway-admin-token missing (set SINEX_API_ADMIN_TOKEN_FILE or provide /run/agenix/sinex-gateway-admin-token)"
+            "api-admin-token missing (set SINEX_API_ADMIN_TOKEN_FILE or provide /run/agenix/sinex-api-admin-token)"
                 .to_string(),
         );
     }
@@ -1353,7 +1353,7 @@ pub(super) async fn execute_deployment_readiness(
 
     let mut items = vec![
         descriptor_item,
-        check_node_entrypoints(descriptor.as_ref()).await,
+        check_runtime_entrypoints(descriptor.as_ref()).await,
     ];
 
     match resolve_target_identity(descriptor.as_ref()) {

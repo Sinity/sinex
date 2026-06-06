@@ -16,8 +16,8 @@
 //! all entities share one sliding window. If richer scoping is desired later
 //! (e.g., per-source co-occurrence), the scope key can be partitioned.
 
-use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, ScopeReconcilerNodeAdapter};
-use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
+use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconcilerAdapter};
+use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, ScopeReconciler};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{RelationType, SyntheticTemporalPolicy};
@@ -122,7 +122,7 @@ impl ScopeReconciler for RelationExtractor {
         scope_key: &str,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         debug_assert_eq!(
             scope_key, CO_OCCURRENCE_SCOPE,
             "relation extractor only supports fixed scope 'co-occurrence-window'"
@@ -213,56 +213,55 @@ fn drain_and_emit_pairs(
     outputs
 }
 
-/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type RelationExtractorNode = ScopeReconcilerNodeAdapter<RelationExtractor>;
+/// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
+pub type RelationExtractorRuntime = ScopeReconcilerAdapter<RelationExtractor>;
 
-// ── Source-unit descriptor (issue #690 / #734) ──────────────────────────────
+// ── Source descriptor (issue #690 / #734) ──────────────────────────────
 
-use sinex_primitives::proof::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitDescriptor, SubjectRef,
+use sinex_primitives::source_contracts::{
+    CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
+    OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
+    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape,
+    SourceContract, SourceRuntimeBinding, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
-register_source_unit! {
-    SourceUnitDescriptor {
+register_source_contract! {
+    SourceContract {
         id: "relation-extractor",
         namespace: "derived",
         event_types: &[
             ("relation-extractor", "entity.related"),
         ],
-        privacy_tier: SuPrivacyTier::Sensitive,
-        horizons: &[SuHorizon::Continuous],
-        retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
-        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+        privacy_tier: ContractPrivacyTier::Sensitive,
+        horizons: &[ContractHorizon::Continuous],
+        retention: ContractRetentionPolicy::Forever,
+        occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
             "(source_entity_id, target_entity_id, relation_type)",
         ),
         access_policy: "event_stream_read",
     }
 }
 
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:relation-extractor"),
+register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:relation-extractor"),
         "relation-extractor",
         "derived",
     )
-    .implementation("sinex-process")
+    .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("entity.related")
     .privacy_context("inherits_from_parents")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
-    .source_unit_id("relation-extractor")
-    .runner_pack("process")
-    .checkpoint_family(SuCheckpointFamily::AppendStream)
-    .runtime_shape(SuRuntimeShape::Continuous)
+    .source_id("relation-extractor")
+    .runner_pack("sinexd")
+    .checkpoint_family(ContractCheckpointFamily::AppendStream)
+    .runtime_shape(ContractRuntimeShape::Continuous)
     .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:process")
-    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
+    .implementation_mode("in_process:sinexd")
+    .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }

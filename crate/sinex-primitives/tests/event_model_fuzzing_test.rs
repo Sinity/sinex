@@ -220,7 +220,7 @@ fn smoke_fuzzed_events() -> impl Strategy<Value = Event<JsonValue>> {
     ];
     let hosts = prop_oneof![
         Just(HostName::from_static("localhost")),
-        Just(HostName::from_static("node-1")),
+        Just(HostName::from_static("host-1")),
         regex_strategy("([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9])(\\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9])){0,2}").prop_map(|raw| {
             HostName::new(raw).unwrap_or_else(|_| unreachable!("regex yields valid HostName"))
         }),
@@ -466,7 +466,7 @@ sinex_proptest! {
         let _ = event.host.as_str();
         let _ = &event.payload;
         let _ = event.ts_orig;
-        let _ = event.source_run_id;
+        let _ = event.module_run_id;
         let _ = event.payload_schema_id;
         TestCaseResult::Ok(())
     }
