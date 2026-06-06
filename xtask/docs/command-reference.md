@@ -807,6 +807,19 @@ Summarise dev-loop wallclock cost without double-counting wrappers
 | `--days` | yes | no | How many days back to analyse |
 
 
+### `xtask history overlap`
+
+Explain what overlapped an invocation and what shared resources were recorded
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `invocation` | yes | no | Invocation selector: `latest`, `previous`, `current`, invocation ID, `inv:<id>`, or `job:<id>` |
+| `--command` | yes | no | Restrict selector resolution to this command |
+| `--limit` | yes | no | Number of overlapping invocations/background jobs to include |
+
+
 ### `xtask history tests`
 
 Query test result history

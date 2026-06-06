@@ -2284,14 +2284,17 @@ impl HistoryDb {
     /// - **Alive PID within legitimate window**: leave alone (drop guard handles
     ///   normal completion)
     fn cleanup_stale_invocations(&self) -> Result<()> {
-        if !self.has_stale_invocations()? {
-            return Ok(());
-        }
-
-        let stale_candidates = self.stale_invocation_candidates()?;
+        let stale_candidates = if self.has_stale_invocations()? {
+            self.stale_invocation_candidates()?
+        } else {
+            Vec::new()
+        };
         let mut stale_invocation_ids = Vec::new();
         let mut zombie_invocation_ids = Vec::new();
-        let mut orphaned_background_job_ids = HashSet::new();
+        let mut orphaned_background_job_ids = self
+            .finished_invocation_running_background_job_ids()?
+            .into_iter()
+            .collect::<HashSet<_>>();
         let mut killed_background_job_ids = HashSet::new();
         let mut reaped_zombies = 0usize;
 
@@ -2413,6 +2416,26 @@ impl HistoryDb {
             .context("failed to collect stale invocation candidates")
     }
 
+    fn finished_invocation_running_background_job_ids(&self) -> Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                r"
+                SELECT bg.id
+                FROM background_jobs bg
+                JOIN invocations i ON i.id = bg.invocation_id
+                WHERE bg.job_status = 'running'
+                  AND i.finished_at IS NOT NULL
+                ",
+            )
+            .context("failed to prepare finished invocation background-job repair query")?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))
+            .context("failed to execute finished invocation background-job repair query")?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .context("failed to collect finished invocation background-job repair candidates")
+    }
+
     fn mark_stale_invocations_cancelled(
         &self,
         invocation_ids: &[i64],
@@ -2476,7 +2499,14 @@ impl HistoryDb {
                 r"
                 UPDATE background_jobs
                 SET job_status = 'orphaned',
-                    finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                    finished_at = COALESCE(
+                        (
+                            SELECT inv.finished_at
+                            FROM invocations inv
+                            WHERE inv.id = background_jobs.invocation_id
+                        ),
+                        strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                    )
                 WHERE id IN ({})
                   AND job_status = 'running'
                 ",
@@ -6373,6 +6403,54 @@ mod tests {
         );
         assert_eq!(cancel_reason, "stale_pid");
         assert_eq!(cancelled_by, "open_time_sweep");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_repairs_running_background_job_for_finished_invocation()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-finished-bg.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute(
+            r"
+            INSERT INTO invocations (
+                command, started_at, finished_at, status, host, cwd, is_background
+            ) VALUES (?1, ?2, ?3, 'failed', ?4, ?5, 1)
+            ",
+            params![
+                "check",
+                "2026-05-17T14:28:06Z",
+                "2026-05-17T14:42:03Z",
+                "localhost",
+                "/tmp"
+            ],
+        )?;
+        let invocation_id = db.conn.last_insert_rowid();
+        db.conn.execute(
+            r"
+            INSERT INTO background_jobs (
+                invocation_id, command, pid, job_status, started_at
+            ) VALUES (?1, ?2, ?3, 'running', ?4)
+            ",
+            params![
+                invocation_id,
+                "check",
+                999_999_999_i64,
+                "2026-05-17T14:28:06Z"
+            ],
+        )?;
+        drop(db);
+
+        let reopened = HistoryDb::open(&db_path)?;
+        let (job_status, finished_at): (String, String) = reopened.conn.query_row(
+            "SELECT job_status, finished_at FROM background_jobs WHERE invocation_id = ?1",
+            params![invocation_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+
+        assert_eq!(job_status, "orphaned");
+        assert_eq!(finished_at, "2026-05-17T14:42:03Z");
         Ok(())
     }
 

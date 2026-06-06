@@ -236,6 +236,18 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 notes: &[],
             },
             GuideEntry {
+                path: "history overlap",
+                fallback_summary: "Explain invocation overlap and recorded shared resources",
+                when: "a run was slow under pressure and you need to see concurrent xtask work, background jobs, and shared build slices",
+                examples: &[
+                    "xtask history overlap latest --command test",
+                    "xtask history overlap inv:2000549 --limit 20",
+                ],
+                notes: &[
+                    "This reports recorded xtask overlap and shared CPU/memory slices; it cannot name arbitrary external I/O producers unless machine telemetry captured them elsewhere.",
+                ],
+            },
+            GuideEntry {
                 path: "analytics workspace-health",
                 fallback_summary: "Compute a composite workspace health score",
                 when: "you want a compact signal about repo health or follow-up recommendations",
