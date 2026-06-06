@@ -9,10 +9,11 @@ use sinex_db::replay::state_machine::{
 };
 use sinex_primitives::rpc::replay::{
     ReplayApproveRequest, ReplayApproveResponse, ReplayCancelRequest, ReplayCancelResponse,
-    ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse,
-    ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayPreviewRequest,
-    ReplayPreviewResponse, ReplayScope as RpcReplayScope, ReplayState as RpcReplayState,
-    ReplayStatusRequest, ReplayStatusResponse, ReplaySubmitRequest, ReplaySubmitResponse,
+    ReplayCheckpoint, ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest,
+    ReplayExecuteResponse, ReplayListRequest, ReplayListResponse, ReplayOperation,
+    ReplayPreviewRequest, ReplayPreviewResponse, ReplayScope as RpcReplayScope,
+    ReplayState as RpcReplayState, ReplayStatusRequest, ReplayStatusResponse,
+    ReplaySubmitRequest, ReplaySubmitResponse,
 };
 use sinex_primitives::{Result, SinexError, Uuid};
 
@@ -165,14 +166,63 @@ pub async fn handle_replay_list_operations(
 }
 
 fn into_replay_operation(operation: DbReplayOperation) -> Result<ReplayOperation> {
-    serde_json::from_value(serde_json::to_value(operation).map_err(|error| {
-        SinexError::serialization("failed to serialize replay operation into wire-compatible form")
-            .with_std_error(&error)
-    })?)
-    .map_err(|error| {
-        SinexError::serialization("failed to deserialize replay operation into RPC contract")
-            .with_std_error(&error)
+    Ok(ReplayOperation {
+        operation_id: operation.operation_id.to_string(),
+        state: rpc_replay_state(operation.state),
+        scope: rpc_replay_scope(operation.scope),
+        preview_summary: operation.preview_summary,
+        checkpoint: ReplayCheckpoint {
+            processed_events: operation.checkpoint.processed_events,
+            total_events: operation.checkpoint.total_events,
+            last_event_id: operation
+                .checkpoint
+                .last_event_id
+                .map(|event_id| event_id.to_string()),
+            batch_number: operation.checkpoint.batch_number,
+            savepoint_id: operation.checkpoint.savepoint_id,
+            updated_at: operation.checkpoint.updated_at.format_rfc3339(),
+        },
+        actor: operation.actor,
+        created_at: operation.created_at.format_rfc3339(),
+        approved_by: operation.approved_by,
+        approved_at: operation.approved_at.map(|ts| ts.format_rfc3339()),
+        executor_module: operation.executor_module,
+        started_at: operation.started_at.map(|ts| ts.format_rfc3339()),
+        finished_at: operation.finished_at.map(|ts| ts.format_rfc3339()),
+        outcome: operation.outcome,
+        error_details: operation.error_details,
     })
+}
+
+fn rpc_replay_scope(scope: DbReplayScope) -> RpcReplayScope {
+    RpcReplayScope {
+        source_name: scope.source_name,
+        time_window: scope
+            .time_window
+            .map(|(start, end)| (start.format_rfc3339(), end.format_rfc3339())),
+        material_filter: scope
+            .material_filter
+            .map(|ids| ids.into_iter().map(|id| id.to_string()).collect()),
+        filters: scope.filters,
+        source_id: scope.source_id,
+        source_material_id: scope.source_material_id.map(|id| id.to_string()),
+        parser_id: None,
+        parser_version: scope.source_version,
+    }
+}
+
+fn rpc_replay_state(state: DbReplayState) -> RpcReplayState {
+    match state {
+        DbReplayState::Planning => RpcReplayState::Planning,
+        DbReplayState::Previewed => RpcReplayState::Previewed,
+        DbReplayState::Approved => RpcReplayState::Approved,
+        DbReplayState::Executing => RpcReplayState::Executing,
+        DbReplayState::Cancelling => RpcReplayState::Cancelling,
+        DbReplayState::Committing => RpcReplayState::Committing,
+        DbReplayState::Completed => RpcReplayState::Completed,
+        DbReplayState::Failed => RpcReplayState::Failed,
+        DbReplayState::Cancelled => RpcReplayState::Cancelled,
+    }
 }
 
 fn db_replay_scope(scope: RpcReplayScope) -> Result<DbReplayScope> {

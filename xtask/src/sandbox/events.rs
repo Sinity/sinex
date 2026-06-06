@@ -5,7 +5,8 @@ use color_eyre::eyre::eyre;
 use serde_json::Value as JsonValue;
 use sinex_db::DbPool;
 use sinex_db::DbPoolExt;
-use sinex_primitives::events::Publishable;
+use sinex_primitives::events::{Publishable, admission::EventIntent};
+use sinex_primitives::transport;
 use sinex_primitives::{Event, Id, OffsetKind, Provenance, SourceMaterial, Timestamp};
 use sinex_primitives::{EventSource, EventType, Uuid};
 use std::collections::HashSet;
@@ -200,9 +201,8 @@ impl EventPublisher for Sandbox {
             return Ok(Vec::new());
         }
 
-        // Just publish to NATS - caller (PipelineScope) is responsible for event_engine
-        let client = self.nats_client();
         let mut published = Vec::with_capacity(events.len());
+        let mut grouped_events: Vec<(EventSource, EventType, Vec<Event<JsonValue>>)> = Vec::new();
 
         for event in events {
             let mut envelope = event.clone();
@@ -217,20 +217,63 @@ impl EventPublisher for Sandbox {
                 uuid
             };
 
-            let payload = serde_json::to_vec(&envelope)?;
-            let subject = self.env().nats_raw_event_subject_with_namespace(
-                Some(self.pipeline_namespace().prefix()),
-                event.source.as_str(),
-                event.event_type.as_str(),
-            );
-            client.publish(subject, payload.into()).await?;
             published.push(event_id);
+            if let Some((_, _, group)) = grouped_events
+                .iter_mut()
+                .find(|(source, event_type, _)| {
+                    source == &envelope.source && event_type == &envelope.event_type
+                })
+            {
+                group.push(envelope);
+            } else {
+                grouped_events.push((
+                    envelope.source.clone(),
+                    envelope.event_type.clone(),
+                    vec![envelope],
+                ));
+            }
         }
 
-        client
-            .flush()
-            .await
-            .map_err(|e| eyre!("NATS flush failed: {e}"))?;
+        let client = self.ensure_nats().await?;
+        let jetstream = async_nats::jetstream::new(client);
+        for (source, event_type, envelope_events) in grouped_events {
+            // Publish the same admission envelope shape production producers use.
+            // Raw event subjects carry source/type routing, so mixed batches must
+            // be split before publishing through JetStream.
+            let subject = self.env().nats_raw_event_subject_with_namespace(
+                Some(self.pipeline_namespace().prefix()),
+                source.as_str(),
+                event_type.as_str(),
+            );
+            let intent = EventIntent::new(
+                "test.sandbox",
+                "xtask-sandbox",
+                "1.0.0",
+                envelope_events,
+                crate::sandbox::local_test_host(),
+            );
+            let payload = serde_json::to_vec(&intent)?;
+
+            let first_event = intent
+                .events
+                .first()
+                .ok_or_else(|| eyre!("sandbox event intent unexpectedly had no events"))?;
+            let msg_id = if let Some(first_id) = first_event.id.as_ref() {
+                format!("intent-{}-{}", first_id, intent.events.len())
+            } else {
+                format!("intent-{}-{}", Uuid::now_v7(), intent.events.len())
+            };
+            let mut headers = async_nats::HeaderMap::new();
+            headers.insert("Nats-Msg-Id", msg_id.as_str());
+            headers.insert("Sinex-Envelope-Version", intent.envelope_version.as_str());
+            transport::insert_transport_class_headers(&mut headers, transport::Class::Critical);
+
+            let ack = jetstream
+                .publish_with_headers(subject, headers, payload.into())
+                .await?;
+            ack.await
+                .map_err(|e| eyre!("JetStream publish ack failed: {e}"))?;
+        }
 
         Ok(published)
     }

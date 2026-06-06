@@ -908,6 +908,17 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
+            "sinex.context_pack",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project_path": {"type": "string", "description": "Project path to filter events"},
+                    "limit": {"type": "integer", "default": 50}
+                },
+                "additionalProperties": false
+            }),
+        ),
+        mcp_tool(
             "sinex.trace_lineage",
             json!({
                 "type": "object",
@@ -1390,16 +1401,6 @@ pub fn tools() -> Vec<McpTool> {
         ),
         mcp_tool("sinex.system_ping", empty_object_schema()),
         mcp_tool("sinex.system_version", empty_object_schema()),
-        mcp_tool(
-            "sinex.context_pack",
-            json!({
-                "type": "object",
-                "properties": {
-                    "project_path": {"type": "string", "description": "Project path to filter events"},
-                    "limit": {"type": "integer", "default": 50}
-                }
-            }),
-        ),
     ]
 }
 

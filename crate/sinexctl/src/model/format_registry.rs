@@ -296,6 +296,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "sources cockpit",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "sources list",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -358,6 +362,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "tasks update",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
+    m.insert("tasks import", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("tasks list", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "tasks state",
@@ -453,6 +458,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
 
     // ── Blob ─────────────────────────────────────────────────────────────────
+    m.insert(
+        "blob verify-integrity",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
     m.insert(
         "blob sweep-orphans",
         FormatCapability::single_shot(TABLE_JSON_YAML),
@@ -610,6 +619,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "verify baseline",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
+    m.insert("timeline", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "now",
         FormatCapability::single_shot(TABLE_JSON_YAML)
@@ -802,6 +812,11 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "ops start",
         "privacy private-mode disable",
         "privacy private-mode enable",
+        "privacy policy backend add",
+        "privacy policy dictionary add",
+        "privacy policy rule add",
+        "privacy policy seed builtin",
+        "privacy policy scope bind",
         "replay approve",
         "replay cancel",
         "replay execute",
@@ -826,6 +841,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "sources stage",
         "state restore",
         "state snapshot",
+        "tasks import",
         "tasks cancel",
         "tasks complete",
         "tasks status",
@@ -869,6 +885,11 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "ops start"
         | "privacy private-mode disable"
         | "privacy private-mode enable"
+        | "privacy policy backend add"
+        | "privacy policy dictionary add"
+        | "privacy policy rule add"
+        | "privacy policy seed builtin"
+        | "privacy policy scope bind"
         | "replay approve"
         | "replay cancel"
         | "replay execute"
@@ -886,6 +907,7 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "sources bindings create"
         | "sources bindings update"
         | "sources stage"
+        | "tasks import"
         | "tasks cancel"
         | "tasks complete"
         | "tasks status"
@@ -936,13 +958,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "dlq requeue" => &[methods::DLQ_REQUEUE],
         "dlq purge" => &[methods::DLQ_PURGE],
         "query" | "recent" | "errors" | "context" | "report today" | "report yesterday"
-        | "report calendar" => &[methods::EVENTS_QUERY],
-        "verify" => &[
-            methods::SYSTEM_HEALTH,
-            methods::EVENTS_QUERY,
-            methods::TELEMETRY_THROUGHPUT,
-            methods::TELEMETRY_RECENT_ACTIVITY,
-        ],
+        | "report calendar" | "timeline" => &[methods::EVENTS_QUERY],
         "verify baseline" => &[],
         "trace" | "explain" => &[methods::EVENTS_LINEAGE],
         "watch" => &[],
@@ -968,6 +984,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "audit" => &[methods::AUDIT_GET],
         "annotate" => &[methods::EVENTS_ANNOTATE],
         "sources stage" => &[methods::SOURCES_STAGE],
+        "sources cockpit" => &[],
         "sources list" => &[methods::SOURCES_LIST],
         "sources show" => &[methods::SOURCES_SHOW],
         "sources coverage" => &[methods::SOURCES_COVERAGE],
@@ -994,6 +1011,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "tasks state" => &[methods::TASKS_STATE_GET],
         "tasks status" => &[methods::TASKS_STATUS_SET],
         "tasks update" => &[methods::TASKS_UPDATE],
+        "tasks import" => &[methods::TASKS_CREATE],
         "curation duplicates" => &[methods::CURATION_DUPLICATE_CANDIDATES_LIST],
         "curation duplicate-judge" => &[methods::CURATION_DUPLICATE_JUDGMENTS_RECORD],
         "curation proposals" => &[methods::CURATION_PROPOSALS_LIST],
