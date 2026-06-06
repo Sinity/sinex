@@ -37,6 +37,9 @@ struct TestRunOverheadRow {
     non_test_overhead_secs: f64,
     test_body_ratio: f64,
     overhead_classification: String,
+    top_stage_name: Option<String>,
+    top_stage_duration_secs: Option<f64>,
+    unaccounted_overhead_secs: Option<f64>,
     host_pressure_level: String,
     host_pressure_reason: Option<String>,
     host_io_pressure_full_avg10_max: Option<f64>,
@@ -61,6 +64,15 @@ impl TestRunOverheadRow {
             non_test_overhead_secs: overhead.non_test_overhead_secs,
             test_body_ratio: overhead.test_body_ratio,
             overhead_classification: overhead.classification.to_string(),
+            top_stage_name: analysis
+                .stage_breakdown
+                .first()
+                .map(|stage| stage.stage_name.clone()),
+            top_stage_duration_secs: analysis
+                .stage_breakdown
+                .first()
+                .map(|stage| stage.total_duration_secs),
+            unaccounted_overhead_secs: analysis.unaccounted_overhead_secs,
             host_pressure_level: host_pressure.map_or_else(
                 || "clear_or_unrecorded".to_string(),
                 |pressure| pressure.level.clone(),
@@ -352,6 +364,14 @@ fn describe_test_run(run: &crate::history::ResolvedTestRun) -> String {
 
 fn format_optional_pressure(value: Option<f64>) -> String {
     value.map_or_else(|| "unavailable".to_string(), |value| format!("{value:.2}%"))
+}
+
+fn format_top_stage(row: &TestRunOverheadRow) -> String {
+    match (&row.top_stage_name, row.top_stage_duration_secs) {
+        (Some(name), Some(seconds)) => format!("{name} {seconds:.1}s"),
+        (Some(name), None) => name.clone(),
+        _ => "-".to_string(),
+    }
 }
 
 pub(super) fn execute_tests_slowest(
@@ -1024,6 +1044,8 @@ fn execute_tests_overhead(
                 "OVERHEAD",
                 "BODY %",
                 "CLASS",
+                "TOP STAGE",
+                "UNACCT",
                 "IO.FULL",
                 "MEM.FULL",
             ]);
@@ -1036,6 +1058,10 @@ fn execute_tests_overhead(
                     format!("{:.1}s", row.non_test_overhead_secs),
                     format!("{:.1}%", row.test_body_ratio * 100.0),
                     row.overhead_classification.clone(),
+                    format_top_stage(row),
+                    row.unaccounted_overhead_secs
+                        .map(|seconds| format!("{seconds:.1}s"))
+                        .unwrap_or_else(|| "-".to_string()),
                     format_optional_pressure(row.host_io_pressure_full_avg10_max),
                     format_optional_pressure(row.host_memory_pressure_full_avg10_max),
                 ]);
