@@ -280,8 +280,8 @@ sops-nix), use `services.sinex.database.setupWaitForPaths` to gate
   deployments, so `sinexd` applies schema before starting runtime modules.
 - When `services.sinex.enable = true`, the module emits
   `/etc/sinex/deployment-readiness.json`, the canonical descriptor consumed by
-  `xtask doctor --deployment-readiness` and the config-derived preflight
-  configuration checks.
+  `sinexd` startup preflight and the config-derived preflight configuration
+  checks (`sinexd::runtime::preflight`).
 - That descriptor also records the managed document-ingestion surface
   (`allowed_roots`, boot/timer execution mode, and scan/timer unit names) so
   readiness checks can verify that non-daemon runtime surfaces are genuinely

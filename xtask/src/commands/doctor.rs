@@ -11,19 +11,9 @@ use console::style;
 use serde::Serialize;
 use sinex_primitives::{DeploymentReadinessDescriptor, privacy::load_private_mode_state};
 use std::path::{Path, PathBuf};
-// Only the gated `deployment` submodule needs `Duration` (for DEPLOYMENT_READY_TIMEOUT).
-#[cfg(feature = "runtime-introspection")]
-use std::time::Duration;
 use walkdir::WalkDir;
 
-// Consumed only by the real `deployment` submodule, which is gated behind the
-// same cfg; without the gate these are dead code in the default (non-introspection) build.
-#[cfg(feature = "runtime-introspection")]
-const DEPLOYMENT_READY_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(feature = "runtime-introspection")]
-const RECOMMENDED_INOTIFY_MAX_USER_WATCHES: u64 = 524_288;
-
-/// Probe developer-environment health and deployment readiness.
+/// Probe developer-environment health (Postgres, NATS, tools, TLS, runtime).
 #[derive(clap::Args)]
 pub struct DoctorCommand {
     /// Run pipeline smoke tests in addition to health checks
@@ -37,10 +27,6 @@ pub struct DoctorCommand {
     /// Check runtime health (event_engine heartbeat, consumer lag, batch latency)
     #[arg(long)]
     pub runtime: bool,
-
-    /// Check deployment readiness (schema, services, permissions)
-    #[arg(long)]
-    pub deployment_readiness: bool,
 
     /// Reclaim stale target-dir artifacts (cargo-sweep + incremental/ prune)
     #[arg(long)]
@@ -400,21 +386,6 @@ impl XtaskCommand for DoctorCommand {
                 result.status = Status::Partial;
             }
             result.warnings.extend(runtime.warnings.clone());
-        }
-
-        if self.deployment_readiness {
-            let readiness = execute_deployment_readiness(ctx).await?;
-            merge_result_data(
-                &mut result,
-                "deployment_readiness",
-                serde_json::to_value(&readiness)?,
-            );
-            if !readiness.overall && result.status == Status::Success {
-                result.status = Status::Partial;
-                result
-                    .warnings
-                    .push("Deployment readiness has failing checks".to_string());
-            }
         }
 
         if self.test_db {
@@ -2071,12 +2042,14 @@ where
     warnings
 }
 
-#[cfg(feature = "runtime-introspection")]
-mod deployment;
-#[cfg(not(feature = "runtime-introspection"))]
+/// Primitives-based deployment helpers used by the default doctor and status
+/// surfaces (DB-URL redaction, probe-target resolution, gateway-readiness
+/// placeholder). Host/deployment proof — systemd unit inspection, source-config
+/// validators, and live gateway probing — lives in `sinexd::runtime::preflight`
+/// and is surfaced through `sinexctl`/NixOS, not xtask. See
+/// `xtask/docs/runtime-target-boundaries.md`.
 mod deployment {
-    use crate::command::CommandContext;
-    use color_eyre::eyre::{Result, bail};
+    use color_eyre::eyre::Result;
     use serde::Serialize;
     use sinex_primitives::utils::{InvalidUrlPolicy, redact_url_password_for_diagnostics};
 
@@ -2086,20 +2059,6 @@ mod deployment {
         pub status: String,
         pub description: String,
         pub blocking: bool,
-    }
-
-    #[derive(Debug, Serialize)]
-    pub struct DeploymentReadinessReport {
-        pub items: Vec<DeploymentReadinessItem>,
-        pub overall: bool,
-    }
-
-    pub async fn execute_deployment_readiness(
-        _ctx: &CommandContext,
-    ) -> Result<DeploymentReadinessReport> {
-        bail!(
-            "doctor --deployment-readiness requires xtask built with the runtime-introspection feature"
-        )
     }
 
     pub fn redact_database_url_password(raw: &str) -> String {
@@ -2121,20 +2080,15 @@ mod deployment {
         DeploymentReadinessItem {
             name: "gateway-ready".to_string(),
             status: "skip".to_string(),
-            description: "gateway readiness requires xtask built with runtime-introspection"
+            description: "gateway readiness probe is owned by sinexctl/NixOS, not xtask"
                 .to_string(),
             blocking: true,
         }
     }
 }
 
-#[cfg(all(test, feature = "runtime-introspection"))]
-use deployment::*;
 pub(crate) use deployment::{DeploymentReadinessItem, check_gateway_ready};
-use deployment::{
-    execute_deployment_readiness, redact_database_url_password,
-    resolve_effective_database_probe_url,
-};
+use deployment::{redact_database_url_password, resolve_effective_database_probe_url};
 
 #[cfg(test)]
 mod build_cache_policy_tests {
@@ -2179,6 +2133,3 @@ mod build_cache_policy_tests {
         Ok(())
     }
 }
-
-#[cfg(all(test, feature = "runtime-introspection"))]
-mod tests;

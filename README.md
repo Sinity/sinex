@@ -152,11 +152,14 @@ Common operator entrypoints:
 
 ```bash
 xtask doctor
-xtask doctor --deployment-readiness
 xtask status --summary
 xtask infra status
 journalctl -u sinexd -f
 ```
+
+Deployment/host readiness proof (systemd units, schema, source-config
+validators) is owned by `sinexd` startup preflight and `sinexctl`/NixOS, not by
+`xtask` — see [runtime-target boundaries](xtask/docs/runtime-target-boundaries.md).
 
 ## Documentation
 
