@@ -32,27 +32,19 @@ tf = ["nextest", "run", "-E", "test(unit::) or test(property::)"] # Fast tests
 tu = ["nextest", "run", "-E", "test(unit::)"]                     # Unit tests only
 ti = ["nextest", "run", "-E", "test(integration::)"]              # Integration tests
 tp = ["nextest", "run", "-E", "test(property::)"]                 # Property tests
-# Ultra-fast development aliases
-c = ["check", "--workspace", "--profile", "dev-fast"] # Super fast check
-cc = [
-  "check",
-  "--workspace",
-  "--all-targets",
-  "--profile",
-  "dev-fast",
-] # Check all targets
-cf = [
-  "check",
-  "--workspace",
-  "--profile",
-  "dev-fast",
-  "--features",
-] # Check with features
+# Fast development aliases
+c = ["check", "--workspace"] # Fast check
+cc = ["check", "--workspace", "--all-targets"] # Check all targets
+cf = ["check", "--workspace", "--features"] # Check with features
 
 # Environment defaults
 [env]
 RUST_BACKTRACE = "0"                   # Disable backtraces for speed
-# RUSTC_WRAPPER is intentionally unset by default
+# Incremental builds are governed by `[profile.dev] incremental = true` in the
+# workspace Cargo.toml. CARGO_INCREMENTAL is intentionally NOT pinned here so the
+# profile setting applies (workspace crates incremental, registry deps not).
+# RUSTC_WRAPPER (sccache) is disabled in the sinex devshell — it conflicts with
+# incremental and gave ~0 on the constantly-changing iterating crate.
 CARGO_NET_GIT_FETCH_WITH_CLI = "false" # Faster git operations
 
 

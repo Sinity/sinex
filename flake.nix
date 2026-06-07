@@ -289,9 +289,7 @@
                 build_stage_metrics="$build_lock_dir/stages.json"
                 build_rebuild_trigger="$build_lock_dir/rebuild-trigger.json"
                 wrapper_event_log="$build_state_dir/xtask-wrapper-events.jsonl"
-                runtime_introspection_stamp="$cargo_target_dir/debug/xtask.runtime-introspection.built"
                 force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
-                requires_runtime_introspection="0"
 
                 _sinex_xtask_json_string() {
                   ${pkgs.jq}/bin/jq -Rn --arg value "$1" '$value'
@@ -412,12 +410,6 @@
                     _sinex_xtask_write_rebuild_trigger "forced" "$bin_path"
                   elif [ ! -x "$bin_path" ]; then
                     _sinex_xtask_write_rebuild_trigger "missing_binary" ""
-                  elif [ "$requires_runtime_introspection" = "1" ] && [ ! -e "$runtime_introspection_stamp" ]; then
-                    _sinex_xtask_write_rebuild_trigger "missing_runtime_introspection_stamp" ""
-                  elif [ "$requires_runtime_introspection" = "1" ] && [ "$bin_path" -nt "$runtime_introspection_stamp" ]; then
-                    _sinex_xtask_write_rebuild_trigger "stale_runtime_introspection_stamp" "$runtime_introspection_stamp"
-                  elif [ "$requires_runtime_introspection" = "1" ] && _sinex_xtask_sources_newer_than "$runtime_introspection_stamp"; then
-                    _sinex_xtask_write_rebuild_trigger "runtime_introspection_sources_newer" "$runtime_introspection_stamp"
                   elif [ ! -r "$depfile_path" ]; then
                     _sinex_xtask_write_rebuild_trigger "missing_depfile" "$bin_path"
                   else
@@ -460,7 +452,6 @@
                     printf ',"duration_ms":%s' "$duration_ms"
                     printf ',"command":%s' "$(_sinex_xtask_json_string "$command_name")"
                     printf ',"args":%s' "$(_sinex_xtask_json_string "$args_text")"
-                    printf ',"requires_runtime_introspection":%s' "$(_sinex_xtask_bool_json "$requires_runtime_introspection")"
                     printf ',"force_rebuild":%s' "$(_sinex_xtask_bool_json "$force_rebuild")"
                     printf ',"log_path":%s' "$log_value"
                     printf ',"rebuild_trigger":%s' "$trigger_value"
@@ -573,16 +564,7 @@
 
                 _sinex_xtask_needs_build() {
                   [ ! -x "$bin_path" ] && return 0
-                  _sinex_xtask_needs_runtime_introspection_build && return 0
                   _sinex_xtask_sources_newer_than "$bin_path"
-                }
-
-                _sinex_xtask_needs_runtime_introspection_build() {
-                  [ "$requires_runtime_introspection" = "1" ] || return 1
-                  [ ! -x "$bin_path" ] && return 0
-                  [ ! -e "$runtime_introspection_stamp" ] && return 0
-                  [ "$bin_path" -nt "$runtime_introspection_stamp" ] && return 0
-                  _sinex_xtask_sources_newer_than "$runtime_introspection_stamp"
                 }
 
                 _sinex_xtask_failed_build_is_current() {
@@ -633,58 +615,6 @@
                         ;;
                     esac
                   done
-                }
-
-                _sinex_xtask_command_arg() {
-                  local wanted_index="$1"
-                  local seen=0
-                  shift
-
-                  while [ "$#" -gt 0 ]; do
-                    case "$1" in
-                      --json|--list-commands|--bg|--fg|-v|-vv|-vvv)
-                        shift
-                        ;;
-                      --format)
-                        if [ "$#" -ge 2 ]; then
-                          shift 2
-                        else
-                          shift
-                        fi
-                        ;;
-                      --format=*)
-                        shift
-                        ;;
-                      *)
-                        if [ "$seen" -eq "$wanted_index" ]; then
-                          printf '%s\n' "$1"
-                          return 0
-                        fi
-                        seen="$((seen + 1))"
-                        shift
-                        ;;
-                    esac
-                  done
-                }
-
-                _sinex_xtask_requires_runtime_introspection() {
-                  local command_name subcommand_name
-                  command_name="$(_sinex_xtask_command_arg 0 "$@")"
-                  subcommand_name="$(_sinex_xtask_command_arg 1 "$@")"
-
-                  case "$command_name" in
-                    doctor)
-                      for _arg in "$@"; do
-                        case "$_arg" in
-                          --deployment-readiness)
-                            return 0
-                            ;;
-                        esac
-                      done
-                      ;;
-                  esac
-
-                  return 1
                 }
 
                 _sinex_xtask_can_use_existing_binary() {
@@ -768,84 +698,12 @@
 
                 _sinex_xtask_build_checkout_binary() {
                   (
-                    local sqlx_tmp pgdata pglog build_rc
-                    local sqlx_tmp_parent
+                    local build_rc
 
-                    sqlx_tmp_parent="''${SINEX_TEST_TMPDIR:-$root_dir/.sinex/state}"
-                    mkdir -p "$sqlx_tmp_parent"
-                    sqlx_tmp="$(mktemp -d "$sqlx_tmp_parent/xtask-sqlx.XXXXXX")"
-                    pgdata="$sqlx_tmp/pgdata"
-                    pglog="$sqlx_tmp/postgres.log"
                     build_rc=0
-
-                    export PGDATA="$pgdata"
-                    export PGHOST="$sqlx_tmp"
-                    export PGPORT="$((55433 + ($$ % 1000)))"
-
                     _stage_started_ns="$(_sinex_xtask_stage_start)"
-                    if ! ${postgresForSqlx}/bin/initdb -D "$PGDATA" --locale=C --encoding=UTF8 --auth=trust --username=postgres; then
-                      _sinex_xtask_stage_record "initdb" "$_stage_started_ns"
-                      rm -rf "$sqlx_tmp"
-                      return 1
-                    fi
-                    _sinex_xtask_stage_record "initdb" "$_stage_started_ns"
-
-                    echo "unix_socket_directories = '$PGHOST'" >> "$PGDATA/postgresql.conf"
-                    echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
-                    echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
-
-                    _stage_started_ns="$(_sinex_xtask_stage_start)"
-                    if ! ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -l "$pglog" -w -t 180 start; then
-                      _sinex_xtask_stage_record "pg_start" "$_stage_started_ns"
-                      cat "$pglog" >&2 || true
-                      rm -rf "$sqlx_tmp"
-                      return 1
-                    fi
-                    _sinex_xtask_stage_record "pg_start" "$_stage_started_ns"
-
-                    _stage_started_ns="$(_sinex_xtask_stage_start)"
-                    if ! ${postgresForSqlx}/bin/createdb -h "$PGHOST" -p "$PGPORT" -U postgres sinex_dev; then
-                      _sinex_xtask_stage_record "createdb" "$_stage_started_ns"
-                      ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
-                      rm -rf "$sqlx_tmp"
-                      return 1
-                    fi
-                    _sinex_xtask_stage_record "createdb" "$_stage_started_ns"
-
-                    export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&user=postgres"
-
-                    _stage_started_ns="$(_sinex_xtask_stage_start)"
-                    if ! cargo build --quiet -p sinex-schema --bin schema-apply-bootstrap; then
-                      _sinex_xtask_stage_record "schema_bootstrap_build" "$_stage_started_ns"
-                      ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
-                      rm -rf "$sqlx_tmp"
-                      return 1
-                    fi
-                    _sinex_xtask_stage_record "schema_bootstrap_build" "$_stage_started_ns"
-                    _stage_started_ns="$(_sinex_xtask_stage_start)"
-                    if ! "$cargo_target_dir/debug/schema-apply-bootstrap"; then
-                      _sinex_xtask_stage_record "schema_apply" "$_stage_started_ns"
-                      ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
-                      rm -rf "$sqlx_tmp"
-                      return 1
-                    fi
-                    _sinex_xtask_stage_record "schema_apply" "$_stage_started_ns"
-
-                    _stage_started_ns="$(_sinex_xtask_stage_start)"
-                    if [ "$requires_runtime_introspection" = "1" ]; then
-                      cargo build --quiet -p xtask --features runtime-introspection || build_rc=$?
-                      if [ "$build_rc" -eq 0 ]; then
-                        touch "$runtime_introspection_stamp"
-                      fi
-                    else
-                      cargo build --quiet -p xtask || build_rc=$?
-                      rm -f "$runtime_introspection_stamp"
-                    fi
+                    cargo build --quiet -p xtask || build_rc=$?
                     _sinex_xtask_stage_record "xtask_build" "$_stage_started_ns"
-                    _stage_started_ns="$(_sinex_xtask_stage_start)"
-                    ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
-                    _sinex_xtask_stage_record "pg_stop" "$_stage_started_ns"
-                    rm -rf "$sqlx_tmp"
                     return "$build_rc"
                   )
                 }
@@ -856,9 +714,6 @@
                   _normalized_args+=("$_arg")
                 done < <(_sinex_xtask_normalize_global_args "$@")
                 set -- "''${_normalized_args[@]}"
-                if _sinex_xtask_requires_runtime_introspection "$@"; then
-                  requires_runtime_introspection="1"
-                fi
 
                 if [ -x "$bin_path" ] \
                   && [ "$force_rebuild" != "1" ] \
@@ -866,30 +721,20 @@
                 then
                   if _sinex_xtask_needs_build; then
                     if _sinex_xtask_failed_build_is_current; then
-                      if [ "$requires_runtime_introspection" = "1" ]; then
-                        _sinex_xtask_report_current_failure
-                        exit 101
-                      else
-                        echo "ℹ  Using existing xtask binary; local rebuild is currently broken for these sources" >&2
-                        if [ -r "$build_failure_log" ]; then
-                          echo "  log: $build_failure_log" >&2
-                        fi
+                      echo "ℹ  Using existing xtask binary; local rebuild is currently broken for these sources" >&2
+                      if [ -r "$build_failure_log" ]; then
+                        echo "  log: $build_failure_log" >&2
                       fi
                     elif _sinex_xtask_is_observability_command "$@"; then
                       echo "ℹ  Using existing xtask binary for read-only command while sources are newer" >&2
                     else
                       if ! _sinex_xtask_build_with_lock "$@"; then
                         if _sinex_xtask_failed_build_is_current; then
-                          if [ "$requires_runtime_introspection" = "1" ]; then
-                            _sinex_xtask_report_current_failure
-                            exit 101
-                          else
-                            echo "ℹ  Falling back to existing xtask binary after rebuild failure" >&2
-                            if [ -r "$build_failure_log" ]; then
-                              echo "  log: $build_failure_log" >&2
-                            fi
-                            exec "$bin_path" "$@"
+                          echo "ℹ  Falling back to existing xtask binary after rebuild failure" >&2
+                          if [ -r "$build_failure_log" ]; then
+                            echo "  log: $build_failure_log" >&2
                           fi
+                          exec "$bin_path" "$@"
                         fi
                         exit 1
                       fi
@@ -902,10 +747,6 @@
                 if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
                   if ! _sinex_xtask_build_with_lock "$@"; then
                     if _sinex_xtask_failed_build_is_current; then
-                      if [ "$requires_runtime_introspection" = "1" ]; then
-                        _sinex_xtask_report_current_failure
-                        exit 101
-                      fi
                       if [ -x "$bin_path" ] && _sinex_xtask_can_use_existing_binary "$@"; then
                         echo "ℹ  Falling back to existing xtask binary after rebuild failure" >&2
                         if [ -r "$build_failure_log" ]; then
@@ -1001,6 +842,13 @@
                   export CARGO_TARGET_DIR="$SINEX_DEV_CACHE_ROOT/target"
                 fi
                 mkdir -p "$SINEX_DEV_CACHE_ROOT" "$CARGO_TARGET_DIR"
+                # Disable sccache for the sinex dev loop. The system (sinnix
+                # build-policy.nix) exports RUSTC_WRAPPER=sccache globally, but
+                # sccache bypasses incremental compilation and gives ~0 on the
+                # constantly-changing iterating crate. We opt into incremental
+                # builds (Cargo.toml [profile.dev] incremental = true) instead.
+                unset RUSTC_WRAPPER
+                unset SCCACHE_DIR
                 _sinex_path_prepend_unique "$CARGO_TARGET_DIR/debug"
                 _sinex_path_prepend_unique "${xtaskCommand}/bin"
                 export PATH
@@ -1008,10 +856,16 @@
                   pkgs.lib.makeLibraryPath [ pkgs.dbus ]
                 }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
                 export CLIPPY_CONF_DIR="$PWD/.config"
-                export SINEX_STATE_DIR="$SINEX_DEV_STATE_DIR/state"
+                # Durable checkout-local state (xtask history DB lives here). Pinned to
+                # the checkout — NOT derived from the relocatable SINEX_DEV_STATE_DIR —
+                # so the history DB never leaks into the /var/cache scratch tree on
+                # re-entry. Matches sinnix-direnvrc's pin; see CLAUDE async-workflow.md
+                # ("history must NOT be relocated into the cache-shaped tree").
+                export SINEX_STATE_DIR="$SINEX_DEV_ROOT/.sinex/state"
                 export SINEX_CACHE_DIR="$SINEX_DEV_CACHE_ROOT"
                 export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
-                export SINEX_NATS_DIR="$SINEX_STATE_DIR/nats"
+                # NATS runtime scratch (JetStream WAL) stays on the relocated NVMe dir.
+                export SINEX_NATS_DIR="$SINEX_DEV_STATE_DIR/nats"
                 export SINEX_DEV_PG_PORT="${toString pgPort}"
                 export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run"
                 export PGHOST="$SINEX_DEV_STATE_DIR/run"
