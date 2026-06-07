@@ -39,27 +39,35 @@ Document each bypass in the PR body.
 
 ### I/O pressure during development
 
-The sinex stack generates ~60 MB/min of baseline I/O when running (self-telemetry).
-During heavy compilation (cargo/nextest with 12+ threads), the combined I/O load can
-cause swap thrash and multi-minute stalls (#1556).
+Heavy compilation is itself the dominant source of build-time I/O: a full
+`xtask check --lint` over the ~473K-LOC workspace writes a large volume of
+rustc/clippy artifacts, and with incremental builds enabled and sccache disabled
+in the devshell that artifact churn — not the running stack — is what drives host
+I/O during a build. The live sinex stack adds a baseline (self-telemetry) on top,
+which can compound host pressure (#1556), but it is a secondary contributor;
+measure before blaming it.
 
 Mitigations already applied:
 - `test-threads = 12` in `.config/nextest.toml` (down from 18; cuts rustc fan-out I/O)
+- `CARGO_TARGET_DIR` is routed to `/cache/sinex/<checkout>/...` via the devShell
+  (NVMe-backed), keeping compilation output off the main filesystem.
 
-During intensive dev sessions, stop the live sinexd daemon to free I/O bandwidth:
+When a check/test run is slow on a contended host:
+- The preflight pressure gate may refuse to start; pass `--allow-contended-host`
+  for an intentional batch run.
+- Clippy over the whole workspace can exceed the default 600s cargo timeout under
+  load. The symptom is `cargo timed out after 600s`, not a code error — raise the
+  ceiling with `SINEX_CARGO_TIMEOUT=1800` rather than assuming lock contention.
+  (Empirically a full `check --lint` completes around io.full avg10 ~50% with the
+  daemon still running; the timeout, not the daemon, is the usual blocker.)
+
+Stopping the live daemon is a last resort, worthwhile only once you have measured
+it as the contributor. On `sinnix-prime` it is a **system** service:
 
 ```bash
-systemctl --user stop sinexd
+sudo systemctl stop sinexd     # free the daemon's baseline I/O
+sudo systemctl start sinexd    # restart afterwards
 ```
-
-Restart when you need it again:
-
-```bash
-systemctl --user start sinexd
-```
-
-The `CARGO_TARGET_DIR` is routed to `/cache/sinex/<checkout>/...` via the devShell
-(NVMe-backed), keeping compilation output off the main filesystem.
 
 ## Workflow Surface
 
