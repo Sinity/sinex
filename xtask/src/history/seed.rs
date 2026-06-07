@@ -156,25 +156,68 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
             }
         }
 
-        // Add stage_timings for check / build
-        if matches!(command, "check" | "build") {
+        // Add stage_timings for check / build / test
+        if matches!(command, "check" | "build" | "test") {
+            // Sample PSI stall μs roughly proportional to stage duration, so
+            // seeded data exercises the io_full_stall_us / cpu_some_stall_us /
+            // memory_some_stall_us columns.
+            let sample_stall_us = |dur: f64, weight: f64| -> i64 {
+                (dur * 1_000_000.0 * weight * random_f64_range(0.05, 0.25)) as i64
+            };
             let preflight_dur = 0.3 + random_f64_range(-0.05, 0.1);
             let _ = db.conn.execute(
                 r"
-                INSERT INTO stage_timings (invocation_id, stage_name, started_at, duration_secs, success)
-                VALUES (?1, 'preflight', ?2, ?3, 1)
+                INSERT INTO stage_timings (invocation_id, stage_name, started_at, duration_secs, success,
+                    io_full_stall_us, cpu_some_stall_us, memory_some_stall_us)
+                VALUES (?1, 'preflight', ?2, ?3, 1, ?4, ?5, ?6)
                 ",
-                params![inv_id, started_at, preflight_dur],
+                params![
+                    inv_id,
+                    started_at,
+                    preflight_dur,
+                    sample_stall_us(preflight_dur, 0.4),
+                    sample_stall_us(preflight_dur, 0.2),
+                    sample_stall_us(preflight_dur, 0.1),
+                ],
             );
             if command == "check" {
                 let clippy_dur = 18.0 + random_f64_range(-1.8, 1.8);
                 let _ = db.conn.execute(
                     r"
-                    INSERT INTO stage_timings (invocation_id, stage_name, started_at, duration_secs, success)
-                    VALUES (?1, 'clippy', ?2, ?3, ?4)
+                    INSERT INTO stage_timings (invocation_id, stage_name, started_at, duration_secs, success,
+                        io_full_stall_us, cpu_some_stall_us, memory_some_stall_us)
+                    VALUES (?1, 'clippy', ?2, ?3, ?4, ?5, ?6, ?7)
                     ",
-                    params![inv_id, started_at, clippy_dur, i32::from(success)],
+                    params![
+                        inv_id,
+                        started_at,
+                        clippy_dur,
+                        i32::from(success),
+                        sample_stall_us(clippy_dur, 0.5),
+                        sample_stall_us(clippy_dur, 0.3),
+                        sample_stall_us(clippy_dur, 0.15),
+                    ],
                 );
+            }
+            if command == "test" {
+                let compile_dur = (duration * random_f64_range(0.35, 0.65)).max(0.5);
+                let run_dur = (duration * random_f64_range(0.05, 0.20)).max(0.05);
+                let junit_dur = random_f64_range(0.01, 0.08);
+                for (stage_name, stage_duration) in [
+                    ("nextest-config", random_f64_range(0.002, 0.02)),
+                    ("nextest-spawn", random_f64_range(0.001, 0.01)),
+                    ("nextest-compile", compile_dur),
+                    ("nextest-run", run_dur),
+                    ("nextest-junit", junit_dur),
+                ] {
+                    let _ = db.conn.execute(
+                        r"
+                        INSERT INTO stage_timings (invocation_id, stage_name, started_at, duration_secs, success)
+                        VALUES (?1, ?2, ?3, ?4, ?5)
+                        ",
+                        params![inv_id, stage_name, started_at, stage_duration, i32::from(success)],
+                    );
+                }
             }
         }
 
