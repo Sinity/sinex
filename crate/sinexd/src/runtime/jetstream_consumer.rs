@@ -337,6 +337,11 @@ impl JetStreamEventConsumer {
         while *running.read().await {
             let messages = pull_batch(&consumer, batch_size, Duration::from_secs(1)).await?;
             for msg in messages {
+                // Break promptly on stop() instead of finishing the whole batch,
+                // so graceful shutdown completes well under the stop timeout.
+                if !*running.read().await {
+                    break;
+                }
                 Self::handle_raw_message(msg, &buffer, &provisional_handler, enable_provisional)
                     .await?;
             }
@@ -352,14 +357,19 @@ impl JetStreamEventConsumer {
         provisional_handler: &Option<Arc<dyn ProvisionalEventHandler>>,
         enable_provisional: bool,
     ) -> RuntimeResult<()> {
-        let event = match Self::parse_provisional_event(&msg) {
-            Ok(event) => event,
+        let events = match Self::parse_provisional_events(&msg) {
+            Ok(events) => events,
             Err(e) => {
-                error!(
+                // Genuinely unparseable payload — neither an EventIntent envelope
+                // nor a flat event. Acked/dropped and tracked by the metric below;
+                // logging each at error! floods the journal and stalls graceful
+                // shutdown, so keep the metric and log at debug. (Normal envelope
+                // traffic no longer reaches this arm.)
+                debug!(
                     target: "sinex_metrics",
                     metric = "runtime.provisional_event_parse_failures_total",
                     error = %e,
-                    "Failed to parse provisional event"
+                    "Failed to parse raw event message"
                 );
                 msg.ack().await.map_err(|ack_err| {
                     Self::message_settlement_error(
@@ -373,33 +383,39 @@ impl JetStreamEventConsumer {
             }
         };
 
-        // Memory protection: if buffer is full, NAK to apply backpressure
-        if !buffer.add_provisional(event.clone()).await {
-            warn!(
-                event_id = %event.event_id,
-                "Buffer at capacity, NAKing message to apply backpressure"
-            );
-            let nak_delay = Some(std::time::Duration::from_millis(500));
-            msg.ack_with(async_nats::jetstream::AckKind::Nak(nak_delay))
-                .await
-                .map_err(|error| {
-                    Self::message_settlement_error(
-                        "failed to NAK provisional message during backpressure",
-                        &msg,
-                        Some(event.event_id),
-                        error,
-                    )
-                })?;
-            return Ok(());
-        }
-
+        // Buffer every event the message carries (one for a flat event, N for an
+        // EventIntent envelope). `add_provisional` is keyed by event_id, so a NAK
+        // redelivery that re-adds an already-buffered sibling is idempotent.
         let mut handler_success = true;
-        if enable_provisional
-            && let Some(handler) = provisional_handler
-            && let Err(e) = handler.handle_provisional(&event).await
-        {
-            warn!("Provisional handler failed: {e}");
-            handler_success = false;
+        for event in &events {
+            // Memory protection: if the buffer is full, NAK the whole message to
+            // apply backpressure; redelivery re-buffers any siblings idempotently.
+            if !buffer.add_provisional(event.clone()).await {
+                warn!(
+                    event_id = %event.event_id,
+                    "Buffer at capacity, NAKing message to apply backpressure"
+                );
+                let nak_delay = Some(std::time::Duration::from_millis(500));
+                msg.ack_with(async_nats::jetstream::AckKind::Nak(nak_delay))
+                    .await
+                    .map_err(|error| {
+                        Self::message_settlement_error(
+                            "failed to NAK provisional message during backpressure",
+                            &msg,
+                            Some(event.event_id),
+                            error,
+                        )
+                    })?;
+                return Ok(());
+            }
+
+            if enable_provisional
+                && let Some(handler) = provisional_handler
+                && let Err(e) = handler.handle_provisional(event).await
+            {
+                warn!("Provisional handler failed: {e}");
+                handler_success = false;
+            }
         }
 
         if handler_success {
@@ -407,7 +423,7 @@ impl JetStreamEventConsumer {
                 Self::message_settlement_error(
                     "failed to ack provisional message",
                     &msg,
-                    Some(event.event_id),
+                    None::<String>,
                     error,
                 )
             })?;
@@ -420,7 +436,7 @@ impl JetStreamEventConsumer {
                 Self::message_settlement_error(
                     "failed to NAK provisional handler failure",
                     &msg,
-                    Some(event.event_id),
+                    None::<String>,
                     error,
                 )
             })?;
@@ -440,6 +456,11 @@ impl JetStreamEventConsumer {
         while *running.read().await {
             let messages = pull_batch(&consumer, batch_size, Duration::from_secs(1)).await?;
             for msg in messages {
+                // Break promptly on stop() instead of finishing the whole batch,
+                // so graceful shutdown completes well under the stop timeout.
+                if !*running.read().await {
+                    break;
+                }
                 Self::handle_confirmation_message(
                     msg,
                     &buffer,
@@ -816,7 +837,7 @@ impl JetStreamEventConsumer {
 
             let timed_out_ids = buffer.check_timeouts().await;
             if !timed_out_ids.is_empty() {
-                warn!(
+                debug!(
                     timed_out = timed_out_ids.len(),
                     "Found timed-out provisional events; retaining them during the confirmation grace period"
                 );
@@ -838,7 +859,7 @@ impl JetStreamEventConsumer {
 
             let purged_events = buffer.purge_expired().await;
             if !purged_events.is_empty() {
-                info!(
+                debug!(
                     purged = purged_events.len(),
                     "Purged timed-out provisional events after confirmation grace period"
                 );
@@ -863,9 +884,52 @@ impl JetStreamEventConsumer {
         }
     }
 
-    fn parse_provisional_event(msg: &jetstream::Message) -> RuntimeResult<ProvisionalEvent> {
-        let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+    /// Parse a raw `JetStream` message into one-or-more provisional events.
+    ///
+    /// Raw traffic on `events.raw.>` arrives in two shapes and both must be
+    /// buffered so confirmation watermarks resolve real buffered inputs instead
+    /// of synthetic kind stand-ins:
+    /// - **`EventIntent` admission envelope** (`{envelope_version, events: […]}`,
+    ///   no top-level `id`) — the canonical batch format every source and
+    ///   automaton publishes via `publish_intent`. Yields one provisional per
+    ///   contained event. This is the dominant shape; flat-parsing it as a single
+    ///   event was the source of the per-message "Missing event id" journal flood
+    ///   and meant the buffer never populated.
+    /// - **Flat single event** (`{id, source, event_type, …}`) — published by
+    ///   `publish_telemetry` and the test/bootstrap raw-event escape hatch.
+    ///
+    /// A payload that is neither shape is a genuine parse failure.
+    fn parse_provisional_events(msg: &jetstream::Message) -> RuntimeResult<Vec<ProvisionalEvent>> {
+        Self::parse_provisional_events_from_bytes(&msg.payload)
+    }
 
+    fn parse_provisional_events_from_bytes(bytes: &[u8]) -> RuntimeResult<Vec<ProvisionalEvent>> {
+        let payload: serde_json::Value = serde_json::from_slice(bytes)?;
+
+        // A top-level string `id` unambiguously marks a flat single event.
+        if payload.get("id").and_then(serde_json::Value::as_str).is_some() {
+            return Ok(vec![Self::parse_single_provisional_event(payload)?]);
+        }
+
+        // Otherwise it is an EventIntent envelope: buffer each contained event.
+        if let Some(events) = payload.get("events").and_then(serde_json::Value::as_array) {
+            return events
+                .iter()
+                .map(|event| Self::parse_single_provisional_event(event.clone()))
+                .collect();
+        }
+
+        Err(SinexError::processing(
+            "raw event message is neither a flat event (missing id) nor an EventIntent envelope (missing events array)"
+                .to_string(),
+        ))
+    }
+
+    /// Parse one event JSON object — a flat event, or one element of an
+    /// `EventIntent` envelope's `events` array — into a `ProvisionalEvent`.
+    fn parse_single_provisional_event(
+        payload: serde_json::Value,
+    ) -> RuntimeResult<ProvisionalEvent> {
         let id_str = payload["id"]
             .as_str()
             .ok_or_else(|| SinexError::processing("Missing event id".to_string()))?;
@@ -1015,6 +1079,74 @@ mod tests {
         assert_eq!(event.event_type.as_ref(), "command.executed");
         assert!(event.payload.is_null());
         assert_eq!(event.ts_orig, ts_ingest);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_event_intent_envelope_buffers_each_event() -> xtask::sandbox::TestResult<()> {
+        // The canonical raw-events wire shape (publish_intent): a top-level
+        // `events` array, no top-level `id`. Each contained event must become a
+        // provisional so confirmation watermarks resolve real buffered inputs.
+        let id1 = Uuid::now_v7();
+        let id2 = Uuid::now_v7();
+        let envelope = serde_json::json!({
+            "envelope_version": "1",
+            "source_id": "shell.atuin",
+            "parser_id": "atuin-history-parser",
+            "parser_version": "1.0.0",
+            "events": [
+                {"id": id1.to_string(), "source": "shell.atuin",
+                 "event_type": "command.executed", "payload": {}},
+                {"id": id2.to_string(), "source": "shell.atuin",
+                 "event_type": "command.executed", "payload": {}},
+            ],
+            "admitted_at": "2026-06-07T00:00:00Z",
+            "admitted_by": "test-host",
+        });
+        let bytes = serde_json::to_vec(&envelope).expect("serialize envelope");
+
+        let events = JetStreamEventConsumer::parse_provisional_events_from_bytes(&bytes)
+            .expect("EventIntent envelope must parse");
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event_id.as_uuid(), &id1);
+        assert_eq!(events[1].event_id.as_uuid(), &id2);
+        assert_eq!(events[0].source.as_str(), "shell.atuin");
+        assert_eq!(events[0].event_type.as_str(), "command.executed");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_flat_single_event_yields_one() -> xtask::sandbox::TestResult<()> {
+        // The flat single-event shape (publish_telemetry / raw-event escape hatch).
+        let id = Uuid::now_v7();
+        let event = serde_json::json!({
+            "id": id.to_string(),
+            "source": "sinexd.event_engine",
+            "event_type": "sinexd.event_engine.batch",
+            "payload": {},
+        });
+        let bytes = serde_json::to_vec(&event).expect("serialize flat event");
+
+        let events = JetStreamEventConsumer::parse_provisional_events_from_bytes(&bytes)
+            .expect("flat event must parse");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_id.as_uuid(), &id);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_rejects_non_event_payload() -> xtask::sandbox::TestResult<()> {
+        // A payload that is neither a flat event nor an envelope is the only
+        // shape that should count as a genuine parse failure.
+        let bytes = serde_json::to_vec(&serde_json::json!({"foo": "bar"}))
+            .expect("serialize junk");
+
+        let err = JetStreamEventConsumer::parse_provisional_events_from_bytes(&bytes)
+            .expect_err("payload without id or events must be a parse failure");
+
+        assert!(format!("{err:#}").contains("neither a flat event"));
         Ok(())
     }
 }
