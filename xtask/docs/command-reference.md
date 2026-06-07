@@ -36,7 +36,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `freshness` | Inspect coordinator freshness keys and reuse decisions |
 | `impact` |  |
 | `git-stack` | Plan and materialize PR-sized git branch stacks from the current commit graph |
-| `doctor` | Probe developer-environment health and deployment readiness |
+| `doctor` | Probe developer-environment health (Postgres, NATS, tools, TLS, runtime) |
 | `ra-diagnose` | Diagnose rust-analyzer process footprint and local workspace contract |
 | `ra` | Rust-analyzer refactor/search helpers |
 | `privacy` | Run privacy-engine catalog, test, key, and config utilities |
@@ -750,6 +750,7 @@ Query build, test, and runtime history recorded by xtask
 | `cost` | Summarise dev-loop wallclock cost without double-counting wrappers |
 | `wrapper-events` | Show pre-exec devshell wrapper rebuild events |
 | `compare-days` | Compare command duration and pressure between two calendar days |
+| `explain` | Explain build/test runtime for a day using xtask history facts |
 | `resources` | Aggregate recorded resource pressure and block I/O by command/window |
 | `overlap` | Explain what overlapped an invocation and what shared resources were recorded |
 | `tests` | Query test result history |
@@ -839,10 +840,25 @@ Compare command duration and pressure between two calendar days
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `--day` | yes | no | Day to inspect, in YYYY-MM-DD. Defaults to today in UTC |
-| `--against` | yes | no | Baseline day, in YYYY-MM-DD. Defaults to the previous UTC day |
+| `--day` | yes | no | Day to inspect: YYYY-MM-DD, today, or yesterday. Defaults to today in UTC |
+| `--against` | yes | no | Baseline day: YYYY-MM-DD, today, or yesterday. Defaults to the previous UTC day |
 | `--command` | yes | no | Commands to include. Can be repeated or comma-separated |
 | `--limit` | yes | no | Number of slowest invocations from the inspected day to include |
+| `--include-failures` | no | no | Include failed invocations in addition to successful invocations |
+
+
+### `xtask history explain`
+
+Explain build/test runtime for a day using xtask history facts
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--day` | yes | no | Day to inspect: YYYY-MM-DD, today, or yesterday. Defaults to today in UTC |
+| `--against` | yes | no | Baseline day: YYYY-MM-DD, today, or yesterday. Defaults to the previous UTC day |
+| `--command` | yes | no | Commands to include. Defaults to check,test,build |
+| `--limit` | yes | no | Number of slowest invocations/test-overhead rows to include |
 | `--include-failures` | no | no | Include failed invocations in addition to successful invocations |
 
 
@@ -1485,7 +1501,7 @@ Push materialized branches and open/reuse PRs from a generated stack plan
 
 ## `xtask doctor`
 
-Probe developer-environment health and deployment readiness
+Probe developer-environment health (Postgres, NATS, tools, TLS, runtime)
 
 **Arguments**
 
@@ -1494,7 +1510,6 @@ Probe developer-environment health and deployment readiness
 | `--pipelines` | no | no | Run pipeline smoke tests in addition to health checks |
 | `--fix` | no | no | Auto-remediate: restart stale processes, invalidate stale preflight cache |
 | `--runtime` | no | no | Check runtime health (event_engine heartbeat, consumer lag, batch latency) |
-| `--deployment-readiness` | no | no | Check deployment readiness (schema, services, permissions) |
 | `--reclaim` | no | no | Reclaim stale target-dir artifacts (cargo-sweep + incremental/ prune) |
 | `--test-db` | no | no | Inspect managed test database footprint and /dev/shm headroom |
 | `--rust-analyzer` | no | no | Inspect rust-analyzer process footprint and local config |
