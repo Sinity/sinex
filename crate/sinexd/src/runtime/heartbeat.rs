@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::time::interval;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Configurable health thresholds.
 ///
@@ -494,7 +494,7 @@ impl HeartbeatEmitter {
         }
 
         // Also log via tracing for local debugging
-        info!(
+        debug!(
             service = %metrics.service_name,
             status = %metrics.status,
             events_processed = metrics.events_processed,
