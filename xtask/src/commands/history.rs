@@ -14,7 +14,7 @@ use color_eyre::eyre::WrapErr;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::history::{
     DiagnosticQuery, ExerciseResultRow, HistoryAnalysis, HistoryDb, InvocationQuery,
-    InvocationStatus, InvocationTimelineEntry, LifecycleStatus, ResourceUsage,
+    InvocationStatus, InvocationTimelineEntry, LifecycleStatus, ResourceUsage, WrapperEventRow,
 };
 
 mod test_commands;
@@ -1272,8 +1272,6 @@ struct RawWrapperEvent {
     #[serde(default)]
     args: Option<String>,
     #[serde(default)]
-    requires_runtime_introspection: bool,
-    #[serde(default)]
     force_rebuild: bool,
     #[serde(default)]
     log_path: Option<String>,
@@ -1312,7 +1310,6 @@ struct WrapperEvent {
     duration_secs: Option<f64>,
     command: Option<String>,
     args: Option<String>,
-    requires_runtime_introspection: bool,
     force_rebuild: bool,
     log_path: Option<String>,
     rebuild_trigger: Option<WrapperRebuildTrigger>,
@@ -1356,6 +1353,16 @@ fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Resu
     let path = wrapper_events_path(ctx.history_db_path());
     let cutoff = time::OffsetDateTime::now_utc() - time::Duration::days(i64::from(days));
     let (mut events, skipped_lines) = read_wrapper_events(&path, cutoff)?;
+
+    // Persist parsed events into the history DB so checkout-local rebuild cost is
+    // SQL-queryable (`xtask history query`) and joinable with `invocations`,
+    // instead of living only in the append-only JSONL. Best-effort: a read-only
+    // or busy DB must not fail the report.
+    if let Ok(db) = HistoryDb::open(ctx.history_db_path()) {
+        let rows: Vec<WrapperEventRow> = events.iter().map(wrapper_event_to_row).collect();
+        let _ = db.upsert_wrapper_events(&rows);
+    }
+
     events.sort_by(|left, right| right.started_at.cmp(&left.started_at));
     events.truncate(limit);
 
@@ -1392,7 +1399,6 @@ fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Resu
                 "STATUS",
                 "SECS",
                 "COMMAND",
-                "RT-INTROSPECT",
                 "FORCE",
                 "TRIGGER",
                 "TOP STAGE",
@@ -1407,7 +1413,6 @@ fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Resu
                         .map(|secs| format!("{secs:.1}"))
                         .unwrap_or_else(|| "-".to_string()),
                     event.command.clone().unwrap_or_else(|| "-".to_string()),
-                    event.requires_runtime_introspection.to_string(),
                     event.force_rebuild.to_string(),
                     wrapper_trigger_summary(event),
                     event
@@ -1467,6 +1472,21 @@ fn execute_wrapper_events(days: u32, limit: usize, ctx: &CommandContext) -> Resu
         .with_message("Loaded wrapper event history")
         .with_duration(ctx.elapsed())
         .with_data(serde_json::to_value(report)?))
+}
+
+fn wrapper_event_to_row(event: &WrapperEvent) -> WrapperEventRow {
+    WrapperEventRow {
+        event: event.event.clone(),
+        status: event.status.clone(),
+        started_at: event.started_at.clone(),
+        finished_at: event.finished_at.clone(),
+        duration_secs: event.duration_secs,
+        command: event.command.clone(),
+        args: event.args.clone(),
+        force_rebuild: event.force_rebuild,
+        rebuild_reason: event.rebuild_trigger.as_ref().map(|t| t.reason.clone()),
+        stage_durations_json: serde_json::to_string(&event.stage_durations_ms).ok(),
+    }
 }
 
 fn wrapper_events_path(history_db_path: &Path) -> std::path::PathBuf {
@@ -1543,7 +1563,6 @@ fn wrapper_event_from_raw(
         duration_secs: raw.duration_ms.map(|ms| ms as f64 / 1000.0),
         command: raw.command.filter(|command| !command.is_empty()),
         args: raw.args,
-        requires_runtime_introspection: raw.requires_runtime_introspection,
         force_rebuild: raw.force_rebuild,
         log_path: raw.log_path,
         rebuild_trigger: raw.rebuild_trigger,
@@ -1658,6 +1677,7 @@ struct DayComparisonReport {
     include_failures: bool,
     rows: Vec<CommandDayComparison>,
     slowest: Vec<SlowInvocationSummary>,
+    evidence_limits: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2090,6 +2110,11 @@ fn execute_compare_days(
         include_failures,
         rows: comparisons,
         slowest,
+        evidence_limits: vec![
+            "Compare-days averages and medians exclude cancelled stale/zombie rows, but tail durations still require end-marker scrutiny.".to_string(),
+            "MAX and slowest rows are outlier triage hints, not proof of actual runtime; missing or late finish registration can inflate them.".to_string(),
+            "Use median deltas and recorded stage totals as the primary day-over-day signal.".to_string(),
+        ],
     };
 
     let mut result = CommandResult::success()
@@ -2255,6 +2280,7 @@ fn execute_explain(
         interpretation,
         evidence_limits: vec![
             "xtask history can prove invocation duration, stage timing, test body duration, runner/setup overhead, xtask-sampled PSI maxima, and aggregate host block-device counters when recorded.".to_string(),
+            "Tail durations are outlier triage hints, not proof of actual runtime; missing or late finish registration can inflate MAX/slowest rows.".to_string(),
             "xtask history cannot name external service/process ownership for I/O stalls; use Lynchpin machine telemetry for cgroup/process/block-device attribution.".to_string(),
             "A runner/setup-dominated test run means test bodies were not the wallclock cost center; it does not by itself distinguish cargo compile, linker, nextest startup, DB fixture setup, or kernel I/O wait.".to_string(),
         ],
@@ -2404,7 +2430,7 @@ fn build_explain_interpretation(
     if let Some(row) = test_overhead.first() {
         if row.non_test_overhead_secs > row.test_body_duration_secs {
             lines.push(format!(
-                "slowest test run #{} is runner/setup dominated: {:.1}s overhead vs {:.1}s summed test bodies",
+                "largest-overhead test row #{} is runner/setup dominated if its finish marker is trustworthy: {:.1}s overhead vs {:.1}s summed test bodies",
                 row.invocation_id, row.non_test_overhead_secs, row.test_body_duration_secs
             ));
         }
@@ -2498,7 +2524,7 @@ fn print_explain_report(report: &HistoryExplainReport) {
     if !report.stage_totals.is_empty() {
         println!("\nLargest recorded stage buckets:");
         let mut stages = Builder::new();
-        stages.push_record(["CMD", "STAGE", "RUNS", "TOTAL", "AVG", "MAX"]);
+        stages.push_record(["CMD", "STAGE", "RUNS", "TOTAL", "AVG", "TAIL"]);
         for row in report.stage_totals.iter().take(10) {
             stages.push_record([
                 row.command.clone(),
@@ -2636,6 +2662,7 @@ fn execute_resources(
         slowest,
         evidence_limits: vec![
             "This report uses only xtask invocation history columns from this checkout.".to_string(),
+            "Tail durations and slowest rows are outlier triage hints, not proof of actual runtime; missing or late finish registration can inflate them.".to_string(),
             "PSI fields are stall percentages sampled during invocations; they do not identify a causal process by themselves.".to_string(),
             "Host block fields are aggregate whole-device deltas sampled during xtask invocations; they quantify device load shape but do not partition service/process ownership.".to_string(),
             "Use Lynchpin machine telemetry for cgroup, process, and block-device attribution outside xtask's own invocation record.".to_string(),
@@ -3313,7 +3340,7 @@ fn print_compare_days_report(report: &DayComparisonReport) {
         "AVG ×",
         "MEDIAN",
         "MEDIAN Δ",
-        "MAX",
+        "TAIL",
         "IO.FULL AVG Δ",
         "MEM.FULL AVG Δ",
     ]);
@@ -3338,7 +3365,7 @@ fn print_compare_days_report(report: &DayComparisonReport) {
 
     if !report.slowest.is_empty() {
         println!();
-        println!("Slowest invocations on {}:", report.day);
+        println!("Tail invocations on {}:", report.day);
         let mut builder = Builder::new();
         builder.push_record([
             "ID", "COMMAND", "STATUS", "DURATION", "IO.FULL", "MEM.FULL", "PROC MB", "STARTED",
@@ -3358,6 +3385,11 @@ fn print_compare_days_report(report: &DayComparisonReport) {
         let mut table = builder.build();
         table.with(Style::rounded());
         println!("{table}");
+    }
+
+    println!("\n{}", style("Evidence limits:").yellow().bold());
+    for line in &report.evidence_limits {
+        println!("  - {line}");
     }
 }
 
@@ -3591,7 +3623,7 @@ fn print_resources_report(report: &ResourceWindowReport) {
         "CANCEL",
         "HOURS",
         "AVG",
-        "MAX",
+        "TAIL",
         "IO AVG/MAX",
         "MEM AVG/MAX",
         "PROC AVG/MAX",
@@ -3647,7 +3679,7 @@ fn print_resources_report(report: &ResourceWindowReport) {
             "TOTAL MiB",
             "R IOPS",
             "W IOPS",
-            "MAX WIO ms/s",
+            "TAIL WIO ms/s",
         ]);
         for device in report.top_devices.iter().take(8) {
             builder.push_record([
@@ -3665,7 +3697,7 @@ fn print_resources_report(report: &ResourceWindowReport) {
     }
 
     if !report.slowest.is_empty() {
-        println!("\nSlowest/high-pressure invocations:");
+        println!("\nTail/high-pressure invocations:");
         let mut builder = Builder::new();
         builder.push_record([
             "ID", "COMMAND", "STATUS", "DURATION", "IO.FULL", "MEM.FULL", "PROCS", "DEVICE",
@@ -4910,7 +4942,7 @@ fn execute_stages(
                 .unwrap_or_default();
             println!("Slowest stages{cmd_note} (avg):");
             let mut builder = Builder::new();
-            builder.push_record(["STAGE", "AVG (s)", "MAX (s)", "RUNS"]);
+            builder.push_record(["STAGE", "AVG (s)", "TAIL (s)", "RUNS"]);
             for s in &stats {
                 builder.push_record([
                     s.stage_name.clone(),
@@ -5086,6 +5118,18 @@ fn execute_view(db: &HistoryDb, name: Option<&str>, ctx: &CommandContext) -> Res
             description: "Auto-fixable diagnostics in current workspace state",
         },
         ViewDef {
+            name: "drift-guard-bypasses",
+            description: "Recent pre-push drift-guard bypasses (security/hygiene audit trail)",
+        },
+        ViewDef {
+            name: "impact-audit",
+            description: "Recent impact-plan audit runs (skip-accuracy / false-negative evidence)",
+        },
+        ViewDef {
+            name: "traces",
+            description: "Most recent internal trace events",
+        },
+        ViewDef {
             name: "chronic-diagnostics",
             description: "Diagnostics present in 3+ recent invocations",
         },
@@ -5163,6 +5207,93 @@ fn execute_view(db: &HistoryDb, name: Option<&str>, ctx: &CommandContext) -> Res
                 .with_message(format!("{} fixable diagnostics", diags.len()))
                 .with_duration(ctx.elapsed()))
         }
+        "drift-guard-bypasses" => {
+            let rows = db.get_drift_guard_bypasses(20)?;
+            if ctx.is_human() {
+                if rows.is_empty() {
+                    println!("No drift-guard bypasses recorded.");
+                } else {
+                    println!("Drift-guard bypasses ({}):", rows.len());
+                    let mut builder = Builder::new();
+                    builder.push_record(["RECORDED", "BRANCH", "HEAD", "PUSH_OK"]);
+                    for r in &rows {
+                        builder.push_record([
+                            r.recorded_at.clone(),
+                            r.git_branch.clone().unwrap_or_else(|| "-".to_string()),
+                            r.head_sha
+                                .as_deref()
+                                .map_or_else(|| "-".to_string(), |s| truncate_message(s, 12)),
+                            r.push_succeeded
+                                .map_or_else(|| "-".to_string(), |b| b.to_string()),
+                        ]);
+                    }
+                    let mut table = builder.build();
+                    table.with(Style::rounded());
+                    println!("{table}");
+                }
+            } else {
+                ctx.print_json(&rows)?;
+            }
+            Ok(CommandResult::success()
+                .with_message(format!("{} drift-guard bypasses", rows.len()))
+                .with_duration(ctx.elapsed()))
+        }
+        "impact-audit" => {
+            let rows = db.get_impact_audit_runs(20)?;
+            if ctx.is_human() {
+                if rows.is_empty() {
+                    println!("No impact-plan audit runs recorded.");
+                } else {
+                    println!("Impact-plan audit runs ({}):", rows.len());
+                    let mut builder = Builder::new();
+                    builder.push_record(["CREATED", "STATUS", "SAMPLE", "FALSE_NEG"]);
+                    for r in &rows {
+                        builder.push_record([
+                            r.created_at.clone(),
+                            r.status.clone(),
+                            r.sample_size.to_string(),
+                            r.false_negative_count.to_string(),
+                        ]);
+                    }
+                    let mut table = builder.build();
+                    table.with(Style::rounded());
+                    println!("{table}");
+                }
+            } else {
+                ctx.print_json(&rows)?;
+            }
+            Ok(CommandResult::success()
+                .with_message(format!("{} impact audit runs", rows.len()))
+                .with_duration(ctx.elapsed()))
+        }
+        "traces" => {
+            let rows = db.get_recent_trace_events(50)?;
+            if ctx.is_human() {
+                if rows.is_empty() {
+                    println!("No trace events recorded.");
+                } else {
+                    println!("Recent trace events ({}):", rows.len());
+                    let mut builder = Builder::new();
+                    builder.push_record(["TS", "LEVEL", "TARGET", "MESSAGE"]);
+                    for r in &rows {
+                        builder.push_record([
+                            r.ts.clone(),
+                            r.level.clone(),
+                            truncate_message(&r.target, 28),
+                            truncate_message(&r.message, 60),
+                        ]);
+                    }
+                    let mut table = builder.build();
+                    table.with(Style::rounded());
+                    println!("{table}");
+                }
+            } else {
+                ctx.print_json(&rows)?;
+            }
+            Ok(CommandResult::success()
+                .with_message(format!("{} trace events", rows.len()))
+                .with_duration(ctx.elapsed()))
+        }
         "chronic-diagnostics" | "new-diagnostics" | "resolved-last-run" => {
             let status = match name {
                 "chronic-diagnostics" => "chronic",
@@ -5205,7 +5336,7 @@ fn execute_view(db: &HistoryDb, name: Option<&str>, ctx: &CommandContext) -> Res
                 } else {
                     println!("Slowest pipeline stages:");
                     let mut builder = Builder::new();
-                    builder.push_record(["STAGE", "AVG (s)", "MAX (s)", "RUNS"]);
+                    builder.push_record(["STAGE", "AVG (s)", "TAIL (s)", "RUNS"]);
                     for s in &stages {
                         builder.push_record([
                             s.stage_name.clone(),
@@ -6634,7 +6765,6 @@ mod tests {
                 "\"started_at\":\"2026-06-06T10:00:00Z\",",
                 "\"finished_at\":\"2026-06-06T10:00:02Z\",",
                 "\"duration_ms\":2500,\"command\":\"docs\",",
-                "\"requires_runtime_introspection\":false,",
                 "\"force_rebuild\":true,",
                 "\"rebuild_trigger\":{\"reason\":\"forced\",\"ref_path\":\"/tmp/target/debug/xtask\",",
                 "\"inputs\":[{\"path\":\"/repo/flake.nix\",\"rel_path\":\"flake.nix\",",
@@ -6753,7 +6883,6 @@ mod tests {
             duration_secs: Some(duration_secs),
             command: Some("history".to_string()),
             args: None,
-            requires_runtime_introspection: false,
             force_rebuild: false,
             log_path: None,
             rebuild_trigger: None,

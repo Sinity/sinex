@@ -5,7 +5,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use xtask::cargo_diagnostics::CompilerDiagnostic;
-use xtask::history::{HistoryDb, InvocationStatus};
+use xtask::history::{HistoryDb, InvocationStatus, StagePressure};
 use xtask::sandbox::sinex_test;
 
 // ============================================================================
@@ -164,9 +164,23 @@ async fn test_stage_recording_roundtrip() -> xtask::sandbox::TestResult<()> {
     let inv_id = db.start_invocation("check", None, None, None)?;
 
     // Record two stages
-    db.record_stage_timing(inv_id, "preflight", "2026-01-01T00:00:00Z", 0.3, true)?;
+    db.record_stage_timing(
+        inv_id,
+        "preflight",
+        "2026-01-01T00:00:00Z",
+        0.3,
+        true,
+        StagePressure::default(),
+    )?;
 
-    db.record_stage_timing(inv_id, "clippy", "2026-01-01T00:00:05Z", 18.5, true)?;
+    db.record_stage_timing(
+        inv_id,
+        "clippy",
+        "2026-01-01T00:00:05Z",
+        18.5,
+        true,
+        StagePressure::default(),
+    )?;
 
     // Finish the invocation
     db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 19.0)?;

@@ -280,20 +280,15 @@ sha2 = "0.10"
 # Database (for Atuin integration)
 rusqlite = { version = "0.32.1", features = ["backup", "bundled"] }
 
-# Speed-optimized profiles for development
+# Fast local iteration profile. `cargo test` inherits this through Cargo's
+# default test-profile inheritance; keep test/check/build behavior aligned.
 [profile.dev]
-# Fast compilation for development
 opt-level = 0
-debug = true
-split-debuginfo = "unpacked" # Faster debug info handling
+debug = false
+strip = true
+# Incremental compilation for workspace crates — ~3x faster warm rebuilds of the
+# iterating crate (e.g. xtask: ~15s -> ~5s; see .agent/scratch/048). The sinex
+# devshell disables sccache (RUSTC_WRAPPER) so this is not forced off; registry
+# deps remain non-incremental and are cached normally in the target dir.
 incremental = true
-codegen-units = 16           # Balance: enough parallelism for incremental, bounded memory
-
-[profile.dev-fast]
-# Ultra-fast check-only profile (no debug info, minimal checks)
-inherits = "dev"
-debug = false                # Skip debug info generation
-strip = true                 # Strip symbols for faster linking
-
-[profile.test]
-inherits = "dev-fast"
+codegen-units = 256

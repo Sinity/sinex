@@ -17,10 +17,10 @@ pub use analysis::{
 pub use db::{
     BackgroundJob, CommandStats, DiagnosticCounts, DiagnosticDelta, DiagnosticLifecycle,
     DiagnosticTrendPoint, DriftGuardBypass, ExerciseResultRow, ExerciseRunRow, FixSession,
-    HistoryDb, Invocation, InvocationFull, InvocationProgress, InvocationStatus,
+    HistoryDb, ImpactAuditRunRow, Invocation, InvocationFull, InvocationProgress, InvocationStatus,
     InvocationTimelineEntry, InvocationWithFingerprint, JobLifecycleStatus, LifecycleStatus,
-    ProofEvidence, ResourceUsage, StageStats, StageTiming, StageTrendPoint, StoredDiagnostic,
-    TestProofUnit, WorkingSession,
+    ProofEvidence, ResourceUsage, StagePressure, StageStats, StageTiming, StageTrendPoint,
+    StoredDiagnostic, TestProofUnit, TraceEventRow, WorkingSession, WrapperEventRow,
 };
 pub use query::{DiagnosticQuery, DiagnosticScope, InvocationQuery, TestResultQuery};
 pub use seed::SeedOptions;

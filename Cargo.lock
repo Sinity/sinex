@@ -7522,7 +7522,6 @@ dependencies = [
  "shadow-rs",
  "sinex-db",
  "sinex-primitives",
- "sinexd",
  "sqlx",
  "syn 2.0.117",
  "sysinfo",
