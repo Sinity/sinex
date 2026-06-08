@@ -47,25 +47,22 @@ evidence, and `xtask impact seed-coverage` for exact per-test LLVM line coverage
 Aggressive mode is available for local iteration when you accept hunk-coverage
 gaps and want the planner to use partial evidence.
 
-## CI-Parity Validation
+## Broad Local Validation
 
 ```bash
 # Checked-in schema bundle drift
 xtask docs schema-bundle --check
 
-# Schema/bootstrap path only
-xtask ci postgres -- xtask ci schema-only
+# Live schema drift against the checkout-local dev stack
+xtask schema strict-diff
 
-# Main Postgres-backed workspace lane used in GitHub Actions
-xtask ci postgres -- xtask ci workspace
-
-# Schema-contract drift against the default branch
-xtask ci compat --base master
+# Broad compile/lint/test surface for local pre-merge confidence
+xtask check --full
+xtask test --impact-mode=off --all
 ```
 
-The workspace lane is broader than the default local loop: it applies schema,
-checks contract tables, runs dependency/lint validation, enforces workspace
-cleanliness, and runs the package test surfaces wired into CI.
+Hosted GitHub workflows have their own implementation details under
+`.github/workflows/`. They are not the normal desktop command surface.
 
 ## Additional Test Surfaces
 

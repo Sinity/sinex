@@ -35,7 +35,7 @@ Both Claude Code Web and Codex Cloud provision roughly:
 
 ## Not appropriate
 
-- `xtask ci workspace` — exceeds RAM and disk.
+- The full hosted workspace workflow — exceeds RAM and disk.
 - `xtask test vm` — needs nested KVM.
 - Full workspace `cargo test` — same reasons; also depends on live
   infrastructure.

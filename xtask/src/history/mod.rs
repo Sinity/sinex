@@ -25,7 +25,8 @@ pub use db::{
 pub use query::{DiagnosticQuery, DiagnosticScope, InvocationQuery, TestResultQuery};
 pub use seed::SeedOptions;
 pub use tests::{
-    Confidence, FailingTest, HistoricalSlowTest, PackageTestStats, RegressionTest, ResolvedTestRun,
-    TestOutputEntry, TestResult, TestStatus,
+    Confidence, FailingTest, HistoricalSlowTest, HostPressureFailureClassification,
+    PackageTestStats, RegressionTest, ResolvedTestRun, TestOutputEntry, TestResult,
+    TestRunOverhead, TestStatus, TestSuiteAnalysis,
 };
 pub use tracing_layer::{CURRENT_INVOCATION_ID, HistoryTracingLayer};

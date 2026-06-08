@@ -11,6 +11,7 @@ use std::time::Duration;
 // Submodules
 pub(crate) mod active;
 pub mod analyzer; // Created in P1.W3.T2
+pub mod compile_surface;
 pub mod reports; // Created in P1.W3.T3
 pub mod timing;
 pub mod unused; // Created in P2.W3.T1 // Created in P2.W3.T4
@@ -55,11 +56,7 @@ pub enum DepsCommand {
     },
 
     /// Detect unused dependencies
-    Unused {
-        /// Fail build if unused dependencies found (for CI)
-        #[arg(long)]
-        ci: bool,
-    },
+    Unused,
 
     /// Analyze build timings
     Timings {
@@ -69,6 +66,29 @@ pub enum DepsCommand {
 
         /// Number of slowest crates to show
         #[arg(long, default_value = "10")]
+        top: usize,
+
+        /// Cargo package to time, e.g. xtask for checkout-wrapper rebuild attribution
+        #[arg(short = 'p', long = "package")]
+        package: Option<String>,
+
+        /// Cargo profile to time: dev, release, or a custom profile name
+        #[arg(long, default_value = "dev")]
+        profile: String,
+
+        /// Run `cargo clean -p <package>` before timing; requires --package
+        #[arg(long, requires = "package")]
+        clean_package: bool,
+    },
+
+    /// Summarize static source/dependency surface that contributes to compile cost
+    CompileSurface {
+        /// Workspace package to summarize
+        #[arg(short = 'p', long = "package", default_value = "xtask")]
+        package: String,
+
+        /// Number of largest source files and module buckets to show
+        #[arg(long, default_value = "20")]
         top: usize,
     },
 
@@ -276,21 +296,11 @@ impl DepsCommand {
                     .with_duration(ctx.elapsed()))
             }
 
-            Self::Unused { ci } => {
+            Self::Unused => {
                 use crate::deps::unused::UnusedDetector;
 
-                // Detect unused dependencies
                 let report =
                     UnusedDetector::detect().context("Failed to detect unused dependencies")?;
-
-                // In CI mode, fail if unused dependencies found
-                if *ci && !report.unused.is_empty() {
-                    return Ok(CommandResult::failure(crate::output::StructuredError::new(
-                        "UNUSED_DEPS",
-                        format!("Found {} unused dependencies", report.unused.len()),
-                    ))
-                    .with_data(serde_json::to_value(&report)?));
-                }
 
                 if ctx.is_json() {
                     // JSON output - return structured report
@@ -315,8 +325,19 @@ impl DepsCommand {
                 }
             }
 
-            Self::Timings { compare: _, top } => {
-                let report = TimingAnalyzer::analyze()?;
+            Self::Timings {
+                compare: _,
+                top,
+                package,
+                profile,
+                clean_package,
+            } => {
+                let report =
+                    TimingAnalyzer::analyze_with_options(&crate::deps::timing::TimingOptions {
+                        package: package.clone(),
+                        profile: profile.clone(),
+                        clean_package: *clean_package,
+                    })?;
 
                 if ctx.is_json() {
                     // JSON output - return the structured report
@@ -334,6 +355,22 @@ impl DepsCommand {
                     )?;
                     let rendered = String::from_utf8(buffer)?;
 
+                    Ok(CommandResult::success()
+                        .with_data(serde_json::Value::String(rendered))
+                        .with_silent()
+                        .with_duration(ctx.elapsed()))
+                }
+            }
+
+            Self::CompileSurface { package, top } => {
+                let report = crate::deps::compile_surface::analyze(package, *top)?;
+                if ctx.is_json() {
+                    Ok(CommandResult::success()
+                        .with_data(serde_json::to_value(&report)?)
+                        .with_silent()
+                        .with_duration(ctx.elapsed()))
+                } else {
+                    let rendered = crate::deps::compile_surface::render_human(&report);
                     Ok(CommandResult::success()
                         .with_data(serde_json::Value::String(rendered))
                         .with_silent()

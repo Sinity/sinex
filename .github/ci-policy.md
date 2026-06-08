@@ -16,23 +16,24 @@ All PRs must pass the following before merge:
   iteration. Use the workspace gate below when the PR needs CI-parity breadth.
 - **`xtask docs check`** — Generated docs drift detection (CLAUDE.md transclusions,
   schema bundle, command reference).
-- **`xtask ci compat --base master`** — Schema-contract drift check against the
-  default branch. Despite the command name, this is not an N-1 runtime
-  compatibility gate.
+- **`xtask schema strict-diff`** — Live schema drift check against the
+  checkout-local dev stack.
 
 ### Broad / Phase-Boundary Gate
 
-- **`xtask ci postgres -- xtask ci workspace`** — CI-parity local workspace lane.
-  This applies schema, checks contract tables, runs dependency/lint validation,
-  enforces workspace cleanliness, runs e2e tests first, then runs the rest of
-  the workspace with e2e excluded.
+- **`xtask check --full`** — Broad local compile/lint/forbidden-pattern gate.
+- **`xtask test --impact-mode=off --all`** — Deliberate full local package test
+  pass when a PR needs phase-boundary breadth instead of the default affected
+  loop.
 
 ### PRs Touching Database Schema
 
-- **`xtask ci postgres -- xtask ci schema-only`** — Full schema bootstrap and
-  apply cycle.
-- **`xtask ci postgres -- xtask ci workspace`** — Run this broad gate before
-  merge when schema edits affect runtime behavior or generated contracts.
+- **`xtask schema strict-diff`** — Verify live schema drift after applying schema
+  changes.
+- **`xtask docs schema-bundle --check`** — Verify the checked-in contract bundle.
+- **`xtask check --full`** and **`xtask test --impact-mode=off --all`** — Run the
+  broad local gates before merge when schema edits affect runtime behavior or
+  generated contracts.
 
 ### PRs Touching NixOS / Deployment
 
