@@ -122,6 +122,30 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         let watchdog_handle = systemd_notify::spawn_watchdog("sinex-runtime");
         let drain_controller = runtime.handles().runtime_drain();
 
+        // Bridge OS shutdown (SIGTERM/SIGINT) into the runtime drain path.
+        //
+        // In supervisor mode the daemon catches the signal but does not reach
+        // into each hosted module's drain controller, and `(spec.run)()` takes
+        // no shutdown channel — so without this the module loops block on
+        // `recv()` until systemd's stop timeout forces SIGKILL (the 90s overrun
+        // on `nixos-rebuild switch`). Mirror the NATS drain command
+        // (`request_drain` + `abort_runtime_work`) so OS shutdown reuses the same
+        // tested teardown path and the consumer/main loops exit promptly.
+        let os_shutdown_drain = drain_controller.clone();
+        let os_shutdown_module = runtime.control_identity().to_string();
+        let os_shutdown_task = tokio::spawn(async move {
+            if crate::runtime::wait_for_os_shutdown_signal().await.is_ok() {
+                let first_request = os_shutdown_drain.request_drain();
+                let aborted_runtime_work = os_shutdown_drain.abort_runtime_work();
+                info!(
+                    module = %os_shutdown_module,
+                    first_request,
+                    aborted_runtime_work,
+                    "OS shutdown signal received; requesting runtime drain"
+                );
+            }
+        });
+
         // Start command listener for source-dispatch replay (scan commands via NATS).
         // This allows the API to dispatch historical scans to running sources.
         #[cfg(feature = "messaging")]
@@ -146,6 +170,10 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                 }
             }
         };
+
+        // The service loop has returned (drain requested above, channel closed,
+        // or error). Stop waiting for OS shutdown so the task does not linger.
+        os_shutdown_task.abort();
 
         Self::signal_shutdown_channel(heartbeat_shutdown_tx, "heartbeat");
         let heartbeat_result = Self::shutdown_join_result("heartbeat", heartbeat_handle.await);
