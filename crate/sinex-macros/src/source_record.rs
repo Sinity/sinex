@@ -299,7 +299,7 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                 }
             }
 
-            #[::async_trait::async_trait]
+            #[_sdk_primitives::__sinex_macros_reexport::async_trait]
             impl _sdk_parser::MaterialParser for #struct_name {
                 type Config = ();
 
