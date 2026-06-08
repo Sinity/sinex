@@ -844,15 +844,6 @@ in
                               default = 3600;
                               description = "Local rate limiter: evict idle token entries after this many seconds.";
                             };
-                            distributedPerMinute = mkOption {
-                              type = positive;
-                              default = 6000;
-                              description = ''
-                                Distributed rate limiter: max requests per minute per token,
-                                enforced across all API instances via NATS KV.
-                                Default 6000 = 100 req/s sustained.
-                              '';
-                            };
                             distributedWindowSec = mkOption {
                               type = positive;
                               default = 60;

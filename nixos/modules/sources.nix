@@ -587,7 +587,6 @@ let
                 "SINEX_API_RATE_LIMIT_REQUESTS_PER_SEC=${toString coreCfg.api.limits.rateLimit.requestsPerSec}"
                 "SINEX_API_RATE_LIMIT_BURST=${toString coreCfg.api.limits.rateLimit.burst}"
                 "SINEX_API_RATE_LIMIT_IDLE_TIMEOUT_SECS=${toString coreCfg.api.limits.rateLimit.idleTimeoutSec}"
-                "SINEX_API_RATE_LIMIT_PER_MINUTE=${toString coreCfg.api.limits.rateLimit.distributedPerMinute}"
                 "SINEX_API_RATE_LIMIT_WINDOW_SECS=${toString coreCfg.api.limits.rateLimit.distributedWindowSec}"
                 "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES=${toString coreCfg.api.nativeMessagingMaxSizeBytes}"
                 "SINEX_API_TCP_LISTEN=${coreCfg.api.listenAddress}"
