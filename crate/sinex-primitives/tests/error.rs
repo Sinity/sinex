@@ -72,7 +72,7 @@ struct InnerTestError;
 
 impl std::fmt::Display for InnerTestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("inner source secret=ghp_inner")
+        f.write_str("inner source secret=api_inner")
     }
 }
 
@@ -181,7 +181,7 @@ async fn typed_source_chain_is_structured_and_std_compatible() -> TestResult<()>
 
     let child = source.child().expect("inner source should be captured");
     assert!(child.type_name().contains("Error"));
-    assert_eq!(child.message(), "inner source secret=ghp_inner");
+    assert_eq!(child.message(), "inner source secret=api_inner");
 
     let std_source = std::error::Error::source(&error).expect("SinexError should expose source()");
     assert_eq!(std_source.to_string(), "outer source failed");
@@ -195,7 +195,7 @@ async fn typed_source_chain_is_structured_and_std_compatible() -> TestResult<()>
         error
             .sources()
             .iter()
-            .any(|msg| msg == "inner source secret=ghp_inner")
+            .any(|msg| msg == "inner source secret=api_inner")
     );
     Ok(())
 }
@@ -233,7 +233,7 @@ async fn public_payload_keeps_safe_fields_and_drops_sensitive_context() -> TestR
     assert!(!json.contains("SELECT secret"));
     assert!(!json.contains("id_ed25519"));
     assert!(!json.contains("nats://"));
-    assert!(!json.contains("ghp_inner"));
+    assert!(!json.contains("api_inner"));
     Ok(())
 }
 

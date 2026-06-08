@@ -70,7 +70,7 @@ async fn test_client_message_server_errors_are_generic() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_public_payload_does_not_serialize_private_diagnostics() -> TestResult<()> {
-    let err = SinexError::database("SELECT * FROM core.events WHERE token = 'ghp_secret'")
+    let err = SinexError::database("SELECT * FROM core.events WHERE token = 'api_secret'")
         .with_context("operation", "events.query")
         .with_context("path", "/home/sinity/.ssh/id_ed25519")
         .with_context("nats_url", "nats://secret@localhost:4222")
@@ -83,7 +83,7 @@ async fn test_public_payload_does_not_serialize_private_diagnostics() -> TestRes
     assert_eq!(json["context"]["operation"], "events.query");
 
     let rendered = json.to_string();
-    assert!(!rendered.contains("ghp_secret"));
+    assert!(!rendered.contains("api_secret"));
     assert!(!rendered.contains("id_ed25519"));
     assert!(!rendered.contains("nats://"));
     assert!(!rendered.contains("postgresql://"));

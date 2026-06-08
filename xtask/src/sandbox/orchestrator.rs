@@ -844,20 +844,25 @@ fn collect_source_files(root: &std::path::Path, paths: &mut Vec<PathBuf>) {
                 .path()
                 .extension()
                 .is_some_and(|extension| extension == "rs")
-            // `#[cfg(test)]` modules under a `src/**/tests/` directory do not
-            // compile into the runtime binary, so an edit to one must not mark
-            // the binary stale. (Inline `#[cfg(test)] mod tests` in a production
-            // file is unavoidably included, but those edits also rebuild the
-            // file's production code; the false positive here is the separate
-            // `tests/` submodule, e.g. `adapter/tests/mod.rs`.)
-            && !entry
-                .path()
-                .components()
-                .any(|component| component.as_os_str() == "tests")
+            && !is_test_only_source_path(root, entry.path())
         {
             paths.push(entry.path().to_path_buf());
         }
     }
+}
+
+/// Returns true for `#[cfg(test)]`-only source paths that Cargo does not link
+/// into the runtime binary: `src/**/tests/` subdirectories and `tests.rs`
+/// sibling files. Editing either must not mark the binary stale.
+///
+/// (Inline `#[cfg(test)] mod tests { … }` inside a production file is
+/// unavoidably included — those edits also recompile the production code.)
+fn is_test_only_source_path(root: &std::path::Path, path: &std::path::Path) -> bool {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    relative.file_name().is_some_and(|name| name == "tests.rs")
+        || relative
+            .components()
+            .any(|component| component.as_os_str() == "tests")
 }
 
 fn newest_modified_input(paths: &[PathBuf]) -> Result<Option<(PathBuf, SystemTime)>> {
@@ -1368,6 +1373,26 @@ mod tests {
              `cargo build -p <other>` bumps lockfile mtime and falsely marks \
              this binary stale (#1220). cargo's own incremental compile remains \
              the safety net for real dep-graph changes"
+        );
+        Ok(())
+    }
+
+    /// Regression: `#[cfg(test)]` source modules in `src/**/tests/` directories
+    /// must not appear in the runtime-binary input set. Editing them does not
+    /// cause Cargo to relink the binary, so marking it stale would cause
+    /// `xtask test` to do a spurious pre-test rebuild on every test-only edit.
+    #[sinex_test]
+    async fn runtime_binary_inputs_exclude_test_only_source_modules() -> TestResult<()> {
+        let workspace = find_workspace_root()?;
+        let inputs = collect_runtime_binary_input_paths(&workspace, "sinexd")?;
+        let test_module =
+            workspace.join("crate/sinexd/src/runtime/automaton/adapter/tests/mod.rs");
+
+        assert!(
+            !inputs.iter().any(|path| path == &test_module),
+            "runtime binary inputs must not include #[cfg(test)] source modules; \
+             editing them does not relink the runtime binary and would falsely \
+             leave tests blocked on a stale-binary guard"
         );
         Ok(())
     }
