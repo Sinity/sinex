@@ -1906,7 +1906,8 @@ impl JetStreamConsumer {
             | AdmissionRejectionKind::MissingEventId
             | AdmissionRejectionKind::InvalidEventId
             | AdmissionRejectionKind::EnvelopeDeserialization
-            | AdmissionRejectionKind::EnvelopeValidation => {
+            | AdmissionRejectionKind::EnvelopeValidation
+            | AdmissionRejectionKind::OccurrenceDuplicate => {
                 self.stats
                     .validation_failures
                     .fetch_add(1, Ordering::Relaxed);
@@ -1932,6 +1933,7 @@ impl JetStreamConsumer {
             AdmissionRejectionKind::QuarantinePolicy => "quarantine_policy",
             AdmissionRejectionKind::MissingEventId => "missing_event_id",
             AdmissionRejectionKind::InvalidEventId => "invalid_event_id",
+            AdmissionRejectionKind::OccurrenceDuplicate => "occurrence_duplicate",
         };
 
         tracing::debug!(

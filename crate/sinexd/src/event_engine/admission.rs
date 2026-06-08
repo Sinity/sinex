@@ -115,6 +115,12 @@ pub enum AdmissionRejectionKind {
     QuarantinePolicy,
     MissingEventId,
     InvalidEventId,
+    /// A live event with the same `equivalence_key` already exists in `core.events`.
+    ///
+    /// Only reachable for events whose `equivalence_key` is `Some(_)` — i.e., events
+    /// emitted by deterministic-key (`Uuid5From`) sources. Sources that do not set
+    /// `equivalence_key` are never suppressed by this path.
+    OccurrenceDuplicate,
 }
 
 /// A rejected candidate event with a stable kind and operator-facing reason.
@@ -395,6 +401,30 @@ impl AdmissionService {
         mut event: Event<JsonValue>,
         metadata: Option<CandidateEventMetadata>,
     ) -> EventEngineResult<AdmissionDecision> {
+        // Occurrence suppression (#1637): if the event carries an equivalence_key and a live
+        // event with that key already exists in core.events, return Suppressed rather than
+        // admitting a duplicate.  Only sources that use OccurrenceIdentity::Uuid5From ever
+        // populate equivalence_key, so the check is gated entirely on the field being Some.
+        // Fail-open on DB errors: admit the event so we never silently drop data.
+        if let Some(key) = &event.equivalence_key {
+            match self.pool.events().exists_with_equivalence_key(key).await {
+                Ok(true) => {
+                    return Ok(AdmissionDecision::Suppressed(AdmissionRejection::new(
+                        AdmissionRejectionKind::OccurrenceDuplicate,
+                        format!("live event with equivalence_key {key} already exists"),
+                    )));
+                }
+                Ok(false) => {} // proceed
+                Err(e) => {
+                    warn!(
+                        equivalence_key = %key,
+                        error = %e,
+                        "equivalence_key existence check failed; admitting event"
+                    );
+                }
+            }
+        }
+
         // #1570 Prong B: material-provenance events legitimately arrive with
         // `ts_orig = None` — they defer resolution to the persistence stage,
         // which reads the source-material timing tier *after* the
@@ -656,8 +686,58 @@ impl AdmissionService {
         }
 
         let mut decisions = Vec::with_capacity(intent.events.len());
+
+        // Batch pre-pass (#1637): collect all equivalence_keys present in this intent
+        // and check which already exist in core.events with a single round-trip. Events
+        // whose key is in the existing set are suppressed here; the remainder proceed
+        // to per-event admit_event() which handles the single-event equivalence_key check.
+        // Fail-open on DB error: fall back to per-event checks so no events are silently dropped.
+        let equiv_keys: Vec<String> = intent
+            .events
+            .iter()
+            .filter_map(|e| e.equivalence_key.clone())
+            .collect();
+        let existing_keys: HashSet<String> = if equiv_keys.is_empty() {
+            HashSet::new()
+        } else {
+            match self
+                .pool
+                .events()
+                .filter_existing_equivalence_keys(&equiv_keys)
+                .await
+            {
+                Ok(keys) => keys.into_iter().collect(),
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        equiv_key_count = equiv_keys.len(),
+                        "batch equivalence_key pre-pass failed; falling back to per-event check"
+                    );
+                    HashSet::new()
+                }
+            }
+        };
+
         for event in intent.events {
-            decisions.push(self.admit_event(event).await?);
+            // Check if this event's equivalence_key was pre-identified as a duplicate.
+            // The map() call resolves the borrow before the else-branch moves `event`.
+            let suppressed = event
+                .equivalence_key
+                .as_deref()
+                .filter(|k| existing_keys.contains(*k))
+                .map(|k| {
+                    AdmissionDecision::Suppressed(AdmissionRejection::new(
+                        AdmissionRejectionKind::OccurrenceDuplicate,
+                        format!(
+                            "live event with equivalence_key {k} already exists (batch pre-pass)"
+                        ),
+                    ))
+                });
+            if let Some(decision) = suppressed {
+                decisions.push(decision);
+            } else {
+                decisions.push(self.admit_event(event).await?);
+            }
         }
         Ok(decisions)
     }

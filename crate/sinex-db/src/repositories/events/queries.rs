@@ -665,6 +665,45 @@ impl EventRepository<'_> {
 
         Ok(rows.into_iter().map(Id::from_uuid).collect())
     }
+
+    // ========== Equivalence-Key Existence Queries ==========
+
+    /// Check if a live event with the given `equivalence_key` already exists in `core.events`.
+    ///
+    /// Returns `true` if at least one live row has `equivalence_key = key`.
+    /// Used by the admission gateway to suppress duplicate deterministic-key events.
+    /// Propagates DB errors to the caller, which must decide whether to admit or suppress
+    /// (the admission layer is fail-open: it admits on error to avoid silently dropping events).
+    pub async fn exists_with_equivalence_key(&self, key: &str) -> DbResult<bool> {
+        let result = sqlx::query_scalar!(
+            "SELECT EXISTS(SELECT 1 FROM core.events WHERE equivalence_key = $1 LIMIT 1)",
+            key
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "check equivalence_key existence"))?;
+        Ok(result.unwrap_or(false))
+    }
+
+    /// Return the subset of `keys` that already have a live row in `core.events`.
+    ///
+    /// Used by the admission batch pre-pass to identify which equivalence-keyed events
+    /// can be suppressed wholesale with a single round-trip instead of N per-event checks.
+    /// Propagates DB errors to the caller; the caller falls back to per-event checks on error.
+    pub async fn filter_existing_equivalence_keys(&self, keys: &[String]) -> DbResult<Vec<String>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let keys_vec = keys.to_vec();
+        let rows: Vec<Option<String>> = sqlx::query_scalar(
+            "SELECT DISTINCT equivalence_key FROM core.events WHERE equivalence_key = ANY($1::text[])",
+        )
+        .bind(&keys_vec)
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "filter existing equivalence keys"))?;
+        Ok(rows.into_iter().flatten().collect())
+    }
 }
 
 pub(crate) fn extract_plan_rows(plan: &serde_json::Value) -> i64 {
