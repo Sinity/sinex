@@ -395,6 +395,8 @@ pub struct InvocationResourceMetrics {
 pub struct PressureSnapshot {
     pub some_avg10: Option<f64>,
     pub full_avg10: Option<f64>,
+    pub some_total_us: Option<u64>,
+    pub full_total_us: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1641,18 +1643,22 @@ pub fn read_pressure_snapshot(_resource: &str) -> PressureSnapshot {
 fn parse_pressure_snapshot(contents: &str) -> PressureSnapshot {
     let mut snapshot = PressureSnapshot::default();
     for line in contents.lines() {
-        let target = if line.starts_with("some ") {
-            &mut snapshot.some_avg10
+        let (avg_target, total_target) = if line.starts_with("some ") {
+            (&mut snapshot.some_avg10, &mut snapshot.some_total_us)
         } else if line.starts_with("full ") {
-            &mut snapshot.full_avg10
+            (&mut snapshot.full_avg10, &mut snapshot.full_total_us)
         } else {
             continue;
         };
         for field in line.split_whitespace() {
-            if let Some(value) = field.strip_prefix("avg10=")
-                && let Ok(parsed) = value.parse::<f64>()
+            if let Some(value) = field.strip_prefix("avg10=") {
+                if let Ok(parsed) = value.parse::<f64>() {
+                    *avg_target = Some(parsed);
+                }
+            } else if let Some(value) = field.strip_prefix("total=")
+                && let Ok(parsed) = value.parse::<u64>()
             {
-                *target = Some(parsed);
+                *total_target = Some(parsed);
             }
         }
     }

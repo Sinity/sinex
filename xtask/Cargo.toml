@@ -13,7 +13,6 @@ path = "src/lib.rs"
 
 [features]
 default = []
-runtime-introspection = ["dep:sinexd"]
 
 [dependencies]
 clap = { workspace = true, features = [
@@ -103,10 +102,6 @@ tabled = { workspace = true }
 
 # Build-time metadata (git hash, build time)
 shadow-rs = { workspace = true }
-
-[dependencies.sinexd]
-path = "../crate/sinexd"
-optional = true
 
 [build-dependencies]
 blake3 = { workspace = true }

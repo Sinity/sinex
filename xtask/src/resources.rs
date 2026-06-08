@@ -447,14 +447,17 @@ mod tests {
             PressureSnapshot {
                 some_avg10: Some(4.0),
                 full_avg10: Some(0.0),
+                ..PressureSnapshot::default()
             },
             PressureSnapshot {
                 some_avg10: Some(8.0),
                 full_avg10: Some(2.9),
+                ..PressureSnapshot::default()
             },
             PressureSnapshot {
                 some_avg10: Some(2.0),
                 full_avg10: Some(4.9),
+                ..PressureSnapshot::default()
             },
             Some((512.0, 15_000.0)),
         );
@@ -466,6 +469,7 @@ mod tests {
             PressureSnapshot {
                 some_avg10: Some(16.0),
                 full_avg10: Some(6.0),
+                ..PressureSnapshot::default()
             },
             PressureSnapshot::default(),
             None,
@@ -479,10 +483,12 @@ mod tests {
             PressureSnapshot {
                 some_avg10: Some(22.0),
                 full_avg10: Some(14.0),
+                ..PressureSnapshot::default()
             },
             PressureSnapshot {
                 some_avg10: Some(28.0),
                 full_avg10: Some(24.0),
+                ..PressureSnapshot::default()
             },
             None,
         );

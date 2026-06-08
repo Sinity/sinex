@@ -31,9 +31,6 @@ use super::reset;
 
 // ── Statics ─────────────────────────────────────────────────────────────────
 
-static OPTIONAL_EXTENSION_MISSING: std::sync::LazyLock<Mutex<HashMap<String, String>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
-
 /// Template database name cached for the current test process
 static TEMPLATE_DB_NAME: std::sync::LazyLock<Mutex<Option<String>>> =
     std::sync::LazyLock::new(|| Mutex::new(None));
@@ -1355,40 +1352,6 @@ async fn is_extension_available(pool: &DbPool, name: &str) -> TestResult<bool> {
 }
 
 /// Install optional extensions, warning (not failing) if unavailable.
-async fn install_optional_extensions(pool: &DbPool) {
-    let optional_extensions: [(&str, &str); 0] = [];
-
-    let mut missing = Vec::new();
-    for (ext_name, description) in optional_extensions {
-        match is_extension_available(pool, ext_name).await {
-            Ok(false) | Err(_) => {
-                missing.push((ext_name.to_string(), description.to_string()));
-                continue;
-            }
-            Ok(true) => {}
-        }
-        if let Err(err) = ensure_extension_installed(pool, ext_name).await {
-            warn!("Failed to auto-install optional extension '{ext_name}': {err}");
-            missing.push((ext_name.to_string(), description.to_string()));
-        }
-    }
-
-    if !missing.is_empty() {
-        let mut guard = OPTIONAL_EXTENSION_MISSING.lock();
-        for (ext_name, description) in missing {
-            if guard
-                .insert(ext_name.clone(), description.clone())
-                .is_none()
-            {
-                warn!(
-                    "Optional PostgreSQL extension '{ext_name}' unavailable; \
-                     related features/tests will be skipped ({description})"
-                );
-            }
-        }
-    }
-}
-
 /// Check if required `PostgreSQL` extensions are available
 async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
     let required_extensions = [
@@ -1414,7 +1377,6 @@ async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
         ));
     }
 
-    install_optional_extensions(pool).await;
     Ok(())
 }
 
@@ -1432,11 +1394,6 @@ async fn collect_extension_versions(pool: &DbPool) -> TestResult<HashMap<String,
         map.insert(extname, extversion);
     }
     Ok(map)
-}
-
-/// Check whether an optional database extension was unavailable during setup.
-pub fn optional_extension_missing(name: &str) -> bool {
-    OPTIONAL_EXTENSION_MISSING.lock().contains_key(name)
 }
 
 async fn ensure_extension_installed(pool: &DbPool, extension: &str) -> TestResult<()> {

@@ -44,6 +44,23 @@ pub use diagnostics::{
     StoredDiagnostic,
 };
 use sinex_primitives::temporal::Timestamp;
+
+/// A devshell wrapper rebuild event persisted into the `wrapper_events` table
+/// from `xtask-wrapper-events.jsonl`. Mirrors the JSONL fields needed to make
+/// checkout-local rebuild cost SQL-queryable and joinable with `invocations`.
+#[derive(Debug, Clone)]
+pub struct WrapperEventRow {
+    pub event: String,
+    pub status: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub duration_secs: Option<f64>,
+    pub command: Option<String>,
+    pub args: Option<String>,
+    pub force_rebuild: bool,
+    pub rebuild_reason: Option<String>,
+    pub stage_durations_json: Option<String>,
+}
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -674,6 +691,30 @@ pub struct DriftGuardBypass {
     pub push_succeeded: Option<bool>,
 }
 
+/// A recorded impact-plan audit run (skip-accuracy evidence). Surfaced via
+/// `xtask history view impact-audit` so the table needs no raw `sqlite3`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ImpactAuditRunRow {
+    pub id: i64,
+    pub invocation_id: Option<i64>,
+    pub sample_size: i64,
+    pub status: String,
+    pub false_negative_count: i64,
+    pub created_at: String,
+}
+
+/// A recorded internal trace event. Surfaced via `xtask history view traces`
+/// so the table needs no raw `sqlite3`.
+#[derive(Debug, Clone, Serialize)]
+pub struct TraceEventRow {
+    pub id: i64,
+    pub invocation_id: Option<i64>,
+    pub ts: String,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+}
+
 /// Emitted once per process (via `OnceLock`) when a read command accesses synthetic data.
 static SYNTHETIC_WARNING_EMITTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
@@ -1186,7 +1227,22 @@ impl HistoryDb {
                 stage_name TEXT NOT NULL,
                 started_at TEXT NOT NULL,
                 duration_secs REAL NOT NULL,
-                success INTEGER NOT NULL DEFAULT 1
+                success INTEGER NOT NULL DEFAULT 1,
+                -- End-of-stage PSI (pressure-stall) snapshot for per-stage causal
+                -- attribution of dev-loop slowdowns. avg10 is a 10s decaying average:
+                -- meaningful for long stages (compile/test/clippy), coarse for sub-10s
+                -- stages. Nullable: /proc/pressure may be unavailable.
+                io_full_avg10 REAL,
+                cpu_some_avg10 REAL,
+                memory_some_avg10 REAL,
+                -- Delta of /proc/pressure `total=` stall microseconds over
+                -- [stage_start, stage_end]: exact stall μs attributable to the
+                -- stage, length-independent (unlike the tail-biased avg10).
+                -- Nullable: /proc/pressure may be unavailable, or a start/end
+                -- counter may be missing.
+                io_full_stall_us INTEGER,
+                cpu_some_stall_us INTEGER,
+                memory_some_stall_us INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS invocation_progress (
@@ -1456,9 +1512,76 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_exercise_results_run ON exercise_results(run_id);
             CREATE INDEX IF NOT EXISTS idx_exercise_results_id ON exercise_results(exercise_id);
             CREATE INDEX IF NOT EXISTS idx_drift_guard_bypasses_recorded ON drift_guard_bypasses(recorded_at);
+
+            CREATE TABLE IF NOT EXISTS wrapper_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                duration_secs REAL,
+                command TEXT,
+                args TEXT,
+                force_rebuild INTEGER NOT NULL DEFAULT 0,
+                rebuild_reason TEXT,
+                stage_durations_json TEXT,
+                UNIQUE(event, started_at)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wrapper_events_started ON wrapper_events(started_at);
             ",
         )?;
         Ok(())
+    }
+
+    /// Upsert devshell wrapper rebuild events (from `xtask-wrapper-events.jsonl`)
+    /// into the `wrapper_events` table so checkout-local rebuild cost — the
+    /// `xtask_build` stage plus any schema/initdb bootstrap — is queryable via
+    /// `xtask history query` and joinable with `invocations` by time, instead of
+    /// living only in the append-only JSONL. Idempotent via
+    /// `UNIQUE(event, started_at)` + `INSERT OR IGNORE`; returns rows inserted.
+    pub fn upsert_wrapper_events(&self, rows: &[WrapperEventRow]) -> Result<usize> {
+        // Ensure the table on write: init_schema is schema-version-gated and does
+        // not re-run on already-initialized databases, so a newly added table
+        // must be ensured here (same approach as `ensure_proof_schema`).
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS wrapper_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                duration_secs REAL,
+                command TEXT,
+                args TEXT,
+                force_rebuild INTEGER NOT NULL DEFAULT 0,
+                rebuild_reason TEXT,
+                stage_durations_json TEXT,
+                UNIQUE(event, started_at)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wrapper_events_started ON wrapper_events(started_at);",
+        )?;
+        let mut stmt = self.conn.prepare(
+            "INSERT OR IGNORE INTO wrapper_events \
+             (event, status, started_at, finished_at, duration_secs, command, args, \
+              force_rebuild, rebuild_reason, stage_durations_json) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        )?;
+        let mut inserted = 0usize;
+        for row in rows {
+            inserted += stmt.execute(params![
+                row.event,
+                row.status,
+                row.started_at,
+                row.finished_at,
+                row.duration_secs,
+                row.command,
+                row.args,
+                i64::from(row.force_rebuild),
+                row.rebuild_reason,
+                row.stage_durations_json,
+            ])?;
+        }
+        Ok(inserted)
     }
 
     fn ensure_column_exists(&self, table: &str, column: &str, definition: &str) -> Result<()> {
@@ -1751,6 +1874,14 @@ impl HistoryDb {
             "authority",
             "TEXT NOT NULL DEFAULT 'proof'",
         )?;
+        // Per-stage end-of-stage PSI snapshot (added for per-stage causal attribution
+        // of dev-loop slowdowns). Nullable REAL — /proc/pressure may be unavailable.
+        self.ensure_column_exists("stage_timings", "io_full_avg10", "REAL")?;
+        self.ensure_column_exists("stage_timings", "cpu_some_avg10", "REAL")?;
+        self.ensure_column_exists("stage_timings", "memory_some_avg10", "REAL")?;
+        self.ensure_column_exists("stage_timings", "io_full_stall_us", "INTEGER")?;
+        self.ensure_column_exists("stage_timings", "cpu_some_stall_us", "INTEGER")?;
+        self.ensure_column_exists("stage_timings", "memory_some_stall_us", "INTEGER")?;
         Ok(())
     }
 
@@ -1860,6 +1991,72 @@ impl HistoryDb {
             })
             .optional()?;
         Ok(row)
+    }
+
+    /// List the most recent drift-guard bypasses (security/hygiene audit trail).
+    ///
+    /// Surfaced via `xtask history view drift-guard-bypasses` so this table no
+    /// longer requires a raw `sqlite3` query to inspect.
+    pub fn get_drift_guard_bypasses(&self, limit: usize) -> Result<Vec<DriftGuardBypass>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, recorded_at, git_branch, head_sha, push_succeeded
+             FROM drift_guard_bypasses
+             ORDER BY recorded_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(DriftGuardBypass {
+                    id: row.get(0)?,
+                    recorded_at: row.get::<_, String>(1)?,
+                    git_branch: row.get(2)?,
+                    head_sha: row.get(3)?,
+                    push_succeeded: row.get(4)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Recent impact-plan audit runs (skip-accuracy / false-negative evidence).
+    pub fn get_impact_audit_runs(&self, limit: usize) -> Result<Vec<ImpactAuditRunRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, invocation_id, sample_size, status, false_negative_count, created_at
+             FROM impact_audit_runs ORDER BY created_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(ImpactAuditRunRow {
+                    id: row.get(0)?,
+                    invocation_id: row.get(1)?,
+                    sample_size: row.get(2)?,
+                    status: row.get(3)?,
+                    false_negative_count: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Most recent internal trace events (newest first).
+    pub fn get_recent_trace_events(&self, limit: usize) -> Result<Vec<TraceEventRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, invocation_id, ts, level, target, message
+             FROM trace_events ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(TraceEventRow {
+                    id: row.get(0)?,
+                    invocation_id: row.get(1)?,
+                    ts: row.get(2)?,
+                    level: row.get(3)?,
+                    target: row.get(4)?,
+                    message: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     /// Start a new invocation record. Returns the invocation ID.
@@ -2020,14 +2217,31 @@ impl HistoryDb {
         started_at: &str,
         duration_secs: f64,
         success: bool,
+        pressure: StagePressure,
     ) -> Result<()> {
         with_sqlite_lock_retry("record stage timing", || {
             self.conn.execute(
                 r"
-                INSERT INTO stage_timings (invocation_id, stage_name, started_at, duration_secs, success)
-                VALUES (?1, ?2, ?3, ?4, ?5)
+                INSERT INTO stage_timings (
+                    invocation_id, stage_name, started_at, duration_secs, success,
+                    io_full_avg10, cpu_some_avg10, memory_some_avg10,
+                    io_full_stall_us, cpu_some_stall_us, memory_some_stall_us
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                 ",
-                params![invocation_id, stage_name, started_at, duration_secs, i32::from(success)],
+                params![
+                    invocation_id,
+                    stage_name,
+                    started_at,
+                    duration_secs,
+                    i32::from(success),
+                    pressure.io_full_avg10,
+                    pressure.cpu_some_avg10,
+                    pressure.memory_some_avg10,
+                    pressure.io_full_stall_us,
+                    pressure.cpu_some_stall_us,
+                    pressure.memory_some_stall_us,
+                ],
             )?;
             Ok(())
         })?;
@@ -2078,7 +2292,9 @@ impl HistoryDb {
     pub fn get_stage_timings_for_invocation(&self, invocation_id: i64) -> Result<Vec<StageTiming>> {
         let mut stmt = self.conn.prepare(
             r"
-            SELECT invocation_id, stage_name, started_at, duration_secs, success
+            SELECT invocation_id, stage_name, started_at, duration_secs, success,
+                   io_full_avg10, cpu_some_avg10, memory_some_avg10,
+                   io_full_stall_us, cpu_some_stall_us, memory_some_stall_us
             FROM stage_timings
             WHERE invocation_id = ?1
             ORDER BY started_at ASC
@@ -2092,6 +2308,12 @@ impl HistoryDb {
                     started_at: row.get(2)?,
                     duration_secs: row.get(3)?,
                     success: row.get::<_, i32>(4)? != 0,
+                    io_full_avg10: row.get(5)?,
+                    cpu_some_avg10: row.get(6)?,
+                    memory_some_avg10: row.get(7)?,
+                    io_full_stall_us: row.get(8)?,
+                    cpu_some_stall_us: row.get(9)?,
+                    memory_some_stall_us: row.get(10)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -5613,6 +5835,39 @@ pub struct StageTiming {
     pub started_at: String,
     pub duration_secs: f64,
     pub success: bool,
+    /// End-of-stage PSI io.full avg10 snapshot (None if /proc/pressure unavailable).
+    pub io_full_avg10: Option<f64>,
+    /// End-of-stage PSI cpu.some avg10 snapshot.
+    pub cpu_some_avg10: Option<f64>,
+    /// End-of-stage PSI memory.some avg10 snapshot.
+    pub memory_some_avg10: Option<f64>,
+    /// Delta of /proc/pressure io.full `total=` stall μs over the stage.
+    pub io_full_stall_us: Option<i64>,
+    /// Delta of /proc/pressure cpu.some `total=` stall μs over the stage.
+    pub cpu_some_stall_us: Option<i64>,
+    /// Delta of /proc/pressure memory.some `total=` stall μs over the stage.
+    pub memory_some_stall_us: Option<i64>,
+}
+
+/// Per-stage pressure-stall metrics recorded alongside a stage timing.
+///
+/// Bundles the tail-biased end-of-stage avg10 snapshot with the precise,
+/// length-independent stall-microsecond delta over the stage window. Passed as
+/// a single struct to `record_stage_timing` to keep its signature manageable.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StagePressure {
+    /// End-of-stage PSI io.full avg10 snapshot.
+    pub io_full_avg10: Option<f64>,
+    /// End-of-stage PSI cpu.some avg10 snapshot.
+    pub cpu_some_avg10: Option<f64>,
+    /// End-of-stage PSI memory.some avg10 snapshot.
+    pub memory_some_avg10: Option<f64>,
+    /// Delta of /proc/pressure io.full `total=` stall μs over the stage.
+    pub io_full_stall_us: Option<i64>,
+    /// Delta of /proc/pressure cpu.some `total=` stall μs over the stage.
+    pub cpu_some_stall_us: Option<i64>,
+    /// Delta of /proc/pressure memory.some `total=` stall μs over the stage.
+    pub memory_some_stall_us: Option<i64>,
 }
 
 /// Map a SQLite row to a `BackgroundJob`.

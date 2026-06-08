@@ -729,8 +729,8 @@ pub struct TestSuiteAnalysis {
     pub run_overhead: Option<TestRunOverhead>,
     /// Recorded pipeline stages for the invocation, grouped by stage name.
     pub stage_breakdown: Vec<TestRunStageBreakdown>,
-    /// Invocation time not explained by summed test bodies or recorded stages.
-    pub unaccounted_overhead_secs: Option<f64>,
+    /// Invocation wall time not covered by recorded pipeline stages.
+    pub unstaged_invocation_secs: Option<f64>,
     /// Total counts
     pub total_passed: usize,
     pub total_failed: usize,
@@ -848,9 +848,8 @@ fn summarize_stage_breakdown(stages: &[StageTiming]) -> Vec<TestRunStageBreakdow
     breakdown
 }
 
-fn unaccounted_overhead_secs(
+fn unstaged_invocation_secs(
     invocation_duration_secs: Option<f64>,
-    test_body_duration_secs: f64,
     stage_breakdown: &[TestRunStageBreakdown],
 ) -> Option<f64> {
     let invocation_duration_secs = invocation_duration_secs?;
@@ -858,7 +857,7 @@ fn unaccounted_overhead_secs(
         .iter()
         .map(|stage| stage.total_duration_secs)
         .sum();
-    Some((invocation_duration_secs - test_body_duration_secs - stage_secs).max(0.0))
+    Some((invocation_duration_secs - stage_secs).max(0.0))
 }
 
 fn invocation_duration_for_analysis(
@@ -1343,11 +1342,8 @@ impl HistoryDb {
                     format!("failed to load stage timings for test invocation {invocation_id}")
                 })?,
         );
-        let unaccounted_overhead_secs = unaccounted_overhead_secs(
-            invocation_duration_secs,
-            total_duration_secs,
-            &stage_breakdown,
-        );
+        let unstaged_invocation_secs =
+            unstaged_invocation_secs(invocation_duration_secs, &stage_breakdown);
 
         // Per-package failure summary
         let mut pkg_map: std::collections::HashMap<String, (usize, usize, Vec<String>)> =
@@ -1390,7 +1386,7 @@ impl HistoryDb {
             host_pressure,
             run_overhead,
             stage_breakdown,
-            unaccounted_overhead_secs,
+            unstaged_invocation_secs,
             total_passed,
             total_failed,
             total_ignored,
@@ -1838,6 +1834,7 @@ impl HistoryDb {
 #[allow(clippy::module_inception)]
 mod tests {
     use super::*;
+    use super::super::db::StagePressure;
     use std::collections::HashMap;
     use xtask::sandbox::sinex_test;
 
@@ -2540,9 +2537,37 @@ mod tests {
     #[sinex_test]
     async fn test_analyze_last_run_basic() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
-        db.record_stage_timing(inv_id, "preflight", "2026-01-01T00:00:00Z", 0.5, true)?;
-        db.record_stage_timing(inv_id, "nextest-stream", "2026-01-01T00:00:01Z", 1.0, true)?;
-        db.record_stage_timing(inv_id, "nextest-stream", "2026-01-01T00:00:02Z", 0.25, true)?;
+        db.record_stage_timing(
+            inv_id,
+            "preflight",
+            "2026-01-01T00:00:00Z",
+            0.5,
+            true,
+            StagePressure::default(),
+        )?;
+        db.record_stage_timing(
+            inv_id,
+            "nextest-stream",
+            "2026-01-01T00:00:01Z",
+            1.0,
+            true,
+            StagePressure {
+                io_full_avg10: Some(12.5),
+                cpu_some_avg10: Some(3.0),
+                memory_some_avg10: Some(1.0),
+                io_full_stall_us: Some(125_000),
+                cpu_some_stall_us: Some(30_000),
+                memory_some_stall_us: Some(10_000),
+            },
+        )?;
+        db.record_stage_timing(
+            inv_id,
+            "nextest-stream",
+            "2026-01-01T00:00:02Z",
+            0.25,
+            true,
+            StagePressure::default(),
+        )?;
 
         let results = vec![
             TestResult {
@@ -2593,7 +2618,7 @@ mod tests {
         assert_eq!(analysis.stage_breakdown[0].runs, 2);
         assert_eq!(analysis.stage_breakdown[0].total_duration_secs, 1.25);
         assert_eq!(analysis.stage_breakdown[1].stage_name, "preflight");
-        assert_eq!(analysis.unaccounted_overhead_secs, Some(1.25));
+        assert_eq!(analysis.unstaged_invocation_secs, Some(3.25));
 
         // Failure summary should have pkg-a with 1 failure
         assert_eq!(analysis.failure_summary.len(), 1);

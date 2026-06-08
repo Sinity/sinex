@@ -46,7 +46,7 @@ pub use health::{
 pub use meta::{PoolMeta, TemplateInfo, TemplateMeta};
 pub use reset::{ensure_default_session_state, seed_test_fixtures};
 pub use stats::{CleanupDiagnostics, DatabaseStats, PoolStats, SlotStats};
-pub use template::{optional_extension_missing, schema_fingerprint};
+pub use template::schema_fingerprint;
 pub use test_database::TestDatabase;
 
 use config::{PoolConfig, is_nextest_run};

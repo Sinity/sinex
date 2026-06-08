@@ -2166,14 +2166,14 @@ mod tests {
                 "-p".into(),
                 "xtask".into(),
                 "--features".into(),
-                "runtime-introspection".into(),
+                "extra-feature".into(),
             ],
         );
         let with_features_combined = scope_key(
             "test",
             &[
                 "--scope=packages:xtask".into(),
-                "--features=runtime-introspection".into(),
+                "--features=extra-feature".into(),
             ],
         );
 
