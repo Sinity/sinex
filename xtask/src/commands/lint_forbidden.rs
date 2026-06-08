@@ -254,8 +254,9 @@ impl XtaskCommand for LintForbiddenCommand {
         // Check for test-utils usage in production code (layering violation)
         check_test_utils_layering(&mut violations)?;
 
-        // Source privacy policy is enforced at admission; source contracts
-        // declare metadata/hints rather than invoking the privacy engine.
+        // Provider-shaped token literals trigger external scanners even when fake.
+        // Build realistic fixtures at runtime via ["prefix", "suffix"].concat().
+        violations.extend(check_provider_shaped_secret_literals()?);
 
         let ast_grep = run_ast_grep_scan()?;
         if let Some(ref ag) = ast_grep {
@@ -601,21 +602,30 @@ where
         .with_context(|| format!("failed to scan for {label}"))
 }
 
-/// Run ripgrep to find pattern matches
+/// Run ripgrep to find pattern matches across Rust source files.
 fn run_rg(pattern: &str) -> Result<Vec<String>> {
-    let output = Command::new("rg")
+    run_rg_with_globs(pattern, &["*.rs"])
+}
+
+/// Run ripgrep with an explicit list of file globs.
+/// Always excludes generated/local artifact directories.
+fn run_rg_with_globs(pattern: &str, globs: &[&str]) -> Result<Vec<String>> {
+    let mut command = Command::new("rg");
+    command
         .current_dir(workspace_root())
-        .args([
-            "--color=never",
-            "--no-heading",
-            "--with-filename",
-            "--line-number",
-            pattern,
-            "--glob",
-            "*.rs",
-            "--glob",
-            "!docs/agent/**",
-        ])
+        .args(["--color=never", "--no-heading", "--with-filename", "--line-number", pattern]);
+    for glob in globs {
+        command.args(["--glob", glob]);
+    }
+    // Always exclude generated/local-only artifact trees that should not be scanned.
+    command.args([
+        "--glob", "!docs/agent/**",
+        "--glob", "!.sinex/**",
+        "--glob", "!.agent/**",
+        "--glob", "!AGENTS.md",
+        "--glob", "!target/**",
+    ]);
+    let output = command
         .output()
         .with_context(|| "failed to invoke ripgrep")?;
     ensure_rg_completed(&output, "ripgrep")?;
@@ -661,6 +671,56 @@ where
         }
     }
     Ok(filtered)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Provider-shaped secret literal guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Scan the workspace for provider-token-shaped string literals across source,
+/// docs, and config. These trigger external secret scanners (GitGuardian, etc.)
+/// even when the values are fake test fixtures.
+///
+/// Build token fixtures at runtime via `["prefix", "rest"].concat()` so the
+/// fixture strings are never static token-shaped literals in source.
+fn check_provider_shaped_secret_literals() -> Result<Vec<String>> {
+    check_pattern_with_globs(
+        "provider-shaped secret literal",
+        &provider_shaped_secret_pattern(),
+        &[],
+        &["*.rs", "*.md", "*.toml", "*.yml", "*.yaml"],
+        |_| false,
+    )
+}
+
+/// Regex that matches realistic provider token shapes.
+///
+/// Deliberately split across `concat!` calls so this source file does not
+/// itself contain a provider-token-shaped literal and match its own gate.
+fn provider_shaped_secret_pattern() -> String {
+    let github_classic_prefix = ["ghp", "_"].concat();
+    let github_fine_grained_prefix = ["github", "_pat", "_"].concat();
+    let aws_access_key_prefix = "AKIA";
+    format!(
+        "({github_classic_prefix}[A-Za-z0-9_]{{5,}}\
+|{github_fine_grained_prefix}[A-Za-z0-9_]{{5,}}\
+|{aws_access_key_prefix}[0-9A-Z]{{12,}})"
+    )
+}
+
+fn check_pattern_with_globs<F>(
+    label: &str,
+    pattern: &str,
+    allow: &[&str],
+    globs: &[&str],
+    skip: F,
+) -> Result<Vec<String>>
+where
+    F: FnMut(&str) -> bool,
+{
+    run_rg_with_globs(pattern, globs)
+        .and_then(|matches| filter_allowlist(matches, allow, skip))
+        .with_context(|| format!("failed to scan for {label}"))
 }
 
 fn is_comment_match(line: &str) -> bool {
@@ -1302,6 +1362,35 @@ mod tests {
         assert!(
             violations.is_empty(),
             "privacy metadata gate found violations in live workspace: {violations:#?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn provider_secret_literal_pattern_catches_known_shapes()
+    -> ::xtask::sandbox::TestResult<()> {
+        let pattern = provider_shaped_secret_pattern();
+        let regex = regex::Regex::new(&pattern)?;
+
+        let classic_github = ["ghp", "_", "ABCDEFghijklmnopqrstuvwxyz1234567890"].concat();
+        let fine_grained_github =
+            ["github", "_pat", "_", "11ABCDEFG0abcdefghijklmnopqrstuvwxyz1234567"].concat();
+        let aws_access_key = ["AKIA", "IOSFODNN7EXAMPLE"].concat();
+
+        assert!(regex.is_match(&classic_github), "classic github token must match");
+        assert!(regex.is_match(&fine_grained_github), "fine-grained github token must match");
+        assert!(regex.is_match(&aws_access_key), "aws access key must match");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn provider_secret_literal_live_workspace_has_no_violations()
+    -> ::xtask::sandbox::TestResult<()> {
+        let violations = check_provider_shaped_secret_literals()?;
+        assert!(
+            violations.is_empty(),
+            "provider-shaped secret literal gate found violations in live workspace: \
+             {violations:#?}"
         );
         Ok(())
     }
