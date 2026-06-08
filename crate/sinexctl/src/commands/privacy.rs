@@ -17,6 +17,9 @@ use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::privacy::{
     PrivacyPolicyBackendAddRequest, PrivacyPolicyDictionaryAddRequest, PrivacyPolicyListResponse,
     PrivacyPolicyMutationResponse, PrivacyPolicyRule, PrivacyPolicyRuleAddRequest,
+    PrivacyPolicyRuleRemoveRequest, PrivacyPolicyRuleRemoveResponse,
+    PrivacyPolicyRuleSetEnabledRequest, PrivacyPolicyRuleSetEnabledResponse,
+    PrivacyPolicyFieldUnbindRequest, PrivacyPolicyFieldUnbindResponse,
     PrivacyPolicyScopeBindRequest, PrivacyPolicySeedBuiltinRequest,
     PrivacyPolicySeedBuiltinResponse,
 };
@@ -191,6 +194,12 @@ struct PolicyDictionaryAddArgs {
 enum PolicyRuleCommand {
     /// Add a DB-backed policy rule.
     Add(PolicyRuleAddArgs),
+    /// Remove a DB-backed policy rule by name.
+    Remove(PolicyRuleRemoveArgs),
+    /// Enable a DB-backed policy rule by name.
+    Enable(PolicyRuleToggleArgs),
+    /// Disable a DB-backed policy rule by name.
+    Disable(PolicyRuleToggleArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -265,6 +274,8 @@ struct PolicyRuleAddArgs {
 enum PolicyScopeCommand {
     /// Bind a rule to an optional source/type/field scope.
     Bind(PolicyScopeBindArgs),
+    /// Unbind a rule-scope entry by its scope UUID.
+    Unbind(PolicyScopeUnbindArgs),
 }
 
 #[derive(Debug, Args)]
@@ -288,6 +299,27 @@ struct PolicyScopeBindArgs {
     /// Scope priority; higher values win earlier when scopes overlap.
     #[arg(long, default_value_t = 0)]
     priority: i32,
+}
+
+#[derive(Debug, Args)]
+struct PolicyScopeUnbindArgs {
+    /// UUID of the field-scope entry to remove.
+    #[arg(long)]
+    scope_id: Uuid,
+}
+
+#[derive(Debug, Args)]
+struct PolicyRuleRemoveArgs {
+    /// Policy rule name to remove.
+    #[arg(long)]
+    name: String,
+}
+
+#[derive(Debug, Args)]
+struct PolicyRuleToggleArgs {
+    /// Policy rule name to enable or disable.
+    #[arg(long)]
+    name: String,
 }
 
 #[derive(Debug, Args)]
@@ -372,12 +404,24 @@ impl PrivacyCommand {
                 PolicyCommand::Rule {
                     cmd: PolicyRuleCommand::Add(_),
                 } => "privacy policy rule add",
+                PolicyCommand::Rule {
+                    cmd: PolicyRuleCommand::Remove(_),
+                } => "privacy policy rule remove",
+                PolicyCommand::Rule {
+                    cmd: PolicyRuleCommand::Enable(_),
+                } => "privacy policy rule enable",
+                PolicyCommand::Rule {
+                    cmd: PolicyRuleCommand::Disable(_),
+                } => "privacy policy rule disable",
                 PolicyCommand::Seed {
                     cmd: PolicySeedCommand::Builtin(_),
                 } => "privacy policy seed builtin",
                 PolicyCommand::Scope {
                     cmd: PolicyScopeCommand::Bind(_),
                 } => "privacy policy scope bind",
+                PolicyCommand::Scope {
+                    cmd: PolicyScopeCommand::Unbind(_),
+                } => "privacy policy scope unbind",
             },
             PrivacySubcommand::Audit(_) => "privacy audit",
             PrivacySubcommand::Export(_) => "privacy export",
@@ -453,6 +497,9 @@ impl PolicyRuleCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
             Self::Add(args) => args.execute(client, format).await,
+            Self::Remove(args) => args.execute(client, format).await,
+            Self::Enable(args) => args.execute_enabled(client, format, true).await,
+            Self::Disable(args) => args.execute_enabled(client, format, false).await,
         }
     }
 }
@@ -469,6 +516,7 @@ impl PolicyScopeCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
             Self::Bind(args) => args.execute(client, format).await,
+            Self::Unbind(args) => args.execute(client, format).await,
         }
     }
 }
@@ -578,6 +626,48 @@ impl PolicyScopeBindArgs {
             field_path: self.field_path.clone(),
             priority: self.priority,
         }
+    }
+}
+
+impl PolicyRuleRemoveArgs {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client
+            .privacy_policy_rule_remove(PrivacyPolicyRuleRemoveRequest {
+                name: self.name.clone(),
+            })
+            .await?;
+        CommandOutput::single(response, format_privacy_policy_mutation_simple).display(&format)?;
+        Ok(())
+    }
+}
+
+impl PolicyRuleToggleArgs {
+    async fn execute_enabled(
+        &self,
+        client: &GatewayClient,
+        format: OutputFormat,
+        enabled: bool,
+    ) -> Result<()> {
+        let response = client
+            .privacy_policy_rule_set_enabled(PrivacyPolicyRuleSetEnabledRequest {
+                name: self.name.clone(),
+                enabled,
+            })
+            .await?;
+        CommandOutput::single(response, format_privacy_policy_rule_enabled).display(&format)?;
+        Ok(())
+    }
+}
+
+impl PolicyScopeUnbindArgs {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client
+            .privacy_policy_field_unbind(PrivacyPolicyFieldUnbindRequest {
+                scope_id: self.scope_id,
+            })
+            .await?;
+        CommandOutput::single(response, format_privacy_policy_unbind).display(&format)?;
+        Ok(())
     }
 }
 
@@ -1140,6 +1230,27 @@ fn format_privacy_rule_line(
         rule.action,
         rule.key_namespace,
         scope_count
+    )
+}
+
+fn format_privacy_policy_mutation_simple(response: &PrivacyPolicyRuleRemoveResponse) -> String {
+    format!(
+        "Privacy Policy Rule Remove\nName: {}\nRemoved: {}",
+        response.name, response.removed
+    )
+}
+
+fn format_privacy_policy_rule_enabled(response: &PrivacyPolicyRuleSetEnabledResponse) -> String {
+    format!(
+        "Privacy Policy Rule\nName: {}\nEnabled: {}",
+        response.name, response.enabled
+    )
+}
+
+fn format_privacy_policy_unbind(response: &PrivacyPolicyFieldUnbindResponse) -> String {
+    format!(
+        "Privacy Policy Field Unbind\nScope ID: {}\nRemoved: {}",
+        response.scope_id, response.removed
     )
 }
 
