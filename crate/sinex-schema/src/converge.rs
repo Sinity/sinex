@@ -731,7 +731,7 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
             mirror: Some(MirrorSpec {
                 schema: "audit",
                 table: "archived_events",
-                columns_to_drop: &["node_version", "occurrence_id"],
+                columns_to_drop: &["node_version", "occurrence_id", "superseded_by_event_id"],
                 // ts_coided is GENERATED ALWAYS AS in core.events, but must be a plain
                 // TIMESTAMPTZ in audit.archived_events (the expression is dropped by
                 // create_table_sql()). Skip it here — it already exists from LIKE
@@ -1244,8 +1244,10 @@ mod tests {
     async fn convergible_tables_resolve_known_metadata() -> TestResult<()> {
         let tables = convergible_tables()?;
         // The convergible table registry now includes all tables that need column
-        // convergence, named-constraint idempotency, and FK management.
-        assert_eq!(tables.len(), 13);
+        // convergence, named-constraint idempotency, and FK management. The count
+        // grew to 17 when the semantic.* lane tables and core embedding tables were
+        // added (#1054); the assertion had not been updated, so it failed on master.
+        assert_eq!(tables.len(), 17);
         assert_eq!(tables[0].meta.qualified_name, "core.events");
         Ok(())
     }

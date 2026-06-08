@@ -247,38 +247,31 @@ fn execute_run(
         }));
     }
 
-    let crate_name = parts[0];
+    let package_name = parts[0];
     let target_name = parts[1];
 
-    let crate_dir = match find_crate_dir(crate_name) {
+    let fuzz_dir = match find_fuzz_dir_for_package(package_name) {
         Ok(dir) => dir,
         Err(_e) => {
             return Ok(CommandResult::failure(StructuredError {
-                code: "CRATE_NOT_FOUND".to_string(),
-                message: format!("Could not find crate: {crate_name}"),
+                code: "FUZZ_PACKAGE_NOT_FOUND".to_string(),
+                message: format!("Could not find fuzz package: {package_name}"),
                 location: Some("fuzz::run".to_string()),
-                suggestion: Some("Available locations checked: crate/, tests/, xtask".to_string()),
+                suggestion: Some(
+                    "Run `xtask test fuzz --list` and use one of the listed package::target pairs"
+                        .to_string(),
+                ),
             }));
         }
     };
-
-    let fuzz_dir = crate_dir.join("fuzz");
-
-    if !fuzz_dir.exists() {
-        return Ok(CommandResult::failure(StructuredError {
-            code: "FUZZ_NOT_INITIALIZED".to_string(),
-            message: format!("Fuzz directory not found for {crate_name}"),
-            location: Some(format!("fuzz::run({crate_name})")),
-            suggestion: Some(format!(
-                "Create {crate_name}/fuzz target layout and rerun `xtask test --fuzz`"
-            )),
-        }));
-    }
 
     let mut builder = ProcessBuilder::cargo()
         .current_dir(&fuzz_dir)
         .args(["fuzz", "run"])
         .arg(target_name);
+    if let Some(ld_library_path) = fuzz_ld_library_path_from_env() {
+        builder = builder.env("LD_LIBRARY_PATH", ld_library_path);
+    }
 
     if max_time > 0 {
         builder = builder.with_timeout(Duration::from_secs(max_time.saturating_add(300)));
@@ -326,7 +319,7 @@ fn execute_run(
 
     Ok(CommandResult::success()
         .with_message(format!("Completed fuzzing {target}"))
-        .with_detail(format!("Crate: {crate_name}"))
+        .with_detail(format!("Package: {package_name}"))
         .with_detail(format!("Target: {target_name}"))
         .with_duration(ctx.elapsed()))
 }
@@ -346,11 +339,11 @@ fn execute_corpus(target: &str, ctx: &CommandContext) -> Result<CommandResult> {
         }));
     }
 
-    let crate_name = parts[0];
+    let package_name = parts[0];
     let target_name = parts[1];
 
-    let crate_dir = find_crate_dir(crate_name)?;
-    let corpus_dir = crate_dir.join("fuzz").join("corpus").join(target_name);
+    let fuzz_dir = find_fuzz_dir_for_package(package_name)?;
+    let corpus_dir = fuzz_dir.join("corpus").join(target_name);
 
     if !corpus_dir.exists() {
         if ctx.is_human() {
@@ -409,6 +402,97 @@ fn discover_fuzz_manifests() -> Result<Vec<PathBuf>> {
         }
     }
     Ok(manifests)
+}
+
+fn find_fuzz_dir_for_package(package_name: &str) -> Result<PathBuf> {
+    find_fuzz_dir_for_package_in_manifests(package_name, discover_fuzz_manifests()?)
+}
+
+fn find_fuzz_dir_for_package_in_manifests(
+    package_name: &str,
+    manifests: impl IntoIterator<Item = PathBuf>,
+) -> Result<PathBuf> {
+    for manifest in manifests {
+        let content = fs::read_to_string(&manifest)
+            .with_context(|| format!("failed to read fuzz manifest {}", manifest.display()))?;
+        let fuzz_manifest: FuzzManifest = toml::from_str(&content)
+            .with_context(|| format!("failed to parse fuzz manifest {}", manifest.display()))?;
+        if fuzz_manifest.package.name == package_name {
+            let fuzz_dir = manifest.parent().ok_or_else(|| {
+                color_eyre::eyre::eyre!(
+                    "fuzz manifest {} has no parent directory",
+                    manifest.display()
+                )
+            })?;
+            return Ok(fuzz_dir.to_path_buf());
+        }
+    }
+
+    bail!("Could not find fuzz package '{package_name}'")
+}
+
+fn fuzz_ld_library_path_from_env() -> Option<String> {
+    fuzz_ld_library_path(
+        std::env::var("NIX_LDFLAGS").ok().as_deref(),
+        std::env::var("LD_LIBRARY_PATH").ok().as_deref(),
+        libstdcxx_dir_from_cxx().as_deref(),
+    )
+}
+
+fn libstdcxx_dir_from_cxx() -> Option<String> {
+    let output = ProcessBuilder::new("g++")
+        .args(["-print-file-name=libstdc++.so.6"])
+        .run_capture()
+        .ok()?;
+    if !output.success() {
+        return None;
+    }
+    let path = output.stdout.trim();
+    if path.is_empty() || path == "libstdc++.so.6" {
+        return None;
+    }
+    Path::new(path)
+        .parent()
+        .map(|parent| parent.to_string_lossy().into_owned())
+}
+
+fn fuzz_ld_library_path(
+    nix_ldflags: Option<&str>,
+    existing: Option<&str>,
+    libstdcxx_dir: Option<&str>,
+) -> Option<String> {
+    let mut paths = Vec::new();
+    if let Some(nix_ldflags) = nix_ldflags {
+        for part in nix_ldflags.split_whitespace() {
+            if let Some(path) = part.strip_prefix("-L")
+                && !path.is_empty()
+                && !paths.iter().any(|existing| existing == path)
+            {
+                paths.push(path.to_string());
+            }
+        }
+    }
+
+    if let Some(path) = libstdcxx_dir
+        && !path.is_empty()
+        && !paths.iter().any(|known| known == path)
+    {
+        paths.push(path.to_string());
+    }
+
+    if let Some(existing) = existing {
+        for path in existing.split(':').filter(|path| !path.is_empty()) {
+            if !paths.iter().any(|known| known == path) {
+                paths.push(path.to_string());
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths.join(":"))
+    }
 }
 
 fn parse_fuzz_manifest(path: &Path) -> Result<Vec<(String, String)>> {
@@ -581,6 +665,65 @@ name = "helper"
         assert_eq!(
             targets,
             vec![("demo-fuzz".to_string(), "fuzz_input_validation".to_string())]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_find_fuzz_dir_resolves_manifest_package_name() -> ::xtask::sandbox::TestResult<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let fuzz_dir = dir.path().join("fuzz");
+        fs::create_dir_all(&fuzz_dir)?;
+        let manifest = fuzz_dir.join("Cargo.toml");
+        fs::write(
+            &manifest,
+            r#"[package]
+name = "demo-fuzz"
+
+[[bin]]
+name = "fuzz_input_validation"
+"#,
+        )?;
+
+        let resolved = find_fuzz_dir_for_package_in_manifests("demo-fuzz", [manifest.clone()])?;
+        assert_eq!(resolved, fuzz_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_find_fuzz_dir_rejects_unknown_manifest_package()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let fuzz_dir = dir.path().join("fuzz");
+        fs::create_dir_all(&fuzz_dir)?;
+        let manifest = fuzz_dir.join("Cargo.toml");
+        fs::write(
+            &manifest,
+            r#"[package]
+name = "demo-fuzz"
+"#,
+        )?;
+
+        let error = find_fuzz_dir_for_package_in_manifests("missing-fuzz", [manifest])
+            .expect_err("unknown fuzz package should be rejected");
+        assert!(error.to_string().contains("Could not find fuzz package"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_fuzz_ld_library_path_merges_nix_ldflags_and_existing_path()
+    -> ::xtask::sandbox::TestResult<()> {
+        let path = fuzz_ld_library_path(
+            Some("-rpath /ignored -L/nix/store/gcc-lib/lib -L/nix/store/dbus/lib"),
+            Some("/nix/store/dbus/lib:/extra/lib"),
+            Some("/nix/store/cxx/lib"),
+        )
+        .expect("library path should be built");
+
+        assert_eq!(
+            path,
+            "/nix/store/gcc-lib/lib:/nix/store/dbus/lib:/nix/store/cxx/lib:/extra/lib"
         );
         Ok(())
     }
