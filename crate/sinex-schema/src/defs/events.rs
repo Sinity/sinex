@@ -414,6 +414,14 @@ impl Events {
                 .col(Events::ScopeKey)
                 .cond_where(Expr::col(Events::ScopeKey).is_not_null())
                 .to_owned(),
+            // Admission dedup: suppress events whose equivalence_key already exists
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_equivalence_key")
+                .table(Self::table_iden())
+                .col(Events::EquivalenceKey)
+                .cond_where(Expr::col(Events::EquivalenceKey).is_not_null())
+                .to_owned(),
             // Operation lineage: find events created by a specific operation
             Index::create()
                 .if_not_exists()

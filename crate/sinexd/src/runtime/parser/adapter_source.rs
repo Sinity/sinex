@@ -1356,12 +1356,9 @@ fn intent_to_event_with_anchor(
 
     // #1570 Prong C: carry the parser's occurrence (natural) key onto the event
     // as `equivalence_key` so it lands in a queryable column. This feeds the
-    // curation duplicate-detection workbench (#1448), which groups on
-    // COALESCE(payload->>'natural_key_hash', payload->>'natural_key', equivalence_key),
-    // for every source whose OccurrenceIdentity is Natural/Uuid5From. Without
-    // this the key was computed by parsers and then dropped here, so source
-    // events never reached the workbench. equivalence_key is only consumed as a
-    // query filter — it drives no dedup/suppression, so this is purely additive.
+    // curation duplicate-detection workbench (#1448) and also drives admission
+    // suppression (#1637): the event_engine will suppress a new event if a live
+    // row with the same equivalence_key already exists in core.events.
     built.equivalence_key =
         sinex_primitives::parser::maybe_occurrence_key_string(intent.occurrence_key.as_ref());
 
