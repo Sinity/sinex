@@ -45,7 +45,9 @@ use sinex_primitives::rpc::{
     pkm::{PKM_CREATE_ENTITIES_METHOD, PKM_CREATE_NOTE_METHOD, PKM_LINK_ENTITIES_METHOD},
     privacy::{
         PRIVACY_POLICY_BACKEND_ADD_METHOD, PRIVACY_POLICY_DICTIONARY_ADD_METHOD,
+        PRIVACY_POLICY_FIELD_BIND_METHOD, PRIVACY_POLICY_FIELD_UNBIND_METHOD,
         PRIVACY_POLICY_LIST_METHOD, PRIVACY_POLICY_RULE_ADD_METHOD,
+        PRIVACY_POLICY_RULE_REMOVE_METHOD, PRIVACY_POLICY_RULE_SET_ENABLED_METHOD,
         PRIVACY_POLICY_SCOPE_BIND_METHOD, PRIVACY_POLICY_SEED_BUILTIN_METHOD,
         PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
         PRIVACY_PRIVATE_MODE_STATUS_METHOD,
@@ -613,7 +615,9 @@ fn build_registry_impl() -> RpcRegistry {
         handle_llm_budget_report, handle_llm_prompts_list, handle_llm_route_explain,
         handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
         handle_privacy_policy_backend_add, handle_privacy_policy_dictionary_add,
+        handle_privacy_policy_field_bind, handle_privacy_policy_field_unbind,
         handle_privacy_policy_list, handle_privacy_policy_rule_add,
+        handle_privacy_policy_rule_remove, handle_privacy_policy_rule_set_enabled,
         handle_privacy_policy_scope_bind, handle_privacy_policy_seed_builtin,
         handle_private_mode_disable_service, handle_private_mode_enable_service,
         handle_private_mode_status_service, handle_replay_approve_operation,
@@ -968,6 +972,22 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(
             PRIVACY_POLICY_SCOPE_BIND_METHOD,
             boxed!(handle_privacy_policy_scope_bind),
+        )
+        .pool_typed_rpc(
+            PRIVACY_POLICY_RULE_REMOVE_METHOD,
+            boxed!(handle_privacy_policy_rule_remove),
+        )
+        .pool_typed_rpc(
+            PRIVACY_POLICY_RULE_SET_ENABLED_METHOD,
+            boxed!(handle_privacy_policy_rule_set_enabled),
+        )
+        .pool_typed_rpc(
+            PRIVACY_POLICY_FIELD_BIND_METHOD,
+            boxed!(handle_privacy_policy_field_bind),
+        )
+        .pool_typed_rpc(
+            PRIVACY_POLICY_FIELD_UNBIND_METHOD,
+            boxed!(handle_privacy_policy_field_unbind),
         )
         // Replay create/preview (Write - doesn't execute yet)
         .replay_typed_rpc(

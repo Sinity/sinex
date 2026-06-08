@@ -277,6 +277,22 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "privacy policy rule remove",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy rule enable",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy rule disable",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy scope unbind",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "privacy audit",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -818,8 +834,12 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "privacy policy backend add",
         "privacy policy dictionary add",
         "privacy policy rule add",
+        "privacy policy rule remove",
+        "privacy policy rule enable",
+        "privacy policy rule disable",
         "privacy policy seed builtin",
         "privacy policy scope bind",
+        "privacy policy scope unbind",
         "replay approve",
         "replay cancel",
         "replay execute",
@@ -891,8 +911,12 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "privacy policy backend add"
         | "privacy policy dictionary add"
         | "privacy policy rule add"
+        | "privacy policy rule remove"
+        | "privacy policy rule enable"
+        | "privacy policy rule disable"
         | "privacy policy seed builtin"
         | "privacy policy scope bind"
+        | "privacy policy scope unbind"
         | "replay approve"
         | "replay cancel"
         | "replay execute"
@@ -976,8 +1000,12 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "privacy policy backend add" => &[methods::PRIVACY_POLICY_BACKEND_ADD],
         "privacy policy dictionary add" => &[methods::PRIVACY_POLICY_DICTIONARY_ADD],
         "privacy policy rule add" => &[methods::PRIVACY_POLICY_RULE_ADD],
+        "privacy policy rule remove" => &[methods::PRIVACY_POLICY_RULE_REMOVE],
+        "privacy policy rule enable" => &[methods::PRIVACY_POLICY_RULE_SET_ENABLED],
+        "privacy policy rule disable" => &[methods::PRIVACY_POLICY_RULE_SET_ENABLED],
         "privacy policy seed builtin" => &[methods::PRIVACY_POLICY_SEED_BUILTIN],
         "privacy policy scope bind" => &[methods::PRIVACY_POLICY_SCOPE_BIND],
+        "privacy policy scope unbind" => &[methods::PRIVACY_POLICY_FIELD_UNBIND],
         "privacy audit" => &[
             methods::PRIVACY_PRIVATE_MODE_STATUS,
             methods::DLQ_LIST,
