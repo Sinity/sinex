@@ -68,15 +68,21 @@ use sinex_primitives::rpc::{
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     privacy::{
         PRIVACY_POLICY_BACKEND_ADD_METHOD, PRIVACY_POLICY_DICTIONARY_ADD_METHOD,
+        PRIVACY_POLICY_FIELD_BIND_METHOD, PRIVACY_POLICY_FIELD_UNBIND_METHOD,
         PRIVACY_POLICY_LIST_METHOD, PRIVACY_POLICY_RULE_ADD_METHOD,
+        PRIVACY_POLICY_RULE_REMOVE_METHOD, PRIVACY_POLICY_RULE_SET_ENABLED_METHOD,
         PRIVACY_POLICY_SCOPE_BIND_METHOD, PRIVACY_POLICY_SEED_BUILTIN_METHOD,
         PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
         PRIVACY_PRIVATE_MODE_STATUS_METHOD, PrivacyPolicyBackendAddRequest,
-        PrivacyPolicyDictionaryAddRequest, PrivacyPolicyListRequest, PrivacyPolicyListResponse,
-        PrivacyPolicyMutationResponse, PrivacyPolicyRuleAddRequest, PrivacyPolicyScopeBindRequest,
-        PrivacyPolicySeedBuiltinRequest, PrivacyPolicySeedBuiltinResponse,
-        PrivateModeDisableRequest, PrivateModeEnableRequest, PrivateModeStateResponse,
-        PrivateModeStatusRequest,
+        PrivacyPolicyDictionaryAddRequest, PrivacyPolicyFieldBindRequest,
+        PrivacyPolicyFieldBindResponse, PrivacyPolicyFieldUnbindRequest,
+        PrivacyPolicyFieldUnbindResponse, PrivacyPolicyListRequest, PrivacyPolicyListResponse,
+        PrivacyPolicyMutationResponse, PrivacyPolicyRuleAddRequest,
+        PrivacyPolicyRuleRemoveRequest, PrivacyPolicyRuleRemoveResponse,
+        PrivacyPolicyRuleSetEnabledRequest, PrivacyPolicyRuleSetEnabledResponse,
+        PrivacyPolicyScopeBindRequest, PrivacyPolicySeedBuiltinRequest,
+        PrivacyPolicySeedBuiltinResponse, PrivateModeDisableRequest, PrivateModeEnableRequest,
+        PrivateModeStateResponse, PrivateModeStatusRequest,
     },
     replay::{
         REPLAY_APPROVE_OPERATION_METHOD, REPLAY_CANCEL_OPERATION_METHOD,
@@ -1537,6 +1543,38 @@ impl GatewayClient {
         req: PrivacyPolicySeedBuiltinRequest,
     ) -> Result<PrivacyPolicySeedBuiltinResponse> {
         self.call_typed(PRIVACY_POLICY_SEED_BUILTIN_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_rule_remove(
+        &self,
+        req: PrivacyPolicyRuleRemoveRequest,
+    ) -> Result<PrivacyPolicyRuleRemoveResponse> {
+        self.call_typed(PRIVACY_POLICY_RULE_REMOVE_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_rule_set_enabled(
+        &self,
+        req: PrivacyPolicyRuleSetEnabledRequest,
+    ) -> Result<PrivacyPolicyRuleSetEnabledResponse> {
+        self.call_typed(PRIVACY_POLICY_RULE_SET_ENABLED_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_field_bind(
+        &self,
+        req: PrivacyPolicyFieldBindRequest,
+    ) -> Result<PrivacyPolicyFieldBindResponse> {
+        self.call_typed(PRIVACY_POLICY_FIELD_BIND_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_field_unbind(
+        &self,
+        req: PrivacyPolicyFieldUnbindRequest,
+    ) -> Result<PrivacyPolicyFieldUnbindResponse> {
+        self.call_typed(PRIVACY_POLICY_FIELD_UNBIND_METHOD, &req)
             .await
     }
 

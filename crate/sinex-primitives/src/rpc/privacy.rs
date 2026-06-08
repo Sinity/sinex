@@ -104,6 +104,50 @@ pub const PRIVACY_POLICY_SCOPE_BIND_METHOD: RpcMethod<
     RpcMutability::Mutating,
 );
 
+pub const PRIVACY_POLICY_RULE_REMOVE_METHOD: RpcMethod<
+    PrivacyPolicyRuleRemoveRequest,
+    PrivacyPolicyRuleRemoveResponse,
+> = RpcMethod::new(
+    methods::PRIVACY_POLICY_RULE_REMOVE,
+    RpcRole::Write,
+    RpcDomain::Privacy,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const PRIVACY_POLICY_RULE_SET_ENABLED_METHOD: RpcMethod<
+    PrivacyPolicyRuleSetEnabledRequest,
+    PrivacyPolicyRuleSetEnabledResponse,
+> = RpcMethod::new(
+    methods::PRIVACY_POLICY_RULE_SET_ENABLED,
+    RpcRole::Write,
+    RpcDomain::Privacy,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const PRIVACY_POLICY_FIELD_BIND_METHOD: RpcMethod<
+    PrivacyPolicyFieldBindRequest,
+    PrivacyPolicyFieldBindResponse,
+> = RpcMethod::new(
+    methods::PRIVACY_POLICY_FIELD_BIND,
+    RpcRole::Write,
+    RpcDomain::Privacy,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const PRIVACY_POLICY_FIELD_UNBIND_METHOD: RpcMethod<
+    PrivacyPolicyFieldUnbindRequest,
+    PrivacyPolicyFieldUnbindResponse,
+> = RpcMethod::new(
+    methods::PRIVACY_POLICY_FIELD_UNBIND,
+    RpcRole::Write,
+    RpcDomain::Privacy,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PrivateModeStatusRequest {}
 
@@ -232,6 +276,58 @@ pub struct PrivacyPolicyMutationResponse {
     pub id: Uuid,
     pub kind: String,
     pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyPolicyRuleRemoveRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyPolicyRuleRemoveResponse {
+    pub name: String,
+    pub removed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyPolicyRuleSetEnabledRequest {
+    pub name: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyPolicyRuleSetEnabledResponse {
+    pub name: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyPolicyFieldBindRequest {
+    pub rule_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_path: Option<String>,
+    #[serde(default)]
+    pub priority: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyPolicyFieldBindResponse {
+    pub scope: PrivacyPolicyFieldScope,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyPolicyFieldUnbindRequest {
+    pub scope_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyPolicyFieldUnbindResponse {
+    pub scope_id: Uuid,
+    pub removed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
