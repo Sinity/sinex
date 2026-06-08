@@ -755,52 +755,43 @@ pub(crate) fn log_access_audit(
 
 /// Rate limiter that can be either in-memory or distributed via NATS KV.
 ///
-/// # Policy divergence — known and documented (#1578)
-///
-/// Three independent rate-limiting subsystems exist in sinexd:
+/// Both backends enforce per-role quotas keyed on `(token, role)`:
 ///
 /// 1. **This enum** — covers the HTTP RPC path (`/rpc`, `/events/stream`).
 ///    - `InMemory`: `TokenRateLimiter` — per-(token, role) RPS+burst via `governor`.
 ///      Role quotas apply: admin < write < readonly by default.
-///    - `Distributed`: `DistributedRateLimiter` — per-token requests/minute via
-///      NATS KV. **Role granularity is dropped** (global token budget only).
-///      The `role` parameter is accepted for API symmetry but ignored.
+///    - `Distributed`: `DistributedRateLimiter` — per-(token, role) RPM via NATS KV.
+///      Each role has its own KV key and window budget derived from the same
+///      per-role RPS settings, so switching backends does not change effective quotas.
 ///
 /// 2. **`native_messaging::RateLimiter`** (private, in that module) — covers the
 ///    browser-extension native-messaging path. Keyed on `extension_id`, enforces
 ///    a per-minute sliding window. Config comes from `ExtensionCapabilities`, not
 ///    `GatewayConfig`. It does not share state or semantics with this enum.
 ///
-/// Merging all three into one type would require a larger refactor (#1578 deferred).
-/// Until then, this comment is the explicit divergence record:
-/// - A quota tightened in `RateLimitConfig` does **not** constrain native messaging.
-/// - Switching from in-memory to distributed **silently removes role quotas** for
-///   the RPC path; the distributed backend applies a flat per-token RPM budget.
-///
-/// Follow-up: carry `role` on the distributed path so policy is uniform regardless
-/// of backend selection.
+/// Residual divergence: a quota tightened in `RateLimitConfig` does **not**
+/// constrain native messaging. That gap is tracked separately (#1578).
 #[derive(Clone)]
 pub(crate) enum RateLimiter {
     /// In-memory rate limiter (fast, but state lost on restart).
     /// Applies per-role RPS+burst quotas via `governor`.
     InMemory(Arc<TokenRateLimiter>),
     /// Distributed rate limiter via NATS KV (shared across instances, survives restarts).
-    /// Applies a flat per-token requests/minute budget; role quotas are not enforced.
+    /// Applies per-role RPM quotas with NATS KV keys scoped per (token, role).
     Distributed(Arc<DistributedRateLimiter>),
 }
 
 impl RateLimiter {
     /// Check if a request is allowed for the given (token, role).
     ///
-    /// **Policy note:** the `role` parameter is used by the in-memory path to enforce
-    /// per-role RPS quotas, but is **ignored** by the distributed path, which applies
-    /// only a flat per-token RPM budget. See the enum-level doc comment for details.
+    /// Both backends enforce per-role quotas: `InMemory` uses RPS+burst via `governor`;
+    /// `Distributed` uses per-window RPM via NATS KV with keys scoped per (token, role).
     async fn check(&self, token: &str, role: crate::api::auth::Role) -> bool {
         match self {
             RateLimiter::InMemory(limiter) => limiter.check(token, role).is_ok(),
-            // role is intentionally not forwarded — distributed backend has no per-role
-            // quota concept. See enum-level doc comment (#1578).
-            RateLimiter::Distributed(limiter) => limiter.check_and_increment(token).await,
+            RateLimiter::Distributed(limiter) => {
+                limiter.check_and_increment(token, role).await
+            }
         }
     }
 }

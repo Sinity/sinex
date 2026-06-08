@@ -281,14 +281,6 @@ pub struct GatewayConfig {
     )]
     pub rpc_rate_limit_window_secs: u64,
 
-    /// Distributed rate-limit allowance per minute.
-    #[serde(default = "default_rate_limit_per_minute")]
-    #[sinex_config(
-        env = "SINEX_API_RATE_LIMIT_PER_MINUTE",
-        default_expr = "default_rate_limit_per_minute()"
-    )]
-    pub rpc_rate_limit_per_minute: u32,
-
     /// Pipeline namespace (`SINEX_NAMESPACE`), used for NATS subject/stream
     /// isolation in tests. The SSE SubscriptionBus subscribes to
     /// `{namespace}.events.confirmations.>`; it MUST match the namespace the
@@ -396,10 +388,6 @@ fn default_rate_limit_window_secs() -> u64 {
     60
 }
 
-fn default_rate_limit_per_minute() -> u32 {
-    6000
-}
-
 fn default_native_messaging_read_timeout_secs() -> u64 {
     30
 }
@@ -448,7 +436,6 @@ impl Default for GatewayConfig {
             rpc_rate_limit_burst: default_rate_limit_burst(),
             rpc_rate_limit_idle_timeout_secs: default_rate_limit_idle_timeout_secs(),
             rpc_rate_limit_window_secs: default_rate_limit_window_secs(),
-            rpc_rate_limit_per_minute: default_rate_limit_per_minute(),
             namespace: None,
         }
     }
@@ -609,7 +596,6 @@ impl GatewayConfig {
     const DEFAULT_RATE_WRITE_RPS: NonZeroU32 = NonZeroU32::new(100).unwrap();
     const DEFAULT_RATE_ADMIN_RPS: NonZeroU32 = NonZeroU32::new(50).unwrap();
     const DEFAULT_RATE_BURST: NonZeroU32 = NonZeroU32::new(50).unwrap();
-    const DEFAULT_RATE_PER_MIN: NonZeroU32 = NonZeroU32::new(6000).unwrap();
 
     #[must_use]
     pub fn rate_limit_requests_per_second(&self) -> NonZeroU32 {
@@ -634,11 +620,6 @@ impl GatewayConfig {
     #[must_use]
     pub fn rate_limit_burst(&self) -> NonZeroU32 {
         NonZeroU32::new(self.rpc_rate_limit_burst).unwrap_or(Self::DEFAULT_RATE_BURST)
-    }
-
-    #[must_use]
-    pub fn rate_limit_per_minute(&self) -> NonZeroU32 {
-        NonZeroU32::new(self.rpc_rate_limit_per_minute).unwrap_or(Self::DEFAULT_RATE_PER_MIN)
     }
 
     #[must_use]

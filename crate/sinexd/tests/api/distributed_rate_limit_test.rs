@@ -7,6 +7,7 @@
 //! - CAS retry exhaustion (all retries fail -> reject)
 //! - Disabled limiter always allows
 
+use sinexd::api::auth::Role;
 use sinexd::api::distributed_rate_limit::{DistributedRateLimitConfig, DistributedRateLimiter};
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
@@ -25,9 +26,12 @@ async fn start_limiter(
 }
 
 fn config_with_limit(rpm: u32) -> DistributedRateLimitConfig {
+    #[allow(clippy::expect_used)] // Test helper: rpm is always >0 from callers
+    let limit = NonZeroU32::new(rpm).expect("non-zero limit");
     DistributedRateLimitConfig {
-        #[allow(clippy::expect_used)] // Test helper: rpm is always >0 from callers
-        requests_per_minute: NonZeroU32::new(rpm).expect("non-zero limit"),
+        readonly_rpm: limit,
+        write_rpm: limit,
+        admin_rpm: limit,
         window_seconds: 60,
         enabled: true,
     }
@@ -40,12 +44,12 @@ async fn rate_limit_allows_requests_under_limit(ctx: TestContext) -> TestResult<
     let (_ctx, limiter) = start_limiter(ctx, config_with_limit(100)).await?;
 
     // First request should always pass
-    let allowed = limiter.check_and_increment("token-a").await;
+    let allowed = limiter.check_and_increment("token-a", Role::ReadOnly).await;
     assert!(allowed, "First request under limit should be allowed");
 
     // Several more should also pass (well under 100)
     for i in 0..10 {
-        let allowed = limiter.check_and_increment("token-a").await;
+        let allowed = limiter.check_and_increment("token-a", Role::ReadOnly).await;
         assert!(allowed, "Request {i} under limit should be allowed");
     }
 
@@ -59,11 +63,11 @@ async fn rate_limit_rejects_requests_over_limit(ctx: TestContext) -> TestResult<
 
     // Exhaust the limit
     for _ in 0..5 {
-        limiter.check_and_increment("token-exhaust").await;
+        limiter.check_and_increment("token-exhaust", Role::ReadOnly).await;
     }
 
     // Next request must be rejected
-    let allowed = limiter.check_and_increment("token-exhaust").await;
+    let allowed = limiter.check_and_increment("token-exhaust", Role::ReadOnly).await;
     assert!(!allowed, "Request over the limit must be rejected");
 
     Ok(())
@@ -77,13 +81,13 @@ async fn rate_limit_per_token_isolation(ctx: TestContext) -> TestResult<()> {
 
     // Exhaust token-x
     for _ in 0..3 {
-        limiter.check_and_increment("token-x").await;
+        limiter.check_and_increment("token-x", Role::ReadOnly).await;
     }
-    let rejected = !limiter.check_and_increment("token-x").await;
+    let rejected = !limiter.check_and_increment("token-x", Role::ReadOnly).await;
     assert!(rejected, "token-x should be exhausted");
 
     // token-y should be completely independent and still pass
-    let allowed = limiter.check_and_increment("token-y").await;
+    let allowed = limiter.check_and_increment("token-y", Role::ReadOnly).await;
     assert!(
         allowed,
         "token-y must be independent from token-x and allowed"
@@ -98,14 +102,17 @@ async fn rate_limit_kv_uses_hashed_token_keys(ctx: TestContext) -> TestResult<()
     let token = "sensitive.token.value";
 
     assert!(
-        limiter.check_and_increment(token).await,
+        limiter.check_and_increment(token, Role::ReadOnly).await,
         "first request should reserve quota"
     );
 
     let nats = ctx.nats_handle()?;
     let js = nats.jetstream().await?;
     let kv = js.get_key_value("sinex_api_rate_limits").await?;
-    let hashed_key = format!("token.{}", blake3::hash(token.as_bytes()).to_hex());
+    let hashed_key = format!(
+        "token.{}.readonly",
+        blake3::hash(token.as_bytes()).to_hex()
+    );
     let raw_key = format!("token.{token}");
 
     assert!(
@@ -124,8 +131,11 @@ async fn rate_limit_kv_uses_hashed_token_keys(ctx: TestContext) -> TestResult<()
 
 #[sinex_test]
 async fn disabled_limiter_always_allows(ctx: TestContext) -> TestResult<()> {
+    let limit = NonZeroU32::new(1).expect("non-zero");
     let config = DistributedRateLimitConfig {
-        requests_per_minute: NonZeroU32::new(1).expect("non-zero"),
+        readonly_rpm: limit,
+        write_rpm: limit,
+        admin_rpm: limit,
         window_seconds: 60,
         enabled: false,
     };
@@ -133,7 +143,7 @@ async fn disabled_limiter_always_allows(ctx: TestContext) -> TestResult<()> {
 
     // Even with limit=1, disabled should allow everything
     for _ in 0..50 {
-        let allowed = limiter.check_and_increment("any-token").await;
+        let allowed = limiter.check_and_increment("any-token", Role::ReadOnly).await;
         assert!(allowed, "Disabled limiter must always allow requests");
     }
 
@@ -145,8 +155,11 @@ async fn is_enabled_reflects_config(ctx: TestContext) -> TestResult<()> {
     let (ctx, enabled_limiter) = start_limiter(ctx, config_with_limit(100)).await?;
     assert!(enabled_limiter.is_enabled());
 
+    let limit = NonZeroU32::new(100).expect("non-zero");
     let disabled_config = DistributedRateLimitConfig {
-        requests_per_minute: NonZeroU32::new(100).expect("non-zero"),
+        readonly_rpm: limit,
+        write_rpm: limit,
+        admin_rpm: limit,
         window_seconds: 60,
         enabled: false,
     };
@@ -166,7 +179,7 @@ async fn fail_closed_on_nats_kv_unavailable(ctx: TestContext) -> TestResult<()> 
     let (ctx, limiter) = start_limiter(ctx, config_with_limit(1000)).await?;
 
     // Verify it works while NATS is alive
-    let allowed = limiter.check_and_increment("fail-closed-token").await;
+    let allowed = limiter.check_and_increment("fail-closed-token", Role::ReadOnly).await;
     assert!(allowed, "Should allow while NATS is up");
 
     // Kill NATS server
@@ -180,7 +193,7 @@ async fn fail_closed_on_nats_kv_unavailable(ctx: TestContext) -> TestResult<()> 
     let mut first_fail_closed_elapsed = None;
     for _ in 0..100 {
         let started = Instant::now();
-        if !limiter.check_and_increment("fail-closed-token").await {
+        if !limiter.check_and_increment("fail-closed-token", Role::ReadOnly).await {
             first_fail_closed_elapsed = Some(started.elapsed());
             break;
         }
@@ -196,7 +209,7 @@ async fn fail_closed_on_nats_kv_unavailable(ctx: TestContext) -> TestResult<()> 
 
     // Once local bucket is drained, next request MUST be rejected (fail closed)
     let same_token_started = Instant::now();
-    let result = limiter.check_and_increment("fail-closed-token").await;
+    let result = limiter.check_and_increment("fail-closed-token", Role::ReadOnly).await;
     let same_token_elapsed = same_token_started.elapsed();
     assert!(
         !result,
@@ -210,7 +223,7 @@ async fn fail_closed_on_nats_kv_unavailable(ctx: TestContext) -> TestResult<()> 
 
     // A different token with no local bucket should also be rejected immediately
     let new_token_started = Instant::now();
-    let result_new_token = limiter.check_and_increment("brand-new-token").await;
+    let result_new_token = limiter.check_and_increment("brand-new-token", Role::ReadOnly).await;
     let new_token_elapsed = new_token_started.elapsed();
     assert!(
         !result_new_token,
@@ -239,7 +252,7 @@ async fn rate_limit_concurrent_tokens(ctx: TestContext) -> TestResult<()> {
         handles.push(tokio::spawn(async move {
             let mut allowed = 0u32;
             for _ in 0..10 {
-                if limiter.check_and_increment(&token).await {
+                if limiter.check_and_increment(&token, Role::ReadOnly).await {
                     allowed += 1;
                 }
             }
@@ -278,7 +291,7 @@ async fn rate_limit_same_token_first_request_race_respects_limit(
         let barrier = barrier.clone();
         handles.push(tokio::spawn(async move {
             barrier.wait().await;
-            limiter.check_and_increment("same-token-race").await
+            limiter.check_and_increment("same-token-race", Role::ReadOnly).await
         }));
     }
 
@@ -302,7 +315,9 @@ async fn rate_limit_same_token_first_request_race_respects_limit(
 #[sinex_test]
 async fn default_config_has_sane_values() -> TestResult<()> {
     let config = DistributedRateLimitConfig::default();
-    assert_eq!(config.requests_per_minute.get(), 6000);
+    assert_eq!(config.readonly_rpm.get(), 12_000); // 200 req/s × 60s
+    assert_eq!(config.write_rpm.get(), 6_000); // 100 req/s × 60s
+    assert_eq!(config.admin_rpm.get(), 3_000); // 50 req/s × 60s
     assert_eq!(config.window_seconds, 60);
     assert!(config.enabled);
     Ok(())
