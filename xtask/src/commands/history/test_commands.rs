@@ -39,7 +39,7 @@ struct TestRunOverheadRow {
     overhead_classification: String,
     top_stage_name: Option<String>,
     top_stage_duration_secs: Option<f64>,
-    unaccounted_overhead_secs: Option<f64>,
+    unstaged_invocation_secs: Option<f64>,
     host_pressure_level: String,
     host_pressure_reason: Option<String>,
     host_io_pressure_full_avg10_max: Option<f64>,
@@ -72,7 +72,7 @@ impl TestRunOverheadRow {
                 .stage_breakdown
                 .first()
                 .map(|stage| stage.total_duration_secs),
-            unaccounted_overhead_secs: analysis.unaccounted_overhead_secs,
+            unstaged_invocation_secs: analysis.unstaged_invocation_secs,
             host_pressure_level: host_pressure.map_or_else(
                 || "clear_or_unrecorded".to_string(),
                 |pressure| pressure.level.clone(),
@@ -819,10 +819,10 @@ pub(super) fn execute_tests_analyze(
                         overhead.non_test_overhead_secs,
                         overhead.classification
                     );
-                    if let Some(unaccounted) = analysis.unaccounted_overhead_secs {
+                    if let Some(unstaged) = analysis.unstaged_invocation_secs {
                         println!(
-                            "  Unaccounted after recorded stages + test bodies: {:.1}s",
-                            unaccounted
+                            "  Unstaged invocation time after recorded stages: {:.1}s",
+                            unstaged
                         );
                     }
                 }
@@ -830,7 +830,7 @@ pub(super) fn execute_tests_analyze(
                 if !analysis.stage_breakdown.is_empty() {
                     println!("\n{}", style("Recorded Stage Breakdown:").cyan().bold());
                     let mut builder = Builder::new();
-                    builder.push_record(["STAGE", "RUNS", "TOTAL", "AVG", "MAX", "OK"]);
+                    builder.push_record(["STAGE", "RUNS", "TOTAL", "AVG", "TAIL", "OK"]);
                     for stage in &analysis.stage_breakdown {
                         builder.push_record([
                             stage.stage_name.clone(),
@@ -1045,7 +1045,7 @@ fn execute_tests_overhead(
                 "BODY %",
                 "CLASS",
                 "TOP STAGE",
-                "UNACCT",
+                "UNSTAGED",
                 "IO.FULL",
                 "MEM.FULL",
             ]);
@@ -1059,7 +1059,7 @@ fn execute_tests_overhead(
                     format!("{:.1}%", row.test_body_ratio * 100.0),
                     row.overhead_classification.clone(),
                     format_top_stage(row),
-                    row.unaccounted_overhead_secs
+                    row.unstaged_invocation_secs
                         .map(|seconds| format!("{seconds:.1}s"))
                         .unwrap_or_else(|| "-".to_string()),
                     format_optional_pressure(row.host_io_pressure_full_avg10_max),

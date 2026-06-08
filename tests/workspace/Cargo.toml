@@ -19,7 +19,7 @@ sqlx = { workspace = true }
 tempfile = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
-xtask = { path = "../../xtask", features = ["runtime-introspection"] }
+xtask = { path = "../../xtask" }
 
 sinex-db = { path = "../../crate/sinex-db" }
 sinex-primitives = { path = "../../crate/sinex-primitives" }

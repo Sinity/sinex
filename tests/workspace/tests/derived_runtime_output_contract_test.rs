@@ -26,8 +26,8 @@ use sinexd::runtime::automaton::{
 };
 use sinexd::runtime::stream::{RuntimeInitContext, RuntimeModule};
 use sinexd::runtime::{ShutdownConfig, automaton::Automaton};
+use test_runtime::{TestRuntime, TestRuntimeBuilder};
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::{TestRuntime, TestRuntimeBuilder};
 
 #[sinex_test(timeout = 90)]
 async fn production_automatons_emit_queryable_synthesis_events(ctx: TestContext) -> TestResult<()> {
@@ -401,4 +401,130 @@ fn assert_synthesis_events(
         }
     }
     Ok(())
+}
+
+/// Runtime scaffold for this test.
+///
+/// Relocated from `xtask::sandbox::runtime` (the module that carried xtask's
+/// only `sinexd` dependency). This is the sole consumer, so the helper lives
+/// here instead of in the shared sandbox; xtask no longer links `sinexd`.
+mod test_runtime {
+    use std::{collections::HashMap, sync::Arc};
+
+    use camino::Utf8PathBuf;
+    use sinex_primitives::{
+        Event, HostName, JsonValue, Uuid, constants::buffers::DEFAULT_EVENT_CHANNEL_SIZE,
+    };
+    use sinexd::runtime::{
+        EventTransport,
+        checkpoint::CheckpointManager,
+        nats_publisher::NatsPublisher,
+        stream::{EventEmitter, RuntimeContext, RuntimeHandles, ServiceInfo},
+    };
+    use tokio::sync::mpsc;
+    use xtask::sandbox::nats::create_or_open_kv_store;
+    use xtask::sandbox::{EphemeralNats, Sandbox};
+
+    /// Fully wired runtime scaffold for automaton integration tests.
+    pub struct TestRuntime {
+        pub runtime: RuntimeContext,
+        pub event_rx: mpsc::Receiver<Event<JsonValue>>,
+        /// Keeps the ephemeral NATS handle alive for the runtime's lifetime.
+        #[allow(dead_code)]
+        nats: Arc<EphemeralNats>,
+    }
+
+    /// Builder for [`TestRuntime`].
+    pub struct TestRuntimeBuilder<'ctx> {
+        ctx: &'ctx Sandbox,
+        service_name: String,
+        dry_run: bool,
+        raw_config: HashMap<String, serde_json::Value>,
+    }
+
+    impl<'ctx> TestRuntimeBuilder<'ctx> {
+        pub fn new(ctx: &'ctx Sandbox, service_name: impl Into<String>) -> Self {
+            Self {
+                ctx,
+                service_name: service_name.into(),
+                dry_run: false,
+                raw_config: HashMap::new(),
+            }
+        }
+
+        pub async fn build(self) -> color_eyre::Result<TestRuntime> {
+            let TestRuntimeBuilder {
+                ctx,
+                service_name,
+                dry_run,
+                raw_config,
+            } = self;
+
+            let nats_client = ctx.ensure_nats().await?;
+            let nats = ctx.nats_handle()?;
+            let publisher = Arc::new(NatsPublisher::new(nats_client.clone()));
+
+            let (event_tx, event_rx) = mpsc::channel(DEFAULT_EVENT_CHANNEL_SIZE);
+            let emitter = EventEmitter::new(event_tx, dry_run);
+
+            let js = async_nats::jetstream::new(nats_client);
+            let kv = create_or_open_kv_store(
+                &js,
+                async_nats::jetstream::kv::Config {
+                    bucket: format!(
+                        "KV_{}",
+                        sinex_primitives::environment().nats_kv_bucket_name("sinex_checkpoints")
+                    ),
+                    history: 1,
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+            let checkpoint_manager = Arc::new(CheckpointManager::new(
+                kv,
+                service_name.clone(),
+                "test".to_string(),
+                format!(
+                    "{}-{}",
+                    service_name,
+                    Uuid::now_v7().to_string().to_lowercase()
+                ),
+            ));
+
+            let handles = RuntimeHandles::new(
+                ctx.pool.clone(),
+                checkpoint_manager,
+                emitter.clone(),
+                EventTransport::Nats(publisher),
+                None,
+                None,
+            );
+
+            let work_dir = Utf8PathBuf::from_path_buf(sinex_primitives::environment().temp_dir())
+                .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex-test"));
+
+            let service_info = ServiceInfo::new(
+                service_name.clone(),
+                service_name,
+                HostName::from_static("sandbox-test-host"),
+                work_dir.clone().into_std_path_buf(),
+                dry_run,
+                format!("sandbox-instance-{}", Uuid::now_v7().simple()),
+                env!("CARGO_PKG_VERSION").to_string(),
+                None,
+            );
+
+            let runtime = RuntimeContext::new(service_info, handles, raw_config, work_dir);
+
+            ctx.register_background_handle("runtime", nats.process_handle())
+                .await;
+
+            Ok(TestRuntime {
+                runtime,
+                event_rx,
+                nats,
+            })
+        }
+    }
 }

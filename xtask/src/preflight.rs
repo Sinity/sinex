@@ -117,10 +117,6 @@ fn open_schema_apply_lock_file(state_dir: &Path) -> Result<std::fs::File> {
 /// Default TTL for the preflight cache in seconds.
 const PREFLIGHT_CACHE_DEFAULT_TTL_SECS: u64 = 60;
 pub(crate) const SCHEMA_READINESS_PROBE_TIMEOUT_SECS: u64 = 5;
-// Consumed only by the cfg-gated `doctor::deployment` submodule.
-#[cfg(feature = "runtime-introspection")]
-pub(crate) const SCHEMA_READINESS_PROBE_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(SCHEMA_READINESS_PROBE_TIMEOUT_SECS);
 const SCHEMA_APPLY_LOCK_WAIT_TIMEOUT_SECS: u64 = 30;
 const SCHEMA_APPLY_LOCK_WAIT_POLL_INTERVAL_MILLIS: u64 = 250;
 const SCHEMA_READINESS_PROBE_SQL: &str = "SET statement_timeout = '5s';

@@ -2275,18 +2275,18 @@ mod tests {
     async fn test_semantic_invocation_args_include_cargo_features()
     -> ::xtask::sandbox::TestResult<()> {
         let command = TestCommand {
-            cargo_features: vec!["runtime-introspection".to_string()],
+            cargo_features: vec!["extra-feature".to_string()],
             ..Default::default()
         };
 
         let args = command.semantic_invocation_args(
             &WorkloadScope::Packages(vec!["xtask".to_string()]),
-            Some("test(deployment_readiness)"),
+            Some("test(some_case)"),
             &[],
             true,
         );
 
-        assert!(args.contains(&"--features=runtime-introspection".to_string()));
+        assert!(args.contains(&"--features=extra-feature".to_string()));
         Ok(())
     }
 
@@ -2859,7 +2859,7 @@ mod tests {
             impact_mode: crate::impact::ImpactMode::Aggressive,
             packages: vec!["xtask".to_string()],
             filter: Some("test(freshness_explain)".to_string()),
-            cargo_features: vec!["runtime-introspection".to_string()],
+            cargo_features: vec!["extra-feature".to_string()],
             ..Default::default()
         };
 
@@ -2883,7 +2883,7 @@ mod tests {
             args.windows(2)
                 .find(|window| window[0] == "--features")
                 .map(|window| window[1].as_str()),
-            Some("runtime-introspection")
+            Some("extra-feature")
         );
         Ok(())
     }

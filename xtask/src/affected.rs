@@ -1402,7 +1402,7 @@ async fn test_workspace_state_dir_honors_explicit_temp_override() {}\n\
 
         let mut xtask_features = HashMap::new();
         xtask_features.insert(
-            "runtime-introspection".to_string(),
+            "extra-feature".to_string(),
             vec!["dep:sinexd".to_string()],
         );
         let mut features = HashMap::new();
@@ -1421,7 +1421,7 @@ async fn test_workspace_state_dir_honors_explicit_temp_override() {}\n\
 
         let feature_closure = active_package_dependency_closure_from_metadata(
             &["xtask".to_string()],
-            &["runtime-introspection".to_string()],
+            &["extra-feature".to_string()],
             &dependency_specs,
             &features,
         );

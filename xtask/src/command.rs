@@ -51,9 +51,66 @@ pub struct StageHandle {
     name: String,
     started_at: String,
     start: Instant,
+    /// /proc/pressure io.full `total=` stall μs at stage start (for delta).
+    start_io_full_us: Option<u64>,
+    /// /proc/pressure cpu.some `total=` stall μs at stage start (for delta).
+    start_cpu_some_us: Option<u64>,
+    /// /proc/pressure memory.some `total=` stall μs at stage start (for delta).
+    start_mem_some_us: Option<u64>,
 }
 
 use crate::output::{OutputWriter, Status, StructuredError};
+
+/// Capture an end-of-stage PSI (pressure-stall) snapshot for per-stage causal
+/// attribution of dev-loop slowdowns.
+///
+/// Returns `(io.full avg10, cpu.some avg10, memory.some avg10)`. avg10 is a 10s
+/// decaying average from `/proc/pressure`: meaningful for the long stages we care
+/// about (compile/test/clippy), coarse for sub-10s stages. Each field is `None`
+/// when `/proc/pressure` is unavailable (e.g. kernel without PSI support).
+fn capture_stage_pressure() -> (Option<f64>, Option<f64>, Option<f64>) {
+    let io = crate::process::read_pressure_snapshot("io");
+    let cpu = crate::process::read_pressure_snapshot("cpu");
+    let memory = crate::process::read_pressure_snapshot("memory");
+    (io.full_avg10, cpu.some_avg10, memory.some_avg10)
+}
+
+/// Capture the start-of-stage `/proc/pressure` `total=` stall-microsecond
+/// counters, used to compute the precise per-stage stall delta at finish time.
+///
+/// Returns `(io.full total, cpu.some total, memory.some total)` in μs. Each is
+/// `None` when `/proc/pressure` is unavailable.
+fn capture_stage_pressure_start() -> (Option<u64>, Option<u64>, Option<u64>) {
+    let io = crate::process::read_pressure_snapshot("io");
+    let cpu = crate::process::read_pressure_snapshot("cpu");
+    let memory = crate::process::read_pressure_snapshot("memory");
+    (io.full_total_us, cpu.some_total_us, memory.some_total_us)
+}
+
+/// Build the full per-stage `StagePressure` at stage finish: the end-of-stage
+/// avg10 snapshot plus the precise stall-microsecond deltas relative to the
+/// counters captured at stage start (`saturating_sub`, `None` if either end is
+/// missing).
+fn finish_stage_pressure(handle: &StageHandle) -> crate::history::StagePressure {
+    let (io_full_avg10, cpu_some_avg10, memory_some_avg10) = capture_stage_pressure();
+    let io_end = crate::process::read_pressure_snapshot("io").full_total_us;
+    let cpu_end = crate::process::read_pressure_snapshot("cpu").some_total_us;
+    let mem_end = crate::process::read_pressure_snapshot("memory").some_total_us;
+    let delta = |start: Option<u64>, end: Option<u64>| -> Option<i64> {
+        match (start, end) {
+            (Some(s), Some(e)) => i64::try_from(e.saturating_sub(s)).ok(),
+            _ => None,
+        }
+    };
+    crate::history::StagePressure {
+        io_full_avg10,
+        cpu_some_avg10,
+        memory_some_avg10,
+        io_full_stall_us: delta(handle.start_io_full_us, io_end),
+        cpu_some_stall_us: delta(handle.start_cpu_some_us, cpu_end),
+        memory_some_stall_us: delta(handle.start_mem_some_us, mem_end),
+    }
+}
 
 /// Metadata about a command's execution requirements and characteristics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -939,10 +996,15 @@ impl CommandContext {
         }
         // Report phase start (indeterminate — we don't know duration yet)
         self.report_progress(name, None, None, None, None);
+        let (start_io_full_us, start_cpu_some_us, start_mem_some_us) =
+            capture_stage_pressure_start();
         StageHandle {
             name: name.to_string(),
             started_at: Timestamp::now().format_rfc3339(),
             start: Instant::now(),
+            start_io_full_us,
+            start_cpu_some_us,
+            start_mem_some_us,
         }
     }
 
@@ -961,10 +1023,15 @@ impl CommandContext {
             let _ = db.set_live_stage(inv_id, name);
             let _ = db.write_progress(inv_id, Some(name), None, None, None, None);
         }
+        let (start_io_full_us, start_cpu_some_us, start_mem_some_us) =
+            capture_stage_pressure_start();
         StageHandle {
             name: name.to_string(),
             started_at: Timestamp::now().format_rfc3339(),
             start: Instant::now(),
+            start_io_full_us,
+            start_cpu_some_us,
+            start_mem_some_us,
         }
     }
 
@@ -1056,8 +1123,16 @@ impl CommandContext {
         let Some(inv_id) = self.invocation_id else {
             return;
         };
+        let pressure = finish_stage_pressure(&handle);
         self.with_history_db(|db| {
-            db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success)?;
+            db.record_stage_timing(
+                inv_id,
+                &handle.name,
+                &handle.started_at,
+                duration,
+                success,
+                pressure,
+            )?;
             // Record ETA sample for this phase (used for future estimates)
             db.record_eta_sample(inv_id, &self.command_name, &handle.name, duration)?;
             // Clear progress phase on stage completion
@@ -1093,7 +1168,15 @@ impl CommandContext {
         let Some(inv_id) = self.invocation_id else {
             return;
         };
-        let _ = db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success);
+        let pressure = finish_stage_pressure(&handle);
+        let _ = db.record_stage_timing(
+            inv_id,
+            &handle.name,
+            &handle.started_at,
+            duration,
+            success,
+            pressure,
+        );
         let _ = db.record_eta_sample(inv_id, &self.command_name, &handle.name, duration);
         let _ = db.write_progress(inv_id, None, None, None, None, None);
         let _ = db.clear_live_stage(inv_id);
