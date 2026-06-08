@@ -100,7 +100,7 @@ struct EventBatcherStats {
 
 impl EventBatcherStats {
     fn log(&self) {
-        info!(
+        debug!(
             batches_sent = self.batches_sent.load(Ordering::Relaxed),
             events_sent = self.events_sent.load(Ordering::Relaxed),
             publish_failures = self.publish_failures.load(Ordering::Relaxed),

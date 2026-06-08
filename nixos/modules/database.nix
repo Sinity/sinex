@@ -176,11 +176,13 @@ let
     # overhead PostgreSQL would otherwise reserve for prepared transactions.
     max_prepared_transactions = mkDefault 0;
 
-    # Logging: keep schema changes and slow statements visible without writing
-    # every ingest INSERT/UPDATE into journald during backlog catch-up.
-    # log_duration is intentionally OFF; use log_min_duration_statement to catch
-    # slow queries without flooding the log for every fast INSERT in the ingest path.
-    log_statement = mkDefault "ddl";
+    # Logging: rely on log_min_duration_statement for slow-query visibility and
+    # keep DDL out of the journal. log_statement="ddl" flooded journald with the
+    # full schema-apply CREATE TABLE bodies (every column on its own line, ~1M
+    # lines/day observed 2026-06-07) because the declarative schema converges on
+    # startup; that noise vacuumed journal history within a day. DDL changes are
+    # already tracked in the schema source + apply-engine logs.
+    log_statement = mkDefault "none";
     log_duration = mkDefault false;
     log_min_duration_statement = mkDefault "1000ms";
     log_line_prefix = mkDefault "%m [%p] %q%u@%d ";
