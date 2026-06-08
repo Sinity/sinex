@@ -189,6 +189,17 @@ let
     log_connections = mkDefault true;
     log_disconnections = mkDefault true;
 
+    # TimescaleDB upgrade safety: allow the loaded library version to be
+    # newer than the catalog version. During a NixOS package upgrade the
+    # postmaster loads the new .so via shared_preload_libraries before
+    # postgresql-setup runs ALTER EXTENSION ... UPDATE. Without this flag
+    # the background worker refuses to register (version mismatch) and the
+    # upgrade script's ts_bgw_db_workers_restart call fails with
+    # "extension must be preloaded". This is safe in a declarative
+    # deployment because mismatches are always intentional upgrade windows,
+    # never unexpected drift.
+    "timescaledb.allow_elevated_versions" = mkDefault "on";
+
     # Computed/required settings
     max_connections = mkDefault computedMaxConnections;
     shared_preload_libraries = mkDefault sharedPreloadLibraries;
