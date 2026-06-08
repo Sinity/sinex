@@ -89,6 +89,23 @@ pub struct DbusNotificationSentPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "dbus", event_type = "notification.closed")]
+/// Desktop notification closed event from D-Bus.
+pub struct DbusNotificationClosedPayload {
+    pub notification_id: u32,
+    pub reason: u32,
+    pub reason_label: String, // "expired" | "dismissed" | "closed" | "undefined"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "dbus", event_type = "notification.action_invoked")]
+/// Desktop notification action button invoked from D-Bus.
+pub struct DbusNotificationActionInvokedPayload {
+    pub notification_id: u32,
+    pub action_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "dbus", event_type = "media.state_changed")]
 /// Media player metadata snapshot extracted from D-Bus.
 pub struct DbusMediaStateChangedPayload {
@@ -336,6 +353,29 @@ impl SystemdUnitStartedPayload {
             main_pid: None,
             active_state: SystemdActiveState::Active,
             sub_state: "running".into(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl DbusNotificationClosedPayload {
+    #[must_use]
+    pub fn test_default() -> Self {
+        Self {
+            notification_id: 1,
+            reason: 2,
+            reason_label: "dismissed".into(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl DbusNotificationActionInvokedPayload {
+    #[must_use]
+    pub fn test_default() -> Self {
+        Self {
+            notification_id: 1,
+            action_key: "default".into(),
         }
     }
 }
