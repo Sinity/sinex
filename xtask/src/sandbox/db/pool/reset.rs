@@ -382,7 +382,6 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
         RETURNS trigger LANGUAGE plpgsql AS $$
         DECLARE
           op_id TEXT := current_setting('sinex.operation_id', true);
-          sup_id uuid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
           who TEXT := current_setting('sinex.archived_by', true);
           why TEXT := current_setting('sinex.archive_reason', true);
         BEGIN
@@ -390,7 +389,7 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
             RAISE EXCEPTION 'DELETE on core.events requires sinex.operation_id to be set in this session';
           END IF;
 
-          INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why, sup_id;
+          INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why;
           RETURN OLD;
         END $$;
         ",
