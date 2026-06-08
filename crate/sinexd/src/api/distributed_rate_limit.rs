@@ -9,6 +9,7 @@
 //! - No quota reset bypass attacks
 #![allow(clippy::expect_used)] // All expects are on compile-time NonZeroU32 constants
 
+use crate::api::auth::Role;
 use crate::api::config::GatewayConfig;
 use async_nats::jetstream::Context;
 use async_nats::jetstream::kv::{
@@ -23,28 +24,29 @@ use tracing::{debug, warn};
 
 /// Configuration for distributed per-token rate limiting.
 ///
-/// # Policy difference vs `RateLimitConfig`
-///
-/// `RateLimitConfig` (in-memory path) enforces per-role quotas (readonly/write/admin
-/// have different RPS+burst budgets). This config enforces a **flat per-token
-/// requests/minute** budget — role is not considered. An operator switching from
-/// in-memory to distributed should be aware that role-specific quotas stop applying.
-///
-/// See the `RateLimiter` enum in `rpc_server` for the full divergence record (#1578).
+/// Enforces per-role RPM quotas (readonly/write/admin), matching the policy of the
+/// in-memory `RateLimitConfig`. NATS KV keys are scoped per `(token, role)` so each
+/// role draws from an independent window budget.
 #[derive(Debug, Clone)]
 pub struct DistributedRateLimitConfig {
-    /// Maximum requests per minute per token (role-agnostic; all roles share this budget).
-    pub requests_per_minute: NonZeroU32,
-    /// Window duration in seconds
+    /// Maximum requests per minute per `ReadOnly`-role token.
+    pub readonly_rpm: NonZeroU32,
+    /// Maximum requests per minute per `Write`-role token.
+    pub write_rpm: NonZeroU32,
+    /// Maximum requests per minute per `Admin`-role token.
+    pub admin_rpm: NonZeroU32,
+    /// Window duration in seconds.
     pub window_seconds: u64,
-    /// Whether rate limiting is enabled
+    /// Whether rate limiting is enabled.
     pub enabled: bool,
 }
 
 impl Default for DistributedRateLimitConfig {
     fn default() -> Self {
         Self {
-            requests_per_minute: NonZeroU32::new(6000).expect("6000 is a non-zero constant"), // 100 req/s
+            readonly_rpm: NonZeroU32::new(12_000).expect("12000 is a non-zero constant"), // 200 req/s × 60s
+            write_rpm: NonZeroU32::new(6_000).expect("6000 is a non-zero constant"), // 100 req/s × 60s
+            admin_rpm: NonZeroU32::new(3_000).expect("3000 is a non-zero constant"), // 50 req/s × 60s
             window_seconds: 60,
             enabled: true,
         }
@@ -54,10 +56,27 @@ impl Default for DistributedRateLimitConfig {
 impl DistributedRateLimitConfig {
     #[must_use]
     pub fn from_gateway_config(config: &GatewayConfig) -> Self {
+        let window_secs = u32::try_from(config.rpc_rate_limit_window_secs)
+            .unwrap_or(u32::MAX)
+            .max(1); // guard against zero-second windows
+        let to_rpm = |rps: NonZeroU32| {
+            NonZeroU32::new(rps.get().saturating_mul(window_secs))
+                .expect("saturating_mul on non-zero rps with window >= 1 is non-zero")
+        };
         Self {
-            requests_per_minute: config.rate_limit_per_minute(),
+            readonly_rpm: to_rpm(config.rate_limit_readonly_rps()),
+            write_rpm: to_rpm(config.rate_limit_write_rps()),
+            admin_rpm: to_rpm(config.rate_limit_admin_rps()),
             window_seconds: config.rpc_rate_limit_window_secs,
             enabled: config.rpc_rate_limit_enabled,
+        }
+    }
+
+    fn rpm_for_role(&self, role: Role) -> NonZeroU32 {
+        match role {
+            Role::ReadOnly => self.readonly_rpm,
+            Role::Write => self.write_rpm,
+            Role::Admin => self.admin_rpm,
         }
     }
 }
@@ -110,10 +129,11 @@ enum ReservationAttemptError {
     BackendUnavailable,
 }
 
-fn token_identity(token: &str) -> TokenIdentity {
+fn token_identity(token: &str, role: Role) -> TokenIdentity {
     let hashed_token = blake3::hash(token.as_bytes()).to_hex().to_string();
+    let role_str = role.as_str();
     TokenIdentity {
-        kv_key: format!("token.{hashed_token}"),
+        kv_key: format!("token.{hashed_token}.{role_str}"),
         fingerprint: hashed_token[..16].to_string(),
         hashed_token,
     }
@@ -330,18 +350,21 @@ impl DistributedRateLimiter {
         }
     }
 
-    /// Check if request is allowed for the given token
+    /// Check if request is allowed for the given (token, role).
     ///
     /// Uses a local reservation system to batch NATS operations:
     /// 1. Consumes from local reservation if available.
     /// 2. If empty, attempts to reserve a batch (50) from NATS KV.
     /// 3. Updates local reservation if successful.
-    pub async fn check_and_increment(&self, token: &str) -> bool {
+    ///
+    /// NATS KV keys are scoped per `(token, role)` so each role draws from an
+    /// independent budget matching the per-role RPM from `DistributedRateLimitConfig`.
+    pub async fn check_and_increment(&self, token: &str, role: Role) -> bool {
         if !self.config.enabled {
             return true;
         }
 
-        let token_identity = token_identity(token);
+        let token_identity = token_identity(token, role);
 
         // Periodically evict exhausted local buckets to prevent unbounded DashMap growth.
         // Tokens with zero local capacity re-hit NATS KV on the next call, which is correct.
@@ -351,10 +374,11 @@ impl DistributedRateLimiter {
                 .retain(|_, v| v.load(Ordering::Relaxed) > 0);
         }
 
-        // 1. Get local bucket (lock-free access via Arc)
+        // 1. Get local bucket keyed by role-scoped kv_key so each (token, role) pair
+        //    draws from its own independent local reservation.
         let bucket = self
             .local_buckets
-            .entry(token_identity.hashed_token.clone())
+            .entry(token_identity.kv_key.clone())
             .or_insert_with(|| Arc::new(AtomicU32::new(0)))
             .clone();
 
@@ -383,7 +407,7 @@ impl DistributedRateLimiter {
             // 3. Replenish from NATS (with CAS loop).
             // Never use the raw bearer token as a NATS KV key or log field.
             let key = token_identity.kv_key.clone();
-            let limit = self.config.requests_per_minute.get();
+            let limit = self.config.rpm_for_role(role).get();
             let batch_size = RESERVATION_BATCH_SIZE;
 
             // Exponential backoff for high contention CAS loops
