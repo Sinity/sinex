@@ -12,11 +12,15 @@ use sinex_primitives::privacy::{
 };
 use sinex_primitives::rpc::privacy::{
     PrivacyPolicyBackendAddRequest, PrivacyPolicyDictionary, PrivacyPolicyDictionaryAddRequest,
-    PrivacyPolicyFieldScope, PrivacyPolicyKeyNamespace, PrivacyPolicyListRequest,
-    PrivacyPolicyListResponse, PrivacyPolicyMutationResponse, PrivacyPolicyRecognizerBackend,
-    PrivacyPolicyRule, PrivacyPolicyRuleAddRequest, PrivacyPolicyScopeBindRequest,
-    PrivacyPolicySeedBuiltinRequest, PrivacyPolicySeedBuiltinResponse, PrivateModeDisableRequest,
-    PrivateModeEnableRequest, PrivateModeStateResponse, PrivateModeStatusRequest,
+    PrivacyPolicyFieldBindRequest, PrivacyPolicyFieldBindResponse, PrivacyPolicyFieldScope,
+    PrivacyPolicyFieldUnbindRequest, PrivacyPolicyFieldUnbindResponse,
+    PrivacyPolicyKeyNamespace, PrivacyPolicyListRequest, PrivacyPolicyListResponse,
+    PrivacyPolicyMutationResponse, PrivacyPolicyRecognizerBackend, PrivacyPolicyRule,
+    PrivacyPolicyRuleAddRequest, PrivacyPolicyRuleRemoveRequest, PrivacyPolicyRuleRemoveResponse,
+    PrivacyPolicyRuleSetEnabledRequest, PrivacyPolicyRuleSetEnabledResponse,
+    PrivacyPolicyScopeBindRequest, PrivacyPolicySeedBuiltinRequest, PrivacyPolicySeedBuiltinResponse,
+    PrivateModeDisableRequest, PrivateModeEnableRequest, PrivateModeStateResponse,
+    PrivateModeStatusRequest,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::transport;
@@ -485,6 +489,125 @@ fn private_mode_operation_scope(action: &'static str, state: &RuntimePrivateMode
 
 fn private_mode_response(state: RuntimePrivateModeState) -> PrivateModeStateResponse {
     PrivateModeStateResponse { state }
+}
+
+pub async fn handle_privacy_policy_rule_remove(
+    pool: &PgPool,
+    request: PrivacyPolicyRuleRemoveRequest,
+) -> Result<PrivacyPolicyRuleRemoveResponse> {
+    let name = required_policy_text(request.name, "privacy policy rule name")?;
+    let rows = pool.privacy_policy().remove_rule(&name).await?;
+    if rows == 0 {
+        return Err(SinexError::not_found(format!(
+            "privacy policy rule not found: {name}"
+        )));
+    }
+    Ok(PrivacyPolicyRuleRemoveResponse {
+        name,
+        removed: true,
+    })
+}
+
+pub async fn handle_privacy_policy_rule_set_enabled(
+    pool: &PgPool,
+    request: PrivacyPolicyRuleSetEnabledRequest,
+) -> Result<PrivacyPolicyRuleSetEnabledResponse> {
+    let name = required_policy_text(request.name, "privacy policy rule name")?;
+    let rows = pool
+        .privacy_policy()
+        .set_rule_enabled(&name, request.enabled)
+        .await?;
+    if rows == 0 {
+        return Err(SinexError::not_found(format!(
+            "privacy policy rule not found: {name}"
+        )));
+    }
+    Ok(PrivacyPolicyRuleSetEnabledResponse {
+        name,
+        enabled: request.enabled,
+    })
+}
+
+pub async fn handle_privacy_policy_field_bind(
+    pool: &PgPool,
+    request: PrivacyPolicyFieldBindRequest,
+) -> Result<PrivacyPolicyFieldBindResponse> {
+    let rule_name = required_policy_text(request.rule_name, "privacy policy rule name")?;
+    let field_path = normalize_optional_text(request.field_path);
+    if let Some(path) = field_path.as_deref()
+        && !path.starts_with('/')
+    {
+        return Err(SinexError::validation(
+            "privacy policy field_path must be a JSON Pointer beginning with '/'",
+        ));
+    }
+    let event_source = normalize_optional_text(request.event_source);
+    let event_type = normalize_optional_text(request.event_type);
+    let id = pool
+        .privacy_policy()
+        .bind_field_rule(
+            &rule_name,
+            event_source.as_deref(),
+            event_type.as_deref(),
+            field_path.as_deref(),
+            request.priority,
+        )
+        .await?;
+    let scope = pool
+        .privacy_policy()
+        .list_field_rules(Some(&rule_name))
+        .await?
+        .into_iter()
+        .find(|scope| scope.id == id)
+        .ok_or_else(|| {
+            SinexError::database("privacy policy field scope was inserted but not readable")
+                .with_context("scope_id", id.to_string())
+        })?;
+    Ok(PrivacyPolicyFieldBindResponse {
+        scope: PrivacyPolicyFieldScope {
+            id: scope.id,
+            rule_id: scope.rule_id,
+            event_source: scope.event_source,
+            event_type: scope.event_type,
+            field_path: scope.field_path,
+            priority: scope.priority,
+        },
+    })
+}
+
+pub async fn handle_privacy_policy_field_unbind(
+    pool: &PgPool,
+    request: PrivacyPolicyFieldUnbindRequest,
+) -> Result<PrivacyPolicyFieldUnbindResponse> {
+    let rows = pool
+        .privacy_policy()
+        .unbind_field_rule(request.scope_id)
+        .await?;
+    if rows == 0 {
+        return Err(SinexError::not_found(format!(
+            "privacy policy field scope not found: {}",
+            request.scope_id
+        )));
+    }
+    Ok(PrivacyPolicyFieldUnbindResponse {
+        scope_id: request.scope_id,
+        removed: true,
+    })
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn required_policy_text(value: String, field: &'static str) -> Result<String> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        Err(SinexError::validation(format!("{field} must not be empty")))
+    } else {
+        Ok(value)
+    }
 }
 
 #[cfg(test)]
