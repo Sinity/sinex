@@ -596,8 +596,8 @@ impl PostgresManager {
     fn render_runtime_config(&self) -> Result<String> {
         // Postgres interprets relative `unix_socket_directories` and `log_directory`
         // against the cluster data directory, not the process cwd. A repo-relative
-        // logs_dir like `.sinex/ci-pgdata` therefore double-nests as
-        // `<data_dir>/.sinex/ci-pgdata`, which doesn't exist — the postmaster bails
+        // logs_dir like `.sinex/test-pgdata` therefore double-nests as
+        // `<data_dir>/.sinex/test-pgdata`, which doesn't exist — the postmaster bails
         // with `could not open log file ... No such file or directory` and pg_ctl
         // reports only the unhelpful "stopped waiting" stderr. Resolve to absolute
         // before rendering postgresql.conf.

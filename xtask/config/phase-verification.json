@@ -36,13 +36,13 @@
       "boundary_checks": [
         "xtask verify plan --check",
         "xtask docs check",
-        "xtask ci workspace --dry-run"
+        "xtask check --plan"
       ],
       "impact_gates": [
         {
           "impact": "schema or source-material persistence",
           "commands": [
-            "xtask ci postgres -- xtask ci schema-only"
+            "xtask schema strict-diff"
           ]
         },
         {
@@ -71,7 +71,7 @@
         {
           "impact": "schema or acquisition job persistence",
           "commands": [
-            "xtask ci postgres -- xtask ci schema-only"
+            "xtask schema strict-diff"
           ]
         },
         {
@@ -96,7 +96,8 @@
         "xtask test -p sinex-db"
       ],
       "boundary_checks": [
-        "xtask ci postgres -- xtask ci workspace"
+        "xtask check --full",
+        "xtask test --impact-mode=off --all"
       ],
       "impact_gates": [
         {
@@ -118,8 +119,8 @@
       "boundary_checks": [
         "xtask check --full",
         "xtask docs check",
-        "xtask ci compat --base master",
-        "xtask ci postgres -- xtask ci workspace"
+        "xtask schema strict-diff",
+        "xtask test --impact-mode=off --all"
       ],
       "impact_gates": [
         {

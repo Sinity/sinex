@@ -139,6 +139,14 @@ pub struct TestReporter {
     interactive: bool,
 }
 
+/// Receives coarse nextest stream phase transitions.
+///
+/// The first suite-started event marks the boundary between cargo/nextest
+/// compile/discovery work and actual test execution.
+pub trait TestPhaseObserver {
+    fn suite_started(&mut self);
+}
+
 #[derive(Clone, Default)]
 struct TerminalProgress;
 
@@ -192,6 +200,7 @@ impl TestReporter {
         stdout: R1,
         stderr: R2,
         history: Option<(&HistoryDb, i64)>,
+        mut phase_observer: Option<&mut dyn TestPhaseObserver>,
     ) -> Result<TestStats>
     where
         R1: BufRead,
@@ -267,6 +276,9 @@ impl TestReporter {
                 .wrap_err_with(|| format!("invalid nextest stdout message: {line}"))?;
             match msg {
                 Message::SuiteStarted(s) => {
+                    if !suite_started && let Some(observer) = phase_observer.as_deref_mut() {
+                        observer.suite_started();
+                    }
                     suite_started = true;
                     // Each test binary emits suite-started, so accumulate total
                     let new_total = stats.total + s.test_count;
@@ -450,8 +462,19 @@ impl TestReporter {
 
 #[cfg(test)]
 mod tests {
-    use super::TestReporter;
+    use super::{TestPhaseObserver, TestReporter};
     use std::io::Cursor;
+
+    #[derive(Default)]
+    struct CountingPhaseObserver {
+        suite_started_count: usize,
+    }
+
+    impl TestPhaseObserver for CountingPhaseObserver {
+        fn suite_started(&mut self) {
+            self.suite_started_count += 1;
+        }
+    }
 
     #[test]
     fn suite_totals_backfill_stream_parse_gaps() {
@@ -465,7 +488,7 @@ mod tests {
         let stderr = Cursor::new(Vec::<u8>::new());
 
         let stats = TestReporter::new(false)
-            .run(stdout, stderr, None)
+            .run(stdout, stderr, None, None)
             .expect("suite-only failure output should still produce stats");
 
         assert_eq!(stats.failed, 1);
@@ -486,7 +509,7 @@ mod tests {
         let stderr = Cursor::new(Vec::<u8>::new());
 
         let error = TestReporter::new(false)
-            .run(stdout, stderr, None)
+            .run(stdout, stderr, None, None)
             .expect_err("malformed nextest stdout must fail honestly");
         let message = error.to_string();
         assert!(
@@ -507,12 +530,35 @@ mod tests {
         let stderr = Cursor::new(Vec::<u8>::new());
 
         let error = TestReporter::new(false)
-            .run(stdout, stderr, None)
+            .run(stdout, stderr, None, None)
             .expect_err("missing nextest test name must fail honestly");
         let message = format!("{error:#}");
         assert!(
             message.contains("nextest test-finished message is missing required field 'name'"),
             "missing-field cause was not preserved in error chain: {message}"
         );
+    }
+
+    #[test]
+    fn phase_observer_fires_once_at_first_suite_start() {
+        let stdout = Cursor::new(
+            concat!(
+                "{\"type\":\"suite\",\"event\":\"started\",\"test_count\":1}\n",
+                "{\"type\":\"suite\",\"event\":\"ok\",\"passed\":1,\"failed\":0,\"ignored\":0}\n",
+                "{\"type\":\"suite\",\"event\":\"started\",\"test_count\":1}\n",
+                "{\"type\":\"suite\",\"event\":\"ok\",\"passed\":1,\"failed\":0,\"ignored\":0}\n",
+            )
+            .as_bytes(),
+        );
+        let stderr = Cursor::new(Vec::<u8>::new());
+        let mut observer = CountingPhaseObserver::default();
+
+        let stats = TestReporter::new(false)
+            .run(stdout, stderr, None, Some(&mut observer))
+            .expect("multi-suite output should parse");
+
+        assert_eq!(observer.suite_started_count, 1);
+        assert_eq!(stats.passed, 2);
+        assert_eq!(stats.total, 2);
     }
 }

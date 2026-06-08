@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use super::junit;
 use super::monitor::TestMonitor;
-use super::reporter::{TestReporter, TestStats};
-use crate::command::CommandContext;
+use super::reporter::{TestPhaseObserver, TestReporter, TestStats};
+use crate::command::{CommandContext, StageHandle};
 use crate::history::HistoryDb;
 use crate::process::ProcessBuilder;
 
@@ -133,6 +133,118 @@ fn prepare_invocation_scoped_nextest_config(
     })
 }
 
+fn backfill_junit_metadata(
+    db: &HistoryDb,
+    invocation_id: i64,
+    junit_path: &Path,
+    stats: &mut TestStats,
+) -> Result<()> {
+    if !junit_path.exists() {
+        return Ok(());
+    }
+    match junit::parse_junit_summary(junit_path) {
+        Ok(summary)
+            if summary.total > 0
+                && (summary.passed != stats.passed
+                    || summary.failed != stats.failed
+                    || summary.ignored != stats.ignored) =>
+        {
+            eprintln!(
+                "📋 Adjusted nextest stats from JUnit XML: passed {}→{}, failed {}→{}, ignored {}→{}",
+                stats.passed,
+                summary.passed,
+                stats.failed,
+                summary.failed,
+                stats.ignored,
+                summary.ignored
+            );
+            stats.passed = summary.passed;
+            stats.failed = summary.failed;
+            stats.ignored = summary.ignored;
+            stats.total = stats.total.max(summary.total);
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("⚠️  Failed to parse JUnit summary: {e}"),
+    }
+
+    match junit::parse_junit_metadata(junit_path) {
+        Ok(metadata) if !metadata.is_empty() => {
+            match db.backfill_test_metadata(invocation_id, &metadata) {
+                Ok(n) if n > 0 => {
+                    eprintln!("📋 Back-filled metadata for {n} test(s) from JUnit XML");
+                }
+                Ok(_) => {} // No tests needed back-fill
+                Err(e) => eprintln!("⚠️  Failed to back-fill test metadata: {e}"),
+            }
+        }
+        Ok(_) => {} // No metadata in JUnit XML
+        Err(e) => eprintln!("⚠️  Failed to parse JUnit XML: {e}"),
+    }
+    Ok(())
+}
+
+fn start_stage(
+    ctx: &CommandContext,
+    history: Option<(&HistoryDb, i64)>,
+    name: &str,
+) -> StageHandle {
+    if let Some((db, _)) = history {
+        ctx.start_stage_with_history_db(db, name)
+    } else {
+        ctx.start_stage(name)
+    }
+}
+
+fn finish_stage(
+    ctx: &CommandContext,
+    history: Option<(&HistoryDb, i64)>,
+    handle: StageHandle,
+    success: bool,
+) {
+    if let Some((db, _)) = history {
+        ctx.finish_stage_with_history_db(db, handle, success);
+    } else {
+        ctx.finish_stage(handle, success);
+    }
+}
+
+struct NextestPhaseStages<'ctx, 'db> {
+    ctx: &'ctx CommandContext,
+    history: Option<(&'db HistoryDb, i64)>,
+    compile_stage: Option<StageHandle>,
+    run_stage: Option<StageHandle>,
+}
+
+impl<'ctx, 'db> NextestPhaseStages<'ctx, 'db> {
+    fn start(ctx: &'ctx CommandContext, history: Option<(&'db HistoryDb, i64)>) -> Self {
+        Self {
+            ctx,
+            history,
+            compile_stage: Some(start_stage(ctx, history, "nextest-compile")),
+            run_stage: None,
+        }
+    }
+
+    fn finish(mut self, success: bool) {
+        if let Some(run_stage) = self.run_stage.take() {
+            finish_stage(self.ctx, self.history, run_stage, success);
+        } else if let Some(compile_stage) = self.compile_stage.take() {
+            finish_stage(self.ctx, self.history, compile_stage, success);
+        }
+    }
+}
+
+impl TestPhaseObserver for NextestPhaseStages<'_, '_> {
+    fn suite_started(&mut self) {
+        if let Some(compile_stage) = self.compile_stage.take() {
+            finish_stage(self.ctx, self.history, compile_stage, true);
+        }
+        if self.run_stage.is_none() {
+            self.run_stage = Some(start_stage(self.ctx, self.history, "nextest-run"));
+        }
+    }
+}
+
 impl<'a> TestRunner<'a> {
     #[must_use]
     pub fn new(ctx: &'a CommandContext, profile: &'a str) -> Self {
@@ -153,10 +265,14 @@ impl<'a> TestRunner<'a> {
     }
 
     pub fn execute(&self, history: Option<(&HistoryDb, i64)>) -> Result<TestStats> {
-        // Validate profile exists before running to avoid silent failures
-        validate_profile(self.profile)?;
-        let nextest_config =
-            prepare_invocation_scoped_nextest_config(self.profile, history.map(|(_, id)| id))?;
+        let config_stage = start_stage(self.ctx, history, "nextest-config");
+        let nextest_config = (|| {
+            // Validate profile exists before running to avoid silent failures
+            validate_profile(self.profile)?;
+            prepare_invocation_scoped_nextest_config(self.profile, history.map(|(_, id)| id))
+        })();
+        finish_stage(self.ctx, history, config_stage, nextest_config.is_ok());
+        let nextest_config = nextest_config?;
 
         // Build base arguments
         let mut cmd_args = vec![
@@ -204,7 +320,10 @@ impl<'a> TestRunner<'a> {
         for (k, v) in &self.extra_env {
             process = process.env(k, v);
         }
-        let (child, stdout_reader) = process.spawn_with_streaming()?;
+        let spawn_stage = start_stage(self.ctx, history, "nextest-spawn");
+        let spawn_result = process.spawn_with_streaming();
+        finish_stage(self.ctx, history, spawn_stage, spawn_result.is_ok());
+        let (child, stdout_reader) = spawn_result?;
 
         // Capture stderr from child (ProcessBuilder pipes it)
         // We use take() because ProcessBuilder sets up piped stderr
@@ -224,11 +343,23 @@ impl<'a> TestRunner<'a> {
 
         // Run reporter (blocks until stdout closes)
         let reporter = TestReporter::new(self.ctx.is_human());
-        let mut stats = reporter.run(stdout_reader, stderr_reader, history)?;
+        let mut phase_stages = NextestPhaseStages::start(self.ctx, history);
+        let stats_result = reporter.run(
+            stdout_reader,
+            stderr_reader,
+            history,
+            Some(&mut phase_stages),
+        );
+        let stats_ok = stats_result.is_ok();
+        phase_stages.finish(stats_ok);
+        let mut stats = stats_result?;
 
         // Wait for process to finish. The reporter already blocked on stdout,
         // so this returns near-instantly in normal cases.
-        let exit_status = child.wait().context("failed to wait for nextest process")?;
+        let wait_stage = start_stage(self.ctx, history, "nextest-wait");
+        let exit_status = child.wait().context("failed to wait for nextest process");
+        finish_stage(self.ctx, history, wait_stage, exit_status.is_ok());
+        let exit_status = exit_status?;
 
         // Stop monitoring
         let metrics = monitor.stop();
@@ -246,47 +377,11 @@ impl<'a> TestRunner<'a> {
             // but JUnit XML (with store-success-output=true) captures ALL output.
             // We also extract: classname (reliable package), failure message/type,
             // and sandbox slog events (slot name, acquisition/cleanup timing).
-            let junit_path = &nextest_config.junit_path;
-            if junit_path.exists() {
-                match junit::parse_junit_summary(junit_path) {
-                    Ok(summary)
-                        if summary.total > 0
-                            && (summary.passed != stats.passed
-                                || summary.failed != stats.failed
-                                || summary.ignored != stats.ignored) =>
-                    {
-                        eprintln!(
-                            "📋 Adjusted nextest stats from JUnit XML: passed {}→{}, failed {}→{}, ignored {}→{}",
-                            stats.passed,
-                            summary.passed,
-                            stats.failed,
-                            summary.failed,
-                            stats.ignored,
-                            summary.ignored
-                        );
-                        stats.passed = summary.passed;
-                        stats.failed = summary.failed;
-                        stats.ignored = summary.ignored;
-                        stats.total = stats.total.max(summary.total);
-                    }
-                    Ok(_) => {}
-                    Err(e) => eprintln!("⚠️  Failed to parse JUnit summary: {e}"),
-                }
-
-                match junit::parse_junit_metadata(junit_path) {
-                    Ok(metadata) if !metadata.is_empty() => {
-                        match db.backfill_test_metadata(invocation_id, &metadata) {
-                            Ok(n) if n > 0 => {
-                                eprintln!("📋 Back-filled metadata for {n} test(s) from JUnit XML");
-                            }
-                            Ok(_) => {} // No tests needed back-fill
-                            Err(e) => eprintln!("⚠️  Failed to back-fill test metadata: {e}"),
-                        }
-                    }
-                    Ok(_) => {} // No metadata in JUnit XML
-                    Err(e) => eprintln!("⚠️  Failed to parse JUnit XML: {e}"),
-                }
-            }
+            let junit_stage = start_stage(self.ctx, history, "nextest-junit");
+            let junit_result =
+                backfill_junit_metadata(db, invocation_id, &nextest_config.junit_path, &mut stats);
+            finish_stage(self.ctx, history, junit_stage, junit_result.is_ok());
+            junit_result?;
             if let Some(run_id) = &impact_artifact_run_id {
                 let artifact_dir = crate::config::workspace_root()
                     .join(".sinex")

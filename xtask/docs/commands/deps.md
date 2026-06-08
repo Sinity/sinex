@@ -164,7 +164,7 @@ xtask deps tree --package my-crate
 xtask deps list
 ```
 
-### CI integration
+### Baseline gate
 
 ```bash
 # Fail only on duplicates directly requested by workspace manifests
@@ -201,12 +201,11 @@ Detect dependencies declared in Cargo.toml but not used in code.
 
 **Usage**:
 ```bash
-xtask deps unused [--format <format>] [--ci]
+xtask deps unused [--format <format>]
 ```
 
 **Options**:
 - `--format <format>` - Output format: `human` (default) or `json`
-- `--ci` - CI mode (fails if unused deps found)
 
 **Examples**:
 ```bash
@@ -215,9 +214,6 @@ xtask deps unused
 
 # JSON output
 xtask deps unused --format json
-
-# CI mode (fails if unused deps found)
-xtask deps unused --ci
 ```
 
 **Output Formats**:
@@ -259,27 +255,20 @@ pkgs.cargo-udeps
 nix shell nixpkgs#cargo-machete
 ```
 
-**CI Integration**:
-
-```yaml
-# .github/workflows/ci.yml
-- name: Check for unused dependencies
-  run: xtask deps unused --ci
-```
-
----
-
 ### `deps timings`
 
 Analyze build times to identify slow compilation units.
 
 **Usage**:
 ```bash
-xtask deps timings [--top <n>]
+xtask deps timings [--top <n>] [--package <pkg>] [--profile <profile>] [--clean-package]
 ```
 
 **Options**:
 - `--top <n>` - Show top N slowest crates (default: 10)
+- `--package <pkg>` - Time a specific package instead of the default workspace build
+- `--profile <profile>` - Time `dev`, `release`, or a custom Cargo profile (default: `dev`)
+- `--clean-package` - Run `cargo clean -p <pkg>` before timing so a warm target dir still produces package compile units; requires `--package`
 
 **Examples**:
 ```bash
@@ -288,12 +277,17 @@ xtask deps timings
 
 # Show top 5 slowest crates
 xtask deps timings --top 5
+
+# Attribute the checkout-local xtask wrapper build shape
+xtask deps timings --package xtask --profile dev --clean-package --top 20
 ```
 
 **Output**:
 
 ```
 Build Timing Analysis
+Command: cargo build --timings
+Profile: dev
 Total build time: 127.45s
 
 Top 10 slowest crates:
@@ -311,7 +305,9 @@ HTML report: /realm/project/sinex/.sinex/cache/target/cargo-timings/cargo-timing
 
 **Notes**:
 
-- First run executes `cargo build --release --timings` which may take time
+- By default this executes `cargo build --timings`, matching the normal local dev build profile
+- Use `--package xtask --clean-package` to approximate the checkout-local wrapper's debug xtask build
+- Use `--profile release` when you specifically need release-build attribution
 - Generates an HTML report with detailed timing breakdown under the resolved Cargo target directory, for example `.sinex/cache/target/cargo-timings/cargo-timing.html`
 - Compare parameter (--compare) reserved for future enhancement
 - Run periodically to track build performance trends
@@ -324,13 +320,19 @@ HTML report: /realm/project/sinex/.sinex/cache/target/cargo-timings/cargo-timing
 ```bash
 # Check for issues before committing
 xtask deps duplicates
-xtask deps unused --ci
+xtask deps unused
 ```
 
 ### Performance Investigation
 ```bash
 # Identify slow build targets
 xtask deps timings --top 15
+
+# Explain why a package is expensive to compile
+xtask deps compile-surface --package xtask --top 20
+
+# Pair the static surface with a scoped cold package timing
+xtask deps timings --package xtask --clean-package --top 20
 
 # Check rebuild impact of changes
 xtask deps impact --package sinexd
@@ -355,6 +357,7 @@ xtask deps unused
 | `deps duplicates` | ✅ Complete | None | Finds version conflicts |
 | `deps unused` | ✅ Complete | cargo-machete OR cargo-udeps | Detects unused deps |
 | `deps timings` | ✅ Complete | None (uses cargo --timings) | Build performance |
+| `deps compile-surface` | ✅ Complete | None (static manifest/source scan) | Compile surface attribution |
 
 ---
 
