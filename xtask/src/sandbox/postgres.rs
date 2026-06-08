@@ -27,7 +27,7 @@ impl Default for PostgresConfig {
     fn default() -> Self {
         Self {
             port: 5433,
-            data_dir: PathBuf::from(".sinex/ci-pgdata"),
+            data_dir: PathBuf::from(".sinex/test-pgdata"),
             socket_dir: env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             keep_data: false,
             app_user: "sinex_app".to_string(),
@@ -88,7 +88,8 @@ pub fn setup_ephemeral(config: &PostgresConfig) -> Result<(PgInstance, PgEnv)> {
         database: config.database.clone(),
         superuser: config.superuser.clone(),
         app_user: config.app_user.clone(),
-        // CI connects via TCP (DATABASE_URL=postgresql://...@127.0.0.1:port/...).
+        // The ephemeral helper connects via TCP
+        // (DATABASE_URL=postgresql://...@127.0.0.1:port/...).
         // Bind to loopback so sqlx's pool can reach the postmaster.
         listen_addresses: "127.0.0.1".to_string(),
         durability: PostgresDurabilityMode::EphemeralFast,
@@ -121,7 +122,7 @@ pub fn setup_ephemeral(config: &PostgresConfig) -> Result<(PgInstance, PgEnv)> {
     // Initialize roles and DB. The cluster was just initialized via `initdb -U
     // postgres`, so the only existing login role is `postgres`. Connect as that
     // role to bootstrap the configured superuser. Falling back to $USER (the
-    // previous behavior) failed on every CI runner where USER != "postgres":
+    // previous behavior) failed anywhere USER != "postgres":
     // psql would receive PGUSER=runner and the postmaster would reject with
     // `FATAL: role "runner" does not exist`.
     const INITDB_BOOTSTRAP_USER: &str = "postgres";

@@ -58,7 +58,7 @@ workspace = false
 
 [files]
 # Exclude everything that isn't source. The whole .sinex/ tree (target,
-# state, ci-pgdata, run, snapshots, test-artifacts, test-tmp, tls) is
+# state, test-pgdata, run, snapshots, test-artifacts, test-tmp, tls) is
 # generated artifacts or runtime state — RA has no business indexing
 # any of it. Likewise /cache and result symlinks.
 excludeDirs = [

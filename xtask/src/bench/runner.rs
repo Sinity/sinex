@@ -260,8 +260,7 @@ impl<'a> BenchRunner<'a> {
         let builder = if let Some(db_pool_size) = scenario.db_pool_size {
             let exe = std::env::current_exe()
                 .context("failed to resolve current xtask executable for db benchmark")?;
-            let mut builder =
-                ProcessBuilder::new(exe.to_string_lossy()).args(["test", "--ephemeral-postgres"]);
+            let mut builder = ProcessBuilder::new(exe.to_string_lossy()).arg("test");
             if self.ctx.config.target == "workspace" {
                 builder = builder.arg("--all");
             } else {

@@ -1,8 +1,7 @@
-//! CI infrastructure validation tests.
+//! Test database infrastructure validation tests.
 //!
-//! These tests verify that the CI environment is correctly configured,
-//! preventing permission-related failures that could otherwise only be
-//! caught during CI runs.
+//! These tests verify that the sandbox database environment is correctly
+//! configured, preventing permission-related failures in Postgres-backed tests.
 
 use sinex_db::schema::registry;
 use sqlx::Row;
@@ -13,9 +12,9 @@ use xtask::sandbox::prelude::{CleanupConfig, CleanupMethod, sinex_test};
 /// Verifies that all schemas from the registry are accessible.
 ///
 /// This test catches cases where schemas are added to the registry but
-/// CI scripts don't grant access to them (like the `public` schema issue).
+/// sandbox setup doesn't grant access to them (like the `public` schema issue).
 #[sinex_test]
-async fn ci_setup_grants_all_schemas(
+async fn test_database_setup_grants_all_schemas(
     ctx: xtask::sandbox::TestContext,
 ) -> xtask::sandbox::TestResult<()> {
     let pool = ctx.pool();
@@ -38,7 +37,7 @@ async fn ci_setup_grants_all_schemas(
         assert!(
             has_usage,
             "User '{current_user}' missing USAGE privilege on schema '{}'.\n\
-             This indicates CI setup (xtask ci postgres) is not granting access to all schemas.\n\
+             This indicates the ephemeral Postgres test setup is not granting access to all schemas.\n\
              The schema registry includes this schema, but permissions were not granted.",
             schema.name
         );
@@ -59,7 +58,7 @@ async fn can_create_tables_in_all_schemas(
     for schema in registry::SINEX_SCHEMAS {
         // Try to create a temporary table
         let result = sqlx::query(&format!(
-            "CREATE TEMP TABLE {}_test_ci_permissions (id INT)",
+            "CREATE TEMP TABLE {}_test_db_permissions (id INT)",
             schema.name
         ))
         .execute(pool)
@@ -68,7 +67,7 @@ async fn can_create_tables_in_all_schemas(
         assert!(
             result.is_ok(),
             "Cannot create tables in schema '{}': {:?}\n\
-             This indicates missing DEFAULT PRIVILEGES grants in CI setup.",
+             This indicates missing DEFAULT PRIVILEGES grants in test database setup.",
             schema.name,
             result.err()
         );

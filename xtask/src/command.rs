@@ -946,6 +946,28 @@ impl CommandContext {
         }
     }
 
+    /// Start timing a pipeline stage using an already-borrowed history DB.
+    ///
+    /// This is for call sites that are executing inside `try_with_history_db`;
+    /// calling `start_stage()` there would try to reacquire the same mutex.
+    #[must_use]
+    pub fn start_stage_with_history_db(
+        &self,
+        db: &crate::history::HistoryDb,
+        name: &str,
+    ) -> StageHandle {
+        tracing::debug!(target: "xtask::command", stage = name, "stage started");
+        if let Some(inv_id) = self.invocation_id {
+            let _ = db.set_live_stage(inv_id, name);
+            let _ = db.write_progress(inv_id, Some(name), None, None, None, None);
+        }
+        StageHandle {
+            name: name.to_string(),
+            started_at: Timestamp::now().format_rfc3339(),
+            start: Instant::now(),
+        }
+    }
+
     /// Report live progress for the current invocation.
     ///
     /// Writes a snapshot to `invocation_progress` in the history DB so that
@@ -1042,6 +1064,39 @@ impl CommandContext {
             db.write_progress(inv_id, None, None, None, None, None)?;
             db.clear_live_stage(inv_id)
         });
+    }
+
+    /// Finish a stage using an already-borrowed history DB.
+    ///
+    /// See `start_stage_with_history_db`.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "StageHandle does not implement Deref; keeping by value simplifies API"
+    )]
+    pub fn finish_stage_with_history_db(
+        &self,
+        db: &crate::history::HistoryDb,
+        handle: StageHandle,
+        success: bool,
+    ) {
+        let duration = handle.start.elapsed().as_secs_f64();
+        tracing::debug!(
+            target: "xtask::command",
+            stage = %handle.name,
+            success,
+            duration_secs = duration,
+            "stage finished"
+        );
+        if let Ok(mut stages) = self.completed_stages.lock() {
+            stages.push((handle.name.clone(), duration, success));
+        }
+        let Some(inv_id) = self.invocation_id else {
+            return;
+        };
+        let _ = db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success);
+        let _ = db.record_eta_sample(inv_id, &self.command_name, &handle.name, duration);
+        let _ = db.write_progress(inv_id, None, None, None, None, None);
+        let _ = db.clear_live_stage(inv_id);
     }
 
     /// Print a summary of completed stage timings to stderr (human mode only).

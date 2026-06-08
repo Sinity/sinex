@@ -286,9 +286,218 @@
                 build_lock_dir="$build_state_dir/xtask-build.lock"
                 build_failure_stamp="$build_state_dir/xtask-build.failed"
                 build_failure_log="$build_state_dir/xtask-build.failed.log"
+                build_stage_metrics="$build_lock_dir/stages.json"
+                build_rebuild_trigger="$build_lock_dir/rebuild-trigger.json"
+                wrapper_event_log="$build_state_dir/xtask-wrapper-events.jsonl"
                 runtime_introspection_stamp="$cargo_target_dir/debug/xtask.runtime-introspection.built"
                 force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
                 requires_runtime_introspection="0"
+
+                _sinex_xtask_json_string() {
+                  ${pkgs.jq}/bin/jq -Rn --arg value "$1" '$value'
+                }
+
+                _sinex_xtask_bool_json() {
+                  case "$1" in
+                    1|true|yes) printf 'true' ;;
+                    *) printf 'false' ;;
+                  esac
+                }
+
+                _sinex_xtask_json_file_or_null() {
+                  local path="$1"
+                  if [ -r "$path" ]; then
+                    ${pkgs.jq}/bin/jq -c . "$path" 2>/dev/null || printf 'null'
+                  else
+                    printf 'null'
+                  fi
+                }
+
+                _sinex_xtask_source_trigger_json() {
+                  local dep_path="$1"
+                  local kind="$2"
+                  local ref_path="$3"
+                  local rel_path status mtime
+
+                  rel_path="''${dep_path#"$root_dir/"}"
+                  if [ ! -e "$dep_path" ]; then
+                    status="missing"
+                    mtime="null"
+                  elif [ "$dep_path" -nt "$ref_path" ]; then
+                    status="newer"
+                    mtime="$(stat -c %Y "$dep_path" 2>/dev/null || printf null)"
+                  else
+                    return 1
+                  fi
+
+                  ${pkgs.jq}/bin/jq -cn \
+                    --arg path "$dep_path" \
+                    --arg rel_path "$rel_path" \
+                    --arg kind "$kind" \
+                    --arg status "$status" \
+                    --argjson mtime "$mtime" \
+                    '{path:$path, rel_path:$rel_path, kind:$kind, status:$status, mtime_epoch:$mtime}'
+                }
+
+                _sinex_xtask_collect_source_triggers() {
+                  local ref_path="$1"
+                  local depfile_path="$cargo_target_dir/debug/xtask.d"
+                  local extra_dep dep_path row first
+
+                  first=1
+                  printf '['
+                  for extra_dep in \
+                    "$root_dir/Cargo.toml" \
+                    "$root_dir/Cargo.lock" \
+                    "$root_dir/flake.nix" \
+                    "$root_dir/xtask/Cargo.toml" \
+                    "$root_dir/.cargo/config.toml"
+                  do
+                    row="$(_sinex_xtask_source_trigger_json "$extra_dep" "extra" "$ref_path" || true)"
+                    if [ -n "$row" ]; then
+                      [ "$first" -eq 1 ] || printf ','
+                      printf '%s' "$row"
+                      first=0
+                    fi
+                  done
+
+                  if [ ! -r "$depfile_path" ]; then
+                    row="$(${pkgs.jq}/bin/jq -cn \
+                      --arg path "$depfile_path" \
+                      --arg rel_path "''${depfile_path#"$root_dir/"}" \
+                      '{path:$path, rel_path:$rel_path, kind:"depfile", status:"missing", mtime_epoch:null}')"
+                    [ "$first" -eq 1 ] || printf ','
+                    printf '%s' "$row"
+                    printf ']'
+                    return 0
+                  fi
+
+                  while IFS= read -r dep_path; do
+                    [ -z "$dep_path" ] && continue
+                    row="$(_sinex_xtask_source_trigger_json "$dep_path" "depfile" "$ref_path" || true)"
+                    if [ -n "$row" ]; then
+                      [ "$first" -eq 1 ] || printf ','
+                      printf '%s' "$row"
+                      first=0
+                    fi
+                  done < <(
+                    sed -e 's/^[^:]*: //' -e 's/\\$//' "$depfile_path" \
+                      | tr ' ' '\n' \
+                      | sed '/^$/d'
+                  )
+
+                  printf ']'
+                }
+
+                _sinex_xtask_write_rebuild_trigger() {
+                  local reason="$1"
+                  local ref_path="''${2:-}"
+                  local inputs="[]"
+                  mkdir -p "$(dirname "$build_rebuild_trigger")" || return 0
+                  if [ -n "$ref_path" ]; then
+                    inputs="$(_sinex_xtask_collect_source_triggers "$ref_path" 2>/dev/null || printf '[]')"
+                  fi
+                  ${pkgs.jq}/bin/jq -cn \
+                    --arg reason "$reason" \
+                    --arg ref_path "$ref_path" \
+                    --argjson inputs "$inputs" \
+                    '{reason:$reason, ref_path:(if $ref_path == "" then null else $ref_path end), inputs:$inputs}' \
+                    > "$build_rebuild_trigger" 2>/dev/null || true
+                }
+
+                _sinex_xtask_write_current_rebuild_trigger() {
+                  local depfile_path="$cargo_target_dir/debug/xtask.d"
+
+                  if [ "$force_rebuild" = "1" ]; then
+                    _sinex_xtask_write_rebuild_trigger "forced" "$bin_path"
+                  elif [ ! -x "$bin_path" ]; then
+                    _sinex_xtask_write_rebuild_trigger "missing_binary" ""
+                  elif [ "$requires_runtime_introspection" = "1" ] && [ ! -e "$runtime_introspection_stamp" ]; then
+                    _sinex_xtask_write_rebuild_trigger "missing_runtime_introspection_stamp" ""
+                  elif [ "$requires_runtime_introspection" = "1" ] && [ "$bin_path" -nt "$runtime_introspection_stamp" ]; then
+                    _sinex_xtask_write_rebuild_trigger "stale_runtime_introspection_stamp" "$runtime_introspection_stamp"
+                  elif [ "$requires_runtime_introspection" = "1" ] && _sinex_xtask_sources_newer_than "$runtime_introspection_stamp"; then
+                    _sinex_xtask_write_rebuild_trigger "runtime_introspection_sources_newer" "$runtime_introspection_stamp"
+                  elif [ ! -r "$depfile_path" ]; then
+                    _sinex_xtask_write_rebuild_trigger "missing_depfile" "$bin_path"
+                  else
+                    _sinex_xtask_write_rebuild_trigger "sources_newer" "$bin_path"
+                  fi
+                }
+
+                _sinex_xtask_record_wrapper_event() {
+                  local event_name="$1"
+                  local status="$2"
+                  local started_at="$3"
+                  local finished_at="$4"
+                  local duration_ms="$5"
+                  local log_path="$6"
+                  local command_name args_text log_value stage_value trigger_value
+                  shift 6
+
+                  mkdir -p "$build_state_dir" || return 0
+                  command_name="$(_sinex_xtask_command_name "$@" || true)"
+                  args_text="$*"
+                  if [ -n "$log_path" ]; then
+                    log_value="$(_sinex_xtask_json_string "$log_path")"
+                  else
+                    log_value="null"
+                  fi
+                  if [ -r "$build_stage_metrics" ]; then
+                    stage_value="$(${pkgs.jq}/bin/jq -c . "$build_stage_metrics" 2>/dev/null || printf '{}')"
+                  else
+                    stage_value="{}"
+                  fi
+                  trigger_value="$(_sinex_xtask_json_file_or_null "$build_rebuild_trigger")"
+
+                  {
+                    printf '{'
+                    printf '"schema_version":1'
+                    printf ',"event":%s' "$(_sinex_xtask_json_string "$event_name")"
+                    printf ',"status":%s' "$(_sinex_xtask_json_string "$status")"
+                    printf ',"started_at":%s' "$(_sinex_xtask_json_string "$started_at")"
+                    printf ',"finished_at":%s' "$(_sinex_xtask_json_string "$finished_at")"
+                    printf ',"duration_ms":%s' "$duration_ms"
+                    printf ',"command":%s' "$(_sinex_xtask_json_string "$command_name")"
+                    printf ',"args":%s' "$(_sinex_xtask_json_string "$args_text")"
+                    printf ',"requires_runtime_introspection":%s' "$(_sinex_xtask_bool_json "$requires_runtime_introspection")"
+                    printf ',"force_rebuild":%s' "$(_sinex_xtask_bool_json "$force_rebuild")"
+                    printf ',"log_path":%s' "$log_value"
+                    printf ',"rebuild_trigger":%s' "$trigger_value"
+                    printf ',"stage_durations_ms":%s' "$stage_value"
+                    printf '}\n'
+                  } >> "$wrapper_event_log" || true
+                }
+
+                _sinex_xtask_stage_start() {
+                  date +%s%N
+                }
+
+                _sinex_xtask_stage_record() {
+                  local stage_name="$1"
+                  local stage_started_ns="$2"
+                  local stage_finished_ns stage_duration_ms tmp_file
+
+                  stage_finished_ns="$(date +%s%N)"
+                  stage_duration_ms="$(( (stage_finished_ns - stage_started_ns) / 1000000 ))"
+                  mkdir -p "$(dirname "$build_stage_metrics")" || return 0
+                  tmp_file="$build_stage_metrics.tmp"
+                  if [ -r "$build_stage_metrics" ]; then
+                    ${pkgs.jq}/bin/jq \
+                      --arg stage "$stage_name" \
+                      --argjson duration "$stage_duration_ms" \
+                      '. + {($stage): $duration}' \
+                      "$build_stage_metrics" > "$tmp_file" 2>/dev/null \
+                      && mv "$tmp_file" "$build_stage_metrics" \
+                      || rm -f "$tmp_file"
+                  else
+                    ${pkgs.jq}/bin/jq -n \
+                      --arg stage "$stage_name" \
+                      --argjson duration "$stage_duration_ms" \
+                      '{($stage): $duration}' > "$build_stage_metrics" 2>/dev/null \
+                      || true
+                  fi
+                }
 
                 _sinex_xtask_normalize_global_args() {
                   local global_args=()
@@ -464,12 +673,14 @@
                   subcommand_name="$(_sinex_xtask_command_arg 1 "$@")"
 
                   case "$command_name" in
-                    docs)
-                      case "$subcommand_name" in
-                        sync|check)
-                          return 0
-                          ;;
-                      esac
+                    doctor)
+                      for _arg in "$@"; do
+                        case "$_arg" in
+                          --deployment-readiness)
+                            return 0
+                            ;;
+                        esac
+                      done
                       ;;
                   esac
 
@@ -526,10 +737,23 @@
                   fi
 
                   if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
+                    local rebuild_started_at rebuild_started_ns rebuild_finished_at rebuild_finished_ns rebuild_duration_ms
+                    rebuild_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                    rebuild_started_ns="$(date +%s%N)"
+                    rm -f "$build_stage_metrics" "$build_stage_metrics.tmp" "$build_rebuild_trigger"
+                    _sinex_xtask_write_current_rebuild_trigger
                     echo "ℹ  Rebuilding checkout-local xtask..." >&2
                     if _sinex_xtask_build_checkout_binary >"$build_failure_log" 2>&1; then
+                      rebuild_finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                      rebuild_finished_ns="$(date +%s%N)"
+                      rebuild_duration_ms="$(( (rebuild_finished_ns - rebuild_started_ns) / 1000000 ))"
+                      _sinex_xtask_record_wrapper_event "checkout-local-rebuild" "success" "$rebuild_started_at" "$rebuild_finished_at" "$rebuild_duration_ms" "" "$@"
                       rm -f "$build_failure_stamp" "$build_failure_log"
                     else
+                      rebuild_finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                      rebuild_finished_ns="$(date +%s%N)"
+                      rebuild_duration_ms="$(( (rebuild_finished_ns - rebuild_started_ns) / 1000000 ))"
+                      _sinex_xtask_record_wrapper_event "checkout-local-rebuild" "failed" "$rebuild_started_at" "$rebuild_finished_at" "$rebuild_duration_ms" "$build_failure_log" "$@"
                       printf '%s\n' "$(date -Iseconds)" > "$build_failure_stamp"
                       cat "$build_failure_log" >&2 || true
                       rm -rf "$build_lock_dir"
@@ -558,36 +782,56 @@
                     export PGHOST="$sqlx_tmp"
                     export PGPORT="$((55433 + ($$ % 1000)))"
 
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
                     if ! ${postgresForSqlx}/bin/initdb -D "$PGDATA" --locale=C --encoding=UTF8 --auth=trust --username=postgres; then
+                      _sinex_xtask_stage_record "initdb" "$_stage_started_ns"
                       rm -rf "$sqlx_tmp"
                       return 1
                     fi
+                    _sinex_xtask_stage_record "initdb" "$_stage_started_ns"
 
                     echo "unix_socket_directories = '$PGHOST'" >> "$PGDATA/postgresql.conf"
                     echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
                     echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
 
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
                     if ! ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -l "$pglog" -w -t 180 start; then
+                      _sinex_xtask_stage_record "pg_start" "$_stage_started_ns"
                       cat "$pglog" >&2 || true
                       rm -rf "$sqlx_tmp"
                       return 1
                     fi
+                    _sinex_xtask_stage_record "pg_start" "$_stage_started_ns"
 
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
                     if ! ${postgresForSqlx}/bin/createdb -h "$PGHOST" -p "$PGPORT" -U postgres sinex_dev; then
+                      _sinex_xtask_stage_record "createdb" "$_stage_started_ns"
                       ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
                       rm -rf "$sqlx_tmp"
                       return 1
                     fi
+                    _sinex_xtask_stage_record "createdb" "$_stage_started_ns"
 
                     export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&user=postgres"
 
-                    cargo build --quiet -p sinex-schema --bin schema-apply-bootstrap
-                    if ! "$cargo_target_dir/debug/schema-apply-bootstrap"; then
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
+                    if ! cargo build --quiet -p sinex-schema --bin schema-apply-bootstrap; then
+                      _sinex_xtask_stage_record "schema_bootstrap_build" "$_stage_started_ns"
                       ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
                       rm -rf "$sqlx_tmp"
                       return 1
                     fi
+                    _sinex_xtask_stage_record "schema_bootstrap_build" "$_stage_started_ns"
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
+                    if ! "$cargo_target_dir/debug/schema-apply-bootstrap"; then
+                      _sinex_xtask_stage_record "schema_apply" "$_stage_started_ns"
+                      ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
+                      rm -rf "$sqlx_tmp"
+                      return 1
+                    fi
+                    _sinex_xtask_stage_record "schema_apply" "$_stage_started_ns"
 
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
                     if [ "$requires_runtime_introspection" = "1" ]; then
                       cargo build --quiet -p xtask --features runtime-introspection || build_rc=$?
                       if [ "$build_rc" -eq 0 ]; then
@@ -597,7 +841,10 @@
                       cargo build --quiet -p xtask || build_rc=$?
                       rm -f "$runtime_introspection_stamp"
                     fi
+                    _sinex_xtask_stage_record "xtask_build" "$_stage_started_ns"
+                    _stage_started_ns="$(_sinex_xtask_stage_start)"
                     ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
+                    _sinex_xtask_stage_record "pg_stop" "$_stage_started_ns"
                     rm -rf "$sqlx_tmp"
                     return "$build_rc"
                   )
@@ -631,7 +878,7 @@
                     elif _sinex_xtask_is_observability_command "$@"; then
                       echo "ℹ  Using existing xtask binary for read-only command while sources are newer" >&2
                     else
-                      if ! _sinex_xtask_build_with_lock; then
+                      if ! _sinex_xtask_build_with_lock "$@"; then
                         if _sinex_xtask_failed_build_is_current; then
                           if [ "$requires_runtime_introspection" = "1" ]; then
                             _sinex_xtask_report_current_failure
@@ -653,7 +900,7 @@
                 fi
 
                 if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
-                  if ! _sinex_xtask_build_with_lock; then
+                  if ! _sinex_xtask_build_with_lock "$@"; then
                     if _sinex_xtask_failed_build_is_current; then
                       if [ "$requires_runtime_introspection" = "1" ]; then
                         _sinex_xtask_report_current_failure
@@ -765,7 +1012,6 @@
                 export SINEX_CACHE_DIR="$SINEX_DEV_CACHE_ROOT"
                 export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
                 export SINEX_NATS_DIR="$SINEX_STATE_DIR/nats"
-                export SINEX_TEST_POSTGRES="''${SINEX_TEST_POSTGRES:-ephemeral}"
                 export SINEX_DEV_PG_PORT="${toString pgPort}"
                 export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run"
                 export PGHOST="$SINEX_DEV_STATE_DIR/run"
@@ -790,11 +1036,11 @@
                   export SINEX_TEST_TMPDIR="$_sinex_test_tmp_root"
                 fi
                 if [ -z "''${SINEX_TEST_PGDATA_DIR:-}" ]; then
-                  _sinex_test_pgdata_root="$SINEX_DEV_ROOT/.sinex/ci-pgdata"
+                  _sinex_test_pgdata_root="$SINEX_DEV_ROOT/.sinex/test-pgdata"
                   if [ -d /dev/shm ] && [ -w /dev/shm ] && [ -k /dev/shm ]; then
                     _sinex_shm_available_kb="$(df -Pk /dev/shm 2>/dev/null | awk 'NR == 2 { print $4 }')"
                     if [ "''${_sinex_shm_available_kb:-0}" -ge 1048576 ]; then
-                      _sinex_test_pgdata_root="/dev/shm/sinex-ci-pgdata-''${USER:-user}-$_sinex_checkout_hash"
+                      _sinex_test_pgdata_root="/dev/shm/sinex-test-pgdata-''${USER:-user}-$_sinex_checkout_hash"
                     fi
                   fi
                   export SINEX_TEST_PGDATA_DIR="$_sinex_test_pgdata_root"
@@ -827,6 +1073,52 @@
                   fi
                 fi
                 if [ -t 1 ]; then
+                  _sinex_tcp_ready() {
+                    timeout 0.2 bash -c ">/dev/tcp/127.0.0.1/$1" 2>/dev/null
+                  }
+
+                  _sinex_recent_history_line() {
+                    local db="$SINEX_STATE_DIR/xtask-history.db"
+                    local query
+
+                    [ -f "$db" ] || return 0
+                    command -v sqlite3 >/dev/null 2>&1 || return 0
+
+                    query="
+                      SELECT command || ' ' || status || ' ' || printf('%.1fs', duration_secs) || ' ' || started_at
+                      FROM invocations
+                      WHERE command IN ('check','test','build','fix')
+                        AND status IN ('success','failed','cancelled')
+                      ORDER BY started_at DESC
+                      LIMIT 1;
+                    "
+
+                    timeout 0.25 sqlite3 "file:$db?mode=ro&immutable=1" "$query" 2>/dev/null || true
+                  }
+
+                  _sinex_print_motd() {
+                    local pg_state="down"
+                    local nats_state="down"
+                    local history_line
+                    local test_tmp="$SINEX_TEST_TMPDIR"
+                    local test_pgdata="''${SINEX_TEST_PGDATA_DIR:-unset}"
+
+                    pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && pg_state="up"
+                    _sinex_tcp_ready "$SINEX_DEV_NATS_PORT" && nats_state="up"
+                    history_line="$(_sinex_recent_history_line)"
+
+                    {
+                      printf 'sinex devshell: pg:%s nats:%s target:%s\n' "$pg_state" "$nats_state" "$CARGO_TARGET_DIR"
+                      printf '  test tmp: %s\n' "$test_tmp"
+                      printf '  test pgdata: %s\n' "$test_pgdata"
+                      if [ -n "$history_line" ]; then
+                        printf '  last xtask: %s\n' "$history_line"
+                      fi
+                      printf '  inspect: xtask status --summary | xtask history explain --day today --against yesterday\n'
+                      printf '  controls: SINEX_AUTO_INFRA=1 starts infra; SINEX_AUTO_STATUS=1 runs full status; SINEX_MOTD=0 hides this\n'
+                    } >&2
+                  }
+
                   # Keep shell entry cheap by default. Heavy dev conveniences are
                   # opt-in so direnv, one-shot commands, and fresh shells do not
                   # silently compile xtask or launch infra.
@@ -888,8 +1180,8 @@
                       done
                     fi
                     xtask status --summary || true
-                  elif [ "''${SINEX_SHELL_BANNER:-1}" = 1 ]; then
-                    echo "sinex devshell ready; live status: xtask status --summary; auto status: SINEX_AUTO_STATUS=1" >&2
+                  elif [ "''${SINEX_MOTD:-1}" = 1 ] && [ "''${SINEX_SHELL_BANNER:-1}" = 1 ]; then
+                    _sinex_print_motd
                   fi
                 fi
               '';

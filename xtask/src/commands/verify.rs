@@ -479,7 +479,7 @@ fn validate_xtask_phase_command(tokens: &[&str], command: &str) -> Result<()> {
         bail!("xtask phase verification command is missing a subcommand: `{command}`");
     };
 
-    const SUPPORTED_ROOTS: &[&str] = &["check", "test", "docs", "ci", "verify"];
+    const SUPPORTED_ROOTS: &[&str] = &["check", "test", "docs", "schema", "verify"];
     if !SUPPORTED_ROOTS.contains(&root) {
         bail!("unsupported xtask phase verification root `{root}` in `{command}`");
     }
@@ -1601,7 +1601,7 @@ mod tests {
                     "git diff --check".to_string(),
                     "xtask test --dry-run --all --exclude sinex-e2e-tests".to_string(),
                 ],
-                boundary_checks: vec!["xtask ci postgres -- xtask ci schema-only".to_string()],
+                boundary_checks: vec!["xtask schema strict-diff".to_string()],
                 impact_gates: vec![PhaseImpactGate {
                     impact: "schema".to_string(),
                     commands: vec!["xtask docs check".to_string()],

@@ -112,8 +112,6 @@ Run the repo's primary nextest-backed test workflows
 | `--features` | yes | no | Cargo features to enable for the selected test packages |
 | `--dry-run` | no | no | Print what would happen |
 | `--skip-preflight` | no | no | Skip automatic infrastructure setup (preflight is ON by default) |
-| `--ephemeral-postgres` | no | no | Run DB-backed tests inside a fresh throwaway Postgres cluster |
-| `--no-ephemeral-postgres` | no | no | Disable SINEX_TEST_POSTGRES=ephemeral auto-wrapping for this invocation |
 | `--include-ignored` | no | no | Include tests marked `#[ignore]` |
 | `--heavy` | no | no | Run heavy/ignored tests |
 | `-a, --all` | no | no | Run ALL packages (disables affected mode default) |
@@ -145,7 +143,7 @@ Run benchmarks with optional contract enforcement
 | `--profile` | yes | no | Nextest profile to use |
 | `--runs` | yes | no | Number of runs per configuration |
 | `--threads` | yes | no | Thread counts to test (comma-separated) |
-| `--db-pool-sizes` | yes | no | Test database pool sizes to sweep (comma-separated). Enables ephemeral Postgres mode |
+| `--db-pool-sizes` | yes | no | Test database pool sizes to sweep (comma-separated) |
 | `--system-impact` | no | no | Use the system-impact preset for measured test concurrency calibration |
 | `--system-impact-extended` | no | no | Include aggressive over-subscription points in the system-impact preset |
 | `--target` | yes | no | Target package(s) or "workspace" |
@@ -626,6 +624,7 @@ Analyze workspace dependency structure and impact
 | `duplicates` | Find duplicate dependencies (multiple versions) |
 | `unused` | Detect unused dependencies |
 | `timings` | Analyze build timings |
+| `compile-surface` | Summarize static source/dependency surface that contributes to compile cost |
 | `impact` | Analyze rebuild impact of package changes |
 | `update` | Update Cargo.lock through the xtask dependency surface |
 | `graph` | Visualize dependency graph |
@@ -670,12 +669,6 @@ Find duplicate dependencies (multiple versions)
 
 Detect unused dependencies
 
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--ci` | no | no | Fail build if unused dependencies found (for CI) |
-
 
 ### `xtask deps timings`
 
@@ -687,6 +680,21 @@ Analyze build timings
 |---|---|---|---|
 | `--compare` | yes | no | Compare with previous build |
 | `--top` | yes | no | Number of slowest crates to show |
+| `-p, --package` | yes | no | Cargo package to time, e.g. xtask for checkout-wrapper rebuild attribution |
+| `--profile` | yes | no | Cargo profile to time: dev, release, or a custom profile name |
+| `--clean-package` | no | no | Run `cargo clean -p <package>` before timing; requires --package |
+
+
+### `xtask deps compile-surface`
+
+Summarize static source/dependency surface that contributes to compile cost
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `-p, --package` | yes | no | Workspace package to summarize |
+| `--top` | yes | no | Number of largest source files and module buckets to show |
 
 
 ### `xtask deps impact`
@@ -740,6 +748,10 @@ Query build, test, and runtime history recorded by xtask
 | `list` | List recent invocations |
 | `stats` | Show statistics for a command (or all commands / all packages) |
 | `cost` | Summarise dev-loop wallclock cost without double-counting wrappers |
+| `wrapper-events` | Show pre-exec devshell wrapper rebuild events |
+| `compare-days` | Compare command duration and pressure between two calendar days |
+| `resources` | Aggregate recorded resource pressure and block I/O by command/window |
+| `overlap` | Explain what overlapped an invocation and what shared resources were recorded |
 | `tests` | Query test result history |
 | `diagnostics` | Query build diagnostics (warnings/errors) |
 | `stages` | Query pipeline stage timing data (G2) |
@@ -807,6 +819,62 @@ Summarise dev-loop wallclock cost without double-counting wrappers
 | `--days` | yes | no | How many days back to analyse |
 
 
+### `xtask history wrapper-events`
+
+Show pre-exec devshell wrapper rebuild events
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--days` | yes | no | How many days back to analyse |
+| `--limit` | yes | no | Maximum number of events to show |
+
+
+### `xtask history compare-days`
+
+Compare command duration and pressure between two calendar days
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--day` | yes | no | Day to inspect, in YYYY-MM-DD. Defaults to today in UTC |
+| `--against` | yes | no | Baseline day, in YYYY-MM-DD. Defaults to the previous UTC day |
+| `--command` | yes | no | Commands to include. Can be repeated or comma-separated |
+| `--limit` | yes | no | Number of slowest invocations from the inspected day to include |
+| `--include-failures` | no | no | Include failed invocations in addition to successful invocations |
+
+
+### `xtask history resources`
+
+Aggregate recorded resource pressure and block I/O by command/window
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--day` | yes | no | Exact UTC calendar day to inspect, in YYYY-MM-DD |
+| `--days` | yes | no | Rolling window in days when --day is omitted |
+| `--command` | yes | no | Commands to include. Can be repeated or comma-separated |
+| `--limit` | yes | no | Number of slowest/high-pressure invocations to include |
+| `--include-background` | no | no | Include background invocations in addition to foreground work |
+| `--success-only` | no | no | Restrict to successful invocations only |
+
+
+### `xtask history overlap`
+
+Explain what overlapped an invocation and what shared resources were recorded
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `invocation` | yes | no | Invocation selector: `latest`, `previous`, `current`, invocation ID, `inv:<id>`, or `job:<id>` |
+| `--command` | yes | no | Restrict selector resolution to this command |
+| `--limit` | yes | no | Number of overlapping invocations/background jobs to include |
+
+
 ### `xtask history tests`
 
 Query test result history
@@ -821,6 +889,7 @@ Query test result history
 | `trends` |  |
 | `failures` | Show failing tests from the most recent test run |
 | `analyze` | Comprehensive analysis of the most recent test run |
+| `overhead` | Rank recent test runs by non-test runner/setup overhead and host pressure |
 | `output` | Show captured output for a test (pass or fail) |
 | `eta` |  |
 | `grep` | Full-text search across stored test output (G7) |
@@ -894,6 +963,18 @@ Comprehensive analysis of the most recent test run
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
+
+
+#### `xtask history tests overhead`
+
+Rank recent test runs by non-test runner/setup overhead and host pressure
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--runs` | yes | no | Number of recent completed test invocations with stored results to inspect |
+| `--limit` | yes | no | Number of rows to display after ranking by non-test overhead |
 
 
 #### `xtask history tests output`

@@ -110,7 +110,7 @@ pub struct ExerciseCommand {
     ///
     /// The manifest is small and stable — no timings, no paths, just behavioral
     /// outcomes. Commit it as `xtask/config/exercise-baseline.json` to create a
-    /// regression gate. Use `--ci-check` to enforce it in CI.
+    /// regression gate. Use `--ci-check` to enforce it against the baseline.
     #[arg(long, value_name = "PATH")]
     pub audit_file: Option<std::path::PathBuf>,
 
@@ -120,7 +120,7 @@ pub struct ExerciseCommand {
     /// `--baseline`). Any exercise that was passing in the baseline and is now
     /// failing is a regression — exits non-zero with a clear report.
     ///
-    /// CI integration: `xtask exercise --tier 1 --seed --ci-check`
+    /// Baseline gate: `xtask exercise --tier 1 --seed --ci-check`
     #[arg(long)]
     pub ci_check: bool,
 
@@ -457,10 +457,10 @@ impl XtaskCommand for ExerciseCommand {
         let passed = outcomes.iter().filter(|o| o.passed).count();
         let failed = outcomes.iter().filter(|o| !o.passed).count();
 
-        // CI regressions override a clean run to a failure.
+        // Baseline regressions override a clean run to a failure.
         let mut result = if !ci_regressions.is_empty() {
             CommandResult::failure(crate::output::StructuredError::new(
-                "CI_REGRESSION",
+                "BASELINE_REGRESSION",
                 format!(
                     "{} exercise(s) regressed vs baseline: {}",
                     ci_regressions.len(),
@@ -596,7 +596,7 @@ fn check_ci_baseline(
 
     if is_human {
         if !regressions.is_empty() {
-            println!("\n  ⚡ CI regressions ({}):", regressions.len());
+            println!("\n  ⚡ Baseline regressions ({}):", regressions.len());
             for id in &regressions {
                 println!("       ✗  {id}  (was passing in baseline)");
             }

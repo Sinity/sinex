@@ -1,6 +1,6 @@
 //! Parse and store nextest JSON output.
 
-use super::db::{HistoryDb, InvocationStatus, ResourceUsage};
+use super::db::{HistoryDb, InvocationStatus, ResourceUsage, StageTiming};
 use color_eyre::eyre::{Result, WrapErr};
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
@@ -727,6 +727,10 @@ pub struct TestSuiteAnalysis {
     pub host_pressure: Option<HostPressureFailureClassification>,
     /// Invocation elapsed time compared with summed test-body duration.
     pub run_overhead: Option<TestRunOverhead>,
+    /// Recorded pipeline stages for the invocation, grouped by stage name.
+    pub stage_breakdown: Vec<TestRunStageBreakdown>,
+    /// Invocation time not explained by summed test bodies or recorded stages.
+    pub unaccounted_overhead_secs: Option<f64>,
     /// Total counts
     pub total_passed: usize,
     pub total_failed: usize,
@@ -745,6 +749,17 @@ pub struct TestRunOverhead {
     pub non_test_overhead_secs: f64,
     pub test_body_ratio: f64,
     pub classification: &'static str,
+}
+
+/// Recorded stage contribution for a single test invocation.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct TestRunStageBreakdown {
+    pub stage_name: String,
+    pub runs: usize,
+    pub total_duration_secs: f64,
+    pub avg_duration_secs: f64,
+    pub max_duration_secs: f64,
+    pub success: bool,
 }
 
 /// Host-pressure context for interpreting timing-sensitive test failures.
@@ -789,6 +804,61 @@ fn classify_test_run_overhead(
         test_body_ratio,
         classification,
     })
+}
+
+fn summarize_stage_breakdown(stages: &[StageTiming]) -> Vec<TestRunStageBreakdown> {
+    let mut by_stage: std::collections::BTreeMap<String, (usize, f64, f64, bool)> =
+        std::collections::BTreeMap::new();
+    for stage in stages {
+        let entry = by_stage
+            .entry(stage.stage_name.clone())
+            .or_insert((0, 0.0, 0.0, true));
+        entry.0 += 1;
+        entry.1 += stage.duration_secs;
+        entry.2 = entry.2.max(stage.duration_secs);
+        entry.3 &= stage.success;
+    }
+
+    let mut breakdown: Vec<TestRunStageBreakdown> = by_stage
+        .into_iter()
+        .map(
+            |(stage_name, (runs, total_duration_secs, max_duration_secs, success))| {
+                TestRunStageBreakdown {
+                    stage_name,
+                    runs,
+                    total_duration_secs,
+                    avg_duration_secs: if runs == 0 {
+                        0.0
+                    } else {
+                        total_duration_secs / runs as f64
+                    },
+                    max_duration_secs,
+                    success,
+                }
+            },
+        )
+        .collect();
+    breakdown.sort_by(|left, right| {
+        right
+            .total_duration_secs
+            .partial_cmp(&left.total_duration_secs)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.stage_name.cmp(&right.stage_name))
+    });
+    breakdown
+}
+
+fn unaccounted_overhead_secs(
+    invocation_duration_secs: Option<f64>,
+    test_body_duration_secs: f64,
+    stage_breakdown: &[TestRunStageBreakdown],
+) -> Option<f64> {
+    let invocation_duration_secs = invocation_duration_secs?;
+    let stage_secs: f64 = stage_breakdown
+        .iter()
+        .map(|stage| stage.total_duration_secs)
+        .sum();
+    Some((invocation_duration_secs - test_body_duration_secs - stage_secs).max(0.0))
 }
 
 fn invocation_duration_for_analysis(
@@ -998,6 +1068,32 @@ impl HistoryDb {
             })
             .optional()
             .map_err(Into::into)
+    }
+
+    /// Recent completed test invocations that have stored test result rows.
+    pub fn recent_test_runs(&self, limit: usize) -> Result<Vec<ResolvedTestRun>> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT i.id, i.started_at
+            FROM invocations i
+            WHERE i.command = 'test'
+              AND i.status IN ('success', 'failed')
+              AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
+            ORDER BY i.started_at DESC, i.id DESC
+            LIMIT ?1
+            ",
+        )?;
+
+        stmt.query_map([limit], |row| {
+            Ok(ResolvedTestRun {
+                invocation_id: row.get(0)?,
+                started_at: row.get(1)?,
+                job_id: None,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("failed to collect recent test invocations with stored results")
     }
 
     fn resolve_test_run_invocation(&self, invocation_id: i64) -> Result<Option<ResolvedTestRun>> {
@@ -1240,6 +1336,18 @@ impl HistoryDb {
         );
         let run_overhead =
             classify_test_run_overhead(invocation_duration_secs, total_duration_secs);
+        let stage_breakdown = summarize_stage_breakdown(
+            &self
+                .get_stage_timings_for_invocation(invocation_id)
+                .wrap_err_with(|| {
+                    format!("failed to load stage timings for test invocation {invocation_id}")
+                })?,
+        );
+        let unaccounted_overhead_secs = unaccounted_overhead_secs(
+            invocation_duration_secs,
+            total_duration_secs,
+            &stage_breakdown,
+        );
 
         // Per-package failure summary
         let mut pkg_map: std::collections::HashMap<String, (usize, usize, Vec<String>)> =
@@ -1281,6 +1389,8 @@ impl HistoryDb {
             failure_summary,
             host_pressure,
             run_overhead,
+            stage_breakdown,
+            unaccounted_overhead_secs,
             total_passed,
             total_failed,
             total_ignored,
@@ -1897,6 +2007,50 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_recent_test_runs_lists_completed_runs_with_results_newest_first() -> TestResult<()>
+    {
+        let (_dir, db, first_inv) = test_db_with_invocation()?;
+        db.store_test_results(
+            first_inv,
+            &[TestResult {
+                test_name: "test_first".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.1),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let without_results = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(without_results, InvocationStatus::Success, Some(0), 1.0)?;
+
+        let check_inv = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(check_inv, InvocationStatus::Success, Some(0), 1.0)?;
+
+        let second_inv = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(second_inv, InvocationStatus::Failed, Some(1), 1.0)?;
+        db.store_test_results(
+            second_inv,
+            &[TestResult {
+                test_name: "test_second".into(),
+                package: "pkg-b".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(0.2),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let runs = db.recent_test_runs(10)?;
+        let ids = runs.iter().map(|run| run.invocation_id).collect::<Vec<_>>();
+
+        assert_eq!(ids, vec![second_inv, first_inv]);
+        assert_eq!(db.recent_test_runs(1)?[0].invocation_id, second_inv);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_resolve_test_run_supports_freshness_selectors() -> TestResult<()> {
         let (_dir, db, first_inv) = test_db_with_invocation()?;
         db.store_test_results(
@@ -2386,6 +2540,9 @@ mod tests {
     #[sinex_test]
     async fn test_analyze_last_run_basic() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
+        db.record_stage_timing(inv_id, "preflight", "2026-01-01T00:00:00Z", 0.5, true)?;
+        db.record_stage_timing(inv_id, "nextest-stream", "2026-01-01T00:00:01Z", 1.0, true)?;
+        db.record_stage_timing(inv_id, "nextest-stream", "2026-01-01T00:00:02Z", 0.25, true)?;
 
         let results = vec![
             TestResult {
@@ -2431,6 +2588,12 @@ mod tests {
         assert_eq!(overhead.test_body_duration_secs, 2.0);
         assert_eq!(overhead.non_test_overhead_secs, 3.0);
         assert_eq!(overhead.classification, "mixed");
+        assert_eq!(analysis.stage_breakdown.len(), 2);
+        assert_eq!(analysis.stage_breakdown[0].stage_name, "nextest-stream");
+        assert_eq!(analysis.stage_breakdown[0].runs, 2);
+        assert_eq!(analysis.stage_breakdown[0].total_duration_secs, 1.25);
+        assert_eq!(analysis.stage_breakdown[1].stage_name, "preflight");
+        assert_eq!(analysis.unaccounted_overhead_secs, Some(1.25));
 
         // Failure summary should have pkg-a with 1 failure
         assert_eq!(analysis.failure_summary.len(), 1);

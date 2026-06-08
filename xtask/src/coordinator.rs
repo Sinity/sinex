@@ -1203,8 +1203,6 @@ fn test_scope_is_fresh_reusable(args: &[String]) -> bool {
                 | "-l"
                 | "--prime"
                 | "--update-snapshots"
-                | "--ephemeral-postgres"
-                | "--no-ephemeral-postgres"
                 | "--no-reuse"
         )
     });
@@ -1323,8 +1321,6 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                     | "--list"
                     | "--prime"
                     | "--update-snapshots"
-                    | "--ephemeral-postgres"
-                    | "--no-ephemeral-postgres"
                     | "--no-reuse"
             ),
             "check" | "fix" => {

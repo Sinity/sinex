@@ -18,13 +18,6 @@ const SINEXD_RUNTIME_TEST_PACKAGES: &[&str] = &[
     "sinex-workspace-tests",
 ];
 const SINEXCTL_RUNTIME_TEST_PACKAGES: &[&str] = &["sinex-workspace-tests"];
-const DATABASE_TEST_PACKAGES: &[&str] = &[
-    "sinex-db",
-    "sinex-e2e-tests",
-    "sinexd",
-    "sinex-schema",
-    "sinex-workspace-tests",
-];
 const SINEXD_RUNTIME_INDEPENDENT_TEST_BINARIES: &[&str] = &[
     "browser_history_parser_test",
     "registry_dispatch_test",
@@ -139,10 +132,6 @@ pub(super) fn runtime_binary_requirements_for_target(
         requirements.retain(|requirement| requirement.package != "sinexd");
     }
     requirements
-}
-
-pub(super) fn test_database_required_for_plan(execution_plan: &NextestExecutionPlan) -> bool {
-    workload_scope_includes_any(&execution_plan.workload_scope, DATABASE_TEST_PACKAGES)
 }
 
 fn workload_scope_includes_any(scope: &WorkloadScope, packages: &[&str]) -> bool {
@@ -527,32 +516,6 @@ mod tests {
             .iter()
             .any(|requirement| requirement.package == "sinexd")
         );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn database_requirement_tracks_db_backed_test_plans() -> ::xtask::sandbox::TestResult<()>
-    {
-        let workspace = NextestExecutionPlan {
-            runner_packages: Vec::new(),
-            excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Workspace,
-        };
-        assert!(test_database_required_for_plan(&workspace));
-
-        let db_package = NextestExecutionPlan {
-            runner_packages: vec!["sinex-db".to_string()],
-            excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-db".to_string()]),
-        };
-        assert!(test_database_required_for_plan(&db_package));
-
-        let xtask_package = NextestExecutionPlan {
-            runner_packages: vec!["xtask".to_string()],
-            excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["xtask".to_string()]),
-        };
-        assert!(!test_database_required_for_plan(&xtask_package));
         Ok(())
     }
 
