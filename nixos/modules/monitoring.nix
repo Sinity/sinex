@@ -126,6 +126,22 @@ in
           ProtectSystem = "strict";
           ProtectHome = true;
           PrivateTmp = true;
+          RestrictSUIDSGID = true;
+          RemoveIPC = true;
+          ProtectKernelTunables = true;
+          ProtectKernelModules = true;
+          ProtectKernelLogs = true;
+          ProtectClock = true;
+          ProtectControlGroups = true;
+          RestrictRealtime = true;
+          LockPersonality = true;
+          MemoryDenyWriteExecute = true;
+          RestrictNamespaces = true;
+          SystemCallArchitectures = "native";
+          RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+          SystemCallFilter = [ "@system-service" "~@privileged" ];
+          SystemCallErrorNumber = "EPERM";
+          UMask = "0077";
         };
       };
     })
