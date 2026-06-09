@@ -2674,7 +2674,13 @@ in
           };
         };
         systemd.timers = lib.genAttrs runtimeAuxiliaryTimerNames (_: {
-          wantedBy = lib.mkForce (lib.optionals cfg.runtime.target.attachToMultiUser [ "timers.target" ]);
+          # When using deferred-start via sinex-runtime.target (attachToMultiUser=false),
+          # attach to sinex-runtime.target so the timer activates when the target does.
+          # When attached to multi-user.target, use timers.target instead.
+          wantedBy = lib.mkForce (
+            if cfg.runtime.target.attachToMultiUser then [ "timers.target" ]
+            else [ "sinex-runtime.target" ]
+          );
           unitConfig.PartOf = [ "sinex-runtime.target" ];
         });
         # postgresql.target leaks into multi-user even with the runtime
