@@ -382,13 +382,32 @@ in
                 ensure_extension() {
                   local dbName="$1"
                   local extName="$2"
-                  local exists
+                  local exists needs_update
                   echo "[sinex] ensuring extension ''${extName} for ''${dbName}"
                   exists="$(extension_exists "$dbName" "$extName")"
                   if [ "$exists" != "1" ]; then
                     create_extension "$dbName" "$extName"
+                    # Freshly created extension is already at latest version.
+                    return
                   fi
-                  update_extension "$dbName" "$extName"
+                  # Skip ALTER EXTENSION UPDATE when the installed version already
+                  # matches the default available version — avoids a NOTICE flood
+                  # ("version X already installed") on every postgresql restart.
+                  needs_update=$(psql -X -v ON_ERROR_STOP=1 \
+                    --set=sinex_ext_name="$extName" \
+                    -d "$dbName" -At 2>/dev/null <<'SQL'
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_extension e
+          JOIN pg_available_extensions ae ON ae.name = e.extname
+          WHERE e.extname = :'sinex_ext_name'
+            AND e.extversion != ae.default_version
+        );
+SQL
+                  )
+                  if [ "''${needs_update}" = "t" ]; then
+                    update_extension "$dbName" "$extName"
+                  fi
                 }
 
                 for dbName in ${concatStringsSep " " (map escapeShellArg allDatabases)}; do
