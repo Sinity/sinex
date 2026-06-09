@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT \n                    id as \"id!: Id<EntityRelation>\",\n                    from_entity_id::uuid as \"from_entity_id!: Id<Entity>\",\n                    to_entity_id::uuid as \"to_entity_id!: Id<Entity>\",\n                    relation_type as \"relation_type!\",\n                    properties as \"properties!\",\n                    source_event_ids::uuid[] as \"source_event_ids!: Vec<Id<Event<JsonValue>>>\",\n                    confidence_score as \"confidence_score!\",\n                    is_active as \"is_active!\",\n                    created_at as \"created_at!: sinex_primitives::temporal::Timestamp\",\n                    updated_at as \"updated_at!: sinex_primitives::temporal::Timestamp\"\n                FROM core.entity_relations\n                WHERE id::uuid = ANY($1)\n                ORDER BY array_position($1, id::uuid)\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: Id<EntityRelation>",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "from_entity_id!: Id<Entity>",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "to_entity_id!: Id<Entity>",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "relation_type!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "properties!",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+        "type_info": "UuidArray"
+      },
+      {
+        "ordinal": 6,
+        "name": "confidence_score!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 7,
+        "name": "is_active!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at!: sinex_primitives::temporal::Timestamp",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at!: sinex_primitives::temporal::Timestamp",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fd0da8c48e8bb6f2a6bf02b7fb5e21bd561618b79afd76de78ed20a8ace56d58"
+}

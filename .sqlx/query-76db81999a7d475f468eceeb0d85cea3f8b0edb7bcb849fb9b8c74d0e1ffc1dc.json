@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE sinex_schemas.event_payload_schemas\n            SET is_active = false, updated_at = NOW()\n            WHERE source = $1\n              AND event_type = $2\n              AND is_active = true\n              AND schema_version <> $3\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "76db81999a7d475f468eceeb0d85cea3f8b0edb7bcb849fb9b8c74d0e1ffc1dc"
+}

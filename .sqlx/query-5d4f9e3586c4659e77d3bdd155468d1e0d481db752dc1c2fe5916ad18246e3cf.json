@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id,\n                baseline_lane_id,\n                candidate_lane_id,\n                diff_kind,\n                counts,\n                examples,\n                report_hash,\n                created_at as \"created_at: Timestamp\"\n            FROM semantic.lane_diffs\n            WHERE baseline_lane_id = $1 OR candidate_lane_id = $1\n            ORDER BY created_at DESC, id DESC\n            LIMIT $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "baseline_lane_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "candidate_lane_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "diff_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "counts",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "examples",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "report_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at: Timestamp",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5d4f9e3586c4659e77d3bdd155468d1e0d481db752dc1c2fe5916ad18246e3cf"
+}

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id::uuid AS \"id!\"\n            FROM core.operations_log\n            WHERE operation_type = 'replay'\n              AND result_status = 'running'\n              AND result_message IN ('executing', 'cancelling', 'committing')\n              AND (preview_summary->>'started_at')::timestamptz\n                  < NOW() - make_interval(secs => $1)\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7e56a4a887e2f2bc578f1d31bbc61089b87f7cf8626ea5e3980fe862526ebfa7"
+}

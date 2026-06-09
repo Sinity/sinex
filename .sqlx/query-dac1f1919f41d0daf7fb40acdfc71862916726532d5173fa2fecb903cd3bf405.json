@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE sinex_schemas.event_payload_schemas\n            SET is_active = false, updated_at = NOW()\n            WHERE id = $1::uuid\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dac1f1919f41d0daf7fb40acdfc71862916726532d5173fa2fecb903cd3bf405"
+}

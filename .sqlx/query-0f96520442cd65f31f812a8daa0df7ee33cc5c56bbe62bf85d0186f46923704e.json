@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE core.operations_log\n            SET result_status = $2,\n                scope = $3,\n                preview_summary = COALESCE($4, preview_summary),\n                result_message = COALESCE($5, result_message),\n                duration_ms = COALESCE($6, duration_ms)\n            WHERE id = $1::uuid AND operation_type = 'tombstone'\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Jsonb",
+        "Jsonb",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0f96520442cd65f31f812a8daa0df7ee33cc5c56bbe62bf85d0186f46923704e"
+}

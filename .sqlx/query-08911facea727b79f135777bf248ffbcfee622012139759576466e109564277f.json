@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT core.start_operation($1, $2, $3::jsonb, $4::tstzrange)::uuid as \"id!: Uuid\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: Uuid",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Jsonb",
+        "TstzRange"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "08911facea727b79f135777bf248ffbcfee622012139759576466e109564277f"
+}
