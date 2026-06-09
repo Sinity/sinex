@@ -888,7 +888,7 @@
       "event_type": "monitor.focused",
       "version": "1.0.0",
       "path": "wm.hyprland/monitor.focused.json",
-      "content_hash": "ac5760bff144ffea0b6ce791519702159094cab3aeed6135265a80eb6eb4a7ad"
+      "content_hash": "662f969ffc123e6d8753bb7f4a4fd738e147f6bc68a9336938ba35900e4e5bc9"
     },
     {
       "source": "wm.hyprland",
@@ -916,7 +916,7 @@
       "event_type": "window.closed",
       "version": "1.0.0",
       "path": "wm.hyprland/window.closed.json",
-      "content_hash": "c11f7a5e1035b7b4cae822788f9c02b9e9612fb96f6828e5bda1c2ace64e3e84"
+      "content_hash": "80b21aca9dc5a03318dc6dbc1d729c66f161b8f9d066aa5fc332db79cb5609b5"
     },
     {
       "source": "wm.hyprland",
@@ -930,7 +930,7 @@
       "event_type": "window.focused",
       "version": "1.0.0",
       "path": "wm.hyprland/window.focused.json",
-      "content_hash": "9b25705fd82a5f515a1e63b56424a00416b9e8615ead6f163ab4e21f5a9f43a8"
+      "content_hash": "cbdcd84f02fd0b84d8766920f1efb439e04878ece6af1ce44f832ae71889cd71"
     },
     {
       "source": "wm.hyprland",
@@ -951,14 +951,14 @@
       "event_type": "window.moved",
       "version": "1.0.0",
       "path": "wm.hyprland/window.moved.json",
-      "content_hash": "d948ba2fc1cdc006e4e3ef328ca3bba60662b8726617439b783f9f2b6340ec61"
+      "content_hash": "836367317269c5bcf6cccc2086d62bf460fc750014048c36efdb4f9e97ffe78a"
     },
     {
       "source": "wm.hyprland",
       "event_type": "window.opened",
       "version": "1.0.0",
       "path": "wm.hyprland/window.opened.json",
-      "content_hash": "5fa94cc65679d76766fa42da247c06338a113c82fcaebde8d9ecc33c21a420e0"
+      "content_hash": "7fd979b0e39afab6a06280d55248c061430dcfefa4923ca6c9ca110d0aca02d7"
     },
     {
       "source": "wm.hyprland",
@@ -986,7 +986,7 @@
       "event_type": "workspace.switched",
       "version": "1.0.0",
       "path": "wm.hyprland/workspace.switched.json",
-      "content_hash": "8eed6cf1fbb4d751342a48bf02eb0131f267460f03f7bd26dbafa716dcb003a2"
+      "content_hash": "ee6baa4caa4f835379922c8df121a5ca768993b7fdf68142ee1db1bea7323f88"
     },
     {
       "source": "wykop",

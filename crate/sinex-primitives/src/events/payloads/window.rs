@@ -14,29 +14,38 @@ pub struct HyprlandWindowOpenedPayload {
     pub window_id: String,
     pub window_class: String,
     pub window_title: String,
-    pub workspace_id: i32,
-    pub monitor_id: i32,
-    pub geometry: WindowGeometry,
-    pub floating: bool,
+    /// Hyprland sends workspace_id as a string; parsed to i32.
+    pub workspace_id: Option<i32>,
+    pub workspace_name: Option<String>,
+    pub monitor_id: Option<i32>,
+    pub geometry: Option<WindowGeometry>,
+    pub floating: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "wm.hyprland", event_type = "window.closed")]
 pub struct HyprlandWindowClosedPayload {
+    /// Only field Hyprland provides in the closewindow IPC event.
     pub window_id: String,
-    pub window_class: String,
-    pub window_title: String,
-    pub workspace_id: i32,
+    /// Not available from Hyprland's closewindow event.
+    pub window_class: Option<String>,
+    /// Not available from Hyprland's closewindow event.
+    pub window_title: Option<String>,
+    /// Not available from Hyprland's closewindow event.
+    pub workspace_id: Option<i32>,
     pub close_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "wm.hyprland", event_type = "window.focused")]
 pub struct HyprlandWindowFocusedPayload {
-    pub window_id: String,
-    pub window_class: String,
-    pub window_title: String,
-    pub workspace_id: i32,
+    /// From activewindowv2 (merged). May be absent if v2 never arrives.
+    pub window_id: Option<String>,
+    /// From activewindow (v1).
+    pub window_class: Option<String>,
+    /// From activewindow (v1).
+    pub window_title: Option<String>,
+    pub workspace_id: Option<i32>,
     pub previous_window_id: Option<String>,
 }
 
@@ -94,32 +103,39 @@ pub struct HyprlandScreencastPayload {
     pub owner: Option<String>,
 }
 
+/// Hyprland `workspace`/`workspacev2` event: only the destination workspace is known.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "wm.hyprland", event_type = "workspace.switched")]
 pub struct HyprlandWorkspaceSwitchedPayload {
-    pub from_workspace_id: i32,
+    /// Destination workspace ID (parsed from the Hyprland workspace IPC string).
     pub to_workspace_id: i32,
-    pub monitor_id: i32,
+    pub workspace_name: Option<String>,
+    /// Not provided by Hyprland's workspace IPC event.
+    pub from_workspace_id: Option<i32>,
+    /// Not provided by Hyprland's workspace IPC event.
+    pub monitor_id: Option<i32>,
     pub active_window_id: Option<String>,
 }
 
 // Additional Hyprland events
 
+/// Hyprland `movewindow` event: address + destination workspace.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "wm.hyprland", event_type = "window.moved")]
 pub struct HyprlandWindowMovedPayload {
-    pub window_address: String,
-    pub new_workspace_id: i32,
-    pub moved_at: String,
+    pub window_id: String,
+    pub workspace_id: Option<i32>,
+    pub workspace_name: Option<String>,
 }
 
+/// Hyprland `focusedmon`/`focusedmonv2` event: monitor name + workspace name (not IDs).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "wm.hyprland", event_type = "monitor.focused")]
 pub struct HyprlandMonitorFocusedPayload {
-    pub monitor_id: i32,
-    pub workspace_id: i32,
-    pub previous_monitor: Option<i32>,
-    pub focused_at: String,
+    /// Monitor name as provided by Hyprland (e.g. "DP-1"), not an integer ID.
+    pub monitor_name: String,
+    /// Workspace name as provided by Hyprland.
+    pub workspace_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -174,10 +190,10 @@ impl HyprlandWindowFocusedPayload {
     #[must_use]
     pub fn test_default() -> Self {
         Self {
-            window_id: "test-window-id".into(),
-            window_class: "test-class".into(),
-            window_title: "Test Window".into(),
-            workspace_id: 0,
+            window_id: Some("test-window-id".into()),
+            window_class: Some("test-class".into()),
+            window_title: Some("Test Window".into()),
+            workspace_id: Some(0),
             previous_window_id: None,
         }
     }
@@ -191,15 +207,16 @@ impl HyprlandWindowOpenedPayload {
             window_id: "test-window-id".into(),
             window_class: "test-class".into(),
             window_title: "Test Window".into(),
-            workspace_id: 0,
-            monitor_id: 0,
-            geometry: WindowGeometry {
+            workspace_id: Some(0),
+            workspace_name: None,
+            monitor_id: Some(0),
+            geometry: Some(WindowGeometry {
                 x: 0,
                 y: 0,
                 width: 800,
                 height: 600,
-            },
-            floating: false,
+            }),
+            floating: Some(false),
         }
     }
 }

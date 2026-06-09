@@ -1,5 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Hyprland `workspace`/`workspacev2` event: only the destination workspace is known.",
   "properties": {
     "active_window_id": {
       "type": [
@@ -8,22 +9,35 @@
       ]
     },
     "from_workspace_id": {
+      "description": "Not provided by Hyprland's workspace IPC event.",
       "format": "int32",
-      "type": "integer"
+      "type": [
+        "integer",
+        "null"
+      ]
     },
     "monitor_id": {
+      "description": "Not provided by Hyprland's workspace IPC event.",
+      "format": "int32",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "to_workspace_id": {
+      "description": "Destination workspace ID (parsed from the Hyprland workspace IPC string).",
       "format": "int32",
       "type": "integer"
     },
-    "to_workspace_id": {
-      "format": "int32",
-      "type": "integer"
+    "workspace_name": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
-    "from_workspace_id",
-    "to_workspace_id",
-    "monitor_id"
+    "to_workspace_id"
   ],
   "title": "HyprlandWorkspaceSwitchedPayload",
   "type": "object",

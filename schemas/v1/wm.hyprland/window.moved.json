@@ -1,21 +1,26 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Hyprland `movewindow` event: address + destination workspace.",
   "properties": {
-    "moved_at": {
+    "window_id": {
       "type": "string"
     },
-    "new_workspace_id": {
+    "workspace_id": {
       "format": "int32",
-      "type": "integer"
+      "type": [
+        "integer",
+        "null"
+      ]
     },
-    "window_address": {
-      "type": "string"
+    "workspace_name": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
-    "window_address",
-    "new_workspace_id",
-    "moved_at"
+    "window_id"
   ],
   "title": "HyprlandWindowMovedPayload",
   "type": "object",
