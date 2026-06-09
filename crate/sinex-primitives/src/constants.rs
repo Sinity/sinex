@@ -73,7 +73,10 @@ pub mod buffers {
     pub const DEFAULT_EVENT_CHANNEL_SIZE: usize = 10_000;
 
     /// Default maximum provisional events retained while waiting for persistence confirmations.
-    pub const DEFAULT_CONFIRMATION_BUFFER_CAPACITY: usize = 10_000;
+    ///
+    /// Set to 50K to absorb startup bursts before the event engine drains its backlog.
+    /// The real fix is narrowing the lock in handle_slice (issue #1673).
+    pub const DEFAULT_CONFIRMATION_BUFFER_CAPACITY: usize = 50_000;
 
     /// Small channel size for testing backpressure scenarios
     pub const TEST_SMALL_CHANNEL_SIZE: usize = 10;
