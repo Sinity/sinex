@@ -8,24 +8,34 @@
       ]
     },
     "window_class": {
-      "type": "string"
+      "description": "Not available from Hyprland's closewindow event.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "window_id": {
+      "description": "Only field Hyprland provides in the closewindow IPC event.",
       "type": "string"
     },
     "window_title": {
-      "type": "string"
+      "description": "Not available from Hyprland's closewindow event.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "workspace_id": {
+      "description": "Not available from Hyprland's closewindow event.",
       "format": "int32",
-      "type": "integer"
+      "type": [
+        "integer",
+        "null"
+      ]
     }
   },
   "required": [
-    "window_id",
-    "window_class",
-    "window_title",
-    "workspace_id"
+    "window_id"
   ],
   "title": "HyprlandWindowClosedPayload",
   "type": "object",

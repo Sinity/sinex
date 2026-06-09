@@ -33,7 +33,10 @@ mod tests {
     const CLIPBOARD_FIXTURE: &[u8] = b"hello from clipboard";
 
     /// Hyprland IPC line for `activewindow` — `TYPE>>class,title` format.
-    const HYPRLAND_FOCUSED_FIXTURE: &[u8] = b"activewindow>>kitty,~/project/sinex";
+    // Hyprland fires a v1+v2 pair for every focus change; the parser merges
+    // them into one window.focused event. The fixture must include both lines.
+    const HYPRLAND_FOCUSED_FIXTURE: &[u8] =
+        b"activewindow>>kitty,~/project/sinex\nactivewindowv2>>0x1234abcd\n";
 
     // -------------------------------------------------------------------------
     // desktop.activitywatch — window.active
@@ -197,9 +200,13 @@ mod tests {
         };
         use sinexd::sources::source_contracts::desktop::window_manager::HyprlandParser;
 
-        let fixture = crate::fixtures::unix_socket::build(b"activewindow>>kitty,~/project/sinex\n")
-            .await
-            .map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
+        // Hyprland fires v1 (class+title) immediately followed by v2 (address).
+        // The parser buffers v1 and emits one merged window.focused on v2.
+        let fixture = crate::fixtures::unix_socket::build(
+            b"activewindow>>kitty,~/project/sinex\nactivewindowv2>>0x1234abcd\n",
+        )
+        .await
+        .map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
         let socket_path = match &fixture.binding {
             crate::fixtures::FixtureBinding::UnixSocketPath(path) => path.clone(),
             other => {
@@ -217,30 +224,43 @@ mod tests {
             reconnect_on_eof: false,
         };
         let mut stream = adapter.open(material_id, &config, None).await?;
-        let record = stream
+        let source_id = SourceId::from_static("desktop.window-manager");
+        let make_ctx =
+            |record: &sinex_primitives::parser::SourceRecord| -> ParserContext {
+                ParserContext {
+                    source_id: source_id.clone(),
+                    source_material_id: material_id,
+                    record_anchor: record.anchor.clone(),
+                    operation_id: sinex_primitives::Uuid::now_v7(),
+                    job_id: sinex_primitives::Uuid::now_v7(),
+                    host: "fixture-host".to_string(),
+                    acquisition_time: Timestamp::now(),
+                }
+            };
+
+        let mut parser = HyprlandParser::default();
+
+        // v1 (activewindow): buffered — no events yet.
+        let record_v1 = stream
             .next()
             .await
             .ok_or_else(|| color_eyre::eyre::eyre!("unix socket fixture emitted no frames"))??;
+        let events_v1 = parser.parse_record(record_v1.clone(), &make_ctx(&record_v1)).await?;
+        assert_eq!(events_v1.len(), 0, "v1 alone should buffer and not emit");
 
-        let source_id = SourceId::from_static("desktop.window-manager");
-        let ctx = ParserContext {
-            source_id: source_id.clone(),
-            source_material_id: material_id,
-            record_anchor: record.anchor.clone(),
-            operation_id: sinex_primitives::Uuid::now_v7(),
-            job_id: sinex_primitives::Uuid::now_v7(),
-            host: "fixture-host".to_string(),
-            acquisition_time: Timestamp::now(),
-        };
-
-        let mut parser = HyprlandParser;
-        let events = parser.parse_record(record, &ctx).await?;
+        // v2 (activewindowv2): merges with buffered v1 → one complete window.focused.
+        let record_v2 = stream
+            .next()
+            .await
+            .ok_or_else(|| color_eyre::eyre::eyre!("unix socket fixture did not emit v2 frame"))??;
+        let events = parser.parse_record(record_v2.clone(), &make_ctx(&record_v2)).await?;
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type.as_str(), "window.focused");
         assert_eq!(events[0].event_source.as_str(), "wm.hyprland");
         assert_eq!(events[0].payload["window_class"], "kitty");
         assert_eq!(events[0].payload["window_title"], "~/project/sinex");
+        assert_eq!(events[0].payload["window_id"], "0x1234abcd");
 
         Ok(())
     }

@@ -1,29 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Hyprland `focusedmon`/`focusedmonv2` event: monitor name + workspace name (not IDs).",
   "properties": {
-    "focused_at": {
+    "monitor_name": {
+      "description": "Monitor name as provided by Hyprland (e.g. \"DP-1\"), not an integer ID.",
       "type": "string"
     },
-    "monitor_id": {
-      "format": "int32",
-      "type": "integer"
-    },
-    "previous_monitor": {
-      "format": "int32",
-      "type": [
-        "integer",
-        "null"
-      ]
-    },
-    "workspace_id": {
-      "format": "int32",
-      "type": "integer"
+    "workspace_name": {
+      "description": "Workspace name as provided by Hyprland.",
+      "type": "string"
     }
   },
   "required": [
-    "monitor_id",
-    "workspace_id",
-    "focused_at"
+    "monitor_name",
+    "workspace_name"
   ],
   "title": "HyprlandMonitorFocusedPayload",
   "type": "object",

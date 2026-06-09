@@ -109,8 +109,23 @@ pub struct HyprlandParserConfig {
 /// and dispatches by `TYPE` to the appropriate payload.  Unknown event types
 /// produce a `wm.unhandled` intent rather than being dropped, so the full IPC
 /// stream is captured.
+///
+/// # activewindow / activewindowv2 merging
+///
+/// Hyprland fires a pair for every focus change:
+/// - `activewindow` (v1): `class,title` — no address
+/// - `activewindowv2` (v2): `address` — no class/title
+///
+/// We buffer the v1 fields and merge them into the v2 event so the emitted
+/// `window.focused` event has both `window_id` (from v2) and `window_class` /
+/// `window_title` (from v1).  If anything other than `activewindowv2` arrives
+/// while `pending_activewindow` is set, the buffered partial is flushed first.
 #[derive(Debug, Clone, Default)]
-pub struct HyprlandParser;
+pub struct HyprlandParser {
+    /// Buffered (window_class, window_title) from the most recent `activewindow`
+    /// v1 event waiting to be merged with the following `activewindowv2`.
+    pending_activewindow: Option<(String, String)>,
+}
 
 #[async_trait]
 impl MaterialParser for HyprlandParser {
@@ -185,40 +200,52 @@ impl MaterialParser for HyprlandParser {
             return Ok(vec![]);
         }
 
-        let (event_type_str, payload) = if let Some((typ, data)) = line.split_once(">>") {
-            match dispatch_hyprland_event(typ, data)? {
-                Some(pair) => pair,
-                None => return Ok(vec![]),
-            }
+        let (typ, data) = if let Some(pair) = line.split_once(">>") {
+            pair
         } else {
-            // Malformed line — capture as unhandled.
-            (
+            // Malformed line — flush any pending activewindow buffer, then capture as unhandled.
+            let mut intents = self.flush_pending_activewindow(&record, ctx);
+            intents.push(self.build_intent(
                 "wm.unhandled",
-                serde_json::json!({
-                    "event_type": "unknown",
-                    "event_data": line,
-                }),
-            )
+                serde_json::json!({ "event_type": "unknown", "event_data": line }),
+                &record,
+                ctx,
+            )?);
+            return Ok(intents);
         };
 
-        let ts_now = Timestamp::now();
+        // activewindow (v1) — buffer class+title, do not emit yet; wait for v2.
+        if typ == "activewindow" {
+            let (class, title) = data.split_once(',').unwrap_or((data, ""));
+            // Flush any stale pending (shouldn't happen, but be safe).
+            let intents = self.flush_pending_activewindow(&record, ctx);
+            self.pending_activewindow = Some((class.to_string(), title.to_string()));
+            return Ok(intents);
+        }
 
-        let intent = ParsedEventIntent::builder()
-            .source_id(ctx.source_id.clone())
-            .parser_id(ParserId::from_static("hyprland-ipc"))
-            .parser_version("1.0.0")
-            .event_type(EventType::new(event_type_str).map_err(|e| {
-                ParserError::Parse(format!("invalid event type '{event_type_str}': {e}"))
-            })?)
-            .event_source(EventSource::from_static("wm.hyprland"))
-            .payload(payload)
-            .ts_orig(ts_now)
-            .timing(TimingEvidence::StagedAtFallback)
-            .anchor(record.anchor.clone())
-            .privacy_context(ProcessingContext::Document)
-            .build();
+        // activewindowv2 — merge with buffered v1 class+title and emit one complete event.
+        if typ == "activewindowv2" {
+            let window_id = data.trim();
+            let (window_class, window_title) = self.pending_activewindow.take().unzip();
+            let payload = serde_json::json!({
+                "window_id": window_id,
+                "window_class": window_class,
+                "window_title": window_title,
+            });
+            return Ok(vec![self.build_intent("window.focused", payload, &record, ctx)?]);
+        }
 
-        Ok(vec![intent])
+        // Any other event type — flush stale pending activewindow first.
+        let mut intents = self.flush_pending_activewindow(&record, ctx);
+
+        match dispatch_hyprland_event(typ, data)? {
+            Some((event_type_str, payload)) => {
+                intents.push(self.build_intent(event_type_str, payload, &record, ctx)?);
+            }
+            None => {} // Suppressed (e.g. windowtitle v1)
+        }
+
+        Ok(intents)
     }
 
     fn baseline_adapter_config() -> serde_json::Value {
@@ -269,11 +296,12 @@ fn dispatch_hyprland_event(
         "openwindow" => {
             // openwindow>>address,workspaceid,workspacename,class,title
             let parts: Vec<&str> = data.splitn(5, ',').collect();
+            let workspace_id = parts.get(1).and_then(|s| s.parse::<i32>().ok());
             (
                 "window.opened",
                 serde_json::json!({
                     "window_id": parts.first().unwrap_or(&""),
-                    "workspace_id": parts.get(1).unwrap_or(&""),
+                    "workspace_id": workspace_id,
                     "workspace_name": parts.get(2).unwrap_or(&""),
                     "window_class": parts.get(3).unwrap_or(&""),
                     "window_title": parts.get(4).unwrap_or(&""),
@@ -284,29 +312,17 @@ fn dispatch_hyprland_event(
             "window.closed",
             serde_json::json!({ "window_id": data.trim() }),
         ),
-        "activewindow" => {
-            // activewindow>>class,title
-            let (class, title) = data.split_once(',').unwrap_or((data, ""));
-            (
-                "window.focused",
-                serde_json::json!({
-                    "window_class": class,
-                    "window_title": title,
-                }),
-            )
-        }
-        "activewindowv2" => (
-            "window.focused",
-            serde_json::json!({ "window_id": data.trim() }),
-        ),
+        // activewindow / activewindowv2 are handled before dispatch in parse_record
+        // (stateful v1+v2 merge). These arms are intentionally absent here.
         "movewindow" => {
             // movewindow>>address,workspaceid,workspacename
             let parts: Vec<&str> = data.splitn(3, ',').collect();
+            let workspace_id = parts.get(1).and_then(|s| s.parse::<i32>().ok());
             (
                 "window.moved",
                 serde_json::json!({
                     "window_id": parts.first().unwrap_or(&""),
-                    "workspace_id": parts.get(1).unwrap_or(&""),
+                    "workspace_id": workspace_id,
                     "workspace_name": parts.get(2).unwrap_or(&""),
                 }),
             )
@@ -331,22 +347,34 @@ fn dispatch_hyprland_event(
             return Ok(None);
         }
         "workspace" | "workspacev2" => {
-            let (id, name) = data.split_once(',').unwrap_or((data, ""));
+            // workspace>>workspaceid (v1) or workspacev2>>workspaceid,workspacename (v2)
+            let (id_str, name) = data.split_once(',').unwrap_or((data, ""));
+            let to_workspace_id = id_str.trim().parse::<i32>().map_err(|_| {
+                ParserError::Parse(format!(
+                    "workspace id is not an integer: '{id_str}' (raw: '{data}')"
+                ))
+            })?;
+            let workspace_name = if name.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(name.to_string())
+            };
             (
                 "workspace.switched",
                 serde_json::json!({
-                    "workspace_id": id,
-                    "workspace_name": name,
+                    "to_workspace_id": to_workspace_id,
+                    "workspace_name": workspace_name,
                 }),
             )
         }
         "focusedmon" | "focusedmonv2" => {
+            // focusedmon>>monitorname,workspacename
             let (monitor, workspace) = data.split_once(',').unwrap_or((data, ""));
             (
                 "monitor.focused",
                 serde_json::json!({
-                    "monitor": monitor,
-                    "workspace": workspace,
+                    "monitor_name": monitor.trim(),
+                    "workspace_name": workspace,
                 }),
             )
         }
@@ -368,6 +396,53 @@ fn dispatch_hyprland_event(
 // ---------------------------------------------------------------------------
 // Source factory registration
 // ---------------------------------------------------------------------------
+
+impl HyprlandParser {
+    /// Build a `ParsedEventIntent` for a single Hyprland IPC event.
+    fn build_intent(
+        &self,
+        event_type_str: &'static str,
+        payload: serde_json::Value,
+        record: &sinex_primitives::parser::SourceRecord,
+        ctx: &ParserContext,
+    ) -> ParserResult<ParsedEventIntent> {
+        Ok(ParsedEventIntent::builder()
+            .source_id(ctx.source_id.clone())
+            .parser_id(ParserId::from_static("hyprland-ipc"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static(event_type_str))
+            .event_source(EventSource::from_static("wm.hyprland"))
+            .payload(payload)
+            .ts_orig(Timestamp::now())
+            .timing(TimingEvidence::Atemporal)
+            .anchor(record.anchor.clone())
+            .privacy_context(ProcessingContext::Document)
+            .build())
+    }
+
+    /// Flush a stale `pending_activewindow` as a partial `window.focused` intent.
+    ///
+    /// Called when any event other than `activewindowv2` arrives while the v1
+    /// class/title buffer is set. Emits what we have (class + title, no
+    /// `window_id`) rather than silently dropping the observation.
+    fn flush_pending_activewindow(
+        &mut self,
+        record: &sinex_primitives::parser::SourceRecord,
+        ctx: &ParserContext,
+    ) -> Vec<ParsedEventIntent> {
+        let Some((window_class, window_title)) = self.pending_activewindow.take() else {
+            return vec![];
+        };
+        let payload = serde_json::json!({
+            "window_class": window_class,
+            "window_title": window_title,
+        });
+        match self.build_intent("window.focused", payload, record, ctx) {
+            Ok(intent) => vec![intent],
+            Err(_) => vec![],
+        }
+    }
+}
 
 register_source!(
     source_id: "desktop.window-manager",

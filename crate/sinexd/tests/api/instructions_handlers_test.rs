@@ -73,9 +73,10 @@ async fn hyprland_workspace_switch_dispatches_typed_command_when_observation_rea
         .create_source_material(Some("hyprland-workspace-observation"))
         .await?;
     let observed = HyprlandWorkspaceSwitchedPayload {
-        from_workspace_id: 1,
+        from_workspace_id: Some(1),
         to_workspace_id: 2,
-        monitor_id: 0,
+        workspace_name: None,
+        monitor_id: Some(0),
         active_window_id: None,
     }
     .from_material(material_id)
@@ -135,9 +136,10 @@ async fn hyprland_workspace_switch_rejects_duplicate_active_idempotency_key(
         .create_source_material(Some("hyprland-workspace-observation"))
         .await?;
     let observed = HyprlandWorkspaceSwitchedPayload {
-        from_workspace_id: 1,
+        from_workspace_id: Some(1),
         to_workspace_id: 2,
-        monitor_id: 0,
+        workspace_name: None,
+        monitor_id: Some(0),
         active_window_id: None,
     }
     .from_material(material_id)
@@ -227,9 +229,10 @@ async fn hyprland_workspace_switch_noops_when_already_satisfied(
         .create_source_material(Some("hyprland-workspace-observation"))
         .await?;
     let observed = HyprlandWorkspaceSwitchedPayload {
-        from_workspace_id: 1,
+        from_workspace_id: Some(1),
         to_workspace_id: 4,
-        monitor_id: 0,
+        workspace_name: None,
+        monitor_id: Some(0),
         active_window_id: None,
     }
     .from_material(material_id)
@@ -285,9 +288,10 @@ async fn hyprland_workspace_switch_dry_run_records_plan_without_dispatch(
         .create_source_material(Some("hyprland-workspace-observation"))
         .await?;
     let observed = HyprlandWorkspaceSwitchedPayload {
-        from_workspace_id: 1,
+        from_workspace_id: Some(1),
         to_workspace_id: 2,
-        monitor_id: 0,
+        workspace_name: None,
+        monitor_id: Some(0),
         active_window_id: None,
     }
     .from_material(material_id)
@@ -352,9 +356,10 @@ async fn hyprland_workspace_switch_records_failed_attempt_on_socket_rejection(
         .create_source_material(Some("hyprland-workspace-observation"))
         .await?;
     let observed = HyprlandWorkspaceSwitchedPayload {
-        from_workspace_id: 1,
+        from_workspace_id: Some(1),
         to_workspace_id: 2,
-        monitor_id: 0,
+        workspace_name: None,
+        monitor_id: Some(0),
         active_window_id: None,
     }
     .from_material(material_id)
@@ -434,9 +439,10 @@ async fn hyprland_workspace_switch_resolves_default_socket_from_runtime_env(
         .create_source_material(Some("hyprland-workspace-observation"))
         .await?;
     let observed = HyprlandWorkspaceSwitchedPayload {
-        from_workspace_id: 1,
+        from_workspace_id: Some(1),
         to_workspace_id: 2,
-        monitor_id: 0,
+        workspace_name: None,
+        monitor_id: Some(0),
         active_window_id: None,
     }
     .from_material(material_id)
