@@ -1289,9 +1289,9 @@ impl<'a> EventRepository<'a> {
             // COPY cannot be mixed with cycle-detection queries in the same
             // transaction easily, so derived batches use the VALUES path.
             //
-            // PostgreSQL caps bound parameters at 65 535 per query. With 23
+            // PostgreSQL caps bound parameters at 65 535 per query. With 24
             // bound parameters per event (see execute_batch_insert's column
-            // list), each chunk must stay ≤ ⌊65535 / 23⌋ = 2849 events to
+            // list), each chunk must stay ≤ ⌊65535 / 24⌋ = 2730 events to
             // stay within the wire-protocol limit. Large mixed batches
             // (material + derived) arrive during burst replay and would
             // otherwise exceed the limit and fail.
@@ -1310,10 +1310,10 @@ impl<'a> EventRepository<'a> {
                     .collect::<Vec<_>>();
                 ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
 
-                // 23 binds per row × SYNTHESIS_CHUNK_MAX ≤ 65535 PostgreSQL
-                // param limit. Keep some headroom below the strict cap so that
-                // future column additions don't immediately overflow.
-                const SYNTHESIS_CHUNK_MAX: usize = 2800;
+                // 24 binds per row × SYNTHESIS_CHUNK_MAX ≤ 65535 PostgreSQL
+                // param limit (⌊65535 / 24⌋ = 2730). Keep headroom so future
+                // column additions don't immediately overflow.
+                const SYNTHESIS_CHUNK_MAX: usize = 2700;
                 let mut total = StreamBatchInsertResult::default();
                 for chunk in batch.chunks(SYNTHESIS_CHUNK_MAX) {
                     let chunk_synthesis_checks = chunk
@@ -1519,7 +1519,7 @@ impl<'a> EventRepository<'a> {
     ///
     /// # Why not query params?
     /// `PostgreSQL`'s protocol limits a single statement to 65 535 bind parameters.
-    /// With 23 writable event columns per row that caps VALUES batches at ~2 849 rows. COPY has no
+    /// With 24 writable event columns per row that caps VALUES batches at ~2 730 rows. COPY has no
     /// such limit and has lower per-row overhead.
     ///
     /// # Why not derived batches?
