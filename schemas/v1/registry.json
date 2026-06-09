@@ -143,6 +143,20 @@
     },
     {
       "source": "dbus",
+      "event_type": "notification.action_invoked",
+      "version": "1.0.0",
+      "path": "dbus/notification.action_invoked.json",
+      "content_hash": "2c3be0f02039e5cba1f1d9491117fd3faeb3a3a4bb46d3be7375114c390f86e3"
+    },
+    {
+      "source": "dbus",
+      "event_type": "notification.closed",
+      "version": "1.0.0",
+      "path": "dbus/notification.closed.json",
+      "content_hash": "8bf55598a3f2deb864976a8b9085e25ac44c9bc18c9dd24da9fdf936216f743b"
+    },
+    {
+      "source": "dbus",
       "event_type": "notification.sent",
       "version": "1.0.0",
       "path": "dbus/notification.sent.json",
@@ -216,7 +230,7 @@
       "event_type": "document.parsed",
       "version": "1.0.0",
       "path": "document-parser/document.parsed.json",
-      "content_hash": "b98961dd916c0d0f475c4280016f4388c330d9dfb044b1fe8e921bdd8e5cc305"
+      "content_hash": "b9bfc76813961edfb9f5e55b3e2206cd7a5bb86e4de1c7f776c5d18f67be7f78"
     },
     {
       "source": "document-source",

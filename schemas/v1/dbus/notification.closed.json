@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Desktop notification closed event from D-Bus.",
+  "properties": {
+    "notification_id": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "reason": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "reason_label": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "notification_id",
+    "reason",
+    "reason_label"
+  ],
+  "title": "DbusNotificationClosedPayload",
+  "type": "object",
+  "x-sinex-event-type": "notification.closed",
+  "x-sinex-source": "dbus",
+  "x-sinex-version": "1.0.0"
+}

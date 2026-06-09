@@ -26,7 +26,7 @@
       "type": "integer"
     },
     "document_id": {
-      "description": "Deterministic document identity. `UUIDv5` over `(NS_DOCUMENTS,\nsource || \"/\" || natural_key)` — replay against the same source\nproduces the same id.",
+      "description": "Deterministic document identity from\n`sinex_primitives::ids::derive_document_id`: `UUIDv5(NAMESPACE_OID,\n\"sinex.documents.v1/<source>/<natural_key>\")`. Replay against the\nsame source produces the same id.",
       "format": "uuid",
       "type": "string"
     },
