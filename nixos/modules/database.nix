@@ -343,7 +343,7 @@ in
                     if [ -n "$installed_version" ]; then
                       echo "[sinex] $extName: version $installed_version .so missing from current package, searching nix store for compat library..."
                       compat_dir=$(find /nix/store -maxdepth 3 \
-                        -name "${extName}-${installed_version}.so" \
+                        -name "''${extName}-''${installed_version}.so" \
                         -printf '%h\n' 2>/dev/null | head -1)
                       if [ -n "$compat_dir" ]; then
                         echo "[sinex] $extName: found compat library at $compat_dir, temporarily extending dynamic_library_path"
