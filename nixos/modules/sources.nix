@@ -1509,13 +1509,8 @@ let
       };
       scanCommand = concatStringsSep " " (
         [
-          # Post-collapse: sinexd hosts the source factory directly via
-          # `scan-source`. Extra args are forwarded into the SDK CLI
-          # subcommand (so `--extra-arg scan --extra-arg --until --extra-arg
-          # snapshot` runs the snapshot scan exactly as the deleted
-          # sinexd scan-source entrypoint did).
           "${sinexPackage}/bin/sinexd"
-          "scan-source"
+          "scan-source-driver"
           "--source"
           "document.staging"
           "--service-name"
