@@ -9,6 +9,7 @@ use crate::runtime::confirmation_handler::{
 };
 use crate::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use crate::runtime::{RuntimeResult, SinexError};
+use sinex_primitives::error::SinexErrorKind;
 use async_nats::jetstream;
 use sinex_primitives::{
     domain::{EventSource, EventType},
@@ -230,6 +231,7 @@ impl JetStreamEventConsumer {
         let running_confirmations = self.running.clone();
         let provisional_handler_for_confirmations = self.provisional_handler.clone();
 
+        let accept_unbuffered = self.config.accept_unbuffered_confirmations;
         let confirmation_task = tokio::spawn(async move {
             Self::consume_confirmations(
                 confirmations_consumer,
@@ -238,7 +240,7 @@ impl JetStreamEventConsumer {
                 confirmed_handler,
                 provisional_handler_for_confirmations,
                 running_confirmations,
-                false,
+                accept_unbuffered,
             )
             .await
         });
@@ -561,9 +563,18 @@ impl JetStreamEventConsumer {
 
             let mut handler_success = true;
             for event in &confirmed_events {
-                if let Err(e) = confirmed_handler.handle_confirmed(event).await {
-                    error!(event_id = %event.event_id, error = %e, "Confirmed handler failed");
-                    handler_success = false;
+                match confirmed_handler.handle_confirmed(event).await {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == SinexErrorKind::Lifecycle => {
+                        // Channel closed = shutdown in progress. Ack and exit cleanly.
+                        debug!(event_id = %event.event_id, "Confirmed handler channel closed (shutdown)");
+                        msg.ack().await.ok();
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        error!(event_id = %event.event_id, error = %e, "Confirmed handler failed");
+                        handler_success = false;
+                    }
                 }
             }
 
@@ -615,6 +626,11 @@ impl JetStreamEventConsumer {
             let synthetic = Self::event_from_unbuffered_confirmation(&confirmation);
             let handler_success = match confirmed_handler.handle_confirmed(&synthetic).await {
                 Ok(()) => true,
+                Err(e) if e.kind() == SinexErrorKind::Lifecycle => {
+                    debug!("Confirmed handler channel closed on unbuffered kind watermark (shutdown)");
+                    msg.ack().await.ok();
+                    return Ok(());
+                }
                 Err(e) => {
                     error!(
                         target: "sinex_metrics",
@@ -713,6 +729,11 @@ impl JetStreamEventConsumer {
 
             let handler_success = match confirmed_handler.handle_confirmed(&event).await {
                 Ok(()) => true,
+                Err(e) if e.kind() == SinexErrorKind::Lifecycle => {
+                    debug!("Confirmed handler channel closed (shutdown)");
+                    msg.ack().await.ok();
+                    return Ok(());
+                }
                 Err(e) => {
                     error!(
                         target: "sinex_metrics",
@@ -763,6 +784,11 @@ impl JetStreamEventConsumer {
                 let event = Self::event_from_unbuffered_confirmation(&confirmation);
                 let handler_success = match confirmed_handler.handle_confirmed(&event).await {
                     Ok(()) => true,
+                    Err(e) if e.kind() == SinexErrorKind::Lifecycle => {
+                        debug!("Confirmed handler channel closed on unbuffered confirmation (shutdown)");
+                        msg.ack().await.ok();
+                        return Ok(());
+                    }
                     Err(e) => {
                         error!(
                             target: "sinex_metrics",
