@@ -15,8 +15,9 @@ ignores:
   - "crate/sinex-db/src/query_helpers.rs"
   - "crate/sinex-db/src/repositories/**"
   - "crate/sinex-db/src/replay/**"
-  # Preflight/migration infrastructure (node-sdk folded into sinexd, #1559)
-  - "crate/sinexd/src/node_sdk/preflight/**"
+  # Preflight/migration infrastructure uses dynamic SQL for session control,
+  # advisory locks, and probe queries that cannot be compile-time checked.
+  - "crate/sinexd/src/runtime/preflight/**"
   # Test infrastructure
   - "xtask/**"
   - "**/tests/**"
