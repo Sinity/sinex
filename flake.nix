@@ -878,6 +878,9 @@
                 export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"
                 export SINEX_API_TCP_LISTEN="127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
                 export SINEX_API_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
+                # sinexctl-prod: talk to the live production sinexd (:9999)
+                # without overriding the dev-shell SINEX_API_URL.
+                sinexctl-prod() { SINEX_API_URL="https://127.0.0.1:9999" sinexctl "$@"; }
 
                 if [ -z "''${SINEX_TEST_TMPDIR:-}" ]; then
                   _sinex_test_tmp_root="$SINEX_DEV_ROOT/.sinex/test-tmp"
@@ -969,6 +972,7 @@
                         printf '  last xtask: %s\n' "$history_line"
                       fi
                       printf '  inspect: xtask status --summary | xtask history explain --day today --against yesterday\n'
+                      printf '  prod: sinexctl-prod (SINEX_API_URL=:9999) | dev: sinexctl (SINEX_API_URL=:%s)\n' "$SINEX_DEV_GATEWAY_PORT"
                       printf '  controls: SINEX_AUTO_INFRA=1 starts infra; SINEX_AUTO_STATUS=1 runs full status; SINEX_MOTD=0 hides this\n'
                     } >&2
                   }

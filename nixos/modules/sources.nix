@@ -613,6 +613,8 @@ let
             {
               Type = lib.mkForce "notify";
               NotifyAccess = "main";
+              LogRateLimitIntervalSec = "10s";
+              LogRateLimitBurst = 500;
               ExecStart = mkDatabasePasswordExec {
                 name = "sinexd";
                 command = "${sinexPackage}/bin/sinexd ${sinexdArgs} serve";
