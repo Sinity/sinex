@@ -174,6 +174,10 @@ pub struct JetStreamConsumer {
 /// SQLSTATE for foreign-key violation.
 const SQLSTATE_DATA_EXCEPTION_CLASS: &str = "22";
 const SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS: &str = "23";
+/// SQLSTATE 54xxx = program_limit_exceeded (includes 54023 too_many_arguments).
+/// Bisecting a batch that exceeds PostgreSQL's 65,535 bound-parameter ceiling
+/// produces sub-batches small enough to succeed — treat as isolatable.
+const SQLSTATE_PROGRAM_LIMIT_EXCEEDED_CLASS: &str = "54";
 
 /// Error-class marker for deferred source-material FK violations.
 const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
@@ -244,6 +248,7 @@ fn is_isolatable_batch_persistence_failure(err: &SinexError) -> bool {
     err.context_map().get("sqlstate").is_some_and(|value| {
         value.starts_with(SQLSTATE_DATA_EXCEPTION_CLASS)
             || value.starts_with(SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS)
+            || value.starts_with(SQLSTATE_PROGRAM_LIMIT_EXCEEDED_CLASS)
     })
 }
 const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
