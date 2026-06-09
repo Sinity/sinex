@@ -461,17 +461,25 @@ impl NatsPublisher {
         );
         let _permit = acquire_lane_permit(&self.semaphores.telemetry, "telemetry event").await?;
 
-        let prov = destructure_provenance(event.provenance());
+        let event_id_str = event
+            .id
+            .as_ref()
+            .ok_or_else(|| {
+                sinex_primitives::SinexError::processing("Telemetry event ID is required")
+            })?
+            .to_string();
 
-        let (event_id_str, payload) = build_publish_payload(
-            event,
-            prov.source_material_id,
-            prov.anchor_byte,
-            prov.offset_start,
-            prov.offset_end,
-            prov.offset_kind,
-            prov.source_event_ids,
-        )?;
+        // Wrap in EventIntent so the event engine can parse it through the
+        // standard admission pipeline. Raw-event bypass caused DLQ entries
+        // with "missing field `envelope_version`".
+        let intent = EventIntent::new(
+            format!("sinex.self-telemetry.{}", event.source.as_str()),
+            "self-observer",
+            "1.0.0",
+            vec![event.clone()],
+            sinex_primitives::events::builder::get_hostname(),
+        );
+        let payload = serde_json::to_vec(&intent).map_err(sinex_primitives::SinexError::from)?;
 
         let subject = self.env.nats_raw_event_subject_with_namespace(
             self.namespace.as_deref(),
@@ -479,8 +487,13 @@ impl NatsPublisher {
             event.event_type.as_str(),
         );
 
+        let msg_id = format!("intent-{}-1", event_id_str);
         let mut headers = async_nats::HeaderMap::new();
-        headers.insert("Nats-Msg-Id", event_id_str.as_str());
+        headers.insert("Nats-Msg-Id", msg_id.as_str());
+        headers.insert(
+            "Sinex-Envelope-Version",
+            sinex_primitives::events::admission::CURRENT_ENVELOPE_VERSION,
+        );
         transport::insert_transport_class_headers(&mut headers, class);
 
         let ack_future = self
