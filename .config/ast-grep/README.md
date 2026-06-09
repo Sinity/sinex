@@ -59,9 +59,6 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
   - `crate/sinex-db/src/repositories/events/conversions.rs`
   - `crate/sinex-primitives/**`
   - `crate/sinexctl/src/commands/report.rs`
-  - `crate/sinexd/src/node_sdk/derived_node/adapter/output.rs`
-  - `crate/sinexd/src/node_sdk/runtime/stream/handles.rs`
-  - `crate/sinexd/src/node_sdk/runtime/stream/runner/provisional.rs`
   - `xtask/src/sandbox/**`
 - Intent:
   See issue #559. The XOR-provenance invariant is encoded in:
@@ -220,7 +217,7 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
   - `crate/sinexd/src/api/handlers/**`
   - `crate/sinexd/src/api/rpc_server.rs`
   - `crate/sinexd/src/event_engine/config.rs`
-  - `crate/sinexd/src/node_sdk/preflight/**`
+  - `crate/sinexd/src/runtime/preflight/**`
   - `xtask/**`
 - Intent:
   Compile-time checked queries (sqlx::query!()) catch SQL errors at build time.

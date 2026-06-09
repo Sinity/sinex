@@ -281,7 +281,20 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
 
         let checkpoint_manager = bridge_manages_checkpoints.then(|| handles.checkpoint_manager());
         let mut checkpoint_state = if let Some(manager) = checkpoint_manager.as_deref() {
-            Some(Self::load_bridge_checkpoint_state(manager).await?)
+            match Self::load_bridge_checkpoint_state(manager).await {
+                Ok(state) => Some(state),
+                Err(err) => {
+                    // Stop the consumer before returning so its background tasks
+                    // do not run as orphans ACKing confirmation messages that
+                    // should be redelivered to the next automaton run.
+                    consumer.stop().await;
+                    drain_controller.clear_runtime_abort();
+                    if let Some(handle) = self.consumer_handle.take() {
+                        let _ = handle.await;
+                    }
+                    return Err(err);
+                }
+            }
         } else {
             None
         };

@@ -450,26 +450,52 @@ impl CheckpointManager {
     }
 
     async fn load_checkpoint_for_key(&self, key: &str) -> RuntimeResult<Option<CheckpointState>> {
-        let entry =
-            self.kv.entry(key).await.map_err(|e| {
-                SinexError::checkpoint("Failed to read checkpoint KV").with_source(e)
-            })?;
-
-        let Some(entry) = entry else {
-            return Ok(None);
-        };
-
-        if entry.value.is_empty() {
-            return Err(SinexError::checkpoint("Checkpoint KV entry is empty")
-                .with_context("key", key.to_string())
-                .with_context("module", self.module_name.clone())
-                .with_context("consumer_group", self.consumer_group.clone())
-                .with_context("consumer_name", self.consumer_name.clone()));
+        // Retry transient NATS KV failures with exponential backoff. Startup is
+        // the most likely time for transient unavailability (many concurrent KV
+        // reads from 13 automata + event-engine consumers hitting the same
+        // JetStream server). A single transient error must not permanently kill
+        // all automata simultaneously.
+        const MAX_ATTEMPTS: u32 = 4;
+        let mut last_err_msg = String::new();
+        for attempt in 1..=MAX_ATTEMPTS {
+            match self.kv.entry(key).await {
+                Ok(None) => return Ok(None),
+                Ok(Some(entry)) if entry.value.is_empty() => {
+                    // KV tombstone (delete/purge record). The entry was deleted;
+                    // treat as missing so the automaton starts fresh rather than
+                    // failing permanently.
+                    warn!(
+                        module = %self.module_name,
+                        key,
+                        "Checkpoint KV entry is a tombstone (deleted/purged); starting fresh"
+                    );
+                    return Ok(None);
+                }
+                Ok(Some(entry)) => {
+                    let mut state = self.decode_checkpoint_state(key, &entry.value)?;
+                    state.revision = entry.revision;
+                    return Ok(Some(state));
+                }
+                Err(e) => {
+                    let delay_ms = 250u64 * 2u64.pow(attempt - 1);
+                    warn!(
+                        module = %self.module_name,
+                        attempt,
+                        delay_ms,
+                        error = %e,
+                        "Checkpoint KV read failed; will retry"
+                    );
+                    last_err_msg = e.to_string();
+                    if attempt < MAX_ATTEMPTS {
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    }
+                }
+            }
         }
-
-        let mut state = self.decode_checkpoint_state(key, &entry.value)?;
-        state.revision = entry.revision;
-        Ok(Some(state))
+        Err(SinexError::checkpoint(format!(
+            "Failed to read checkpoint KV after {MAX_ATTEMPTS} attempts"
+        ))
+        .with_source(last_err_msg))
     }
 
     fn decode_checkpoint_state(&self, key: &str, value: &[u8]) -> RuntimeResult<CheckpointState> {

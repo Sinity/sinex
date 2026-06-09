@@ -25,8 +25,6 @@ ignores:
   # follow-up for an explicit `material_from_wire` / `derived_from_wire`
   # constructor surface).
   - "crate/sinex-db/src/repositories/events/conversions.rs"
-  - "crate/sinexd/src/node_sdk/runtime/stream/runner/provisional.rs"
-  - "crate/sinexd/src/node_sdk/derived_node/adapter/output.rs"
   # Tests and test infrastructure legitimately construct events with arbitrary
   # provenance shapes for failure injection and fixture builders. Production
   # paths must go through the typed builder methods.
@@ -39,7 +37,6 @@ ignores:
   # we ignore the file. New production code in these files must still use
   # `Provenance::from_material()` / `from_derived()` — reviewers are the
   # backstop here.
-  - "crate/sinexd/src/node_sdk/runtime/stream/handles.rs"
   - "crate/sinexctl/src/commands/report.rs"
 note: |
   See issue #559. The XOR-provenance invariant is encoded in:
