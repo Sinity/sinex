@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Desktop notification action button invoked from D-Bus.",
+  "properties": {
+    "action_key": {
+      "type": "string"
+    },
+    "notification_id": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "notification_id",
+    "action_key"
+  ],
+  "title": "DbusNotificationActionInvokedPayload",
+  "type": "object",
+  "x-sinex-event-type": "notification.action_invoked",
+  "x-sinex-source": "dbus",
+  "x-sinex-version": "1.0.0"
+}
