@@ -324,11 +324,16 @@ impl Events {
         "
     }
 
-    /// Adds an automatic compression policy: chunks older than 7 days are compressed
-    /// by the `TimescaleDB` background worker.
+    /// Adds an automatic compression policy: chunks created more than 7 days ago are
+    /// compressed by the `TimescaleDB` background worker.
+    ///
+    /// `compress_created_before` is used instead of `compress_after` because `core.events`
+    /// is partitioned by UUIDv7 `id`, not by a time column. `compress_after` resolves lag
+    /// via the partition dimension type; it has no UUID branch and always fails with a
+    /// `CASE statement is missing ELSE part` error.
     #[must_use]
     pub fn add_compression_policy_sql() -> &'static str {
-        "SELECT add_compression_policy('core.events', INTERVAL '7 days', if_not_exists => true);"
+        "SELECT add_compression_policy('core.events', compress_created_before => INTERVAL '7 days', if_not_exists => true);"
     }
 
     /// Generates all necessary indexes for `core.events`.
