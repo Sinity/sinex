@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n                id as \"id!\",\n                scope_key,\n                source_material_id,\n                anchor_byte,\n                offset_start,\n                offset_end,\n                offset_kind,\n                anchor_payload_hash AS \"anchor_payload_hash: Vec<u8>\"\n             FROM audit.archived_events\n             WHERE id = ANY($1::uuid[])\n               AND source_material_id IS NOT NULL\n               AND anchor_byte IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "scope_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "source_material_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "anchor_byte",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "offset_start",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "offset_end",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "offset_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "anchor_payload_hash: Vec<u8>",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "411350ece88d12d9d7089e272c86eeb87ba76f2ca88156262e1e0ca1952e77c3"
+}

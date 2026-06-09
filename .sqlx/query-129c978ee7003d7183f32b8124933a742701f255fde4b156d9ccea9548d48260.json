@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT dimensions as \"dimensions!\"\n            FROM core.embedding_models\n            WHERE id = $1 AND is_active = true\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "dimensions!",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "129c978ee7003d7183f32b8124933a742701f255fde4b156d9ccea9548d48260"
+}

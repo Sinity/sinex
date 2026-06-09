@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id::uuid as \"id!\",\n                source as \"source!\",\n                event_type as \"event_type!\",\n                ts_coided as \"ts_coided!: Timestamp\",\n                payload as \"payload!\"\n            FROM core.events\n            WHERE payload IS NULL OR payload = 'null'::jsonb OR payload = '{}'::jsonb\n            ORDER BY ts_coided DESC\n            LIMIT $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "source!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "event_type!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "ts_coided!: Timestamp",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "payload!",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "92bf81a28e65bff344f7e942d6588c5e5607595db4697a602630419048becd5f"
+}

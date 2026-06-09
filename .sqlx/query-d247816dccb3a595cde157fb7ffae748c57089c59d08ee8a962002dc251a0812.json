@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.entity_relations\n        SET to_entity_id = $2\n        WHERE to_entity_id::uuid = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d247816dccb3a595cde157fb7ffae748c57089c59d08ee8a962002dc251a0812"
+}

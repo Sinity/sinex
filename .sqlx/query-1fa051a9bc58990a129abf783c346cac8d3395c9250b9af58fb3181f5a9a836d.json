@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pg_advisory_xact_lock(hashtext($1)::bigint) as \"lock!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "lock!",
+        "type_info": "Void"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "1fa051a9bc58990a129abf783c346cac8d3395c9250b9af58fb3181f5a9a836d"
+}

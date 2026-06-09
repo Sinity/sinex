@@ -1,0 +1,92 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id,\n                name,\n                description,\n                matcher_type,\n                matcher_value,\n                matcher_config,\n                recognizer_backend_id,\n                recognizer_kind,\n                case_sensitive,\n                action,\n                action_label,\n                key_namespace,\n                enabled\n            FROM privacy.rules\n            WHERE enabled = true\n            ORDER BY name\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "matcher_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "matcher_value",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "matcher_config",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "recognizer_backend_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 7,
+        "name": "recognizer_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "case_sensitive",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "action_label",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "key_namespace",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "enabled",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "56ed3bba57d55a5a9379a160e79996f033ff8bc046202926d40c24b36fc0433e"
+}

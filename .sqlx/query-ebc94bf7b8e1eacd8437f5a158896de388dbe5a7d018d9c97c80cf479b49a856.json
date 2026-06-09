@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT payload\n        FROM core.events\n        WHERE source = 'wm.hyprland'\n          AND event_type = 'workspace.switched'\n        ORDER BY ts_orig DESC, id DESC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "payload",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ebc94bf7b8e1eacd8437f5a158896de388dbe5a7d018d9c97c80cf479b49a856"
+}

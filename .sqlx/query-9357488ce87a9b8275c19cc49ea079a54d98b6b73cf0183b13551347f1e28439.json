@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT DISTINCT split_part(e.source, '.', 1) AS \"family!: String\"\n            FROM core.events e\n            JOIN raw.source_material_registry sm ON sm.id = e.source_material_id\n            WHERE ($1::timestamptz IS NULL OR sm.staged_at >= $1)\n              AND e.source IS NOT NULL\n              AND e.source <> ''\n            ORDER BY 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "family!: String",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9357488ce87a9b8275c19cc49ea079a54d98b6b73cf0183b13551347f1e28439"
+}

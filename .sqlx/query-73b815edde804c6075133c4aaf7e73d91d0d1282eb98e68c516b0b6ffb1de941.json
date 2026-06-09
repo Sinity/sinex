@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT depth as \"depth!\", node_count as \"node_count!\" FROM core.cascade_depth_histogram($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "depth!",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "node_count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "73b815edde804c6075133c4aaf7e73d91d0d1282eb98e68c516b0b6ffb1de941"
+}

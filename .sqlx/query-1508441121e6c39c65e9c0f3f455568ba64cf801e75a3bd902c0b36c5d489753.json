@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                source,\n                event_type,\n                payload as \"payload!\",\n                payload_schema_id::uuid as \"payload_schema_id?: Uuid\"\n            FROM core.events\n            WHERE id = $1::uuid\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "source",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "event_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "payload!",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 3,
+        "name": "payload_schema_id?: Uuid",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "1508441121e6c39c65e9c0f3f455568ba64cf801e75a3bd902c0b36c5d489753"
+}

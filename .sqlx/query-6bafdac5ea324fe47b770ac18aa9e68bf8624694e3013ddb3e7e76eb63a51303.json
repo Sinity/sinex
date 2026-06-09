@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id as \"id!: Uuid\",\n                event_type,\n                payload\n            FROM core.events\n            WHERE id = ANY($1)\n              AND event_type = ANY($2)\n            ORDER BY id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "event_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "payload",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "6bafdac5ea324fe47b770ac18aa9e68bf8624694e3013ddb3e7e76eb63a51303"
+}

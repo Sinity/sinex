@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM core.entity_relations\n        WHERE from_entity_id::uuid = $1\n          AND (to_entity_id, relation_type) IN (\n            SELECT to_entity_id, relation_type\n            FROM core.entity_relations\n            WHERE from_entity_id::uuid = $2\n          )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d62b19489792bc3dceb508d1eb166650503d3f87d54c7fb5d9410ebc3298bc3a"
+}

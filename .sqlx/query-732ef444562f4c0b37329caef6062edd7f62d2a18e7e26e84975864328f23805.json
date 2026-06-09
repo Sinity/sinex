@@ -1,0 +1,90 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE semantic.lanes\n            SET status = $2, completed_at = COALESCE($3, completed_at)\n            WHERE id = $1\n            RETURNING\n                id,\n                name,\n                kind,\n                base_epoch_id,\n                candidate_epoch_id,\n                scope,\n                status,\n                purpose,\n                operation_id,\n                created_at as \"created_at: Timestamp\",\n                completed_at as \"completed_at: Timestamp\",\n                expires_at as \"expires_at: Timestamp\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "base_epoch_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "candidate_epoch_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "scope",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "purpose",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "operation_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at: Timestamp",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "completed_at: Timestamp",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "expires_at: Timestamp",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "732ef444562f4c0b37329caef6062edd7f62d2a18e7e26e84975864328f23805"
+}

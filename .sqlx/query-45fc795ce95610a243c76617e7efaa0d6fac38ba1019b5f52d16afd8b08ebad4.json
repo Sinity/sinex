@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE raw.source_material_registry\n            SET optional_blob_id = COALESCE($2::uuid, optional_blob_id),\n                metadata = CASE\n                    WHEN $5::bigint IS NOT NULL\n                         AND metadata ? 'source_material_contract'\n                         AND jsonb_typeof(metadata->'source_material_contract') = 'object'\n                         AND metadata->'source_material_contract'->>'version' = '1'\n                         AND metadata->'source_material_contract'->>'format' IN (\n                            'json', 'jsonl', 'sqlite', 'markdown', 'text', 'csv',\n                            'tsv', 'html', 'pdf', 'directory', 'repository', 'image',\n                            'audio', 'video', 'archive', 'binary', 'unknown'\n                         )\n                         AND metadata->'source_material_contract'->>'timing' IN (\n                            'realtime', 'intrinsic', 'inferred', 'declared',\n                            'atemporal', 'staged_at'\n                         )\n                    THEN core.jsonb_merge_deep(\n                        core.jsonb_merge_deep(metadata, $3),\n                        jsonb_build_object(\n                            'source_material_contract',\n                            jsonb_build_object(\n                                'version', 1,\n                                'statistics', jsonb_build_object('total_bytes', $5::bigint)\n                            )\n                        )\n                    )\n                    ELSE core.jsonb_merge_deep(metadata, $3)\n                END,\n                status = $4,\n                end_time = COALESCE(end_time, NOW()),\n                total_bytes = COALESCE($5, total_bytes)\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Jsonb",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "45fc795ce95610a243c76617e7efaa0d6fac38ba1019b5f52d16afd8b08ebad4"
+}
