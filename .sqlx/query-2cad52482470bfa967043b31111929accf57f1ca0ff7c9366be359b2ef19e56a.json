@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, name, kind, endpoint_url, config, enabled\n            FROM privacy.recognizer_backends\n            WHERE id = $1 AND enabled = true\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "endpoint_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "config",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "enabled",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "2cad52482470bfa967043b31111929accf57f1ca0ff7c9366be359b2ef19e56a"
+}

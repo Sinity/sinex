@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                id as \"id!: Uuid\",\n                source,\n                event_type,\n                schema_version,\n                schema_content,\n                content_hash,\n                is_active,\n                updated_at as \"updated_at: Timestamp\"\n            FROM sinex_schemas.event_payload_schemas\n            WHERE source = $1 \n                AND ($2 OR is_active = true)\n            ORDER BY event_type, updated_at DESC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "source",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "event_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "schema_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "schema_content",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "content_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "is_active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at: Timestamp",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b9c127672126f4b261aba1af13eb1f90858eaf80ab20d5d35c3e1308fa29dbca"
+}

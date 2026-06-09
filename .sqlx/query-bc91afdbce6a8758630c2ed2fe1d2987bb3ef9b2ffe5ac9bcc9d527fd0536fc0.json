@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE core.operations_log\n            SET result_status = $2,\n                result_message = $3\n            WHERE id = $1::uuid\n            RETURNING\n                id as \"id!: Id<Operation>\",\n                operation_type,\n                operator,\n                scope,\n                result_status,\n                result_message,\n                preview_summary,\n                duration_ms\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: Id<Operation>",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "operation_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "operator",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "scope",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "result_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "result_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "preview_summary",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "duration_ms",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "bc91afdbce6a8758630c2ed2fe1d2987bb3ef9b2ffe5ac9bcc9d527fd0536fc0"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE core.runs\n            SET status = 'inactive'\n            WHERE id IN (\n                SELECT r.id FROM core.runs r\n                JOIN core.manifests m ON m.id = r.manifest_id\n                WHERE m.name = $1 AND m.version = $2\n                ORDER BY r.id DESC\n                LIMIT 1\n            )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9c888a90a9fc48a8946ea87a8b2ddc59fefca2cbc7183e6c060dd384ad1f8f8e"
+}

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE core.runs\n            SET status = $2,\n                last_heartbeat_at = NOW(),\n                ended_at = CASE\n                    WHEN $3::timestamptz IS NULL THEN ended_at\n                    ELSE COALESCE(ended_at, $3::timestamptz)\n                END\n            WHERE id = $1::uuid\n              AND status NOT IN ('failed', 'stopped')\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b17e7f3c04b691ca3b33bd979beeebbc0d824e18446f93f586297e3b4df967e5"
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO privacy.recognizer_backends (name, kind, endpoint_url, config, enabled)\n            VALUES ($1, $2, $3, $4, $5)\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d9b5c04d32705490be379c5646d79d5e056f928a3dd3b176d23f9cc2214679ad"
+}

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT core.cleanup_cascade_session($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "cleanup_cascade_session",
+        "type_info": "Void"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "3193e6bf71a00c32ba066c28f6c024d59e2e82fd2fa62e409721d113cb8989e4"
+}

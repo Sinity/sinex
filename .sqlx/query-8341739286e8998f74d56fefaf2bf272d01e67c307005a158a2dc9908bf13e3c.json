@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO semantic.lane_outputs (\n                lane_id, output_kind, output_key, source_event_id, output_hash, payload, metadata\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7)\n            ON CONFLICT (lane_id, output_kind, output_key)\n            DO UPDATE SET output_hash = EXCLUDED.output_hash,\n                          source_event_id = EXCLUDED.source_event_id,\n                          payload = EXCLUDED.payload,\n                          metadata = EXCLUDED.metadata,\n                          created_at = CURRENT_TIMESTAMP\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Uuid",
+        "Text",
+        "Jsonb",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8341739286e8998f74d56fefaf2bf272d01e67c307005a158a2dc9908bf13e3c"
+}

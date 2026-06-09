@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id::uuid as \"id!\" FROM audit.archived_events WHERE source = $1 ORDER BY ts_orig, id LIMIT $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ea47b0e966d5c6626241116097e647c5216b4dbe92d463ef50a6edab9c8066ea"
+}

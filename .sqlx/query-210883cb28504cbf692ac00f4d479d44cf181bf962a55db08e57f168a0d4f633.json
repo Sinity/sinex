@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO raw.temporal_ledger\n                (source_material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)\n            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8",
+        "Int8",
+        "Text",
+        "Timestamptz",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "210883cb28504cbf692ac00f4d479d44cf181bf962a55db08e57f168a0d4f633"
+}

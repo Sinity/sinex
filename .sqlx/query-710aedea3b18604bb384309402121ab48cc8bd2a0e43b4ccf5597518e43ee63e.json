@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH active_runs AS (\n                SELECT\n                    nm.name,\n                    COUNT(*)::bigint AS active_run_count,\n                    MAX(nr.last_heartbeat_at) AS latest_heartbeat_at\n                FROM core.runs nr\n                JOIN core.manifests nm ON nm.id = nr.manifest_id\n                WHERE nr.status = 'running'\n                  AND nr.last_heartbeat_at IS NOT NULL\n                  AND nr.last_heartbeat_at >= $1\n                GROUP BY nm.name\n            ),\n            manifest_only_live AS (\n                SELECT\n                    nm.name,\n                    MAX(nr.last_heartbeat_at) AS latest_heartbeat_at\n                FROM core.runs nr\n                JOIN core.manifests nm ON nm.id = nr.manifest_id\n                WHERE nr.status = 'active'\n                  AND nr.last_heartbeat_at IS NOT NULL\n                  AND nr.last_heartbeat_at >= $1\n                  AND NOT EXISTS (\n                      SELECT 1\n                      FROM active_runs ar\n                      WHERE ar.name = nm.name\n                  )\n                GROUP BY nm.name\n            ),\n            module_inventory AS (\n                SELECT DISTINCT name\n                FROM core.manifests\n\n                UNION\n\n                SELECT DISTINCT nm.name\n                FROM core.runs nr\n                JOIN core.manifests nm ON nm.id = nr.manifest_id\n            ),\n            module_status AS (\n                SELECT\n                    ni.name,\n                    COALESCE(ar.active_run_count, 0) AS active_run_count,\n                    COALESCE(ar.latest_heartbeat_at, mol.latest_heartbeat_at) AS latest_heartbeat_at,\n                    (ar.name IS NOT NULL OR mol.name IS NOT NULL) AS has_live_instance\n                FROM module_inventory ni\n                LEFT JOIN active_runs ar ON ar.name = ni.name\n                LEFT JOIN manifest_only_live mol ON mol.name = ni.name\n            )\n            SELECT\n                COUNT(*) FILTER (WHERE has_live_instance) as \"active_count!\",\n                COUNT(*) FILTER (WHERE NOT has_live_instance) as \"inactive_count!\",\n                COUNT(*) as \"unique_modules!\",\n                COALESCE(SUM(active_run_count), 0)::bigint as \"active_run_count!\",\n                MIN(latest_heartbeat_at) FILTER (WHERE has_live_instance) as \"oldest_heartbeat: sinex_primitives::temporal::Timestamp\"\n            FROM module_status\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "active_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "inactive_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "unique_modules!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "active_run_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "oldest_heartbeat: sinex_primitives::temporal::Timestamp",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "710aedea3b18604bb384309402121ab48cc8bd2a0e43b4ccf5597518e43ee63e"
+}

@@ -1,0 +1,92 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id, name, description, matcher_type, matcher_value,\n                matcher_config, recognizer_backend_id, recognizer_kind,\n                case_sensitive, action, action_label, key_namespace, enabled\n            FROM privacy.rules\n            ORDER BY name\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "matcher_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "matcher_value",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "matcher_config",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "recognizer_backend_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 7,
+        "name": "recognizer_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "case_sensitive",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "action_label",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "key_namespace",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "enabled",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "f7f289f579115a9acb325090cc612801ece3af492892d97330bad7efdb0a97af"
+}
