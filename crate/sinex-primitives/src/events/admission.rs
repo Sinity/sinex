@@ -23,6 +23,15 @@ pub const CURRENT_ENVELOPE_VERSION: &str = "1";
 /// Envelope versions that event_engine will accept on receipt.
 pub const ACCEPTED_ENVELOPE_VERSIONS: &[&str] = &["1"];
 
+/// Default envelope version for backward-compatible deserialization.
+///
+/// Pre-#1149 producers did not include `envelope_version` in the serialized
+/// envelope. Serde uses this function when the field is absent, so old messages
+/// round-trip correctly instead of failing with "missing field".
+fn default_envelope_version() -> String {
+    CURRENT_ENVELOPE_VERSION.to_string()
+}
+
 /// The kind of anchor that identifies an occurrence within source material.
 ///
 /// Each variant describes a different coordinate system for locating a stable
@@ -113,6 +122,10 @@ impl std::str::FromStr for OccurrenceAnchorKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventIntent {
     /// Envelope version — currently "1".
+    ///
+    /// Pre-#1149 messages did not carry this field; `default_envelope_version`
+    /// supplies `"1"` so they deserialize correctly rather than hitting DLQ.
+    #[serde(default = "default_envelope_version")]
     pub envelope_version: String,
 
     /// Source identifier (e.g., "fs-watcher", "terminal-source").
@@ -342,6 +355,24 @@ mod tests {
     #[sinex_test]
     async fn occurrence_anchor_kind_rejects_invalid() -> TestResult<()> {
         assert!(OccurrenceAnchorKind::try_from_str("bogus_kind").is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn deserializes_intent_without_envelope_version() -> TestResult<()> {
+        // Pre-#1149 messages omitted envelope_version entirely.
+        // Deserialization must default to "1" rather than fail.
+        let json = serde_json::json!({
+            "source_id": "test.source",
+            "parser_id": "test-parser",
+            "parser_version": "1.0.0",
+            "events": [],
+            "admitted_at": Timestamp::now(),
+            "admitted_by": "test-host"
+        });
+        let intent: EventIntent = serde_json::from_value(json)?;
+        assert_eq!(intent.envelope_version, "1");
+        assert!(intent.is_version_accepted());
         Ok(())
     }
 
