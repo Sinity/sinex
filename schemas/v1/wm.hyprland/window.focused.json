@@ -8,25 +8,34 @@
       ]
     },
     "window_class": {
-      "type": "string"
+      "description": "From activewindow (v1).",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "window_id": {
-      "type": "string"
+      "description": "From activewindowv2 (merged). May be absent if v2 never arrives.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "window_title": {
-      "type": "string"
+      "description": "From activewindow (v1).",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "workspace_id": {
       "format": "int32",
-      "type": "integer"
+      "type": [
+        "integer",
+        "null"
+      ]
     }
   },
-  "required": [
-    "window_id",
-    "window_class",
-    "window_title",
-    "workspace_id"
-  ],
   "title": "HyprlandWindowFocusedPayload",
   "type": "object",
   "x-sinex-event-type": "window.focused",

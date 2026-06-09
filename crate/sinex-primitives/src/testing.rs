@@ -253,10 +253,10 @@ pub mod strategies {
     /// Generate random `HyprlandWindowFocusedPayload` values.
     pub fn window_focused_payload() -> impl Strategy<Value = HyprlandWindowFocusedPayload> {
         (
-            "[0-9a-f]{8,16}",
-            "[a-zA-Z][a-zA-Z0-9._-]{2,30}",
-            "[A-Z][a-zA-Z0-9 ._-]{2,50}",
-            0i32..20i32,
+            proptest::option::of("[0-9a-f]{8,16}"),
+            proptest::option::of("[a-zA-Z][a-zA-Z0-9._-]{2,30}"),
+            proptest::option::of("[A-Z][a-zA-Z0-9 ._-]{2,50}"),
+            proptest::option::of(0i32..20i32),
             proptest::option::of("[0-9a-f]{8,16}"),
         )
             .prop_map(

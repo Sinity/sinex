@@ -43,9 +43,10 @@ fn instruction(
 
 fn observation(to_workspace_id: i32) -> HyprlandWorkspaceSwitchedPayload {
     HyprlandWorkspaceSwitchedPayload {
-        from_workspace_id: 1,
+        from_workspace_id: Some(1),
         to_workspace_id,
-        monitor_id: 0,
+        workspace_name: None,
+        monitor_id: Some(0),
         active_window_id: None,
     }
 }

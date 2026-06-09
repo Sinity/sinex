@@ -33,14 +33,27 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "floating": {
-      "type": "boolean"
+      "type": [
+        "boolean",
+        "null"
+      ]
     },
     "geometry": {
-      "$ref": "#/$defs/WindowGeometry"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WindowGeometry"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "monitor_id": {
       "format": "int32",
-      "type": "integer"
+      "type": [
+        "integer",
+        "null"
+      ]
     },
     "window_class": {
       "type": "string"
@@ -52,18 +65,24 @@
       "type": "string"
     },
     "workspace_id": {
+      "description": "Hyprland sends workspace_id as a string; parsed to i32.",
       "format": "int32",
-      "type": "integer"
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "workspace_name": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [
     "window_id",
     "window_class",
-    "window_title",
-    "workspace_id",
-    "monitor_id",
-    "geometry",
-    "floating"
+    "window_title"
   ],
   "title": "HyprlandWindowOpenedPayload",
   "type": "object",
