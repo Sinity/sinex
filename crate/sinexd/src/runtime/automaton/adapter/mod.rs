@@ -563,16 +563,22 @@ where
         }
 
         if !nats_save_success {
-            return Err(SinexError::checkpoint(format!(
-                "RuntimeModule {} failed to save final checkpoint to NATS KV during shutdown \
-                 (file save {})",
-                self.automaton.name(),
-                if file_save_success {
-                    "succeeded"
-                } else {
-                    "also failed"
-                }
-            )));
+            if file_save_success {
+                // NATS KV CAS failure during shutdown with file save intact. The file is
+                // priority-1 on the next startup so recovery is safe; treat this as a
+                // non-fatal warning so the supervisor does not restart on a clean shutdown.
+                warn!(
+                    automaton = %self.automaton.name(),
+                    "NATS KV checkpoint save failed during shutdown but file save succeeded; \
+                     treating as clean exit"
+                );
+            } else {
+                return Err(SinexError::checkpoint(format!(
+                    "RuntimeModule {} failed to save final checkpoint to NATS KV during shutdown \
+                     (file save also failed)",
+                    self.automaton.name(),
+                )));
+            }
         }
 
         Ok(())
