@@ -456,7 +456,7 @@ impl CheckpointManager {
         // JetStream server). A single transient error must not permanently kill
         // all automata simultaneously.
         const MAX_ATTEMPTS: u32 = 4;
-        let mut last_err: Option<async_nats::Error> = None;
+        let mut last_err_msg = String::new();
         for attempt in 1..=MAX_ATTEMPTS {
             match self.kv.entry(key).await {
                 Ok(None) => return Ok(None),
@@ -485,7 +485,7 @@ impl CheckpointManager {
                         error = %e,
                         "Checkpoint KV read failed; will retry"
                     );
-                    last_err = Some(e);
+                    last_err_msg = e.to_string();
                     if attempt < MAX_ATTEMPTS {
                         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                     }
@@ -495,7 +495,7 @@ impl CheckpointManager {
         Err(SinexError::checkpoint(format!(
             "Failed to read checkpoint KV after {MAX_ATTEMPTS} attempts"
         ))
-        .with_source(last_err.unwrap()))
+        .with_source(last_err_msg))
     }
 
     fn decode_checkpoint_state(&self, key: &str, value: &[u8]) -> RuntimeResult<CheckpointState> {
