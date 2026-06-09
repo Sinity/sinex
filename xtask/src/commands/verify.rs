@@ -1783,6 +1783,8 @@ Either add the missing verification commands to the closing comment / issue body
         assert!(is_closure_verifier_self_command(
             "RUST_LOG=debug xtask verify closure 1576 --json"
         ));
+        // "source-worker" was a subcommand removed in Wave-B (#1081); used here
+        // as an arbitrary non-closure-verifier string for the negative assertion.
         assert!(!is_closure_verifier_self_command(
             "xtask verify source-worker"
         ));

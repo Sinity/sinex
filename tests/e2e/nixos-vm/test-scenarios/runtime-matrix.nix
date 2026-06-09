@@ -246,15 +246,14 @@ SQL
         desktop_scan_config = '{"activitywatch_db_path":"/home/test/.local/share/activitywatch/aw-server-rust/sqlite.db","clipboard_enabled":false,"window_manager_enabled":false,"window_manager_type":"Hyprland","clipboard_poll_interval_secs":1,"require_hyprland":false}'
         desktop_scan_command = (
             "set -euo pipefail; "
-            "mkdir -p /var/lib/sinex/desktop-history-proof; "
             "scan_until=$(date -u +%Y-%m-%dT%H:%M:%SZ); "
             "DATABASE_URL=postgresql://sinex@127.0.0.1:5432/sinex_dev "
             "SINEX_NATS_URL=nats://127.0.0.1:4222 "
-            "${sinexPackage}/bin/sinex-desktop-ingestor "
+            "${sinexPackage}/bin/sinexd scan-source-driver "
+            "--source desktop.activitywatch "
             "--service-name sinex-desktop-history-proof "
-            "--work-dir /var/lib/sinex/desktop-history-proof "
             f"--runtime-config {shlex.quote(desktop_scan_config)} "
-            'scan --from none --until "$scan_until"'
+            '--extra-arg scan --extra-arg --from --extra-arg none --extra-arg --until --extra-arg "$scan_until"'
         )
         machine.succeed(f"su -s /bin/sh -c {shlex.quote(desktop_scan_command)} sinex")
         machine.wait_until_succeeds(

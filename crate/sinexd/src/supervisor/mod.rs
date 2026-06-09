@@ -15,7 +15,7 @@ use crate::runtime::systemd_notify;
 use sinex_primitives::error::{Result, SinexError};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::api::config::GatewayConfig;
 use crate::api::rpc_server;
@@ -366,14 +366,50 @@ fn spawn_automaton(
     shutdown_rx: watch::Receiver<bool>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        // Keep the shutdown receiver alive in the task scope so the
-        // `watch::Sender` half cannot observe a premature drop.
-        let _shutdown_rx = shutdown_rx;
-        let future = (spec.run)();
-        if let Err(error) = future.await {
-            warn!(automaton = %spec.name, ?error, "automaton exited with error");
-        } else {
-            info!(automaton = %spec.name, "automaton exited");
+        let mut backoff = Duration::from_secs(1);
+        const MAX_BACKOFF: Duration = Duration::from_secs(30);
+        // Reset backoff to 1 s if the automaton ran for at least this long
+        // before failing — indicates a stable start followed by a transient
+        // runtime error rather than a crash-loop.
+        const STABLE_THRESHOLD: Duration = Duration::from_secs(60);
+
+        loop {
+            if *shutdown_rx.borrow() {
+                break;
+            }
+
+            let started = std::time::Instant::now();
+            match (spec.run)().await {
+                Ok(()) => {
+                    // Clean exit: drain completed or historical batch done.
+                    info!(automaton = %spec.name, "automaton exited cleanly");
+                    break;
+                }
+                Err(error) if *shutdown_rx.borrow() => {
+                    debug!(automaton = %spec.name, ?error, "automaton exited during shutdown");
+                    break;
+                }
+                Err(error) => {
+                    if started.elapsed() >= STABLE_THRESHOLD {
+                        backoff = Duration::from_secs(1);
+                    }
+                    warn!(
+                        automaton = %spec.name,
+                        backoff_ms = backoff.as_millis(),
+                        ?error,
+                        "automaton exited with error; restarting after backoff"
+                    );
+                    // Wait for backoff, but abort early if shutdown is signaled.
+                    tokio::select! {
+                        () = tokio::time::sleep(backoff) => {}
+                        _ = {
+                            let mut rx = shutdown_rx.clone();
+                            async move { let _ = rx.wait_for(|&v| v).await; }
+                        } => { break; }
+                    }
+                    backoff = (backoff * 2).min(MAX_BACKOFF);
+                }
+            }
         }
     })
 }

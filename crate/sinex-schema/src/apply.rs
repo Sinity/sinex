@@ -2238,7 +2238,7 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.command_frequency_hourly
 WITH (timescaledb.continuous) AS
 SELECT
     time_bucket('1 hour', id) AS bucket,
-    COALESCE(payload->>'command', payload->>'command_string') AS command,
+    LEFT(COALESCE(payload->>'command', payload->>'command_string'), 500) AS command,
     CASE
         WHEN source = 'shell.kitty' THEN COALESCE(payload->>'shell_type', 'kitty')
         WHEN source = 'shell.atuin' THEN 'atuin'
@@ -2270,7 +2270,7 @@ WHERE event_type = 'command.executed'
   AND COALESCE(payload->>'command', payload->>'command_string') IS NOT NULL
 GROUP BY
     time_bucket('1 hour', id),
-    COALESCE(payload->>'command', payload->>'command_string'),
+    LEFT(COALESCE(payload->>'command', payload->>'command_string'), 500),
     CASE
         WHEN source = 'shell.kitty' THEN COALESCE(payload->>'shell_type', 'kitty')
         WHEN source = 'shell.atuin' THEN 'atuin'

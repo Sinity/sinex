@@ -189,6 +189,17 @@ let
     log_connections = mkDefault true;
     log_disconnections = mkDefault true;
 
+    # TimescaleDB upgrade safety: allow the loaded library version to be
+    # newer than the catalog version. During a NixOS package upgrade the
+    # postmaster loads the new .so via shared_preload_libraries before
+    # postgresql-setup runs ALTER EXTENSION ... UPDATE. Without this flag
+    # the background worker refuses to register (version mismatch) and the
+    # upgrade script's ts_bgw_db_workers_restart call fails with
+    # "extension must be preloaded". This is safe in a declarative
+    # deployment because mismatches are always intentional upgrade windows,
+    # never unexpected drift.
+    "timescaledb.allow_elevated_versions" = mkDefault "on";
+
     # Computed/required settings
     max_connections = mkDefault computedMaxConnections;
     shared_preload_libraries = mkDefault sharedPreloadLibraries;
@@ -311,23 +322,92 @@ in
                   # TimescaleDB requires ALTER EXTENSION to be the first command in a
                   # fresh psql session after a package update. Keep every extension on
                   # this stricter path so setup behavior stays uniform.
-                  psql -X -v ON_ERROR_STOP=1 \
+                  #
+                  # On minor-version upgrades (e.g. TimescaleDB 2.26.4 -> 2.27.1) the
+                  # installed .so is no longer present in the new package derivation.
+                  # Detect this via "could not access file" and automatically locate the
+                  # old .so in the nix store by searching for the versioned filename.
+                  local output rc installed_version compat_dir
+                  output=$(psql -X -v ON_ERROR_STOP=1 \
                     --set=sinex_ext_name="$extName" \
-                    -d "$dbName" <<'SQL' >/dev/null
+                    -d "$dbName" 2>&1 <<'SQL'
         ALTER EXTENSION :"sinex_ext_name" UPDATE;
         SQL
+                  )
+                  rc=$?
+                  [ $rc -eq 0 ] && return 0
+
+                  if printf '%s' "$output" | grep -qF 'could not access file'; then
+                    installed_version=$(psql -X -At -d "$dbName" \
+                      -c "SELECT extversion FROM pg_extension WHERE extname = '$extName'" 2>/dev/null)
+                    if [ -n "$installed_version" ]; then
+                      echo "[sinex] $extName: version $installed_version .so missing from current package, searching nix store for compat library..."
+                      compat_dir=$(find /nix/store -maxdepth 3 \
+                        -name "${extName}-${installed_version}.so" \
+                        -printf '%h\n' 2>/dev/null | head -1)
+                      if [ -n "$compat_dir" ]; then
+                        echo "[sinex] $extName: found compat library at $compat_dir, temporarily extending dynamic_library_path"
+                        psql -v ON_ERROR_STOP=1 -d postgres \
+                          -c "ALTER SYSTEM SET dynamic_library_path TO '$compat_dir:\$libdir';" >/dev/null
+                        psql -v ON_ERROR_STOP=1 -d postgres \
+                          -c "SELECT pg_reload_conf();" >/dev/null
+                        psql -X -v ON_ERROR_STOP=1 \
+                          --set=sinex_ext_name="$extName" \
+                          -d "$dbName" <<'SQL' >/dev/null
+        ALTER EXTENSION :"sinex_ext_name" UPDATE;
+        SQL
+                        rc=$?
+                        # Always reset dynamic_library_path whether the update succeeded or failed.
+                        psql -v ON_ERROR_STOP=1 -d postgres \
+                          -c "ALTER SYSTEM RESET dynamic_library_path;" >/dev/null
+                        psql -v ON_ERROR_STOP=1 -d postgres \
+                          -c "SELECT pg_reload_conf();" >/dev/null
+                        if [ $rc -eq 0 ]; then
+                          echo "[sinex] $extName: upgraded via compat library path"
+                          return 0
+                        fi
+                        echo "[sinex] ERROR: $extName: upgrade failed even with compat library" >&2
+                        return $rc
+                      fi
+                    fi
+                    echo "[sinex] ERROR: $extName: version $installed_version .so not found in nix store" >&2
+                    echo "[sinex] Hint: add the old package to services.sinex.database.extensionCompatibilityPackages" >&2
+                    return 1
+                  fi
+
+                  printf '[sinex] ERROR: %s update failed: %s\n' "$extName" "$output" >&2
+                  return $rc
                 }
 
                 ensure_extension() {
                   local dbName="$1"
                   local extName="$2"
-                  local exists
+                  local exists needs_update
                   echo "[sinex] ensuring extension ''${extName} for ''${dbName}"
                   exists="$(extension_exists "$dbName" "$extName")"
                   if [ "$exists" != "1" ]; then
                     create_extension "$dbName" "$extName"
+                    # Freshly created extension is already at latest version.
+                    return
                   fi
-                  update_extension "$dbName" "$extName"
+                  # Skip ALTER EXTENSION UPDATE when the installed version already
+                  # matches the default available version — avoids a NOTICE flood
+                  # ("version X already installed") on every postgresql restart.
+                  needs_update=$(psql -X -v ON_ERROR_STOP=1 \
+                    --set=sinex_ext_name="$extName" \
+                    -d "$dbName" -At 2>/dev/null <<'SQL'
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_extension e
+          JOIN pg_available_extensions ae ON ae.name = e.extname
+          WHERE e.extname = :'sinex_ext_name'
+            AND e.extversion != ae.default_version
+        );
+SQL
+                  )
+                  if [ "''${needs_update}" = "t" ]; then
+                    update_extension "$dbName" "$extName"
+                  fi
                 }
 
                 for dbName in ${concatStringsSep " " (map escapeShellArg allDatabases)}; do
