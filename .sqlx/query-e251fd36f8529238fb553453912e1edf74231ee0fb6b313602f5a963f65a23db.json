@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id as \"id!: Id<EventAnnotation>\",\n                event_id::uuid as \"event_id!: Id<Event<JsonValue>>\",\n                annotation_type as \"annotation_type!\",\n                content as \"content!\",\n                metadata as \"metadata!\",\n                created_by as \"created_by!\",\n                created_at as \"created_at: Timestamp\",\n                updated_at as \"updated_at: Timestamp\"\n            FROM core.event_annotations\n            WHERE annotation_type = $1\n            ORDER BY created_at DESC\n            LIMIT $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: Id<EventAnnotation>",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "event_id!: Id<Event<JsonValue>>",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "annotation_type!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "content!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "metadata!",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_by!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at: Timestamp",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at: Timestamp",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e251fd36f8529238fb553453912e1edf74231ee0fb6b313602f5a963f65a23db"
+}

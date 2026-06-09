@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT dt.term\n                FROM privacy.dictionary_terms dt\n                JOIN privacy.dictionaries d ON d.id = dt.dictionary_id\n                WHERE d.name = $1 AND d.enabled = true AND dt.enabled = true\n                ORDER BY dt.term\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "term",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8fc547119a466d09a7dd025a0813ab94403c3847a95211a3ae39112c0714acf9"
+}

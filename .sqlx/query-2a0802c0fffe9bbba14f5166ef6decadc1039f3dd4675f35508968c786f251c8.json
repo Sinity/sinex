@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT COUNT(*) as \"count!: i64\"\n        FROM core.events e\n        JOIN raw.source_material_registry sm ON sm.id = e.source_material_id\n        WHERE sm.source_identifier = $1\n          AND ($2::text IS NULL OR sm.material_kind = $2)\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!: i64",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "2a0802c0fffe9bbba14f5166ef6decadc1039f3dd4675f35508968c786f251c8"
+}

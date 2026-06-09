@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT COUNT(*)::BIGINT AS \"count!\"\n                FROM core.events e\n                WHERE e.source_material_id IN (\n                    SELECT id FROM raw.source_material_registry\n                    WHERE source_identifier = $1\n                )\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "6ba39309770c7111711e622b09db2109e1e16c69a59a2799d3a49f1c1f44ac52"
+}

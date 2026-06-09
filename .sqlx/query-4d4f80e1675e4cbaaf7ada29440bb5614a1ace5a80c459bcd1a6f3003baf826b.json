@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            (payload->>'value')::float8 AS \"value!\",\n            EXTRACT(EPOCH FROM (NOW() - ts_coided))::bigint AS \"age_secs!: i64\"\n        FROM core.events\n        WHERE source = 'sinex'\n          AND event_type = 'metric.gauge'\n          AND payload->>'name' = 'event_engine.consumer.lag.pending'\n        ORDER BY id DESC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "value!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 1,
+        "name": "age_secs!: i64",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "4d4f80e1675e4cbaaf7ada29440bb5614a1ace5a80c459bcd1a6f3003baf826b"
+}

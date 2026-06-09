@@ -1,0 +1,77 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            sm.id as \"id!\",\n            sm.material_kind,\n            sm.source_identifier,\n            sm.status,\n            sm.timing_info_type,\n            sm.metadata,\n            sm.staged_at as \"staged_at!\",\n            sm.staged_by,\n            sm.total_bytes,\n            b.mime_type\n        FROM raw.source_material_registry sm\n        LEFT JOIN core.blobs b ON b.id = sm.optional_blob_id\n        WHERE ($1::text IS NULL OR sm.status = $1)\n        ORDER BY sm.staged_at DESC\n        LIMIT $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "material_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "source_identifier",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "timing_info_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "staged_at!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "staged_by",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "total_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "mime_type",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "ab11a328f5fbef71d40ff7e7455e3ad25d7e14d1fc04bedf78663d69380c3ca1"
+}

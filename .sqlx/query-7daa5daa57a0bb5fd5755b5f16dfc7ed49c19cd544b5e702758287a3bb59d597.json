@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            DELETE FROM semantic.lane_outputs\n            WHERE lane_id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7daa5daa57a0bb5fd5755b5f16dfc7ed49c19cd544b5e702758287a3bb59d597"
+}

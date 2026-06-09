@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT ((a.atttypmod - 4) / 4)::int4 as \"dim\"\n            FROM pg_catalog.pg_attribute a\n            JOIN pg_catalog.pg_class c ON c.oid = a.attrelid\n            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n            WHERE n.nspname = 'core'\n              AND c.relname = 'event_embeddings'\n              AND a.attname = 'embedding'\n              AND a.atttypmod > 0\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "dim",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "094e868fd8f7b23c59914c5811f392c867b0f6cb4bfbba57d924f0e29945ec2e"
+}

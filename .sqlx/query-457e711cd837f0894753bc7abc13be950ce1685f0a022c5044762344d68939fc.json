@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH vector_results AS (\n                SELECT ee.event_id, ee.embedded_text,\n                       ROW_NUMBER() OVER (ORDER BY ee.embedding <=> $1::text::vector) as vector_rank,\n                       (1.0::float8 - (ee.embedding <=> $1::text::vector)) as vector_similarity\n                FROM core.event_embeddings ee\n                WHERE ee.embedding_model_id = $2\n                ORDER BY ee.embedding <=> $1::text::vector\n                LIMIT $4::int8 * 3\n            ),\n            fts_results AS (\n                SELECT e.id as event_id,\n                       ROW_NUMBER() OVER (ORDER BY ts_rank_cd(\n                           to_tsvector('simple', e.payload::text),\n                           websearch_to_tsquery('simple', $3)\n                       ) DESC) as fts_rank,\n                       ts_rank_cd(\n                           to_tsvector('simple', e.payload::text),\n                           websearch_to_tsquery('simple', $3)\n                       ) as fts_score\n                FROM core.events e\n                WHERE to_tsvector('simple', e.payload::text) @@ websearch_to_tsquery('simple', $3)\n                ORDER BY fts_score DESC\n                LIMIT $4::int8 * 3\n            ),\n            combined AS (\n                SELECT COALESCE(v.event_id, f.event_id) as event_id,\n                       v.embedded_text as embedded_text,\n                       COALESCE(1.0::float8 / ($5::float8 + v.vector_rank::float8), 0.0::float8) as vector_rrf,\n                       COALESCE(1.0::float8 / ($5::float8 + f.fts_rank::float8), 0.0::float8) as fts_rrf,\n                       COALESCE(v.vector_similarity, 0.0::float8) as vector_similarity,\n                       COALESCE(f.fts_score::float8, 0.0::float8) as fts_score\n                FROM vector_results v\n                FULL OUTER JOIN fts_results f ON v.event_id = f.event_id\n            )\n            SELECT event_id as \"event_id!\", embedded_text as \"embedded_text?: String\",\n                   (vector_rrf + fts_rrf) as \"rrf_score!: f64\",\n                   vector_similarity as \"vector_similarity!: f64\",\n                   fts_score as \"fts_score!: f64\"\n            FROM combined\n            ORDER BY (vector_rrf + fts_rrf) DESC\n            LIMIT $4::int8\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "event_id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "embedded_text?: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "rrf_score!: f64",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 3,
+        "name": "vector_similarity!: f64",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 4,
+        "name": "fts_score!: f64",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Text",
+        "Int8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "457e711cd837f0894753bc7abc13be950ce1685f0a022c5044762344d68939fc"
+}

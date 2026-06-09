@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            nr.status,\n            EXTRACT(EPOCH FROM (NOW() - nr.last_heartbeat_at))::bigint as \"age_secs: i64\"\n        FROM core.runs nr\n        JOIN core.manifests nm ON nm.id = nr.manifest_id\n        WHERE nm.name = 'sinexd'\n          AND nr.status = 'running'\n        ORDER BY nr.last_heartbeat_at DESC NULLS LAST\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "age_secs: i64",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "c3c110512f7a988ae3365fa1b4331af96dd12502db7af958d26a1d0ce44074b0"
+}

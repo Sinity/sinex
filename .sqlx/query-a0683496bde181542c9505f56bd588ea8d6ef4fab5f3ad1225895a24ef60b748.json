@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.entities\n        SET\n            aliases = $2,\n            properties = $3,\n            source_event_ids = $4,\n            confidence_score = $5,\n            created_at = $6,\n            updated_at = NOW()\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray",
+        "Jsonb",
+        "UuidArray",
+        "Float8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a0683496bde181542c9505f56bd588ea8d6ef4fab5f3ad1225895a24ef60b748"
+}

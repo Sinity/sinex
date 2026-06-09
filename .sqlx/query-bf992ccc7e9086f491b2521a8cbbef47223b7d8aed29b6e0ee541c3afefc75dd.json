@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO sinex_schemas.binary_schema_version (id, version) VALUES (1, $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bf992ccc7e9086f491b2521a8cbbef47223b7d8aed29b6e0ee541c3afefc75dd"
+}
