@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id::uuid AS \"id!\"\n            FROM core.operations_log\n            WHERE operation_type = 'replay'\n              AND scope->>'source_name' = $1\n              AND result_status = 'running'\n            LIMIT 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9e1e66ca226e800fb1b81ce713a9994093148e77ddf16f4979b73e55268cf54e"
+}

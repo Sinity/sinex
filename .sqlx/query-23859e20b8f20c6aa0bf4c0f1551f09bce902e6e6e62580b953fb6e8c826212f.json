@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT ee.event_id as \"event_id!\", ee.embedded_text as \"embedded_text!\",\n                   (1.0::float8 - (ee.embedding <=> $1::text::vector)) as \"similarity!: f64\"\n            FROM core.event_embeddings ee\n            WHERE ee.embedding_model_id = $2\n            ORDER BY ee.embedding <=> $1::text::vector\n            LIMIT $3\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "event_id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "embedded_text!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "similarity!: f64",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "23859e20b8f20c6aa0bf4c0f1551f09bce902e6e6e62580b953fb6e8c826212f"
+}

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH RECURSIVE path AS (\n                SELECT \n                    ARRAY[id::uuid] AS relation_ids,\n                    from_entity_id,\n                    to_entity_id,\n                    1 AS depth\n                FROM core.entity_relations\n                WHERE from_entity_id::uuid = $1\n                  AND is_active = true\n\n                UNION ALL\n\n                SELECT\n                    path.relation_ids || rel.id::uuid,\n                    rel.from_entity_id,\n                    rel.to_entity_id,\n                    path.depth + 1\n                FROM path\n                JOIN core.entity_relations rel\n                  ON rel.from_entity_id = path.to_entity_id\n                WHERE path.depth < $3\n                  AND rel.is_active = true\n                  AND NOT rel.id::uuid = ANY(path.relation_ids)\n            )\n            SELECT relation_ids as \"relation_ids!: Vec<Uuid>\"\n            FROM path\n            WHERE to_entity_id::uuid = $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "relation_ids!: Vec<Uuid>",
+        "type_info": "UuidArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ef2e9b2dc5fd136575d318be2c12e34c9d5b7f3ed72570307f015131c052c0d4"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.entity_relations target\n        SET source_event_ids = (\n                SELECT COALESCE(array_agg(DISTINCT eid ORDER BY eid), ARRAY[]::uuid[])\n                FROM unnest(target.source_event_ids || dup.source_event_ids) AS eid\n            ),\n            updated_at = NOW()\n        FROM core.entity_relations dup\n        WHERE target.from_entity_id::uuid = $2\n          AND dup.from_entity_id::uuid = $1\n          AND dup.to_entity_id = target.to_entity_id\n          AND dup.relation_type = target.relation_type\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "553e76c303c36dba60c5e6d3fdaa8137a50488098400276f9e61ca6e14f61979"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO privacy.dictionary_terms (dictionary_id, term)\n                VALUES ($1, $2)\n                ON CONFLICT (dictionary_id, term) DO NOTHING\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3036cad70e3ff1cd6bd67e2dde611c08a4576a92927e35023c1cc5f8fb34e47f"
+}

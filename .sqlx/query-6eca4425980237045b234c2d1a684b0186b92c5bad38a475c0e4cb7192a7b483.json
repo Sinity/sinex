@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                document_id         as \"document_id!: Uuid\",\n                chunk_index         as \"chunk_index!\",\n                text                as \"text!\",\n                byte_offset_start   as \"byte_offset_start!\",\n                byte_offset_end     as \"byte_offset_end!\",\n                source_anchor_start as \"source_anchor_start?: i64\",\n                source_anchor_end   as \"source_anchor_end?: i64\",\n                chunked_event_id    as \"chunked_event_id!: Uuid\"\n            FROM core.document_chunks\n            WHERE document_id = $1\n            ORDER BY chunk_index ASC\n            LIMIT $2 OFFSET $3\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "document_id!: Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "chunk_index!",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "text!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "byte_offset_start!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "byte_offset_end!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "source_anchor_start?: i64",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "source_anchor_end?: i64",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "chunked_event_id!: Uuid",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "6eca4425980237045b234c2d1a684b0186b92c5bad38a475c0e4cb7192a7b483"
+}

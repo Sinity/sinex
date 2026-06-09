@@ -9,6 +9,7 @@ on:
     paths:
       - 'crate/sinex-schema/**'
       - 'crate/sinex-db/**'
+      - '.sqlx/**'
       - '.github/workflows/schema-strict-diff.yml'
 
 # Why: declarative `xtask schema apply` reconciles missing tables/columns/named
@@ -37,6 +38,14 @@ jobs:
 
       - name: Run schema-only drift gate
         shell: bash
+        env:
+          # SQLX_OFFLINE=true lets cargo compile sinex-db using the committed
+          # .sqlx/ query cache rather than connecting to a live database.
+          # This avoids the chicken-and-egg: the xtask wrapper must compile
+          # sinex-db before postgres starts, so a live DATABASE_URL is not
+          # available at build time. Runtime schema validation still happens
+          # through xtask ci schema-only against the ephemeral postgres.
+          SQLX_OFFLINE: "true"
         run: |
           nix develop --accept-flake-config --no-pure-eval --command bash -lc '
             set -euo pipefail

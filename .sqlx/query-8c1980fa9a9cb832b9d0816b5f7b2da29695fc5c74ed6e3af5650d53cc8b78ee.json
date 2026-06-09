@@ -1,0 +1,56 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id as \"id!: Uuid\",\n                entity_type,\n                name,\n                canonical_name,\n                aliases,\n                properties,\n                confidence_score\n            FROM core.entities\n            WHERE is_merged = false\n            ORDER BY id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "entity_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "canonical_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "aliases",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 5,
+        "name": "properties",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "confidence_score",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8c1980fa9a9cb832b9d0816b5f7b2da29695fc5c74ed6e3af5650d53cc8b78ee"
+}

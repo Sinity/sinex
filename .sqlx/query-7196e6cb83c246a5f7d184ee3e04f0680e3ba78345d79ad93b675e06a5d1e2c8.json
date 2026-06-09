@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT count(*) as \"count!\"\n            FROM core.embedding_models\n            WHERE is_active = true\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "7196e6cb83c246a5f7d184ee3e04f0680e3ba78345d79ad93b675e06a5d1e2c8"
+}

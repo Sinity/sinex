@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id AS \"id: uuid::Uuid\"\n            FROM raw.source_material_registry\n            WHERE staged_at > NOW() - INTERVAL '1 hour' * $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: uuid::Uuid",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8c50ef7ce39f401a419fed5a03843edf5198762db4aeafc2421769d7d95de91c"
+}
