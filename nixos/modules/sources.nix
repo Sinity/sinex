@@ -562,6 +562,7 @@ let
                 "SINEX_EVENT_ENGINE_CONSUMER_MAX_ACK_PENDING=${toString coreCfg.event_engine.consumerMaxAckPending}"
                 "SINEX_EVENT_ENGINE_MATERIAL_SLICES_MAX_ACK_PENDING=${toString coreCfg.event_engine.materialSlicesMaxAckPending}"
                 "SINEX_EVENT_ENGINE_REJECT_INITIAL_REPLAY=${if coreCfg.event_engine.rejectInitialReplay then "true" else "false"}"
+                "SINEX_EVENT_ENGINE_STARTUP_CATCH_UP_MAX_CONCURRENT=${toString coreCfg.event_engine.startupCatchUpMaxConcurrent}"
                 # Explicit work and spool dirs prevent fallback to dirs::cache_dir() (~/.cache)
                 # which is blocked by ProtectHome = true in the systemd unit.
                 "SINEX_EVENT_ENGINE_WORK_DIR=${stateRoot}/event_engine/work"

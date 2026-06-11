@@ -714,6 +714,16 @@ in
                     recover by replaying the existing raw stream.
                   '';
                 };
+                startupCatchUpMaxConcurrent = mkOption {
+                  type = ints.between 0 256;
+                  default = 4;
+                  description = ''
+                    Maximum concurrent event_engine batch-processing tasks
+                    while catching up after startup. Set to 1 on interactive
+                    workstations to reduce PostgreSQL/NATS/I/O pressure during
+                    recovery replay; set to 0 to disable the limiter.
+                  '';
+                };
                 resources = mkOption {
                   type = resourceModule {
                     defaultMemory = "8G";
