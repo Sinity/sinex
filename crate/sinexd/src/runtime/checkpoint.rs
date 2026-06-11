@@ -554,15 +554,8 @@ impl CheckpointManager {
                             stale_revision = state.revision,
                             "Checkpoint KV entry is missing after restoring a local checkpoint revision; recreating it"
                         );
-                        self.kv
-                            .create(&key, encoded.into())
-                            .await
-                            .map_err(|error| {
-                                SinexError::checkpoint(
-                                    "Failed to recreate missing checkpoint in KV after stale local revision",
-                                )
-                                .with_source(error)
-                            })?
+                        self.create_checkpoint_after_missing_revision(&key, encoded, state)
+                            .await?
                     } else {
                         // CAS failure with existing entry: stale revision (e.g. loaded from
                         // file after restart while NATS KV advanced further). Refresh the
@@ -615,11 +608,40 @@ impl CheckpointManager {
                                 "Checkpoint create reported an error but the matching entry already exists; treating as an idempotent save"
                             );
                             existing_entry.revision
+                        } else if state.processed_count > existing_state.processed_count {
+                            warn!(
+                                target: "sinex_metrics",
+                                metric = "runtime.checkpoint_kv_create_conflict_update_total",
+                                module = %self.module_name,
+                                consumer_group = %self.consumer_group,
+                                consumer_name = %self.consumer_name,
+                                existing_revision = existing_entry.revision,
+                                existing_processed_count = existing_state.processed_count,
+                                incoming_processed_count = state.processed_count,
+                                "Checkpoint create found an older existing KV entry; updating it with the replayed checkpoint state"
+                            );
+                            self.kv
+                                .update(&key, encoded.into(), existing_entry.revision)
+                                .await
+                                .map_err(|retry_error| {
+                                    SinexError::checkpoint(
+                                        "Failed to update checkpoint in KV after create conflict",
+                                    )
+                                    .with_source(retry_error)
+                                })?
                         } else {
-                            return Err(SinexError::checkpoint(
-                                "Failed to create checkpoint in KV (already exists or create failed)",
-                            )
-                            .with_source(create_error));
+                            warn!(
+                                target: "sinex_metrics",
+                                metric = "runtime.checkpoint_kv_create_conflict_stale_total",
+                                module = %self.module_name,
+                                consumer_group = %self.consumer_group,
+                                consumer_name = %self.consumer_name,
+                                existing_revision = existing_entry.revision,
+                                existing_processed_count = existing_state.processed_count,
+                                incoming_processed_count = state.processed_count,
+                                "Checkpoint create found an equal-or-newer existing KV entry; keeping existing checkpoint state"
+                            );
+                            existing_entry.revision
                         }
                     } else {
                         return Err(SinexError::checkpoint(
@@ -642,6 +664,86 @@ impl CheckpointManager {
         );
 
         Ok(revision)
+    }
+
+    async fn create_checkpoint_after_missing_revision(
+        &self,
+        key: &str,
+        encoded: Vec<u8>,
+        state: &CheckpointState,
+    ) -> RuntimeResult<u64> {
+        match self.kv.create(key, encoded.clone().into()).await {
+            Ok(revision) => Ok(revision),
+            Err(create_error) => {
+                let existing_entry = self.kv.entry(key).await.map_err(|verify_error| {
+                    SinexError::checkpoint("Failed to verify checkpoint KV after recreate timeout")
+                        .with_context("create_error", create_error.to_string())
+                        .with_source(verify_error)
+                })?;
+
+                let Some(existing_entry) = existing_entry else {
+                    return Err(SinexError::checkpoint(
+                        "Failed to recreate missing checkpoint in KV after stale local revision",
+                    )
+                    .with_source(create_error));
+                };
+
+                let mut existing_state =
+                    self.decode_checkpoint_state(key, &existing_entry.value)?;
+                existing_state.revision = existing_entry.revision;
+
+                if checkpoint_states_match(&existing_state, state) {
+                    warn!(
+                        target: "sinex_metrics",
+                        metric = "runtime.checkpoint_kv_recovery_verify_total",
+                        module = %self.module_name,
+                        consumer_group = %self.consumer_group,
+                        consumer_name = %self.consumer_name,
+                        revision = existing_entry.revision,
+                        create_error = %create_error,
+                        "Checkpoint recreate reported an error but the matching entry now exists; treating as a successful recovery"
+                    );
+                    Ok(existing_entry.revision)
+                } else if state.processed_count > existing_state.processed_count {
+                    warn!(
+                        target: "sinex_metrics",
+                        metric = "runtime.checkpoint_kv_recovery_conflict_update_total",
+                        module = %self.module_name,
+                        consumer_group = %self.consumer_group,
+                        consumer_name = %self.consumer_name,
+                        existing_revision = existing_entry.revision,
+                        existing_processed_count = existing_state.processed_count,
+                        incoming_processed_count = state.processed_count,
+                        create_error = %create_error,
+                        "Checkpoint recreate reported an error and found an older entry; updating it with the recovered local checkpoint state"
+                    );
+                    self.kv
+                        .update(key, encoded.into(), existing_entry.revision)
+                        .await
+                        .map_err(|retry_error| {
+                            SinexError::checkpoint(
+                                "Failed to update checkpoint in KV after recreate conflict",
+                            )
+                            .with_context("create_error", create_error.to_string())
+                            .with_source(retry_error)
+                        })
+                } else {
+                    warn!(
+                        target: "sinex_metrics",
+                        metric = "runtime.checkpoint_kv_recovery_conflict_stale_total",
+                        module = %self.module_name,
+                        consumer_group = %self.consumer_group,
+                        consumer_name = %self.consumer_name,
+                        existing_revision = existing_entry.revision,
+                        existing_processed_count = existing_state.processed_count,
+                        incoming_processed_count = state.processed_count,
+                        create_error = %create_error,
+                        "Checkpoint recreate reported an error and found an equal-or-newer entry; keeping existing checkpoint state"
+                    );
+                    Ok(existing_entry.revision)
+                }
+            }
+        }
     }
 
     fn kv_key(&self) -> String {
@@ -974,7 +1076,10 @@ pub fn spawn_checkpoint_cleanup_task(
 #[cfg(test)]
 mod tests {
     // Inline because this covers local checkpoint env/default semantics.
-    use super::{CheckpointCleanupConfig, CheckpointManager, checkpoint_cleanup_cutoff};
+    use super::{
+        CheckpointCleanupConfig, CheckpointManager, CheckpointState, checkpoint_cleanup_cutoff,
+    };
+    use crate::runtime::stream::Checkpoint;
     use sinex_primitives::prelude::Timestamp;
     use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
@@ -1026,6 +1131,111 @@ mod tests {
         );
 
         assert!(manager.missing_checkpoint_logs_as_warning());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn save_checkpoint_updates_existing_entry_after_create_conflict(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let kv = ctx.with_nats().shared().await?.checkpoint_kv().await?;
+        let manager = CheckpointManager::new(
+            kv,
+            format!("checkpoint-create-conflict-update-{}", uuid::Uuid::now_v7()),
+            "test-group".to_string(),
+            "test-consumer".to_string(),
+        );
+
+        let baseline = CheckpointState {
+            checkpoint: Checkpoint::external(serde_json::json!({ "offset": 1 }), "offset 1"),
+            processed_count: 1,
+            ..CheckpointState::default()
+        };
+        let baseline_revision = manager.save_checkpoint(&baseline).await?;
+
+        let replayed = CheckpointState {
+            checkpoint: Checkpoint::external(serde_json::json!({ "offset": 2 }), "offset 2"),
+            processed_count: 2,
+            revision: 0,
+            ..CheckpointState::default()
+        };
+        let replayed_revision = manager.save_checkpoint(&replayed).await?;
+        let restored = manager.load_checkpoint().await?;
+
+        assert!(replayed_revision > baseline_revision);
+        assert_eq!(restored.processed_count, 2);
+        assert_eq!(restored.checkpoint, replayed.checkpoint);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn save_checkpoint_keeps_newer_entry_after_stale_create_conflict(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let kv = ctx.with_nats().shared().await?.checkpoint_kv().await?;
+        let manager = CheckpointManager::new(
+            kv,
+            format!("checkpoint-create-conflict-stale-{}", uuid::Uuid::now_v7()),
+            "test-group".to_string(),
+            "test-consumer".to_string(),
+        );
+
+        let current = CheckpointState {
+            checkpoint: Checkpoint::external(serde_json::json!({ "offset": 5 }), "offset 5"),
+            processed_count: 5,
+            ..CheckpointState::default()
+        };
+        let current_revision = manager.save_checkpoint(&current).await?;
+
+        let stale = CheckpointState {
+            checkpoint: Checkpoint::external(serde_json::json!({ "offset": 3 }), "offset 3"),
+            processed_count: 3,
+            revision: 0,
+            ..CheckpointState::default()
+        };
+        let stale_revision = manager.save_checkpoint(&stale).await?;
+        let restored = manager.load_checkpoint().await?;
+
+        assert_eq!(stale_revision, current_revision);
+        assert_eq!(restored.processed_count, 5);
+        assert_eq!(restored.checkpoint, current.checkpoint);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn save_checkpoint_keeps_existing_entry_after_equal_count_conflict(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let kv = ctx.with_nats().shared().await?.checkpoint_kv().await?;
+        let manager = CheckpointManager::new(
+            kv,
+            format!("checkpoint-create-conflict-equal-{}", uuid::Uuid::now_v7()),
+            "test-group".to_string(),
+            "test-consumer".to_string(),
+        );
+
+        let current = CheckpointState {
+            checkpoint: Checkpoint::external(serde_json::json!({ "offset": 5 }), "offset 5"),
+            processed_count: 5,
+            ..CheckpointState::default()
+        };
+        let current_revision = manager.save_checkpoint(&current).await?;
+
+        let ambiguous = CheckpointState {
+            checkpoint: Checkpoint::external(
+                serde_json::json!({ "offset": "ambiguous" }),
+                "ambiguous offset",
+            ),
+            processed_count: 5,
+            revision: 0,
+            ..CheckpointState::default()
+        };
+        let ambiguous_revision = manager.save_checkpoint(&ambiguous).await?;
+        let restored = manager.load_checkpoint().await?;
+
+        assert_eq!(ambiguous_revision, current_revision);
+        assert_eq!(restored.processed_count, 5);
+        assert_eq!(restored.checkpoint, current.checkpoint);
         Ok(())
     }
 }

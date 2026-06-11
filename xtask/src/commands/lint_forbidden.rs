@@ -611,19 +611,28 @@ fn run_rg(pattern: &str) -> Result<Vec<String>> {
 /// Always excludes generated/local artifact directories.
 fn run_rg_with_globs(pattern: &str, globs: &[&str]) -> Result<Vec<String>> {
     let mut command = Command::new("rg");
-    command
-        .current_dir(workspace_root())
-        .args(["--color=never", "--no-heading", "--with-filename", "--line-number", pattern]);
+    command.current_dir(workspace_root()).args([
+        "--color=never",
+        "--no-heading",
+        "--with-filename",
+        "--line-number",
+        pattern,
+    ]);
     for glob in globs {
         command.args(["--glob", glob]);
     }
     // Always exclude generated/local-only artifact trees that should not be scanned.
     command.args([
-        "--glob", "!docs/agent/**",
-        "--glob", "!.sinex/**",
-        "--glob", "!.agent/**",
-        "--glob", "!AGENTS.md",
-        "--glob", "!target/**",
+        "--glob",
+        "!docs/agent/**",
+        "--glob",
+        "!.sinex/**",
+        "--glob",
+        "!.agent/**",
+        "--glob",
+        "!AGENTS.md",
+        "--glob",
+        "!target/**",
     ]);
     let output = command
         .output()
@@ -1373,12 +1382,23 @@ mod tests {
         let regex = regex::Regex::new(&pattern)?;
 
         let classic_github = ["ghp", "_", "ABCDEFghijklmnopqrstuvwxyz1234567890"].concat();
-        let fine_grained_github =
-            ["github", "_pat", "_", "11ABCDEFG0abcdefghijklmnopqrstuvwxyz1234567"].concat();
+        let fine_grained_github = [
+            "github",
+            "_pat",
+            "_",
+            "11ABCDEFG0abcdefghijklmnopqrstuvwxyz1234567",
+        ]
+        .concat();
         let aws_access_key = ["AKIA", "IOSFODNN7EXAMPLE"].concat();
 
-        assert!(regex.is_match(&classic_github), "classic github token must match");
-        assert!(regex.is_match(&fine_grained_github), "fine-grained github token must match");
+        assert!(
+            regex.is_match(&classic_github),
+            "classic github token must match"
+        );
+        assert!(
+            regex.is_match(&fine_grained_github),
+            "fine-grained github token must match"
+        );
         assert!(regex.is_match(&aws_access_key), "aws access key must match");
         Ok(())
     }

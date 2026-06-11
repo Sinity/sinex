@@ -279,10 +279,7 @@ fn parse_events_jsonl(
             }
         };
 
-        let record_type = event
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let record_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
         // Only emit events for prompt records; skip session_start, recorder, etc.
         if record_type != "prompt" {

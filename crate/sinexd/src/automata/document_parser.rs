@@ -27,9 +27,9 @@ use crate::runtime::automaton::{
     AutomatonContext, DerivedOutput, InputProvenanceFilter, MultiOutputTransducer,
 };
 use crate::runtime::processing::AutomatonLogicError;
+use sinex_primitives::JsonValue;
 use sinex_primitives::events::payloads::DocumentKind;
 use sinex_primitives::ids::derive_document_id;
-use sinex_primitives::JsonValue;
 use std::collections::HashMap;
 
 // ── Constants ──────────────────────────────────────────────────────────

@@ -182,6 +182,8 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         systemd_notify::notify_stopping("sinex-runtime");
 
         let shutdown_result = self.shutdown().await;
+        let service_result =
+            Self::service_result_after_drain(drain_controller.is_requested(), service_result);
 
         #[cfg(feature = "messaging")]
         let drain_complete_result =

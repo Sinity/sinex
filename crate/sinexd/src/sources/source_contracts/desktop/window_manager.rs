@@ -232,7 +232,12 @@ impl MaterialParser for HyprlandParser {
                 "window_class": window_class,
                 "window_title": window_title,
             });
-            return Ok(vec![self.build_intent("window.focused", payload, &record, ctx)?]);
+            return Ok(vec![self.build_intent(
+                "window.focused",
+                payload,
+                &record,
+                ctx,
+            )?]);
         }
 
         // Any other event type — flush stale pending activewindow first.

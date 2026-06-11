@@ -225,18 +225,17 @@ mod tests {
         };
         let mut stream = adapter.open(material_id, &config, None).await?;
         let source_id = SourceId::from_static("desktop.window-manager");
-        let make_ctx =
-            |record: &sinex_primitives::parser::SourceRecord| -> ParserContext {
-                ParserContext {
-                    source_id: source_id.clone(),
-                    source_material_id: material_id,
-                    record_anchor: record.anchor.clone(),
-                    operation_id: sinex_primitives::Uuid::now_v7(),
-                    job_id: sinex_primitives::Uuid::now_v7(),
-                    host: "fixture-host".to_string(),
-                    acquisition_time: Timestamp::now(),
-                }
-            };
+        let make_ctx = |record: &sinex_primitives::parser::SourceRecord| -> ParserContext {
+            ParserContext {
+                source_id: source_id.clone(),
+                source_material_id: material_id,
+                record_anchor: record.anchor.clone(),
+                operation_id: sinex_primitives::Uuid::now_v7(),
+                job_id: sinex_primitives::Uuid::now_v7(),
+                host: "fixture-host".to_string(),
+                acquisition_time: Timestamp::now(),
+            }
+        };
 
         let mut parser = HyprlandParser::default();
 
@@ -245,15 +244,18 @@ mod tests {
             .next()
             .await
             .ok_or_else(|| color_eyre::eyre::eyre!("unix socket fixture emitted no frames"))??;
-        let events_v1 = parser.parse_record(record_v1.clone(), &make_ctx(&record_v1)).await?;
+        let events_v1 = parser
+            .parse_record(record_v1.clone(), &make_ctx(&record_v1))
+            .await?;
         assert_eq!(events_v1.len(), 0, "v1 alone should buffer and not emit");
 
         // v2 (activewindowv2): merges with buffered v1 → one complete window.focused.
-        let record_v2 = stream
-            .next()
-            .await
-            .ok_or_else(|| color_eyre::eyre::eyre!("unix socket fixture did not emit v2 frame"))??;
-        let events = parser.parse_record(record_v2.clone(), &make_ctx(&record_v2)).await?;
+        let record_v2 = stream.next().await.ok_or_else(|| {
+            color_eyre::eyre::eyre!("unix socket fixture did not emit v2 frame")
+        })??;
+        let events = parser
+            .parse_record(record_v2.clone(), &make_ctx(&record_v2))
+            .await?;
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type.as_str(), "window.focused");

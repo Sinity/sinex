@@ -18,13 +18,13 @@
   };
 
   outputs =
-    inputs@{ self
-    , nixpkgs
-    , fenix
-    , crane
-    , agenix
-    , flake-utils
-    ,
+    inputs@{
+      self,
+      nixpkgs,
+      fenix,
+      crane,
+      agenix,
+      flake-utils,
     }:
     let
       # pg_jsonschema - PostgreSQL JSON Schema validation extension
@@ -127,10 +127,13 @@
             inherit src;
             strictDeps = true;
 
-            buildInputs = with pkgs; [
-              openssl
-              dbus
-            ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.systemd ];
+            buildInputs =
+              with pkgs;
+              [
+                openssl
+                dbus
+              ]
+              ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.systemd ];
 
             nativeBuildInputs = with pkgs; [
               pkg-config
@@ -236,21 +239,24 @@
 
           vmCheckOutputs = { };
 
-          nixFormatCheck = pkgs.runCommand "sinex-nix-format-check"
-            {
-              nativeBuildInputs = [ pkgs.nixpkgs-fmt ];
-              src = pkgs.lib.cleanSourceWith {
-                src = ./.;
-                filter = path: type:
-                  let
-                    rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
-                  in
-                  type == "directory" || rel == "flake.nix";
-              };
-            } ''
-            nixpkgs-fmt --check "$src/flake.nix"
-            touch "$out"
-          '';
+          nixFormatCheck =
+            pkgs.runCommand "sinex-nix-format-check"
+              {
+                nativeBuildInputs = [ pkgs.nixpkgs-fmt ];
+                src = pkgs.lib.cleanSourceWith {
+                  src = ./.;
+                  filter =
+                    path: type:
+                    let
+                      rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
+                    in
+                    type == "directory" || rel == "flake.nix";
+                };
+              }
+              ''
+                nixpkgs-fmt --check "$src/flake.nix"
+                touch "$out"
+              '';
 
         in
         rec {
@@ -833,10 +839,20 @@
                   PATH="$entry''${rest:+:$rest}"
                 }
                 export SINEX_DEV_ROOT="$PWD"
-                export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
                 export SINEX_DEV_TOOLCHAIN="${rustToolchain.name}"
                 if [ -z "''${SINEX_DEV_CACHE_ROOT:-}" ]; then
-                  export SINEX_DEV_CACHE_ROOT="$SINEX_DEV_ROOT/.sinex/cache"
+                  _sinex_user="''${USER:-$(id -un)}"
+                  _sinex_hash="$(printf '%s' "$SINEX_DEV_ROOT" | sha256sum | cut -c1-12)"
+                  _sinex_cache_base="/var/cache/sinex/$_sinex_user/$_sinex_hash"
+                  if mkdir -p "$_sinex_cache_base" 2>/dev/null; then
+                    export SINEX_DEV_CACHE_ROOT="$_sinex_cache_base"
+                  else
+                    export SINEX_DEV_CACHE_ROOT="$SINEX_DEV_ROOT/.sinex/cache"
+                  fi
+                  unset _sinex_user _sinex_hash _sinex_cache_base
+                fi
+                if [ -z "''${SINEX_DEV_STATE_DIR:-}" ]; then
+                  export SINEX_DEV_STATE_DIR="$SINEX_DEV_ROOT/${stateDir}"
                 fi
                 if [ -z "''${CARGO_TARGET_DIR:-}" ]; then
                   export CARGO_TARGET_DIR="$SINEX_DEV_CACHE_ROOT/target"
@@ -1092,7 +1108,8 @@
                     system.stateVersion = "24.05";
                   }
                 )
-              ] ++ extraModules;
+              ]
+              ++ extraModules;
             };
         in
         {
@@ -1115,11 +1132,11 @@
       # Unified overlay: pg_jsonschema + all sinex packages
       overlays.default = nixpkgs.lib.composeExtensions pgJsonschemaOverlay (
         final: prev:
-          builtins.listToAttrs (
-            map
-              (name: nixpkgs.lib.nameValuePair name self.packages.${final.stdenv.hostPlatform.system}.${name})
-              packageOutputNames
-          )
+        builtins.listToAttrs (
+          map (
+            name: nixpkgs.lib.nameValuePair name self.packages.${final.stdenv.hostPlatform.system}.${name}
+          ) packageOutputNames
+        )
       );
     };
 }

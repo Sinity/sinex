@@ -68,30 +68,32 @@ impl MaterialParser for NotificationClosedParser {
         // No in-process correlation with notification.sent is available here;
         // cross-event linkage is a downstream analysis concern.
 
-        Ok(vec![ParsedEventIntent::builder()
-            .source_id(SourceId::from_static("desktop.notification.closed"))
-            .parser_id(ParserId::from_static("desktop-notification-closed"))
-            .parser_version("1.0.0")
-            .event_source(EventSource::from_static("dbus"))
-            .event_type(EventType::from_static("notification.closed"))
-            .payload(serde_json::json!({
-                "notification_id": notification_id,
-                "reason": reason,
-                "reason_label": label,
-                "timestamp": ts_orig,
-            }))
-            .ts_orig(ts_orig)
-            .timing(TimingEvidence::Intrinsic {
-                field: "timestamp".into(),
-                confidence: TimingConfidence::Intrinsic,
-            })
-            .anchor(MaterialAnchor::ByteRange { start: 0, len: 1 })
-            .occurrence_key(OccurrenceKey {
-                source_id: SourceId::from_static("desktop.notification.closed"),
-                fields: vec![("notification_id".into(), notification_id.to_string())],
-            })
-            .privacy_context(ProcessingContext::Notification)
-            .build()])
+        Ok(vec![
+            ParsedEventIntent::builder()
+                .source_id(SourceId::from_static("desktop.notification.closed"))
+                .parser_id(ParserId::from_static("desktop-notification-closed"))
+                .parser_version("1.0.0")
+                .event_source(EventSource::from_static("dbus"))
+                .event_type(EventType::from_static("notification.closed"))
+                .payload(serde_json::json!({
+                    "notification_id": notification_id,
+                    "reason": reason,
+                    "reason_label": label,
+                    "timestamp": ts_orig,
+                }))
+                .ts_orig(ts_orig)
+                .timing(TimingEvidence::Intrinsic {
+                    field: "timestamp".into(),
+                    confidence: TimingConfidence::Intrinsic,
+                })
+                .anchor(MaterialAnchor::ByteRange { start: 0, len: 1 })
+                .occurrence_key(OccurrenceKey {
+                    source_id: SourceId::from_static("desktop.notification.closed"),
+                    fields: vec![("notification_id".into(), notification_id.to_string())],
+                })
+                .privacy_context(ProcessingContext::Notification)
+                .build(),
+        ])
     }
 }
 

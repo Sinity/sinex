@@ -15,11 +15,11 @@ use sinex_primitives::query::{
 };
 use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::privacy::{
-    PrivacyPolicyBackendAddRequest, PrivacyPolicyDictionaryAddRequest, PrivacyPolicyListResponse,
+    PrivacyPolicyBackendAddRequest, PrivacyPolicyDictionaryAddRequest,
+    PrivacyPolicyFieldUnbindRequest, PrivacyPolicyFieldUnbindResponse, PrivacyPolicyListResponse,
     PrivacyPolicyMutationResponse, PrivacyPolicyRule, PrivacyPolicyRuleAddRequest,
     PrivacyPolicyRuleRemoveRequest, PrivacyPolicyRuleRemoveResponse,
     PrivacyPolicyRuleSetEnabledRequest, PrivacyPolicyRuleSetEnabledResponse,
-    PrivacyPolicyFieldUnbindRequest, PrivacyPolicyFieldUnbindResponse,
     PrivacyPolicyScopeBindRequest, PrivacyPolicySeedBuiltinRequest,
     PrivacyPolicySeedBuiltinResponse,
 };

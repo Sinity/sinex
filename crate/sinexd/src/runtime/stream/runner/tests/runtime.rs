@@ -367,6 +367,23 @@ async fn event_batcher_shutdown_result_rejects_join_panics() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn service_result_after_drain_suppresses_interrupted_loop_errors() -> TestResult<()> {
+    RuntimeRunner::<RuntimeTestModule>::service_result_after_drain(
+        true,
+        Err(SinexError::processing("interrupted by drain")),
+    )?;
+
+    let error = RuntimeRunner::<RuntimeTestModule>::service_result_after_drain(
+        false,
+        Err(SinexError::processing("ordinary runtime failure")),
+    )
+    .expect_err("non-drain service errors must still fail the runner");
+
+    assert!(error.to_string().contains("ordinary runtime failure"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn shutdown_task_waits_for_watch_signalled_exit() -> TestResult<()> {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let finished = Arc::new(AtomicBool::new(false));

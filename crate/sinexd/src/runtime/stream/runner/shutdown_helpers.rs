@@ -79,6 +79,23 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         }
     }
 
+    pub(super) fn service_result_after_drain(
+        drain_requested: bool,
+        result: RuntimeResult<()>,
+    ) -> RuntimeResult<()> {
+        match (drain_requested, result) {
+            (true, Err(error)) => {
+                warn!(
+                    error = %error,
+                    "Service loop exited with an error after drain was requested; \
+                     treating the service loop as drained and relying on shutdown cleanup"
+                );
+                Ok(())
+            }
+            (_, result) => result,
+        }
+    }
+
     pub(super) fn push_shutdown_error(
         errors: &mut Vec<(String, SinexError)>,
         step: impl Into<String>,

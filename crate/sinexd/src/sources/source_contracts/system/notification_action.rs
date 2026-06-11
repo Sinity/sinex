@@ -55,32 +55,34 @@ impl MaterialParser for NotificationActionParser {
         let notification_id = payload["notification_id"].as_u64().unwrap_or_default() as u32;
         let action_key = payload["action_key"].as_str().unwrap_or("").to_owned();
 
-        Ok(vec![ParsedEventIntent::builder()
-            .source_id(SourceId::from_static("desktop.notification.action"))
-            .parser_id(ParserId::from_static("desktop-notification-action"))
-            .parser_version("1.0.0")
-            .event_source(EventSource::from_static("dbus"))
-            .event_type(EventType::from_static("notification.action_invoked"))
-            .payload(serde_json::json!({
-                "notification_id": notification_id,
-                "action_key": action_key,
-                "timestamp": ts_orig,
-            }))
-            .ts_orig(ts_orig)
-            .timing(TimingEvidence::Intrinsic {
-                field: "timestamp".into(),
-                confidence: TimingConfidence::Intrinsic,
-            })
-            .anchor(MaterialAnchor::ByteRange { start: 0, len: 1 })
-            .occurrence_key(OccurrenceKey {
-                source_id: SourceId::from_static("desktop.notification.action"),
-                fields: vec![
-                    ("notification_id".into(), notification_id.to_string()),
-                    ("action_key".into(), action_key.clone()),
-                ],
-            })
-            .privacy_context(ProcessingContext::Notification)
-            .build()])
+        Ok(vec![
+            ParsedEventIntent::builder()
+                .source_id(SourceId::from_static("desktop.notification.action"))
+                .parser_id(ParserId::from_static("desktop-notification-action"))
+                .parser_version("1.0.0")
+                .event_source(EventSource::from_static("dbus"))
+                .event_type(EventType::from_static("notification.action_invoked"))
+                .payload(serde_json::json!({
+                    "notification_id": notification_id,
+                    "action_key": action_key,
+                    "timestamp": ts_orig,
+                }))
+                .ts_orig(ts_orig)
+                .timing(TimingEvidence::Intrinsic {
+                    field: "timestamp".into(),
+                    confidence: TimingConfidence::Intrinsic,
+                })
+                .anchor(MaterialAnchor::ByteRange { start: 0, len: 1 })
+                .occurrence_key(OccurrenceKey {
+                    source_id: SourceId::from_static("desktop.notification.action"),
+                    fields: vec![
+                        ("notification_id".into(), notification_id.to_string()),
+                        ("action_key".into(), action_key.clone()),
+                    ],
+                })
+                .privacy_context(ProcessingContext::Notification)
+                .build(),
+        ])
     }
 }
 
