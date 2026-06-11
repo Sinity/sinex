@@ -280,44 +280,38 @@ in
 
     (mkIf (db.enable && db.autoSetup) {
       systemd.services.postgresql-setup.script = lib.mkAfter ''
-                sql_literal() {
-                  local value="$1"
-                  printf "'%s'" "$(printf '%s' "$value" | sed "s/'/''/g")"
-                }
-
-                psql_exec_generated() {
-                  local dbName="$1"
-                  local sql="$2"
-                  psql -X -v ON_ERROR_STOP=1 -d "$dbName" -At -c "$sql" \
-                    | psql -X -v ON_ERROR_STOP=1 -d "$dbName" >/dev/null
-                }
-
                 ensure_database_owner() {
                   local dbName="$1"
                   local roleName="$2"
                   echo "[sinex] ensuring database owner ''${roleName} for ''${dbName}"
-                  psql_exec_generated postgres \
-                    "SELECT format('ALTER DATABASE %I OWNER TO %I;', $(sql_literal "$dbName"), $(sql_literal "$roleName"));"
+                  printf '%s\n' "SELECT format('ALTER DATABASE %I OWNER TO %I;', :'sinex_db_name', :'sinex_role_name') \\gexec" \
+                    | psql -X -v ON_ERROR_STOP=1 \
+                      --set=sinex_db_name="$dbName" \
+                      --set=sinex_role_name="$roleName" \
+                      -d postgres >/dev/null
                 }
 
                 extension_exists() {
                   local dbName="$1"
                   local extName="$2"
-                  psql -X -v ON_ERROR_STOP=1 \
-                    -d "$dbName" \
-                    -At \
-                    -c "SELECT EXISTS (
+                  printf '%s\n' "SELECT EXISTS (
                           SELECT 1
                           FROM pg_extension
-                          WHERE extname = $(sql_literal "$extName")
-                        )::int;"
+                          WHERE extname = :'sinex_ext_name'
+                        )::int;" \
+                    | psql -X -v ON_ERROR_STOP=1 \
+                      --set=sinex_ext_name="$extName" \
+                      -d "$dbName" \
+                      -At
                 }
 
                 create_extension() {
                   local dbName="$1"
                   local extName="$2"
-                  psql_exec_generated "$dbName" \
-                    "SELECT format('CREATE EXTENSION IF NOT EXISTS %I;', $(sql_literal "$extName"));"
+                  printf '%s\n' "SELECT format('CREATE EXTENSION IF NOT EXISTS %I;', :'sinex_ext_name') \\gexec" \
+                    | psql -X -v ON_ERROR_STOP=1 \
+                      --set=sinex_ext_name="$extName" \
+                      -d "$dbName" >/dev/null
                 }
 
                 update_extension() {
@@ -333,11 +327,10 @@ in
                   # old .so in the nix store by searching for the versioned filename.
                   local output rc installed_version compat_dir
                   set +e
-                  output=$(psql -X -v ON_ERROR_STOP=1 \
-                    -d "$dbName" \
-                    -At \
-                    -c "SELECT format('ALTER EXTENSION %I UPDATE;', $(sql_literal "$extName"));" \
-                    | psql -X -v ON_ERROR_STOP=1 -d "$dbName" \
+                  output=$(printf '%s\n' "SELECT format('ALTER EXTENSION %I UPDATE;', :'sinex_ext_name') \\gexec" \
+                    | psql -X -v ON_ERROR_STOP=1 \
+                      --set=sinex_ext_name="$extName" \
+                      -d "$dbName" \
                     2>&1
                   )
                   rc=$?
@@ -345,8 +338,8 @@ in
                   [ $rc -eq 0 ] && return 0
 
                   if printf '%s' "$output" | grep -qF 'could not access file'; then
-                    installed_version=$(psql -X -At -d "$dbName" \
-                      -c "SELECT extversion FROM pg_extension WHERE extname = $(sql_literal "$extName")" 2>/dev/null)
+                    installed_version=$(printf '%s\n' "SELECT extversion FROM pg_extension WHERE extname = :'sinex_ext_name'" \
+                      | psql -X -At -d "$dbName" --set=sinex_ext_name="$extName" 2>/dev/null)
                     if [ -n "$installed_version" ]; then
                       echo "[sinex] $extName: version $installed_version .so missing from current package, searching nix store for compat library..."
                       compat_dir=$(find /nix/store -maxdepth 3 \
@@ -358,8 +351,10 @@ in
                           -c "ALTER SYSTEM SET dynamic_library_path TO '$compat_dir:\$libdir';" >/dev/null
                         psql -v ON_ERROR_STOP=1 -d postgres \
                           -c "SELECT pg_reload_conf();" >/dev/null
-                        psql_exec_generated "$dbName" \
-                          "SELECT format('ALTER EXTENSION %I UPDATE;', $(sql_literal "$extName"));"
+                        printf '%s\n' "SELECT format('ALTER EXTENSION %I UPDATE;', :'sinex_ext_name') \\gexec" \
+                          | psql -X -v ON_ERROR_STOP=1 \
+                            --set=sinex_ext_name="$extName" \
+                            -d "$dbName" >/dev/null
                         rc=$?
                         # Always reset dynamic_library_path whether the update succeeded or failed.
                         psql -v ON_ERROR_STOP=1 -d postgres \
@@ -386,17 +381,18 @@ in
                 extension_needs_update() {
                   local dbName="$1"
                   local extName="$2"
-                  psql -X -v ON_ERROR_STOP=1 \
-                    -d "$dbName" \
-                    -At \
-                    -c "SELECT EXISTS (
+                  printf '%s\n' "SELECT EXISTS (
                           SELECT 1
                           FROM pg_extension e
                           JOIN pg_available_extensions ae ON ae.name = e.extname
-                          WHERE e.extname = $(sql_literal "$extName")
+                          WHERE e.extname = :'sinex_ext_name'
                             AND e.extversion != ae.default_version
                         );" \
-                    2>/dev/null
+                    | psql -X -v ON_ERROR_STOP=1 \
+                      --set=sinex_ext_name="$extName" \
+                      -d "$dbName" \
+                      -At \
+                      2>/dev/null
                 }
 
                 ensure_extension() {
@@ -442,8 +438,13 @@ in
                   fi
 
                   password="$(tr -d '\n' < "$passwordFile")"
-                  psql_exec_generated postgres \
-                    "SELECT format('ALTER ROLE %I WITH PASSWORD %L;', $(sql_literal "$roleName"), $(sql_literal "$password"));"
+                  printf '%s\n' "SELECT format('ALTER ROLE %I WITH PASSWORD %L;', :'sinex_role', :'sinex_password') \\gexec" \
+                    | PGPASSWORD= psql \
+                      -v ON_ERROR_STOP=1 \
+                      --set=sinex_role="$roleName" \
+                      --set=sinex_password="$password" \
+                      postgres \
+                      >/dev/null
                 }
 
                 sync_role_password ${escapeShellArg db.user} ${escapeShellArg effectiveDatabasePasswordFile}
