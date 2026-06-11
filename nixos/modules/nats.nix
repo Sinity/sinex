@@ -14,10 +14,13 @@ let
   dataDir = cfg.dataDir or (stateRoot + "/nats");
   storeDir = cfg.storeDir or (dataDir + "/jetstream");
   natsCli = pkgs.natscli or null; # natscli provides the `nats` CLI
-  # natscli currently rejects --max-bytes values above signed 32-bit range even though
-  # JetStream itself supports larger caps. Keep declarative bootstrap values within the
-  # CLI ceiling so stream reconciliation succeeds on every host switch.
-  natsCliMaxBytes = "2147483647";
+  # Budget the standard streams inside the default 32G JetStream store. natscli
+  # 0.3.0 accepts human-readable sizes here, avoiding the old signed-32-bit
+  # integer ceiling that left production streams at 2 GiB.
+  rawEventsMaxBytes = "18G";
+  sourceMaterialMaxBytes = "4G";
+  dlqMaxBytes = "4G";
+  auxiliaryStreamMaxBytes = "1G";
   secretPaths = config.sinex.secrets.paths or { };
   envName = lib.toLower cfg.environment;
   envUpper = lib.toUpper envName;
@@ -449,47 +452,47 @@ in
             subjects = [ "events.raw.>" ];
             maxAge = "168h"; # 7d; replay is served from source material/archive, not JetStream
             maxMsgs = 2000000;
-            maxBytes = natsCliMaxBytes;
+            maxBytes = rawEventsMaxBytes;
           }
           {
             name = "SOURCE_MATERIAL";
             subjects = [ "source_material.frames.>" ];
             retention = "work";
             maxAge = "72h";
-            maxBytes = natsCliMaxBytes;
+            maxBytes = sourceMaterialMaxBytes;
           }
           {
             name = "SINEX_RAW_EVENTS_CONFIRMATIONS";
             subjects = [ "events.confirmations.>" ];
             maxAge = "72h";
-            maxBytes = natsCliMaxBytes;
+            maxBytes = auxiliaryStreamMaxBytes;
             maxMsgsPerSubject = 1;
           }
           {
             name = "SINEX_RAW_EVENTS_DLQ";
             subjects = [ "events.dlq.>" ];
             maxAge = "168h"; # 7d
-            maxBytes = natsCliMaxBytes;
+            maxBytes = dlqMaxBytes;
             dupeWindow = "1h";
           }
           {
             name = "SINEX_RAW_EVENTS_CONFIRMATION_RETRIES";
             subjects = [ "events.confirmation_retries.>" ];
             maxAge = "72h";
-            maxBytes = natsCliMaxBytes;
+            maxBytes = auxiliaryStreamMaxBytes;
             maxMsgsPerSubject = 1;
           }
           {
             name = "SINEX_RAW_EVENTS_PROCESSING_FAILURES";
             subjects = [ "events.processing_failures.>" ];
             maxAge = "168h"; # 7d
-            maxBytes = natsCliMaxBytes;
+            maxBytes = auxiliaryStreamMaxBytes;
           }
           {
             name = "SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS";
             subjects = [ "sinex.derived.invalidation" ];
             maxAge = "24h";
-            maxBytes = natsCliMaxBytes;
+            maxBytes = auxiliaryStreamMaxBytes;
           }
         ];
         description = "Stream definitions to bootstrap when bootstrapStreams.enable is true.";
