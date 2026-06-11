@@ -704,6 +704,16 @@ in
                   default = 1000;
                   description = "JetStream max_ack_pending for the material slices consumer.";
                 };
+                rejectInitialReplay = mkOption {
+                  type = bool;
+                  default = true;
+                  description = ''
+                    Refuse to create a missing event_engine durable consumer
+                    with DeliverPolicy::All when the raw-event stream already
+                    contains messages. Disable only when the operator intends to
+                    recover by replaying the existing raw stream.
+                  '';
+                };
                 resources = mkOption {
                   type = resourceModule {
                     defaultMemory = "8G";
