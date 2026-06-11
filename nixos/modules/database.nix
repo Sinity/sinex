@@ -287,9 +287,9 @@ in
                   psql -v ON_ERROR_STOP=1 \
                     --set=sinex_db_name="$dbName" \
                     --set=sinex_role_name="$roleName" \
-                    postgres <<'SQL' >/dev/null
-        ALTER DATABASE :"sinex_db_name" OWNER TO :"sinex_role_name";
-        SQL
+                    postgres \
+                    -c 'ALTER DATABASE :"sinex_db_name" OWNER TO :"sinex_role_name";' \
+                    >/dev/null
                 }
 
                 extension_exists() {
@@ -297,13 +297,13 @@ in
                   local extName="$2"
                   psql -X -v ON_ERROR_STOP=1 \
                     --set=sinex_ext_name="$extName" \
-                    -d "$dbName" -At <<'SQL'
-        SELECT EXISTS (
-          SELECT 1
-          FROM pg_extension
-          WHERE extname = :'sinex_ext_name'
-        )::int;
-        SQL
+                    -d "$dbName" \
+                    -At \
+                    -c "SELECT EXISTS (
+                          SELECT 1
+                          FROM pg_extension
+                          WHERE extname = :'sinex_ext_name'
+                        )::int;"
                 }
 
                 create_extension() {
@@ -311,9 +311,9 @@ in
                   local extName="$2"
                   psql -X -v ON_ERROR_STOP=1 \
                     --set=sinex_ext_name="$extName" \
-                    -d "$dbName" <<'SQL' >/dev/null
-        CREATE EXTENSION IF NOT EXISTS :"sinex_ext_name";
-        SQL
+                    -d "$dbName" \
+                    -c 'CREATE EXTENSION IF NOT EXISTS :"sinex_ext_name";' \
+                    >/dev/null
                 }
 
                 update_extension() {
@@ -330,9 +330,9 @@ in
                   local output rc installed_version compat_dir
                   output=$(psql -X -v ON_ERROR_STOP=1 \
                     --set=sinex_ext_name="$extName" \
-                    -d "$dbName" 2>&1 <<'SQL'
-        ALTER EXTENSION :"sinex_ext_name" UPDATE;
-        SQL
+                    -d "$dbName" \
+                    -c 'ALTER EXTENSION :"sinex_ext_name" UPDATE;' \
+                    2>&1
                   )
                   rc=$?
                   [ $rc -eq 0 ] && return 0
@@ -353,9 +353,9 @@ in
                           -c "SELECT pg_reload_conf();" >/dev/null
                         psql -X -v ON_ERROR_STOP=1 \
                           --set=sinex_ext_name="$extName" \
-                          -d "$dbName" <<'SQL' >/dev/null
-        ALTER EXTENSION :"sinex_ext_name" UPDATE;
-        SQL
+                          -d "$dbName" \
+                          -c 'ALTER EXTENSION :"sinex_ext_name" UPDATE;' \
+                          >/dev/null
                         rc=$?
                         # Always reset dynamic_library_path whether the update succeeded or failed.
                         psql -v ON_ERROR_STOP=1 -d postgres \
@@ -384,15 +384,16 @@ in
                   local extName="$2"
                   psql -X -v ON_ERROR_STOP=1 \
                     --set=sinex_ext_name="$extName" \
-                    -d "$dbName" -At 2>/dev/null <<'SQL'
-        SELECT EXISTS (
-          SELECT 1
-          FROM pg_extension e
-          JOIN pg_available_extensions ae ON ae.name = e.extname
-          WHERE e.extname = :'sinex_ext_name'
-            AND e.extversion != ae.default_version
-        );
-SQL
+                    -d "$dbName" \
+                    -At \
+                    -c "SELECT EXISTS (
+                          SELECT 1
+                          FROM pg_extension e
+                          JOIN pg_available_extensions ae ON ae.name = e.extname
+                          WHERE e.extname = :'sinex_ext_name'
+                            AND e.extversion != ae.default_version
+                        );" \
+                    2>/dev/null
                 }
 
                 ensure_extension() {
@@ -442,9 +443,9 @@ SQL
                     -v ON_ERROR_STOP=1 \
                     --set=sinex_role="$roleName" \
                     --set=sinex_password="$password" \
-                    postgres <<'SQL' >/dev/null
-        ALTER ROLE :"sinex_role" WITH PASSWORD :'sinex_password';
-        SQL
+                    postgres \
+                    -c "ALTER ROLE :\"sinex_role\" WITH PASSWORD :'sinex_password';" \
+                    >/dev/null
                 }
 
                 sync_role_password ${escapeShellArg db.user} ${escapeShellArg effectiveDatabasePasswordFile}
