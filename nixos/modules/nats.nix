@@ -17,10 +17,10 @@ let
   # Budget the standard streams inside the default 32G JetStream store. natscli
   # 0.3.0 accepts human-readable sizes here, avoiding the old signed-32-bit
   # integer ceiling that left production streams at 2 GiB.
-  rawEventsMaxBytes = "18G";
-  sourceMaterialMaxBytes = "4G";
-  dlqMaxBytes = "4G";
-  auxiliaryStreamMaxBytes = "1G";
+  rawEventsMaxBytes = "16G";
+  sourceMaterialMaxBytes = "3G";
+  dlqMaxBytes = "3G";
+  auxiliaryStreamMaxBytes = "512M";
   secretPaths = config.sinex.secrets.paths or { };
   envName = lib.toLower cfg.environment;
   envUpper = lib.toUpper envName;
