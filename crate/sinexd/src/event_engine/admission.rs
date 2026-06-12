@@ -21,16 +21,17 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, timeout};
 use tracing::{error, warn};
 
-const DB_WRITE_TIMEOUT_BASE: Duration = Duration::from_secs(5);
+const DB_WRITE_TIMEOUT_BASE: Duration = Duration::from_secs(30);
 const DB_WRITE_TIMEOUT_PER_ROW: Duration = Duration::from_millis(1);
 const RECENT_ID_CACHE_SIZE: usize = 50_000;
 
 /// Dynamic write timeout that scales with batch size.
 ///
 /// Larger batches get proportionally more time rather than hitting a fixed
-/// 5 s ceiling during backlog catchup (common post-deploy with 35K+
-/// queued NATS messages). The per-row overhead is negligible for small
-/// batches but keeps 6000+-row COPY batches from tripping the timeout.
+/// ceiling during backlog catchup (common post-deploy with 35K+ queued NATS
+/// messages). The 30 s floor matches production Postgres statement timeout
+/// headroom and avoids false failures when tiny batches briefly sit behind
+/// checkpoints, material assembly fsyncs, or desktop I/O pressure.
 fn db_write_timeout(batch_size: usize) -> Duration {
     let per_row = DB_WRITE_TIMEOUT_PER_ROW * batch_size as u32;
     std::cmp::max(DB_WRITE_TIMEOUT_BASE, per_row)
@@ -1188,4 +1189,21 @@ fn is_isolatable_batch_persistence_failure(error: &SinexError) -> bool {
         value.starts_with(SQLSTATE_DATA_EXCEPTION_CLASS)
             || value.starts_with(SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn db_write_timeout_keeps_operational_headroom_for_small_batches() {
+        assert_eq!(db_write_timeout(1), Duration::from_secs(30));
+        assert_eq!(db_write_timeout(2), Duration::from_secs(30));
+        assert_eq!(db_write_timeout(29_999), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn db_write_timeout_scales_for_large_batches() {
+        assert_eq!(db_write_timeout(30_001), Duration::from_millis(30_001));
+    }
 }
