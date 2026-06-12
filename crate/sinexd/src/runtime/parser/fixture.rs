@@ -87,7 +87,8 @@ impl ParserTestContext {
     #[must_use]
     pub fn parser_context(&self, record_anchor: MaterialAnchor) -> ParserContext {
         ParserContext {
-            source_id: sinex_primitives::parser::SourceId::from_static("test-source"),
+            source_id: sinex_primitives::parser::SourceId::new(&self.source_id)
+                .expect("ParserTestContext source_id must be a valid SourceId"),
             source_material_id: self.source_material_id,
             record_anchor,
             operation_id: self.operation_id,
