@@ -209,6 +209,7 @@ impl JetStreamEventConsumer {
 
         let confirmation_buffer = self.confirmation_buffer.clone();
         let confirmed_handler = self.confirmed_handler.clone();
+        let raw_confirmed_handler = self.confirmed_handler.clone();
         let provisional_handler = self.provisional_handler.clone();
         let enable_provisional = self.config.enable_provisional_processing;
         let batch_size = self.config.batch_size;
@@ -219,6 +220,7 @@ impl JetStreamEventConsumer {
                 raw_consumer,
                 batch_size,
                 confirmation_buffer.clone(),
+                raw_confirmed_handler,
                 provisional_handler,
                 enable_provisional,
                 running.clone(),
@@ -332,6 +334,7 @@ impl JetStreamEventConsumer {
         consumer: jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
         batch_size: usize,
         buffer: Arc<ConfirmationBuffer>,
+        confirmed_handler: Arc<dyn ConfirmedEventHandler>,
         provisional_handler: Option<Arc<dyn ProvisionalEventHandler>>,
         enable_provisional: bool,
         running: Arc<RwLock<bool>>,
@@ -344,8 +347,14 @@ impl JetStreamEventConsumer {
                 if !*running.read().await {
                     break;
                 }
-                Self::handle_raw_message(msg, &buffer, &provisional_handler, enable_provisional)
-                    .await?;
+                Self::handle_raw_message(
+                    msg,
+                    &buffer,
+                    &*confirmed_handler,
+                    &provisional_handler,
+                    enable_provisional,
+                )
+                .await?;
             }
         }
 
@@ -356,6 +365,7 @@ impl JetStreamEventConsumer {
     async fn handle_raw_message(
         msg: jetstream::Message,
         buffer: &ConfirmationBuffer,
+        confirmed_handler: &dyn ConfirmedEventHandler,
         provisional_handler: &Option<Arc<dyn ProvisionalEventHandler>>,
         enable_provisional: bool,
     ) -> RuntimeResult<()> {
@@ -390,6 +400,41 @@ impl JetStreamEventConsumer {
         // redelivery that re-adds an already-buffered sibling is idempotent.
         let mut handler_success = true;
         for event in &events {
+            if let Some(watermark) = buffer.try_implicit_confirm_on_add(event).await {
+                if watermark.persisted {
+                    match confirmed_handler.handle_confirmed(event).await {
+                        Ok(()) => {}
+                        Err(e) if e.kind() == SinexErrorKind::Lifecycle => {
+                            debug!(
+                                event_id = %event.event_id,
+                                watermark = %watermark.event_id,
+                                "Confirmed handler channel closed for already-confirmed raw event (shutdown)"
+                            );
+                            msg.ack().await.ok();
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            error!(
+                                target: "sinex_metrics",
+                                metric = "runtime.implicit_confirmation_handler_failures_total",
+                                event_id = %event.event_id,
+                                watermark = %watermark.event_id,
+                                error = %e,
+                                "Confirmed handler failed for already-confirmed raw event"
+                            );
+                            handler_success = false;
+                        }
+                    }
+                } else {
+                    debug!(
+                        event_id = %event.event_id,
+                        watermark = %watermark.event_id,
+                        "Raw event is already covered by a non-persisted confirmation watermark; skipping buffer insert"
+                    );
+                }
+                continue;
+            }
+
             // Memory protection: if the buffer is full, NAK the whole message to
             // apply backpressure; redelivery re-buffers any siblings idempotently.
             if !buffer.add_provisional(event.clone()).await {
@@ -527,6 +572,7 @@ impl JetStreamEventConsumer {
                 &confirmation.source,
                 &confirmation.event_type,
                 confirmation.event_id,
+                confirmation.persisted,
             )
             .await;
 
@@ -1046,8 +1092,24 @@ mod tests {
     // exit classification logic that is not exposed through the public consumer API.
     use super::{EventConfirmation, JetStreamEventConsumer, JetStreamEventConsumerConfig};
     use async_nats::jetstream::consumer::DeliverPolicy;
+    use crate::runtime::confirmation_handler::{ConfirmationBuffer, ProvisionalEvent};
     use sinex_primitives::{SinexError, Uuid, events::builder::EventId};
     use xtask::sandbox::sinex_test;
+
+    fn provisional_event(
+        event_id: EventId,
+        source: &str,
+        event_type: &str,
+    ) -> ProvisionalEvent {
+        ProvisionalEvent {
+            event_id,
+            source: source.try_into().expect("valid source"),
+            event_type: event_type.try_into().expect("valid event type"),
+            payload: serde_json::json!({}),
+            ts_orig: sinex_primitives::temporal::now(),
+            received_at: sinex_primitives::temporal::now(),
+        }
+    }
 
     #[sinex_test]
     async fn background_task_exit_is_error_while_running() -> xtask::sandbox::TestResult<()> {
@@ -1090,6 +1152,52 @@ mod tests {
         assert!(config.buffer_raw_events);
         assert!(!config.accept_unbuffered_confirmations);
         assert_eq!(config.deliver_policy, DeliverPolicy::All);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn kind_watermark_recognizes_late_raw_event_before_buffering()
+    -> xtask::sandbox::TestResult<()> {
+        let buffer = ConfirmationBuffer::new(std::time::Duration::from_secs(30));
+        let earlier = EventId::from_uuid(Uuid::now_v7());
+        let watermark = EventId::from_uuid(Uuid::now_v7());
+
+        buffer
+            .confirm_kind_up_to("shell.atuin", "command.executed", watermark, true)
+            .await;
+        let event = provisional_event(earlier, "shell.atuin", "command.executed");
+
+        let resolved = buffer
+            .try_implicit_confirm_on_add(&event)
+            .await
+            .expect("late raw event should be covered by watermark");
+
+        assert_eq!(resolved.event_id, watermark);
+        assert!(resolved.persisted);
+        assert!(buffer.is_empty().await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn non_persisted_kind_watermark_does_not_imply_success()
+    -> xtask::sandbox::TestResult<()> {
+        let buffer = ConfirmationBuffer::new(std::time::Duration::from_secs(30));
+        let earlier = EventId::from_uuid(Uuid::now_v7());
+        let watermark = EventId::from_uuid(Uuid::now_v7());
+
+        buffer
+            .confirm_kind_up_to("shell.atuin", "command.executed", watermark, false)
+            .await;
+        let event = provisional_event(earlier, "shell.atuin", "command.executed");
+
+        let resolved = buffer
+            .try_implicit_confirm_on_add(&event)
+            .await
+            .expect("late raw event should be covered by non-persisted watermark");
+
+        assert_eq!(resolved.event_id, watermark);
+        assert!(!resolved.persisted);
+        assert!(buffer.is_empty().await);
         Ok(())
     }
 

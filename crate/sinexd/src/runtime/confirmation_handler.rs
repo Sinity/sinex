@@ -41,6 +41,12 @@ struct PendingEntry {
     timed_out_at: Option<sinex_primitives::temporal::Timestamp>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KindConfirmationWatermark {
+    pub event_id: EventId,
+    pub persisted: bool,
+}
+
 /// Per-kind confirmation watermark from event_engine. Per #1306: a single message
 /// per `(source, event_type)` tells downstream "events of this kind with
 /// id ≤ `event_id` are confirmed". Subjects use the kind as the leaf
@@ -98,10 +104,10 @@ pub struct ConfirmationBuffer {
     pending: Arc<RwLock<HashMap<EventId, PendingEntry>>>,
     /// Per-kind confirmation high-watermark seen on the confirmations stream.
     /// Per #1306: when a provisional event is added whose `(source, event_type)`
-    /// already has a watermark `>=` its `event_id`, it is implicitly confirmed
-    /// immediately (the confirmation message arrived before the provisional —
-    /// would otherwise sit in the buffer until timeout).
-    kind_watermarks: Arc<RwLock<HashMap<(String, String), EventId>>>,
+    /// already has a watermark `>=` its `event_id`, it is resolved immediately
+    /// (the confirmation message arrived before the provisional — would
+    /// otherwise sit in the buffer until timeout).
+    kind_watermarks: Arc<RwLock<HashMap<(String, String), KindConfirmationWatermark>>>,
     /// Maximum time to wait for confirmation before treating as failure
     timeout: std::time::Duration,
     /// Additional grace period to retain timed-out events so delayed confirmations
@@ -150,7 +156,7 @@ impl ConfirmationBuffer {
     /// Per #1306: callers that want to handle the late-confirmation race
     /// (confirmation watermark arrived before the provisional event was added)
     /// should call `try_implicit_confirm_on_add` BEFORE `add_provisional` and
-    /// dispatch the confirmed handler synchronously when it returns true.
+    /// resolve the event synchronously when it returns a watermark.
     #[tracing::instrument(skip(self, event), fields(event_id = %event.event_id, buffer_size))]
     pub async fn add_provisional(&self, event: ProvisionalEvent) -> bool {
         let acquire_start = std::time::Instant::now();
@@ -222,19 +228,21 @@ impl ConfirmationBuffer {
         result.map(|entry| entry.event)
     }
 
-    /// Returns Some(event) iff the provisional event's kind already has a
-    /// watermark `>=` its `event_id` — i.e. event_engine already confirmed it but the
-    /// confirmation arrived before this provisional was buffered. Caller should
-    /// treat the returned event as already confirmed.
-    pub async fn try_implicit_confirm_on_add(&self, event: &ProvisionalEvent) -> bool {
+    /// Returns Some(watermark) iff the provisional event's kind already has a
+    /// watermark `>=` its `event_id` — i.e. event_engine already resolved it
+    /// but the confirmation arrived before this provisional was buffered.
+    pub async fn try_implicit_confirm_on_add(
+        &self,
+        event: &ProvisionalEvent,
+    ) -> Option<KindConfirmationWatermark> {
         let watermarks = self.kind_watermarks.read().await;
         let key = (
             event.source.as_str().to_string(),
             event.event_type.as_str().to_string(),
         );
-        watermarks
-            .get(&key)
-            .is_some_and(|wm| wm.as_uuid() >= event.event_id.as_uuid())
+        watermarks.get(&key).copied().filter(|wm| {
+            wm.event_id.as_uuid() >= event.event_id.as_uuid()
+        })
     }
 
     /// Per-kind watermark confirm. Per #1306: remove and return every pending
@@ -250,6 +258,7 @@ impl ConfirmationBuffer {
         source: &str,
         event_type: &str,
         watermark: EventId,
+        persisted: bool,
     ) -> Vec<ProvisionalEvent> {
         // Advance the per-kind watermark first so late-arriving provisional
         // events of the same kind with id <= watermark are recognized as
@@ -259,9 +268,15 @@ impl ConfirmationBuffer {
             let key = (source.to_string(), event_type.to_string());
             let advance = watermarks
                 .get(&key)
-                .is_none_or(|prev| watermark.as_uuid() > prev.as_uuid());
+                .is_none_or(|prev| watermark.as_uuid() > prev.event_id.as_uuid());
             if advance {
-                watermarks.insert(key, watermark);
+                watermarks.insert(
+                    key,
+                    KindConfirmationWatermark {
+                        event_id: watermark,
+                        persisted,
+                    },
+                );
             }
         }
         let acquire_start = std::time::Instant::now();
