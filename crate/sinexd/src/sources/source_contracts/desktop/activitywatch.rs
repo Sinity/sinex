@@ -20,69 +20,10 @@ use sinex_primitives::parser::{
     TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
+use sinex_macros::SourceMeta;
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
-use crate::runtime::parser::{MaterialParser, ParserError, ParserResult, SqliteRowAdapter};
-
-use crate::register_source;
-
-// ---------------------------------------------------------------------------
-// Source contract
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "desktop.activitywatch",
-        namespace: "desktop",
-        event_types: &[
-            ("activitywatch", "window.active"),
-            ("activitywatch", "afk.changed"),
-            ("activitywatch", "browser.tab.active"),
-        ],
-        privacy_tier: PrivacyTier::Secret,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From(
-            "(source, bucket_id, event_timestamp)",
-        ),
-        access_policy: "target_home_read:activitywatch_sqlite",
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Binding
-// ---------------------------------------------------------------------------
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:desktop.activitywatch"),
-        "desktop.activitywatch",
-        "desktop",
-    )
-    .implementation("sinexd")
-    .adapter("SqliteRowAdapter")
-    .output_event_type("window.active")
-    .privacy_context("document")
-    .material_policy("activitywatch_bucket_event")
-    .checkpoint_policy("mutable_snapshot")
-    .resource_shape("linear_rows_bounded_memory")
-    .source_id("desktop.activitywatch")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::MutableSnapshot {
-        backing_store_kind: "sqlite",
-        occurrence_anchor: "bucket_event_timestamp",
-    })
-    .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("desktop_activitywatch")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 
 // ---------------------------------------------------------------------------
 // Parser config
@@ -140,7 +81,30 @@ fn parse_aw_timestamp(s: &str) -> Option<Timestamp> {
 ///
 /// Malformed or unknown bucket types produce a `skip_row` (empty intents)
 /// rather than an error, so one bad bucket does not abort the whole batch.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "desktop.activitywatch",
+    namespace = "desktop",
+    event_source = "activitywatch",
+    event_type = "window.active",
+    event_types = "afk.changed, browser.tab.active",
+    adapter = "SqliteRowAdapter",
+    privacy_tier = "Secret",
+    horizons = "historical",
+    retention = "forever",
+    occurrence_identity = "uuid5:(source, bucket_id, event_timestamp)",
+    access_policy = "target_home_read:activitywatch_sqlite",
+    implementation = "sinexd",
+    privacy_context = "document",
+    material_policy = "activitywatch_bucket_event",
+    checkpoint_policy = "mutable_snapshot",
+    resource_shape = "linear_rows_bounded_memory",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "mutable_snapshot:sqlite:bucket_event_timestamp",
+    runtime_shape = "continuous",
+    package_impact = "desktop_activitywatch",
+    implementation_mode = "sinexd:source"
+)]
 pub struct ActivityWatchParser;
 
 #[async_trait]
@@ -320,12 +284,3 @@ impl MaterialParser for ActivityWatchParser {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Source factory registration
-// ---------------------------------------------------------------------------
-
-register_source!(
-    source_id: "desktop.activitywatch",
-    adapter: SqliteRowAdapter,
-    parser: ActivityWatchParser,
-);

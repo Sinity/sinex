@@ -165,4 +165,65 @@ mod tests {
         );
         Ok(())
     }
+
+    // -------------------------------------------------------------------------
+    // terminal.asciinema
+    //
+    // AsciinemaParser dispatches on the record's logical filename
+    // (`session.json` → `session.recorded`, `events.jsonl` → `session.prompt`),
+    // so the byte-level `_run_case` harness (which leaves `logical_path = None`)
+    // cannot exercise it. Drive the parser directly with a session.json record —
+    // this is the obligation evidence cited by the smoke matrix.
+    // -------------------------------------------------------------------------
+
+    #[sinex_test]
+    async fn terminal_asciinema_session_json_ingestion() -> TestResult<()> {
+        use sinex_primitives::ids::Id;
+        use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceId, SourceRecord};
+        use sinex_primitives::temporal::Timestamp;
+        use sinex_primitives::Uuid;
+        use sinexd::runtime::parser::MaterialParser;
+        use sinexd::sources::source_contracts::terminal::asciinema::AsciinemaParser;
+
+        const SESSION_JSON: &[u8] =
+            br#"{"session_id":"sess-abc","ts_ms":1700000000000,"cwd":"/home/sinity","schema":"v1"}"#;
+
+        let mut parser = AsciinemaParser;
+        let record = SourceRecord {
+            material_id: Id::new(),
+            anchor: MaterialAnchor::ByteRange {
+                start: 0,
+                len: SESSION_JSON.len() as u64,
+            },
+            bytes: SESSION_JSON.to_vec(),
+            logical_path: Some("2024/06/01/sess-abc/session.json".into()),
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
+        };
+        let ctx = ParserContext {
+            source_id: SourceId::from_static("terminal.asciinema"),
+            source_material_id: Id::new(),
+            record_anchor: MaterialAnchor::ByteRange {
+                start: 0,
+                len: SESSION_JSON.len() as u64,
+            },
+            operation_id: Uuid::new_v4(),
+            job_id: Uuid::new_v4(),
+            host: "test-host".into(),
+            acquisition_time: Timestamp::now(),
+        };
+
+        let intents = parser
+            .parse_record(record, &ctx)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("asciinema parse_record failed: {e}"))?;
+
+        assert_eq!(
+            intents.len(),
+            1,
+            "session.json must yield exactly one session.recorded event"
+        );
+        assert_eq!(intents[0].event_type.as_str(), "session.recorded");
+        Ok(())
+    }
 }

@@ -481,6 +481,16 @@ mod coverage_matrix {
             "production_path/system.rs test_desktop_notification_initial_ingestion",
         ),
         entry(
+            "desktop.notification.action",
+            SmokeCoverage::ObligationHarness,
+            "production_path/system.rs test_desktop_notification_action_initial_ingestion",
+        ),
+        entry(
+            "desktop.notification.closed",
+            SmokeCoverage::ObligationHarness,
+            "production_path/system.rs test_desktop_notification_closed_initial_ingestion",
+        ),
+        entry(
             "desktop.window-manager",
             SmokeCoverage::ObligationHarness,
             "production_path/desktop.rs unix socket fixture",
@@ -574,6 +584,11 @@ mod coverage_matrix {
             "system.udev",
             SmokeCoverage::ObligationHarness,
             "production_path/system.rs",
+        ),
+        entry(
+            "terminal.asciinema",
+            SmokeCoverage::ObligationHarness,
+            "production_path/terminal.rs terminal_asciinema_session_json_ingestion",
         ),
         entry(
             "terminal.atuin-history",
