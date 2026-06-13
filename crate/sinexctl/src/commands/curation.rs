@@ -171,7 +171,7 @@ pub struct CurationDuplicateJudgeCommand {
 
     /// Logical key shared by the duplicate cluster.
     #[arg(long)]
-    natural_key_hash: String,
+    equivalence_key: String,
 
     /// Candidate event UUID. Repeat for every event in the cluster.
     #[arg(long = "event-id", required = true)]
@@ -204,7 +204,7 @@ impl CurationDuplicateJudgeCommand {
             .curation_duplicate_judgments_record(CurationRecordDuplicateJudgmentRequest {
                 source: self.source.clone(),
                 event_type: self.event_type.clone(),
-                natural_key_hash: self.natural_key_hash.clone(),
+                equivalence_key: self.equivalence_key.clone(),
                 event_ids: self.event_ids.clone(),
                 action: parse_serde_enum("action", &self.action)?,
                 preferred_event_id: self.preferred_event_id,

@@ -9,6 +9,7 @@
 pub mod admission;
 pub mod builder;
 pub mod enums;
+pub mod identity_keys;
 pub mod occurrence;
 pub mod payload;
 pub mod payloads;
@@ -16,6 +17,7 @@ pub mod schema_registry;
 
 pub use admission::*;
 pub use builder::*;
+pub use identity_keys::{EquivalenceKey, ScopeKey};
 pub use occurrence::MaterialOccurrenceKey;
 pub use payload::*;
 pub use payloads::*;

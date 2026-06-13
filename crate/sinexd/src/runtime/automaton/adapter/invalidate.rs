@@ -19,7 +19,7 @@ use crate::runtime::automaton::invalidation::DerivedScopeInvalidation;
 use crate::runtime::automaton::traits::Automaton;
 use crate::runtime::{RuntimeResult, SinexError};
 
-use sinex_primitives::events::Event;
+use sinex_primitives::events::{EquivalenceKey, Event, ScopeKey};
 use sinex_primitives::events::builder::OperationMarker;
 use sinex_primitives::{JsonValue, Uuid};
 
@@ -316,8 +316,8 @@ where
                                 old_event_id: *old_id,
                                 new_event_id: *new_id,
                                 relation_kind: ReplacementKind::Recomputed,
-                                scope_key: Some(scope_key.clone()),
-                                equivalence_key: eq_key.clone(),
+                                scope_key: Some(ScopeKey::from(scope_key.clone())),
+                                equivalence_key: eq_key.clone().map(EquivalenceKey::from),
                             })
                     })
                     .collect();

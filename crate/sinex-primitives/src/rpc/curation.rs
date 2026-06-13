@@ -137,9 +137,8 @@ pub struct CurationDuplicateCandidateCluster {
     pub cluster_id: String,
     pub source: String,
     pub event_type: String,
-    /// Logical key value drawn from `payload.natural_key_hash`,
-    /// `payload.natural_key`, or the event `equivalence_key`.
-    pub natural_key_hash: String,
+    /// Logical key value from the event `equivalence_key` column.
+    pub equivalence_key: String,
     pub event_count: i64,
     pub material_count: i64,
     pub events: Vec<CurationDuplicateCandidateEvent>,
@@ -164,7 +163,7 @@ pub enum CurationDuplicateAction {
 pub struct CurationRecordDuplicateJudgmentRequest {
     pub source: String,
     pub event_type: String,
-    pub natural_key_hash: String,
+    pub equivalence_key: String,
     pub event_ids: Vec<Uuid>,
     pub action: CurationDuplicateAction,
     #[serde(default)]
