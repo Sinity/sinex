@@ -5,7 +5,7 @@
 //! with the `messaging` feature.
 
 use super::{
-    Arc, AtomicBool, ControlCommandKind, EventTransport, LISTENER_RETRY_DELAY, ModuleKind,
+    Arc, AtomicBool, ControlCommandKind, LISTENER_RETRY_DELAY, ModuleKind,
     Ordering, RuntimeModule, RuntimeRunner, SourceScanAck, SourceScanCommand, SourceScanProgress,
     StreamExt, Uuid, control_command_kind, debug, error, info, run_resubscribing_listener, warn,
     watch,
@@ -43,8 +43,12 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             return;
         };
 
-        let nats_client = match handles.transport() {
-            EventTransport::Nats(publisher) => publisher.nats_client().clone(),
+        let nats_client = match handles.transport().nats_publisher() {
+            Ok(publisher) => publisher.nats_client().clone(),
+            Err(e) => {
+                warn!(error = %e, "Cannot start command listener: NATS transport required");
+                return;
+            }
         };
 
         let module_name = service_info.control_identity().to_string();
