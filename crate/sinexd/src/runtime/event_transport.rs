@@ -1,10 +1,11 @@
 //! Event batcher that handles batching and sending events.
 
 use crate::runtime::{RuntimeResult, nats_publisher::NatsPublisher};
+use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::HostName;
 use sinex_primitives::events::{Event, admission::EventIntent};
-use sinex_primitives::{JsonValue, Uuid};
+use sinex_primitives::{JsonValue, SinexError, Uuid};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -16,25 +17,95 @@ use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
-/// Event transport mechanism
+/// Callback type for the direct in-process admission path.
+///
+/// Receives a batch of events and routes them straight to `AdmissionService`
+/// without a JetStream publish → ack → re-consume round-trip. Defined as a
+/// type alias here (in `runtime`) so that `EventTransport` does not depend on
+/// `crate::event_engine::admission`, which already imports from `runtime`
+/// and would create a circular dependency if the relationship were reversed.
+///
+/// In production, callers in `event_engine` construct this by capturing
+/// `Arc<AdmissionService>` in a closure. In tests, use
+/// `EventTransport::new_noop_direct()` for a no-op variant that discards events.
+pub type DirectAdmissionFn = Arc<
+    dyn Fn(Vec<Event<JsonValue>>) -> BoxFuture<'static, RuntimeResult<()>> + Send + Sync,
+>;
+
+/// Event transport mechanism.
 #[derive(Clone)]
 pub enum EventTransport {
-    /// Direct NATS `JetStream` publishing
+    /// Durable JetStream publishing: events are published to the raw-events
+    /// stream, acked, then re-consumed by `event_engine`.  Use this for
+    /// cross-process producers and any path that must survive NATS-only outages
+    /// with local recovery-spool fallback.
     Nats(Arc<NatsPublisher>),
+    /// Direct in-process path: events bypass JetStream and go straight to the
+    /// `AdmissionService` running in the same process.
+    ///
+    /// Use for co-located staged parsers that produce local material events.
+    /// The `Nats` variant remains correct for durable cross-process and
+    /// external-producer paths where JetStream replay semantics matter.
+    Direct(DirectAdmissionFn),
 }
 
 impl std::fmt::Debug for EventTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EventTransport::Nats(_) => write!(f, "EventTransport::Nats"),
+            EventTransport::Direct(_) => write!(f, "EventTransport::Direct"),
         }
     }
 }
 
 impl EventTransport {
+    /// Construct a `Direct` transport with the given admission callback.
+    ///
+    /// The closure is typically created in `event_engine` by capturing
+    /// `Arc<AdmissionService>`.
+    #[must_use]
+    pub fn new_direct(
+        f: impl Fn(Vec<Event<JsonValue>>) -> BoxFuture<'static, RuntimeResult<()>>
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        EventTransport::Direct(Arc::new(f))
+    }
+
+    /// Construct a no-op `Direct` transport that silently discards all events.
+    ///
+    /// Intended for unit tests that exercise adapter/parser state machines
+    /// without requiring event persistence. Do **not** use in production paths.
+    #[cfg(test)]
+    #[must_use]
+    pub fn new_noop_direct() -> Self {
+        use futures::FutureExt as _;
+        EventTransport::Direct(Arc::new(|_events| async { Ok(()) }.boxed()))
+    }
+
+    /// Extract the inner `NatsPublisher`, or return an error for `Direct` transports.
+    ///
+    /// Call sites that require NATS — JetStream consumers, checkpoint KV,
+    /// Core-NATS command listeners, `AcquisitionManager` — should use this
+    /// helper so that match exhaustion is centralised here rather than
+    /// scattered across the codebase.
+    pub fn nats_publisher(&self) -> RuntimeResult<&NatsPublisher> {
+        match self {
+            EventTransport::Nats(publisher) => Ok(publisher),
+            EventTransport::Direct(_) => Err(SinexError::configuration(
+                "Direct transport does not provide a NATS publisher; \
+                 this operation requires a Nats-backed EventTransport",
+            )),
+        }
+    }
+
     /// Send a failed event to the processing-failure stream.
     ///
     /// This is for derived/runtime processing failures, not the raw-ingest DLQ.
+    /// Direct transport does not have a processing-failure stream; a warning is
+    /// logged and the method returns `Ok(())` so callers do not abort on a
+    /// secondary concern.
     pub async fn send_to_processing_failure_queue(
         &self,
         event: &Event<JsonValue>,
@@ -51,6 +122,14 @@ impl EventTransport {
                 )
                 .await
                 .map_err(|e| e.with_context("operation", "send_to_processing_failure_queue")),
+            EventTransport::Direct(_) => {
+                warn!(
+                    module = module_name,
+                    error,
+                    "Direct transport: processing failure dropped (no JetStream failure stream)"
+                );
+                Ok(())
+            }
         }
     }
 }
@@ -352,6 +431,9 @@ impl EventBatcher {
                         .publish_intent(&intent, sinex_primitives::transport::Class::Critical)
                         .await
                 }
+                EventTransport::Direct(direct_fn) => direct_fn(vec![event])
+                    .await
+                    .map_err(|e| e.with_context("operation", "recovery_spool_replay_direct")),
             };
 
             if let Err(error) = publish_result {
@@ -460,6 +542,9 @@ impl EventBatcher {
                     &self.config.parser_version,
                 )
                 .await
+            }
+            EventTransport::Direct(direct_fn) => {
+                Self::send_batch_direct(direct_fn, batch).await
             }
         };
 
@@ -593,6 +678,56 @@ impl EventBatcher {
         file.sync_all().await?;
         tokio::fs::rename(&temp_path, recovery_spool_path).await?;
         Ok(())
+    }
+
+    /// Send a batch of events through the direct in-process admission path.
+    ///
+    /// Events are drained from `batch` and passed to the `DirectAdmissionFn`.
+    /// On success the batch is cleared; on failure the events are returned so
+    /// the caller can route them to the local recovery spool.
+    async fn send_batch_direct(
+        direct_fn: &DirectAdmissionFn,
+        events: &mut Vec<Event<JsonValue>>,
+    ) -> BatchPublishResult {
+        if events.is_empty() {
+            return BatchPublishResult {
+                published: 0,
+                failed: 0,
+            };
+        }
+
+        let event_count = events.len();
+        // Deliver a clone so the originals stay in `events` if admission fails.
+        // This mirrors the NATS arm, which restores `intent.events` on failure so
+        // `send_batch` can route the undelivered events to the recovery spool.
+        // Without this, a failing `DirectAdmissionFn` would consume the batch and
+        // the recovery-spool safety net would silently spool nothing.
+        let to_deliver = events.clone();
+
+        match direct_fn(to_deliver).await {
+            Ok(()) => {
+                events.clear();
+                debug!(published = event_count, "Intent batch sent via Direct admission");
+                BatchPublishResult {
+                    published: event_count,
+                    failed: 0,
+                }
+            }
+            Err(e) => {
+                error!(
+                    target: "sinex_metrics",
+                    metric = "runtime.event_publish_failures_total",
+                    event_count,
+                    error = %e,
+                    "Failed to admit event batch via Direct path"
+                );
+                // `events` is left intact so `send_batch` can spool the batch.
+                BatchPublishResult {
+                    published: 0,
+                    failed: event_count,
+                }
+            }
+        }
     }
 
     async fn send_batch_nats(
@@ -802,8 +937,13 @@ mod tests {
         let message = tokio::time::timeout(Duration::from_secs(5), subscription.next())
             .await?
             .expect("replayed recovery-spool event should be published");
+        // The recovery path publishes via `publish_intent`, so the message
+        // payload is an `EventIntent` envelope — the event_type lives under
+        // `events[0]`, not at the top level. (Inherited assertion bug: the
+        // raw-event-to-intent switch in #1653 left this asserting `event_type`
+        // at the envelope root, where it is always null.)
         let payload: JsonValue = serde_json::from_slice(&message.payload)?;
-        assert_eq!(payload["event_type"], "recovery_spool.recovered");
+        assert_eq!(payload["events"][0]["event_type"], "recovery_spool.recovered");
         assert!(
             tokio::fs::metadata(&recovery_spool_path).await.is_err(),
             "fully replayed recovery spool should be removed"
@@ -847,6 +987,101 @@ mod tests {
         assert!(
             !contents.contains("recovery_spool.partial_recovery"),
             "successfully replayed entries should be removed from the preserved recovery spool"
+        );
+        Ok(())
+    }
+
+    /// Proves the `Direct` transport routes a batch synchronously to its
+    /// admission closure without any NATS infrastructure: the closure captures
+    /// the delivered events, and after `send_batch` the captured set matches the
+    /// sent set by both count and event identity, and the input batch is drained.
+    #[sinex_test]
+    async fn direct_transport_send_batch_delivers_to_closure() -> TestResult<()> {
+        use std::sync::Mutex;
+
+        let delivered: Arc<Mutex<Vec<Event<JsonValue>>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&delivered);
+        let transport = EventTransport::new_direct(move |events| {
+            let sink = Arc::clone(&sink);
+            Box::pin(async move {
+                sink.lock()
+                    .expect("delivered-events mutex should not be poisoned")
+                    .extend(events);
+                Ok(())
+            })
+        });
+
+        let work_dir = tempdir()?;
+        let (_sender, receiver) = mpsc::channel(1);
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let mut batcher = EventBatcher::new(
+            transport,
+            EventBatcherConfig::default(),
+            receiver,
+            shutdown_rx,
+            work_dir.path().to_path_buf(),
+        );
+
+        let first = test_event("direct.first", true)?;
+        let second = test_event("direct.second", true)?;
+        let expected_ids = vec![first.id, second.id];
+        let mut batch = vec![first, second];
+
+        batcher.send_batch(&mut batch).await?;
+
+        assert!(
+            batch.is_empty(),
+            "Direct send_batch must drain the input batch on success"
+        );
+        let captured = delivered
+            .lock()
+            .expect("delivered-events mutex should not be poisoned");
+        assert_eq!(
+            captured.len(),
+            2,
+            "Direct path must deliver every event in the batch"
+        );
+        let captured_ids: Vec<_> = captured.iter().map(|event| event.id).collect();
+        assert_eq!(
+            captured_ids, expected_ids,
+            "Direct path must deliver the same events (by identity) that were sent"
+        );
+        Ok(())
+    }
+
+    /// Proves a `Direct` admission closure that returns an error does not drop
+    /// silently: the events are routed to the local recovery spool so they can be
+    /// replayed, exactly as the NATS publish-failure path does.
+    #[sinex_test]
+    async fn direct_transport_failure_routes_to_recovery_spool() -> TestResult<()> {
+        let transport = EventTransport::new_direct(|_events| {
+            Box::pin(async { Err(sinex_primitives::SinexError::processing("admission rejected")) })
+        });
+
+        let work_dir = tempdir()?;
+        let recovery_spool_path = work_dir.path().join("sinex_event_recovery_spool.jsonl");
+        let (_sender, receiver) = mpsc::channel(1);
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let mut batcher = EventBatcher::new(
+            transport,
+            EventBatcherConfig::default(),
+            receiver,
+            shutdown_rx,
+            work_dir.path().to_path_buf(),
+        );
+
+        let mut batch = vec![test_event("direct.failed", true)?];
+        // send_batch swallows the failure and spools; it returns Ok once spooled.
+        batcher.send_batch(&mut batch).await?;
+
+        assert!(
+            tokio::fs::metadata(&recovery_spool_path).await.is_ok(),
+            "Direct admission failure must persist events to the recovery spool"
+        );
+        let contents = tokio::fs::read_to_string(&recovery_spool_path).await?;
+        assert!(
+            contents.contains("direct.failed"),
+            "recovery spool must contain the undelivered Direct event"
         );
         Ok(())
     }
