@@ -1391,7 +1391,7 @@ mod tests {
     use crate::runtime::checkpoint::CheckpointManager;
     use crate::runtime::parser::{InputShapeKind, ParserError, ParserResult, SourceRecord};
     use crate::runtime::stream::{EventEmitter, RuntimeHandles, ServiceInfo};
-    use crate::runtime::{EventTransport, NatsPublisher};
+    use crate::runtime::EventTransport;
     use async_trait::async_trait;
     use camino::Utf8PathBuf;
     use futures::stream::{self, BoxStream};
@@ -1653,11 +1653,10 @@ mod tests {
         ));
         let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
         let emitter = EventEmitter::new(event_sender, false);
-        let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
         let handles = RuntimeHandles::new_edge(
             checkpoint_manager,
             emitter,
-            EventTransport::Nats(publisher),
+            EventTransport::new_noop_direct(),
             None,
             None,
         );

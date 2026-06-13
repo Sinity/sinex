@@ -121,8 +121,9 @@ impl RuntimeContext {
     #[cfg(feature = "messaging")]
     #[must_use]
     pub fn nats_client(&self) -> Option<async_nats::Client> {
-        match self.handles.transport() {
-            EventTransport::Nats(publisher) => Some(publisher.nats_client().clone()),
+        match self.handles.transport().nats_publisher() {
+            Ok(publisher) => Some(publisher.nats_client().clone()),
+            Err(_) => None,
         }
     }
 
