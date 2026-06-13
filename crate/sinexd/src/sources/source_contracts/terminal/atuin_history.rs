@@ -1,232 +1,107 @@
-//! `terminal.atuin-history` — Atuin `SQLite` history adapter.
+//! `terminal.atuin-history` — Atuin `SQLite` history source.
 //!
-//! Folds the Atuin history source from `sinex-terminal-source` into
-//! the source dispatch and source factory registries.
+//! Pilot for `#[derive(SourceDefinition)]` (#1727, SNX-41). One annotated
+//! struct ([`AtuinHistoryRecord`]) replaces the four hand-wired, string-cross-
+//! referenced registration sites a source author used to maintain:
 //!
-//! Adapter: [`SqliteRowAdapter`] — reads from `~/.local/share/atuin/history.db`.
-//! Parser:  [`AtuinHistoryParser`] — maps each `SQLite` row to
-//!          [`AtuinCommandExecutedPayload`].
+//!   1. the `SourceContract` (semantic identity),
+//!   2. the `SourceRuntimeBinding` (deployment shape),
+//!   3. the `register_source!` adapter + parser factory wiring,
+//!   4. the `impl MaterialParser`.
 //!
-//! The source contract and binding are registered here; the
-//! `terminal.atuin-history` contract in `sinex-primitives/src/source_contracts.rs`
-//! is the canonical primitive-level declaration — this module registers the
-//! source host implementation binding on top of it.
+//! Adapter: [`SqliteRowAdapter`](crate::runtime::parser::SqliteRowAdapter) —
+//! reads from `~/.local/share/atuin/history.db`.
+//!
+//! Field-level privacy hints are declared inline via `#[privacy(...)]`; they
+//! are exported through the parser manifest for the DB/user policy layer and
+//! never auto-act (#1611).
+//!
+//! # Migration note (#1727 slice 1 follow-up)
+//!
+//! The previous imperative `AtuinHistoryParser` performed two validations the
+//! declarative DSL v1 cannot yet express: `host:user` hostname normalization
+//! and timestamp range checks. Under the declarative parser these become
+//! runtime concerns rather than typed-at-construction checks. Restoring them as
+//! declarative validation hooks is tracked as a follow-up referenced from the
+//! source-definition PR.
 
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use sinex_macros::SourceDefinition;
 
-use crate::runtime::parser::{MaterialParser, ParserError, ParserResult, SqliteRowAdapter};
-use sinex_primitives::domain::{EventSource, EventType};
-use sinex_primitives::events::payloads::shell::AtuinCommandExecutedPayload;
-use sinex_primitives::parser::{
-    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceId,
-    TimingConfidence, TimingEvidence,
-};
-use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
-
-use crate::register_source;
-
-// ---------------------------------------------------------------------------
-// Source contract
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "terminal.atuin-history",
-        namespace: "terminal",
-        event_types: &[("shell.atuin", "command.executed")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Continuous, Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Natural,
-        access_policy: "target_home_read:.local/share/atuin/history.db",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:terminal.atuin-history"),
-        "terminal.atuin-history",
-        "terminal",
-    )
-    .implementation("sinexd")
-    .adapter("SqliteRowAdapter")
-    .output_event_type("command.executed")
-    .privacy_context("Command")
-    .material_policy("sqlite_row_id")
-    .checkpoint_policy("mutable_snapshot")
-    .resource_shape("linear_rows_bounded_memory")
-    .source_id("terminal.atuin-history")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::MutableSnapshot {
-        backing_store_kind: "sqlite",
-        occurrence_anchor: "atuin_history_id",
-    })
-    .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("atuin_history_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
-// ---------------------------------------------------------------------------
-// Parser
-// ---------------------------------------------------------------------------
-
-/// Parser configuration (empty — path comes from [`SqliteRowConfig`]).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AtuinHistoryParserConfig;
-
-/// Parser for Atuin `SQLite` history rows.
+/// Declarative Atuin history source definition.
 ///
-/// Each [`SourceRecord`] carries a JSON-serialized row from the `history`
-/// table. The parser extracts fields and builds [`AtuinCommandExecutedPayload`].
-#[derive(Debug, Clone, Default)]
-pub struct AtuinHistoryParser;
+/// Field names are the emitted payload keys; `#[source(column_name = …)]` maps
+/// each to the corresponding `history` table column (the adapter expands
+/// `query = "history"` to `SELECT rowid, * FROM history`).
+// `Default` is generated by the `SourceDefinition` derive (the struct is a
+// parser marker), so it is intentionally absent from this derive list.
+#[derive(SourceDefinition, Debug, Clone)]
+#[source_definition(
+    id = "terminal.atuin-history",
+    namespace = "terminal",
+    event_source = "shell.atuin",
+    event_type = "command.executed",
+    input_shape = "sqlite_row",
+    adapter = "SqliteRowAdapter",
+    default_privacy_context = "Command",
+    privacy_tier = "Sensitive",
+    horizons = "continuous, historical",
+    retention = "forever",
+    occurrence_identity = "natural",
+    access_policy = "target_home_read:.local/share/atuin/history.db",
+    implementation = "sinexd",
+    privacy_context = "Command",
+    material_policy = "sqlite_row_id",
+    checkpoint_policy = "mutable_snapshot",
+    resource_shape = "linear_rows_bounded_memory",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "mutable_snapshot:sqlite:atuin_history_id",
+    runtime_shape = "continuous",
+    package_impact = "atuin_history_source",
+    implementation_mode = "sinexd:source",
+    baseline_adapter_config = r#"{"query":"history","table":"history"}"#
+)]
+pub struct AtuinHistoryRecord {
+    /// `SQLite` rowid — occurrence anchor (excluded from the emitted payload).
+    #[source(column_name = "rowid")]
+    #[occurrence_key]
+    #[skip]
+    pub rowid: i64,
 
-#[async_trait]
-impl MaterialParser for AtuinHistoryParser {
-    type Config = AtuinHistoryParserConfig;
+    /// Command start time, unix nanoseconds.
+    #[source(column_name = "timestamp")]
+    #[timestamp(format = "unix_seconds_nanos", fallback = "material_timing")]
+    pub timestamp: i64,
 
-    fn manifest(&self) -> ParserManifest {
-        ParserManifest {
-            parser_id: ParserId::from_static("atuin-history"),
-            parser_version: "1.0.0".into(),
-            accepted_input_shapes: vec![InputShapeKind::SqliteQuery],
-            source_id: SourceId::from_static("terminal.atuin-history"),
-            declared_event_types: vec![(
-                EventSource::from_static("shell.atuin"),
-                EventType::from_static("command.executed"),
-            )],
-            privacy_contexts: vec![ProcessingContext::Command, ProcessingContext::Metadata],
-            sensitivity_hints: Vec::new(),
-            description: "Parses Atuin SQLite history rows into command.executed events.".into(),
-        }
-    }
+    /// Executed command line.
+    #[source(column_name = "command")]
+    #[privacy(context = "Command")]
+    #[privacy(sensitivity = "free_text, credential_bearing")]
+    pub command_string: String,
 
-    async fn parse_record(
-        &mut self,
-        record: sinex_primitives::parser::SourceRecord,
-        ctx: &ParserContext,
-    ) -> ParserResult<Vec<ParsedEventIntent>> {
-        let row: serde_json::Value = serde_json::from_slice(&record.bytes)
-            .map_err(|e| ParserError::Parse(format!("invalid JSON in atuin row: {e}")))?;
+    /// Working directory.
+    #[source(column_name = "cwd")]
+    #[privacy(sensitivity = "source_path")]
+    pub cwd: String,
 
-        // Extract fields from the JSON row (serialised by SqliteRowAdapter).
-        let command_string = row
-            .get("command")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+    /// Process exit code (defaults to 0 when absent).
+    #[source(column_name = "exit")]
+    #[default = "0"]
+    pub exit_code: i64,
 
-        if command_string.is_empty() {
-            return Ok(vec![]);
-        }
+    /// Command duration in nanoseconds (defaults to 0 when absent).
+    #[source(column_name = "duration")]
+    #[default = "0"]
+    pub duration_ns: i64,
 
-        let history_id = row
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let session_id = row
-            .get("session")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let hostname_raw = row
-            .get("hostname")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let cwd_raw = row
-            .get("cwd")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let timestamp_ns = row
-            .get("timestamp")
-            .and_then(sinex_primitives::JsonValue::as_i64)
-            .unwrap_or(0);
-        let duration_ns = row
-            .get("duration")
-            .and_then(sinex_primitives::JsonValue::as_i64)
-            .unwrap_or(0);
-        let exit_code = row
-            .get("exit")
-            .and_then(sinex_primitives::JsonValue::as_i64)
-            .unwrap_or(0);
+    /// Atuin history row id.
+    #[source(column_name = "id")]
+    pub atuin_history_id: String,
 
-        let cwd = cwd_raw.into();
-        let payload_result = AtuinCommandExecutedPayload::from_raw_history(
-            command_string,
-            cwd,
-            exit_code,
-            duration_ns,
-            history_id,
-            session_id,
-            timestamp_ns,
-            hostname_raw,
-        );
+    /// Atuin session id.
+    #[source(column_name = "session")]
+    pub atuin_session_id: String,
 
-        let payload = match payload_result {
-            Ok(p) => p,
-            Err(e) => {
-                return Err(ParserError::Parse(format!(
-                    "atuin payload construction failed: {e}"
-                )));
-            }
-        };
-
-        let ts_orig = payload.ts_start_orig;
-        let payload_json = serde_json::to_value(&payload)
-            .map_err(|e| ParserError::Parse(format!("payload serialization failed: {e}")))?;
-
-        Ok(vec![
-            ParsedEventIntent::builder()
-                .source_id(ctx.source_id.clone())
-                .parser_id(ParserId::from_static("atuin-history"))
-                .parser_version("1.0.0")
-                .event_type(EventType::from_static("command.executed"))
-                .event_source(EventSource::from_static("shell.atuin"))
-                .payload(payload_json)
-                .ts_orig(ts_orig)
-                .timing(TimingEvidence::Intrinsic {
-                    field: "timestamp".into(),
-                    confidence: TimingConfidence::Intrinsic,
-                })
-                .anchor(record.anchor)
-                .privacy_context(ProcessingContext::Command)
-                .build(),
-        ])
-    }
-
-    fn required_input_keys(&self) -> Vec<String> {
-        ["history.command", "history.timestamp"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect()
-    }
-
-    fn baseline_adapter_config() -> serde_json::Value {
-        // Atuin's history table has columns (id, timestamp, duration, exit,
-        // command, cwd, session, hostname, deleted_at). SqliteRowAdapter
-        // expands query="history" to `SELECT rowid, * FROM history`, which
-        // provides every column AtuinHistoryParser reads.
-        serde_json::json!({ "query": "history", "table": "history" })
-    }
+    /// Originating hostname (`host:user` form; not normalized in DSL v1).
+    #[source(column_name = "hostname")]
+    pub hostname: String,
 }
-
-// ---------------------------------------------------------------------------
-// Source factory registration
-// ---------------------------------------------------------------------------
-
-register_source!(
-    source_id: "terminal.atuin-history",
-    adapter: SqliteRowAdapter,
-    parser: AtuinHistoryParser,
-);
