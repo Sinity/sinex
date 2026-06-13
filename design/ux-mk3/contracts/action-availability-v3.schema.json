@@ -38,7 +38,7 @@
         "null"
       ]
     },
-    "command_equivalent": {
+    "command_hint": {
       "type": [
         "string",
         "null"
