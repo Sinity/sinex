@@ -162,6 +162,12 @@ pub use content_store::{
 };
 pub use preflight::{VerificationStatus, verify_service_dependencies};
 
+// ApiCursor adapter — paginated REST import support (#1746).
+pub use parser::{
+    ApiClient, ApiFetchError, ApiFetchPage, ApiCursorAdapter, ApiCursorConfig, ApiCursorPosition,
+    RetryPolicy,
+};
+
 // Re-export commonly used types from dependencies
 pub use sinex_primitives::error::{ErrorDetails, SinexError};
 pub use sinex_primitives::temporal::Timestamp;
