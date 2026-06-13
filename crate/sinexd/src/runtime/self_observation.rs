@@ -30,9 +30,12 @@
 //! observer.emit_gauge("connections.active", 42.0, None).await?;
 //! ```
 
-use crate::runtime::acquisition_manager::{AcquisitionManager, RotationPolicy};
+use crate::runtime::NatsPublisher;
+use crate::runtime::acquisition_manager::{
+    AcquisitionManager, BufferedAppendStreamWriter, BufferedAppendStreamWriterConfig,
+    RotationPolicy,
+};
 use crate::runtime::error_helpers::env_nonempty_string_optional;
-use crate::runtime::{BufferedRecordMaterializer, NatsPublisher};
 use async_nats::Client as NatsClient;
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::env as shared_env;
@@ -59,7 +62,15 @@ pub struct SelfObserver {
     /// Shared publisher path for raw events (None when disabled)
     publisher: Option<NatsPublisher>,
     /// Source-material stream used to record the emitted observation bytes.
-    materializer: Option<BufferedRecordMaterializer>,
+    ///
+    /// A `BufferedAppendStreamWriter` owns the active source material behind a
+    /// background task: it appends through an `&self` channel (interior
+    /// mutability), creates the BEGIN frame lazily on the first append, and
+    /// rotates streams without holding a mutex across NATS I/O. This is the same
+    /// substrate the deleted `BufferedRecordMaterializer` wrapped; the wrapper's
+    /// only added behavior was JSONL serialization, which now lives in
+    /// `stable_json_line` below.
+    materializer: Option<BufferedAppendStreamWriter>,
     /// Component name
     component: String,
     /// Whether self-observation is enabled
@@ -151,9 +162,10 @@ impl SelfObserver {
             ));
             (
                 Some(NatsPublisher::with_namespace(nats_client, namespace)),
-                Some(BufferedRecordMaterializer::buffered_default(
+                Some(BufferedAppendStreamWriter::from_manager(
                     acquisition_manager,
                     self_observation_source_identifier(&component),
+                    BufferedAppendStreamWriterConfig::default(),
                 )),
             )
         } else {
@@ -207,8 +219,8 @@ impl SelfObserver {
     ///
     /// # Why this exists (#1241 prong 2)
     ///
-    /// `BufferedRecordMaterializer` creates its source material lazily on the
-    /// first `append_*` call.  When the adapter emits a `metric.gauge` event,
+    /// `BufferedAppendStreamWriter` creates its source material lazily on the
+    /// first `append` call.  When the adapter emits a `metric.gauge` event,
     /// the event carries a `source_material_id` that was assigned by the
     /// materializer at append time.  If the BEGIN frame hasn't been committed to
     /// `JetStream` yet — or if event_engine's `MaterialAssembler` consumer hasn't
@@ -226,14 +238,11 @@ impl SelfObserver {
         let Some(materializer) = self.materializer.as_ref() else {
             return Ok(());
         };
-        materializer
-            .append_stable_bytes(vec![b'\n'])
-            .await
-            .map_err(|e| {
-                SelfObservationError::Materialization(format!(
-                    "failed to prime self-observation material stream: {e}"
-                ))
-            })?;
+        materializer.append(vec![b'\n']).await.map_err(|e| {
+            SelfObservationError::Materialization(format!(
+                "failed to prime self-observation material stream: {e}"
+            ))
+        })?;
         debug!(
             component = %self.component,
             "Primed self-observation material stream (BEGIN frame committed)"
@@ -351,7 +360,12 @@ impl SelfObserver {
             payload: &payload_json,
         };
 
-        let anchor = match materializer.append_json_line(&record).await {
+        let anchor = match async {
+            let line = stable_json_line(&record)?;
+            materializer.append(line).await
+        }
+        .await
+        {
             Ok(anchor) => anchor,
             Err(error) => {
                 self.release_metric_slot(&metric_key).await;
@@ -910,6 +924,20 @@ struct SelfObservationRecord<'a> {
 
 fn self_observation_source_identifier(component: &str) -> String {
     format!("sinex.self-observation.{component}")
+}
+
+/// Serialize a record as a newline-terminated JSON line for stable, byte-anchored
+/// appends to the source-material stream.
+fn stable_json_line<T>(record: &T) -> Result<Vec<u8>, SinexError>
+where
+    T: serde::Serialize + ?Sized,
+{
+    let mut data = serde_json::to_vec(record).map_err(|error| {
+        SinexError::serialization("failed to serialize self-observation record")
+            .with_std_error(&error)
+    })?;
+    data.push(b'\n');
+    Ok(data)
 }
 
 /// Background task for periodic metric emission
