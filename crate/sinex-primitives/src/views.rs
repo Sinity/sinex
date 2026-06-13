@@ -110,7 +110,7 @@ pub struct ActionAvailability {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub command_equivalent: Option<String>,
+    pub command_hint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rpc_method: Option<String>,
     pub side_effect: ActionSideEffect,
@@ -134,7 +134,7 @@ impl ActionAvailability {
             label: label.into(),
             state,
             reason: None,
-            command_equivalent: None,
+            command_hint: None,
             rpc_method: None,
             side_effect: ActionSideEffect::Read,
             requires_confirmation: false,
@@ -150,8 +150,8 @@ impl ActionAvailability {
     }
 
     #[must_use]
-    pub fn with_command_equivalent(mut self, command: impl Into<String>) -> Self {
-        self.command_equivalent = Some(command.into());
+    pub fn with_command_hint(mut self, command: impl Into<String>) -> Self {
+        self.command_hint = Some(command.into());
         self
     }
 
@@ -439,11 +439,11 @@ fn event_actions(event_id: Option<&str>) -> Vec<ActionAvailability> {
     match event_id {
         Some(id) => vec![
             ActionAvailability::read("event.trace", "Trace", ActionAvailabilityState::Enabled)
-                .with_command_equivalent(format!("sinexctl trace {id}"))
+                .with_command_hint(format!("sinexctl trace {id}"))
                 .with_rpc_method("events.lineage"),
             ActionAvailability::read("event.inspect", "Inspect", ActionAvailabilityState::Target)
                 .with_reason("multi-pane event inspector is tracked separately")
-                .with_command_equivalent(format!("sinexctl trace {id}"))
+                .with_command_hint(format!("sinexctl trace {id}"))
                 .with_rpc_method("events.query"),
         ],
         None => vec![
