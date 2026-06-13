@@ -183,13 +183,75 @@ pub fn workspace_target_dir() -> PathBuf {
 }
 
 /// Cargo target directory for a specific checkout root.
+///
+/// When the inherited `CARGO_TARGET_DIR` is foreign to `workspace_root` — either
+/// because it lives inside a different sinex checkout or because it is a
+/// `/var/cache/sinex/<user>/<hash>/...` path whose hash does not match the active
+/// workspace — the value is overridden with the worktree-correct target dir and a
+/// prominent warning is emitted to stderr. The warning fires at most once per xtask
+/// process (guarded by [`FOREIGN_TARGET_DIR_WARNED`]) so it does not spam on
+/// repeated cargo invocations.
+///
+/// An arbitrary user-set path (e.g. `/tmp/custom`) that is neither a
+/// `/var/cache/sinex/<hash>` shape nor inside another checkout is respected verbatim.
 #[must_use]
 pub fn workspace_target_dir_for(workspace_root: &Path) -> PathBuf {
     if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
-        return PathBuf::from(dir);
+        let candidate = PathBuf::from(&dir);
+        if is_foreign_sinex_cache_path(&candidate, workspace_root)
+            || path_belongs_to_other_checkout(&candidate, workspace_root)
+        {
+            let corrected = workspace_cache_root_for(workspace_root).join("target");
+            FOREIGN_TARGET_DIR_WARNED.get_or_init(|| {
+                eprintln!(
+                    "[xtask] WARNING: CARGO_TARGET_DIR={dir} belongs to a different checkout \
+                     (hash mismatch); using {} to avoid validating the wrong tree",
+                    corrected.display()
+                );
+            });
+            return corrected;
+        }
+        return candidate;
     }
 
     workspace_cache_root_for(workspace_root).join("target")
+}
+
+/// Fired at most once per xtask process when an inherited `CARGO_TARGET_DIR` is
+/// detected as foreign and overridden. Prevents duplicate warnings on repeated
+/// cargo invocations within a single xtask run.
+static FOREIGN_TARGET_DIR_WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// Return `true` when `path` appears to be a sinnix-managed cache dir for a
+/// **different** workspace — that is, a path of the form
+/// `/var/cache/sinex/<user>/<hash>/...` where `<hash>` does not match the
+/// SHA-256-derived [`workspace_hash`] of `workspace_root`.
+///
+/// The check is deliberately narrow: a path that does not contain the
+/// `/var/cache/sinex/<user>/<hash>/` prefix is never considered foreign by this
+/// predicate, even if it is unusual or user-defined.
+fn is_foreign_sinex_cache_path(path: &Path, workspace_root: &Path) -> bool {
+    let components: Vec<_> = path
+        .components()
+        .map(|c| c.as_os_str().to_owned())
+        .collect();
+
+    // Locate the /var/cache/sinex/ triple in the component sequence.
+    let Some(var_idx) = components
+        .windows(3)
+        .position(|w| w[0] == "var" && w[1] == "cache" && w[2] == "sinex")
+    else {
+        return false; // Not a sinnix cache path — leave it alone.
+    };
+
+    // After /var/cache/sinex/ the shape is: <user> (var_idx+3) then <hash> (var_idx+4).
+    let hash_idx = var_idx + 4;
+    let Some(path_hash) = components.get(hash_idx) else {
+        return false; // Truncated path with no hash segment — treat as non-matching.
+    };
+
+    let expected = workspace_hash(workspace_root);
+    path_hash.to_string_lossy() != expected.as_str()
 }
 
 /// Cache root for checkout-local build/runtime artifacts.
@@ -236,7 +298,7 @@ fn usable_sticky_tmpfs(_path: &Path, _min_free_mb: f64) -> bool {
     false
 }
 
-fn workspace_hash(workspace_root: &Path) -> String {
+pub(crate) fn workspace_hash(workspace_root: &Path) -> String {
     use sha2::{Digest, Sha256};
 
     let mut hasher = Sha256::new();
@@ -425,8 +487,9 @@ fn path_belongs_to_other_checkout(path: &Path, workspace_root: &Path) -> bool {
 }
 
 /// Read a path-valued env var, ignoring values that point inside a different
-/// sinex checkout. Falls back to `fallback()` when the env var is unset or
-/// belongs to another checkout.
+/// sinex checkout or that carry a sinnix cache-hash segment belonging to a
+/// different workspace. Falls back to `fallback()` when the env var is unset or
+/// is foreign to `workspace_root`.
 pub(crate) fn workspace_pinned_env_path<F>(var: &str, workspace_root: &Path, fallback: F) -> PathBuf
 where
     F: FnOnce() -> PathBuf,
@@ -434,7 +497,9 @@ where
     match env::var(var) {
         Ok(raw) => {
             let candidate = PathBuf::from(raw);
-            if path_belongs_to_other_checkout(&candidate, workspace_root) {
+            if path_belongs_to_other_checkout(&candidate, workspace_root)
+                || is_foreign_sinex_cache_path(&candidate, workspace_root)
+            {
                 fallback()
             } else {
                 candidate
@@ -803,6 +868,128 @@ mod tests {
         assert!(
             error.to_string().contains("failed to parse"),
             "expected parse context, got: {error}"
+        );
+        Ok(())
+    }
+
+    // ── Foreign-target-dir guard tests ────────────────────────────────────────
+
+    /// A `/var/cache/sinex/<user>/<OTHER-hash>/target` inherited from the
+    /// orchestrator's devshell must be overridden to the worktree-correct dir.
+    ///
+    /// This is the exact scenario that caused #1749 to merge non-compiling: the
+    /// worktree agent's `CARGO_TARGET_DIR` pointed at the main checkout's warm
+    /// artifacts and `xtask check` false-passed in 0.3 s.
+    #[sinex_test]
+    async fn test_workspace_target_dir_overrides_foreign_sinex_cache_hash() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        // The hash for THIS workspace (tempdir path) is computed by workspace_hash.
+        let correct_hash = workspace_hash(workspace.path());
+        // Construct a cache path with a DIFFERENT hash — simulates the orchestrator's dir.
+        let other_hash = if correct_hash == "000000000000" {
+            "111111111111"
+        } else {
+            "000000000000"
+        };
+        let foreign = format!("/var/cache/sinex/sinity/{other_hash}/target");
+
+        let mut env = EnvGuard::with_keys(&["CARGO_TARGET_DIR", "SINEX_DEV_CACHE_ROOT"]);
+        env.set("CARGO_TARGET_DIR", &foreign);
+        env.clear("SINEX_DEV_CACHE_ROOT");
+
+        // The function must NOT use the foreign path. It must fall back to the
+        // workspace-local cache tree.
+        let expected = workspace.path().join(".sinex/cache/target");
+        assert_eq!(
+            workspace_target_dir_for(workspace.path()),
+            expected,
+            "foreign-hash CARGO_TARGET_DIR must be overridden to the worktree-correct dir"
+        );
+        Ok(())
+    }
+
+    /// A `/var/cache/sinex/<user>/<SAME-hash>/target` that was legitimately set
+    /// by the active devshell must be respected verbatim — it is not foreign.
+    #[sinex_test]
+    async fn test_workspace_target_dir_keeps_matching_sinex_cache_hash() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let hash = workspace_hash(workspace.path());
+        let matching = format!("/var/cache/sinex/sinity/{hash}/target");
+
+        let mut env = EnvGuard::with_keys(&["CARGO_TARGET_DIR"]);
+        env.set("CARGO_TARGET_DIR", &matching);
+
+        assert_eq!(
+            workspace_target_dir_for(workspace.path()),
+            PathBuf::from(&matching),
+            "a same-hash sinnix cache path must be returned unchanged"
+        );
+        Ok(())
+    }
+
+    /// An arbitrary user-set `CARGO_TARGET_DIR` (not a sinnix cache shape, not
+    /// inside another checkout) must always be respected verbatim.
+    ///
+    /// This ensures the existing `test_workspace_target_dir_respects_cargo_target_dir`
+    /// contract holds after the foreign-target guard is added.
+    #[sinex_test]
+    async fn test_workspace_target_dir_keeps_arbitrary_custom_path() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let custom = workspace.path().join("my-custom-target");
+
+        let mut env = EnvGuard::with_keys(&["CARGO_TARGET_DIR", "SINEX_DEV_CACHE_ROOT"]);
+        env.set("CARGO_TARGET_DIR", &custom);
+        env.clear("SINEX_DEV_CACHE_ROOT");
+
+        assert_eq!(
+            workspace_target_dir_for(workspace.path()),
+            custom,
+            "an arbitrary non-cache CARGO_TARGET_DIR must not be overridden"
+        );
+        Ok(())
+    }
+
+    /// When `CARGO_TARGET_DIR` is unset the function falls back to the
+    /// workspace-local cache tree.
+    #[sinex_test]
+    async fn test_workspace_target_dir_fallback_when_unset() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let mut env = EnvGuard::with_keys(&["CARGO_TARGET_DIR", "SINEX_DEV_CACHE_ROOT"]);
+        env.clear("CARGO_TARGET_DIR");
+        env.clear("SINEX_DEV_CACHE_ROOT");
+
+        assert_eq!(
+            workspace_target_dir_for(workspace.path()),
+            workspace.path().join(".sinex/cache/target")
+        );
+        Ok(())
+    }
+
+    /// A foreign-hash sinnix cache path in `SINEX_DEV_CACHE_ROOT` is also
+    /// rejected by `workspace_pinned_env_path` so the corrected target-dir
+    /// fallback chain does not silently route back to the main checkout's cache.
+    #[sinex_test]
+    async fn test_workspace_pinned_env_path_rejects_foreign_sinex_cache_hash() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let correct_hash = workspace_hash(workspace.path());
+        let other_hash = if correct_hash == "000000000000" {
+            "111111111111"
+        } else {
+            "000000000000"
+        };
+        let foreign = PathBuf::from(format!("/var/cache/sinex/sinity/{other_hash}"));
+        let fallback_dir = workspace.path().join(".sinex/cache");
+
+        let mut env = EnvGuard::with_keys(&["SINEX_TEST_PINNED_PATH"]);
+        env.set("SINEX_TEST_PINNED_PATH", &foreign);
+        let resolved = workspace_pinned_env_path(
+            "SINEX_TEST_PINNED_PATH",
+            workspace.path(),
+            || fallback_dir.clone(),
+        );
+        assert_eq!(
+            resolved, fallback_dir,
+            "a foreign-hash sinnix cache path must fall back to the workspace-local default"
         );
         Ok(())
     }
