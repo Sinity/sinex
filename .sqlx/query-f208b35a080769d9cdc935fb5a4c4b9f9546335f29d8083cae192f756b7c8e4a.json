@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            event_id,\n            provenance_kind,\n            source,\n            event_type,\n            ts_capture,\n            temporal_source_type,\n            temporal_policy,\n            semantics_version,\n            scope_key\n        FROM core.event_temporal_facts\n        WHERE event_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "event_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "provenance_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "source",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "event_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "ts_capture",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "temporal_source_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "temporal_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "semantics_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "scope_key",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "f208b35a080769d9cdc935fb5a4c4b9f9546335f29d8083cae192f756b7c8e4a"
+}

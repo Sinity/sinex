@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE sinex_schemas.event_payload_schemas\n        SET retention_seconds = CASE\n                WHEN id = $1::uuid THEN 3600\n                WHEN id = $2::uuid THEN 60\n                ELSE retention_seconds\n            END,\n            is_active = CASE\n                WHEN id = $2::uuid THEN false\n                ELSE is_active\n            END\n        WHERE id IN ($1::uuid, $2::uuid)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "40d1b989c4f267cb4791f48d99087645bd127067bdf3cedc6411bdde450d1984"
+}

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT duration_ms as \"duration_ms!\" FROM core.operations_log WHERE id = $1::uuid",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "duration_ms!",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "e044f2b1eb870d5f415b87511dc7033438b2f57040316ec305d8e5ad9cd6b00f"
+}

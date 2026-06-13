@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT COUNT(*) FROM raw.source_material_registry\n        WHERE status = $1 AND source_identifier LIKE 'concurrent-source-%'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "3dfd3c8d4dfe5d144bf256ef461cb08d6d44323f8f9db66c76b9cc23858cd98c"
+}

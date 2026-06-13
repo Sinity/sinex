@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE raw.source_material_registry\n        SET status = $1,\n            metadata = core.jsonb_merge_deep(metadata, jsonb_build_object(\n                'recovery_info', jsonb_build_object(\n                    'recovered_at', NOW(),\n                    'recovery_reason', 'node_crash',\n                    'original_status', 'sensing'\n                )\n            ))\n        WHERE id = $2::uuid\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "902f1d43c0e8ab1eaf4a1931051e07f6c0f0d8e87b9f138c22421789eeec4a69"
+}

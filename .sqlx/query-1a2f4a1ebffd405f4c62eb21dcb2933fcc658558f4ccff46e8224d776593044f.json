@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.events (\n            id, source, event_type, host, payload, ts_orig, ts_orig_subnano,\n            source_material_id, anchor_byte\n        )\n        VALUES ($1, 'test', 'fixture.event', 'test-host', '{}'::jsonb,\n                NOW(), 0, $2, 0)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1a2f4a1ebffd405f4c62eb21dcb2933fcc658558f4ccff46e8224d776593044f"
+}

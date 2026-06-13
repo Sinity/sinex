@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.events (\n            id,\n            source,\n            event_type,\n            host,\n            payload,\n            ts_orig,\n            source_event_ids\n        ) VALUES (\n            $1::uuid,\n            $2,\n            $3,\n            $4,\n            $5,\n            $6,\n            ARRAY[$7::uuid]::uuid[]::uuid[]\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Timestamptz",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1e478d5174328c81a0f299f088f41c3aa8ef70904595f80f1833038fa7266d31"
+}

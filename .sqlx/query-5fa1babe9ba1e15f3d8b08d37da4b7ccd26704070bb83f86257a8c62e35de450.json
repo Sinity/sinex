@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE core.events RENAME COLUMN scope_key TO scope_key_broken",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "5fa1babe9ba1e15f3d8b08d37da4b7ccd26704070bb83f86257a8c62e35de450"
+}

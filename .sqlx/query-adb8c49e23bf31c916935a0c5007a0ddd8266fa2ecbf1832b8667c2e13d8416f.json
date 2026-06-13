@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.operations_log\n        SET preview_summary = '\"broken\"'::jsonb\n        WHERE id = $1::uuid\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "adb8c49e23bf31c916935a0c5007a0ddd8266fa2ecbf1832b8667c2e13d8416f"
+}

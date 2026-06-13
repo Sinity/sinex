@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.operations_log\n        SET preview_summary = jsonb_set(\n                jsonb_set(\n                    preview_summary,\n                    '{started_at}',\n                    to_jsonb($2::timestamptz),\n                    true\n                ),\n                '{executor_module}',\n                $3::jsonb,\n                true\n            )\n        WHERE id = $1::uuid\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2750bdc6019ba4dba3fe3101a5d40959eb818884c56dc1e7c564b9d89b5e6f00"
+}

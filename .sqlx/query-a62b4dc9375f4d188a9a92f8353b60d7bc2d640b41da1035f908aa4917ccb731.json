@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT result_status, result_message, preview_summary\n        FROM core.operations_log\n        WHERE id = $1::uuid\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "result_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "result_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "preview_summary",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "a62b4dc9375f4d188a9a92f8353b60d7bc2d640b41da1035f908aa4917ccb731"
+}

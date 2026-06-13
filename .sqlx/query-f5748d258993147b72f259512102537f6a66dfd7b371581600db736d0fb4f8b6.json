@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pg_sleep(0.5), $1::int as idx",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pg_sleep",
+        "type_info": "Void"
+      },
+      {
+        "ordinal": 1,
+        "name": "idx",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "f5748d258993147b72f259512102537f6a66dfd7b371581600db736d0fb4f8b6"
+}

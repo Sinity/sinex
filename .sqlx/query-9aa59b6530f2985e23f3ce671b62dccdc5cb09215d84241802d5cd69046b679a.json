@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT COUNT(*) FROM raw.temporal_ledger tl\n        JOIN raw.source_material_registry smr ON tl.source_material_id = smr.id\n        WHERE smr.source_identifier LIKE 'concurrent-source-%'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9aa59b6530f2985e23f3ce671b62dccdc5cb09215d84241802d5cd69046b679a"
+}

@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.document_chunks\n            (document_id, chunk_index, text, byte_offset_start, byte_offset_end,\n             source_anchor_start, source_anchor_end, chunked_event_id)\n        VALUES ($1, $2, $3, 0, $4, NULL, NULL, $5)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Text",
+        "Int8",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "306b7079fd7ed7f38c35ebfd4b421d3c9f99dcc2c3de3c21851c00e86337b5fb"
+}

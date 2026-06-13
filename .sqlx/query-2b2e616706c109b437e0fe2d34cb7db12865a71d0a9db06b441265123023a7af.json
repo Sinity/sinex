@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT EXISTS(\n            SELECT 1\n            FROM pg_proc p\n            JOIN pg_namespace n ON n.oid = p.pronamespace\n            WHERE n.nspname = 'core'\n              AND p.proname = 'prepare_cascade_session'\n        ) AS \"exists!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "2b2e616706c109b437e0fe2d34cb7db12865a71d0a9db06b441265123023a7af"
+}

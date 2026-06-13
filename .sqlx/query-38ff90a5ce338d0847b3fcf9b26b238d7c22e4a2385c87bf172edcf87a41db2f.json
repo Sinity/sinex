@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            status,\n            ended_at as \"ended_at: sinex_primitives::temporal::Timestamp\",\n            effective_config_hash,\n            effective_config\n        FROM core.runs\n        WHERE id = $1::uuid\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "ended_at: sinex_primitives::temporal::Timestamp",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 2,
+        "name": "effective_config_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "effective_config",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "38ff90a5ce338d0847b3fcf9b26b238d7c22e4a2385c87bf172edcf87a41db2f"
+}

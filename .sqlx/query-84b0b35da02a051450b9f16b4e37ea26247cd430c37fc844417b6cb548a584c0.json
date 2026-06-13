@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE core.operations_log\n        SET scope = jsonb_set(scope, '{created_at}', to_jsonb($2::text), false)\n        WHERE id = $1::uuid\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "84b0b35da02a051450b9f16b4e37ea26247cd430c37fc844417b6cb548a584c0"
+}

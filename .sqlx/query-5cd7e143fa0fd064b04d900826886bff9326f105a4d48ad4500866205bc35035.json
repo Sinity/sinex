@@ -1,0 +1,82 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            event_id,\n            provenance_kind,\n            source,\n            event_type,\n            ts_capture,\n            temporal_policy,\n            semantics_version,\n            scope_key,\n            equivalence_key,\n            created_by_operation_id,\n            automaton_model\n        FROM core.event_temporal_facts\n        WHERE event_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "event_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "provenance_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "source",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "event_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "ts_capture",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "temporal_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "semantics_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "scope_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "equivalence_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_by_operation_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 10,
+        "name": "automaton_model",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "5cd7e143fa0fd064b04d900826886bff9326f105a4d48ad4500866205bc35035"
+}

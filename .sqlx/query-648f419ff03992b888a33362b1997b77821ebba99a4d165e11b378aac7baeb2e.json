@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO raw.source_material_registry (\n            id,\n            material_kind,\n            source_identifier,\n            status,\n            timing_info_type,\n            metadata\n        )\n        VALUES ($1::uuid, 'annex', $2, 'sensing', 'realtime', $3)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "648f419ff03992b888a33362b1997b77821ebba99a4d165e11b378aac7baeb2e"
+}

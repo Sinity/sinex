@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO core.event_tombstones (\n            id, source, event_type, ts_orig, ts_purged,\n            purge_reason, purge_operation_id, archived_at\n        )\n        VALUES (\n            $1::uuid, 'test.source', 'test.event', NOW(), NOW(),\n            'typed-id regression', $2::uuid, NOW()\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "719513581a33c37d60a9403f06252d67e49c1f67b08f1cdbe0085b578fae5786"
+}
