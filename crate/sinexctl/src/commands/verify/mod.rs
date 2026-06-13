@@ -245,7 +245,7 @@ impl VerifyCommand {
 fn finalize_summary(summary: &VerificationSummary, format: OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Table => print_verification_footer(summary),
-        OutputFormat::Json => {
+        OutputFormat::Json | OutputFormat::Ndjson => {
             println!("{}", format_json(&summary.as_json())?);
             if summary.fail > 0 {
                 std::process::exit(1);

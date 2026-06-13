@@ -35,7 +35,7 @@ impl ExplainCommand {
         let result = client.trace_lineage(query).await?;
 
         match format {
-            OutputFormat::Json | OutputFormat::Dot => {
+            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                 println!("{}", format_json(&result)?);
                 return Ok(());
             }

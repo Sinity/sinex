@@ -472,7 +472,7 @@ async fn execute_watch(
                 }
             }
         }
-        OutputFormat::Json | OutputFormat::Dot => loop {
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => loop {
             let op = client.replay_status(operation_id).await?;
             println!("{}", format_json(&op)?);
             if op.state.is_terminal() {

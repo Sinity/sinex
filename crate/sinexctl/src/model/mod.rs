@@ -13,8 +13,10 @@ pub enum OutputFormat {
     /// Human-readable table (default)
     #[default]
     Table,
-    /// JSON output (one object per line)
+    /// JSON output — the entire response serialized as one finite pretty-printed document
     Json,
+    /// NDJSON (newline-delimited JSON) — one JSON object per line, for streaming/bulk use
+    Ndjson,
     /// YAML output
     Yaml,
     /// Graphviz DOT language (for provenance graphs)

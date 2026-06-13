@@ -1,4 +1,4 @@
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::{format_json, format_yaml, render_envelope};
 use crate::model::OutputFormat;
 use crate::parse::parse_duration;
 use clap::Args;
@@ -69,7 +69,7 @@ impl StatusCommand {
         };
 
         match format {
-            OutputFormat::Json | OutputFormat::Dot => {
+            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                 println!("{}", serde_json::to_string_pretty(&snapshot)?);
             }
             OutputFormat::Yaml => {
@@ -864,17 +864,15 @@ impl RecentCommand {
             "source": self.source,
         }));
 
-        match format {
-            OutputFormat::Json | OutputFormat::Dot => {
-                println!("{}", format_json(&envelope)?);
-                return Ok(());
+        if let Some(output) = render_envelope(&envelope, &envelope.payload.cards, format)? {
+            // Trim trailing newline added by render_envelope (ndjson) before println! adds one
+            print!("{output}");
+            if !output.ends_with('\n') {
+                println!();
             }
-            OutputFormat::Yaml => {
-                println!("{}", format_yaml(&envelope)?);
-                return Ok(());
-            }
-            OutputFormat::Table => {}
+            return Ok(());
         }
+        // OutputFormat::Table — fall through to human rendering below
 
         if events.is_empty() {
             println!("No events found in the last {}", self.since);
@@ -974,7 +972,7 @@ impl ErrorsCommand {
         };
 
         match format {
-            OutputFormat::Json | OutputFormat::Dot => {
+            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                 let payload = json!({
                     "since": self.since,
                     "count": events.len(),
@@ -1104,7 +1102,7 @@ impl WatchCommand {
         while let Some(result) = stream.next().await {
             match result {
                 Ok(SseClientMessage::Event { event }) => match format {
-                    OutputFormat::Json | OutputFormat::Dot => {
+                    OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                         let line = json!({ "kind": "event", "event": event });
                         println!("{}", serde_json::to_string(&line)?);
                     }
@@ -1154,7 +1152,7 @@ impl WatchCommand {
                     }
                 },
                 Ok(SseClientMessage::Gap { dropped, .. }) => match format {
-                    OutputFormat::Json | OutputFormat::Dot => {
+                    OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                         let line = json!({ "kind": "gap", "dropped": dropped });
                         println!("{}", serde_json::to_string(&line)?);
                     }
@@ -1175,7 +1173,7 @@ impl WatchCommand {
                 }
                 Ok(SseClientMessage::Error { code, message }) => {
                     match format {
-                        OutputFormat::Json | OutputFormat::Dot => {
+                        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                             let line = json!({ "kind": "error", "code": code, "message": message });
                             println!("{}", serde_json::to_string(&line)?);
                         }
@@ -1195,7 +1193,7 @@ impl WatchCommand {
                 }
                 Err(e) => {
                     match format {
-                        OutputFormat::Json | OutputFormat::Dot => {
+                        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                             let line = json!({ "kind": "error", "message": e.to_string() });
                             println!("{}", serde_json::to_string(&line)?);
                         }
