@@ -109,7 +109,7 @@ impl LlmBudgetReportCommand {
 
 fn render_prompts(response: &EventQueryResult, format: OutputFormat) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(response)?),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => println!("{}", format_json(response)?),
         OutputFormat::Yaml => println!("{}", format_yaml(response)?),
         OutputFormat::Table => match response {
             EventQueryResult::Events { events, .. } => {
@@ -149,7 +149,7 @@ fn render_prompts(response: &EventQueryResult, format: OutputFormat) -> Result<(
 
 fn render_route_explain(response: &LlmRouteExplainResponse, format: OutputFormat) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(response)?),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => println!("{}", format_json(response)?),
         OutputFormat::Yaml => println!("{}", format_yaml(response)?),
         OutputFormat::Table => {
             println!("LLM route decision");
@@ -170,7 +170,7 @@ fn render_route_explain(response: &LlmRouteExplainResponse, format: OutputFormat
 
 fn render_budget_report(response: &LlmBudgetReportResponse, format: OutputFormat) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(response)?),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => println!("{}", format_json(response)?),
         OutputFormat::Yaml => println!("{}", format_yaml(response)?),
         OutputFormat::Table => {
             println!("LLM budget report");

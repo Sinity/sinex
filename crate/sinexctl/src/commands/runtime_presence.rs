@@ -48,7 +48,7 @@ impl RuntimePresenceCommand {
             .collect();
 
         match format {
-            OutputFormat::Json | OutputFormat::Dot => {
+            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                 let payload = serde_json::json!({
                     "modules": enriched.iter().map(|n| serde_json::json!({
                         "instance_id": n.info.instance_id.as_str(),

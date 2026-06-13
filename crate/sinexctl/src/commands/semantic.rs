@@ -540,7 +540,7 @@ fn read_outputs(
 
 fn render_value(label: &str, value: &Value, format: OutputFormat) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(value)?),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => println!("{}", format_json(value)?),
         OutputFormat::Yaml => println!("{}", format_yaml(value)?),
         OutputFormat::Table => {
             println!("{label}");
@@ -552,7 +552,7 @@ fn render_value(label: &str, value: &Value, format: OutputFormat) -> Result<()> 
 
 fn render_values(label: &str, values: &[Value], format: OutputFormat) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(values)?),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => println!("{}", format_json(values)?),
         OutputFormat::Yaml => println!("{}", format_yaml(values)?),
         OutputFormat::Table => {
             println!("{label}: {}", values.len());

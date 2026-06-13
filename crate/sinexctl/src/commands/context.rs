@@ -91,7 +91,7 @@ impl ContextCommand {
                 "sources": source_entries,
             });
             match format {
-                OutputFormat::Json | OutputFormat::Dot => {
+                OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                     println!("{}", format_json(&payload)?);
                 }
                 OutputFormat::Yaml => {

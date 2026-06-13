@@ -124,7 +124,7 @@ fn config_show(format: OutputFormat) -> Result<()> {
     let config = Config::load().unwrap_or_else(|_| Config::default());
 
     match format {
-        OutputFormat::Json | OutputFormat::Dot => {
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
             let json = serde_json::to_string(&config)?;
             println!("{json}");
             return Ok(());

@@ -114,7 +114,7 @@ impl TraceCommand {
     fn render(&self, result: &LineageResult, format: OutputFormat) -> Result<()> {
         match format {
             OutputFormat::Table => render_tree(result),
-            OutputFormat::Json => println!("{}", format_json(result)?),
+            OutputFormat::Json | OutputFormat::Ndjson => println!("{}", format_json(result)?),
             OutputFormat::Yaml => println!("{}", format_yaml(result)?),
             OutputFormat::Dot => println!("{}", render_dot(result)),
         }
