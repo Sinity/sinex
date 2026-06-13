@@ -1,4 +1,4 @@
-//! Production-shaped replay proof: source parse listener receives
+//! Integration test: source parse listener receives
 //! parse commands via NATS, dispatches to parser, returns acks with event counts.
 //!
 //! Replaces the fake-DB-write scan-runtime tests referenced in #1132.

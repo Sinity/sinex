@@ -8,8 +8,8 @@
 //!          [`AtuinCommandExecutedPayload`].
 //!
 //! The source contract and binding are registered here; the
-//! `terminal.atuin-history` binding in `sinex-primitives/src/proof.rs` is
-//! the canonical primitive-level binding — this module registers the
+//! `terminal.atuin-history` contract in `sinex-primitives/src/source_contracts.rs`
+//! is the canonical primitive-level declaration — this module registers the
 //! source host implementation binding on top of it.
 
 use async_trait::async_trait;

@@ -1,6 +1,6 @@
 //! Production-path test harness root.
 //!
-//! Per-source proof modules call `_run_case(...)` with fixture data,
+//! Per-source test modules call `_run_case(...)` with fixture data,
 //! expected event types, and the obligation set they want to exercise.
 //!
 //! # Adapter kinds
