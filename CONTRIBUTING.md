@@ -52,6 +52,34 @@ Mitigations already applied:
 - `CARGO_TARGET_DIR` is routed to `/cache/sinex/<checkout>/...` via the devShell
   (NVMe-backed), keeping compilation output off the main filesystem.
 
+### Worktree isolation and CARGO_TARGET_DIR
+
+When a worktree agent inherits the orchestrator's devshell environment, its
+`CARGO_TARGET_DIR` points at the **main checkout's** warm build artifacts rather
+than the worktree's own cache. Without a guard, `xtask check` in the worktree
+compiles against those stale artifacts and false-passes in under a second — exactly
+the mechanism behind #1749 merging non-compiling code.
+
+xtask now self-corrects this automatically:
+- `workspace_target_dir_for` detects a `/var/cache/sinex/<user>/<HASH>/...` path
+  whose `<HASH>` does not match the active workspace (workspace-hash mismatch).
+- On mismatch it prints a one-line `[xtask] WARNING: CARGO_TARGET_DIR=...` to
+  stderr and silently overrides the value to the worktree-correct target dir.
+- The corrected value is explicitly exported to every cargo subprocess via
+  `apply_cargo_env_policy_std/tokio`, so it wins over the raw inherited env.
+- Arbitrary user-set paths that are neither a `/var/cache/sinex/<hash>` shape
+  nor inside another checkout remain respected verbatim.
+
+If you see the WARNING, it confirms xtask caught and corrected the leak. A real
+compilation against the worktree tree takes minutes, not 0.3 s. If a check
+returns in under a second claiming success from a worktree, the env fix may not
+have fired — verify with:
+
+```bash
+CARGO_TARGET_DIR=/var/cache/sinex/sinity/SOMEOTHERHASH000/target xtask check -p xtask
+# Should print the WARNING and then do a real compile.
+```
+
 When a check/test run is slow on a contended host:
 - The preflight pressure gate may refuse to start; pass `--allow-contended-host`
   for an intentional batch run.
