@@ -1,12 +1,55 @@
 # CI Policy
 
-GitHub-hosted workflows are manual-only in this repository. Local `xtask`
-verification recorded in the PR is the default review gate unless a workflow is
-deliberately invoked with `workflow_dispatch`.
+Most GitHub-hosted workflows are manual-only in this repository. The exception
+is the **compile gate** (`compile-gate.yml`), which runs automatically on every
+`pull_request` and is a required status check — a non-compiling branch cannot
+merge. All other workflows require deliberate `workflow_dispatch` invocation.
+
+## Required GitHub Status Checks (branch protection)
+
+These checks must be green before a PR can merge:
+
+| Check | Workflow | Trigger |
+|-------|----------|---------|
+| `xtask check --full --all` | `compile-gate.yml` | every pull_request |
+| CodeRabbit | external | every pull_request |
+| GitGuardian | external | every pull_request |
+| `xtask schema strict-diff` | `schema-strict-diff.yml` | PRs touching schema paths |
+
+> **Branch protection note:** after adding a new required check, the repo owner
+> must navigate to Settings → Branches → master branch protection rule and add
+> the check's exact job name (`xtask check --full --all`) to the required status
+> checks list.
+
+## Warm-Cache False-Pass Risk (deletion / refactor PRs)
+
+`xtask check` can false-pass locally when a warm `CARGO_TARGET_DIR` masks a
+cross-crate break from a deleted symbol. The implementing agent in PR #1749
+reported a passing `xtask check -p sinexd` while the worktree's code did not
+compile — the agent's `CARGO_TARGET_DIR` pointed at the main checkout's warm
+cache, not the worktree's actual compiled artifacts.
+
+**Before merging any deletion or refactor PR:**
+- Run `xtask check --full --all` with `CARGO_INCREMENTAL=0` from a clean or
+  isolated target dir to rule out warm-cache false-passes.
+- From a worktree agent, always override `CARGO_TARGET_DIR` to a
+  worktree-dedicated path:
+  ```bash
+  cd <worktree> && nix develop --command env \
+    CARGO_TARGET_DIR=/var/cache/sinex/sinity/wt-<tag>/target \
+    CARGO_INCREMENTAL=0 \
+    xtask check --full --all
+  ```
+  A result in 0.3s means the wrong tree was checked; a real check takes minutes.
+- The CI compile gate (`compile-gate.yml`) always runs with `CARGO_INCREMENTAL=0`
+  and a fresh checkout, so a CI green is authoritative even when local signal
+  was unreliable.
 
 ## Required Local Checks Per PR Type
 
-All PRs must pass the following before merge:
+All PRs must pass the following local gates before merge (the CI compile gate
+catches compile errors independently, but local verification should still run
+before pushing to avoid unnecessary CI cycles):
 
 ### Every PR
 
@@ -66,16 +109,17 @@ All PRs must pass the following before merge:
 
 ## CI Lane Summary
 
-| Lane | When To Run | Approximate Runtime |
-|------|---------|-------------------|
-| `check (full)` | Local before merge; manual workflow if requested | ~3-5 min |
-| `test (postgres, workspace)` | Local broad/phase gate; manual workflow if requested | ~8-12 min |
-| `docs (check)` | Local before merge when generated surfaces may drift | ~30 sec |
-| `schema (contract drift)` | Local before merge when schema/payload contracts change | ~1 min |
-| `schema (bootstrap)` | Local for schema changes; manual workflow if requested | ~2 min |
-| `test (heavy)` | Local/manual for heavy-risk surfaces | ~15-30 min |
-| `test (vm smoke)` | Local/manual for NixOS/deployment changes | ~5-10 min |
-| `test (vm integration)` | Local/manual for restart/replay/cascade changes | ~15-30 min |
+| Lane | When To Run | Trigger | Approximate Runtime |
+|------|-------------|---------|-------------------|
+| `compile gate (check --full --all)` | **Required** — every PR | pull_request (auto) | ~5-15 min cold |
+| `check (full)` | Local before merge; also the compile gate lane | local / pull_request | ~3-5 min warm |
+| `test (postgres, workspace)` | Local broad/phase gate; manual workflow if requested | workflow_dispatch | ~8-12 min |
+| `docs (check)` | Local before merge when generated surfaces may drift | local | ~30 sec |
+| `schema (contract drift)` | PRs touching schema sources | pull_request (path-scoped) | ~2 min |
+| `schema (bootstrap)` | Local for schema changes; manual workflow if requested | workflow_dispatch | ~2 min |
+| `test (heavy)` | Local/manual for heavy-risk surfaces | local | ~15-30 min |
+| `test (vm smoke)` | Local/manual for NixOS/deployment changes | local | ~5-10 min |
+| `test (vm integration)` | Local/manual for restart/replay/cascade changes | local | ~15-30 min |
 
 ## Skipping CI
 

@@ -1,0 +1,81 @@
+name: Workspace Compile Gate
+
+# Why this workflow exists:
+# PR #1749 merged to master on 2026-06-13 with all required checks green
+# (CodeRabbit, GitGuardian, schema-strict-diff) while sinexd did not compile.
+# None of the prior required checks compile the workspace. This workflow adds
+# `xtask check --full --all` as a pull_request-triggered status check so any
+# non-compiling branch is blocked from merging (#1752).
+#
+# Design decisions:
+#
+#   SQLX_OFFLINE=true — sqlx compile-time query macros need a live database by
+#   default. CI does not run a database during the compile step. The committed
+#   .sqlx/ query cache (259 files) lets cargo compile the full workspace without
+#   a live DATABASE_URL. Keep .sqlx/ current after any query change:
+#     xtask infra start && cargo sqlx prepare --workspace && git add .sqlx/
+#
+#   CARGO_INCREMENTAL=0 — forces a non-incremental compile so cross-crate
+#   breaks from deleted symbols are not masked by a warm target cache. This is
+#   the same failure mode that caused #1749 to appear locally "green" (#1752
+#   root cause: agent's CARGO_TARGET_DIR pointed at the main checkout's warm
+#   cache, not the worktree's code).
+#
+#   --full --all — runs fmt-check + clippy + forbidden-pattern scan across the
+#   entire workspace (not just affected packages), matching the "every PR"
+#   local gate from ci-policy.md. --all disables the default affected-mode
+#   package selection so a broken crate that isn't in the diff still fails.
+#
+#   --allow-contended-host — bypasses the host PSI pressure guard (only
+#   relevant on the local dev machine; CI runners have no PSI monitoring).
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  compile:
+    name: xtask check --full --all
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: compile-gate-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Nix and Cachix
+        uses: ./.github/actions/nix-bootstrap
+        with:
+          cache-name: sinity
+          cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-compile-gate-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-compile-gate-${{ runner.os }}-
+
+      - name: Compile and lint workspace (xtask check --full --all)
+        shell: bash
+        env:
+          # Use committed .sqlx/ cache so sqlx macros compile without a live DB.
+          SQLX_OFFLINE: "true"
+          # Non-incremental: prevents cross-crate breaks from being masked by a
+          # warm target cache (the false-pass failure mode in #1749 / #1752).
+          CARGO_INCREMENTAL: "0"
+        run: |
+          nix develop --accept-flake-config --no-pure-eval --command bash -lc '
+            set -euo pipefail
+            xtask check --full --all --allow-contended-host
+          '
