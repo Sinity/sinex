@@ -6,7 +6,7 @@
 //! materialized inputs and feeds them into the module implementation.
 
 use super::{
-    Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, EventTransport, JetStreamEventConsumer,
+    Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, JetStreamEventConsumer,
     JetStreamEventConsumerConfig, LeaderState, ProcessingModel, ProvisionalEvent,
     RunnerConfirmedEventHandler, RuntimeModule, RuntimeResult, RuntimeRunner, ScanArgs, SinexError,
     TimeHorizon, Uuid, debug, info, mpsc, systemd_notify, warn,
@@ -213,9 +213,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
 
         let env = sinex_primitives::environment::environment().clone();
 
-        let nats_client = match &transport {
-            EventTransport::Nats(publisher) => publisher.nats_client().clone(),
-        };
+        let nats_client = transport.nats_publisher()?.nats_client().clone();
 
         let consumer_config = Self::automaton_consumer_config(
             service_name.as_str(),

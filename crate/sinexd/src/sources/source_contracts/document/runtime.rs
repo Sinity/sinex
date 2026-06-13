@@ -9,7 +9,7 @@ use crate::runtime::{
     ActivityEntry, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use crate::runtime::{
-    EventTransport, RuntimeResult, SinexError,
+    RuntimeResult, SinexError,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     source_driver::SourceDriver,
     stage_as_you_go::StageAsYouGoContext,
@@ -786,11 +786,9 @@ impl SourceDriver for DocumentSourceDriver {
     ) -> RuntimeResult<()> {
         config.validate()?;
 
-        let publisher = match runtime.transport() {
-            EventTransport::Nats(publisher) => Arc::clone(publisher),
-        };
+        let nats_client = runtime.transport().nats_publisher()?.nats_client().clone();
 
-        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+        AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
         let acquisition =
             Arc::new(runtime.acquisition_manager(RotationPolicy::default(), "document")?);

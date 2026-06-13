@@ -130,10 +130,7 @@ impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
 }
 
 pub(super) async fn create_checkpoint_kv(transport: &EventTransport) -> RuntimeResult<kv::Store> {
-    // NATS KV is now mandatory
-    let client = match transport {
-        EventTransport::Nats(publisher) => publisher.nats_client().clone(),
-    };
+    let client = transport.nats_publisher()?.nats_client().clone();
 
     let js = async_nats::jetstream::new(client);
     let env = sinex_primitives::environment::environment();
@@ -164,8 +161,12 @@ pub(super) async fn maybe_start_schema_listener(
     // Schemas are broadcast from event_engine and stored in NATS KV.
     // In edge mode (without full infrastructure), gracefully skip schema validation.
 
-    let client = match transport {
-        EventTransport::Nats(publisher) => publisher.nats_client().clone(),
+    let client = match transport.nats_publisher() {
+        Ok(publisher) => publisher.nats_client().clone(),
+        Err(_) => {
+            debug!("Schema broadcast listener skipped: Direct transport has no NATS client");
+            return Ok((None, None, None, None));
+        }
     };
     let env = sinex_primitives::environment::environment();
     let subject = env.nats_subject("system.schemas.active");
