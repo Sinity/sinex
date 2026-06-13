@@ -485,42 +485,6 @@ pub fn source_runtime_bindings() -> impl Iterator<Item = &'static SourceRuntimeB
     inventory::iter::<SourceRuntimeBinding>()
 }
 
-// Pre-existing binding for the only currently-deployed source
-// (`terminal.atuin-history`). Aligned with the post-#1184 naming convention
-// (`source:<id>`), the descriptor's id (`terminal.atuin-history`), and
-// the descriptor's event_types (`("shell.atuin", "command.executed")`).
-inventory::submit! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:terminal.atuin-history"),
-        "terminal.atuin-history",
-        "terminal",
-    )
-    .implementation("sinexd::sources::terminal::atuin_history")
-    .adapter("sqlite_row_stream")
-    .output_event_type("command.executed")
-    .privacy_context("command")
-    .material_policy("canonical_json_lines")
-    .checkpoint_policy("sqlite_row_id")
-    .resource_shape("linear_rows_bounded_memory")
-    .capabilities(&[
-        "supports_snapshot",
-        "supports_historical",
-        "produces_material_anchors",
-        "requires_target_home",
-    ])
-    .source_id("terminal.atuin-history")
-    .runner_pack("terminal")
-    .checkpoint_family(CheckpointFamily::MutableSnapshot {
-        backing_store_kind: "sqlite",
-        occurrence_anchor: "atuin_history_id",
-    })
-    .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:terminal")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
 /// How the source's checkpoint state is shaped.
 ///
 /// Determines what the runtime checkpoint adapter must support and what
@@ -760,13 +724,40 @@ mod tests {
         Ok(())
     }
 
+    // Sentinel binding submitted at link time to exercise the inventory
+    // collection path. Concrete source bindings (e.g. terminal.atuin-history)
+    // now live with their `#[derive(SourceDefinition)]` source structs in
+    // `sinexd`, so this crate's test binary only verifies the mechanism.
+    ::inventory::submit! {
+        SourceRuntimeBinding::builder(
+            SubjectRef::from_static("source:primitives.inventory-sentinel"),
+            "primitives.inventory-sentinel",
+            "test",
+        )
+        .implementation("sinex-primitives::test")
+        .adapter("test_adapter")
+        .output_event_type("test.output")
+        .privacy_context("Metadata")
+        .material_policy("test_material")
+        .checkpoint_policy("test_checkpoint")
+        .resource_shape("test_shape")
+        .source_id("primitives.inventory-sentinel")
+        .runner_pack("test")
+        .checkpoint_family(CheckpointFamily::AppendStream)
+        .runtime_shape(RuntimeShape::OnDemand)
+        .package_impact("no_new_output")
+        .implementation_mode("test")
+        .build_impact(SourceBuildImpact::ZERO)
+        .build()
+    }
+
     #[sinex_test]
-    async fn source_runtime_binding_inventory_contains_atuin() -> TestResult<()> {
+    async fn source_runtime_binding_inventory_collects_submissions() -> TestResult<()> {
         let bindings = source_runtime_bindings()
             .map(|descriptor| descriptor.subject.as_str())
             .collect::<Vec<_>>();
 
-        assert!(bindings.contains(&"source:terminal.atuin-history"));
+        assert!(bindings.contains(&"source:primitives.inventory-sentinel"));
         Ok(())
     }
 }
