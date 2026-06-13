@@ -5,7 +5,7 @@ use sqlx::FromRow;
 
 /// Row from `core.model_effects`.
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
-pub struct ModelEffectRecord {
+pub struct ModelEffectRow {
     pub id: sqlx::types::Uuid,
     pub provider: String,
     pub model: String,

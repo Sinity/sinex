@@ -318,10 +318,10 @@
     },
     {
       "source": "integration.polylogue",
-      "event_type": "integration.polylogue.conversation_indexed",
+      "event_type": "integration.polylogue.session_indexed",
       "version": "1.0.0",
-      "path": "integration.polylogue/integration.polylogue.conversation_indexed.json",
-      "content_hash": "6538704c100208e6a3315c19a3aa8ce2e473aae6a3ffd99a23250c5c574c92b2"
+      "path": "integration.polylogue/integration.polylogue.session_indexed.json",
+      "content_hash": "9395a5ed2beb279231c0181f2b31a0dea3b927c4f1ffca4fc7897cca3f07aec8"
     },
     {
       "source": "irc",

@@ -9,7 +9,7 @@
 //!
 //! This module provides:
 //! - A source contract for the canonical
-//!   [`sinex_primitives::events::payloads::PolylogueConversationIndexedPayload`]
+//!   [`sinex_primitives::events::payloads::PolylogueSessionIndexedPayload`]
 //!   schema Polylogue publishes.
 //! - [`register_source_contract!`] and [`register_source_runtime_binding!`] entries
 //!   so the source appears in the catalog and in `sinexctl sources list`.
@@ -24,19 +24,19 @@
 //!
 //! | Subject | Description |
 //! |---------|-------------|
-//! | `{env}.sinex.events.raw.integration.polylogue.conversation_indexed` | Conversation indexed |
+//! | `{env}.sinex.events.raw.integration.polylogue.session_indexed` | Session indexed |
 //!
 //! ## Payload schema
 //!
 //! | Field | Type | Required | Description |
 //! |-------|------|----------|-------------|
-//! | `conversation_id` | string | yes | Stable polylogue conversation ID |
-//! | `provider` | string | yes | AI provider (`claude`, `chatgpt`, `codex`, …) |
-//! | `title` | string? | no | Conversation title if present |
+//! | `session_id` | string | yes | Stable polylogue session ID |
+//! | `origin` | string | yes | AI provider origin (`claude`, `chatgpt`, `codex`, …) |
+//! | `title` | string? | no | Session title if present |
 //! | `tags` | string[] | yes | User-applied and auto-inferred tags |
-//! | `content_hash` | string | yes | SHA-256 hex of canonical conversation content |
-//! | `created_at` | RFC 3339 | yes | When the conversation was created |
-//! | `updated_at` | RFC 3339 | yes | When the conversation was last updated |
+//! | `content_hash` | string | yes | SHA-256 hex of canonical session content |
+//! | `created_at` | RFC 3339 | yes | When the session was created |
+//! | `updated_at` | RFC 3339 | yes | When the session was last updated |
 //! | `message_count` | int | yes | Total message count |
 //! | `cost_usd` | number? | no | Estimated cost in USD if available |
 //! | `model_slug` | string? | no | Primary model used (e.g. `claude-opus-4-5`) |
@@ -44,12 +44,12 @@
 //! ## Privacy tier
 //!
 //! **Sensitive** — tags and titles can reflect personal context even though
-//! raw conversation text is not included.
+//! raw session text is not included.
 //!
 //! ## Occurrence identity
 //!
-//! `(content_hash, conversation_id)` — the content hash detects changed
-//! conversations; the `conversation_id` provides the stable external key.
+//! `(content_hash, session_id)` — the content hash detects changed
+//! sessions; the `session_id` provides the stable external key.
 
 use sinex_primitives::source_contracts::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
@@ -65,11 +65,11 @@ register_source_contract! {
     SourceContract {
         id: "integration.polylogue",
         namespace: "integration",
-        event_types: &[("integration.polylogue", "integration.polylogue.conversation_indexed")],
+        event_types: &[("integration.polylogue", "integration.polylogue.session_indexed")],
         privacy_tier: PrivacyTier::Sensitive,
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(content_hash, conversation_id)"),
+        occurrence_identity: OccurrenceIdentity::Uuid5From("(content_hash, session_id)"),
         access_policy: "personal_ai_conversations",
     }
 }
@@ -82,7 +82,7 @@ register_source_runtime_binding! {
     )
     .implementation("polylogue-daemon")
     .adapter("ExternalProducer")
-    .output_event_type("integration.polylogue.conversation_indexed")
+    .output_event_type("integration.polylogue.session_indexed")
     .privacy_context("Document")
     .material_policy("external_producer_virtual_material")
     .checkpoint_policy("external_producer")
