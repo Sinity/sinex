@@ -32,19 +32,15 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::runtime::parser::{MaterialParser, ParserError, ParserResult, StaticFileAdapter};
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
+use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceId, SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // ---------------------------------------------------------------------------
 // Raw CSV row
@@ -79,7 +75,29 @@ struct RaindropCsvRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RaindropParserConfig;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "raindrop-bookmarks",
+    namespace = "web",
+    event_source = "raindrop",
+    event_type = "bookmark.created",
+    adapter = "StaticFileAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "historical",
+    retention = "forever",
+    occurrence_identity = "uuid5:(raindrop_id, url, created)",
+    access_policy = "personal_bookmarks",
+    implementation = "sinexd",
+    privacy_context = "Metadata",
+    material_policy = "static_export_file",
+    checkpoint_policy = "static_file_cursor",
+    resource_shape = "file_reader",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "append_stream",
+    runtime_shape = "on_demand",
+    package_impact = "raindrop_bookmarks_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct RaindropBookmarkParser;
 
 #[async_trait]
@@ -204,54 +222,6 @@ fn non_empty(s: &str) -> Option<&str> {
     let trimmed = s.trim();
     (!trimmed.is_empty()).then_some(trimmed)
 }
-
-// ---------------------------------------------------------------------------
-// Source contract + binding + registration
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "raindrop-bookmarks",
-        namespace: "web",
-        event_types: &[("raindrop", "bookmark.created")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From(
-            "(raindrop_id, url, created)",
-        ),
-        access_policy: "personal_bookmarks",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:raindrop-bookmarks"),
-        "raindrop-bookmarks",
-        "web",
-    )
-    .implementation("sinexd")
-    .adapter("StaticFileAdapter")
-    .output_event_type("bookmark.created")
-    .privacy_context("Metadata")
-    .material_policy("static_export_file")
-    .checkpoint_policy("static_file_cursor")
-    .resource_shape("file_reader")
-    .source_id("raindrop-bookmarks")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("raindrop_bookmarks_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
-crate::register_source!(
-    source_id: "raindrop-bookmarks",
-    adapter: StaticFileAdapter,
-    parser: RaindropBookmarkParser,
-);
 
 // ---------------------------------------------------------------------------
 // Tests
