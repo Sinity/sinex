@@ -6,6 +6,7 @@ use crate::runtime::parser::{
     FileDropEventKind, FileDropMoveRole, FileDropRecordMetadata, MaterialParser, ParserError,
 };
 use async_trait::async_trait;
+use sinex_macros::SourceMeta;
 use sinex_primitives::{
     domain::{EventSource, EventType, RecordedPath},
     events::{
@@ -26,7 +27,30 @@ use sinex_primitives::{
 const PARSER_ID: ParserId = ParserId::from_static("fs");
 const PARSER_VERSION: &str = "1.0.0";
 
-#[derive(Default)]
+#[derive(Default, SourceMeta)]
+#[source_meta(
+    id = "fs",
+    namespace = "filesystem",
+    event_source = "fs-watcher",
+    event_type = "file.created",
+    event_types = "file.modified, file.deleted, file.moved",
+    adapter = "FileContentDropAdapter",
+    privacy_tier = "Secret",
+    horizons = "continuous, historical",
+    retention = "forever",
+    occurrence_identity = "anchor",
+    access_policy = "configured_watch_roots",
+    implementation = "sinexd",
+    privacy_context = "fs_path",
+    material_policy = "inotify_anchor",
+    checkpoint_policy = "append_stream",
+    resource_shape = "continuous_inotify",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "append_stream",
+    runtime_shape = "continuous",
+    package_impact = "no_new_output",
+    implementation_mode = "sinexd:source"
+)]
 pub struct FilesystemParser;
 
 #[async_trait]
