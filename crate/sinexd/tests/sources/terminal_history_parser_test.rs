@@ -14,7 +14,7 @@ use sinex_primitives::{
 use sinexd::runtime::parser::MaterialParser;
 use sinexd::sources::source_contracts::terminal::{
     atuin_history::AtuinHistoryRecord, bash_history::BashHistoryParser,
-    fish_history::FishHistoryParser, text_history::TextHistoryParser,
+    fish_history::FishHistoryRecord, text_history::TextHistoryParser,
     zsh_history::ZshHistoryParser,
 };
 
@@ -117,7 +117,7 @@ async fn text_history_command_is_not_parser_redacted() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fish_history_command_is_not_parser_redacted() -> Result<(), Box<dyn std::error::Error>> {
-    let mut parser = FishHistoryParser;
+    let mut parser = FishHistoryRecord::default();
     let record = json_record(
         serde_json::json!({
             "rowid": 9,
