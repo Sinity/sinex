@@ -11,9 +11,17 @@ name: Workspace Compile Gate
 #
 #   SQLX_OFFLINE=true — sqlx compile-time query macros need a live database by
 #   default. CI does not run a database during the compile step. The committed
-#   .sqlx/ query cache (259 files) lets cargo compile the full workspace without
-#   a live DATABASE_URL. Keep .sqlx/ current after any query change:
-#     xtask infra start && cargo sqlx prepare --workspace && git add .sqlx/
+#   .sqlx/ query cache lets cargo compile the full workspace without a live
+#   DATABASE_URL. Keep .sqlx/ current after any sqlx query change — including
+#   queries only used in test code (xtask check --full compiles --tests targets):
+#
+#     nix develop --command env DATABASE_URL='postgresql:///sinex_dev?host=...' \
+#       bash -lc 'export PATH="/path/to/sqlx-cli/bin:$PATH"
+#         CARGO=$(which cargo) cargo-sqlx sqlx prepare --workspace -- --tests'
+#     git add .sqlx/
+#
+#   The --tests flag is required; without it, test-only sqlx queries are not
+#   cached and SQLX_OFFLINE=true fails when compiling test targets.
 #
 #   CARGO_INCREMENTAL=0 — forces a non-incremental compile so cross-crate
 #   breaks from deleted symbols are not masked by a warm target cache. This is
