@@ -85,6 +85,7 @@ impl ParserTestContext {
 
     /// Build a [`ParserContext`] for the given record.
     #[must_use]
+    #[allow(clippy::expect_used)] // test infrastructure — bad source_id is a programming error
     pub fn parser_context(&self, record_anchor: MaterialAnchor) -> ParserContext {
         ParserContext {
             source_id: sinex_primitives::parser::SourceId::new(&self.source_id)
