@@ -1,0 +1,7 @@
+error: source_meta: missing required 'occurrence_identity' (one of: natural, anchor, uuid5:<namespace>)
+ --> tests/compile_fail/source_meta_missing_occurrence.rs:5:19
+  |
+5 | #[derive(Default, SourceMeta)]
+  |                   ^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `SourceMeta` (in Nightly builds, run with -Z macro-backtrace for more info)
