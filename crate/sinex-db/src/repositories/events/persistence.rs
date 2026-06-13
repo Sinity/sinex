@@ -8,7 +8,7 @@ use crate::repositories::common::{DbResult, EnhancedRepository, Repository, db_e
 use crate::schema::Events;
 use crate::{EventRecord, SinexError};
 use sinex_primitives::domain::{DataTier, EventSource, EventType, HostName, SchemaVersion};
-use sinex_primitives::events::{EventId, SourceMaterial};
+use sinex_primitives::events::{EquivalenceKey, EventId, ScopeKey, SourceMaterial};
 use sinex_primitives::{Id, Timestamp};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -77,9 +77,9 @@ pub struct StreamBatchRow {
     /// Version of the producer logic that produced this event
     pub semantics_version: Option<String>,
     /// Scope identifier for scope-reconciler replacement
-    pub scope_key: Option<String>,
+    pub scope_key: Option<ScopeKey>,
     /// Output slot identifier for targeted replacement
-    pub equivalence_key: Option<String>,
+    pub equivalence_key: Option<EquivalenceKey>,
     /// Which replay/operation created this event
     pub created_by_operation_id: Option<Uuid>,
     /// Which automaton model produced this event
@@ -2223,8 +2223,8 @@ pub struct ReplacementRecord {
     pub old_event_id: Uuid,
     pub new_event_id: Uuid,
     pub relation_kind: ReplacementKind,
-    pub scope_key: Option<String>,
-    pub equivalence_key: Option<String>,
+    pub scope_key: Option<ScopeKey>,
+    pub equivalence_key: Option<EquivalenceKey>,
 }
 
 impl EventRepository<'_> {
