@@ -1,7 +1,7 @@
 //! `system.journald` — stream all journald entries via `JournalctlStreamAdapter`.
 
-use crate::register_source;
-use crate::runtime::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
+use crate::runtime::parser::{MaterialParser, ParserError};
+use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::JournalSyncType;
 use sinex_primitives::events::payloads::system::{
@@ -12,58 +12,10 @@ use sinex_primitives::parser::{
     SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::units::{Microseconds, ProcessId, SyslogPriority, UnixGid, UnixUid};
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 use std::collections::HashMap;
-
-// ---------------------------------------------------------------------------
-// Source contract
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "system.journald",
-        namespace: "system",
-        event_types: &[
-            ("journald", "entry.written"),
-            ("journald", "sync.completed"),
-        ],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Continuous, Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(source, journal_cursor)"),
-        access_policy: "systemd_journal_read",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:system.journald"),
-        "system.journald",
-        "system",
-    )
-    .implementation("sinexd")
-    .adapter("JournalctlStreamAdapter")
-    .output_event_type("entry.written")
-    .privacy_context("Journal")
-    .material_policy("journal_cursor")
-    .checkpoint_policy("journal")
-    .resource_shape("journal_tail")
-    .source_id("system.journald")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::Journal)
-    .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("system_journald_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
 
 // ---------------------------------------------------------------------------
 // Parser
@@ -72,7 +24,30 @@ register_source_runtime_binding! {
 const MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
 
 /// Parser for `system.journald` — converts journal JSON lines into typed events.
-#[derive(Default)]
+#[derive(Default, SourceMeta)]
+#[source_meta(
+    id = "system.journald",
+    namespace = "system",
+    event_source = "journald",
+    event_type = "entry.written",
+    event_types = "sync.completed",
+    adapter = "JournalctlStreamAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "continuous, historical",
+    retention = "forever",
+    occurrence_identity = "uuid5:(source, journal_cursor)",
+    access_policy = "systemd_journal_read",
+    implementation = "sinexd",
+    privacy_context = "Journal",
+    material_policy = "journal_cursor",
+    checkpoint_policy = "journal",
+    resource_shape = "journal_tail",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "journal",
+    runtime_shape = "continuous",
+    package_impact = "system_journald_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct JournaldParser;
 
 #[async_trait::async_trait]
@@ -267,16 +242,6 @@ impl MaterialParser for JournaldParser {
             .collect()
     }
 }
-
-// Register for dispatch (replay path).
-register_source!(source_id: "system.journald", parser: JournaldParser);
-
-// Register source factory — JournalctlStreamAdapter + JournaldParser.
-crate::register_source!(
-    source_id: "system.journald",
-    adapter: JournalctlStreamAdapter,
-    parser: JournaldParser,
-);
 
 // ---------------------------------------------------------------------------
 // Tests

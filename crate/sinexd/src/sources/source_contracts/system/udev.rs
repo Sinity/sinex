@@ -1,9 +1,9 @@
 //! `system.udev` — stream udev device events via `FileDropAdapter` over `/sys`.
 
-use crate::register_source;
 use crate::runtime::parser::{
-    FileDropAdapter, FileDropEventKind, FileDropRecordMetadata, MaterialParser, ParserError,
+    FileDropEventKind, FileDropRecordMetadata, MaterialParser, ParserError,
 };
+use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{DeviceType, UdevAction};
 use sinex_primitives::events::payloads::system::{
@@ -15,68 +15,40 @@ use sinex_primitives::parser::{
     SourceRecord, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 use tracing::warn;
 
 use std::collections::HashMap;
-
-// ---------------------------------------------------------------------------
-// Source contract
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "system.udev",
-        namespace: "system",
-        event_types: &[
-            ("udev", "device.connected"),
-            ("udev", "device.disconnected"),
-            ("udev", "device.changed"),
-            ("udev", "device.driver_changed"),
-            ("udev", "device.other"),
-        ],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Continuous],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Anchor,
-        access_policy: "udev_monitor_read",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:system.udev"),
-        "system.udev",
-        "system",
-    )
-    .implementation("sinexd")
-    .adapter("FileDropAdapter")
-    .output_event_type("device.connected")
-    .privacy_context("Metadata")
-    .material_policy("udev_anchor")
-    .checkpoint_policy("live_observation")
-    .resource_shape("event_emitter")
-    .source_id("system.udev")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::LiveObservation)
-    .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("system_udev_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
 
 // ---------------------------------------------------------------------------
 // Parser
 // ---------------------------------------------------------------------------
 
 /// Parser for `system.udev` — maps `FileDropAdapter` inotify records to udev device events.
-#[derive(Default)]
+#[derive(Default, SourceMeta)]
+#[source_meta(
+    id = "system.udev",
+    namespace = "system",
+    event_source = "udev",
+    event_type = "device.connected",
+    event_types = "device.disconnected, device.changed, device.driver_changed, device.other",
+    adapter = "FileDropAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "continuous",
+    retention = "forever",
+    occurrence_identity = "anchor",
+    access_policy = "udev_monitor_read",
+    implementation = "sinexd",
+    privacy_context = "Metadata",
+    material_policy = "udev_anchor",
+    checkpoint_policy = "live_observation",
+    resource_shape = "event_emitter",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "live_observation",
+    runtime_shape = "continuous",
+    package_impact = "system_udev_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct UdevParser;
 
 /// Infer `DeviceType` from a `/sys` path.
@@ -292,16 +264,6 @@ impl MaterialParser for UdevParser {
         })
     }
 }
-
-// Register for dispatch (replay path).
-register_source!(source_id: "system.udev", parser: UdevParser);
-
-// Register source factory — FileDropAdapter + UdevParser.
-crate::register_source!(
-    source_id: "system.udev",
-    adapter: FileDropAdapter,
-    parser: UdevParser,
-);
 
 // ---------------------------------------------------------------------------
 // Tests
