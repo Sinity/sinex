@@ -16,7 +16,7 @@ use sinex_primitives::utils::CoordinationPrimitive;
 use sinex_primitives::{Id, Seconds, Uuid};
 use std::mem::MaybeUninit;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
@@ -109,6 +109,8 @@ pub struct HeartbeatEmitter {
     module_run_id: Option<Uuid>,
     /// Counter for rate-limiting persistence failure warn! logs (every 100th).
     persistence_warn_count: Arc<AtomicU64>,
+    /// Whether the one-per-run baseline heartbeat record has been written to the log sink.
+    logged_first_beat: Arc<AtomicBool>,
     /// Optional database pool for persisting heartbeat status to `core.runs`.
     /// When set, each heartbeat emission also updates the `last_heartbeat_at` and `status`
     /// columns for this module, enabling efficient active-module queries.
@@ -151,6 +153,7 @@ impl HeartbeatEmitter {
             error_window: Arc::new(parking_lot::Mutex::new(Vec::new())),
             module_run_id: None,
             persistence_warn_count: Arc::new(AtomicU64::new(0)),
+            logged_first_beat: Arc::new(AtomicBool::new(false)),
             #[cfg(feature = "db")]
             db_pool: None,
         }
@@ -371,35 +374,50 @@ impl HeartbeatEmitter {
     }
 
     /// Emit a single heartbeat to stdout
+    ///
+    /// The full JSON record reaches the log sink only when it carries signal:
+    /// the first beat of a run (one baseline record with identity metadata),
+    /// a non-healthy status, or a beat that observed errors. Routine healthy
+    /// beats are logged at debug level only — journald persists every stdout
+    /// byte regardless of the `level` field inside the JSON, so suppressing
+    /// emission is the only way to keep steady-state journal volume bounded
+    /// (#1726). Status *transitions* are logged separately by
+    /// `emit_status_alert_if_needed`.
     pub async fn emit_heartbeat(&self, metadata: Option<serde_json::Value>) {
         let metrics = self.create_heartbeat_metrics(metadata).await;
 
-        // Create structured log message that journald will capture
-        let log_entry = json!({
-            "level": "INFO",
-            "message": "heartbeat",
-            "target": "heartbeat",
-            "module_path": "sinexd::runtime::heartbeat",
-            "file": "heartbeat.rs",
-            "line": 1,
-            "fields": {
-                "event_type": "runtime.heartbeat",
-                "service_name": metrics.service_name,
-                "status": metrics.status,
-                "events_processed": metrics.events_processed,
-                "uptime_seconds": metrics.uptime_seconds,
-                "memory_usage_mb": metrics.memory_usage_mb,
-                "cpu_usage_percent": metrics.cpu_usage_percent,
-                "errors_count": metrics.errors_count,
-                "last_error_message": metrics.last_error_message,
-                "version": metrics.version,
-                "git_hash": metrics.git_hash,
-                "timestamp": metrics.timestamp,
-                "metadata": metrics.metadata
-            }
-        });
+        let first_beat = !self.logged_first_beat.swap(true, Ordering::Relaxed);
+        let signal_bearing = metrics.status != HealthStatus::Healthy
+            || metrics.errors_count > 0
+            || metrics.last_error_message.is_some();
 
-        self.log_sink.emit(&log_entry);
+        if first_beat || signal_bearing {
+            let log_entry = json!({
+                "level": "INFO",
+                "message": "heartbeat",
+                "target": "heartbeat",
+                "module_path": "sinexd::runtime::heartbeat",
+                "file": "heartbeat.rs",
+                "line": 1,
+                "fields": {
+                    "event_type": "runtime.heartbeat",
+                    "service_name": metrics.service_name,
+                    "status": metrics.status,
+                    "events_processed": metrics.events_processed,
+                    "uptime_seconds": metrics.uptime_seconds,
+                    "memory_usage_mb": metrics.memory_usage_mb,
+                    "cpu_usage_percent": metrics.cpu_usage_percent,
+                    "errors_count": metrics.errors_count,
+                    "last_error_message": metrics.last_error_message,
+                    "version": metrics.version,
+                    "git_hash": metrics.git_hash,
+                    "timestamp": metrics.timestamp,
+                    "metadata": metrics.metadata
+                }
+            });
+
+            self.log_sink.emit(&log_entry);
+        }
 
         // Persist heartbeat to database if pool is configured
         #[cfg(feature = "db")]
@@ -691,39 +709,97 @@ impl HeartbeatCounterHandle {
     }
 }
 
-/// Helper macro for creating heartbeat logs in runtime modules
-#[macro_export]
-macro_rules! emit_heartbeat {
-    ($service_name:expr) => {
-        let log_entry = serde_json::json!({
-            "level": "INFO",
-            "message": "heartbeat",
-            "target": "heartbeat",
-            "fields": {
-                "service_name": $service_name,
-                "status": "healthy",
-                "timestamp": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now())
-            }
-        });
-        println!("{log_entry}");
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask::sandbox::sinex_test;
 
-    ($service_name:expr, $($field:ident = $value:expr),+) => {
-        let mut fields = serde_json::json!({
-            "service_name": $service_name,
-            "timestamp": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now())
-        });
+    #[derive(Debug, Default)]
+    struct RecordingSink(parking_lot::Mutex<Vec<serde_json::Value>>);
 
-        $(
-            fields[stringify!($field)] = serde_json::json!($value);
-        )+
+    impl HeartbeatLogSink for RecordingSink {
+        fn emit(&self, entry: &serde_json::Value) {
+            self.0.lock().push(entry.clone());
+        }
+    }
 
-        let log_entry = serde_json::json!({
-            "level": "INFO",
-            "message": "heartbeat",
-            "target": "heartbeat",
-            "fields": fields
-        });
-        println!("{log_entry}");
-    };
+    impl RecordingSink {
+        fn heartbeat_records(&self) -> Vec<serde_json::Value> {
+            self.0
+                .lock()
+                .iter()
+                .filter(|entry| entry["message"] == "heartbeat")
+                .cloned()
+                .collect()
+        }
+    }
+
+    fn emitter_with_sink() -> (HeartbeatEmitter, Arc<RecordingSink>) {
+        let sink = Arc::new(RecordingSink::default());
+        let emitter = HeartbeatEmitter::new(
+            ServiceName::new("heartbeat-test"),
+            sinex_primitives::Seconds::from_secs(60),
+        )
+        .with_log_sink(sink.clone());
+        (emitter, sink)
+    }
+
+    #[sinex_test]
+    async fn first_beat_emits_baseline_then_routine_beats_are_suppressed() -> TestResult<()> {
+        let (emitter, sink) = emitter_with_sink();
+
+        emitter.emit_heartbeat(None).await;
+        emitter.emit_heartbeat(None).await;
+        emitter.emit_heartbeat(None).await;
+
+        let records = sink.heartbeat_records();
+        assert_eq!(
+            records.len(),
+            1,
+            "only the baseline record should be emitted for healthy steady state"
+        );
+        assert_eq!(records[0]["fields"]["event_type"], "runtime.heartbeat");
+        assert_eq!(records[0]["fields"]["status"], "healthy");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn error_carrying_beat_is_emitted() -> TestResult<()> {
+        let (emitter, sink) = emitter_with_sink();
+        let handle = emitter.get_counter_handle();
+
+        emitter.emit_heartbeat(None).await; // baseline
+        emitter.emit_heartbeat(None).await; // suppressed
+        handle.record_error("boom");
+        emitter.emit_heartbeat(None).await; // signal-bearing
+
+        let records = sink.heartbeat_records();
+        assert_eq!(records.len(), 2, "baseline plus the error-carrying beat");
+        let error_beat = &records[1];
+        assert_eq!(error_beat["fields"]["errors_count"], 1);
+        assert_eq!(error_beat["fields"]["last_error_message"], "boom");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn recovery_returns_to_suppressed_steady_state() -> TestResult<()> {
+        let (emitter, sink) = emitter_with_sink();
+        let handle = emitter.get_counter_handle();
+
+        emitter.emit_heartbeat(None).await; // baseline
+        handle.record_error("transient");
+        emitter.emit_heartbeat(None).await; // signal-bearing
+        emitter.emit_heartbeat(None).await; // healthy and error-free again
+
+        // A single error stays far below the degraded threshold, so the
+        // post-recovery beat is healthy and must be suppressed.
+        let records = sink.heartbeat_records();
+        assert_eq!(
+            records.len(),
+            2,
+            "healthy error-free beats after recovery must be suppressed"
+        );
+        assert_eq!(records.last().unwrap()["fields"]["errors_count"], 1);
+        Ok(())
+    }
 }
