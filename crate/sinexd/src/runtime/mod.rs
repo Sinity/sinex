@@ -120,21 +120,6 @@ pub use material::{
     TransientErrorPredicate,
 };
 pub use nats_publisher::NatsPublisher;
-pub use parser::SqliteSnapshotLinker;
-pub use parser::{
-    ApiClient, ApiFetchCheckpoint, ApiFetchError, ApiFetchPage, ApiFetchRecordSource,
-    AppendOnlyTextRecord, AppendOnlyUtf8FileSource, BufferedRecordMaterializer, BufferedRecordSink,
-    BufferedRecordSourceHarness, IncrementalDumpCheckpoint, IncrementalDumpError,
-    IncrementalDumpRecordSource, IpcStreamCheckpoint, IpcStreamError, IpcStreamRecord,
-    IpcStreamRecordSource, JournalCursorCheckpoint, MockRecordSource, MockRecordSourceError,
-    OneTimeDumpCheckpoint, OneTimeDumpError, OneTimeDumpRecord, OneTimeDumpRecordSource,
-    PollingRecordSource, RecordMaterialSink, RecordMaterializer, RecordProcessContext,
-    RecordProcessReport, RecordProcessingOutcome, RecordReadBatch, RecordReadHorizon,
-    RecordReadItem, RecordSource, RecordSourceDescriptor, RecordSourceHarness, RecordSourceKind,
-    RecordSourceObservation, RecordSources, RecordWarningDisposition, RetryPolicy,
-    SqliteRecordSource, SqliteRowCheckpoint, TimestampRecordCheckpoint,
-    process_record_batch_lenient, stable_json_line,
-};
 pub use pressure::PressureMonitor;
 pub use processing::AutomatonLogicError;
 pub use runtime_cli::{
