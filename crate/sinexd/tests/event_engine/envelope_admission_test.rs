@@ -8,7 +8,7 @@
 use sinex_primitives::domain::HostName;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::admission::{CURRENT_ENVELOPE_VERSION, EventIntent};
-use sinex_primitives::events::payloads::PolylogueConversationIndexedPayload;
+use sinex_primitives::events::payloads::PolylogueSessionIndexedPayload;
 use sinex_primitives::{DynamicPayload, Id, JsonValue, Uuid};
 use sinexd::event_engine::IngestEventValidator;
 use sinexd::event_engine::admission::{
@@ -298,9 +298,9 @@ async fn external_producer_json_fixture_parses(ctx: TestContext) -> TestResult<(
 async fn polylogue_external_producer_metadata_fixture_admits(ctx: TestContext) -> TestResult<()> {
     let service = admission_service(&ctx);
     let material_id = Id::<sinex_primitives::events::SourceMaterial>::from_uuid(Uuid::now_v7());
-    let payload = PolylogueConversationIndexedPayload {
-        conversation_id: "claude-code:session-018f".into(),
-        provider: "claude_code".into(),
+    let payload = PolylogueSessionIndexedPayload {
+        session_id: "claude-code:session-018f".into(),
+        origin: "claude_code".into(),
         title: Some("source host drain review".into()),
         tags: vec!["sinex".into(), "review".into()],
         content_hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -320,12 +320,12 @@ async fn polylogue_external_producer_metadata_fixture_admits(ctx: TestContext) -
     );
     assert!(
         !rendered_payload.contains("raw_text"),
-        "Polylogue bridge fixture must not carry raw conversation text"
+        "Polylogue bridge fixture must not carry raw session text"
     );
 
     let mut event = DynamicPayload::new(
         "integration.polylogue",
-        "integration.polylogue.conversation_indexed",
+        "integration.polylogue.session_indexed",
         payload_json,
     )
     .from_material(material_id)
