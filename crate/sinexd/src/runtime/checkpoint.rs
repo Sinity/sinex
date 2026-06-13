@@ -544,49 +544,52 @@ impl CheckpointManager {
                             .with_source(error)
                     })?;
 
-                    if existing_entry.is_none() {
-                        warn!(
-                            target: "sinex_metrics",
-                            metric = "runtime.checkpoint_kv_recovery_total",
-                            module = %self.module_name,
-                            consumer_group = %self.consumer_group,
-                            consumer_name = %self.consumer_name,
-                            stale_revision = state.revision,
-                            "Checkpoint KV entry is missing after restoring a local checkpoint revision; recreating it"
-                        );
-                        self.kv
-                            .create(&key, encoded.into())
-                            .await
-                            .map_err(|error| {
-                                SinexError::checkpoint(
-                                    "Failed to recreate missing checkpoint in KV after stale local revision",
-                                )
-                                .with_source(error)
-                            })?
-                    } else {
-                        // CAS failure with existing entry: stale revision (e.g. loaded from
-                        // file after restart while NATS KV advanced further). Refresh the
-                        // revision from the current entry and retry once.
-                        let current_revision = existing_entry.unwrap().revision;
-                        warn!(
-                            target: "sinex_metrics",
-                            metric = "runtime.checkpoint_kv_cas_retry_total",
-                            module = %self.module_name,
-                            consumer_group = %self.consumer_group,
-                            consumer_name = %self.consumer_name,
-                            stale_revision = state.revision,
-                            current_revision,
-                            "Checkpoint CAS failed with stale revision; refreshing and retrying"
-                        );
-                        self.kv
-                            .update(&key, encoded.into(), current_revision)
-                            .await
-                            .map_err(|retry_error| {
-                                SinexError::checkpoint(
-                                    "Failed to update checkpoint in KV (CAS conflict after refresh)",
-                                )
-                                .with_source(retry_error)
-                            })?
+                    match existing_entry {
+                        None => {
+                            warn!(
+                                target: "sinex_metrics",
+                                metric = "runtime.checkpoint_kv_recovery_total",
+                                module = %self.module_name,
+                                consumer_group = %self.consumer_group,
+                                consumer_name = %self.consumer_name,
+                                stale_revision = state.revision,
+                                "Checkpoint KV entry is missing after restoring a local checkpoint revision; recreating it"
+                            );
+                            self.kv
+                                .create(&key, encoded.into())
+                                .await
+                                .map_err(|error| {
+                                    SinexError::checkpoint(
+                                        "Failed to recreate missing checkpoint in KV after stale local revision",
+                                    )
+                                    .with_source(error)
+                                })?
+                        }
+                        Some(entry) => {
+                            // CAS failure with existing entry: stale revision (e.g. loaded from
+                            // file after restart while NATS KV advanced further). Refresh the
+                            // revision from the current entry and retry once.
+                            let current_revision = entry.revision;
+                            warn!(
+                                target: "sinex_metrics",
+                                metric = "runtime.checkpoint_kv_cas_retry_total",
+                                module = %self.module_name,
+                                consumer_group = %self.consumer_group,
+                                consumer_name = %self.consumer_name,
+                                stale_revision = state.revision,
+                                current_revision,
+                                "Checkpoint CAS failed with stale revision; refreshing and retrying"
+                            );
+                            self.kv
+                                .update(&key, encoded.into(), current_revision)
+                                .await
+                                .map_err(|retry_error| {
+                                    SinexError::checkpoint(
+                                        "Failed to update checkpoint in KV (CAS conflict after refresh)",
+                                    )
+                                    .with_source(retry_error)
+                                })?
+                        }
                     }
                 }
             }
