@@ -1998,12 +1998,26 @@ fn apply_cargo_env_policy_std(command: &mut Command) {
     ) {
         command.env("CARGO_INCREMENTAL", "0");
     }
+    // Always export the workspace-correct CARGO_TARGET_DIR to the cargo subprocess.
+    // A worktree agent inherits the orchestrator's CARGO_TARGET_DIR which points at
+    // the main checkout's warm artifacts; without this explicit override, cargo reads
+    // the raw inherited env var and false-passes against the wrong tree (see #1752).
+    // `workspace_target_dir()` detects and corrects any foreign value before returning.
+    command.env(
+        "CARGO_TARGET_DIR",
+        crate::config::workspace_target_dir(),
+    );
 }
 
 fn apply_cargo_env_policy_tokio(command: &mut tokio::process::Command) {
     if should_force_nonincremental_for_sccache(std::env::var_os("RUSTC_WRAPPER"), false) {
         command.env("CARGO_INCREMENTAL", "0");
     }
+    // Same rationale as apply_cargo_env_policy_std — see #1752.
+    command.env(
+        "CARGO_TARGET_DIR",
+        crate::config::workspace_target_dir(),
+    );
 }
 
 fn should_force_nonincremental_for_sccache(
