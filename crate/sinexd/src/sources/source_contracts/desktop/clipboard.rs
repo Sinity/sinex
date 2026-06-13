@@ -16,63 +16,10 @@ use sinex_primitives::parser::{
     TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
+use sinex_macros::SourceMeta;
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
-use crate::runtime::parser::{ClipboardPollingAdapter, MaterialParser, ParserError, ParserResult};
-
-use crate::register_source;
-
-// ---------------------------------------------------------------------------
-// Source contract
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "desktop.clipboard",
-        namespace: "desktop",
-        event_types: &[
-            ("clipboard", "clipboard.copied"),
-            ("clipboard", "clipboard.selected"),
-        ],
-        privacy_tier: PrivacyTier::Secret,
-        horizons: &[Horizon::Continuous],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Anchor,
-        access_policy: "target_runtime_bridge:clipboard",
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Binding
-// ---------------------------------------------------------------------------
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:desktop.clipboard"),
-        "desktop.clipboard",
-        "desktop",
-    )
-    .implementation("sinexd")
-    .adapter("ClipboardPollingAdapter")
-    .output_event_type("clipboard.copied")
-    .privacy_context("clipboard")
-    .material_policy("clipboard_stream")
-    .checkpoint_policy("live_stream")
-    .resource_shape("polling_watcher")
-    .source_id("desktop.clipboard")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::LiveObservation)
-    .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("desktop_clipboard")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 
 // ---------------------------------------------------------------------------
 // Parser config
@@ -114,7 +61,30 @@ impl Default for ClipboardParserConfig {
 /// `ClipboardPollingAdapter` currently provides a single stream; the parser
 /// emits `clipboard.copied` for all changes.  A future adapter extension that
 /// exposes `LinuxClipboardKind` in record metadata can split these.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "desktop.clipboard",
+    namespace = "desktop",
+    event_source = "clipboard",
+    event_type = "clipboard.copied",
+    event_types = "clipboard.selected",
+    adapter = "ClipboardPollingAdapter",
+    privacy_tier = "Secret",
+    horizons = "continuous",
+    retention = "forever",
+    occurrence_identity = "anchor",
+    access_policy = "target_runtime_bridge:clipboard",
+    implementation = "sinexd",
+    privacy_context = "clipboard",
+    material_policy = "clipboard_stream",
+    checkpoint_policy = "live_stream",
+    resource_shape = "polling_watcher",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "live_observation",
+    runtime_shape = "continuous",
+    package_impact = "desktop_clipboard",
+    implementation_mode = "sinexd:source"
+)]
 pub struct ClipboardParser;
 
 #[async_trait]
@@ -184,12 +154,3 @@ impl MaterialParser for ClipboardParser {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Source factory registration
-// ---------------------------------------------------------------------------
-
-register_source!(
-    source_id: "desktop.clipboard",
-    adapter: ClipboardPollingAdapter,
-    parser: ClipboardParser,
-);

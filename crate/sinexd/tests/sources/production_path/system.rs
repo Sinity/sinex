@@ -29,6 +29,15 @@ const UDEV_FIXTURE: &[u8] = b"/sys/bus/usb/devices/1-1";
 /// the D-Bus `Notify` stream): app_name, summary, body, urgency, timeout, …
 const DESKTOP_NOTIFICATION_FIXTURE: &[u8] = br#"{"app_name":"sinex-tests","summary":"Build complete","body":"All checks passed","urgency":1,"timeout":-1,"actions":[],"hints":{}}"#;
 
+/// A notification action-invoked record (`NotificationActionParser` shape):
+/// notification_id + action_key.
+const DESKTOP_NOTIFICATION_ACTION_FIXTURE: &[u8] =
+    br#"{"notification_id":42,"action_key":"default"}"#;
+
+/// A notification closed record (`NotificationClosedParser` shape):
+/// notification_id + close reason (2 = dismissed).
+const DESKTOP_NOTIFICATION_CLOSED_FIXTURE: &[u8] = br#"{"notification_id":42,"reason":2}"#;
+
 // ---------------------------------------------------------------------------
 // system.journald
 // ---------------------------------------------------------------------------
@@ -92,6 +101,30 @@ async fn test_desktop_notification_initial_ingestion() -> TestResult<()> {
         super::AdapterKind::Dbus,
         DESKTOP_NOTIFICATION_FIXTURE,
         &["notification.sent"],
+    )
+    .await
+    .map_err(|e| color_eyre::eyre::eyre!("{e}"))
+}
+
+#[sinex_test]
+async fn test_desktop_notification_action_initial_ingestion() -> TestResult<()> {
+    super::obligations::initial_ingestion::run(
+        "desktop.notification.action",
+        super::AdapterKind::Dbus,
+        DESKTOP_NOTIFICATION_ACTION_FIXTURE,
+        &["notification.action_invoked"],
+    )
+    .await
+    .map_err(|e| color_eyre::eyre::eyre!("{e}"))
+}
+
+#[sinex_test]
+async fn test_desktop_notification_closed_initial_ingestion() -> TestResult<()> {
+    super::obligations::initial_ingestion::run(
+        "desktop.notification.closed",
+        super::AdapterKind::Dbus,
+        DESKTOP_NOTIFICATION_CLOSED_FIXTURE,
+        &["notification.closed"],
     )
     .await
     .map_err(|e| color_eyre::eyre::eyre!("{e}"))

@@ -4,23 +4,41 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
+use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
     SourceId, SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NotificationClosedParserConfig;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "desktop.notification.closed",
+    namespace = "desktop",
+    event_source = "dbus",
+    event_type = "notification.closed",
+    adapter = "DbusStreamAdapter",
+    privacy_tier = "Public",
+    horizons = "continuous",
+    retention = "forever",
+    occurrence_identity = "uuid5:(notification_id)",
+    access_policy = "desktop_notifications",
+    implementation = "live-capture",
+    privacy_context = "Notification",
+    material_policy = "notification_stream_frame",
+    checkpoint_policy = "dbus_stream_cursor",
+    resource_shape = "dbus_signal_stream",
+    runner_pack = "live",
+    checkpoint_family = "live_observation",
+    runtime_shape = "continuous",
+    package_impact = "desktop_notification_closed_source",
+    implementation_mode = "live:dbus-notification-closed"
+)]
 pub struct NotificationClosedParser;
 
 fn reason_label(reason: u32) -> &'static str {
@@ -94,45 +112,3 @@ impl MaterialParser for NotificationClosedParser {
             .build()])
     }
 }
-
-register_source_contract! {
-    SourceContract {
-        id: "desktop.notification.closed",
-        namespace: "desktop",
-        event_types: &[("dbus", "notification.closed")],
-        privacy_tier: PrivacyTier::Public,
-        horizons: &[Horizon::Continuous],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(notification_id)"),
-        access_policy: "desktop_notifications",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:desktop.notification.closed"),
-        "desktop.notification.closed",
-        "desktop",
-    )
-    .implementation("live-capture")
-    .adapter("DbusStreamAdapter")
-    .output_event_type("notification.closed")
-    .privacy_context("Notification")
-    .material_policy("notification_stream_frame")
-    .checkpoint_policy("dbus_stream_cursor")
-    .resource_shape("dbus_signal_stream")
-    .source_id("desktop.notification.closed")
-    .runner_pack("live")
-    .checkpoint_family(CheckpointFamily::LiveObservation)
-    .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("desktop_notification_closed_source")
-    .implementation_mode("live:dbus-notification-closed")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
-crate::register_source!(
-    source_id: "desktop.notification.closed",
-    adapter: crate::runtime::parser::DbusStreamAdapter,
-    parser: NotificationClosedParser,
-);

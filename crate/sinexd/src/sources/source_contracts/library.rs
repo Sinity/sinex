@@ -37,7 +37,8 @@ use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 
-use crate::runtime::parser::{DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult};
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
+use sinex_macros::SourceMeta;
 use sinex_primitives::{
     domain::{EventSource, EventType},
     parser::{
@@ -45,61 +46,8 @@ use sinex_primitives::{
         ParserManifest, SourceId, SourceRecord, TimingEvidence,
     },
     privacy::ProcessingContext,
-    source_contracts::{
-        CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-        SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-    },
     temporal::Timestamp,
 };
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
-
-// ---------------------------------------------------------------------------
-// Source contract
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "docs-library-index",
-        namespace: "library",
-        event_types: &[
-            ("docs-library", "document.indexed"),
-        ],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From(
-            "(source, path, content_hash)",
-        ),
-        access_policy: "local_library_root",
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Source binding
-// ---------------------------------------------------------------------------
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:docs-library-index"),
-        "docs-library-index",
-        "library",
-    )
-    .implementation("sinexd")
-    .adapter("DirectoryWalkAdapter")
-    .output_event_type("document.indexed")
-    .privacy_context("Metadata")
-    .material_policy("directory_walk_fingerprint")
-    .checkpoint_policy("directory_walk_cursor")
-    .resource_shape("file_reader")
-    .source_id("docs-library-index")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("docs_library_index_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
 
 // ---------------------------------------------------------------------------
 // Parser config
@@ -236,7 +184,29 @@ fn extract_author_title(stem: &str) -> (Option<String>, Option<String>) {
 /// 3. Reads mtime from the live filesystem (path from anchor).
 /// 4. Applies filename heuristics to derive optional fields.
 /// 5. Emits `ProcessingContext::Metadata` for DB admission policy.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "docs-library-index",
+    namespace = "library",
+    event_source = "docs-library",
+    event_type = "document.indexed",
+    adapter = "DirectoryWalkAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "historical",
+    retention = "forever",
+    occurrence_identity = "uuid5:(source, path, content_hash)",
+    access_policy = "local_library_root",
+    implementation = "sinexd",
+    privacy_context = "Metadata",
+    material_policy = "directory_walk_fingerprint",
+    checkpoint_policy = "directory_walk_cursor",
+    resource_shape = "file_reader",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "append_stream",
+    runtime_shape = "on_demand",
+    package_impact = "docs_library_index_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct DocsLibraryParser;
 
 #[async_trait]
@@ -362,16 +332,6 @@ fn read_mtime(path: &Utf8PathBuf) -> (Timestamp, TimingEvidence) {
         Err(_) => (Timestamp::now(), TimingEvidence::Atemporal),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Source factory registration
-// ---------------------------------------------------------------------------
-
-crate::register_source!(
-    source_id: "docs-library-index",
-    adapter: DirectoryWalkAdapter,
-    parser: DocsLibraryParser,
-);
 
 // ---------------------------------------------------------------------------
 // Tests

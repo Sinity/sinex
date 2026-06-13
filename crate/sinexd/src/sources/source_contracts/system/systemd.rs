@@ -3,8 +3,8 @@
 //! Uses `JournalctlStreamAdapter` (same subprocess as `system.journald`).
 //! Records without `_SYSTEMD_UNIT` are silently skipped.
 
-use crate::register_source;
-use crate::runtime::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
+use crate::runtime::parser::{MaterialParser, ParserError};
+use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
 use sinex_primitives::events::payloads::system::{
@@ -16,65 +16,37 @@ use sinex_primitives::parser::{
     SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
-
-// ---------------------------------------------------------------------------
-// Source contract
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "system.systemd",
-        namespace: "system",
-        event_types: &[
-            ("systemd", "unit.started"),
-            ("systemd", "unit.stopped"),
-            ("systemd", "unit.failed"),
-            ("systemd", "unit.reloaded"),
-            ("systemd", "timer.triggered"),
-        ],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Continuous],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Anchor,
-        access_policy: "systemd_journal_read",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:system.systemd"),
-        "system.systemd",
-        "system",
-    )
-    .implementation("sinexd")
-    .adapter("JournalctlStreamAdapter")
-    .output_event_type("unit.started")
-    .privacy_context("Journal")
-    .material_policy("journal_cursor")
-    .checkpoint_policy("journal")
-    .resource_shape("journal_tail")
-    .source_id("system.systemd")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::Journal)
-    .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("system_systemd_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
 
 // ---------------------------------------------------------------------------
 // Parser
 // ---------------------------------------------------------------------------
 
 /// Parser for `system.systemd` — emits unit lifecycle events from journal records.
-#[derive(Default)]
+#[derive(Default, SourceMeta)]
+#[source_meta(
+    id = "system.systemd",
+    namespace = "system",
+    event_source = "systemd",
+    event_type = "unit.started",
+    event_types = "unit.stopped, unit.failed, unit.reloaded, timer.triggered",
+    adapter = "JournalctlStreamAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "continuous",
+    retention = "forever",
+    occurrence_identity = "anchor",
+    access_policy = "systemd_journal_read",
+    implementation = "sinexd",
+    privacy_context = "Journal",
+    material_policy = "journal_cursor",
+    checkpoint_policy = "journal",
+    resource_shape = "journal_tail",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "journal",
+    runtime_shape = "continuous",
+    package_impact = "system_systemd_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct SystemdParser;
 
 /// Infer `SystemdUnitType` from the unit name suffix.
@@ -317,16 +289,6 @@ impl MaterialParser for SystemdParser {
         .collect()
     }
 }
-
-// Register for dispatch (replay path).
-register_source!(source_id: "system.systemd", parser: SystemdParser);
-
-// Register source factory — JournalctlStreamAdapter + SystemdParser.
-crate::register_source!(
-    source_id: "system.systemd",
-    adapter: JournalctlStreamAdapter,
-    parser: SystemdParser,
-);
 
 // ---------------------------------------------------------------------------
 // Tests

@@ -18,19 +18,15 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
-use crate::runtime::parser::{DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult};
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
+use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceId, SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -217,7 +213,29 @@ fn derive_title(fm: &serde_json::Value, path: &str) -> String {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct KnowledgebaseParserConfig;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "knowledgebase-vault",
+    namespace = "knowledge",
+    event_source = "knowledgebase",
+    event_type = "note.observed",
+    adapter = "DirectoryWalkAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "historical",
+    retention = "forever",
+    occurrence_identity = "uuid5:(path, body_text_hash)",
+    access_policy = "personal_knowledgebase",
+    implementation = "sinexd",
+    privacy_context = "Document",
+    material_policy = "directory_walk",
+    checkpoint_policy = "directory_walk_cursor",
+    resource_shape = "file_reader",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "append_stream",
+    runtime_shape = "on_demand",
+    package_impact = "knowledgebase_vault_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct KnowledgebaseVaultParser;
 
 #[async_trait]
@@ -406,52 +424,6 @@ fn parse_date(s: &str) -> Option<Timestamp> {
 
     None
 }
-
-// ---------------------------------------------------------------------------
-// Source contract + binding + registration
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "knowledgebase-vault",
-        namespace: "knowledge",
-        event_types: &[("knowledgebase", "note.observed")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(path, body_text_hash)"),
-        access_policy: "personal_knowledgebase",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:knowledgebase-vault"),
-        "knowledgebase-vault",
-        "knowledge",
-    )
-    .implementation("sinexd")
-    .adapter("DirectoryWalkAdapter")
-    .output_event_type("note.observed")
-    .privacy_context("Document")
-    .material_policy("directory_walk")
-    .checkpoint_policy("directory_walk_cursor")
-    .resource_shape("file_reader")
-    .source_id("knowledgebase-vault")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("knowledgebase_vault_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
-crate::register_source!(
-    source_id: "knowledgebase-vault",
-    adapter: DirectoryWalkAdapter,
-    parser: KnowledgebaseVaultParser,
-);
 
 // ---------------------------------------------------------------------------
 // Tests
