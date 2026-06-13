@@ -47,19 +47,15 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::runtime::parser::{MaterialParser, ParserError, ParserResult, StaticFileAdapter};
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
+use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceId, SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // ===========================================================================
 // Reddit — comments.csv
@@ -100,7 +96,29 @@ struct RedditCommentCsvRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RedditCommentParserConfig;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "reddit-gdpr-comments",
+    namespace = "social",
+    event_source = "reddit",
+    event_type = "social.comment.posted",
+    adapter = "StaticFileAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "historical",
+    retention = "forever",
+    occurrence_identity = "uuid5:(reddit_id, subreddit)",
+    access_policy = "personal_social_data",
+    implementation = "sinexd",
+    privacy_context = "Document",
+    material_policy = "static_export_file",
+    checkpoint_policy = "static_file_cursor",
+    resource_shape = "file_reader",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "append_stream",
+    runtime_shape = "on_demand",
+    package_impact = "reddit_gdpr_comments_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct RedditCommentParser;
 
 #[async_trait]
@@ -202,52 +220,6 @@ fn parse_reddit_comment_row(
         .build())
 }
 
-// ---------------------------------------------------------------------------
-// Source contract + binding + registration
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "reddit-gdpr-comments",
-        namespace: "social",
-        event_types: &[("reddit", "social.comment.posted")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(reddit_id, subreddit)"),
-        access_policy: "personal_social_data",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:reddit-gdpr-comments"),
-        "reddit-gdpr-comments",
-        "social",
-    )
-    .implementation("sinexd")
-    .adapter("StaticFileAdapter")
-    .output_event_type("social.comment.posted")
-    .privacy_context("Document")
-    .material_policy("static_export_file")
-    .checkpoint_policy("static_file_cursor")
-    .resource_shape("file_reader")
-    .source_id("reddit-gdpr-comments")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("reddit_gdpr_comments_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
-crate::register_source!(
-    source_id: "reddit-gdpr-comments",
-    adapter: StaticFileAdapter,
-    parser: RedditCommentParser,
-);
-
 // ===========================================================================
 // Reddit — posts.csv
 // ===========================================================================
@@ -285,7 +257,29 @@ struct RedditPostCsvRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RedditPostParserConfig;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "reddit-gdpr-posts",
+    namespace = "social",
+    event_source = "reddit",
+    event_type = "social.post.created",
+    adapter = "StaticFileAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "historical",
+    retention = "forever",
+    occurrence_identity = "uuid5:(reddit_id, subreddit)",
+    access_policy = "personal_social_data",
+    implementation = "sinexd",
+    privacy_context = "Document",
+    material_policy = "static_export_file",
+    checkpoint_policy = "static_file_cursor",
+    resource_shape = "file_reader",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "append_stream",
+    runtime_shape = "on_demand",
+    package_impact = "reddit_gdpr_posts_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct RedditPostParser;
 
 #[async_trait]
@@ -386,52 +380,6 @@ fn parse_reddit_post_row(
         .build())
 }
 
-// ---------------------------------------------------------------------------
-// Source contract + binding + registration
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "reddit-gdpr-posts",
-        namespace: "social",
-        event_types: &[("reddit", "social.post.created")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(reddit_id, subreddit)"),
-        access_policy: "personal_social_data",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:reddit-gdpr-posts"),
-        "reddit-gdpr-posts",
-        "social",
-    )
-    .implementation("sinexd")
-    .adapter("StaticFileAdapter")
-    .output_event_type("social.post.created")
-    .privacy_context("Document")
-    .material_policy("static_export_file")
-    .checkpoint_policy("static_file_cursor")
-    .resource_shape("file_reader")
-    .source_id("reddit-gdpr-posts")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("reddit_gdpr_posts_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
-crate::register_source!(
-    source_id: "reddit-gdpr-posts",
-    adapter: StaticFileAdapter,
-    parser: RedditPostParser,
-);
-
 // ===========================================================================
 // Wykop — wykop_entries_added.jsonl
 // ===========================================================================
@@ -463,7 +411,29 @@ struct WykopEntryJsonRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WykopEntryParserConfig;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "wykop-entries",
+    namespace = "social",
+    event_source = "wykop",
+    event_type = "social.entry.created",
+    adapter = "StaticFileAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "historical",
+    retention = "forever",
+    occurrence_identity = "uuid5:(entry_id)",
+    access_policy = "personal_social_data",
+    implementation = "sinexd",
+    privacy_context = "Document",
+    material_policy = "static_export_file",
+    checkpoint_policy = "static_file_cursor",
+    resource_shape = "file_reader",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "append_stream",
+    runtime_shape = "on_demand",
+    package_impact = "wykop_entries_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct WykopEntryParser;
 
 #[async_trait]
@@ -563,52 +533,6 @@ fn parse_wykop_entry_row(
         .build())
 }
 
-// ---------------------------------------------------------------------------
-// Source contract + binding + registration
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "wykop-entries",
-        namespace: "social",
-        event_types: &[("wykop", "social.entry.created")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(entry_id)"),
-        access_policy: "personal_social_data",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:wykop-entries"),
-        "wykop-entries",
-        "social",
-    )
-    .implementation("sinexd")
-    .adapter("StaticFileAdapter")
-    .output_event_type("social.entry.created")
-    .privacy_context("Document")
-    .material_policy("static_export_file")
-    .checkpoint_policy("static_file_cursor")
-    .resource_shape("file_reader")
-    .source_id("wykop-entries")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("wykop_entries_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
-crate::register_source!(
-    source_id: "wykop-entries",
-    adapter: StaticFileAdapter,
-    parser: WykopEntryParser,
-);
-
 // ===========================================================================
 // Wykop — wykop_entry_comments.jsonl
 // ===========================================================================
@@ -640,7 +564,29 @@ struct WykopEntryCommentJsonRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WykopEntryCommentParserConfig;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "wykop-entry-comments",
+    namespace = "social",
+    event_source = "wykop",
+    event_type = "social.entry_comment.posted",
+    adapter = "StaticFileAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "historical",
+    retention = "forever",
+    occurrence_identity = "uuid5:(comment_id)",
+    access_policy = "personal_social_data",
+    implementation = "sinexd",
+    privacy_context = "Document",
+    material_policy = "static_export_file",
+    checkpoint_policy = "static_file_cursor",
+    resource_shape = "file_reader",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "append_stream",
+    runtime_shape = "on_demand",
+    package_impact = "wykop_entry_comments_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct WykopEntryCommentParser;
 
 #[async_trait]
@@ -743,52 +689,6 @@ fn parse_wykop_entry_comment_row(
         .privacy_context(ProcessingContext::Document)
         .build())
 }
-
-// ---------------------------------------------------------------------------
-// Source contract + binding + registration
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "wykop-entry-comments",
-        namespace: "social",
-        event_types: &[("wykop", "social.entry_comment.posted")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(comment_id)"),
-        access_policy: "personal_social_data",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:wykop-entry-comments"),
-        "wykop-entry-comments",
-        "social",
-    )
-    .implementation("sinexd")
-    .adapter("StaticFileAdapter")
-    .output_event_type("social.entry_comment.posted")
-    .privacy_context("Document")
-    .material_policy("static_export_file")
-    .checkpoint_policy("static_file_cursor")
-    .resource_shape("file_reader")
-    .source_id("wykop-entry-comments")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("wykop_entry_comments_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
-crate::register_source!(
-    source_id: "wykop-entry-comments",
-    adapter: StaticFileAdapter,
-    parser: WykopEntryCommentParser,
-);
 
 // ===========================================================================
 // Shared helpers

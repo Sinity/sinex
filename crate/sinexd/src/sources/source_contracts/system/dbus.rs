@@ -4,8 +4,8 @@
 //! Notification body and D-Bus args are emitted with privacy metadata; DB
 //! admission policy owns redaction and suppression.
 
-use crate::register_source;
-use crate::runtime::parser::{DbusStreamAdapter, MaterialParser, ParserError};
+use crate::runtime::parser::{MaterialParser, ParserError};
+use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{
     BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,
@@ -21,64 +21,9 @@ use sinex_primitives::parser::{
     SourceRecord, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 use std::collections::HashMap;
-
-// ---------------------------------------------------------------------------
-// Source contract
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "system.dbus",
-        namespace: "system",
-        event_types: &[
-            ("dbus", "signal.received"),
-            ("dbus", "method.called"),
-            ("dbus", "power.state_changed"),
-            ("dbus", "bluetooth.device_changed"),
-            ("dbus", "network.state_changed"),
-            ("dbus", "device.connected"),
-            ("dbus", "media.state_changed"),
-            ("dbus", "mount.event"),
-            ("dbus", "notification.sent"),
-        ],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Continuous],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Anchor,
-        access_policy: "system_bus_session_bus_read",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:system.dbus"),
-        "system.dbus",
-        "system",
-    )
-    .implementation("sinexd")
-    .adapter("DbusStreamAdapter")
-    .output_event_type("signal.received")
-    .privacy_context("Dbus")
-    .material_policy("bus_anchor")
-    .checkpoint_policy("live_observation")
-    .resource_shape("event_emitter")
-    .source_id("system.dbus")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::LiveObservation)
-    .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("system_dbus_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
 
 // ---------------------------------------------------------------------------
 // Parser
@@ -87,7 +32,30 @@ register_source_runtime_binding! {
 const MAX_DBUS_MESSAGE_BYTES: usize = 1_048_576;
 
 /// Parser for `system.dbus` — dispatches to 9 payload types by interface + member.
-#[derive(Default)]
+#[derive(Default, SourceMeta)]
+#[source_meta(
+    id = "system.dbus",
+    namespace = "system",
+    event_source = "dbus",
+    event_type = "signal.received",
+    event_types = "method.called, power.state_changed, bluetooth.device_changed, network.state_changed, device.connected, media.state_changed, mount.event, notification.sent",
+    adapter = "DbusStreamAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "continuous",
+    retention = "forever",
+    occurrence_identity = "anchor",
+    access_policy = "system_bus_session_bus_read",
+    implementation = "sinexd",
+    privacy_context = "Dbus",
+    material_policy = "bus_anchor",
+    checkpoint_policy = "live_observation",
+    resource_shape = "event_emitter",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "live_observation",
+    runtime_shape = "continuous",
+    package_impact = "system_dbus_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct DbusParser;
 
 /// Classify a D-Bus message by interface and member into an event-type string.
@@ -404,16 +372,6 @@ impl MaterialParser for DbusParser {
         })
     }
 }
-
-// Register for dispatch (replay path).
-register_source!(source_id: "system.dbus", parser: DbusParser);
-
-// Register source factory — DbusStreamAdapter + DbusParser.
-crate::register_source!(
-    source_id: "system.dbus",
-    adapter: DbusStreamAdapter,
-    parser: DbusParser,
-);
 
 // ---------------------------------------------------------------------------
 // Tests

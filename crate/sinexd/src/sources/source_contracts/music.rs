@@ -45,19 +45,15 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::runtime::parser::{MaterialParser, ParserError, ParserResult, StaticFileAdapter};
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
+use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceId, SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 const SKIP_THRESHOLD_MS: u64 = 30_000;
 
@@ -110,7 +106,29 @@ struct SpotifyExportRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SpotifyHistoryConfig;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "spotify-extended-history",
+    namespace = "music",
+    event_source = "spotify",
+    event_type = "track.played",
+    adapter = "StaticFileAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "historical",
+    retention = "forever",
+    occurrence_identity = "uuid5:(track_uri, track_name, artist_name, started_at, played_ms)",
+    access_policy = "personal_music_history",
+    implementation = "sinexd",
+    privacy_context = "Metadata",
+    material_policy = "static_export_file",
+    checkpoint_policy = "static_file_cursor",
+    resource_shape = "file_reader",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "append_stream",
+    runtime_shape = "on_demand",
+    package_impact = "spotify_extended_history_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct SpotifyHistoryParser;
 
 #[async_trait]
@@ -259,54 +277,6 @@ fn build_occurrence_key(
         fields,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Source contract + binding + registration
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "spotify-extended-history",
-        namespace: "music",
-        event_types: &[("spotify", "track.played")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From(
-            "(track_uri, track_name, artist_name, started_at, played_ms)",
-        ),
-        access_policy: "personal_music_history",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:spotify-extended-history"),
-        "spotify-extended-history",
-        "music",
-    )
-    .implementation("sinexd")
-    .adapter("StaticFileAdapter")
-    .output_event_type("track.played")
-    .privacy_context("Metadata")
-    .material_policy("static_export_file")
-    .checkpoint_policy("static_file_cursor")
-    .resource_shape("file_reader")
-    .source_id("spotify-extended-history")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("spotify_extended_history_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
-crate::register_source!(
-    source_id: "spotify-extended-history",
-    adapter: StaticFileAdapter,
-    parser: SpotifyHistoryParser,
-);
 
 // ---------------------------------------------------------------------------
 // Tests

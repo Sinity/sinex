@@ -221,16 +221,24 @@ pub(crate) fn generate_factory_registration(
 /// `crate::runtime::parser::<Adapter>`.
 fn adapter_type_ident(adapter: &str) -> syn::Result<Ident> {
     // Bare-ident form only (no generics) for the adapters re-exported from
-    // `crate::runtime::parser`.
+    // `crate::runtime::parser`. Each entry must be a real adapter type that
+    // compiles with `run_adapter_source::<Adapter, Parser>` — verified by the
+    // sources that already wire it via the explicit `register_source!`
+    // adapter+parser form.
     match adapter {
         "SqliteRowAdapter" | "AppendOnlyFileAdapter" | "StaticFileAdapter"
-        | "DirectoryWalkAdapter" => Ok(Ident::new(adapter, Span::call_site())),
+        | "DirectoryWalkAdapter" | "DbusStreamAdapter" | "JournalctlStreamAdapter"
+        | "FileDropAdapter" | "FileContentDropAdapter" | "ClipboardPollingAdapter"
+        | "UnixSocketStreamAdapter" => Ok(Ident::new(adapter, Span::call_site())),
         other => Err(Error::new(
             Span::call_site(),
             format!(
                 "adapter \"{other}\" is not yet wired for factory registration \
                  (supported: SqliteRowAdapter, AppendOnlyFileAdapter, StaticFileAdapter, \
-                 DirectoryWalkAdapter)"
+                 DirectoryWalkAdapter, DbusStreamAdapter, JournalctlStreamAdapter, \
+                 FileDropAdapter, FileContentDropAdapter, ClipboardPollingAdapter, \
+                 UnixSocketStreamAdapter); a generic or locally-aliased adapter \
+                 type is not supported — keep the explicit register_source! wiring"
             ),
         )),
     }
