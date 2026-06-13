@@ -61,6 +61,10 @@ use sinex_primitives::{register_source_contract, register_source_runtime_binding
 // Source contract + binding
 // ─────────────────────────────────────────────────────────────────────────────
 
+// register_source_contract!: escape-hatch pending #1761 (ExternalProducer —
+// Polylogue daemon publishes directly to NATS; sinexd carries no parser for
+// this source and no register_source! call is needed; contract-only registration
+// is valid but unsupported by SourceMeta which always emits factory wiring).
 register_source_contract! {
     SourceContract {
         id: "integration.polylogue",

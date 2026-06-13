@@ -46,6 +46,9 @@ use sinex_primitives::{register_source_contract, register_source_runtime_binding
 // Source contract — "document.staging"
 // ---------------------------------------------------------------------------
 
+// register_source_contract!: escape-hatch pending #1761 (custom imperative
+// document runtime with ExternalProducer-shaped dispatch and acquisition logic
+// beyond SourceMeta's registration scope).
 register_source_contract! {
     SourceContract {
         id: "document.staging",
