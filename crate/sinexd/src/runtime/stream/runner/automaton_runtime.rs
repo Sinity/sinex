@@ -6,7 +6,7 @@
 //! materialized inputs and feeds them into the module implementation.
 
 use super::{
-    Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, EventTransport, JetStreamEventConsumer,
+    Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, JetStreamEventConsumer,
     JetStreamEventConsumerConfig, LeaderState, ProcessingModel, ProvisionalEvent,
     RunnerConfirmedEventHandler, RuntimeModule, RuntimeResult, RuntimeRunner, ScanArgs, SinexError,
     TimeHorizon, Uuid, debug, info, mpsc, systemd_notify, warn,
