@@ -1663,11 +1663,23 @@ impl JetStreamConsumer {
                             acked_count as usize,
                         ));
                     }
-                    info!(
-                        confirmed = confirmation_batch.len(),
-                        tombstoned = tombstoned_batch.len(),
-                        "Processed admission batch"
-                    );
+                    // Steady-state confirmed-only batches carry no operator
+                    // signal and fire ~6/sec; demote them to debug! so they do
+                    // not dominate journal volume (#1726 measurement). Keep
+                    // info! only when tombstones are present — that is the
+                    // operationally interesting case worth a default-level line.
+                    if tombstoned_batch.is_empty() {
+                        debug!(
+                            confirmed = confirmation_batch.len(),
+                            "Processed admission batch"
+                        );
+                    } else {
+                        info!(
+                            confirmed = confirmation_batch.len(),
+                            tombstoned = tombstoned_batch.len(),
+                            "Processed admission batch (tombstones present)"
+                        );
+                    }
                 }
                 Err(failure) => {
                     self.settle_admission_skips(
