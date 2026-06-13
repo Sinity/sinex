@@ -59,19 +59,15 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::runtime::parser::{MaterialParser, ParserError, ParserResult, StaticFileAdapter};
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
+use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceId, SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // ---------------------------------------------------------------------------
 // Shared anchor helper
@@ -130,7 +126,29 @@ struct ClaudeContentBlock {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClaudeSessionParserConfig;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "ai-session-claude",
+    namespace = "ai_session",
+    event_source = "claude",
+    event_type = "ai.message",
+    adapter = "StaticFileAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "historical",
+    retention = "forever",
+    occurrence_identity = "uuid5:(session_id, message_id)",
+    access_policy = "personal_ai_conversations",
+    implementation = "sinexd",
+    privacy_context = "Document",
+    material_policy = "static_export_file",
+    checkpoint_policy = "static_file_cursor",
+    resource_shape = "file_reader",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "append_stream",
+    runtime_shape = "on_demand",
+    package_impact = "ai_session_claude_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct ClaudeSessionParser;
 
 #[async_trait]
@@ -266,52 +284,6 @@ fn parse_claude_message(
         .build())
 }
 
-// ---------------------------------------------------------------------------
-// Source contract + binding + registration
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "ai-session-claude",
-        namespace: "ai_session",
-        event_types: &[("claude", "ai.message")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(session_id, message_id)"),
-        access_policy: "personal_ai_conversations",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:ai-session-claude"),
-        "ai-session-claude",
-        "ai_session",
-    )
-    .implementation("sinexd")
-    .adapter("StaticFileAdapter")
-    .output_event_type("ai.message")
-    .privacy_context("Document")
-    .material_policy("static_export_file")
-    .checkpoint_policy("static_file_cursor")
-    .resource_shape("file_reader")
-    .source_id("ai-session-claude")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("ai_session_claude_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
-crate::register_source!(
-    source_id: "ai-session-claude",
-    adapter: StaticFileAdapter,
-    parser: ClaudeSessionParser,
-);
-
 // ===========================================================================
 // ChatGPT parser
 // ===========================================================================
@@ -377,7 +349,29 @@ struct ChatGptMessageMetadata {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChatGptSessionParserConfig;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "ai-session-chatgpt",
+    namespace = "ai_session",
+    event_source = "chatgpt",
+    event_type = "ai.message",
+    adapter = "StaticFileAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "historical",
+    retention = "forever",
+    occurrence_identity = "uuid5:(session_id, message_id)",
+    access_policy = "personal_ai_conversations",
+    implementation = "sinexd",
+    privacy_context = "Document",
+    material_policy = "static_export_file",
+    checkpoint_policy = "static_file_cursor",
+    resource_shape = "file_reader",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "append_stream",
+    runtime_shape = "on_demand",
+    package_impact = "ai_session_chatgpt_source",
+    implementation_mode = "sinexd:source"
+)]
 pub struct ChatGptSessionParser;
 
 #[async_trait]
@@ -555,52 +549,6 @@ fn parse_chatgpt_message(
             .build(),
     ))
 }
-
-// ---------------------------------------------------------------------------
-// Source contract + binding + registration
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "ai-session-chatgpt",
-        namespace: "ai_session",
-        event_types: &[("chatgpt", "ai.message")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(session_id, message_id)"),
-        access_policy: "personal_ai_conversations",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:ai-session-chatgpt"),
-        "ai-session-chatgpt",
-        "ai_session",
-    )
-    .implementation("sinexd")
-    .adapter("StaticFileAdapter")
-    .output_event_type("ai.message")
-    .privacy_context("Document")
-    .material_policy("static_export_file")
-    .checkpoint_policy("static_file_cursor")
-    .resource_shape("file_reader")
-    .source_id("ai-session-chatgpt")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("ai_session_chatgpt_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
-crate::register_source!(
-    source_id: "ai-session-chatgpt",
-    adapter: StaticFileAdapter,
-    parser: ChatGptSessionParser,
-);
 
 // ===========================================================================
 // Tests
