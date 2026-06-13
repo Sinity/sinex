@@ -18,70 +18,10 @@ use sinex_primitives::parser::{
     TimingEvidence,
 };
 use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
+use sinex_macros::SourceMeta;
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
-use crate::runtime::parser::{MaterialParser, ParserError, ParserResult, UnixSocketStreamAdapter};
-
-use crate::register_source;
-
-// ---------------------------------------------------------------------------
-// Source contract
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "desktop.window-manager",
-        namespace: "desktop",
-        event_types: &[
-            ("wm.hyprland", "window.opened"),
-            ("wm.hyprland", "window.closed"),
-            ("wm.hyprland", "window.focused"),
-            ("wm.hyprland", "window.moved"),
-            ("wm.hyprland", "window.title_changed"),
-            ("wm.hyprland", "workspace.switched"),
-            ("wm.hyprland", "monitor.focused"),
-            ("wm.hyprland", "state.captured"),
-            ("wm.hyprland", "wm.unhandled"),
-        ],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Continuous],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Anchor,
-        access_policy: "target_runtime_bridge:window_manager",
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Binding
-// ---------------------------------------------------------------------------
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:desktop.window-manager"),
-        "desktop.window-manager",
-        "desktop",
-    )
-    .implementation("sinexd")
-    .adapter("UnixSocketStreamAdapter")
-    .output_event_type("window.opened")
-    .privacy_context("document")
-    .material_policy("wm_socket_stream")
-    .checkpoint_policy("live_stream")
-    .resource_shape("unix_socket_watcher")
-    .source_id("desktop.window-manager")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::LiveObservation)
-    .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("desktop_window_manager")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 
 // ---------------------------------------------------------------------------
 // Parser config
@@ -120,7 +60,30 @@ pub struct HyprlandParserConfig {
 /// `window.focused` event has both `window_id` (from v2) and `window_class` /
 /// `window_title` (from v1).  If anything other than `activewindowv2` arrives
 /// while `pending_activewindow` is set, the buffered partial is flushed first.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "desktop.window-manager",
+    namespace = "desktop",
+    event_source = "wm.hyprland",
+    event_type = "window.opened",
+    event_types = "window.closed, window.focused, window.moved, window.title_changed, workspace.switched, monitor.focused, state.captured, wm.unhandled",
+    adapter = "UnixSocketStreamAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "continuous",
+    retention = "forever",
+    occurrence_identity = "anchor",
+    access_policy = "target_runtime_bridge:window_manager",
+    implementation = "sinexd",
+    privacy_context = "document",
+    material_policy = "wm_socket_stream",
+    checkpoint_policy = "live_stream",
+    resource_shape = "unix_socket_watcher",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "live_observation",
+    runtime_shape = "continuous",
+    package_impact = "desktop_window_manager",
+    implementation_mode = "sinexd:source"
+)]
 pub struct HyprlandParser {
     /// Buffered (window_class, window_title) from the most recent `activewindow`
     /// v1 event waiting to be merged with the following `activewindowv2`.
@@ -443,12 +406,6 @@ impl HyprlandParser {
         }
     }
 }
-
-register_source!(
-    source_id: "desktop.window-manager",
-    adapter: UnixSocketStreamAdapter,
-    parser: HyprlandParser,
-);
 
 #[cfg(test)]
 mod tests {
