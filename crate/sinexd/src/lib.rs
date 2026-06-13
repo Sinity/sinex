@@ -6,7 +6,6 @@
 //! NATS remains the durable event-intent / confirmation / DLQ /
 //! replay-control fabric.
 
-use sinexd_nonexistent_crate::BrokenType; // DELIBERATE_BREAK_FOR_CI_PROOF
 pub mod api;
 pub mod automata;
 pub mod event_engine;
