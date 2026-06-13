@@ -165,3 +165,46 @@ async fn weechat_descriptor_registered() -> TestResult<()> {
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// 7. SourceMeta-migrated terminal sources still register all three sites
+// ---------------------------------------------------------------------------
+
+/// The four deferred imperative terminal sources moved their `SourceContract`,
+/// `SourceRuntimeBinding`, and `register_source!` factory wiring into
+/// `#[derive(SourceMeta)]` (#1727 slice 3) while keeping their hand-written
+/// `MaterialParser`. This asserts the derive actually emits all three
+/// registration sites for each, so the migration did not silently drop a
+/// source from the inventory.
+#[sinex_test]
+async fn source_meta_terminal_sources_fully_registered() -> TestResult<()> {
+    use sinex_primitives::source_contracts::source_runtime_bindings;
+    use sinexd::sources::SourceContractRegistry;
+
+    let registry = SourceContractRegistry::from_inventory();
+
+    for id in [
+        "terminal.bash-history",
+        "terminal.zsh-history",
+        "terminal.text-history",
+        "terminal.asciinema",
+    ] {
+        assert!(
+            registry.find(&sui(id)).is_some(),
+            "SourceContract for '{id}' must be registered by #[derive(SourceMeta)]"
+        );
+        assert!(
+            find_source_factory(&sui(id)).is_some(),
+            "source factory for '{id}' must be registered by #[derive(SourceMeta)]"
+        );
+        assert!(
+            find_parser_factory(&sui(id)).is_some(),
+            "parser factory for '{id}' must be registered by #[derive(SourceMeta)]"
+        );
+        assert!(
+            source_runtime_bindings().any(|b| b.id == id),
+            "SourceRuntimeBinding for '{id}' must be registered by #[derive(SourceMeta)]"
+        );
+    }
+    Ok(())
+}

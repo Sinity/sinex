@@ -10,9 +10,10 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sinex_macros::SourceMeta;
 
 use crate::runtime::parser::dedup::ContentHashWindow;
-use crate::runtime::parser::{AppendOnlyFileAdapter, MaterialParser, ParserError, ParserResult};
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload;
 use sinex_primitives::parser::{
@@ -20,54 +21,7 @@ use sinex_primitives::parser::{
     TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
-
-use crate::register_source;
-
-// ---------------------------------------------------------------------------
-// Source contract
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "terminal.zsh-history",
-        namespace: "terminal",
-        event_types: &[("shell.history", "command.imported")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Continuous, Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Anchor,
-        access_policy: "target_home_read:.zsh_history",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:terminal.zsh-history"),
-        "terminal.zsh-history",
-        "terminal",
-    )
-    .implementation("sinexd")
-    .adapter("AppendOnlyFileAdapter")
-    .output_event_type("command.imported")
-    .privacy_context("Command")
-    .material_policy("text_history_anchor")
-    .checkpoint_policy("append_stream")
-    .resource_shape("linear_rows_bounded_memory")
-    .source_id("terminal.zsh-history")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("zsh_history_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
 
 // ---------------------------------------------------------------------------
 // Zsh extended-history prefix parser
@@ -112,7 +66,31 @@ pub struct ZshHistoryParserConfig;
 /// Parser for zsh history files (plain and HISTTIMEFORMAT extended).
 ///
 /// Maintains dedup window and tracks multi-line continuation state.
-#[derive(Debug, Default)]
+///
+/// `#[derive(SourceMeta)]` collapses the `SourceContract`,
+/// `SourceRuntimeBinding`, and `register_source!` factory wiring (#1727 slice
+/// 3); the hand-written `MaterialParser` is kept because of the multi-line
+/// continuation state machine and extended-history timestamp parsing.
+#[derive(Debug, Default, SourceMeta)]
+#[source_meta(
+    id = "terminal.zsh-history",
+    namespace = "terminal",
+    event_source = "shell.history",
+    event_type = "command.imported",
+    adapter = "AppendOnlyFileAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "continuous, historical",
+    retention = "forever",
+    occurrence_identity = "anchor",
+    access_policy = "target_home_read:.zsh_history",
+    privacy_context = "Command",
+    material_policy = "text_history_anchor",
+    checkpoint_policy = "append_stream",
+    resource_shape = "linear_rows_bounded_memory",
+    checkpoint_family = "append_stream",
+    runtime_shape = "continuous",
+    package_impact = "zsh_history_source"
+)]
 pub struct ZshHistoryParser {
     dedup: ContentHashWindow,
     /// Accumulated command for a multi-line continuation (backslash-continued).
@@ -282,13 +260,3 @@ impl ZshHistoryParser {
         ])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Source factory registration
-// ---------------------------------------------------------------------------
-
-register_source!(
-    source_id: "terminal.zsh-history",
-    adapter: AppendOnlyFileAdapter,
-    parser: ZshHistoryParser,
-);
