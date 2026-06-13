@@ -31,6 +31,8 @@
 | Staged export parsers | `crate/sinexd/docs/sources/adding_staged_export_parser.md` |
 | Provenance | `README.md#the-provenance-model-read-this-first` |
 | Distributed patterns | `crate/sinexd/docs/api/coordination.md`, `crate/sinex-primitives/docs/distributed_coordination.md` |
+| NATS transport decision record | `crate/sinexd/docs/architecture/nats-transport-decision-record.md` (traffic class per subject/stream/KV) |
+| Transport semantics catalog | `crate/sinex-primitives/docs/transport.md` (publish-class taxonomy + drain) |
 | Event engine pipeline | `crate/sinexd/docs/event_engine/` |
 | API gateway | `crate/sinexd/docs/api/` |
 | Sources | `crate/sinexd/docs/sources/` |
