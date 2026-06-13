@@ -6,6 +6,9 @@ use sinex_primitives::source_contracts::{
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
+// register_source_contract!: escape-hatch pending #1761 (proposed source with
+// two independent runtime bindings and no parser; SourceMeta requires exactly
+// one (id, adapter, occurrence_identity) triple).
 register_source_contract! {
     SourceContract {
         id: "email.mailbox",

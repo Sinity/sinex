@@ -36,6 +36,8 @@ use sinex_primitives::{register_source_contract, register_source_runtime_binding
 // Source contract
 // ---------------------------------------------------------------------------
 
+// register_source_contract!: escape-hatch pending #1761 (SourceDefinition/SourceMeta
+// DSL v1 cannot express ChainedAdapter dual-leg sources).
 register_source_contract! {
     SourceContract {
         id: "browser.history",

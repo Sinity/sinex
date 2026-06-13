@@ -1,0 +1,7 @@
+error: adapter "ChainedAdapter" is not yet wired for factory registration (supported: SqliteRowAdapter, AppendOnlyFileAdapter, StaticFileAdapter, DirectoryWalkAdapter, DbusStreamAdapter, JournalctlStreamAdapter, FileDropAdapter, FileContentDropAdapter, ClipboardPollingAdapter, UnixSocketStreamAdapter); a generic or locally-aliased adapter type is not supported — keep the explicit register_source! wiring
+ --> tests/compile_fail/source_definition_unknown_adapter.rs:8:10
+  |
+8 | #[derive(SourceDefinition)]
+  |          ^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `SourceDefinition` (in Nightly builds, run with -Z macro-backtrace for more info)

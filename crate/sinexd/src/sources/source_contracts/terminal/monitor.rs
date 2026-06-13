@@ -30,6 +30,9 @@ use crate::sources::monitor_driver::MonitorPhase;
 // Source contract + binding
 // ---------------------------------------------------------------------------
 
+// register_source_contract!: escape-hatch pending #1761 (MonitorDriver
+// adapter for fire-once Type=oneshot unit not yet in SourceDefinition/SourceMeta
+// adapter_type_ident allowlist).
 register_source_contract! {
     SourceContract {
         id: "terminal.monitor",
