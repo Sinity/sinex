@@ -9,9 +9,10 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sinex_macros::SourceMeta;
 
 use crate::runtime::parser::dedup::ContentHashWindow;
-use crate::runtime::parser::{AppendOnlyFileAdapter, MaterialParser, ParserError, ParserResult};
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload;
 use sinex_primitives::parser::{
@@ -19,53 +20,6 @@ use sinex_primitives::parser::{
     TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
-
-use crate::register_source;
-
-// ---------------------------------------------------------------------------
-// Source contract
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "terminal.bash-history",
-        namespace: "terminal",
-        event_types: &[("shell.history", "command.imported")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Continuous, Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Anchor,
-        access_policy: "target_home_read:.bash_history",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:terminal.bash-history"),
-        "terminal.bash-history",
-        "terminal",
-    )
-    .implementation("sinexd")
-    .adapter("AppendOnlyFileAdapter")
-    .output_event_type("command.imported")
-    .privacy_context("Command")
-    .material_policy("text_history_anchor")
-    .checkpoint_policy("append_stream")
-    .resource_shape("linear_rows_bounded_memory")
-    .source_id("terminal.bash-history")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("bash_history_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
 
 // ---------------------------------------------------------------------------
 // Parser
@@ -78,7 +32,31 @@ pub struct BashHistoryParserConfig;
 ///
 /// Each line is a raw command string. Maintains a [`ContentHashWindow`] to
 /// suppress re-emission of lines that appear after a file rotation.
-#[derive(Debug, Default)]
+///
+/// `#[derive(SourceMeta)]` collapses the `SourceContract`,
+/// `SourceRuntimeBinding`, and `register_source!` factory wiring (#1727 slice
+/// 3); the hand-written `MaterialParser` below is kept verbatim because the
+/// stateful rotation-aware dedup is beyond the declarative DSL.
+#[derive(Debug, Default, SourceMeta)]
+#[source_meta(
+    id = "terminal.bash-history",
+    namespace = "terminal",
+    event_source = "shell.history",
+    event_type = "command.imported",
+    adapter = "AppendOnlyFileAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "continuous, historical",
+    retention = "forever",
+    occurrence_identity = "anchor",
+    access_policy = "target_home_read:.bash_history",
+    privacy_context = "Command",
+    material_policy = "text_history_anchor",
+    checkpoint_policy = "append_stream",
+    resource_shape = "linear_rows_bounded_memory",
+    checkpoint_family = "append_stream",
+    runtime_shape = "continuous",
+    package_impact = "bash_history_source"
+)]
 pub struct BashHistoryParser {
     dedup: ContentHashWindow,
 }
@@ -171,13 +149,3 @@ impl MaterialParser for BashHistoryParser {
         ])
     }
 }
-
-// ---------------------------------------------------------------------------
-// Source factory registration
-// ---------------------------------------------------------------------------
-
-register_source!(
-    source_id: "terminal.bash-history",
-    adapter: AppendOnlyFileAdapter,
-    parser: BashHistoryParser,
-);
