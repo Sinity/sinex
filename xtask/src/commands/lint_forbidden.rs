@@ -157,6 +157,7 @@ impl XtaskCommand for LintForbiddenCommand {
 
         violations.extend(check_transport_publish_family_inventory()?);
         violations.extend(check_privacy_metadata_for_sensitive_units()?);
+        violations.extend(check_raw_source_registration_macros()?);
 
         // anyhow:: in library code is disallowed; libraries use the project error stack.
         let anyhow_allow: [&str; 0] = [];
@@ -489,6 +490,72 @@ fn check_privacy_metadata_for_sensitive_units() -> Result<Vec<String>> {
     }
 
     Ok(violations)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Raw source-registration macro fence (#1727 slice 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Gate: new source contracts under `source_contracts/` must use
+/// `#[derive(SourceDefinition)]` or `#[derive(SourceMeta)]` rather than raw
+/// `register_source_contract!` / `register_source_runtime_binding!` calls.
+///
+/// **Scope:** only `crate/sinexd/src/sources/source_contracts/**` is scanned.
+/// `crate/sinexd/src/automata/**` and `crate/sinexd/src/sources/{registry,
+/// bindings,noop,monitor_driver}.rs` are outside this tree and are NOT flagged.
+///
+/// **Allowlist (8 escape-hatch files):** sources whose shape cannot yet be
+/// expressed by SourceDefinition/SourceMeta v1 (ChainedAdapter, MonitorDriver,
+/// ExternalProducer, multi-parser, proposed/stub sources). Each file carries
+/// an inline comment explaining the blocker; when the derive DSL gains
+/// coverage, the allowlist entry and its comment should be removed together.
+/// Tracking issue for extending derive coverage: #1761.
+fn check_raw_source_registration_macros() -> Result<Vec<String>> {
+    let escape_hatch = [
+        // ChainedAdapter (SQLite + AppendOnlyFile dual-leg) not yet in
+        // adapter_type_ident allowlist; SourceDefinition/SourceMeta DSL v1
+        // cannot express two-leg chained adapters.
+        "crate/sinexd/src/sources/source_contracts/browser/history.rs",
+        // ExternalProducer-shaped document runtime with custom acquisition
+        // logic beyond SourceMeta's registration scope.
+        "crate/sinexd/src/sources/source_contracts/document/staging.rs",
+        // Proposed/stub source with two independent runtime bindings and no
+        // parser; SourceMeta requires exactly one (id, adapter,
+        // occurrence_identity) triple.
+        "crate/sinexd/src/sources/source_contracts/email.rs",
+        // Proposed/stub sources with proposed(true) builder flag and two
+        // contracts per file; not yet in SourceMeta/SourceDefinition DSL.
+        "crate/sinexd/src/sources/source_contracts/media.rs",
+        // ExternalProducer — Polylogue daemon publishes directly to NATS; no
+        // parser needed. Contract-only registration is valid but SourceMeta
+        // always emits factory wiring, which breaks this shape.
+        "crate/sinexd/src/sources/source_contracts/polylogue.rs",
+        // MonitorDriver adapter (monitor-emit / fire-once oneshot shape) not
+        // yet in adapter_type_ident allowlist.
+        "crate/sinexd/src/sources/source_contracts/system/monitor.rs",
+        // MonitorDriver adapter (monitor-emit / fire-once oneshot shape) not
+        // yet in adapter_type_ident allowlist.
+        "crate/sinexd/src/sources/source_contracts/terminal/monitor.rs",
+        // Two distinct parsers (WeeChatMessageRecord + WeeChatLogParser)
+        // registered separately; SourceMeta cannot express multi-parser
+        // registrations under one source id.
+        "crate/sinexd/src/sources/source_contracts/weechat.rs",
+    ];
+
+    // Restrict scan to source_contracts/ only.  Automata and sources/infra
+    // files are out of scope — they legitimately use these macros.
+    let glob = "crate/sinexd/src/sources/source_contracts/**/*.rs";
+    let mut matches = run_rg_with_globs("register_source_contract!", &[glob])
+        .with_context(|| "failed to scan source_contracts/ for register_source_contract!")?;
+    matches.extend(
+        run_rg_with_globs("register_source_runtime_binding!", &[glob])
+            .with_context(|| {
+                "failed to scan source_contracts/ for register_source_runtime_binding!"
+            })?,
+    );
+
+    filter_allowlist(matches, &escape_hatch, is_tests_path)
+        .with_context(|| "failed to filter raw source-registration macro allowlist")
 }
 
 /// Return true if any `.rs` file directly inside `dir` (non-recursive) contains

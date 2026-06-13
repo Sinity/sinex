@@ -33,6 +33,9 @@ use sinex_primitives::{register_source_contract, register_source_runtime_binding
 // Source contract — "weechat"
 // ---------------------------------------------------------------------------
 
+// register_source_contract!: escape-hatch pending #1761 (two distinct parsers
+// registered separately: WeeChatMessageRecord + WeeChatLogParser; SourceMeta
+// cannot express multi-parser registrations under one source id).
 register_source_contract! {
     SourceContract {
         id: "weechat",

@@ -6,6 +6,10 @@ use sinex_primitives::source_contracts::{
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
+// register_source_contract!: escape-hatch pending #1761 (proposed stub sources
+// with proposed(true) builder flag not yet in SourceMeta/SourceDefinition DSL;
+// two contracts per file).
+
 // ── audio.transcription ────────────────────────────────────────────────
 
 register_source_contract! {

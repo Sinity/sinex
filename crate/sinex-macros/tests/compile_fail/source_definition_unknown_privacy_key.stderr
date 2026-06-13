@@ -1,0 +1,5 @@
+error: expected #[privacy(context = "...")] or #[privacy(sensitivity = "...")]
+  --> tests/compile_fail/source_definition_unknown_privacy_key.rs:17:15
+   |
+17 |     #[privacy(redaction_level = "full")]
+   |               ^^^^^^^^^^^^^^^
