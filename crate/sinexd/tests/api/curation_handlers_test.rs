@@ -118,7 +118,7 @@ async fn curation_duplicate_candidates_list_cross_material_clusters(
     let cluster = &response.clusters[0];
     assert_eq!(cluster.source, "webhistory");
     assert_eq!(cluster.event_type, "page.visited");
-    assert_eq!(cluster.natural_key_hash, "visit-1");
+    assert_eq!(cluster.equivalence_key, "visit-1");
     assert_eq!(cluster.event_count, 2);
     assert_eq!(cluster.material_count, 2);
     let listed_ids: Vec<_> = cluster
@@ -144,7 +144,7 @@ async fn curation_duplicate_judgment_records_proposal_over_candidate_set(
         CurationRecordDuplicateJudgmentRequest {
             source: "webhistory".to_string(),
             event_type: "page.visited".to_string(),
-            natural_key_hash: "visit-1".to_string(),
+            equivalence_key: "visit-1".to_string(),
             event_ids: vec![candidate_a, candidate_b],
             action: CurationDuplicateAction::Prefer,
             preferred_event_id: Some(candidate_a),
@@ -301,22 +301,22 @@ async fn insert_fixture_proposal(
 
 async fn insert_duplicate_candidate(
     ctx: &TestContext,
-    natural_key_hash: &str,
+    equivalence_key: &str,
     material_label: &str,
 ) -> TestResult<sinex_primitives::Uuid> {
     let material_id = ctx
         .create_source_material(Some(&format!("duplicate-candidate-{material_label}")))
         .await?;
-    let event = DynamicPayload::new(
+    let mut event = DynamicPayload::new(
         "webhistory",
         "page.visited",
         json!({
-            "natural_key_hash": natural_key_hash,
-            "url": format!("https://example.test/{natural_key_hash}"),
+            "url": format!("https://example.test/{equivalence_key}"),
         }),
     )
     .from_material(material_id)
     .build()?;
+    event.equivalence_key = Some(equivalence_key.to_string());
     let inserted = ctx.pool().events().insert(event).await?;
     let id = inserted
         .id
