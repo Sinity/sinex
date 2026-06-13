@@ -12,7 +12,7 @@ use sinex_primitives::domain::{
     SourceMaterialTimingInfoType, SyntheticTemporalPolicy,
 };
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
-use sinex_primitives::events::{DynamicPayload, EventId, SourceMaterial};
+use sinex_primitives::events::{DynamicPayload, EquivalenceKey, EventId, ScopeKey, SourceMaterial};
 use sinex_primitives::rpc::sources::{
     SourceAnnotations, SourceMaterialMetadataContract, SourceMaterialStatistics, SourceOrigin,
 };
@@ -1704,8 +1704,8 @@ async fn event_replacements_record_and_query(ctx: TestContext) -> TestResult<()>
             old_event_id: old_event_1,
             new_event_id: new_event_1,
             relation_kind: ReplacementKind::Superseded,
-            scope_key: Some("scope:fs".to_string()),
-            equivalence_key: Some("eq:file1".to_string()),
+            scope_key: Some("scope:fs".into()),
+            equivalence_key: Some("eq:file1".into()),
         },
         ReplacementRecord {
             old_event_id: old_event_2,
@@ -1718,7 +1718,7 @@ async fn event_replacements_record_and_query(ctx: TestContext) -> TestResult<()>
             old_event_id: old_event_1,
             new_event_id: new_event_2,
             relation_kind: ReplacementKind::Split,
-            scope_key: Some("scope:fs".to_string()),
+            scope_key: Some("scope:fs".into()),
             equivalence_key: None,
         },
     ];

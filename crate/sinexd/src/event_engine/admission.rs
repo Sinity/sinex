@@ -10,7 +10,7 @@ use crate::event_engine::{EventEngineResult, SinexError};
 use sinex_db::DbPool;
 use sinex_db::repositories::{DbPoolExt, StreamBatchRow};
 use sinex_primitives::constants::limits::MAX_EVENT_PAYLOAD_BYTES;
-use sinex_primitives::events::Event;
+use sinex_primitives::events::{EquivalenceKey, Event, ScopeKey};
 use sinex_primitives::events::admission::{ACCEPTED_ENVELOPE_VERSIONS, EventIntent};
 use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::{Id, JsonValue, Timestamp, Uuid};
@@ -695,7 +695,7 @@ impl AdmissionService {
         let equiv_keys: Vec<String> = intent
             .events
             .iter()
-            .filter_map(|e| e.equivalence_key.clone())
+            .filter_map(|e| e.equivalence_key.as_ref().map(|k| k.as_str().to_owned()))
             .collect();
         let existing_keys: HashSet<String> = if equiv_keys.is_empty() {
             HashSet::new()
@@ -1045,8 +1045,8 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
                 anchor_payload_hash: event.anchor_payload_hash.clone(),
                 temporal_policy: event.temporal_policy.map(|policy| policy.to_string()),
                 semantics_version: event.semantics_version.clone(),
-                scope_key: event.scope_key.clone(),
-                equivalence_key: event.equivalence_key.clone(),
+                scope_key: event.scope_key.clone().map(ScopeKey::from),
+                equivalence_key: event.equivalence_key.clone().map(EquivalenceKey::from),
                 created_by_operation_id: event.created_by_operation_id,
                 automaton_model: event.automaton_model.map(|model| model.to_string()),
                 ts_quality: event.ts_quality.map(|quality| quality.to_string()),

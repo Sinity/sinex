@@ -124,27 +124,18 @@ pub async fn handle_curation_list_duplicate_candidates(
 
     let cluster_rows = sqlx::query(
         r"
-        WITH keyed AS (
-            SELECT
-                source,
-                event_type,
-                source_material_id,
-                COALESCE(NULLIF(payload->>'natural_key_hash', ''), NULLIF(payload->>'natural_key', ''), equivalence_key) AS natural_key_hash,
-                ts_orig
-            FROM core.events
-            WHERE source_material_id IS NOT NULL
-              AND ($1::text IS NULL OR source = $1)
-              AND ($2::text IS NULL OR event_type = $2)
-        )
         SELECT
             source,
             event_type,
-            natural_key_hash,
+            equivalence_key,
             COUNT(*)::bigint AS event_count,
             COUNT(DISTINCT source_material_id)::bigint AS material_count
-        FROM keyed
-        WHERE natural_key_hash IS NOT NULL AND natural_key_hash <> ''
-        GROUP BY source, event_type, natural_key_hash
+        FROM core.events
+        WHERE source_material_id IS NOT NULL
+          AND equivalence_key IS NOT NULL AND equivalence_key <> ''
+          AND ($1::text IS NULL OR source = $1)
+          AND ($2::text IS NULL OR event_type = $2)
+        GROUP BY source, event_type, equivalence_key
         HAVING COUNT(*) > 1 AND COUNT(DISTINCT source_material_id) > 1
         ORDER BY MAX(ts_orig) DESC
         LIMIT $3
@@ -164,8 +155,8 @@ pub async fn handle_curation_list_duplicate_candidates(
     for row in cluster_rows {
         let source: String = row.try_get("source").map_err(cluster_row_error)?;
         let event_type: String = row.try_get("event_type").map_err(cluster_row_error)?;
-        let natural_key_hash: String =
-            row.try_get("natural_key_hash").map_err(cluster_row_error)?;
+        let equivalence_key: String =
+            row.try_get("equivalence_key").map_err(cluster_row_error)?;
         let event_count: i64 = row.try_get("event_count").map_err(cluster_row_error)?;
         let material_count: i64 = row.try_get("material_count").map_err(cluster_row_error)?;
 
@@ -176,14 +167,14 @@ pub async fn handle_curation_list_duplicate_candidates(
             WHERE source = $1
               AND event_type = $2
               AND source_material_id IS NOT NULL
-              AND COALESCE(NULLIF(payload->>'natural_key_hash', ''), NULLIF(payload->>'natural_key', ''), equivalence_key) = $3
+              AND equivalence_key = $3
             ORDER BY ts_orig DESC, id DESC
             LIMIT $4
             ",
         )
         .bind(&source)
         .bind(&event_type)
-        .bind(&natural_key_hash)
+        .bind(&equivalence_key)
         .bind(events_per_cluster)
         .fetch_all(pool)
         .await
@@ -191,7 +182,7 @@ pub async fn handle_curation_list_duplicate_candidates(
             SinexError::database("failed to list duplicate candidate events")
                 .with_context("source", &source)
                 .with_context("event_type", &event_type)
-                .with_context("natural_key_hash", &natural_key_hash)
+                .with_context("equivalence_key", &equivalence_key)
                 .with_std_error(&error)
         })?;
 
@@ -207,10 +198,10 @@ pub async fn handle_curation_list_duplicate_candidates(
         }
 
         clusters.push(CurationDuplicateCandidateCluster {
-            cluster_id: duplicate_cluster_id(&source, &event_type, &natural_key_hash),
+            cluster_id: duplicate_cluster_id(&source, &event_type, &equivalence_key),
             source,
             event_type,
-            natural_key_hash,
+            equivalence_key,
             event_count,
             material_count,
             events,
@@ -264,13 +255,13 @@ pub async fn handle_curation_record_duplicate_judgment(
                     .map_or_else(|_| "<missing-id>".to_string(), |id| id.to_string()),
             )
         })?;
-        if key != req.natural_key_hash {
+        if key != req.equivalence_key {
             return Err(SinexError::validation(
                 "curation.duplicate_judgments.record: candidate event logical key mismatch",
             )
             .with_context("event_id", persisted_event_id(event)?.to_string())
-            .with_context("expected_natural_key_hash", &req.natural_key_hash)
-            .with_context("actual_natural_key_hash", key));
+            .with_context("expected_equivalence_key", &req.equivalence_key)
+            .with_context("actual_equivalence_key", key));
         }
         let Provenance::Material { id, .. } = &event.provenance else {
             return Err(SinexError::validation(
@@ -302,13 +293,13 @@ pub async fn handle_curation_record_duplicate_judgment(
     let candidate_payload = json!({
         "source": req.source.clone(),
         "event_type": req.event_type.clone(),
-        "natural_key_hash": req.natural_key_hash.clone(),
+        "equivalence_key": req.equivalence_key.clone(),
         "action": action_label,
         "preferred_event_id": req.preferred_event_id,
         "candidate_event_ids": req.event_ids.clone(),
         "candidate_material_ids": evidence_material_ids.clone(),
     });
-    let cluster_id = duplicate_cluster_id(&req.source, &req.event_type, &req.natural_key_hash);
+    let cluster_id = duplicate_cluster_id(&req.source, &req.event_type, &req.equivalence_key);
     let proposal = CurationProposalPayload {
         proposal_id: Uuid::now_v7(),
         proposal_key: format!("duplicate-resolution:{cluster_id}"),
@@ -465,19 +456,16 @@ fn cluster_row_error(error: sqlx::Error) -> SinexError {
     SinexError::database("failed to decode duplicate candidate row").with_std_error(&error)
 }
 
-fn duplicate_cluster_id(source: &str, event_type: &str, natural_key_hash: &str) -> String {
-    format!("{source}/{event_type}/{natural_key_hash}")
+fn duplicate_cluster_id(source: &str, event_type: &str, equivalence_key: &str) -> String {
+    format!("{source}/{event_type}/{equivalence_key}")
 }
 
 fn duplicate_logical_key(event: &Event<JsonValue>) -> Option<String> {
     event
-        .payload
-        .get("natural_key_hash")
-        .or_else(|| event.payload.get("natural_key"))
-        .and_then(|value| value.as_str())
+        .equivalence_key
+        .as_deref()
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .or_else(|| event.equivalence_key.clone())
 }
 
 fn persisted_event_id(event: &Event<JsonValue>) -> Result<EventId> {
@@ -497,9 +485,9 @@ fn validate_duplicate_judgment_request(req: &CurationRecordDuplicateJudgmentRequ
             "curation.duplicate_judgments.record requires event_type",
         ));
     }
-    if req.natural_key_hash.trim().is_empty() {
+    if req.equivalence_key.trim().is_empty() {
         return Err(SinexError::validation(
-            "curation.duplicate_judgments.record requires natural_key_hash",
+            "curation.duplicate_judgments.record requires equivalence_key",
         ));
     }
     if req.event_ids.len() < 2 {

@@ -12,7 +12,7 @@ use crate::runtime::stream::{
 };
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::ControlSubject;
-use sinex_primitives::events::Provenance;
+use sinex_primitives::events::{Provenance, ScopeKey};
 use sinex_primitives::{Result, SinexError, Timestamp, Uuid};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -183,7 +183,7 @@ impl ReplayExecutionEngine {
                         old_event_id: *old_event_id,
                         new_event_id,
                         relation_kind,
-                        scope_key: scope_key.clone(),
+                        scope_key: scope_key.clone().map(ScopeKey::from),
                         equivalence_key: None,
                     });
                 }
