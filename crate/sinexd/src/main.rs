@@ -85,7 +85,7 @@ enum Command {
 
     /// Run a single source to completion against the given subcommand.
     ///
-    /// Runs a source through the `sinexd scan-source` entrypoint
+    /// Runs a source through the `sinexd scan-source-driver` entrypoint
     /// like the document snapshot scan. Reuses the source-binding manifest
     /// shape so operator-facing tooling matches the supervisor's catalog.
     ScanSourceDriver {
