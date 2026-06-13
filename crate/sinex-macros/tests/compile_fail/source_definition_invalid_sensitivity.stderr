@@ -1,0 +1,7 @@
+error: unknown sensitivity hint 'super_private'; expected one of: potentially_sensitive, free_text, credential_bearing, person_name_candidate, source_path
+ --> tests/compile_fail/source_definition_invalid_sensitivity.rs:6:10
+  |
+6 | #[derive(SourceDefinition)]
+  |          ^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `SourceDefinition` (in Nightly builds, run with -Z macro-backtrace for more info)
