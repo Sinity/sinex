@@ -52,7 +52,7 @@ expression: cards
         "id": "trace",
         "label": "Trace",
         "state": "enabled",
-        "command_equivalent": "sinexctl trace ux.event.full_provenance",
+        "command_hint": "sinexctl trace ux.event.full_provenance",
         "side_effect": "read"
       },
       {
@@ -121,7 +121,7 @@ expression: cards
         "id": "trace",
         "label": "Trace",
         "state": "enabled",
-        "command_equivalent": "sinexctl trace ux.event.redacted",
+        "command_hint": "sinexctl trace ux.event.redacted",
         "side_effect": "read"
       },
       {
@@ -183,7 +183,7 @@ expression: cards
         "id": "trace",
         "label": "Trace",
         "state": "enabled",
-        "command_equivalent": "sinexctl trace ux.event.missing_material_anchor",
+        "command_hint": "sinexctl trace ux.event.missing_material_anchor",
         "side_effect": "read"
       },
       {
