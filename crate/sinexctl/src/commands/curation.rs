@@ -239,7 +239,7 @@ fn render_duplicate_candidates(
     format: OutputFormat,
 ) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(response)?),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => println!("{}", format_json(response)?),
         OutputFormat::Yaml => println!("{}", format_yaml(response)?),
         OutputFormat::Table => {
             println!("Duplicate candidate clusters: {}", response.clusters.len());
@@ -262,7 +262,7 @@ fn render_duplicate_candidates(
 
 fn render_finalization(response: &CurationFinalizeResponse, format: OutputFormat) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(response)?),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => println!("{}", format_json(response)?),
         OutputFormat::Yaml => println!("{}", format_yaml(response)?),
         OutputFormat::Table => {
             let event_id = response
@@ -288,7 +288,7 @@ fn render_duplicate_judgment(
     format: OutputFormat,
 ) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(response)?),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => println!("{}", format_json(response)?),
         OutputFormat::Yaml => println!("{}", format_yaml(response)?),
         OutputFormat::Table => {
             let proposal_event_id = response
@@ -323,7 +323,7 @@ fn render_duplicate_judgment(
 
 fn render_proposals(response: &EventQueryResult, format: OutputFormat) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(response)?),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => println!("{}", format_json(response)?),
         OutputFormat::Yaml => println!("{}", format_yaml(response)?),
         OutputFormat::Table => match response {
             EventQueryResult::Events { events, .. } => {
@@ -357,7 +357,7 @@ fn render_proposals(response: &EventQueryResult, format: OutputFormat) -> Result
 
 fn render_judgment(response: &CurationRecordJudgmentResponse, format: OutputFormat) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(response)?),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => println!("{}", format_json(response)?),
         OutputFormat::Yaml => println!("{}", format_yaml(response)?),
         OutputFormat::Table => {
             let event_id = response

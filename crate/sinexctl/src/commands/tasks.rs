@@ -396,7 +396,7 @@ impl TaskListCommand {
             })
             .await?;
         match format {
-            OutputFormat::Json | OutputFormat::Dot => {
+            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                 println!("{}", format_json(&response)?);
             }
             OutputFormat::Yaml => {
@@ -421,7 +421,7 @@ impl TaskStateCommand {
             .tasks_state_get(TaskStateGetRequest { task_id })
             .await?;
         match format {
-            OutputFormat::Json | OutputFormat::Dot => {
+            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                 println!("{}", format_json(&response)?);
             }
             OutputFormat::Yaml => {

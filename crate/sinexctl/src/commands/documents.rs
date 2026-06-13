@@ -155,7 +155,7 @@ impl SearchArgs {
         let response: DocumentsSearchResponse = client.documents_search(request).await?;
 
         match format {
-            OutputFormat::Json | OutputFormat::Dot => {
+            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                 println!("{}", format_json(&response)?);
             }
             OutputFormat::Yaml => {
@@ -223,7 +223,7 @@ impl GetArgs {
         let response = client.documents_get(request).await?;
 
         match format {
-            OutputFormat::Json | OutputFormat::Dot => {
+            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                 println!("{}", format_json(&response)?);
             }
             OutputFormat::Yaml => {
@@ -294,7 +294,7 @@ impl ChunksArgs {
         let response = client.documents_get_chunks(request).await?;
 
         match format {
-            OutputFormat::Json | OutputFormat::Dot => {
+            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                 println!("{}", format_json(&response)?);
             }
             OutputFormat::Yaml => {

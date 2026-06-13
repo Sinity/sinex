@@ -171,7 +171,7 @@ fn render_event_query_result(
             next_cursor,
             total_estimate,
         )),
-        OutputFormat::Json | OutputFormat::Dot => format_json(&EventQueryResult::Events {
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => format_json(&EventQueryResult::Events {
             events: events.to_vec(),
             next_cursor: next_cursor.cloned(),
             total_estimate,
@@ -190,7 +190,7 @@ fn render_non_event_query_result(
 ) -> Result<String> {
     match format {
         OutputFormat::Table => Ok(format_non_event_query_result_table(result)),
-        OutputFormat::Json | OutputFormat::Dot => format_json(result),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => format_json(result),
         OutputFormat::Yaml => format_yaml(result),
     }
 }

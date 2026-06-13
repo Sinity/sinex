@@ -1,3 +1,4 @@
+pub mod envelope;
 pub mod json;
 pub mod output;
 pub mod progress;
@@ -5,6 +6,7 @@ pub mod table;
 pub mod units;
 pub mod yaml;
 
+pub use envelope::render_envelope;
 pub use json::{format_json, format_json_lines};
 pub use output::{CommandOutput, empty_result, format_list, format_single};
 pub use progress::{ProgressReporter, Spinner, SpinnerGuard, with_spinner, with_spinner_result};

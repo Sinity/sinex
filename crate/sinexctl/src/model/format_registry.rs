@@ -107,6 +107,12 @@ impl FormatCapability {
 
 const TABLE_JSON_YAML: &[OutputFormat] =
     &[OutputFormat::Table, OutputFormat::Json, OutputFormat::Yaml];
+const TABLE_JSON_NDJSON_YAML: &[OutputFormat] = &[
+    OutputFormat::Table,
+    OutputFormat::Json,
+    OutputFormat::Ndjson,
+    OutputFormat::Yaml,
+];
 const TABLE_JSON_YAML_DOT: &[OutputFormat] = &[
     OutputFormat::Table,
     OutputFormat::Json,
@@ -624,7 +630,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Shortcuts ────────────────────────────────────────────────────────────
     m.insert("status", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("recent", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "recent",
+        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML)
+            .with_note("ndjson emits one EventCardView object per line (envelope metadata omitted)"),
+    );
     m.insert("errors", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "watch",
@@ -1134,15 +1144,15 @@ pub fn render_format_matrix() -> String {
     let rows = command_catalog();
 
     let mut out = String::from(
-        "| Command | effect | RPC role | mutation guards | RPC methods | table | json | yaml | dot | streaming | Note |\n",
+        "| Command | effect | RPC role | mutation guards | RPC methods | table | json | ndjson | yaml | dot | streaming | Note |\n",
     );
-    out.push_str("|---------|--------|----------|-----------------|-------------|-------|------|------|-----|-----------|------|\n");
+    out.push_str("|---------|--------|----------|-----------------|-------------|-------|------|--------|------|-----|-----------|------|\n");
 
     for entry in &rows {
         let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "✓" } else { "" };
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             entry.path,
             effect_label(entry.effect),
             entry.required_rpc_role.map_or("", rpc_role_label),
@@ -1150,6 +1160,7 @@ pub fn render_format_matrix() -> String {
             entry.backing_rpc_methods.join(", "),
             has(OutputFormat::Table),
             has(OutputFormat::Json),
+            has(OutputFormat::Ndjson),
             has(OutputFormat::Yaml),
             has(OutputFormat::Dot),
             if cap.streaming { "stream" } else { "" },
@@ -1186,7 +1197,7 @@ pub fn render_format_matrix_terminal() -> String {
         .unwrap_or("rpc_methods".len())
         .max("rpc_methods".len());
     let header = format!(
-        "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<guard_width$}  {:<rpc_width$}  table  json   yaml   dot  stream  note",
+        "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<guard_width$}  {:<rpc_width$}  table  json  ndjson   yaml   dot  stream  note",
         "COMMAND",
         "EFFECT",
         "RPC_ROLE",
@@ -1206,7 +1217,7 @@ pub fn render_format_matrix_terminal() -> String {
         let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "  ✓  " } else { "     " };
         out.push_str(&format!(
-            "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<guard_width$}  {:<rpc_width$}{}{}{}{}  {:<6}  {}\n",
+            "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<guard_width$}  {:<rpc_width$}{}{}{}{}{}  {:<6}  {}\n",
             entry.path,
             effect_label(entry.effect),
             entry.required_rpc_role.map_or("", rpc_role_label),
@@ -1214,6 +1225,7 @@ pub fn render_format_matrix_terminal() -> String {
             rpc_methods_label(entry),
             has(OutputFormat::Table),
             has(OutputFormat::Json),
+            has(OutputFormat::Ndjson),
             has(OutputFormat::Yaml),
             has(OutputFormat::Dot),
             if cap.streaming { "stream" } else { "" },

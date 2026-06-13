@@ -1021,7 +1021,7 @@ fn render_privacy_export_report(
 ) -> Result<String> {
     match format {
         OutputFormat::Table => Ok(format_privacy_export_report(report)),
-        OutputFormat::Json | OutputFormat::Dot => format_json(report),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => format_json(report),
         OutputFormat::Yaml => format_yaml(report),
     }
 }
