@@ -8,12 +8,13 @@
 //!   3. `register_source!` adapter + parser factory wiring
 //!   4. `impl MaterialParser` via `DeclarativeParser::evaluate`
 //!
-//! Site 4 reuses the exact declarative-parser code path that
-//! `#[derive(SourceRecord)]` emits (see [`crate::source_record`]). The struct
-//! carries the same `#[privacy(...)]` / `#[timestamp(...)]` /
-//! `#[occurrence_key]` / `#[source(...)]` field attributes; the struct-level
-//! `#[source_definition(...)]` attribute carries the union of what
-//! `SourceContract` and `SourceRuntimeBinding` need.
+//! Sites 1–3 are emitted by the shared [`crate::source_registration`] module
+//! (also used by `#[derive(SourceMeta)]`). Site 4 reuses the exact
+//! declarative-parser code path that `#[derive(SourceRecord)]` emits (see
+//! [`crate::source_record`]). The struct carries the same `#[privacy(...)]` /
+//! `#[timestamp(...)]` / `#[occurrence_key]` / `#[source(...)]` field
+//! attributes; the struct-level `#[source_definition(...)]` attribute carries
+//! the union of what `SourceContract` and `SourceRuntimeBinding` need.
 //!
 //! # Cross-crate note
 //!
@@ -31,6 +32,10 @@ use syn::{DeriveInput, Error, parse_macro_input};
 use crate::source_record::{
     ParserSpecAttrs, collect_dispatch_event_types, generate_material_parser, parse_struct_fields,
 };
+use crate::source_registration::{
+    RegistrationAttrs, generate_factory_registration, generate_source_contract,
+    generate_source_runtime_binding, split_csv,
+};
 
 pub fn derive_source_definition_impl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -44,12 +49,12 @@ fn derive_source_definition_inner(input: &DeriveInput) -> syn::Result<TokenStrea
     let struct_name = &input.ident;
 
     let attrs = parse_source_definition_attrs(&input.attrs)?;
+    let registration = attrs.registration_attrs();
     let field_decls = parse_struct_fields(input, "SourceDefinition")?;
 
     // --- Compile-fail check: every #[event_dispatch] target must be a declared
     // event type of this source definition. ---
-    let mut declared_types: Vec<String> = vec![attrs.event_type.clone()];
-    declared_types.extend(attrs.additional_event_types.iter().cloned());
+    let declared_types = registration.declared_types();
     for target in collect_dispatch_event_types(&field_decls) {
         if !declared_types.contains(&target) {
             return Err(Error::new(
@@ -67,14 +72,10 @@ fn derive_source_definition_inner(input: &DeriveInput) -> syn::Result<TokenStrea
     // --- Site 4: declarative MaterialParser (shared with SourceRecord). ---
     let parser_tokens = generate_material_parser(struct_name, &attrs.parser_spec_attrs(), &field_decls)?;
 
-    // --- Site 1: SourceContract. ---
-    let contract_tokens = generate_source_contract(&attrs, &declared_types)?;
-
-    // --- Site 2: SourceRuntimeBinding. ---
-    let binding_tokens = generate_source_runtime_binding(&attrs)?;
-
-    // --- Site 3: register_source! adapter + parser factory wiring. ---
-    let factory_tokens = generate_factory_registration(struct_name, &attrs)?;
+    // --- Sites 1–3: contract, binding, factory (shared with SourceMeta). ---
+    let contract_tokens = generate_source_contract(&registration, &declared_types)?;
+    let binding_tokens = generate_source_runtime_binding(&registration)?;
+    let factory_tokens = generate_factory_registration(struct_name, &registration)?;
 
     // The source struct is a pure marker: its fields declare the parser spec,
     // never hold runtime data. The factory constructs it via `Default`, so we
@@ -186,15 +187,35 @@ impl SourceDefinitionAttrs {
             baseline_adapter_config: self.baseline_adapter_config.clone(),
         }
     }
-}
 
-fn split_csv(value: &str) -> Vec<String> {
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect()
+    /// Project the registration-relevant subset for the shared contract /
+    /// binding / factory emission (sites 1–3).
+    fn registration_attrs(&self) -> RegistrationAttrs {
+        RegistrationAttrs {
+            id: self.id.clone(),
+            namespace: self.namespace.clone(),
+            event_type: self.event_type.clone(),
+            event_source: self.event_source.clone(),
+            adapter: self.adapter.clone(),
+            additional_event_types: self.additional_event_types.clone(),
+            privacy_tier: self.privacy_tier.clone(),
+            horizons: self.horizons.clone(),
+            retention: self.retention.clone(),
+            occurrence_identity: self.occurrence_identity.clone(),
+            access_policy: self.access_policy.clone(),
+            implementation: self.implementation.clone(),
+            privacy_context: self.privacy_context.clone(),
+            material_policy: self.material_policy.clone(),
+            checkpoint_policy: self.checkpoint_policy.clone(),
+            resource_shape: self.resource_shape.clone(),
+            runner_pack: self.runner_pack.clone(),
+            checkpoint_family: self.checkpoint_family.clone(),
+            runtime_shape: self.runtime_shape.clone(),
+            package_impact: self.package_impact.clone(),
+            implementation_mode: self.implementation_mode.clone(),
+            capabilities: self.capabilities.clone(),
+        }
+    }
 }
 
 fn parse_source_definition_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceDefinitionAttrs> {
@@ -286,302 +307,4 @@ fn parse_source_definition_attrs(attrs: &[syn::Attribute]) -> syn::Result<Source
     }
 
     Ok(out)
-}
-
-// ---------------------------------------------------------------------------
-// Site 1: SourceContract
-// ---------------------------------------------------------------------------
-
-fn generate_source_contract(
-    attrs: &SourceDefinitionAttrs,
-    declared_types: &[String],
-) -> syn::Result<TokenStream> {
-    let id = &attrs.id;
-    let namespace = &attrs.namespace;
-    let access_policy = attrs.access_policy.as_deref().unwrap_or("internal");
-
-    // event_types: (event_source, event_type) pairs. All emitted under the
-    // definition's event_source for v1.
-    let event_source = &attrs.event_source;
-    let event_type_pairs = declared_types.iter().map(|et| {
-        quote!((#event_source, #et))
-    });
-
-    let privacy_tier = privacy_tier_token(attrs.privacy_tier.as_deref().unwrap_or("Sensitive"))?;
-
-    let horizons = if attrs.horizons.is_empty() {
-        vec![quote!(::sinex_primitives::source_contracts::Horizon::Continuous)]
-    } else {
-        attrs
-            .horizons
-            .iter()
-            .map(|h| horizon_token(h))
-            .collect::<syn::Result<Vec<_>>>()?
-    };
-
-    let retention = retention_token(attrs.retention.as_deref().unwrap_or("forever"))?;
-    let occurrence_identity = occurrence_identity_token(
-        attrs
-            .occurrence_identity
-            .as_deref()
-            .expect("occurrence_identity required (checked during attr parsing)"),
-    )?;
-
-    Ok(quote! {
-        ::sinex_primitives::source_contracts::__register::inventory::submit! {
-            ::sinex_primitives::source_contracts::SourceContract {
-                id: #id,
-                namespace: #namespace,
-                event_types: &[ #(#event_type_pairs),* ],
-                privacy_tier: #privacy_tier,
-                horizons: &[ #(#horizons),* ],
-                retention: #retention,
-                occurrence_identity: #occurrence_identity,
-                access_policy: #access_policy,
-            }
-        }
-    })
-}
-
-// ---------------------------------------------------------------------------
-// Site 2: SourceRuntimeBinding
-// ---------------------------------------------------------------------------
-
-fn generate_source_runtime_binding(attrs: &SourceDefinitionAttrs) -> syn::Result<TokenStream> {
-    let id = &attrs.id;
-    let namespace = &attrs.namespace;
-    let subject = format!("source:{id}");
-
-    let implementation = attrs.implementation.as_deref().unwrap_or("sinexd");
-    let adapter = &attrs.adapter;
-    let output_event_type = &attrs.event_type;
-    let privacy_context = attrs.privacy_context.as_deref().unwrap_or("Metadata");
-    let material_policy = attrs.material_policy.as_deref().unwrap_or("");
-    let checkpoint_policy = attrs.checkpoint_policy.as_deref().unwrap_or("");
-    let resource_shape = attrs.resource_shape.as_deref().unwrap_or("");
-    let runner_pack = attrs.runner_pack.as_deref().unwrap_or("sinexd-source");
-    let package_impact = attrs.package_impact.as_deref().unwrap_or("no_new_output");
-    let implementation_mode = attrs.implementation_mode.as_deref().unwrap_or("sinexd:source");
-
-    let checkpoint_family =
-        checkpoint_family_token(attrs.checkpoint_family.as_deref().unwrap_or("append_stream"))?;
-    let runtime_shape =
-        runtime_shape_token(attrs.runtime_shape.as_deref().unwrap_or("continuous"))?;
-
-    let capabilities_call = if attrs.capabilities.is_empty() {
-        quote!()
-    } else {
-        let caps = attrs.capabilities.iter();
-        quote!(.capabilities(&[ #(#caps),* ]))
-    };
-
-    Ok(quote! {
-        ::sinex_primitives::source_contracts::__register::inventory::submit! {
-            ::sinex_primitives::source_contracts::SourceRuntimeBinding::builder(
-                ::sinex_primitives::source_contracts::SubjectRef::from_static(#subject),
-                #id,
-                #namespace,
-            )
-            .implementation(#implementation)
-            .adapter(#adapter)
-            .output_event_type(#output_event_type)
-            .privacy_context(#privacy_context)
-            .material_policy(#material_policy)
-            .checkpoint_policy(#checkpoint_policy)
-            .resource_shape(#resource_shape)
-            .source_id(#id)
-            .runner_pack(#runner_pack)
-            #capabilities_call
-            .checkpoint_family(#checkpoint_family)
-            .runtime_shape(#runtime_shape)
-            .package_impact(#package_impact)
-            .implementation_mode(#implementation_mode)
-            .build_impact(::sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
-            .build()
-        }
-    })
-}
-
-// ---------------------------------------------------------------------------
-// Site 3: register_source! factory wiring
-// ---------------------------------------------------------------------------
-
-fn generate_factory_registration(
-    struct_name: &syn::Ident,
-    attrs: &SourceDefinitionAttrs,
-) -> syn::Result<TokenStream> {
-    let id = &attrs.id;
-    let adapter_ident = adapter_type_ident(&attrs.adapter)?;
-
-    Ok(quote! {
-        crate::register_source!(
-            source_id: #id,
-            adapter: crate::runtime::parser::#adapter_ident,
-            parser: #struct_name,
-        );
-    })
-}
-
-/// Resolve the adapter type identifier from the `adapter = "..."` attribute.
-///
-/// The attribute carries the adapter type name (also used verbatim as the
-/// binding's `adapter` string field). The factory wiring references it under
-/// `crate::runtime::parser::<Adapter>`.
-fn adapter_type_ident(adapter: &str) -> syn::Result<syn::Ident> {
-    // Slice 1 wires the adapters that have a 1:1 adapter type re-exported from
-    // `crate::runtime::parser`. Bare-ident form only (no generics) for v1.
-    match adapter {
-        "SqliteRowAdapter" | "AppendOnlyFileAdapter" | "StaticFileAdapter"
-        | "DirectoryWalkAdapter" => Ok(syn::Ident::new(adapter, Span::call_site())),
-        other => Err(Error::new(
-            Span::call_site(),
-            format!(
-                "source_definition: adapter \"{other}\" is not yet wired for factory \
-                 registration (slice 1 supports: SqliteRowAdapter, AppendOnlyFileAdapter, \
-                 StaticFileAdapter, DirectoryWalkAdapter)"
-            ),
-        )),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Enum token helpers
-// ---------------------------------------------------------------------------
-
-fn privacy_tier_token(name: &str) -> syn::Result<TokenStream> {
-    let variant = match name {
-        "Public" | "public" => quote!(Public),
-        "Sensitive" | "sensitive" => quote!(Sensitive),
-        "Secret" | "secret" => quote!(Secret),
-        other => {
-            return Err(Error::new(
-                Span::call_site(),
-                format!("unknown privacy_tier '{other}'; expected Public, Sensitive, or Secret"),
-            ));
-        }
-    };
-    Ok(quote!(::sinex_primitives::source_contracts::PrivacyTier::#variant))
-}
-
-fn horizon_token(name: &str) -> syn::Result<TokenStream> {
-    let variant = match name {
-        "continuous" | "Continuous" => quote!(Continuous),
-        "historical" | "Historical" => quote!(Historical),
-        other => {
-            return Err(Error::new(
-                Span::call_site(),
-                format!("unknown horizon '{other}'; expected continuous or historical"),
-            ));
-        }
-    };
-    Ok(quote!(::sinex_primitives::source_contracts::Horizon::#variant))
-}
-
-fn retention_token(spec: &str) -> syn::Result<TokenStream> {
-    let mut parts = spec.split(':');
-    let kind = parts.next().unwrap_or("");
-    match kind {
-        "forever" => Ok(quote!(::sinex_primitives::source_contracts::RetentionPolicy::Forever)),
-        "days" => {
-            let days: u32 = parts
-                .next()
-                .and_then(|d| d.parse().ok())
-                .ok_or_else(|| Error::new(Span::call_site(), "retention days expects 'days:N'"))?;
-            Ok(quote!(::sinex_primitives::source_contracts::RetentionPolicy::Days { days: #days }))
-        }
-        "tiered" => {
-            let hot: u32 = parts.next().and_then(|d| d.parse().ok()).ok_or_else(|| {
-                Error::new(Span::call_site(), "retention tiered expects 'tiered:HOT:WARM'")
-            })?;
-            let warm: u32 = parts.next().and_then(|d| d.parse().ok()).ok_or_else(|| {
-                Error::new(Span::call_site(), "retention tiered expects 'tiered:HOT:WARM'")
-            })?;
-            Ok(quote!(::sinex_primitives::source_contracts::RetentionPolicy::Tiered {
-                hot_days: #hot,
-                warm_days: #warm,
-            }))
-        }
-        other => Err(Error::new(
-            Span::call_site(),
-            format!("unknown retention '{other}'; expected forever, days:N, or tiered:HOT:WARM"),
-        )),
-    }
-}
-
-fn occurrence_identity_token(spec: &str) -> syn::Result<TokenStream> {
-    let mut parts = spec.splitn(2, ':');
-    let kind = parts.next().unwrap_or("");
-    match kind {
-        "natural" => Ok(quote!(::sinex_primitives::source_contracts::OccurrenceIdentity::Natural)),
-        "anchor" => Ok(quote!(::sinex_primitives::source_contracts::OccurrenceIdentity::Anchor)),
-        "uuid5" => {
-            let ns = parts.next().ok_or_else(|| {
-                Error::new(Span::call_site(), "occurrence_identity uuid5 expects 'uuid5:<namespace>'")
-            })?;
-            Ok(quote!(::sinex_primitives::source_contracts::OccurrenceIdentity::Uuid5From(#ns)))
-        }
-        other => Err(Error::new(
-            Span::call_site(),
-            format!(
-                "unknown occurrence_identity '{other}'; expected natural, anchor, or uuid5:<ns>"
-            ),
-        )),
-    }
-}
-
-fn checkpoint_family_token(spec: &str) -> syn::Result<TokenStream> {
-    let mut parts = spec.split(':');
-    let kind = parts.next().unwrap_or("");
-    match kind {
-        "append_stream" => {
-            Ok(quote!(::sinex_primitives::source_contracts::CheckpointFamily::AppendStream))
-        }
-        "journal" => Ok(quote!(::sinex_primitives::source_contracts::CheckpointFamily::Journal)),
-        "polling" => Ok(quote!(::sinex_primitives::source_contracts::CheckpointFamily::Polling)),
-        "live_observation" => {
-            Ok(quote!(::sinex_primitives::source_contracts::CheckpointFamily::LiveObservation))
-        }
-        "mutable_snapshot" => {
-            let backing = parts.next().ok_or_else(|| {
-                Error::new(
-                    Span::call_site(),
-                    "checkpoint_family mutable_snapshot expects \
-                     'mutable_snapshot:<backing_store>:<occurrence_anchor>'",
-                )
-            })?;
-            let anchor = parts.next().ok_or_else(|| {
-                Error::new(
-                    Span::call_site(),
-                    "checkpoint_family mutable_snapshot expects \
-                     'mutable_snapshot:<backing_store>:<occurrence_anchor>'",
-                )
-            })?;
-            Ok(quote!(::sinex_primitives::source_contracts::CheckpointFamily::MutableSnapshot {
-                backing_store_kind: #backing,
-                occurrence_anchor: #anchor,
-            }))
-        }
-        other => Err(Error::new(
-            Span::call_site(),
-            format!(
-                "unknown checkpoint_family '{other}'; expected append_stream, journal, polling, \
-                 live_observation, or mutable_snapshot:<backing>:<anchor>"
-            ),
-        )),
-    }
-}
-
-fn runtime_shape_token(name: &str) -> syn::Result<TokenStream> {
-    let variant = match name {
-        "continuous" | "Continuous" => quote!(Continuous),
-        "on_demand" | "OnDemand" => quote!(OnDemand),
-        "scheduled" | "Scheduled" => quote!(Scheduled),
-        other => {
-            return Err(Error::new(
-                Span::call_site(),
-                format!("unknown runtime_shape '{other}'; expected continuous, on_demand, scheduled"),
-            ));
-        }
-    };
-    Ok(quote!(::sinex_primitives::source_contracts::RuntimeShape::#variant))
 }

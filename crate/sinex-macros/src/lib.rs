@@ -10,7 +10,9 @@ mod db_check;
 mod event_payload;
 mod sinex_config;
 mod source_definition;
+mod source_meta;
 mod source_record;
+mod source_registration;
 
 use proc_macro::TokenStream;
 
@@ -183,6 +185,52 @@ pub fn derive_source_record(input: TokenStream) -> TokenStream {
 )]
 pub fn derive_source_definition(input: TokenStream) -> TokenStream {
     source_definition::derive_source_definition_impl(input)
+}
+
+/// Derive macro that unifies source *registration* for sources with a
+/// hand-written parser.
+///
+/// `#[derive(SourceMeta)]` is the imperative sibling of
+/// [`macro@SourceDefinition`]. It collapses only the three registration sites —
+/// `SourceContract`, `SourceRuntimeBinding`, and the `register_source!`
+/// adapter+parser factory — into a single annotated struct, and does **not**
+/// generate a `MaterialParser`. Use it when the parser needs logic the
+/// declarative DSL cannot express (stateful dedup, multi-line state machines,
+/// multi-event fan-out, custom timestamp parsing): the author keeps their
+/// `impl MaterialParser`, and `SourceMeta` removes the two error-prone
+/// `register_source_contract!` / `register_source_runtime_binding!` calls.
+///
+/// The derive is applied directly to the hand-written parser struct (the
+/// `MaterialParser` implementor); the factory wiring references that struct as
+/// its parser type. The struct must provide `Default` (the factory constructs
+/// the parser via `Default::default()`).
+///
+/// # Struct attribute
+///
+/// `#[source_meta(...)]` keys (all string literals):
+///
+/// Required: `id`, `namespace`, `event_type`, `event_source`, `adapter`,
+/// `occurrence_identity` (one of `natural` | `anchor` | `uuid5:<ns>`).
+///
+/// Optional: `event_types` (extra comma-separated emitted types),
+/// `privacy_tier`, `horizons`, `retention`, `access_policy`, `implementation`,
+/// `privacy_context`, `material_policy`, `checkpoint_policy`, `resource_shape`,
+/// `runner_pack`, `checkpoint_family` (e.g.
+/// `mutable_snapshot:directory:file_path_fingerprint`), `runtime_shape`,
+/// `package_impact`, `implementation_mode`, `capabilities`.
+///
+/// Unlike `SourceDefinition` there are no parser-spec keys (`input_shape`,
+/// `default_privacy_context`, `version`, `baseline_adapter_config`) — those
+/// belong to the declarative parser this derive does not generate.
+///
+/// # Compile-fail invariants (slice 3 subset)
+///
+/// - Missing `occurrence_identity` fails to compile.
+///
+/// See issue #1727 (SNX-41).
+#[proc_macro_derive(SourceMeta, attributes(source_meta))]
+pub fn derive_source_meta(input: TokenStream) -> TokenStream {
+    source_meta::derive_source_meta_impl(input)
 }
 
 /// Derive `from_env()` for env-driven configuration structs.

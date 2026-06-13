@@ -14,22 +14,16 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sinex_macros::SourceMeta;
 
-use crate::runtime::parser::{DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult};
+use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceId, SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
-
-use crate::register_source;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -41,56 +35,6 @@ const EVENT_TYPE_SESSION_RECORDED: &str = "session.recorded";
 const EVENT_TYPE_SESSION_PROMPT: &str = "session.prompt";
 const PARSER_ID: &str = "asciinema-session";
 const PARSER_VERSION: &str = "1.0.0";
-
-// ---------------------------------------------------------------------------
-// Source contract
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "terminal.asciinema",
-        namespace: "terminal",
-        event_types: &[
-            ("terminal.asciinema", "session.recorded"),
-            ("terminal.asciinema", "session.prompt"),
-        ],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(session_id, record_type[, line_index])"),
-        access_policy: "target_data_read:captures/asciinema",
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Runtime binding
-// ---------------------------------------------------------------------------
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:terminal.asciinema"),
-        "terminal.asciinema",
-        "terminal",
-    )
-    .implementation("sinexd")
-    .adapter("DirectoryWalkAdapter")
-    .output_event_type("session.recorded")
-    .privacy_context("Command")
-    .material_policy("directory_file")
-    .checkpoint_policy("mutable_snapshot")
-    .resource_shape("directory_tree_files")
-    .source_id("terminal.asciinema")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::MutableSnapshot {
-        backing_store_kind: "directory",
-        occurrence_anchor: "file_path_fingerprint",
-    })
-    .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("asciinema_source")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
 
 // ---------------------------------------------------------------------------
 // Parser configuration
@@ -114,7 +58,32 @@ pub struct AsciinemaParserConfig;
 /// - `session.json` → `session.recorded` event
 /// - `events.jsonl` → `session.prompt` event per `"prompt"` line
 /// - `session.cast` → skipped (terminal output frames; out of scope)
-#[derive(Debug, Clone, Default)]
+///
+/// `#[derive(SourceMeta)]` collapses the `SourceContract`,
+/// `SourceRuntimeBinding`, and `register_source!` factory wiring (#1727 slice
+/// 3); the hand-written `MaterialParser` is kept because of the
+/// filename-dispatched multi-event fan-out (two event types from one source).
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "terminal.asciinema",
+    namespace = "terminal",
+    event_source = "terminal.asciinema",
+    event_type = "session.recorded",
+    event_types = "session.prompt",
+    adapter = "DirectoryWalkAdapter",
+    privacy_tier = "Sensitive",
+    horizons = "historical",
+    retention = "forever",
+    occurrence_identity = "uuid5:(session_id, record_type[, line_index])",
+    access_policy = "target_data_read:captures/asciinema",
+    privacy_context = "Command",
+    material_policy = "directory_file",
+    checkpoint_policy = "mutable_snapshot",
+    resource_shape = "directory_tree_files",
+    checkpoint_family = "mutable_snapshot:directory:file_path_fingerprint",
+    runtime_shape = "continuous",
+    package_impact = "asciinema_source"
+)]
 pub struct AsciinemaParser;
 
 #[async_trait]
@@ -390,13 +359,3 @@ fn session_dir_fallback(record: &SourceRecord) -> String {
         })
         .unwrap_or_default()
 }
-
-// ---------------------------------------------------------------------------
-// Source factory registration
-// ---------------------------------------------------------------------------
-
-register_source!(
-    source_id: "terminal.asciinema",
-    adapter: DirectoryWalkAdapter,
-    parser: AsciinemaParser,
-);
