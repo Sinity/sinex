@@ -43,10 +43,10 @@ pub async fn run(
     run_metadata_only(source_id).await
 }
 
-/// Run only the privacy metadata proof.
+/// Run only the privacy metadata check.
 ///
 /// Use this when the caller has already verified clean fixture dispatch in the
-/// same case. It preserves the privacy proof while avoiding a duplicate
+/// same case. It preserves the privacy check while avoiding a duplicate
 /// initial-ingestion pass in `ALL_OBLIGATIONS`.
 pub async fn run_metadata_only(source_id: &str) -> Result<(), String> {
     let source_id = SourceId::new(source_id.to_owned())

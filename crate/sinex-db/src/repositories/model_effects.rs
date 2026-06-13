@@ -32,7 +32,7 @@ impl ModelEffectRepository<'_> {
     pub async fn find_by_composite_key(
         &self,
         key: &str,
-    ) -> DbResult<Option<crate::models::model_effect::ModelEffectRecord>> {
+    ) -> DbResult<Option<crate::models::model_effect::ModelEffectRow>> {
         sqlx::query_as(
             "SELECT id, provider, model, prompt_hash, schema_hash, input_hash, \
              composite_key, output, output_hash, replay_policy, recorded_at, \

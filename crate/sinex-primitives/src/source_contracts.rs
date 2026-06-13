@@ -735,7 +735,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn source_binding_builder_requires_proof_fields() -> TestResult<()> {
+    async fn source_runtime_binding_builder_accepts_all_required_fields() -> TestResult<()> {
         let descriptor = SourceRuntimeBinding::builder(
             SubjectRef::from_static("runtime_unit:test.demo"),
             "test.demo",
@@ -761,7 +761,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn proof_inventory_contains_builtin_source_binding() -> TestResult<()> {
+    async fn source_runtime_binding_inventory_contains_atuin() -> TestResult<()> {
         let bindings = source_runtime_bindings()
             .map(|descriptor| descriptor.subject.as_str())
             .collect::<Vec<_>>();
