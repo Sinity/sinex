@@ -980,6 +980,10 @@
                   # Keep shell entry cheap by default. Heavy dev conveniences are
                   # opt-in so direnv, one-shot commands, and fresh shells do not
                   # silently compile xtask or launch infra.
+                  # When SINEX_AUTO_INFRA=1 does start the stack, it is a
+                  # persistent dev service by design: it detaches (setsid below)
+                  # and deliberately outlives the launching shell or one-shot
+                  # command, listening on loopback only (#1725).
                   _sinex_infra_starting=0
 
                   if [ "''${SINEX_AUTO_DOCS_SYNC:-0}" = 1 ]; then
