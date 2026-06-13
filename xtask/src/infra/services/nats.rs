@@ -256,6 +256,9 @@ impl NatsManager {
         let store_dir = self.config.data_dir.join("jetstream");
         let expected_conf = format!(
             r#"# sinex-dev isolated NATS configuration
+# The dev event bus must never listen on non-loopback interfaces (#1725);
+# nats-server defaults to 0.0.0.0 when host is omitted.
+host = "127.0.0.1"
 port = {}
 jetstream {{
     store_dir = "{}"
@@ -613,6 +616,39 @@ mod tests {
             pid_file: root.path().join("run/nats.pid"),
             log_file: root.path().join("run/nats.log"),
         })
+    }
+
+    #[sinex_test]
+    async fn generate_config_binds_loopback_only() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = test_manager(&temp);
+
+        manager.generate_config()?;
+
+        let conf = fs::read_to_string(temp.path().join("nats.conf"))?;
+        assert!(
+            conf.contains(r#"host = "127.0.0.1""#),
+            "dev NATS config must pin a loopback bind, got:\n{conf}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn generate_config_replaces_wildcard_bind_configs() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let manager = test_manager(&temp);
+
+        // Configs written before the loopback fix lack the host line; the
+        // content-equality check must regenerate them on next start.
+        fs::write(
+            temp.path().join("nats.conf"),
+            "# sinex-dev isolated NATS configuration\nport = 4222\n",
+        )?;
+        manager.generate_config()?;
+
+        let conf = fs::read_to_string(temp.path().join("nats.conf"))?;
+        assert!(conf.contains(r#"host = "127.0.0.1""#));
+        Ok(())
     }
 
     #[sinex_test]
