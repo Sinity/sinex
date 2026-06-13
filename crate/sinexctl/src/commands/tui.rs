@@ -2473,13 +2473,13 @@ mod tests {
             projection_badges: vec!["ux-mk3".to_string()],
             actions: vec![
                 ActionAvailability::read("trace", "Trace", ActionAvailabilityState::Enabled)
-                    .with_command_equivalent(format!("sinexctl trace {id}")),
+                    .with_command_hint(format!("sinexctl trace {id}")),
                 ActionAvailability {
                     id: "redact".to_string(),
                     label: "Redact".to_string(),
                     state: ActionAvailabilityState::Target,
                     reason: Some("target-only fixture".to_string()),
-                    command_equivalent: None,
+                    command_hint: None,
                     rpc_method: None,
                     side_effect: ActionSideEffect::Destructive,
                     requires_confirmation: true,

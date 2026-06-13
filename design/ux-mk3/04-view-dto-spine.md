@@ -55,7 +55,7 @@ Core fields:
 - `label`
 - `state`: enabled, disabled, target, loading, dangerous, partial, unavailable
 - `reason`
-- `command_equivalent`
+- `command_hint`
 - `rpc_method`
 - `side_effect`: read, compose, write, admin, destructive
 - `requires_confirmation`
