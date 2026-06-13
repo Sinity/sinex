@@ -162,7 +162,7 @@ async fn run_baseline(args: BaselineArgs, format: OutputFormat) -> Result<()> {
     };
 
     match format {
-        OutputFormat::Json => println!("{}", format_json(&report)?),
+        OutputFormat::Json | OutputFormat::Ndjson => println!("{}", format_json(&report)?),
         OutputFormat::Yaml => println!("{}", format_yaml(&report)?),
         OutputFormat::Table => {
             // Table report already printed above; nothing extra to emit.

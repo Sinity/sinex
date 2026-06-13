@@ -41,7 +41,7 @@ impl NowCommand {
         };
 
         match format {
-            OutputFormat::Json | OutputFormat::Dot => {
+            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
                 println!("{}", serde_json::to_string_pretty(&snapshot)?);
             }
             OutputFormat::Yaml => {

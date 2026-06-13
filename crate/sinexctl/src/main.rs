@@ -412,6 +412,9 @@ fn render_list_formats(format: OutputFormat) -> color_eyre::Result<String> {
             serde_json::to_string_pretty(&operator_surface_catalog())?
         )),
         OutputFormat::Yaml => Ok(format!("{}\n", format_yaml(&operator_surface_catalog())?)),
+        OutputFormat::Ndjson => Err(eyre!(
+            "--list-formats does not support --format ndjson; use json or table"
+        )),
         OutputFormat::Dot => Err(eyre!("--list-formats does not support --format dot")),
     }
 }

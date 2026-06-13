@@ -335,7 +335,7 @@ async fn run_report(
     format: OutputFormat,
 ) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Dot => {
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
             let mut data = collect_report_data(client, time_range).await?;
             if let Some(obj) = data.as_object_mut() {
                 obj.insert("label".to_string(), json!(label));
@@ -569,7 +569,7 @@ async fn run_calendar(
     format: OutputFormat,
 ) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Dot => {
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
             let data = collect_calendar_data(client, days, offset).await?;
             println!("{}", format_json(&data)?);
             Ok(())
