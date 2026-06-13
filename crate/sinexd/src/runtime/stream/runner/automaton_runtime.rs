@@ -213,9 +213,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
 
         let env = sinex_primitives::environment::environment().clone();
 
-        let nats_client = match &transport {
-            EventTransport::Nats(publisher) => publisher.nats_client().clone(),
-        };
+        let nats_client = transport.nats_publisher()?.nats_client().clone();
 
         let consumer_config = Self::automaton_consumer_config(
             service_name.as_str(),

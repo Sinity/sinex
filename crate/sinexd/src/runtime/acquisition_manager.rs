@@ -330,17 +330,18 @@ impl AcquisitionManager {
     }
 
     /// Create an acquisition manager directly from runtime handles.
+    ///
+    /// Requires a `Nats`-backed transport: `AcquisitionManager` uses JetStream
+    /// for the `SOURCE_MATERIAL` frame protocol and cannot operate over the
+    /// `Direct` in-process path.
     pub fn from_handles(
         handles: &RuntimeHandles,
         rotation_policy: RotationPolicy,
         source_type: impl Into<String>,
     ) -> RuntimeResult<Self> {
-        let (nats_client, namespace) = match handles.transport() {
-            crate::runtime::event_transport::EventTransport::Nats(publisher) => (
-                publisher.nats_client().clone(),
-                publisher.namespace().map(ToOwned::to_owned),
-            ),
-        };
+        let publisher = handles.transport().nats_publisher()?;
+        let nats_client = publisher.nats_client().clone();
+        let namespace = publisher.namespace().map(ToOwned::to_owned);
 
         Ok(Self::new_with_namespace(
             nats_client,

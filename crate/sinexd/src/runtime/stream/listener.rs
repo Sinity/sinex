@@ -130,10 +130,7 @@ impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
 }
 
 pub(super) async fn create_checkpoint_kv(transport: &EventTransport) -> RuntimeResult<kv::Store> {
-    // NATS KV is now mandatory
-    let client = match transport {
-        EventTransport::Nats(publisher) => publisher.nats_client().clone(),
-    };
+    let client = transport.nats_publisher()?.nats_client().clone();
 
     let js = async_nats::jetstream::new(client);
     let env = sinex_primitives::environment::environment();
