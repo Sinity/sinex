@@ -26,7 +26,33 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
     // Parse the struct-level #[source_record(...)] attribute.
     let attrs = parse_source_record_attrs(&input.attrs)?;
 
-    // Collect fields.
+    // Collect + parse fields.
+    let field_decls = parse_struct_fields(input, "SourceRecord")?;
+
+    // Resolve defaults into the shared parser-codegen inputs.
+    let spec_attrs = ParserSpecAttrs::from_source_record_attrs(&attrs);
+
+    generate_material_parser(struct_name, &spec_attrs, &field_decls)
+}
+
+/// Collect every event type referenced by a `#[event_dispatch(...)]` field.
+///
+/// Used by `#[derive(SourceDefinition)]` to enforce that dispatch targets are
+/// declared in the source definition's event-type set (compile-fail check).
+pub(crate) fn collect_dispatch_event_types(fields: &[FieldDecl]) -> Vec<String> {
+    fields
+        .iter()
+        .flat_map(|d| d.event_dispatch.iter().map(|(_, et)| et.clone()))
+        .collect()
+}
+
+/// Collect and parse a struct's named fields into [`FieldDecl`]s.
+///
+/// Shared by `#[derive(SourceRecord)]` and `#[derive(SourceDefinition)]`.
+pub(crate) fn parse_struct_fields(
+    input: &DeriveInput,
+    derive_name: &str,
+) -> syn::Result<Vec<FieldDecl>> {
     let fields = match &input.data {
         Data::Struct(DataStruct {
             fields: Fields::Named(named),
@@ -35,17 +61,82 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
         _ => {
             return Err(Error::new_spanned(
                 input,
-                "#[derive(SourceRecord)] only works on structs with named fields",
+                format!("#[derive({derive_name})] only works on structs with named fields"),
             ));
         }
     };
 
-    // Parse each field's attributes into a FieldDecl.
     let mut field_decls = Vec::with_capacity(fields.len());
     for field in fields {
         field_decls.push(parse_field_decl(field)?);
     }
+    Ok(field_decls)
+}
 
+/// Resolved inputs for the shared declarative-parser code generation.
+///
+/// Both `#[derive(SourceRecord)]` (from `#[source_record(...)]`) and
+/// `#[derive(SourceDefinition)]` (from `#[source_definition(...)]`) lower their
+/// struct-level attributes into this shape before calling
+/// [`generate_material_parser`]. Every field here is already resolved — no
+/// `Option` defaults remain.
+pub(crate) struct ParserSpecAttrs {
+    pub(crate) parser_id: String,
+    pub(crate) source_id: String,
+    pub(crate) input_shape: String,
+    pub(crate) event_type: String,
+    pub(crate) event_source: String,
+    pub(crate) default_privacy_context: String,
+    pub(crate) version: String,
+    pub(crate) discriminator_field: Option<String>,
+    pub(crate) on_unknown: Option<String>,
+    /// Optional JSON literal emitted as the parser's
+    /// `MaterialParser::baseline_adapter_config()` override (e.g. atuin's
+    /// `{"query":"history"}`). `None` leaves the trait default (empty object).
+    pub(crate) baseline_adapter_config: Option<String>,
+}
+
+impl ParserSpecAttrs {
+    fn from_source_record_attrs(attrs: &SourceRecordAttrs) -> Self {
+        let event_source = attrs.event_source.clone().unwrap_or_else(|| {
+            // Default: first dot-segment of source_id (e.g.
+            // "terminal.atuin-history" → "terminal").
+            attrs
+                .source_id
+                .split('.')
+                .next()
+                .unwrap_or(&attrs.source_id)
+                .to_string()
+        });
+        Self {
+            parser_id: attrs.id.clone(),
+            source_id: attrs.source_id.clone(),
+            input_shape: attrs.input_shape.clone(),
+            event_type: attrs.event_type.clone(),
+            event_source,
+            default_privacy_context: attrs
+                .default_privacy_context
+                .clone()
+                .unwrap_or_else(|| "Metadata".to_string()),
+            version: attrs.version.clone().unwrap_or_else(|| "1.0.0".to_string()),
+            discriminator_field: attrs.discriminator_field.clone(),
+            on_unknown: attrs.on_unknown.clone(),
+            baseline_adapter_config: None,
+        }
+    }
+}
+
+/// Generate the `impl MaterialParser` + static `DeclarativeParserSpec` for a
+/// struct, from resolved [`ParserSpecAttrs`] + parsed [`FieldDecl`]s.
+///
+/// This is the shared declarative-parser code path. `#[derive(SourceRecord)]`
+/// emits only this; `#[derive(SourceDefinition)]` emits this plus the
+/// `SourceContract` / `SourceRuntimeBinding` / factory registrations.
+pub(crate) fn generate_material_parser(
+    struct_name: &syn::Ident,
+    attrs: &ParserSpecAttrs,
+    field_decls: &[FieldDecl],
+) -> syn::Result<TokenStream> {
     // --- Extension A: validate discriminator consistency ---
     // Find the field(s) with event_dispatch mappings.
     let dispatch_fields: Vec<&FieldDecl> = field_decls
@@ -55,8 +146,8 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
 
     // Validate: at most one field may carry event_dispatch.
     if dispatch_fields.len() > 1 {
-        return Err(Error::new_spanned(
-            input,
+        return Err(Error::new(
+            proc_macro2::Span::call_site(),
             format!(
                 "at most one field may have #[event_dispatch(...)]; found on fields: {}",
                 dispatch_fields
@@ -72,8 +163,8 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
     if let Some(ref disc_field) = attrs.discriminator_field {
         let found = field_decls.iter().any(|d| &d.name == disc_field);
         if !found {
-            return Err(Error::new_spanned(
-                input,
+            return Err(Error::new(
+                proc_macro2::Span::call_site(),
                 format!(
                     "discriminator = \"{disc_field}\" but no field with that name exists on the struct"
                 ),
@@ -134,16 +225,8 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
     // Collect all event types: base type + any dispatch cases.
     let all_event_type_pairs: Vec<TokenStream> = {
         let mut pairs = vec![]; // (event_source, event_type) tokens
-        let base_event_source_lit = attrs.event_source.clone().unwrap_or_else(|| {
-            attrs
-                .source_id
-                .split('.')
-                .next()
-                .unwrap_or(&attrs.source_id)
-                .to_string()
-        });
         let base_et = &attrs.event_type;
-        let base_es = &base_event_source_lit;
+        let base_es = &attrs.event_source;
         pairs.push(quote! {
             (_sdk_domain::EventSource::from_static(#base_es), _sdk_domain::EventType::from_static(#base_et))
         });
@@ -164,27 +247,33 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
         struct_name.to_string().to_uppercase()
     );
 
-    let parser_id_lit = &attrs.id;
+    let parser_id_lit = &attrs.parser_id;
     let source_id_lit = &attrs.source_id;
     let event_type_lit = &attrs.event_type;
-    let event_source_lit = attrs.event_source.clone().unwrap_or_else(|| {
-        // Default: first dot-segment of source_id (e.g.
-        // "terminal.atuin-history" → "terminal").
-        attrs
-            .source_id
-            .split('.')
-            .next()
-            .unwrap_or(&attrs.source_id)
-            .to_string()
-    });
-    let version_lit = attrs.version.clone().unwrap_or_else(|| "1.0.0".to_string());
-    let default_privacy_context_token = privacy_context_token(
-        attrs
-            .default_privacy_context
-            .as_deref()
-            .unwrap_or("Metadata"),
-    )?;
+    let event_source_lit = &attrs.event_source;
+    let version_lit = &attrs.version;
+    let default_privacy_context_token = privacy_context_token(&attrs.default_privacy_context)?;
     let input_format_token = input_format_token(&attrs.input_shape)?;
+
+    // Optional baseline adapter config override. Parsed as JSON at runtime
+    // (LazyLock-free; the trait method returns a fresh value each call).
+    let baseline_adapter_config_impl = if let Some(json) = &attrs.baseline_adapter_config {
+        // Validate the literal is parseable JSON at macro-expansion time.
+        serde_json::from_str::<serde_json::Value>(json).map_err(|e| {
+            Error::new(
+                proc_macro2::Span::call_site(),
+                format!("baseline_adapter_config is not valid JSON: {e}"),
+            )
+        })?;
+        quote! {
+            fn baseline_adapter_config() -> ::serde_json::Value {
+                ::serde_json::from_str(#json)
+                    .expect("baseline_adapter_config validated as JSON at macro-expansion time")
+            }
+        }
+    } else {
+        quote! {}
+    };
 
     // Determine whether any field uses carry — if so, use StatefulDeclarativeParser.
     let has_carry_fields = field_decls.iter().any(|d| d.carry.is_some());
@@ -320,6 +409,8 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                 fn required_input_keys(&self) -> Vec<String> {
                     Self::parser_spec().required_input_keys()
                 }
+
+                #baseline_adapter_config_impl
 
                 #parse_record_impl
             }
@@ -470,7 +561,7 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
-struct FieldDecl {
+pub(crate) struct FieldDecl {
     name: String,
     field_type: FieldType,
     source: FieldSourceDecl,

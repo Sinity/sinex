@@ -9,6 +9,7 @@
 mod db_check;
 mod event_payload;
 mod sinex_config;
+mod source_definition;
 mod source_record;
 
 use proc_macro::TokenStream;
@@ -130,6 +131,58 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 )]
 pub fn derive_source_record(input: TokenStream) -> TokenStream {
     source_record::derive_source_record_impl(input)
+}
+
+/// Derive macro that unifies source registration from one struct.
+///
+/// `#[derive(SourceDefinition)]` collapses the four registration sites a source
+/// author would otherwise hand-wire — `SourceContract`, `SourceRuntimeBinding`,
+/// the `register_source!` adapter+parser factory, and `impl MaterialParser` —
+/// into a single annotated struct. Site 4 reuses the exact declarative-parser
+/// code path of [`macro@SourceRecord`]; the field attributes
+/// (`#[source(...)]`, `#[privacy(...)]`, `#[timestamp(...)]`,
+/// `#[occurrence_key]`, `#[event_dispatch(...)]`) are identical.
+///
+/// # Struct attribute
+///
+/// `#[source_definition(...)]` keys (all string literals):
+///
+/// Required: `id`, `namespace`, `event_type`, `event_source`, `input_shape`,
+/// `adapter`, `occurrence_identity` (one of `natural` | `anchor` |
+/// `uuid5:<ns>`).
+///
+/// Optional: `default_privacy_context`, `version`, `event_types` (extra
+/// comma-separated emitted types), `privacy_tier`, `horizons`, `retention`,
+/// `access_policy`, `implementation`, `privacy_context`, `material_policy`,
+/// `checkpoint_policy`, `resource_shape`, `runner_pack`, `checkpoint_family`
+/// (e.g. `mutable_snapshot:sqlite:atuin_history_id`), `runtime_shape`,
+/// `package_impact`, `implementation_mode`, `capabilities`.
+///
+/// # Compile-fail invariants (slice 1 subset)
+///
+/// - Missing `occurrence_identity` fails to compile.
+/// - An `#[event_dispatch(... => "type")]` target not in the definition's
+///   declared event types (`event_type` ∪ `event_types`) fails to compile.
+///
+/// See issue #1727 (SNX-41).
+#[proc_macro_derive(
+    SourceDefinition,
+    attributes(
+        source_definition,
+        source,
+        required,
+        skip,
+        occurrence_key,
+        privacy,
+        timestamp,
+        suppress_if,
+        default,
+        event_dispatch,
+        carry_across_records,
+    )
+)]
+pub fn derive_source_definition(input: TokenStream) -> TokenStream {
+    source_definition::derive_source_definition_impl(input)
 }
 
 /// Derive `from_env()` for env-driven configuration structs.

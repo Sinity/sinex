@@ -1,0 +1,7 @@
+error: #[event_dispatch] target event type "undeclared.event" is not declared by this source definition (declared: test.event, declared.event); add it to #[source_definition(event_types = "...")]
+ --> tests/compile_fail/source_definition_dispatch_undeclared_type.rs:7:10
+  |
+7 | #[derive(SourceDefinition)]
+  |          ^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `SourceDefinition` (in Nightly builds, run with -Z macro-backtrace for more info)
