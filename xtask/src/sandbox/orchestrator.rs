@@ -922,7 +922,7 @@ pub async fn start_test_source(
 
     let mut cmd = Command::new(&binary_path);
     crate::process::configure_managed_child_tokio(&mut cmd);
-    cmd.arg("scan-source");
+    cmd.arg("scan-source-driver");
     cmd.args(["--source", &config.source_id]);
     cmd.env("DATABASE_URL", &config.database_url);
     cmd.env("SINEX_NATS_URL", &config.nats.url);
@@ -965,7 +965,7 @@ pub async fn start_test_source(
     if let Some(sandbox) = ctx
         && sandbox.nats_handle().is_ok()
         && let Err(error) = wait_for_ready_notify(
-            "sinexd scan-source",
+            "sinexd scan-source-driver",
             &notify_listener,
             &mut child,
             Duration::from_secs(Timeouts::STANDARD),
@@ -992,7 +992,7 @@ pub async fn start_test_source(
     })
 }
 
-/// Run a one-shot `sinexd scan-source` subprocess and capture its output.
+/// Run a one-shot `sinexd scan-source-driver` subprocess and capture its output.
 ///
 /// Use this for production-path tests that need to exercise the real binary
 /// path without keeping a long-running service process alive.
@@ -1002,7 +1002,7 @@ pub async fn run_test_source_scan(
     ctx: Option<&crate::sandbox::context::Sandbox>,
 ) -> Result<CapturedOutput> {
     let workspace_root = find_workspace_root()?;
-    // The source host is the `sinexd scan-source` subcommand. The SDK subcommand
+    // The source host is the `sinexd scan-source-driver` subcommand. The SDK subcommand
     // (`scan --until snapshot --targets …`) is forwarded via repeated `--extra-arg`,
     // exactly as the NixOS source-binding units invoke it
     // (see `nixos/modules/sources.nix`).
@@ -1018,10 +1018,10 @@ pub async fn run_test_source_scan(
 
     let mut cmd = Command::new(&freshness.binary_path);
     crate::process::configure_managed_child_tokio(&mut cmd);
-    cmd.arg("scan-source");
+    cmd.arg("scan-source-driver");
     cmd.args(["--source", &config.source_id]);
     if let Some(wd) = &config.work_dir {
-        // `scan-source` has no --work-dir flag; the runner reads SINEX_WORK_DIR.
+        // `scan-source-driver` has no --work-dir flag; the runner reads SINEX_WORK_DIR.
         cmd.env("SINEX_WORK_DIR", wd);
     }
     if let Some(service_name) = &config.service_name {
