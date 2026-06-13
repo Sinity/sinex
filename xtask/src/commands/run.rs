@@ -51,12 +51,12 @@ fn make_instance_id(name: &str, prefix: Option<&str>) -> String {
 ///
 /// Post-collapse, every short name (`sinexd`, automatons, source contracts)
 /// resolves to the same `sinexd` binary. Source short names dispatch through
-/// `sinexd scan-source --source <id>`; everything else falls through to
+/// `sinexd scan-source-driver --source <id>`; everything else falls through to
 /// the default `serve` subcommand which runs the full supervisor.
 fn runtime_cli_args(_package: &str, run_identity: &str, source: Option<&str>) -> Vec<String> {
     source.map_or_else(Vec::new, |id| {
         vec![
-            "scan-source".to_string(),
+            "scan-source-driver".to_string(),
             "--source".to_string(),
             id.to_string(),
             "--service-name".to_string(),
@@ -352,14 +352,14 @@ async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
 ///   supervisor brings up the event engine, the API, and every enabled
 ///   source/automaton in one process.
 /// - Source short names (e.g. `fs-source`): dispatch through
-///   `sinexd scan-source --source <id>` for one-off scan-mode
+///   `sinexd scan-source-driver --source <id>` for one-off scan-mode
 ///   runs against a single source.
 /// - Automaton short names: also resolve to the supervisor (`serve`) since
 ///   individual automatons are no longer separately runnable.
 static BINARIES: &[(&str, &str, &str, Option<&str>)] = &[
     // Core supervisor entry points (serve the whole daemon)
     ("sinexd", "sinexd", "sinexd", None),
-    // Source one-off scans (sinexd scan-source --source <id>)
+    // Source one-off scans (sinexd scan-source-driver --source <id>)
     ("fs-source", "sinexd", "sinexd", Some("fs")),
     (
         "terminal-source",
@@ -1494,7 +1494,7 @@ mod tests {
                 Some("terminal.zsh-history")
             ),
             vec![
-                "scan-source".to_string(),
+                "scan-source-driver".to_string(),
                 "--source".to_string(),
                 "terminal.zsh-history".to_string(),
                 "--service-name".to_string(),
@@ -1521,7 +1521,7 @@ mod tests {
                 "-p".to_string(),
                 "sinexd".to_string(),
                 "--".to_string(),
-                "scan-source".to_string(),
+                "scan-source-driver".to_string(),
                 "--source".to_string(),
                 "terminal.zsh-history".to_string(),
                 "--service-name".to_string(),
