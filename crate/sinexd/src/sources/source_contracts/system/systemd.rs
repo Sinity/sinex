@@ -5,6 +5,7 @@
 
 use crate::runtime::parser::{MaterialParser, ParserError};
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
 use sinex_primitives::events::payloads::system::{
@@ -31,10 +32,10 @@ use sinex_primitives::temporal::Timestamp;
     event_type = "unit.started",
     event_types = "unit.stopped, unit.failed, unit.reloaded, timer.triggered",
     adapter = "JournalctlStreamAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "continuous",
-    retention = "forever",
-    occurrence_identity = "anchor",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Continuous),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Anchor,
     access_policy = "systemd_journal_read",
     implementation = "sinexd",
     privacy_context = "Journal",
@@ -42,8 +43,8 @@ use sinex_primitives::temporal::Timestamp;
     checkpoint_policy = "journal",
     resource_shape = "journal_tail",
     runner_pack = "sinexd-source",
-    checkpoint_family = "journal",
-    runtime_shape = "continuous",
+    checkpoint_family = CheckpointFamily::Journal,
+    runtime_shape = RuntimeShape::Continuous,
     package_impact = "system_systemd_source",
     implementation_mode = "sinexd:source"
 )]

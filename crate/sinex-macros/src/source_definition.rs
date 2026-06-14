@@ -34,7 +34,8 @@ use crate::source_record::{
 };
 use crate::source_registration::{
     RegistrationAttrs, generate_factory_registration, generate_source_contract,
-    generate_source_runtime_binding, split_csv,
+    generate_source_runtime_binding, parse_enum_expr_attr, parse_enum_path_attr,
+    parse_enum_path_list_attr, split_csv,
 };
 
 pub fn derive_source_definition_impl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -148,11 +149,15 @@ struct SourceDefinitionAttrs {
     additional_event_types: Vec<String>,
 
     // SourceContract semantic fields
-    privacy_tier: Option<String>,
-    horizons: Vec<String>,
-    retention: Option<String>,
+    /// Typed enum path token (e.g. `PrivacyTier::Public`), emitted verbatim.
+    privacy_tier: Option<proc_macro2::TokenStream>,
+    /// Typed enum path tokens (e.g. `Horizon::Continuous`), emitted verbatim.
+    horizons: Vec<proc_macro2::TokenStream>,
+    /// Typed enum-expression token (`RetentionPolicy::Forever`, ..), verbatim.
+    retention: Option<proc_macro2::TokenStream>,
+    /// Typed enum-expression token (`OccurrenceIdentity::Anchor`, ..), verbatim.
     /// REQUIRED — missing `occurrence_identity` is a compile error.
-    occurrence_identity: Option<String>,
+    occurrence_identity: Option<proc_macro2::TokenStream>,
     access_policy: Option<String>,
 
     // SourceRuntimeBinding deployment fields
@@ -162,8 +167,11 @@ struct SourceDefinitionAttrs {
     checkpoint_policy: Option<String>,
     resource_shape: Option<String>,
     runner_pack: Option<String>,
-    checkpoint_family: Option<String>,
-    runtime_shape: Option<String>,
+    /// Typed enum-expression token (unit-variant path or `MutableSnapshot { .. }`
+    /// struct variant), emitted verbatim.
+    checkpoint_family: Option<proc_macro2::TokenStream>,
+    /// Typed enum path token (e.g. `RuntimeShape::OnDemand`), emitted verbatim.
+    runtime_shape: Option<proc_macro2::TokenStream>,
     package_impact: Option<String>,
     implementation_mode: Option<String>,
     capabilities: Vec<String>,
@@ -237,6 +245,37 @@ fn parse_source_definition_attrs(attrs: &[syn::Attribute]) -> syn::Result<Source
                 .get_ident()
                 .map(std::string::ToString::to_string)
                 .ok_or_else(|| meta.error("expected attribute key"))?;
+            // The enum-valued attributes take typed path/expression values
+            // (e.g. `PrivacyTier::Public`); `horizons` is a typed path list
+            // (`horizons(Horizon::Continuous, ..)`); all other keys take a
+            // string literal.
+            match key.as_str() {
+                "privacy_tier" => {
+                    out.privacy_tier = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
+                "runtime_shape" => {
+                    out.runtime_shape = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
+                "checkpoint_family" => {
+                    out.checkpoint_family = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
+                "retention" => {
+                    out.retention = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
+                "occurrence_identity" => {
+                    out.occurrence_identity = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
+                "horizons" => {
+                    out.horizons = parse_enum_path_list_attr(&meta)?;
+                    return Ok(());
+                }
+                _ => {}
+            }
             let s: syn::LitStr = meta.value()?.parse()?;
             let v = s.value();
             match key.as_str() {
@@ -250,10 +289,6 @@ fn parse_source_definition_attrs(attrs: &[syn::Attribute]) -> syn::Result<Source
                 "version" => out.version = Some(v),
                 "baseline_adapter_config" => out.baseline_adapter_config = Some(v),
                 "event_types" => out.additional_event_types = split_csv(&v),
-                "privacy_tier" => out.privacy_tier = Some(v),
-                "horizons" => out.horizons = split_csv(&v),
-                "retention" => out.retention = Some(v),
-                "occurrence_identity" => out.occurrence_identity = Some(v),
                 "access_policy" => out.access_policy = Some(v),
                 "implementation" => out.implementation = Some(v),
                 "privacy_context" => out.privacy_context = Some(v),
@@ -261,8 +296,6 @@ fn parse_source_definition_attrs(attrs: &[syn::Attribute]) -> syn::Result<Source
                 "checkpoint_policy" => out.checkpoint_policy = Some(v),
                 "resource_shape" => out.resource_shape = Some(v),
                 "runner_pack" => out.runner_pack = Some(v),
-                "checkpoint_family" => out.checkpoint_family = Some(v),
-                "runtime_shape" => out.runtime_shape = Some(v),
                 "package_impact" => out.package_impact = Some(v),
                 "implementation_mode" => out.implementation_mode = Some(v),
                 "capabilities" => out.capabilities = split_csv(&v),

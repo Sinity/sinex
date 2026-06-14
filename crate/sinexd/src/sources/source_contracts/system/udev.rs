@@ -4,6 +4,7 @@ use crate::runtime::parser::{
     FileDropEventKind, FileDropRecordMetadata, MaterialParser, ParserError,
 };
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{DeviceType, UdevAction};
 use sinex_primitives::events::payloads::system::{
@@ -33,10 +34,10 @@ use std::collections::HashMap;
     event_type = "device.connected",
     event_types = "device.disconnected, device.changed, device.driver_changed, device.other",
     adapter = "FileDropAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "continuous",
-    retention = "forever",
-    occurrence_identity = "anchor",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Continuous),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Anchor,
     access_policy = "udev_monitor_read",
     implementation = "sinexd",
     privacy_context = "Metadata",
@@ -44,8 +45,8 @@ use std::collections::HashMap;
     checkpoint_policy = "live_observation",
     resource_shape = "event_emitter",
     runner_pack = "sinexd-source",
-    checkpoint_family = "live_observation",
-    runtime_shape = "continuous",
+    checkpoint_family = CheckpointFamily::LiveObservation,
+    runtime_shape = RuntimeShape::Continuous,
     package_impact = "system_udev_source",
     implementation_mode = "sinexd:source"
 )]

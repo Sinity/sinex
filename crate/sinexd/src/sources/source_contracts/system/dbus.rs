@@ -6,6 +6,7 @@
 
 use crate::runtime::parser::{MaterialParser, ParserError};
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{
     BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,
@@ -40,10 +41,10 @@ const MAX_DBUS_MESSAGE_BYTES: usize = 1_048_576;
     event_type = "signal.received",
     event_types = "method.called, power.state_changed, bluetooth.device_changed, network.state_changed, device.connected, media.state_changed, mount.event, notification.sent",
     adapter = "DbusStreamAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "continuous",
-    retention = "forever",
-    occurrence_identity = "anchor",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Continuous),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Anchor,
     access_policy = "system_bus_session_bus_read",
     implementation = "sinexd",
     privacy_context = "Dbus",
@@ -51,8 +52,8 @@ const MAX_DBUS_MESSAGE_BYTES: usize = 1_048_576;
     checkpoint_policy = "live_observation",
     resource_shape = "event_emitter",
     runner_pack = "sinexd-source",
-    checkpoint_family = "live_observation",
-    runtime_shape = "continuous",
+    checkpoint_family = CheckpointFamily::LiveObservation,
+    runtime_shape = RuntimeShape::Continuous,
     package_impact = "system_dbus_source",
     implementation_mode = "sinexd:source"
 )]

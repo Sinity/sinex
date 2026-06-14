@@ -15,7 +15,7 @@
 //! two derives stay byte-for-byte consistent in everything they have in common.
 
 use proc_macro2::{Span, TokenStream};
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{Error, Ident};
 
 /// The struct-level attribute fields consumed by the three shared registration
@@ -32,12 +32,22 @@ pub(crate) struct RegistrationAttrs {
     /// Extra event types this source may emit besides `event_type`.
     pub additional_event_types: Vec<String>,
 
-    // SourceContract semantic fields
-    pub privacy_tier: Option<String>,
-    pub horizons: Vec<String>,
-    pub retention: Option<String>,
+    // SourceContract semantic fields.
+    //
+    // `privacy_tier` is a typed enum path token (e.g. `PrivacyTier::Public`),
+    // captured verbatim by the attribute parser and emitted directly. `None`
+    // means the attribute was absent; the generator supplies the default path.
+    pub privacy_tier: Option<TokenStream>,
+    /// Typed enum path tokens (e.g. `Horizon::Continuous`), one per list entry,
+    /// emitted verbatim. Empty => generator supplies the default.
+    pub horizons: Vec<TokenStream>,
+    /// Typed enum-expression token (`RetentionPolicy::Forever`,
+    /// `RetentionPolicy::Days { .. }`), emitted verbatim. `None` => default.
+    pub retention: Option<TokenStream>,
+    /// Typed enum-expression token (`OccurrenceIdentity::Anchor`,
+    /// `OccurrenceIdentity::Uuid5From("..")`), emitted verbatim.
     /// REQUIRED — checked during attribute parsing, not here.
-    pub occurrence_identity: Option<String>,
+    pub occurrence_identity: Option<TokenStream>,
     pub access_policy: Option<String>,
 
     // SourceRuntimeBinding deployment fields
@@ -47,8 +57,14 @@ pub(crate) struct RegistrationAttrs {
     pub checkpoint_policy: Option<String>,
     pub resource_shape: Option<String>,
     pub runner_pack: Option<String>,
-    pub checkpoint_family: Option<String>,
-    pub runtime_shape: Option<String>,
+    /// Typed enum-expression token. A path for the unit variants
+    /// (`CheckpointFamily::AppendStream`) or a struct-variant expression
+    /// (`CheckpointFamily::MutableSnapshot { .. }`) — captured verbatim and
+    /// emitted directly. `None` => generator supplies the default path.
+    pub checkpoint_family: Option<TokenStream>,
+    /// Typed enum path token (e.g. `RuntimeShape::OnDemand`), emitted verbatim.
+    /// `None` => generator supplies the default path.
+    pub runtime_shape: Option<TokenStream>,
     pub package_impact: Option<String>,
     pub implementation_mode: Option<String>,
     pub capabilities: Vec<String>,
@@ -102,25 +118,30 @@ pub(crate) fn generate_source_contract(
         quote!((#event_source, #et))
     });
 
-    let privacy_tier = privacy_tier_token(attrs.privacy_tier.as_deref().unwrap_or("Sensitive"))?;
+    // The author writes a typed path (`PrivacyTier::Public`); it is emitted
+    // verbatim. When the attribute is absent the default path is fully
+    // qualified so it resolves without requiring the source to import the enum.
+    let privacy_tier = attrs.privacy_tier.clone().unwrap_or_else(|| {
+        quote!(::sinex_primitives::source_contracts::PrivacyTier::Sensitive)
+    });
 
+    // Typed enum tokens emitted verbatim; absent attrs fall back to a
+    // fully-qualified default path (resolves without an import in the source).
     let horizons = if attrs.horizons.is_empty() {
         vec![quote!(::sinex_primitives::source_contracts::Horizon::Continuous)]
     } else {
-        attrs
-            .horizons
-            .iter()
-            .map(|h| horizon_token(h))
-            .collect::<syn::Result<Vec<_>>>()?
+        attrs.horizons.clone()
     };
 
-    let retention = retention_token(attrs.retention.as_deref().unwrap_or("forever"))?;
-    let occurrence_identity = occurrence_identity_token(
-        attrs
-            .occurrence_identity
-            .as_deref()
-            .expect("occurrence_identity required (checked during attr parsing)"),
-    )?;
+    let retention = attrs.retention.clone().unwrap_or_else(|| {
+        quote!(::sinex_primitives::source_contracts::RetentionPolicy::Forever)
+    });
+    let occurrence_identity = attrs.occurrence_identity.clone().ok_or_else(|| {
+        Error::new(
+            Span::call_site(),
+            "occurrence_identity required (checked during attr parsing)",
+        )
+    })?;
 
     Ok(quote! {
         ::sinex_primitives::source_contracts::__register::inventory::submit! {
@@ -160,10 +181,14 @@ pub(crate) fn generate_source_runtime_binding(
     let package_impact = attrs.package_impact.as_deref().unwrap_or("no_new_output");
     let implementation_mode = attrs.implementation_mode.as_deref().unwrap_or("sinexd:source");
 
-    let checkpoint_family =
-        checkpoint_family_token(attrs.checkpoint_family.as_deref().unwrap_or("append_stream"))?;
-    let runtime_shape =
-        runtime_shape_token(attrs.runtime_shape.as_deref().unwrap_or("continuous"))?;
+    // Typed enum tokens emitted verbatim; absent attributes fall back to a
+    // fully-qualified default path (resolves without an import in the source).
+    let checkpoint_family = attrs.checkpoint_family.clone().unwrap_or_else(|| {
+        quote!(::sinex_primitives::source_contracts::CheckpointFamily::AppendStream)
+    });
+    let runtime_shape = attrs.runtime_shape.clone().unwrap_or_else(|| {
+        quote!(::sinex_primitives::source_contracts::RuntimeShape::Continuous)
+    });
 
     let capabilities_call = if attrs.capabilities.is_empty() {
         quote!()
@@ -278,143 +303,40 @@ fn adapter_type_ident(adapter: &str) -> syn::Result<Ident> {
 }
 
 // ---------------------------------------------------------------------------
-// Enum token helpers
+// Typed enum-attribute parsing
 // ---------------------------------------------------------------------------
 
-fn privacy_tier_token(name: &str) -> syn::Result<TokenStream> {
-    let variant = match name {
-        "Public" | "public" => quote!(Public),
-        "Sensitive" | "sensitive" => quote!(Sensitive),
-        "Secret" | "secret" => quote!(Secret),
-        other => {
-            return Err(Error::new(
-                Span::call_site(),
-                format!("unknown privacy_tier '{other}'; expected Public, Sensitive, or Secret"),
-            ));
-        }
-    };
-    Ok(quote!(::sinex_primitives::source_contracts::PrivacyTier::#variant))
+/// Parse the value of a scalar enum attribute (`privacy_tier`, `runtime_shape`)
+/// as a typed path such as `PrivacyTier::Public`. Captured verbatim and emitted
+/// at the registration site, so an invalid variant is a type error at use, not
+/// a stringly match in the macro. Rejects non-path values (e.g. string
+/// literals) with a syn parse error pointing at the offending token.
+pub(crate) fn parse_enum_path_attr(meta: &syn::meta::ParseNestedMeta) -> syn::Result<TokenStream> {
+    let path: syn::Path = meta.value()?.parse()?;
+    Ok(path.into_token_stream())
 }
 
-fn horizon_token(name: &str) -> syn::Result<TokenStream> {
-    let variant = match name {
-        "continuous" | "Continuous" => quote!(Continuous),
-        "historical" | "Historical" => quote!(Historical),
-        other => {
-            return Err(Error::new(
-                Span::call_site(),
-                format!("unknown horizon '{other}'; expected continuous or historical"),
-            ));
-        }
-    };
-    Ok(quote!(::sinex_primitives::source_contracts::Horizon::#variant))
+/// Parse the value of an enum attribute that may carry data, as a typed enum
+/// *expression*. Used for `checkpoint_family` (`MutableSnapshot { .. }`),
+/// `retention` (`Days { .. }` / `Tiered { .. }`), and `occurrence_identity`
+/// (`Uuid5From("..")`). Accepts both the unit-variant path form and the
+/// struct/tuple-variant forms. Emitted verbatim at the registration site.
+pub(crate) fn parse_enum_expr_attr(meta: &syn::meta::ParseNestedMeta) -> syn::Result<TokenStream> {
+    let expr: syn::Expr = meta.value()?.parse()?;
+    Ok(expr.into_token_stream())
 }
 
-fn retention_token(spec: &str) -> syn::Result<TokenStream> {
-    let mut parts = spec.split(':');
-    let kind = parts.next().unwrap_or("");
-    match kind {
-        "forever" => Ok(quote!(::sinex_primitives::source_contracts::RetentionPolicy::Forever)),
-        "days" => {
-            let days: u32 = parts
-                .next()
-                .and_then(|d| d.parse().ok())
-                .ok_or_else(|| Error::new(Span::call_site(), "retention days expects 'days:N'"))?;
-            Ok(quote!(::sinex_primitives::source_contracts::RetentionPolicy::Days { days: #days }))
-        }
-        "tiered" => {
-            let hot: u32 = parts.next().and_then(|d| d.parse().ok()).ok_or_else(|| {
-                Error::new(Span::call_site(), "retention tiered expects 'tiered:HOT:WARM'")
-            })?;
-            let warm: u32 = parts.next().and_then(|d| d.parse().ok()).ok_or_else(|| {
-                Error::new(Span::call_site(), "retention tiered expects 'tiered:HOT:WARM'")
-            })?;
-            Ok(quote!(::sinex_primitives::source_contracts::RetentionPolicy::Tiered {
-                hot_days: #hot,
-                warm_days: #warm,
-            }))
-        }
-        other => Err(Error::new(
-            Span::call_site(),
-            format!("unknown retention '{other}'; expected forever, days:N, or tiered:HOT:WARM"),
-        )),
-    }
+/// Parse a list-valued enum attribute written as a nested meta list, e.g.
+/// `horizons(Horizon::Continuous, Horizon::Historical)`. Each entry is a typed
+/// path captured verbatim; the generator emits them into the contract's list.
+pub(crate) fn parse_enum_path_list_attr(
+    meta: &syn::meta::ParseNestedMeta,
+) -> syn::Result<Vec<TokenStream>> {
+    let mut paths = Vec::new();
+    meta.parse_nested_meta(|inner| {
+        paths.push(inner.path.into_token_stream());
+        Ok(())
+    })?;
+    Ok(paths)
 }
 
-fn occurrence_identity_token(spec: &str) -> syn::Result<TokenStream> {
-    let mut parts = spec.splitn(2, ':');
-    let kind = parts.next().unwrap_or("");
-    match kind {
-        "natural" => Ok(quote!(::sinex_primitives::source_contracts::OccurrenceIdentity::Natural)),
-        "anchor" => Ok(quote!(::sinex_primitives::source_contracts::OccurrenceIdentity::Anchor)),
-        "uuid5" => {
-            let ns = parts.next().ok_or_else(|| {
-                Error::new(Span::call_site(), "occurrence_identity uuid5 expects 'uuid5:<namespace>'")
-            })?;
-            Ok(quote!(::sinex_primitives::source_contracts::OccurrenceIdentity::Uuid5From(#ns)))
-        }
-        other => Err(Error::new(
-            Span::call_site(),
-            format!(
-                "unknown occurrence_identity '{other}'; expected natural, anchor, or uuid5:<ns>"
-            ),
-        )),
-    }
-}
-
-fn checkpoint_family_token(spec: &str) -> syn::Result<TokenStream> {
-    let mut parts = spec.split(':');
-    let kind = parts.next().unwrap_or("");
-    match kind {
-        "append_stream" => {
-            Ok(quote!(::sinex_primitives::source_contracts::CheckpointFamily::AppendStream))
-        }
-        "journal" => Ok(quote!(::sinex_primitives::source_contracts::CheckpointFamily::Journal)),
-        "polling" => Ok(quote!(::sinex_primitives::source_contracts::CheckpointFamily::Polling)),
-        "live_observation" => {
-            Ok(quote!(::sinex_primitives::source_contracts::CheckpointFamily::LiveObservation))
-        }
-        "mutable_snapshot" => {
-            let backing = parts.next().ok_or_else(|| {
-                Error::new(
-                    Span::call_site(),
-                    "checkpoint_family mutable_snapshot expects \
-                     'mutable_snapshot:<backing_store>:<occurrence_anchor>'",
-                )
-            })?;
-            let anchor = parts.next().ok_or_else(|| {
-                Error::new(
-                    Span::call_site(),
-                    "checkpoint_family mutable_snapshot expects \
-                     'mutable_snapshot:<backing_store>:<occurrence_anchor>'",
-                )
-            })?;
-            Ok(quote!(::sinex_primitives::source_contracts::CheckpointFamily::MutableSnapshot {
-                backing_store_kind: #backing,
-                occurrence_anchor: #anchor,
-            }))
-        }
-        other => Err(Error::new(
-            Span::call_site(),
-            format!(
-                "unknown checkpoint_family '{other}'; expected append_stream, journal, polling, \
-                 live_observation, or mutable_snapshot:<backing>:<anchor>"
-            ),
-        )),
-    }
-}
-
-fn runtime_shape_token(name: &str) -> syn::Result<TokenStream> {
-    let variant = match name {
-        "continuous" | "Continuous" => quote!(Continuous),
-        "on_demand" | "OnDemand" => quote!(OnDemand),
-        "scheduled" | "Scheduled" => quote!(Scheduled),
-        other => {
-            return Err(Error::new(
-                Span::call_site(),
-                format!("unknown runtime_shape '{other}'; expected continuous, on_demand, scheduled"),
-            ));
-        }
-    };
-    Ok(quote!(::sinex_primitives::source_contracts::RuntimeShape::#variant))
-}

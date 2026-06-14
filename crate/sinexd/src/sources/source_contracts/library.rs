@@ -39,6 +39,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::{
     domain::{EventSource, EventType},
     parser::{
@@ -191,10 +192,10 @@ fn extract_author_title(stem: &str) -> (Option<String>, Option<String>) {
     event_source = "docs-library",
     event_type = "document.indexed",
     adapter = "DirectoryWalkAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "historical",
-    retention = "forever",
-    occurrence_identity = "uuid5:(source, path, content_hash)",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(source, path, content_hash)"),
     access_policy = "local_library_root",
     implementation = "sinexd",
     privacy_context = "Metadata",
@@ -202,8 +203,8 @@ fn extract_author_title(stem: &str) -> (Option<String>, Option<String>) {
     checkpoint_policy = "directory_walk_cursor",
     resource_shape = "file_reader",
     runner_pack = "sinexd-source",
-    checkpoint_family = "append_stream",
-    runtime_shape = "on_demand",
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
     package_impact = "docs_library_index_source",
     implementation_mode = "sinexd:source"
 )]

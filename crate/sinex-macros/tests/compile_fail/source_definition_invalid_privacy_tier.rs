@@ -1,5 +1,8 @@
-// Compile-fail: a #[derive(SourceDefinition)] with an unknown `privacy_tier`
-// value must not compile (#1727 slice-4 compile-fail matrix).
+// Compile-fail: `privacy_tier` is now a typed enum-path attribute, not a magic
+// string. Passing a string literal (the old form) must not compile — the macro
+// rejects it at parse time because the value is not a path. An invalid *variant*
+// (e.g. `PrivacyTier::Bogus`) is caught one level up by the type system at the
+// registration site, so the macro itself only guards the path-shaped value here.
 use sinex_macros::SourceDefinition;
 
 #[derive(SourceDefinition)]

@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -89,10 +90,10 @@ pub struct MessengerParserConfig;
     event_source = "messenger",
     event_type = "message.sent",
     adapter = "StaticFileAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "historical",
-    retention = "forever",
-    occurrence_identity = "uuid5:(thread_name, sender_name, timestamp_ms, text_hint)",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(thread_name, sender_name, timestamp_ms, text_hint)"),
     access_policy = "personal_private_messages",
     implementation = "sinexd",
     privacy_context = "Document",
@@ -100,8 +101,8 @@ pub struct MessengerParserConfig;
     checkpoint_policy = "static_file_cursor",
     resource_shape = "file_reader",
     runner_pack = "sinexd-source",
-    checkpoint_family = "append_stream",
-    runtime_shape = "on_demand",
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
     package_impact = "facebook_messenger_thread_source",
     implementation_mode = "sinexd:source"
 )]
