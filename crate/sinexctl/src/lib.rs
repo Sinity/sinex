@@ -21,7 +21,8 @@ pub use client::GatewayClient;
 pub use color_eyre::Result;
 pub use config::{Config, default_rpc_url};
 pub use model::format_registry::{
-    command_catalog, registry as format_registry, render_format_matrix_terminal, validate_format,
+    command_catalog, command_consumes_format, registry as format_registry,
+    render_format_matrix_terminal, validate_format,
 };
 pub use model::{
     CommandCatalogEntry, CommandFamily, FormatCapability, OutputFormat, RuntimeModuleRole,
