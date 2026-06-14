@@ -13,24 +13,32 @@
 //!
 //! # Cursor semantics
 //!
-//! The cursor ([`IncrementalDumpCursor`]) is the highest order key consumed so
-//! far — exactly the high-water-mark shape of [`ApiCursorPosition`], which fits
-//! the per-record [`cursor_after`][InputShapeAdapter::cursor_after] contract in
-//! O(1) (a growing "seen-set" cursor would not — it cannot be reconstructed
-//! from a single record without O(n) per-record metadata).
+//! The cursor ([`IncrementalDumpCursor`]) is the highest **(order key, content
+//! hash)** position consumed so far. The content hash is a BLAKE3 digest of the
+//! record's canonical JSON, used purely as a tie-breaker so that records sharing
+//! an order key (non-unique timestamps are common in GDPR/Takeout exports) are
+//! still fully ordered and *none are dropped*. The position is reconstructable
+//! from a single record's metadata, so the per-record
+//! [`cursor_after`][InputShapeAdapter::cursor_after] contract stays O(1) (a
+//! growing "seen-set" cursor would not).
 //!
 //! - `cursor = None` or `high_water = None` → brand-new source: emit everything.
-//! - `cursor.high_water = Some(k)` → emit only records whose order key `> k`.
+//! - `cursor.high_water = Some(pos)` → emit only records whose `(order_key,
+//!   content_hash)` is strictly greater than `pos`.
 //!
-//! **The order key MUST be unique and lexicographically monotonic across
-//! exports** (ULIDs, snowflake ids, zero-padded sequence ids, or a timestamp
-//! at sufficient resolution / a `timestamp+id` composite field). Comparison is
-//! string-wise, so unpadded decimal ids (`"9" > "10"`) will misorder — pad them.
-//! Uniqueness is required because the high-water cursor cannot disambiguate
-//! tied records: checkpointing one record at key `K` would drop any sibling at
-//! `K` on the next run. A non-unique key is **rejected fail-closed** at
-//! [`open`][InputShapeAdapter::open] rather than risk silent data loss. Sources
-//! whose records have no unique monotonic key are not a fit for this adapter.
+//! The order key SHOULD be monotonic across exports (timestamps, ULIDs,
+//! zero-padded sequence ids, or a `timestamp+id` composite) so the high-water
+//! mark advances in append order. It need **not** be unique — the content-hash
+//! tie-breaker disambiguates ties, which is the fix for the original data-loss
+//! bug where records sharing a timestamp were dropped (Codex review, PR #1776).
+//! Comparison is string-wise, so unpadded decimal ids (`"9" > "10"`) still
+//! misorder — pad them.
+//!
+//! The only residual ambiguity: two records that are byte-identical *and* share
+//! an order key map to the same composite position, so if a run is interrupted
+//! after consuming one of them, an identical sibling is skipped on resume. That
+//! is correct under the object-level dedup model — identical content is the same
+//! occurrence, and cross-record dedup is a downstream concern, not the adapter's.
 //!
 //! [`ApiCursorPosition`]: super::ApiCursorPosition
 
@@ -84,15 +92,6 @@ pub enum IncrementalDumpError {
         /// The configured field name that was absent.
         field: String,
     },
-    /// Two records shared the same order key. The high-water-mark cursor cannot
-    /// disambiguate tied records (checkpointing one would drop its siblings on
-    /// restart/re-import), so a non-unique key is rejected.
-    DuplicateOrderKey {
-        /// The configured order-key field.
-        field: String,
-        /// The value that appeared on more than one record.
-        key: String,
-    },
 }
 
 impl fmt::Display for IncrementalDumpError {
@@ -102,13 +101,6 @@ impl fmt::Display for IncrementalDumpError {
             Self::MissingOrderKey { field } => {
                 write!(f, "record missing order-key field `{field}`")
             }
-            Self::DuplicateOrderKey { field, key } => write!(
-                f,
-                "order-key field `{field}` is not unique: value `{key}` appears on \
-                 multiple records — choose a unique key (e.g. a record id, or a \
-                 composite/finer-grained field) so the high-water cursor cannot \
-                 drop tied records"
-            ),
         }
     }
 }
@@ -122,23 +114,38 @@ impl Error for IncrementalDumpError {}
 /// Configuration for [`IncrementalDumpAdapter`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IncrementalDumpConfig {
-    /// Name of the top-level field in each record that holds a **unique**,
-    /// lexicographically monotonic order key (e.g. a ULID or a timestamp at
-    /// sufficient resolution). Records are emitted in ascending order-key order;
-    /// only keys strictly greater than the prior high-water mark are emitted. A
-    /// non-unique key is rejected fail-closed at `open` (see the module docs).
-    /// Required — there is no sensible default.
+    /// Name of the top-level field in each record that holds a lexicographically
+    /// monotonic order key (e.g. a ULID or a timestamp at sufficient
+    /// resolution). Records are emitted in ascending `(order_key, content_hash)`
+    /// order; only positions strictly greater than the prior high-water mark are
+    /// emitted. The key need not be unique — a BLAKE3 content-hash tie-breaker
+    /// disambiguates records that share a key (see the module docs). Required —
+    /// there is no sensible default.
     pub order_key_field: String,
 }
 
-/// Cursor for [`IncrementalDumpAdapter`] — the highest order key consumed.
+/// A consumed position: an order key plus a content-hash tie-breaker.
+///
+/// Ordering is the field-declaration tuple order — `order_key` first, then
+/// `content_hash` — so two records with the same order key are still totally
+/// ordered by content.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct IncrementalDumpPosition {
+    /// The record's order key (value of the configured `order_key_field`).
+    pub order_key: String,
+    /// BLAKE3 hex digest of the record's canonical JSON — the tie-breaker that
+    /// keeps records sharing an `order_key` distinct and ordered.
+    pub content_hash: String,
+}
+
+/// Cursor for [`IncrementalDumpAdapter`] — the highest position consumed.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IncrementalDumpCursor {
-    /// The highest order key emitted so far.
+    /// The highest `(order_key, content_hash)` position emitted so far.
     ///
     /// `None` means nothing has been consumed yet (brand-new source); the next
     /// `open` emits the entire dump.
-    pub high_water: Option<String>,
+    pub high_water: Option<IncrementalDumpPosition>,
 }
 
 // =============================================================================
@@ -146,13 +153,18 @@ pub struct IncrementalDumpCursor {
 // =============================================================================
 
 const META_ORDER_KEY: &str = "incremental_dump_order_key";
+const META_CONTENT_HASH: &str = "incremental_dump_content_hash";
 const META_DUMP_INDEX: &str = "incremental_dump_index";
 
-fn build_record_metadata(order_key: &str, dump_index: u64) -> JsonValue {
+fn build_record_metadata(order_key: &str, content_hash: &str, dump_index: u64) -> JsonValue {
     let mut map = Map::new();
     map.insert(
         META_ORDER_KEY.to_owned(),
         JsonValue::String(order_key.to_owned()),
+    );
+    map.insert(
+        META_CONTENT_HASH.to_owned(),
+        JsonValue::String(content_hash.to_owned()),
     );
     map.insert(
         META_DUMP_INDEX.to_owned(),
@@ -223,7 +235,7 @@ where
         config: &Self::Config,
         cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
-        let high_water: Option<String> = cursor.and_then(|c| c.high_water);
+        let high_water: Option<IncrementalDumpPosition> = cursor.and_then(|c| c.high_water);
 
         let raw = self
             .loader
@@ -231,11 +243,13 @@ where
             .await
             .map_err(|e| ParserError::Adapter(IncrementalDumpError::Load(e.to_string()).to_string()))?;
 
-        // Pair each record with its order key, failing closed if any record is
-        // missing the configured field (a silent skip would lose data).
-        let mut keyed: Vec<(String, JsonValue)> = Vec::with_capacity(raw.len());
+        // Pair each record with its composite position + serialized bytes,
+        // failing closed if any record is missing the order-key field (a silent
+        // skip would lose data). The content hash is a tie-breaker so records
+        // sharing an order key stay distinct and ordered.
+        let mut keyed: Vec<(IncrementalDumpPosition, Vec<u8>)> = Vec::with_capacity(raw.len());
         for record in raw {
-            let Some(key) = extract_order_key(&record, &config.order_key_field) else {
+            let Some(order_key) = extract_order_key(&record, &config.order_key_field) else {
                 return Err(ParserError::Adapter(
                     IncrementalDumpError::MissingOrderKey {
                         field: config.order_key_field.clone(),
@@ -243,41 +257,36 @@ where
                     .to_string(),
                 ));
             };
-            keyed.push((key, record));
-        }
-
-        // Emit in ascending order-key order so the high-water mark advances
-        // monotonically and a mid-stream checkpoint is always resumable.
-        keyed.sort_by(|a, b| a.0.cmp(&b.0));
-
-        // The high-water cursor cannot disambiguate records that share an order
-        // key: checkpointing one of them would skip the rest on the next open
-        // (restart/crash mid-stream, or a later export adding another record at
-        // the same key). Reject a non-unique key fail-closed rather than lose
-        // data (Codex review, PR #1776). Adjacent equality suffices after sort.
-        if let Some(dup) = keyed.windows(2).find(|w| w[0].0 == w[1].0) {
-            return Err(ParserError::Adapter(
-                IncrementalDumpError::DuplicateOrderKey {
-                    field: config.order_key_field.clone(),
-                    key: dup[0].0.clone(),
-                }
-                .to_string(),
+            // `serde_json::Map` is BTreeMap-backed (no `preserve_order` feature),
+            // so serialization is canonical (sorted keys, recursively) and the
+            // hash is stable even if the provider reorders fields between dumps.
+            let bytes = serde_json::to_vec(&record).map_err(|e| {
+                ParserError::Adapter(format!("failed to serialize incremental dump record: {e}"))
+            })?;
+            let content_hash = blake3::hash(&bytes).to_hex().to_string();
+            keyed.push((
+                IncrementalDumpPosition {
+                    order_key,
+                    content_hash,
+                },
+                bytes,
             ));
         }
 
+        // Emit in ascending (order_key, content_hash) order so the high-water
+        // mark advances monotonically and a mid-stream checkpoint is resumable.
+        keyed.sort_by(|a, b| a.0.cmp(&b.0));
+
         let mut records: Vec<ParserResult<SourceRecord>> = Vec::new();
-        for (dump_index, (key, record)) in keyed.into_iter().enumerate() {
-            if let Some(hw) = high_water.as_deref() {
-                if key.as_str() <= hw {
+        for (dump_index, (position, bytes)) in keyed.into_iter().enumerate() {
+            if let Some(hw) = high_water.as_ref() {
+                if position <= *hw {
                     continue;
                 }
             }
 
-            let bytes = serde_json::to_vec(&record).map_err(|e| {
-                ParserError::Adapter(format!("failed to serialize incremental dump record: {e}"))
-            })?;
-
-            let metadata = build_record_metadata(&key, dump_index as u64);
+            let metadata =
+                build_record_metadata(&position.order_key, &position.content_hash, dump_index as u64);
 
             records.push(Ok(SourceRecord {
                 material_id,
@@ -296,11 +305,22 @@ where
     }
 
     fn cursor_after(&self, record: &SourceRecord) -> ParserResult<Self::Cursor> {
-        let high_water = record
+        let order_key = record.metadata.get(META_ORDER_KEY).and_then(|v| v.as_str());
+        let content_hash = record
             .metadata
-            .get(META_ORDER_KEY)
-            .and_then(|v| v.as_str())
-            .map(str::to_owned);
+            .get(META_CONTENT_HASH)
+            .and_then(|v| v.as_str());
+        // Both halves of the composite position must be present; a record we
+        // emitted always carries both. If either is missing the record did not
+        // come from this adapter — leave the cursor empty rather than checkpoint
+        // a half-position that would mis-filter the next run.
+        let high_water = match (order_key, content_hash) {
+            (Some(order_key), Some(content_hash)) => Some(IncrementalDumpPosition {
+                order_key: order_key.to_owned(),
+                content_hash: content_hash.to_owned(),
+            }),
+            _ => None,
+        };
         Ok(IncrementalDumpCursor { high_water })
     }
 }
@@ -386,6 +406,29 @@ mod tests {
             .collect()
     }
 
+    /// Open and return the raw [`SourceRecord`]s (needed to derive cursors via
+    /// `cursor_after`, which a plain payload collect discards).
+    async fn open_records(
+        adapter: &IncrementalDumpAdapter<MockLoader>,
+        cursor: Option<IncrementalDumpCursor>,
+    ) -> Vec<SourceRecord> {
+        let stream = adapter
+            .open(dummy_material_id(), &config(), cursor)
+            .await
+            .unwrap();
+        stream
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    fn v_of(record: &SourceRecord) -> i64 {
+        let json: JsonValue = serde_json::from_slice(&record.bytes).unwrap();
+        json["v"].as_i64().unwrap()
+    }
+
     #[sinex_test]
     async fn first_import_emits_all_in_order() -> xtask::sandbox::TestResult<()> {
         let loader = MockLoader::new(vec![
@@ -404,34 +447,79 @@ mod tests {
     #[sinex_test]
     async fn superset_reimport_emits_only_new() -> xtask::sandbox::TestResult<()> {
         // Second export supersets the first; only records past the high-water
-        // mark are emitted.
-        let loader = MockLoader::new(vec![
+        // mark are emitted. The cursor is derived from a prior record (the real
+        // checkpoint path), not hand-built.
+        let records = vec![
             serde_json::json!({"ts": "2026-01-01", "v": 1}),
             serde_json::json!({"ts": "2026-01-02", "v": 2}),
             serde_json::json!({"ts": "2026-01-03", "v": 3}),
-        ]);
-        let adapter = IncrementalDumpAdapter::new(loader);
-        let cursor = Some(IncrementalDumpCursor {
-            high_water: Some("2026-01-02".to_owned()),
-        });
-        let out = collect(&adapter, cursor).await;
+        ];
+        let adapter = IncrementalDumpAdapter::new(MockLoader::new(records));
+        let first = open_records(&adapter, None).await;
+        let at_02 = first.iter().find(|r| v_of(r) == 2).unwrap();
+        let cursor = adapter.cursor_after(at_02).unwrap();
+        let out = open_records(&adapter, Some(cursor)).await;
 
-        let vs: Vec<i64> = out.iter().map(|r| r["v"].as_i64().unwrap()).collect();
+        let vs: Vec<i64> = out.iter().map(v_of).collect();
         assert_eq!(vs, vec![3], "only the record past the high-water mark");
         Ok(())
     }
 
     #[sinex_test]
-    async fn cursor_after_reports_record_order_key() -> xtask::sandbox::TestResult<()> {
-        let loader = MockLoader::new(vec![serde_json::json!({"ts": "2026-05-05", "v": 9})]);
-        let adapter = IncrementalDumpAdapter::new(loader);
-        let stream = adapter
-            .open(dummy_material_id(), &config(), None)
-            .await
-            .unwrap();
-        let records: Vec<_> = stream.collect().await;
-        let cursor = adapter.cursor_after(records[0].as_ref().unwrap()).unwrap();
-        assert_eq!(cursor.high_water.as_deref(), Some("2026-05-05"));
+    async fn non_unique_order_keys_all_emit() -> xtask::sandbox::TestResult<()> {
+        // GDPR/Takeout timestamps are not unique. Distinct records that share an
+        // order key must ALL be emitted — the content-hash tie-breaker keeps them
+        // ordered instead of dropping siblings (the original Codex P1, PR #1776).
+        let adapter = IncrementalDumpAdapter::new(MockLoader::new(vec![
+            serde_json::json!({"ts": "2026-01-01", "v": 1}),
+            serde_json::json!({"ts": "2026-01-01", "v": 2}),
+            serde_json::json!({"ts": "2026-01-02", "v": 3}),
+        ]));
+        let out = open_records(&adapter, None).await;
+        let mut vs: Vec<i64> = out.iter().map(v_of).collect();
+        vs.sort();
+        assert_eq!(vs, vec![1, 2, 3], "no record sharing a timestamp is dropped");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn resume_across_shared_order_key_keeps_siblings() -> xtask::sandbox::TestResult<()> {
+        // The exact data-loss scenario from the Codex P1 review (PR #1776): a run
+        // is interrupted after consuming one of two records that share an order
+        // key. On resume the sibling at the same timestamp must NOT be dropped.
+        let adapter = IncrementalDumpAdapter::new(MockLoader::new(vec![
+            serde_json::json!({"ts": "2026-01-01", "v": 1}),
+            serde_json::json!({"ts": "2026-01-01", "v": 2}),
+            serde_json::json!({"ts": "2026-01-02", "v": 3}),
+        ]));
+        let first = open_records(&adapter, None).await;
+        // Checkpoint right after the first emitted record (lowest position).
+        let consumed = v_of(&first[0]);
+        let cursor = adapter.cursor_after(&first[0]).unwrap();
+        let out = open_records(&adapter, Some(cursor)).await;
+
+        let mut vs: Vec<i64> = out.iter().map(v_of).collect();
+        vs.sort();
+        let mut expected: Vec<i64> = vec![1, 2, 3].into_iter().filter(|v| *v != consumed).collect();
+        expected.sort();
+        // Everything except the already-consumed record survives — crucially the
+        // other record sharing ts=2026-01-01 is still present.
+        assert_eq!(vs, expected, "sibling sharing the order key is not dropped");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn cursor_after_reports_composite_position() -> xtask::sandbox::TestResult<()> {
+        let adapter =
+            IncrementalDumpAdapter::new(MockLoader::new(vec![serde_json::json!({"ts": "2026-05-05", "v": 9})]));
+        let records = open_records(&adapter, None).await;
+        let position = adapter
+            .cursor_after(&records[0])
+            .unwrap()
+            .high_water
+            .expect("a consumed record yields a position");
+        assert_eq!(position.order_key, "2026-05-05");
+        assert_eq!(position.content_hash.len(), 64, "BLAKE3 hex digest is 64 chars");
         Ok(())
     }
 
@@ -443,23 +531,6 @@ mod tests {
         assert!(
             result.is_err(),
             "a record missing the order-key field must fail, not silently drop"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn duplicate_order_keys_fail_closed() -> xtask::sandbox::TestResult<()> {
-        // Two records sharing an order key would let a mid-stream checkpoint drop
-        // the sibling on restart; reject rather than risk silent data loss.
-        let loader = MockLoader::new(vec![
-            serde_json::json!({"ts": "2026-01-01", "v": 1}),
-            serde_json::json!({"ts": "2026-01-01", "v": 2}),
-        ]);
-        let adapter = IncrementalDumpAdapter::new(loader);
-        let result = adapter.open(dummy_material_id(), &config(), None).await;
-        assert!(
-            result.is_err(),
-            "a non-unique order key must be rejected, not silently lose tied records"
         );
         Ok(())
     }

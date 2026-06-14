@@ -44,6 +44,7 @@ pub use adapters::{
     IncrementalDumpConfig,
     IncrementalDumpCursor,
     IncrementalDumpError,
+    IncrementalDumpPosition,
     // Adapter JSON Schema export (#1238).
     AdapterSchema,
     // Existing adapters.

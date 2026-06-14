@@ -45,7 +45,7 @@ pub use api_cursor::{
 // IncrementalDump adapter (#1774).
 pub use incremental_dump::{
     DumpLoader, IncrementalDumpAdapter, IncrementalDumpConfig, IncrementalDumpCursor,
-    IncrementalDumpError,
+    IncrementalDumpError, IncrementalDumpPosition,
 };
 
 // Existing adapters.

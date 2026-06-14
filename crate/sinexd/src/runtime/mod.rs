@@ -171,7 +171,7 @@ pub use parser::{
 // IncrementalDump adapter — periodic full-export superset dumps (#1774).
 pub use parser::{
     DumpLoader, IncrementalDumpAdapter, IncrementalDumpConfig, IncrementalDumpCursor,
-    IncrementalDumpError,
+    IncrementalDumpError, IncrementalDumpPosition,
 };
 
 // Re-export commonly used types from dependencies
