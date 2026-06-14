@@ -17,6 +17,7 @@ use sinex_primitives::parser::{
 };
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::temporal::Timestamp;
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
@@ -69,10 +70,10 @@ impl Default for ClipboardParserConfig {
     event_type = "clipboard.copied",
     event_types = "clipboard.selected",
     adapter = "ClipboardPollingAdapter",
-    privacy_tier = "Secret",
-    horizons = "continuous",
-    retention = "forever",
-    occurrence_identity = "anchor",
+    privacy_tier = PrivacyTier::Secret,
+    horizons(Horizon::Continuous),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Anchor,
     access_policy = "target_runtime_bridge:clipboard",
     implementation = "sinexd",
     privacy_context = "clipboard",
@@ -80,8 +81,8 @@ impl Default for ClipboardParserConfig {
     checkpoint_policy = "live_stream",
     resource_shape = "polling_watcher",
     runner_pack = "sinexd-source",
-    checkpoint_family = "live_observation",
-    runtime_shape = "continuous",
+    checkpoint_family = CheckpointFamily::LiveObservation,
+    runtime_shape = RuntimeShape::Continuous,
     package_impact = "desktop_clipboard",
     implementation_mode = "sinexd:source"
 )]

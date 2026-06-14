@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -68,10 +69,10 @@ pub struct SleepParserConfig;
     event_source = "samsung-health",
     event_type = "sleep.session",
     adapter = "StaticFileAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "historical",
-    retention = "forever",
-    occurrence_identity = "uuid5:(sh_datauuid)",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(sh_datauuid)"),
     access_policy = "personal_health_data",
     implementation = "sinexd",
     privacy_context = "Metadata",
@@ -79,8 +80,8 @@ pub struct SleepParserConfig;
     checkpoint_policy = "static_file_cursor",
     resource_shape = "file_reader",
     runner_pack = "sinexd-source",
-    checkpoint_family = "append_stream",
-    runtime_shape = "on_demand",
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
     package_impact = "sleep_merged_summary_source",
     implementation_mode = "sinexd:source"
 )]

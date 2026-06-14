@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::payloads::LedgerPosting;
 use sinex_primitives::parser::{
@@ -60,10 +61,10 @@ pub struct HledgerJournalParserConfig;
     event_source = "ledger",
     event_type = "transaction.posted",
     adapter = "StaticFileAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "historical",
-    retention = "forever",
-    occurrence_identity = "uuid5:(date, description, first_explicit_posting_amount)",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(date, description, first_explicit_posting_amount)"),
     access_policy = "personal_finance_data",
     implementation = "sinexd",
     privacy_context = "Document",
@@ -71,8 +72,8 @@ pub struct HledgerJournalParserConfig;
     checkpoint_policy = "static_file_cursor",
     resource_shape = "file_reader",
     runner_pack = "sinexd-source",
-    checkpoint_family = "append_stream",
-    runtime_shape = "on_demand",
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
     package_impact = "hledger_journal_source",
     implementation_mode = "sinexd:source"
 )]

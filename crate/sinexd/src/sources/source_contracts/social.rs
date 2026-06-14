@@ -49,6 +49,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -103,10 +104,10 @@ pub struct RedditCommentParserConfig;
     event_source = "reddit",
     event_type = "social.comment.posted",
     adapter = "StaticFileAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "historical",
-    retention = "forever",
-    occurrence_identity = "uuid5:(reddit_id, subreddit)",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(reddit_id, subreddit)"),
     access_policy = "personal_social_data",
     implementation = "sinexd",
     privacy_context = "Document",
@@ -114,8 +115,8 @@ pub struct RedditCommentParserConfig;
     checkpoint_policy = "static_file_cursor",
     resource_shape = "file_reader",
     runner_pack = "sinexd-source",
-    checkpoint_family = "append_stream",
-    runtime_shape = "on_demand",
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
     package_impact = "reddit_gdpr_comments_source",
     implementation_mode = "sinexd:source"
 )]
@@ -264,10 +265,10 @@ pub struct RedditPostParserConfig;
     event_source = "reddit",
     event_type = "social.post.created",
     adapter = "StaticFileAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "historical",
-    retention = "forever",
-    occurrence_identity = "uuid5:(reddit_id, subreddit)",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(reddit_id, subreddit)"),
     access_policy = "personal_social_data",
     implementation = "sinexd",
     privacy_context = "Document",
@@ -275,8 +276,8 @@ pub struct RedditPostParserConfig;
     checkpoint_policy = "static_file_cursor",
     resource_shape = "file_reader",
     runner_pack = "sinexd-source",
-    checkpoint_family = "append_stream",
-    runtime_shape = "on_demand",
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
     package_impact = "reddit_gdpr_posts_source",
     implementation_mode = "sinexd:source"
 )]
@@ -418,10 +419,10 @@ pub struct WykopEntryParserConfig;
     event_source = "wykop",
     event_type = "social.entry.created",
     adapter = "StaticFileAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "historical",
-    retention = "forever",
-    occurrence_identity = "uuid5:(entry_id)",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(entry_id)"),
     access_policy = "personal_social_data",
     implementation = "sinexd",
     privacy_context = "Document",
@@ -429,8 +430,8 @@ pub struct WykopEntryParserConfig;
     checkpoint_policy = "static_file_cursor",
     resource_shape = "file_reader",
     runner_pack = "sinexd-source",
-    checkpoint_family = "append_stream",
-    runtime_shape = "on_demand",
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
     package_impact = "wykop_entries_source",
     implementation_mode = "sinexd:source"
 )]
@@ -571,10 +572,10 @@ pub struct WykopEntryCommentParserConfig;
     event_source = "wykop",
     event_type = "social.entry_comment.posted",
     adapter = "StaticFileAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "historical",
-    retention = "forever",
-    occurrence_identity = "uuid5:(comment_id)",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(comment_id)"),
     access_policy = "personal_social_data",
     implementation = "sinexd",
     privacy_context = "Document",
@@ -582,8 +583,8 @@ pub struct WykopEntryCommentParserConfig;
     checkpoint_policy = "static_file_cursor",
     resource_shape = "file_reader",
     runner_pack = "sinexd-source",
-    checkpoint_family = "append_stream",
-    runtime_shape = "on_demand",
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
     package_impact = "wykop_entry_comments_source",
     implementation_mode = "sinexd:source"
 )]

@@ -2,6 +2,7 @@
 
 use crate::runtime::parser::{MaterialParser, ParserError};
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::JournalSyncType;
 use sinex_primitives::events::payloads::system::{
@@ -32,10 +33,10 @@ const MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
     event_type = "entry.written",
     event_types = "sync.completed",
     adapter = "JournalctlStreamAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "continuous, historical",
-    retention = "forever",
-    occurrence_identity = "uuid5:(source, journal_cursor)",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Continuous, Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(source, journal_cursor)"),
     access_policy = "systemd_journal_read",
     implementation = "sinexd",
     privacy_context = "Journal",
@@ -43,8 +44,8 @@ const MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
     checkpoint_policy = "journal",
     resource_shape = "journal_tail",
     runner_pack = "sinexd-source",
-    checkpoint_family = "journal",
-    runtime_shape = "continuous",
+    checkpoint_family = CheckpointFamily::Journal,
+    runtime_shape = RuntimeShape::Continuous,
     package_impact = "system_journald_source",
     implementation_mode = "sinexd:source"
 )]
