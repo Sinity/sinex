@@ -149,16 +149,18 @@ pub fn derive_source_record(input: TokenStream) -> TokenStream {
 ///
 /// `#[source_definition(...)]` keys (all string literals):
 ///
-/// Required: `id`, `namespace`, `event_type`, `event_source`, `input_shape`,
-/// `adapter`, `occurrence_identity` (one of `natural` | `anchor` |
-/// `uuid5:<ns>`).
+/// String-literal keys — Required: `id`, `namespace`, `event_type`,
+/// `event_source`, `input_shape`, `adapter`. Optional: `default_privacy_context`,
+/// `version`, `baseline_adapter_config`, `implementation`, `event_types` (extra
+/// comma-separated emitted types), `capabilities`.
 ///
-/// Optional: `default_privacy_context`, `version`, `event_types` (extra
-/// comma-separated emitted types), `privacy_tier`, `horizons`, `retention`,
-/// `access_policy`, `implementation`, `privacy_context`, `material_policy`,
-/// `checkpoint_policy`, `resource_shape`, `runner_pack`, `checkpoint_family`
-/// (e.g. `mutable_snapshot:sqlite:atuin_history_id`), `runtime_shape`,
-/// `package_impact`, `implementation_mode`, `capabilities`.
+/// Typed enum-path/expression keys (written as Rust paths, e.g.
+/// `privacy_tier = PrivacyTier::Sensitive`) — Required: `occurrence_identity`
+/// (e.g. `OccurrenceIdentity::Anchor`). Optional: `privacy_tier`,
+/// `horizons(Horizon::Continuous, ..)`, `retention`, `access_scope` (e.g.
+/// `AccessScope::TargetHome { path: ".." }`), `privacy_context`
+/// (`ProcessingContext::*`), `resource_profile` (`ResourceProfile::*`),
+/// `runner_pack` (`RunnerPack::*`), `checkpoint_family`, `runtime_shape`.
 ///
 /// # Compile-fail invariants (slice 1 subset)
 ///
@@ -207,17 +209,19 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 ///
 /// # Struct attribute
 ///
-/// `#[source_meta(...)]` keys (all string literals):
+/// `#[source_meta(...)]` keys:
 ///
-/// Required: `id`, `namespace`, `event_type`, `event_source`, `adapter`,
-/// `occurrence_identity` (one of `natural` | `anchor` | `uuid5:<ns>`).
+/// String-literal keys — Required: `id`, `namespace`, `event_type`,
+/// `event_source`, `adapter`. Optional: `implementation`, `event_types` (extra
+/// comma-separated emitted types), `capabilities`, and for monitor-emit sources
+/// `monitor_emit_fn` / `monitor_phase`.
 ///
-/// Optional: `event_types` (extra comma-separated emitted types),
-/// `privacy_tier`, `horizons`, `retention`, `access_policy`, `implementation`,
-/// `privacy_context`, `material_policy`, `checkpoint_policy`, `resource_shape`,
-/// `runner_pack`, `checkpoint_family` (e.g.
-/// `mutable_snapshot:directory:file_path_fingerprint`), `runtime_shape`,
-/// `package_impact`, `implementation_mode`, `capabilities`.
+/// Typed enum-path/expression keys (written as Rust paths) — Required:
+/// `occurrence_identity` (e.g. `OccurrenceIdentity::Anchor`). Optional:
+/// `privacy_tier`, `horizons(Horizon::*, ..)`, `retention`, `access_scope`
+/// (e.g. `AccessScope::TargetHome { path: ".." }`), `privacy_context`
+/// (`ProcessingContext::*`), `resource_profile` (`ResourceProfile::*`),
+/// `runner_pack` (`RunnerPack::*`), `checkpoint_family`, `runtime_shape`.
 ///
 /// Unlike `SourceDefinition` there are no parser-spec keys (`input_shape`,
 /// `default_privacy_context`, `version`, `baseline_adapter_config`) — those
