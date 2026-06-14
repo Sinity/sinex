@@ -38,6 +38,13 @@ pub use adapters::{
     ApiCursorConfig,
     ApiCursorPosition,
     RetryPolicy,
+    // IncrementalDump adapter (#1774).
+    DumpLoader,
+    IncrementalDumpAdapter,
+    IncrementalDumpConfig,
+    IncrementalDumpCursor,
+    IncrementalDumpError,
+    IncrementalDumpPosition,
     // Adapter JSON Schema export (#1238).
     AdapterSchema,
     // Existing adapters.
