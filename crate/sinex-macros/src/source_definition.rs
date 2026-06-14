@@ -214,6 +214,10 @@ impl SourceDefinitionAttrs {
             package_impact: self.package_impact.clone(),
             implementation_mode: self.implementation_mode.clone(),
             capabilities: self.capabilities.clone(),
+            // SourceDefinition is the declarative adapter+parser form; it never
+            // uses the monitor-emit factory shape.
+            monitor_emit_fn: None,
+            monitor_phase: None,
         }
     }
 }

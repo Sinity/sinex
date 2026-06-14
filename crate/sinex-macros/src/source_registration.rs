@@ -52,6 +52,15 @@ pub(crate) struct RegistrationAttrs {
     pub package_impact: Option<String>,
     pub implementation_mode: Option<String>,
     pub capabilities: Vec<String>,
+
+    // Monitor-emit factory form. A monitor source's adapter (e.g. MonitorDriver)
+    // fires an emit fn at a lifecycle phase instead of running a `MaterialParser`
+    // over records — it has an adapter but no parser. When `monitor_emit_fn` is
+    // set the factory wiring uses the `register_source!(emit_at:, emit:)` form
+    // instead of the adapter+parser form, bypassing the `adapter_type_ident`
+    // allowlist (the adapter string is still carried on the binding).
+    pub monitor_emit_fn: Option<String>,
+    pub monitor_phase: Option<String>,
 }
 
 impl RegistrationAttrs {
@@ -203,6 +212,30 @@ pub(crate) fn generate_factory_registration(
     attrs: &RegistrationAttrs,
 ) -> syn::Result<TokenStream> {
     let id = &attrs.id;
+
+    // Monitor-emit form: the adapter fires an emit fn at a lifecycle phase
+    // rather than running a parser, so there is no parser to wire. Emits
+    // `register_source!(emit_at:, emit:)` verbatim, bypassing the
+    // `adapter_type_ident` allowlist (the adapter string is still carried on the
+    // binding for deployment metadata).
+    if let Some(emit_fn) = &attrs.monitor_emit_fn {
+        let phase = attrs.monitor_phase.as_deref().ok_or_else(|| {
+            Error::new(
+                Span::call_site(),
+                "source_meta: 'monitor_emit_fn' requires 'monitor_phase'",
+            )
+        })?;
+        let emit_ident = Ident::new(emit_fn, Span::call_site());
+        let phase_ident = Ident::new(phase, Span::call_site());
+        return Ok(quote! {
+            crate::register_source!(
+                source_id: #id,
+                emit_at: crate::sources::monitor_driver::MonitorPhase::#phase_ident,
+                emit: #emit_ident,
+            );
+        });
+    }
+
     let adapter_ident = adapter_type_ident(&attrs.adapter)?;
 
     Ok(quote! {
