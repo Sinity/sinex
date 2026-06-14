@@ -48,15 +48,21 @@ pub(crate) struct RegistrationAttrs {
     /// `OccurrenceIdentity::Uuid5From("..")`), emitted verbatim.
     /// REQUIRED — checked during attribute parsing, not here.
     pub occurrence_identity: Option<TokenStream>,
-    pub access_policy: Option<String>,
+    /// Typed enum-expression token (`AccessScope::TargetHome { .. }` or a unit
+    /// variant path), emitted verbatim. `None` => generator supplies the default.
+    pub access_scope: Option<TokenStream>,
 
     // SourceRuntimeBinding deployment fields
     pub implementation: Option<String>,
-    pub privacy_context: Option<String>,
-    pub material_policy: Option<String>,
-    pub checkpoint_policy: Option<String>,
-    pub resource_shape: Option<String>,
-    pub runner_pack: Option<String>,
+    /// Typed enum path token (`ProcessingContext::Command`), emitted verbatim.
+    /// `None` => generator supplies the default path.
+    pub privacy_context: Option<TokenStream>,
+    /// Typed enum path token (`ResourceProfile::BoundedFile`), emitted verbatim.
+    /// `None` => generator supplies the default path.
+    pub resource_profile: Option<TokenStream>,
+    /// Typed enum path token (`RunnerPack::SinexdSource`), emitted verbatim.
+    /// `None` => generator supplies the default path.
+    pub runner_pack: Option<TokenStream>,
     /// Typed enum-expression token. A path for the unit variants
     /// (`CheckpointFamily::AppendStream`) or a struct-variant expression
     /// (`CheckpointFamily::MutableSnapshot { .. }`) — captured verbatim and
@@ -65,8 +71,6 @@ pub(crate) struct RegistrationAttrs {
     /// Typed enum path token (e.g. `RuntimeShape::OnDemand`), emitted verbatim.
     /// `None` => generator supplies the default path.
     pub runtime_shape: Option<TokenStream>,
-    pub package_impact: Option<String>,
-    pub implementation_mode: Option<String>,
     pub capabilities: Vec<String>,
 
     // Monitor-emit factory form. A monitor source's adapter (e.g. MonitorDriver)
@@ -109,7 +113,9 @@ pub(crate) fn generate_source_contract(
 ) -> syn::Result<TokenStream> {
     let id = &attrs.id;
     let namespace = &attrs.namespace;
-    let access_policy = attrs.access_policy.as_deref().unwrap_or("internal");
+    let access_scope = attrs.access_scope.clone().unwrap_or_else(|| {
+        quote!(::sinex_primitives::source_contracts::AccessScope::Internal)
+    });
 
     // event_types: (event_source, event_type) pairs. All emitted under the
     // definition's event_source for v1.
@@ -153,7 +159,7 @@ pub(crate) fn generate_source_contract(
                 horizons: &[ #(#horizons),* ],
                 retention: #retention,
                 occurrence_identity: #occurrence_identity,
-                access_policy: #access_policy,
+                access_scope: #access_scope,
             }
         }
     })
@@ -173,16 +179,18 @@ pub(crate) fn generate_source_runtime_binding(
     let implementation = attrs.implementation.as_deref().unwrap_or("sinexd");
     let adapter = &attrs.adapter;
     let output_event_type = &attrs.event_type;
-    let privacy_context = attrs.privacy_context.as_deref().unwrap_or("Metadata");
-    let material_policy = attrs.material_policy.as_deref().unwrap_or("");
-    let checkpoint_policy = attrs.checkpoint_policy.as_deref().unwrap_or("");
-    let resource_shape = attrs.resource_shape.as_deref().unwrap_or("");
-    let runner_pack = attrs.runner_pack.as_deref().unwrap_or("sinexd-source");
-    let package_impact = attrs.package_impact.as_deref().unwrap_or("no_new_output");
-    let implementation_mode = attrs.implementation_mode.as_deref().unwrap_or("sinexd:source");
 
     // Typed enum tokens emitted verbatim; absent attributes fall back to a
     // fully-qualified default path (resolves without an import in the source).
+    let privacy_context = attrs.privacy_context.clone().unwrap_or_else(|| {
+        quote!(::sinex_primitives::privacy::ProcessingContext::Metadata)
+    });
+    let resource_profile = attrs.resource_profile.clone().unwrap_or_else(|| {
+        quote!(::sinex_primitives::source_contracts::ResourceProfile::BoundedFile)
+    });
+    let runner_pack = attrs.runner_pack.clone().unwrap_or_else(|| {
+        quote!(::sinex_primitives::source_contracts::RunnerPack::SinexdSource)
+    });
     let checkpoint_family = attrs.checkpoint_family.clone().unwrap_or_else(|| {
         quote!(::sinex_primitives::source_contracts::CheckpointFamily::AppendStream)
     });
@@ -208,16 +216,12 @@ pub(crate) fn generate_source_runtime_binding(
             .adapter(#adapter)
             .output_event_type(#output_event_type)
             .privacy_context(#privacy_context)
-            .material_policy(#material_policy)
-            .checkpoint_policy(#checkpoint_policy)
-            .resource_shape(#resource_shape)
+            .resource_profile(#resource_profile)
             .source_id(#id)
             .runner_pack(#runner_pack)
             #capabilities_call
             .checkpoint_family(#checkpoint_family)
             .runtime_shape(#runtime_shape)
-            .package_impact(#package_impact)
-            .implementation_mode(#implementation_mode)
             .build_impact(::sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
             .build()
         }

@@ -19,7 +19,7 @@ use sinex_primitives::parser::{
 };
 use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::temporal::Timestamp;
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
@@ -73,17 +73,13 @@ pub struct HyprlandParserConfig {
     horizons(Horizon::Continuous),
     retention = RetentionPolicy::Forever,
     occurrence_identity = OccurrenceIdentity::Anchor,
-    access_policy = "target_runtime_bridge:window_manager",
+    access_scope = AccessScope::RuntimeBridge { surface: "window_manager" },
     implementation = "sinexd",
-    privacy_context = "document",
-    material_policy = "wm_socket_stream",
-    checkpoint_policy = "live_stream",
-    resource_shape = "unix_socket_watcher",
-    runner_pack = "sinexd-source",
+    privacy_context = ProcessingContext::Document,
+    resource_profile = ResourceProfile::LiveWatcher,
+    runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::LiveObservation,
     runtime_shape = RuntimeShape::Continuous,
-    package_impact = "desktop_window_manager",
-    implementation_mode = "sinexd:source"
 )]
 pub struct HyprlandParser {
     /// Buffered (window_class, window_title) from the most recent `activewindow`

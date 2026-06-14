@@ -17,7 +17,8 @@
 //! `Command` privacy context.
 
 use sinex_macros::SourceDefinition;
-use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::privacy::ProcessingContext;
+use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 
 /// Declarative fish shell history source definition.
 ///
@@ -39,17 +40,13 @@ use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeS
     horizons(Horizon::Continuous, Horizon::Historical),
     retention = RetentionPolicy::Forever,
     occurrence_identity = OccurrenceIdentity::Natural,
-    access_policy = "target_home_read:.local/share/fish/fish_history",
+    access_scope = AccessScope::TargetHome { path: ".local/share/fish/fish_history" },
     implementation = "sinexd",
-    privacy_context = "Command",
-    material_policy = "sqlite_row_id",
-    checkpoint_policy = "mutable_snapshot",
-    resource_shape = "linear_rows_bounded_memory",
-    runner_pack = "sinexd-source",
+    privacy_context = ProcessingContext::Command,
+    resource_profile = ResourceProfile::BoundedStream,
+    runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::MutableSnapshot { backing_store_kind: "sqlite", occurrence_anchor: "fish_history_row_id" },
     runtime_shape = RuntimeShape::Continuous,
-    package_impact = "fish_history_source",
-    implementation_mode = "sinexd:source",
     baseline_adapter_config = r#"{"query":"fish_history","table":"fish_history"}"#
 )]
 pub struct FishHistoryRecord {

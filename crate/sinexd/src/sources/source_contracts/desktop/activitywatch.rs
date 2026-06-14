@@ -21,7 +21,7 @@ use sinex_primitives::parser::{
 };
 use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::temporal::Timestamp;
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
@@ -94,17 +94,13 @@ fn parse_aw_timestamp(s: &str) -> Option<Timestamp> {
     horizons(Horizon::Historical),
     retention = RetentionPolicy::Forever,
     occurrence_identity = OccurrenceIdentity::Uuid5From("(source, bucket_id, event_timestamp)"),
-    access_policy = "target_home_read:activitywatch_sqlite",
+    access_scope = AccessScope::TargetHome { path: "activitywatch_sqlite" },
     implementation = "sinexd",
-    privacy_context = "document",
-    material_policy = "activitywatch_bucket_event",
-    checkpoint_policy = "mutable_snapshot",
-    resource_shape = "linear_rows_bounded_memory",
-    runner_pack = "sinexd-source",
+    privacy_context = ProcessingContext::Document,
+    resource_profile = ResourceProfile::BoundedStream,
+    runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::MutableSnapshot { backing_store_kind: "sqlite", occurrence_anchor: "bucket_event_timestamp" },
     runtime_shape = RuntimeShape::Continuous,
-    package_impact = "desktop_activitywatch",
-    implementation_mode = "sinexd:source"
 )]
 pub struct ActivityWatchParser;
 
