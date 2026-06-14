@@ -15,3 +15,5 @@ This directory owns source and staged-source runtime docs for
 - `evidence_lanes.md` - source-material occurrence/snapshot role model.
 - `sqlite_evidence_lane.md` - SQLite row-stream plus snapshot evidence decision.
 - `integration_authority.md` - external adapter authority categories.
+- `source_family_pilot_template.md` - the required-field template and per-pilot
+  contract every new source issue/pilot follows.

@@ -37,6 +37,12 @@ is the useful external boundary only when an independently useful producer can
 publish admitted event intents or material-staged signals without linking the
 Rust runtime.
 
+A `SourceMaterialOnly` adapter that introduces a new source also follows the
+required-field contract in
+[`source_family_pilot_template.md`](source_family_pilot_template.md): the
+authority category answers *who owns the fact*, the pilot template answers *what
+the source definition, adapter, parser, per-field privacy, and fixtures must be*.
+
 ## Examples
 
 ### Polylogue
