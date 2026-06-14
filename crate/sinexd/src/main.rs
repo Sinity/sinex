@@ -122,6 +122,23 @@ enum Command {
         #[arg(long = "extra-env", value_parser = parse_kv, action = clap::ArgAction::Append)]
         extra_env: Vec<(String, String)>,
     },
+
+    /// Export the typed source catalog (contracts + bindings + resource limits)
+    /// to the committed JSON artifact consumed by the NixOS deployment layer.
+    ///
+    /// This is the Rust→Nix generation seam (#1727): the link-time source
+    /// inventory is the authoring source of truth. With `--check`, the artifact
+    /// is verified rather than written and a stale artifact exits non-zero
+    /// (the drift gate).
+    ExportSourceCatalog {
+        /// Output path (defaults to the committed artifact path, relative to CWD).
+        #[arg(long)]
+        output: Option<String>,
+
+        /// Verify only; do not write. Exits non-zero if the artifact is stale.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 fn parse_kv(s: &str) -> Result<(String, String), String> {
@@ -171,7 +188,29 @@ async fn main() -> color_eyre::Result<()> {
             extra_args,
             extra_env,
         } => scan_source(source, service_name, runtime_config, extra_args, extra_env).await,
+        Command::ExportSourceCatalog { output, check } => export_source_catalog(output, check),
     }
+}
+
+fn export_source_catalog(output: Option<String>, check: bool) -> color_eyre::Result<()> {
+    use sinexd::sources::catalog_export::{CATALOG_ARTIFACT_PATH, export_catalog};
+
+    let path = output.unwrap_or_else(|| CATALOG_ARTIFACT_PATH.to_string());
+    let changed = export_catalog(std::path::Path::new(&path), check)?;
+
+    if check {
+        if changed {
+            color_eyre::eyre::bail!(
+                "source catalog artifact {path} is stale; run `sinexd export-source-catalog` to regenerate"
+            );
+        }
+        println!("source catalog up to date: {path}");
+    } else if changed {
+        println!("source catalog written: {path}");
+    } else {
+        println!("source catalog already up to date: {path}");
+    }
+    Ok(())
 }
 
 async fn serve(cli: &Cli) -> color_eyre::Result<()> {
