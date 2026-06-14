@@ -471,8 +471,12 @@ pub enum RetentionPolicy {
 }
 
 /// How the source identifies real-world occurrences.
+///
+/// Adjacently tagged (`content = "key"`) so the `Uuid5From` newtype variant
+/// serializes — internal tagging cannot serialize a newtype variant holding a
+/// primitive. The catalog export (#1727) is the first JSON consumer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "key", rename_all = "snake_case")]
 pub enum OccurrenceIdentity {
     Uuid5From(&'static str),
     Natural,
