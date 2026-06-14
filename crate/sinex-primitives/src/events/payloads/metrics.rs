@@ -526,11 +526,12 @@ impl StreamStatsPayload {
 // owning source or runner-pack descriptors.
 // ─────────────────────────────────────────────────────────────────────────────
 
+use crate::privacy::ProcessingContext;
 use crate::source_contracts::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceBuildImpact,
-    SourceContract, SourceRuntimeBinding, SubjectRef,
+    AccessScope, CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier, ResourceProfile,
+    RetentionPolicy as SuRetentionPolicy, RunnerPack, RuntimeShape as SuRuntimeShape,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use crate::{register_source_contract, register_source_runtime_binding};
 
@@ -548,7 +549,7 @@ register_source_contract! {
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         occurrence_identity: SuOccurrenceIdentity::Natural,
-        access_policy: "embedded_in_every_sinex_binary",
+        access_scope: AccessScope::Internal,
     }
 }
 
@@ -567,7 +568,7 @@ register_source_contract! {
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         occurrence_identity: SuOccurrenceIdentity::Natural,
-        access_policy: "embedded_in_event_engine",
+        access_scope: AccessScope::Internal,
     }
 }
 
@@ -586,7 +587,7 @@ register_source_contract! {
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         occurrence_identity: SuOccurrenceIdentity::Natural,
-        access_policy: "embedded_in_api",
+        access_scope: AccessScope::Internal,
     }
 }
 
@@ -599,7 +600,7 @@ register_source_contract! {
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         occurrence_identity: SuOccurrenceIdentity::Natural,
-        access_policy: "embedded_in_runtime",
+        access_scope: AccessScope::Internal,
     }
 }
 
@@ -617,17 +618,13 @@ register_source_runtime_binding! {
     .implementation("sinex-primitives::metrics")
     .adapter("EmbeddedEmitter")
     .output_event_type("metric.counter")
-    .privacy_context("none")
-    .material_policy("none")
-    .checkpoint_policy("live_observation")
-    .resource_shape("embedded_emitter")
+    .privacy_context(ProcessingContext::Metadata)
+    .resource_profile(ResourceProfile::EmbeddedEmitter)
     .source_id("sinex-metrics")
     .proposed(true)
-    .runner_pack("infra")
+    .runner_pack(RunnerPack::InProcess)
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
-    .package_impact("no_new_output")
-    .implementation_mode("rust_in_every_sinex_binary")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
@@ -641,17 +638,13 @@ register_source_runtime_binding! {
     .implementation("sinexd")
     .adapter("EmbeddedEmitter")
     .output_event_type("stream.stats")
-    .privacy_context("none")
-    .material_policy("none")
-    .checkpoint_policy("live_observation")
-    .resource_shape("embedded_emitter")
+    .privacy_context(ProcessingContext::Metadata)
+    .resource_profile(ResourceProfile::EmbeddedEmitter)
     .source_id("sinexd-event-engine-telemetry")
     .proposed(true)
-    .runner_pack("infra")
+    .runner_pack(RunnerPack::InProcess)
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
-    .package_impact("no_new_output")
-    .implementation_mode("rust_in_event_engine")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
@@ -665,17 +658,13 @@ register_source_runtime_binding! {
     .implementation("sinexd")
     .adapter("EmbeddedEmitter")
     .output_event_type("request.stats")
-    .privacy_context("none")
-    .material_policy("none")
-    .checkpoint_policy("live_observation")
-    .resource_shape("embedded_emitter")
+    .privacy_context(ProcessingContext::Metadata)
+    .resource_profile(ResourceProfile::EmbeddedEmitter)
     .source_id("sinexd-api-telemetry")
     .proposed(true)
-    .runner_pack("infra")
+    .runner_pack(RunnerPack::InProcess)
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
-    .package_impact("no_new_output")
-    .implementation_mode("rust_in_api")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
@@ -689,17 +678,13 @@ register_source_runtime_binding! {
     .implementation("sinexd")
     .adapter("EmbeddedEmitter")
     .output_event_type("processing.stats")
-    .privacy_context("none")
-    .material_policy("none")
-    .checkpoint_policy("live_observation")
-    .resource_shape("embedded_emitter")
+    .privacy_context(ProcessingContext::Metadata)
+    .resource_profile(ResourceProfile::EmbeddedEmitter)
     .source_id("sinex-runtime-telemetry")
     .proposed(true)
-    .runner_pack("infra")
+    .runner_pack(RunnerPack::InProcess)
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
-    .package_impact("no_new_output")
-    .implementation_mode("rust_in_runtime")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }

@@ -121,6 +121,22 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                     out.horizons = parse_enum_path_list_attr(&meta)?;
                     return Ok(());
                 }
+                "privacy_context" => {
+                    out.privacy_context = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
+                "resource_profile" => {
+                    out.resource_profile = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
+                "runner_pack" => {
+                    out.runner_pack = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
+                "access_scope" => {
+                    out.access_scope = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
                 _ => {}
             }
             let s: syn::LitStr = meta.value()?.parse()?;
@@ -132,15 +148,7 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                 "event_source" => out.event_source = v,
                 "adapter" => out.adapter = v,
                 "event_types" => out.additional_event_types = split_csv(&v),
-                "access_policy" => out.access_policy = Some(v),
                 "implementation" => out.implementation = Some(v),
-                "privacy_context" => out.privacy_context = Some(v),
-                "material_policy" => out.material_policy = Some(v),
-                "checkpoint_policy" => out.checkpoint_policy = Some(v),
-                "resource_shape" => out.resource_shape = Some(v),
-                "runner_pack" => out.runner_pack = Some(v),
-                "package_impact" => out.package_impact = Some(v),
-                "implementation_mode" => out.implementation_mode = Some(v),
                 "capabilities" => out.capabilities = split_csv(&v),
                 "monitor_emit_fn" => out.monitor_emit_fn = Some(v),
                 "monitor_phase" => out.monitor_phase = Some(v),
