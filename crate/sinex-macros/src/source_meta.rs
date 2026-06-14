@@ -116,6 +116,8 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                 "package_impact" => out.package_impact = Some(v),
                 "implementation_mode" => out.implementation_mode = Some(v),
                 "capabilities" => out.capabilities = split_csv(&v),
+                "monitor_emit_fn" => out.monitor_emit_fn = Some(v),
+                "monitor_phase" => out.monitor_phase = Some(v),
                 other => {
                     return Err(meta.error(format!("unknown source_meta attribute '{other}'")));
                 }

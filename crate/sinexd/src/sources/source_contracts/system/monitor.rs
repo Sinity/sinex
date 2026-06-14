@@ -10,10 +10,7 @@
 
 use crate::runtime::{RuntimeResult, stream::RuntimeContext};
 use futures::future::BoxFuture;
-use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
-};
+use sinex_macros::SourceMeta;
 use sinex_primitives::{
     JsonValue, SinexError,
     events::payloads::system::SystemMonitoringStartedPayload,
@@ -21,63 +18,33 @@ use sinex_primitives::{
     ids::Id,
     temporal::Timestamp,
 };
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
-use crate::register_source;
-use crate::sources::monitor_driver::MonitorPhase;
-
-// ---------------------------------------------------------------------------
-// Source contract + binding
-// ---------------------------------------------------------------------------
-
-// register_source_contract!: escape-hatch pending #1761 (MonitorDriver
-// adapter for fire-once Type=oneshot unit not yet in SourceDefinition/SourceMeta
-// adapter_type_ident allowlist).
-register_source_contract! {
-    SourceContract {
-        id: "system.monitor",
-        namespace: "system",
-        event_types: &[("system", "monitoring.started")],
-        privacy_tier: PrivacyTier::Public,
-        horizons: &[Horizon::Continuous],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Natural,
-        access_policy: "lifecycle_hook:none",
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:system.monitor"),
-        "system.monitor",
-        "system",
-    )
-    .implementation("sinexd")
-    .adapter("MonitorDriver")
-    .output_event_type("monitoring.started")
-    .privacy_context("Metadata")
-    .material_policy("synthetic_oneshot")
-    .checkpoint_policy("stateless")
-    .resource_shape("oneshot_bounded_memory")
-    .source_id("system.monitor")
-    .runner_pack("sinexd-source")
-    .checkpoint_family(CheckpointFamily::LiveObservation)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("system_monitor_unit")
-    .implementation_mode("sinexd:source")
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
-// ---------------------------------------------------------------------------
-// Source registration
-// ---------------------------------------------------------------------------
-
-register_source!(
-    source_id: "system.monitor",
-    emit_at: MonitorPhase::ServiceStart,
-    emit: emit_system_monitor,
-);
+#[derive(Debug, Default, SourceMeta)]
+#[source_meta(
+    id = "system.monitor",
+    namespace = "system",
+    event_type = "monitoring.started",
+    event_source = "system",
+    adapter = "MonitorDriver",
+    privacy_tier = "Public",
+    horizons = "Continuous",
+    retention = "forever",
+    occurrence_identity = "natural",
+    access_policy = "lifecycle_hook:none",
+    implementation = "sinexd",
+    privacy_context = "Metadata",
+    material_policy = "synthetic_oneshot",
+    checkpoint_policy = "stateless",
+    resource_shape = "oneshot_bounded_memory",
+    runner_pack = "sinexd-source",
+    checkpoint_family = "live_observation",
+    runtime_shape = "on_demand",
+    package_impact = "system_monitor_unit",
+    implementation_mode = "sinexd:source",
+    monitor_emit_fn = "emit_system_monitor",
+    monitor_phase = "ServiceStart",
+)]
+pub struct SystemMonitorSource;
 
 // ---------------------------------------------------------------------------
 // Emit function
