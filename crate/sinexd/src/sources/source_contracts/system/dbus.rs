@@ -6,7 +6,7 @@
 
 use crate::runtime::parser::{MaterialParser, ParserError};
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{
     BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,
@@ -45,17 +45,13 @@ const MAX_DBUS_MESSAGE_BYTES: usize = 1_048_576;
     horizons(Horizon::Continuous),
     retention = RetentionPolicy::Forever,
     occurrence_identity = OccurrenceIdentity::Anchor,
-    access_policy = "system_bus_session_bus_read",
+    access_scope = AccessScope::SessionBus,
     implementation = "sinexd",
-    privacy_context = "Dbus",
-    material_policy = "bus_anchor",
-    checkpoint_policy = "live_observation",
-    resource_shape = "event_emitter",
-    runner_pack = "sinexd-source",
+    privacy_context = ProcessingContext::Dbus,
+    resource_profile = ResourceProfile::LiveWatcher,
+    runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::LiveObservation,
     runtime_shape = RuntimeShape::Continuous,
-    package_impact = "system_dbus_source",
-    implementation_mode = "sinexd:source"
 )]
 pub struct DbusParser;
 

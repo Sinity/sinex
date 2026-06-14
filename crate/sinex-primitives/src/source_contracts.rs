@@ -8,6 +8,8 @@ use std::marker::PhantomData;
 
 use serde::Serialize;
 
+use crate::privacy::ProcessingContext;
+
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(transparent)]
 pub struct SubjectRef {
@@ -150,10 +152,10 @@ pub struct SourceRuntimeBinding {
     pub implementation: &'static str,
     pub adapter: &'static str,
     pub output_event_type: &'static str,
-    pub privacy_context: &'static str,
-    pub material_policy: &'static str,
-    pub checkpoint_policy: &'static str,
-    pub resource_shape: &'static str,
+    /// Source-level default redaction context for the privacy engine.
+    pub privacy_context: ProcessingContext,
+    /// Resource ceiling profile; derives the deployment unit's systemd limits.
+    pub resource_profile: ResourceProfile,
     pub capabilities: &'static [&'static str],
     /// Stable id of the [`SourceContract`] this binding belongs to.
     ///
@@ -171,16 +173,12 @@ pub struct SourceRuntimeBinding {
     // — `SourceContract` is now strictly semantic. Inventory consumers
     // that need deployment shape look up the binding via `source_id` FK.
     // ────────────────────────────────────────────────────────────
-    /// Logical runner pack hosting this binding (e.g. "terminal", "process").
-    pub runner_pack: &'static str,
+    /// Which runner hosts this binding at deployment time.
+    pub runner_pack: RunnerPack,
     /// Shape of the source's checkpoint state machine.
     pub checkpoint_family: CheckpointFamily,
     /// Runtime invocation shape (continuous, scheduled, on-demand).
     pub runtime_shape: RuntimeShape,
-    /// Coarse package-level impact summary string.
-    pub package_impact: &'static str,
-    /// How the source is implemented (e.g. "`rust_in_pack:terminal`").
-    pub implementation_mode: &'static str,
     /// Physical/build footprint declared by this binding.
     pub build_impact: SourceBuildImpact,
 }
@@ -193,20 +191,6 @@ pub struct HasOutput;
 pub struct MissingPrivacy;
 #[derive(Debug, Clone, Copy)]
 pub struct HasPrivacy;
-#[derive(Debug, Clone, Copy)]
-pub struct MissingMaterial;
-#[derive(Debug, Clone, Copy)]
-pub struct HasMaterial;
-/// Typestate marker: checkpoint policy not yet supplied to [`SourceRuntimeBindingBuilder`].
-#[derive(Debug, Clone, Copy)]
-pub struct MissingCheckpoint;
-/// Typestate marker: checkpoint policy supplied to [`SourceRuntimeBindingBuilder`].
-///
-/// Named `CheckpointPresent` (not `HasCheckpoint`) to distinguish this family from the
-/// `HasProvenance`/`NoProvenance` markers in `events::builder`, which guard a different
-/// state machine — see issue #746 (A9).
-#[derive(Debug, Clone, Copy)]
-pub struct CheckpointPresent;
 #[derive(Debug, Clone, Copy)]
 pub struct MissingCheckpointFamily;
 #[derive(Debug, Clone, Copy)]
@@ -221,25 +205,9 @@ pub struct MissingBuildImpact;
 pub struct HasBuildImpact;
 
 #[derive(Debug, Clone, Copy)]
-pub struct SourceRuntimeBindingBuilder<
-    Output,
-    Privacy,
-    Material,
-    Checkpoint,
-    CheckpointFam,
-    Runtime,
-    Build,
-> {
+pub struct SourceRuntimeBindingBuilder<Output, Privacy, CheckpointFam, Runtime, Build> {
     descriptor: SourceRuntimeBinding,
-    _state: PhantomData<(
-        Output,
-        Privacy,
-        Material,
-        Checkpoint,
-        CheckpointFam,
-        Runtime,
-        Build,
-    )>,
+    _state: PhantomData<(Output, Privacy, CheckpointFam, Runtime, Build)>,
 }
 
 impl SourceRuntimeBinding {
@@ -251,8 +219,6 @@ impl SourceRuntimeBinding {
     ) -> SourceRuntimeBindingBuilder<
         MissingOutput,
         MissingPrivacy,
-        MissingMaterial,
-        MissingCheckpoint,
         MissingCheckpointFamily,
         MissingRuntimeShape,
         MissingBuildImpact,
@@ -265,18 +231,14 @@ impl SourceRuntimeBinding {
                 implementation: "",
                 adapter: "",
                 output_event_type: "",
-                privacy_context: "",
-                material_policy: "",
-                checkpoint_policy: "",
-                resource_shape: "",
+                privacy_context: ProcessingContext::Metadata,
+                resource_profile: ResourceProfile::BoundedFile,
                 capabilities: &[],
                 source_id: "",
                 proposed: false,
-                runner_pack: "",
+                runner_pack: RunnerPack::SinexdSource,
                 checkpoint_family: CheckpointFamily::AppendStream,
                 runtime_shape: RuntimeShape::Continuous,
-                package_impact: "",
-                implementation_mode: "",
                 build_impact: SourceBuildImpact::ZERO,
             },
             _state: PhantomData,
@@ -284,7 +246,7 @@ impl SourceRuntimeBinding {
     }
 }
 
-impl<O, P, M, C, CF, RS, BI> SourceRuntimeBindingBuilder<O, P, M, C, CF, RS, BI> {
+impl<O, P, CF, RS, BI> SourceRuntimeBindingBuilder<O, P, CF, RS, BI> {
     #[must_use]
     pub const fn implementation(mut self, implementation: &'static str) -> Self {
         self.descriptor.implementation = implementation;
@@ -298,8 +260,8 @@ impl<O, P, M, C, CF, RS, BI> SourceRuntimeBindingBuilder<O, P, M, C, CF, RS, BI>
     }
 
     #[must_use]
-    pub const fn resource_shape(mut self, resource_shape: &'static str) -> Self {
-        self.descriptor.resource_shape = resource_shape;
+    pub const fn resource_profile(mut self, resource_profile: ResourceProfile) -> Self {
+        self.descriptor.resource_profile = resource_profile;
         self
     }
 
@@ -331,35 +293,20 @@ impl<O, P, M, C, CF, RS, BI> SourceRuntimeBindingBuilder<O, P, M, C, CF, RS, BI>
         self
     }
 
-    /// Logical runner pack hosting this binding. Mirrors the descriptor field
-    /// during the #1175 descriptor→binding migration.
+    /// Which runner hosts this binding at deployment time.
     #[must_use]
-    pub const fn runner_pack(mut self, runner_pack: &'static str) -> Self {
+    pub const fn runner_pack(mut self, runner_pack: RunnerPack) -> Self {
         self.descriptor.runner_pack = runner_pack;
-        self
-    }
-
-    /// Coarse package-level impact summary string.
-    #[must_use]
-    pub const fn package_impact(mut self, package_impact: &'static str) -> Self {
-        self.descriptor.package_impact = package_impact;
-        self
-    }
-
-    /// How the source is implemented (e.g. "`rust_in_pack:terminal`").
-    #[must_use]
-    pub const fn implementation_mode(mut self, mode: &'static str) -> Self {
-        self.descriptor.implementation_mode = mode;
         self
     }
 }
 
-impl<P, M, C, CF, RS, BI> SourceRuntimeBindingBuilder<MissingOutput, P, M, C, CF, RS, BI> {
+impl<P, CF, RS, BI> SourceRuntimeBindingBuilder<MissingOutput, P, CF, RS, BI> {
     #[must_use]
     pub const fn output_event_type(
         mut self,
         output_event_type: &'static str,
-    ) -> SourceRuntimeBindingBuilder<HasOutput, P, M, C, CF, RS, BI> {
+    ) -> SourceRuntimeBindingBuilder<HasOutput, P, CF, RS, BI> {
         self.descriptor.output_event_type = output_event_type;
         SourceRuntimeBindingBuilder {
             descriptor: self.descriptor,
@@ -368,12 +315,12 @@ impl<P, M, C, CF, RS, BI> SourceRuntimeBindingBuilder<MissingOutput, P, M, C, CF
     }
 }
 
-impl<O, M, C, CF, RS, BI> SourceRuntimeBindingBuilder<O, MissingPrivacy, M, C, CF, RS, BI> {
+impl<O, CF, RS, BI> SourceRuntimeBindingBuilder<O, MissingPrivacy, CF, RS, BI> {
     #[must_use]
     pub const fn privacy_context(
         mut self,
-        privacy_context: &'static str,
-    ) -> SourceRuntimeBindingBuilder<O, HasPrivacy, M, C, CF, RS, BI> {
+        privacy_context: ProcessingContext,
+    ) -> SourceRuntimeBindingBuilder<O, HasPrivacy, CF, RS, BI> {
         self.descriptor.privacy_context = privacy_context;
         SourceRuntimeBindingBuilder {
             descriptor: self.descriptor,
@@ -382,35 +329,7 @@ impl<O, M, C, CF, RS, BI> SourceRuntimeBindingBuilder<O, MissingPrivacy, M, C, C
     }
 }
 
-impl<O, P, C, CF, RS, BI> SourceRuntimeBindingBuilder<O, P, MissingMaterial, C, CF, RS, BI> {
-    #[must_use]
-    pub const fn material_policy(
-        mut self,
-        material_policy: &'static str,
-    ) -> SourceRuntimeBindingBuilder<O, P, HasMaterial, C, CF, RS, BI> {
-        self.descriptor.material_policy = material_policy;
-        SourceRuntimeBindingBuilder {
-            descriptor: self.descriptor,
-            _state: PhantomData,
-        }
-    }
-}
-
-impl<O, P, M, CF, RS, BI> SourceRuntimeBindingBuilder<O, P, M, MissingCheckpoint, CF, RS, BI> {
-    #[must_use]
-    pub const fn checkpoint_policy(
-        mut self,
-        checkpoint_policy: &'static str,
-    ) -> SourceRuntimeBindingBuilder<O, P, M, CheckpointPresent, CF, RS, BI> {
-        self.descriptor.checkpoint_policy = checkpoint_policy;
-        SourceRuntimeBindingBuilder {
-            descriptor: self.descriptor,
-            _state: PhantomData,
-        }
-    }
-}
-
-impl<O, P, M, C, RS, BI> SourceRuntimeBindingBuilder<O, P, M, C, MissingCheckpointFamily, RS, BI> {
+impl<O, P, RS, BI> SourceRuntimeBindingBuilder<O, P, MissingCheckpointFamily, RS, BI> {
     /// Shape of the source's checkpoint state machine. Required: codex P2 follow-up
     /// on PR #1189 — concrete defaults silently passed descriptor validation
     /// for new bindings that forgot to set it. Typestate forces every binding to
@@ -419,7 +338,7 @@ impl<O, P, M, C, RS, BI> SourceRuntimeBindingBuilder<O, P, M, C, MissingCheckpoi
     pub const fn checkpoint_family(
         mut self,
         family: CheckpointFamily,
-    ) -> SourceRuntimeBindingBuilder<O, P, M, C, HasCheckpointFamily, RS, BI> {
+    ) -> SourceRuntimeBindingBuilder<O, P, HasCheckpointFamily, RS, BI> {
         self.descriptor.checkpoint_family = family;
         SourceRuntimeBindingBuilder {
             descriptor: self.descriptor,
@@ -428,14 +347,14 @@ impl<O, P, M, C, RS, BI> SourceRuntimeBindingBuilder<O, P, M, C, MissingCheckpoi
     }
 }
 
-impl<O, P, M, C, CF, BI> SourceRuntimeBindingBuilder<O, P, M, C, CF, MissingRuntimeShape, BI> {
+impl<O, P, CF, BI> SourceRuntimeBindingBuilder<O, P, CF, MissingRuntimeShape, BI> {
     /// Runtime invocation shape (continuous, scheduled, on-demand). Required:
     /// see `checkpoint_family` for the same rationale.
     #[must_use]
     pub const fn runtime_shape(
         mut self,
         shape: RuntimeShape,
-    ) -> SourceRuntimeBindingBuilder<O, P, M, C, CF, HasRuntimeShape, BI> {
+    ) -> SourceRuntimeBindingBuilder<O, P, CF, HasRuntimeShape, BI> {
         self.descriptor.runtime_shape = shape;
         SourceRuntimeBindingBuilder {
             descriptor: self.descriptor,
@@ -444,7 +363,7 @@ impl<O, P, M, C, CF, BI> SourceRuntimeBindingBuilder<O, P, M, C, CF, MissingRunt
     }
 }
 
-impl<O, P, M, C, CF, RS> SourceRuntimeBindingBuilder<O, P, M, C, CF, RS, MissingBuildImpact> {
+impl<O, P, CF, RS> SourceRuntimeBindingBuilder<O, P, CF, RS, MissingBuildImpact> {
     /// Physical/build footprint declared by this binding. Required: see
     /// `checkpoint_family` for the same rationale. `SourceBuildImpact::ZERO`
     /// is a perfectly fine value to set explicitly — typestate only requires
@@ -453,7 +372,7 @@ impl<O, P, M, C, CF, RS> SourceRuntimeBindingBuilder<O, P, M, C, CF, RS, Missing
     pub const fn build_impact(
         mut self,
         build_impact: SourceBuildImpact,
-    ) -> SourceRuntimeBindingBuilder<O, P, M, C, CF, RS, HasBuildImpact> {
+    ) -> SourceRuntimeBindingBuilder<O, P, CF, RS, HasBuildImpact> {
         self.descriptor.build_impact = build_impact;
         SourceRuntimeBindingBuilder {
             descriptor: self.descriptor,
@@ -466,8 +385,6 @@ impl
     SourceRuntimeBindingBuilder<
         HasOutput,
         HasPrivacy,
-        HasMaterial,
-        CheckpointPresent,
         HasCheckpointFamily,
         HasRuntimeShape,
         HasBuildImpact,
@@ -562,6 +479,122 @@ pub enum OccurrenceIdentity {
     Anchor,
 }
 
+/// Which runner hosts a source binding at deployment time.
+///
+/// Replaces the former free-form `runner_pack`/`implementation_mode` strings
+/// (26×`sinexd-source`, 3×`live`, plus `parser:staged`/`external:*`/`in_process:*`
+/// variants on automata and embedded emitters). The *domain* a source belongs to
+/// already lives in [`SourceContract::namespace`]; this enum carries only the
+/// runner kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerPack {
+    /// Hosted in-process by `sinexd` as a source binding (the common case).
+    SinexdSource,
+    /// Live capture binding (e.g. D-Bus signal listeners).
+    Live,
+    /// Staged-export parser fed from operator-staged material.
+    Staged,
+    /// External producer that publishes events over NATS (e.g. polylogue).
+    External,
+    /// Emitted from within a sinex binary / automaton, not a hosted source.
+    InProcess,
+}
+
+/// Concrete resource ceiling a binding declares, used to derive the systemd
+/// unit's `MemoryMax`/`CPUWeight` when the deployment unit is generated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ResourceLimits {
+    /// Hard memory ceiling in MiB.
+    pub memory_max_mib: u32,
+    /// systemd `CPUWeight` (1–10000; 100 = default share).
+    pub cpu_weight: u16,
+}
+
+/// Resource profile of a source binding.
+///
+/// Replaces the former free-form `resource_shape` string. Each variant maps to a
+/// concrete [`ResourceLimits`] ceiling so the deployment unit's limits are a
+/// typed function of the declared profile rather than a hand-set number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceProfile {
+    /// Reads a bounded file/scan (history files, export files, watched files).
+    BoundedFile,
+    /// Streams rows with bounded working memory (sqlite/db row cursors).
+    BoundedStream,
+    /// Long-lived watcher with low steady-state memory (sockets, signals, polls).
+    LiveWatcher,
+    /// Walks a directory tree; memory bounded by the walk, not the tree size.
+    DirectoryScan,
+    /// Runs once over a bounded input then exits (on-demand batch).
+    Oneshot,
+    /// Consumes the derived-event stream (automata).
+    EventStreamConsumer,
+    /// Emits telemetry from within a running binary (embedded emitters).
+    EmbeddedEmitter,
+}
+
+impl ResourceProfile {
+    /// Concrete systemd resource ceiling for this profile.
+    #[must_use]
+    pub const fn limits(self) -> ResourceLimits {
+        match self {
+            Self::BoundedFile | Self::Oneshot => ResourceLimits {
+                memory_max_mib: 256,
+                cpu_weight: 100,
+            },
+            Self::BoundedStream => ResourceLimits {
+                memory_max_mib: 512,
+                cpu_weight: 100,
+            },
+            Self::LiveWatcher | Self::EmbeddedEmitter => ResourceLimits {
+                memory_max_mib: 128,
+                cpu_weight: 80,
+            },
+            Self::DirectoryScan => ResourceLimits {
+                memory_max_mib: 1024,
+                cpu_weight: 120,
+            },
+            Self::EventStreamConsumer => ResourceLimits {
+                memory_max_mib: 512,
+                cpu_weight: 120,
+            },
+        }
+    }
+}
+
+/// What resource a source reads, de-conflated from the data-category labels the
+/// former `access_policy` string mixed in (e.g. `target_home_read:.zsh_history`
+/// vs `personal_social_data`). This carries only the *locator* axis; data
+/// classification belongs to [`SourceContract::privacy_tier`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "scope", rename_all = "snake_case")]
+pub enum AccessScope {
+    /// No direct external access (internal/derived).
+    Internal,
+    /// Reads operator-staged export material (GDPR/Takeout dumps).
+    StagedExport,
+    /// Reads a path under the target user's home directory.
+    TargetHome { path: &'static str },
+    /// Reads a path under the realm data lake.
+    TargetData { path: &'static str },
+    /// Bridges a target runtime surface (window manager, clipboard).
+    RuntimeBridge { surface: &'static str },
+    /// Reads the systemd journal.
+    SystemdJournal,
+    /// Reads kernel uevents (udev monitor).
+    KernelUevents,
+    /// Listens on the D-Bus session bus.
+    SessionBus,
+    /// Listens on the D-Bus system bus.
+    SystemBus,
+    /// Reads operator-configured watch roots.
+    ConfiguredRoots,
+    /// Reads a local library root.
+    LibraryRoot,
+}
+
 /// Physical/build footprint declared by a source binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SourceBuildImpact {
@@ -588,9 +621,9 @@ impl SourceBuildImpact {
 ///
 /// This is strictly a *semantic* descriptor: identity, emitted event-type
 /// pairs, privacy tier, time horizons, retention, occurrence identity, and
-/// access policy. Deployment-shape fields (`runner_pack`, `checkpoint_family`,
-/// `runtime_shape`, `package_impact`, `implementation_mode`, `build_impact`)
-/// live on the matching [`SourceRuntimeBinding`]. See issue #1175.
+/// access scope. Deployment-shape fields (`runner_pack`, `resource_profile`,
+/// `checkpoint_family`, `runtime_shape`, `build_impact`) live on the matching
+/// [`SourceRuntimeBinding`]. See issue #1175.
 ///
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct SourceContract {
@@ -601,7 +634,8 @@ pub struct SourceContract {
     pub horizons: &'static [Horizon],
     pub retention: RetentionPolicy,
     pub occurrence_identity: OccurrenceIdentity,
-    pub access_policy: &'static str,
+    /// Resource locator this source reads (de-conflated from data category).
+    pub access_scope: AccessScope,
 }
 
 inventory::collect!(SourceContract);
@@ -689,7 +723,7 @@ mod tests {
             horizons: &[Horizon::Continuous],
             retention: RetentionPolicy::Forever,
             occurrence_identity: OccurrenceIdentity::Natural,
-            access_policy: "internal",
+            access_scope: AccessScope::Internal,
         };
 
         // Verify the descriptor is well-formed (fields accessible).
@@ -708,19 +742,16 @@ mod tests {
         .adapter("sqlite_row_stream")
         .implementation("demo::Unit")
         .output_event_type("test.output")
-        .privacy_context("command")
-        .material_policy("canonical_json_lines")
-        .checkpoint_policy("row_id")
-        .resource_shape("linear_rows_bounded_memory")
+        .privacy_context(ProcessingContext::Command)
+        .resource_profile(ResourceProfile::BoundedStream)
         .checkpoint_family(CheckpointFamily::AppendStream)
         .runtime_shape(RuntimeShape::Continuous)
         .build_impact(SourceBuildImpact::ZERO)
         .build();
 
         assert_eq!(descriptor.output_event_type, "test.output");
-        assert_eq!(descriptor.privacy_context, "command");
-        assert_eq!(descriptor.material_policy, "canonical_json_lines");
-        assert_eq!(descriptor.checkpoint_policy, "row_id");
+        assert_eq!(descriptor.privacy_context, ProcessingContext::Command);
+        assert_eq!(descriptor.resource_profile, ResourceProfile::BoundedStream);
         Ok(())
     }
 
@@ -737,16 +768,12 @@ mod tests {
         .implementation("sinex-primitives::test")
         .adapter("test_adapter")
         .output_event_type("test.output")
-        .privacy_context("Metadata")
-        .material_policy("test_material")
-        .checkpoint_policy("test_checkpoint")
-        .resource_shape("test_shape")
+        .privacy_context(ProcessingContext::Metadata)
+        .resource_profile(ResourceProfile::EmbeddedEmitter)
         .source_id("primitives.inventory-sentinel")
-        .runner_pack("test")
+        .runner_pack(RunnerPack::InProcess)
         .checkpoint_family(CheckpointFamily::AppendStream)
         .runtime_shape(RuntimeShape::OnDemand)
-        .package_impact("no_new_output")
-        .implementation_mode("test")
         .build_impact(SourceBuildImpact::ZERO)
         .build()
     }

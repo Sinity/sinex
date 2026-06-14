@@ -35,7 +35,7 @@ use sinex_primitives::parser::{
     TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::SourceContract;
+use sinex_primitives::source_contracts::{AccessScope, SourceContract};
 use sinex_primitives::temporal::Timestamp;
 
 use super::{InputShapeAdapter, MaterialParser};
@@ -1090,7 +1090,7 @@ mod tests {
             horizons: HORIZONS,
             retention: RetentionPolicy::Forever,
             occurrence_identity: OccurrenceIdentity::Natural,
-            access_policy: "fixture",
+            access_scope: AccessScope::Internal,
         }
     }
 

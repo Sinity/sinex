@@ -158,22 +158,22 @@ struct SourceDefinitionAttrs {
     /// Typed enum-expression token (`OccurrenceIdentity::Anchor`, ..), verbatim.
     /// REQUIRED — missing `occurrence_identity` is a compile error.
     occurrence_identity: Option<proc_macro2::TokenStream>,
-    access_policy: Option<String>,
+    /// Typed enum-expression token (`AccessScope::TargetHome { .. }`), verbatim.
+    access_scope: Option<proc_macro2::TokenStream>,
 
     // SourceRuntimeBinding deployment fields
     implementation: Option<String>,
-    privacy_context: Option<String>,
-    material_policy: Option<String>,
-    checkpoint_policy: Option<String>,
-    resource_shape: Option<String>,
-    runner_pack: Option<String>,
+    /// Typed enum path token (`ProcessingContext::Command`), emitted verbatim.
+    privacy_context: Option<proc_macro2::TokenStream>,
+    /// Typed enum path token (`ResourceProfile::BoundedFile`), emitted verbatim.
+    resource_profile: Option<proc_macro2::TokenStream>,
+    /// Typed enum path token (`RunnerPack::SinexdSource`), emitted verbatim.
+    runner_pack: Option<proc_macro2::TokenStream>,
     /// Typed enum-expression token (unit-variant path or `MutableSnapshot { .. }`
     /// struct variant), emitted verbatim.
     checkpoint_family: Option<proc_macro2::TokenStream>,
     /// Typed enum path token (e.g. `RuntimeShape::OnDemand`), emitted verbatim.
     runtime_shape: Option<proc_macro2::TokenStream>,
-    package_impact: Option<String>,
-    implementation_mode: Option<String>,
     capabilities: Vec<String>,
 }
 
@@ -210,17 +210,13 @@ impl SourceDefinitionAttrs {
             horizons: self.horizons.clone(),
             retention: self.retention.clone(),
             occurrence_identity: self.occurrence_identity.clone(),
-            access_policy: self.access_policy.clone(),
+            access_scope: self.access_scope.clone(),
             implementation: self.implementation.clone(),
             privacy_context: self.privacy_context.clone(),
-            material_policy: self.material_policy.clone(),
-            checkpoint_policy: self.checkpoint_policy.clone(),
-            resource_shape: self.resource_shape.clone(),
+            resource_profile: self.resource_profile.clone(),
             runner_pack: self.runner_pack.clone(),
             checkpoint_family: self.checkpoint_family.clone(),
             runtime_shape: self.runtime_shape.clone(),
-            package_impact: self.package_impact.clone(),
-            implementation_mode: self.implementation_mode.clone(),
             capabilities: self.capabilities.clone(),
             // SourceDefinition is the declarative adapter+parser form; it never
             // uses the monitor-emit factory shape.
@@ -274,6 +270,22 @@ fn parse_source_definition_attrs(attrs: &[syn::Attribute]) -> syn::Result<Source
                     out.horizons = parse_enum_path_list_attr(&meta)?;
                     return Ok(());
                 }
+                "privacy_context" => {
+                    out.privacy_context = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
+                "resource_profile" => {
+                    out.resource_profile = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
+                "runner_pack" => {
+                    out.runner_pack = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
+                "access_scope" => {
+                    out.access_scope = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
                 _ => {}
             }
             let s: syn::LitStr = meta.value()?.parse()?;
@@ -289,15 +301,7 @@ fn parse_source_definition_attrs(attrs: &[syn::Attribute]) -> syn::Result<Source
                 "version" => out.version = Some(v),
                 "baseline_adapter_config" => out.baseline_adapter_config = Some(v),
                 "event_types" => out.additional_event_types = split_csv(&v),
-                "access_policy" => out.access_policy = Some(v),
                 "implementation" => out.implementation = Some(v),
-                "privacy_context" => out.privacy_context = Some(v),
-                "material_policy" => out.material_policy = Some(v),
-                "checkpoint_policy" => out.checkpoint_policy = Some(v),
-                "resource_shape" => out.resource_shape = Some(v),
-                "runner_pack" => out.runner_pack = Some(v),
-                "package_impact" => out.package_impact = Some(v),
-                "implementation_mode" => out.implementation_mode = Some(v),
                 "capabilities" => out.capabilities = split_csv(&v),
                 other => {
                     return Err(meta.error(format!(

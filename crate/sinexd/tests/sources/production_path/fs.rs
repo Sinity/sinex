@@ -70,8 +70,10 @@ async fn test_fs_binding_uses_content_drop_adapter() -> TestResult<()> {
         .expect("fs source binding must be registered");
 
     assert_eq!(binding.adapter, "FileContentDropAdapter");
-    assert_eq!(binding.material_policy, "inotify_anchor");
-    assert_eq!(binding.checkpoint_policy, "append_stream");
+    assert_eq!(
+        binding.resource_profile,
+        sinex_primitives::source_contracts::ResourceProfile::LiveWatcher
+    );
     assert_eq!(
         binding.runtime_shape,
         sinex_primitives::source_contracts::RuntimeShape::Continuous

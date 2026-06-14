@@ -7,7 +7,7 @@ use crate::runtime::parser::{
 };
 use async_trait::async_trait;
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::source_contracts::{AccessScope, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon, ResourceProfile, RunnerPack};
 use sinex_primitives::{
     domain::{EventSource, EventType, RecordedPath},
     events::{
@@ -40,17 +40,13 @@ const PARSER_VERSION: &str = "1.0.0";
     horizons(Horizon::Continuous, Horizon::Historical),
     retention = RetentionPolicy::Forever,
     occurrence_identity = OccurrenceIdentity::Anchor,
-    access_policy = "configured_watch_roots",
+    access_scope = AccessScope::ConfiguredRoots,
     implementation = "sinexd",
-    privacy_context = "fs_path",
-    material_policy = "inotify_anchor",
-    checkpoint_policy = "append_stream",
-    resource_shape = "continuous_inotify",
-    runner_pack = "sinexd-source",
+    privacy_context = ProcessingContext::Metadata,
+    resource_profile = ResourceProfile::LiveWatcher,
+    runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
-    runtime_shape = RuntimeShape::Continuous,
-    package_impact = "no_new_output",
-    implementation_mode = "sinexd:source"
+    runtime_shape = RuntimeShape::Continuous
 )]
 pub struct FilesystemParser;
 

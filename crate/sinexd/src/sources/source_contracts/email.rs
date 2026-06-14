@@ -1,9 +1,11 @@
 //! Email capture source — `email.mailbox` (#1469).
 
 use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // register_source_contract!: escape-hatch pending #1761 (proposed source with
@@ -21,7 +23,7 @@ register_source_contract! {
         horizons: &[Horizon::Historical, Horizon::Continuous],
         retention: RetentionPolicy::Forever,
         occurrence_identity: OccurrenceIdentity::Uuid5From("(message_id, folder)"),
-        access_policy: "personal_email",
+        access_scope: AccessScope::StagedExport,
     }
 }
 
@@ -34,16 +36,12 @@ register_source_runtime_binding! {
     .implementation("staged-parser")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("email.message.received")
-    .privacy_context("Document")
-    .material_policy("per_message_source_material")
-    .checkpoint_policy("cursor_per_folder")
-    .resource_shape("file_scanner")
+    .privacy_context(ProcessingContext::Document)
+    .resource_profile(ResourceProfile::BoundedFile)
     .source_id("email.mailbox")
-    .runner_pack("staged")
+    .runner_pack(RunnerPack::Staged)
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::Scheduled)
-    .package_impact("email_mailbox_source")
-    .implementation_mode("parser:staged")
     .build_impact(SourceBuildImpact::ZERO)
     .proposed(true)
     .build()
@@ -58,16 +56,12 @@ register_source_runtime_binding! {
     .implementation("staged-parser")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("email.message.sent")
-    .privacy_context("Document")
-    .material_policy("per_message_source_material")
-    .checkpoint_policy("cursor_per_folder")
-    .resource_shape("file_scanner")
+    .privacy_context(ProcessingContext::Document)
+    .resource_profile(ResourceProfile::BoundedFile)
     .source_id("email.mailbox")
-    .runner_pack("staged")
+    .runner_pack(RunnerPack::Staged)
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::Scheduled)
-    .package_impact("email_mailbox_source")
-    .implementation_mode("parser:staged")
     .build_impact(SourceBuildImpact::ZERO)
     .proposed(true)
     .build()

@@ -24,9 +24,11 @@ use crate::register_source;
 use crate::runtime::parser::{AppendOnlyFileAdapter, WeeChatLogParser};
 use sinex_macros::SourceRecord;
 use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // ---------------------------------------------------------------------------
@@ -50,7 +52,7 @@ register_source_contract! {
         horizons: &[Horizon::Historical],
         retention: RetentionPolicy::Forever,
         occurrence_identity: OccurrenceIdentity::Anchor,
-        access_policy: "personal_irc_logs",
+        access_scope: AccessScope::StagedExport,
     }
 }
 
@@ -63,16 +65,12 @@ register_source_runtime_binding! {
     .implementation("sinexd")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("irc.message")
-    .privacy_context("Command")
-    .material_policy("append_only_log")
-    .checkpoint_policy("append_only_cursor")
-    .resource_shape("file_watcher")
+    .privacy_context(ProcessingContext::Command)
+    .resource_profile(ResourceProfile::LiveWatcher)
     .source_id("weechat")
-    .runner_pack("sinexd-source")
+    .runner_pack(RunnerPack::SinexdSource)
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("weechat_source")
-    .implementation_mode("sinexd:source")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
@@ -133,7 +131,7 @@ register_source_contract! {
         horizons: &[Horizon::Historical],
         retention: RetentionPolicy::Forever,
         occurrence_identity: OccurrenceIdentity::Anchor,
-        access_policy: "personal_irc_logs",
+        access_scope: AccessScope::StagedExport,
     }
 }
 
@@ -146,16 +144,12 @@ register_source_runtime_binding! {
     .implementation("sinexd")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("irc.message")
-    .privacy_context("Command")
-    .material_policy("append_only_log")
-    .checkpoint_policy("append_only_cursor")
-    .resource_shape("file_watcher")
+    .privacy_context(ProcessingContext::Command)
+    .resource_profile(ResourceProfile::LiveWatcher)
     .source_id("weechat.message")
-    .runner_pack("sinexd-source")
+    .runner_pack(RunnerPack::SinexdSource)
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("weechat_message_source")
-    .implementation_mode("sinexd:source")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }

@@ -35,8 +35,9 @@ use sinex_primitives::{
     },
     privacy::{ProcessingContext, SensitivityHint},
     source_contracts::{
-        CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-        SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
+        AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+        RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
+        SourceRuntimeBinding, SubjectRef,
     },
     temporal::Timestamp,
 };
@@ -60,7 +61,7 @@ register_source_contract! {
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
         occurrence_identity: OccurrenceIdentity::Anchor,
-        access_policy: "configured_document_roots",
+        access_scope: AccessScope::ConfiguredRoots,
     }
 }
 
@@ -73,16 +74,12 @@ register_source_runtime_binding! {
     .implementation("sinexd")
     .adapter("DocumentStagingParser")
     .output_event_type("document.ingested")
-    .privacy_context("document_body")
-    .material_policy("document_anchor")
-    .checkpoint_policy("fingerprint_dedup")
-    .resource_shape("on_demand_batch")
+    .privacy_context(ProcessingContext::Document)
+    .resource_profile(ResourceProfile::Oneshot)
     .source_id("document.staging")
-    .runner_pack("sinexd-source")
+    .runner_pack(RunnerPack::SinexdSource)
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
-    .package_impact("no_new_output")
-    .implementation_mode("sinexd:source")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }

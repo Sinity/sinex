@@ -18,8 +18,9 @@ use crate::runtime::parser::{
     AppendOnlyFileAdapter, ChainedAdapter, MaterialParser, ParserError, ParserResult,
 };
 use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{
     domain::{EventSource, EventType},
@@ -51,7 +52,7 @@ register_source_contract! {
         occurrence_identity: OccurrenceIdentity::Uuid5From(
             "(source, browser_profile, visit_id)",
         ),
-        access_policy: "target_home_read:browser_history",
+        access_scope: AccessScope::TargetHome { path: "browser_history" },
     }
 }
 
@@ -64,19 +65,15 @@ register_source_runtime_binding! {
     .implementation("sinexd")
     .adapter("ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>")
     .output_event_type("page.visited")
-    .privacy_context("url")
-    .material_policy("browser_visit_id")
-    .checkpoint_policy("mutable_snapshot")
-    .resource_shape("linear_rows_bounded_memory")
+    .privacy_context(ProcessingContext::Metadata)
+    .resource_profile(ResourceProfile::BoundedStream)
     .source_id("browser.history")
-    .runner_pack("sinexd-source")
+    .runner_pack(RunnerPack::SinexdSource)
     .checkpoint_family(CheckpointFamily::MutableSnapshot {
         backing_store_kind: "sqlite",
         occurrence_anchor: "visit_id",
     })
     .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("browser_history_source")
-    .implementation_mode("sinexd:source")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
