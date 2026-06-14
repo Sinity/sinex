@@ -1,17 +1,17 @@
-error[E0599]: no method named `build` found for struct `SourceRuntimeBindingBuilder<MissingOutput, HasPrivacy, HasMaterial, CheckpointPresent, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact>` in the current scope
-  --> tests/source_contract_compile_fail/missing_output.rs:19:6
+error[E0599]: no method named `build` found for struct `SourceRuntimeBindingBuilder<MissingOutput, HasPrivacy, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact>` in the current scope
+  --> tests/source_contract_compile_fail/missing_output.rs:18:6
    |
- 7 |       let _ = SourceRuntimeBinding::builder(
+ 8 |       let _ = SourceRuntimeBinding::builder(
    |  _____________-
- 8 | |         subject_ref!("runtime_unit:test.missing_output"),
- 9 | |         "test.missing_output",
-10 | |         "test",
+ 9 | |         subject_ref!("runtime_unit:test.missing_output"),
+10 | |         "test.missing_output",
+11 | |         "test",
 ...  |
-18 | |     .build_impact(SourceBuildImpact::ZERO)
-19 | |     .build();
-   | |     -^^^^^ method not found in `SourceRuntimeBindingBuilder<MissingOutput, HasPrivacy, HasMaterial, CheckpointPresent, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact>`
+17 | |     .build_impact(SourceBuildImpact::ZERO)
+18 | |     .build();
+   | |     -^^^^^ method not found in `SourceRuntimeBindingBuilder<MissingOutput, HasPrivacy, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact>`
    | |_____|
    |
    |
    = note: the method was found for
-           - `SourceRuntimeBindingBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact>`
+           - `SourceRuntimeBindingBuilder<HasOutput, HasPrivacy, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact>`

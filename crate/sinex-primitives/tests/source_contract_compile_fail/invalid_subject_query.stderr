@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: invalid proof subject query
+error[E0080]: evaluation panicked: invalid source subject query
  --> tests/source_contract_compile_fail/invalid_subject_query.rs:4:13
   |
 4 |     let _ = subject_query!("runtime_unit");
@@ -10,10 +10,10 @@ note: inside `SubjectQuery::from_static`
   |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
   |
- ::: src/proof.rs
+ ::: src/source_contracts.rs
   |
   | /         assert!(
   | |             is_valid_subject_expr(raw, true),
-  | |             "invalid proof subject query"
+  | |             "invalid source subject query"
   | |         );
   | |_________- in this macro invocation
