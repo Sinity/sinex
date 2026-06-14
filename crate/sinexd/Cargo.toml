@@ -37,6 +37,10 @@ name = "registry_dispatch_test"
 path = "tests/sources/registry_dispatch_test.rs"
 
 [[test]]
+name = "source_catalog_drift_test"
+path = "tests/sources/source_catalog_drift_test.rs"
+
+[[test]]
 name = "parse_listener_integration_test"
 path = "tests/sources/parse_listener_integration_test.rs"
 

@@ -5,6 +5,7 @@
 //! concrete source under `source_contracts/`.
 
 pub mod bindings;
+pub mod catalog_export;
 pub mod dispatch;
 pub mod drain;
 pub mod monitor_driver;
