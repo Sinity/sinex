@@ -26,6 +26,7 @@
 //! source-definition PR.
 
 use sinex_macros::SourceDefinition;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 
 /// Declarative Atuin history source definition.
 ///
@@ -43,10 +44,10 @@ use sinex_macros::SourceDefinition;
     input_shape = "sqlite_row",
     adapter = "SqliteRowAdapter",
     default_privacy_context = "Command",
-    privacy_tier = "Sensitive",
-    horizons = "continuous, historical",
-    retention = "forever",
-    occurrence_identity = "natural",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Continuous, Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Natural,
     access_policy = "target_home_read:.local/share/atuin/history.db",
     implementation = "sinexd",
     privacy_context = "Command",
@@ -54,8 +55,8 @@ use sinex_macros::SourceDefinition;
     checkpoint_policy = "mutable_snapshot",
     resource_shape = "linear_rows_bounded_memory",
     runner_pack = "sinexd-source",
-    checkpoint_family = "mutable_snapshot:sqlite:atuin_history_id",
-    runtime_shape = "continuous",
+    checkpoint_family = CheckpointFamily::MutableSnapshot { backing_store_kind: "sqlite", occurrence_anchor: "atuin_history_id" },
+    runtime_shape = RuntimeShape::Continuous,
     package_impact = "atuin_history_source",
     implementation_mode = "sinexd:source",
     baseline_adapter_config = r#"{"query":"history","table":"history"}"#

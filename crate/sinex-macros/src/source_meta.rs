@@ -42,7 +42,8 @@ use syn::{DeriveInput, Error, parse_macro_input};
 
 use crate::source_registration::{
     RegistrationAttrs, generate_factory_registration, generate_source_contract,
-    generate_source_runtime_binding, split_csv,
+    generate_source_runtime_binding, parse_enum_expr_attr, parse_enum_path_attr,
+    parse_enum_path_list_attr, split_csv,
 };
 
 pub fn derive_source_meta_impl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -91,6 +92,37 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                 .get_ident()
                 .map(std::string::ToString::to_string)
                 .ok_or_else(|| meta.error("expected attribute key"))?;
+            // The enum-valued attributes take typed path/expression values
+            // (e.g. `PrivacyTier::Public`); `horizons` is a typed path list
+            // (`horizons(Horizon::Continuous, ..)`); all other keys take a
+            // string literal.
+            match key.as_str() {
+                "privacy_tier" => {
+                    out.privacy_tier = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
+                "runtime_shape" => {
+                    out.runtime_shape = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
+                "checkpoint_family" => {
+                    out.checkpoint_family = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
+                "retention" => {
+                    out.retention = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
+                "occurrence_identity" => {
+                    out.occurrence_identity = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
+                "horizons" => {
+                    out.horizons = parse_enum_path_list_attr(&meta)?;
+                    return Ok(());
+                }
+                _ => {}
+            }
             let s: syn::LitStr = meta.value()?.parse()?;
             let v = s.value();
             match key.as_str() {
@@ -100,10 +132,6 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                 "event_source" => out.event_source = v,
                 "adapter" => out.adapter = v,
                 "event_types" => out.additional_event_types = split_csv(&v),
-                "privacy_tier" => out.privacy_tier = Some(v),
-                "horizons" => out.horizons = split_csv(&v),
-                "retention" => out.retention = Some(v),
-                "occurrence_identity" => out.occurrence_identity = Some(v),
                 "access_policy" => out.access_policy = Some(v),
                 "implementation" => out.implementation = Some(v),
                 "privacy_context" => out.privacy_context = Some(v),
@@ -111,8 +139,6 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                 "checkpoint_policy" => out.checkpoint_policy = Some(v),
                 "resource_shape" => out.resource_shape = Some(v),
                 "runner_pack" => out.runner_pack = Some(v),
-                "checkpoint_family" => out.checkpoint_family = Some(v),
-                "runtime_shape" => out.runtime_shape = Some(v),
                 "package_impact" => out.package_impact = Some(v),
                 "implementation_mode" => out.implementation_mode = Some(v),
                 "capabilities" => out.capabilities = split_csv(&v),

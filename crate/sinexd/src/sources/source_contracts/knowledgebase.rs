@@ -20,6 +20,7 @@ use std::sync::OnceLock;
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -220,10 +221,10 @@ pub struct KnowledgebaseParserConfig;
     event_source = "knowledgebase",
     event_type = "note.observed",
     adapter = "DirectoryWalkAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "historical",
-    retention = "forever",
-    occurrence_identity = "uuid5:(path, body_text_hash)",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(path, body_text_hash)"),
     access_policy = "personal_knowledgebase",
     implementation = "sinexd",
     privacy_context = "Document",
@@ -231,8 +232,8 @@ pub struct KnowledgebaseParserConfig;
     checkpoint_policy = "directory_walk_cursor",
     resource_shape = "file_reader",
     runner_pack = "sinexd-source",
-    checkpoint_family = "append_stream",
-    runtime_shape = "on_demand",
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
     package_impact = "knowledgebase_vault_source",
     implementation_mode = "sinexd:source"
 )]

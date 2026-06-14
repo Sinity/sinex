@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
@@ -23,10 +24,10 @@ pub struct NotificationActionParserConfig;
     event_source = "dbus",
     event_type = "notification.action_invoked",
     adapter = "DbusStreamAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "continuous",
-    retention = "forever",
-    occurrence_identity = "uuid5:(notification_id, action_key)",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Continuous),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(notification_id, action_key)"),
     access_policy = "desktop_notifications",
     implementation = "live-capture",
     privacy_context = "Notification",
@@ -34,8 +35,8 @@ pub struct NotificationActionParserConfig;
     checkpoint_policy = "dbus_stream_cursor",
     resource_shape = "dbus_signal_stream",
     runner_pack = "live",
-    checkpoint_family = "live_observation",
-    runtime_shape = "continuous",
+    checkpoint_family = CheckpointFamily::LiveObservation,
+    runtime_shape = RuntimeShape::Continuous,
     package_impact = "desktop_notification_action_source",
     implementation_mode = "live:dbus-notification-action"
 )]
