@@ -22,12 +22,15 @@
 //! - `cursor = None` or `high_water = None` → brand-new source: emit everything.
 //! - `cursor.high_water = Some(k)` → emit only records whose order key `> k`.
 //!
-//! **The order key MUST be lexicographically monotonic across exports**
-//! (ISO-8601 timestamps, zero-padded ids, ULIDs). Comparison is string-wise, so
-//! unpadded decimal ids (`"9" > "10"`) will misorder — pad them or use a
-//! timestamp. This is the documented contract narrowing that makes the cursor
-//! record-local; sources whose new records can appear at arbitrary positions
-//! (no monotonic key) are not a fit for this adapter.
+//! **The order key MUST be unique and lexicographically monotonic across
+//! exports** (ULIDs, snowflake ids, zero-padded sequence ids, or a timestamp
+//! at sufficient resolution / a `timestamp+id` composite field). Comparison is
+//! string-wise, so unpadded decimal ids (`"9" > "10"`) will misorder — pad them.
+//! Uniqueness is required because the high-water cursor cannot disambiguate
+//! tied records: checkpointing one record at key `K` would drop any sibling at
+//! `K` on the next run. A non-unique key is **rejected fail-closed** at
+//! [`open`][InputShapeAdapter::open] rather than risk silent data loss. Sources
+//! whose records have no unique monotonic key are not a fit for this adapter.
 //!
 //! [`ApiCursorPosition`]: super::ApiCursorPosition
 
@@ -81,6 +84,15 @@ pub enum IncrementalDumpError {
         /// The configured field name that was absent.
         field: String,
     },
+    /// Two records shared the same order key. The high-water-mark cursor cannot
+    /// disambiguate tied records (checkpointing one would drop its siblings on
+    /// restart/re-import), so a non-unique key is rejected.
+    DuplicateOrderKey {
+        /// The configured order-key field.
+        field: String,
+        /// The value that appeared on more than one record.
+        key: String,
+    },
 }
 
 impl fmt::Display for IncrementalDumpError {
@@ -90,6 +102,13 @@ impl fmt::Display for IncrementalDumpError {
             Self::MissingOrderKey { field } => {
                 write!(f, "record missing order-key field `{field}`")
             }
+            Self::DuplicateOrderKey { field, key } => write!(
+                f,
+                "order-key field `{field}` is not unique: value `{key}` appears on \
+                 multiple records — choose a unique key (e.g. a record id, or a \
+                 composite/finer-grained field) so the high-water cursor cannot \
+                 drop tied records"
+            ),
         }
     }
 }
@@ -103,10 +122,12 @@ impl Error for IncrementalDumpError {}
 /// Configuration for [`IncrementalDumpAdapter`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IncrementalDumpConfig {
-    /// Name of the top-level field in each record that holds a lexicographically
-    /// monotonic order key (e.g. an ISO-8601 timestamp). Records are emitted in
-    /// ascending order-key order; only keys strictly greater than the prior
-    /// high-water mark are emitted. Required — there is no sensible default.
+    /// Name of the top-level field in each record that holds a **unique**,
+    /// lexicographically monotonic order key (e.g. a ULID or a timestamp at
+    /// sufficient resolution). Records are emitted in ascending order-key order;
+    /// only keys strictly greater than the prior high-water mark are emitted. A
+    /// non-unique key is rejected fail-closed at `open` (see the module docs).
+    /// Required — there is no sensible default.
     pub order_key_field: String,
 }
 
@@ -228,6 +249,21 @@ where
         // Emit in ascending order-key order so the high-water mark advances
         // monotonically and a mid-stream checkpoint is always resumable.
         keyed.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // The high-water cursor cannot disambiguate records that share an order
+        // key: checkpointing one of them would skip the rest on the next open
+        // (restart/crash mid-stream, or a later export adding another record at
+        // the same key). Reject a non-unique key fail-closed rather than lose
+        // data (Codex review, PR #1776). Adjacent equality suffices after sort.
+        if let Some(dup) = keyed.windows(2).find(|w| w[0].0 == w[1].0) {
+            return Err(ParserError::Adapter(
+                IncrementalDumpError::DuplicateOrderKey {
+                    field: config.order_key_field.clone(),
+                    key: dup[0].0.clone(),
+                }
+                .to_string(),
+            ));
+        }
 
         let mut records: Vec<ParserResult<SourceRecord>> = Vec::new();
         for (dump_index, (key, record)) in keyed.into_iter().enumerate() {
@@ -407,6 +443,23 @@ mod tests {
         assert!(
             result.is_err(),
             "a record missing the order-key field must fail, not silently drop"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn duplicate_order_keys_fail_closed() -> xtask::sandbox::TestResult<()> {
+        // Two records sharing an order key would let a mid-stream checkpoint drop
+        // the sibling on restart; reject rather than risk silent data loss.
+        let loader = MockLoader::new(vec![
+            serde_json::json!({"ts": "2026-01-01", "v": 1}),
+            serde_json::json!({"ts": "2026-01-01", "v": 2}),
+        ]);
+        let adapter = IncrementalDumpAdapter::new(loader);
+        let result = adapter.open(dummy_material_id(), &config(), None).await;
+        assert!(
+            result.is_err(),
+            "a non-unique order key must be rejected, not silently lose tied records"
         );
         Ok(())
     }
