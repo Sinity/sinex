@@ -18,6 +18,7 @@
 //! | [`ClipboardPollingAdapter`] | `Polling` | `()` (anchor-only) | Clipboard change detection |
 //! | [`DirectoryWalkAdapter`] | `DirectoryWalk` | `BTreeMap<path, fingerprint>` | Recursive walk with fingerprint dedup |
 //! | [`ApiCursorAdapter`] | `ApiCursor` | `ApiCursorPosition` | Paginated REST API with cursor |
+//! | [`IncrementalDumpAdapter`] | `IncrementalDump` | `IncrementalDumpCursor` | Periodic full-export superset dumps |
 
 pub mod adapter_schemas;
 mod api_cursor;
@@ -27,6 +28,7 @@ mod clipboard_polling;
 mod dbus_stream;
 mod directory_walk;
 mod file_drop;
+mod incremental_dump;
 mod journalctl_stream;
 mod sqlite_row;
 #[cfg(feature = "messaging")]
@@ -38,6 +40,12 @@ mod unix_socket_stream;
 pub use api_cursor::{
     ApiClient, ApiFetchError, ApiFetchPage, ApiCursorAdapter, ApiCursorConfig,
     ApiCursorPosition, RetryPolicy,
+};
+
+// IncrementalDump adapter (#1774).
+pub use incremental_dump::{
+    DumpLoader, IncrementalDumpAdapter, IncrementalDumpConfig, IncrementalDumpCursor,
+    IncrementalDumpError,
 };
 
 // Existing adapters.
@@ -91,6 +99,11 @@ use crate::runtime::parser::InputShapeAdapterExt;
 
 #[cfg(feature = "messaging")]
 impl<C: api_cursor::ApiClient + 'static> InputShapeAdapterExt for api_cursor::ApiCursorAdapter<C> {}
+#[cfg(feature = "messaging")]
+impl<L: incremental_dump::DumpLoader + 'static> InputShapeAdapterExt
+    for incremental_dump::IncrementalDumpAdapter<L>
+{
+}
 #[cfg(feature = "messaging")]
 impl InputShapeAdapterExt for append_only_file::AppendOnlyFileAdapter {}
 #[cfg(feature = "messaging")]
