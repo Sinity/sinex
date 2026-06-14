@@ -19,8 +19,8 @@ use sinexctl::fmt::format_yaml;
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
 use sinexctl::model::OutputFormat;
 use sinexctl::{
-    CommandCatalogEntry, Config, command_catalog, default_rpc_url, render_format_matrix_terminal,
-    validate_format,
+    CommandCatalogEntry, Config, command_catalog, command_consumes_format, default_rpc_url,
+    render_format_matrix_terminal, validate_format,
 };
 use sinexd::runtime::service_runtime;
 use std::path::PathBuf;
@@ -319,11 +319,21 @@ async fn main() -> color_eyre::Result<()> {
         .command
         .ok_or_else(|| eyre!("a subcommand is required; see `sinexctl --help`"))?;
 
-    // Validate --format against the declared capability of the command.
-    // Only check when --format was explicitly provided on the command line so
-    // that the default value "table" never causes false rejections.
-    if cli_value_is_explicit(&matches, "format") {
-        let path = command_path(&command);
+    // Validate the effective format against the command's declared capability.
+    // `Table` is the universal human default and is never rejected. An explicit
+    // `--format` is always validated. A non-`Table` format inherited from a
+    // config `default_format` is validated only for commands that actually
+    // consume a format — formatless commands (`completions`, `demo`, `tui`;
+    // empty supported set) ignore `--format`, so a config default must not make
+    // them fail (Codex review, PR #1773). This still closes the original bypass
+    // where `default_format = "ndjson"` reached a format-consuming command that
+    // does not support ndjson and emitted pretty JSON under an ndjson default
+    // (Codex review, PR #1766).
+    let path = command_path(&command);
+    let format_is_explicit = cli_value_is_explicit(&matches, "format");
+    if format_is_explicit
+        || (!matches!(format, OutputFormat::Table) && command_consumes_format(&path))
+    {
         if let Err(msg) = validate_format(&path, format) {
             return Err(eyre!("{msg}"));
         }
@@ -1051,6 +1061,49 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn validate_format_rejects_ndjson_for_unsupported_command() -> TestResult<()> {
+        // `status` is not wired through the ViewEnvelope ndjson path; the
+        // registry must reject ndjson so a config `default_format = "ndjson"`
+        // cannot make it emit pretty JSON under an ndjson default (Codex
+        // review, PR #1766). main() validates any non-Table effective format.
+        let result = sinexctl::validate_format("status", sinexctl::OutputFormat::Ndjson);
+        assert!(result.is_err(), "status must reject ndjson format");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn validate_format_accepts_ndjson_for_runtime_list() -> TestResult<()> {
+        // `runtime list` renders through render_envelope and advertises ndjson,
+        // so `runtime list --format ndjson` must be reachable (Codex review,
+        // PR #1771 — the rendering path existed but the registry rejected it).
+        assert!(
+            sinexctl::validate_format("runtime list", sinexctl::OutputFormat::Ndjson).is_ok(),
+            "runtime list must accept ndjson format"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn formatless_commands_are_not_format_consumers() -> TestResult<()> {
+        // Formatless commands ignore --format; a config `default_format` must
+        // not be validated against them, or `sinexctl completions bash` would
+        // fail under `default_format = "json"`/`"yaml"` (Codex review, PR #1773).
+        assert!(
+            !sinexctl::command_consumes_format("completions"),
+            "completions is formatless"
+        );
+        assert!(
+            !sinexctl::command_consumes_format("demo"),
+            "demo is formatless"
+        );
+        assert!(
+            sinexctl::command_consumes_format("runtime list"),
+            "runtime list consumes a format"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn validate_format_accepts_dot_for_trace() -> TestResult<()> {
         assert!(
             sinexctl::validate_format("trace", sinexctl::OutputFormat::Dot).is_ok(),
@@ -1231,7 +1284,7 @@ mod tests {
                     "webhistory",
                     "--event-type",
                     "page.visited",
-                    "--natural-key-hash",
+                    "--equivalence-key",
                     "visit-1",
                     "--event-id",
                     "0196ed62-8f7a-7000-8000-000000000001",
