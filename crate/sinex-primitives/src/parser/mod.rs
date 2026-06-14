@@ -297,6 +297,12 @@ pub enum InputShapeKind {
     /// An API cursor-based pagination source.
     ApiCursor,
 
+    /// A periodically re-exported full dump where each export supersets the
+    /// previous one (e.g. a GDPR/Takeout archive). Records already seen in a
+    /// prior export are skipped via an order-key high-water mark, so only new
+    /// records are emitted.
+    IncrementalDump,
+
     /// A long-lived child process emitting structured records (e.g.
     /// `journalctl -f -o json`). Cursor is process-defined (e.g. journal
     /// cursor string).
@@ -326,6 +332,7 @@ impl InputShapeKind {
             Self::SqliteQuery => "sqlite_query",
             Self::RepositorySnapshot => "repository_snapshot",
             Self::ApiCursor => "api_cursor",
+            Self::IncrementalDump => "incremental_dump",
             Self::Subprocess => "subprocess",
             Self::UnixSocket => "unix_socket",
             Self::DbusSubscription => "dbus_subscription",

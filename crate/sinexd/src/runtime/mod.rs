@@ -168,6 +168,12 @@ pub use parser::{
     RetryPolicy,
 };
 
+// IncrementalDump adapter — periodic full-export superset dumps (#1774).
+pub use parser::{
+    DumpLoader, IncrementalDumpAdapter, IncrementalDumpConfig, IncrementalDumpCursor,
+    IncrementalDumpError, IncrementalDumpPosition,
+};
+
 // Re-export commonly used types from dependencies
 pub use sinex_primitives::error::{ErrorDetails, SinexError};
 pub use sinex_primitives::temporal::Timestamp;
