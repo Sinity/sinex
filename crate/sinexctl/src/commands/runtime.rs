@@ -107,8 +107,10 @@ impl RuntimeCommands {
                 if let Some(output) =
                     render_envelope(&envelope, &envelope.payload.modules, format)?
                 {
+                    // Empty ndjson (zero modules) must stay empty — a blank line
+                    // is not a valid NDJSON record (Codex review, PR #1766).
                     print!("{output}");
-                    if !output.ends_with('\n') {
+                    if !output.is_empty() && !output.ends_with('\n') {
                         println!();
                     }
                     return Ok(());

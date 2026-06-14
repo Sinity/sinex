@@ -153,7 +153,8 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     // ── RuntimeModule ─────────────────────────────────────────────────────────────────
     m.insert(
         "runtime list",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
+        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML)
+            .with_note("ndjson emits one RuntimeModule object per line (envelope metadata omitted)"),
     );
     m.insert(
         "runtime status",

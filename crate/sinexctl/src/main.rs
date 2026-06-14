@@ -319,10 +319,14 @@ async fn main() -> color_eyre::Result<()> {
         .command
         .ok_or_else(|| eyre!("a subcommand is required; see `sinexctl --help`"))?;
 
-    // Validate --format against the declared capability of the command.
-    // Only check when --format was explicitly provided on the command line so
-    // that the default value "table" never causes false rejections.
-    if cli_value_is_explicit(&matches, "format") {
+    // Validate the effective format against the command's declared capability.
+    // `Table` is the universal human default that every command supports, so it
+    // is never rejected; any non-`Table` effective format must be advertised by
+    // the command — whether it came from an explicit `--format` flag OR a config
+    // `default_format`. Validating only on the explicit flag let a config
+    // `default_format = "ndjson"` reach commands that do not support ndjson and
+    // emit pretty JSON under an ndjson default (Codex review, PR #1766).
+    if !matches!(format, OutputFormat::Table) {
         let path = command_path(&command);
         if let Err(msg) = validate_format(&path, format) {
             return Err(eyre!("{msg}"));
@@ -1051,6 +1055,29 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn validate_format_rejects_ndjson_for_unsupported_command() -> TestResult<()> {
+        // `status` is not wired through the ViewEnvelope ndjson path; the
+        // registry must reject ndjson so a config `default_format = "ndjson"`
+        // cannot make it emit pretty JSON under an ndjson default (Codex
+        // review, PR #1766). main() validates any non-Table effective format.
+        let result = sinexctl::validate_format("status", sinexctl::OutputFormat::Ndjson);
+        assert!(result.is_err(), "status must reject ndjson format");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn validate_format_accepts_ndjson_for_runtime_list() -> TestResult<()> {
+        // `runtime list` renders through render_envelope and advertises ndjson,
+        // so `runtime list --format ndjson` must be reachable (Codex review,
+        // PR #1771 — the rendering path existed but the registry rejected it).
+        assert!(
+            sinexctl::validate_format("runtime list", sinexctl::OutputFormat::Ndjson).is_ok(),
+            "runtime list must accept ndjson format"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn validate_format_accepts_dot_for_trace() -> TestResult<()> {
         assert!(
             sinexctl::validate_format("trace", sinexctl::OutputFormat::Dot).is_ok(),
@@ -1231,7 +1258,7 @@ mod tests {
                     "webhistory",
                     "--event-type",
                     "page.visited",
-                    "--natural-key-hash",
+                    "--equivalence-key",
                     "visit-1",
                     "--event-id",
                     "0196ed62-8f7a-7000-8000-000000000001",
