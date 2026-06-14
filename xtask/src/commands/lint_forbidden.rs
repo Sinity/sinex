@@ -530,12 +530,6 @@ fn check_raw_source_registration_macros() -> Result<Vec<String>> {
         // parser needed. Contract-only registration is valid but SourceMeta
         // always emits factory wiring, which breaks this shape.
         "crate/sinexd/src/sources/source_contracts/polylogue.rs",
-        // MonitorDriver adapter (monitor-emit / fire-once oneshot shape) not
-        // yet in adapter_type_ident allowlist.
-        "crate/sinexd/src/sources/source_contracts/system/monitor.rs",
-        // MonitorDriver adapter (monitor-emit / fire-once oneshot shape) not
-        // yet in adapter_type_ident allowlist.
-        "crate/sinexd/src/sources/source_contracts/terminal/monitor.rs",
         // Two distinct parsers (WeeChatMessageRecord + WeeChatLogParser)
         // registered separately; SourceMeta cannot express multi-parser
         // registrations under one source id.
