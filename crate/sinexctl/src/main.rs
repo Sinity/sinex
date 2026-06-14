@@ -19,8 +19,8 @@ use sinexctl::fmt::format_yaml;
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
 use sinexctl::model::OutputFormat;
 use sinexctl::{
-    CommandCatalogEntry, Config, command_catalog, default_rpc_url, render_format_matrix_terminal,
-    validate_format,
+    CommandCatalogEntry, Config, command_catalog, command_consumes_format, default_rpc_url,
+    render_format_matrix_terminal, validate_format,
 };
 use sinexd::runtime::service_runtime;
 use std::path::PathBuf;
@@ -320,14 +320,20 @@ async fn main() -> color_eyre::Result<()> {
         .ok_or_else(|| eyre!("a subcommand is required; see `sinexctl --help`"))?;
 
     // Validate the effective format against the command's declared capability.
-    // `Table` is the universal human default that every command supports, so it
-    // is never rejected; any non-`Table` effective format must be advertised by
-    // the command — whether it came from an explicit `--format` flag OR a config
-    // `default_format`. Validating only on the explicit flag let a config
-    // `default_format = "ndjson"` reach commands that do not support ndjson and
-    // emit pretty JSON under an ndjson default (Codex review, PR #1766).
-    if !matches!(format, OutputFormat::Table) {
-        let path = command_path(&command);
+    // `Table` is the universal human default and is never rejected. An explicit
+    // `--format` is always validated. A non-`Table` format inherited from a
+    // config `default_format` is validated only for commands that actually
+    // consume a format — formatless commands (`completions`, `demo`, `tui`;
+    // empty supported set) ignore `--format`, so a config default must not make
+    // them fail (Codex review, PR #1773). This still closes the original bypass
+    // where `default_format = "ndjson"` reached a format-consuming command that
+    // does not support ndjson and emitted pretty JSON under an ndjson default
+    // (Codex review, PR #1766).
+    let path = command_path(&command);
+    let format_is_explicit = cli_value_is_explicit(&matches, "format");
+    if format_is_explicit
+        || (!matches!(format, OutputFormat::Table) && command_consumes_format(&path))
+    {
         if let Err(msg) = validate_format(&path, format) {
             return Err(eyre!("{msg}"));
         }
@@ -1073,6 +1079,26 @@ mod tests {
         assert!(
             sinexctl::validate_format("runtime list", sinexctl::OutputFormat::Ndjson).is_ok(),
             "runtime list must accept ndjson format"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn formatless_commands_are_not_format_consumers() -> TestResult<()> {
+        // Formatless commands ignore --format; a config `default_format` must
+        // not be validated against them, or `sinexctl completions bash` would
+        // fail under `default_format = "json"`/`"yaml"` (Codex review, PR #1773).
+        assert!(
+            !sinexctl::command_consumes_format("completions"),
+            "completions is formatless"
+        );
+        assert!(
+            !sinexctl::command_consumes_format("demo"),
+            "demo is formatless"
+        );
+        assert!(
+            sinexctl::command_consumes_format("runtime list"),
+            "runtime list consumes a format"
         );
         Ok(())
     }

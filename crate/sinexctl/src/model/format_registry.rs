@@ -1139,6 +1139,22 @@ pub fn validate_format(command_path: &str, format: OutputFormat) -> Result<(), S
     Ok(())
 }
 
+/// Return `true` if the command renders by output format (its declared
+/// capability set is non-empty).
+///
+/// Formatless commands (`completions`, `demo`, `tui`) are registered with an
+/// empty supported set and ignore `--format` entirely, so they return `false`.
+/// Callers use this to decide whether a non-`Table` format inherited from a
+/// config `default_format` should be validated: a config default must not make
+/// a formatless command fail, even though an explicit `--format` on such a
+/// command is still rejected by [`validate_format`].
+#[must_use]
+pub fn command_consumes_format(command_path: &str) -> bool {
+    registry()
+        .get(command_path)
+        .is_some_and(|cap| !cap.supported.is_empty())
+}
+
 /// Render the full format-support matrix as a Markdown table.
 #[must_use]
 pub fn render_format_matrix() -> String {
