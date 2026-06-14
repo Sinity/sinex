@@ -11,7 +11,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 
 use crate::runtime::parser::dedup::ContentHashWindow;
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
@@ -83,14 +83,11 @@ pub struct ZshHistoryParserConfig;
     horizons(Horizon::Continuous, Horizon::Historical),
     retention = RetentionPolicy::Forever,
     occurrence_identity = OccurrenceIdentity::Anchor,
-    access_policy = "target_home_read:.zsh_history",
-    privacy_context = "Command",
-    material_policy = "text_history_anchor",
-    checkpoint_policy = "append_stream",
-    resource_shape = "linear_rows_bounded_memory",
+    access_scope = AccessScope::TargetHome { path: ".zsh_history" },
+    privacy_context = ProcessingContext::Command,
+    resource_profile = ResourceProfile::BoundedStream,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::Continuous,
-    package_impact = "zsh_history_source"
 )]
 pub struct ZshHistoryParser {
     dedup: ContentHashWindow,

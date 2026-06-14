@@ -82,11 +82,12 @@ pub struct AutomatonErrorPayload {
 // because the runtime owners are existing pack bindings.
 // ─────────────────────────────────────────────────────────────────────────────
 
+use crate::privacy::ProcessingContext;
 use crate::source_contracts::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceBuildImpact,
-    SourceContract, SourceRuntimeBinding, SubjectRef,
+    AccessScope, CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier, ResourceProfile,
+    RetentionPolicy as SuRetentionPolicy, RunnerPack, RuntimeShape as SuRuntimeShape,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use crate::{register_source_contract, register_source_runtime_binding};
 
@@ -104,7 +105,7 @@ register_source_contract! {
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         occurrence_identity: SuOccurrenceIdentity::Natural,
-        access_policy: "embedded_in_every_sinex_binary",
+        access_scope: AccessScope::Internal,
     }
 }
 
@@ -117,7 +118,7 @@ register_source_contract! {
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         occurrence_identity: SuOccurrenceIdentity::Natural,
-        access_policy: "embedded_in_automaton_runtime",
+        access_scope: AccessScope::Internal,
     }
 }
 
@@ -130,17 +131,13 @@ register_source_runtime_binding! {
     .implementation("sinex-primitives::process")
     .adapter("EmbeddedEmitter")
     .output_event_type("process.started")
-    .privacy_context("none")
-    .material_policy("none")
-    .checkpoint_policy("live_observation")
-    .resource_shape("embedded_emitter")
+    .privacy_context(ProcessingContext::Metadata)
+    .resource_profile(ResourceProfile::EmbeddedEmitter)
     .source_id("sinexd-lifecycle")
     .proposed(true)
-    .runner_pack("infra")
+    .runner_pack(RunnerPack::InProcess)
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
-    .package_impact("no_new_output")
-    .implementation_mode("rust_in_every_sinex_binary")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
@@ -154,17 +151,13 @@ register_source_runtime_binding! {
     .implementation("sinexd")
     .adapter("EmbeddedEmitter")
     .output_event_type("automaton.error")
-    .privacy_context("none")
-    .material_policy("none")
-    .checkpoint_policy("live_observation")
-    .resource_shape("embedded_emitter")
+    .privacy_context(ProcessingContext::Metadata)
+    .resource_profile(ResourceProfile::EmbeddedEmitter)
     .source_id("sinex-automaton-error")
     .proposed(true)
-    .runner_pack("infra")
+    .runner_pack(RunnerPack::InProcess)
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
-    .package_impact("no_new_output")
-    .implementation_mode("in_process:sinexd")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }

@@ -1,9 +1,11 @@
 //! Media capture source contracts — audio transcription + screen OCR (#1043).
 
 use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // register_source_contract!: escape-hatch pending #1761 (proposed stub sources
@@ -21,7 +23,7 @@ register_source_contract! {
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,
         occurrence_identity: OccurrenceIdentity::Uuid5From("(device_id, audio_chunk_hash)"),
-        access_policy: "personal_audio",
+        access_scope: AccessScope::StagedExport,
     }
 }
 
@@ -34,16 +36,12 @@ register_source_runtime_binding! {
     .implementation("proposed")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("media.audio.transcription")
-    .privacy_context("Document")
-    .material_policy("audio_chunk_material")
-    .checkpoint_policy("continuous_audio_stream")
-    .resource_shape("audio_capture")
+    .privacy_context(ProcessingContext::Document)
+    .resource_profile(ResourceProfile::LiveWatcher)
     .source_id("media.audio")
-    .runner_pack("staged")
+    .runner_pack(RunnerPack::Staged)
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("media_audio_source")
-    .implementation_mode("parser:staged")
     .build_impact(SourceBuildImpact::ZERO)
     .proposed(true)
     .build()
@@ -60,7 +58,7 @@ register_source_contract! {
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,
         occurrence_identity: OccurrenceIdentity::Uuid5From("(display_id, capture_hash)"),
-        access_policy: "personal_screen",
+        access_scope: AccessScope::StagedExport,
     }
 }
 
@@ -73,16 +71,12 @@ register_source_runtime_binding! {
     .implementation("proposed")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("media.screen.ocr")
-    .privacy_context("Document")
-    .material_policy("screenshot_chunk_material")
-    .checkpoint_policy("periodic_screen_capture")
-    .resource_shape("screen_capture")
+    .privacy_context(ProcessingContext::Document)
+    .resource_profile(ResourceProfile::LiveWatcher)
     .source_id("media.screen")
-    .runner_pack("staged")
+    .runner_pack(RunnerPack::Staged)
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("media_screen_source")
-    .implementation_mode("parser:staged")
     .build_impact(SourceBuildImpact::ZERO)
     .proposed(true)
     .build()

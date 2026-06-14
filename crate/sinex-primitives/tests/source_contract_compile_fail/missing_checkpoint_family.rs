@@ -2,6 +2,7 @@ use sinex_primitives::{
     source_contracts::{RuntimeShape, SourceRuntimeBinding, SourceBuildImpact},
     subject_ref,
 };
+use sinex_primitives::privacy::ProcessingContext;
 
 fn main() {
     let _ = SourceRuntimeBinding::builder(
@@ -11,9 +12,7 @@ fn main() {
     )
     .adapter("sqlite_row_stream")
     .output_event_type("test.output")
-    .privacy_context("command")
-    .material_policy("canonical_json_lines")
-    .checkpoint_policy("row_id")
+    .privacy_context(ProcessingContext::Command)
     .runtime_shape(RuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
     .build();

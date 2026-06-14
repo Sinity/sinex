@@ -58,11 +58,12 @@ pub struct StorageStatisticsPayload {
 // produced from inside long-running sinex processes.
 // ─────────────────────────────────────────────────────────────────────────────
 
+use crate::privacy::ProcessingContext;
 use crate::source_contracts::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceBuildImpact,
-    SourceContract, SourceRuntimeBinding, SubjectRef,
+    AccessScope, CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier, ResourceProfile,
+    RetentionPolicy as SuRetentionPolicy, RunnerPack, RuntimeShape as SuRuntimeShape,
+    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use crate::{register_source_contract, register_source_runtime_binding};
 
@@ -80,7 +81,7 @@ register_source_contract! {
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         occurrence_identity: SuOccurrenceIdentity::Natural,
-        access_policy: "embedded_in_pipeline_processes",
+        access_scope: AccessScope::Internal,
     }
 }
 
@@ -96,17 +97,13 @@ register_source_runtime_binding! {
     .implementation("sinex-primitives::blob")
     .adapter("EmbeddedEmitter")
     .output_event_type("blob.retrieved")
-    .privacy_context("blob_metadata")
-    .material_policy("none")
-    .checkpoint_policy("live_observation")
-    .resource_shape("embedded_emitter")
+    .privacy_context(ProcessingContext::Metadata)
+    .resource_profile(ResourceProfile::EmbeddedEmitter)
     .source_id("blob-storage")
     .proposed(true)
-    .runner_pack("infra")
+    .runner_pack(RunnerPack::InProcess)
     .checkpoint_family(SuCheckpointFamily::LiveObservation)
     .runtime_shape(SuRuntimeShape::Continuous)
-    .package_impact("no_new_output")
-    .implementation_mode("rust_in_pipeline_processes")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
