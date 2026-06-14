@@ -7,6 +7,7 @@ use crate::runtime::parser::{
 };
 use async_trait::async_trait;
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::{
     domain::{EventSource, EventType, RecordedPath},
     events::{
@@ -35,10 +36,10 @@ const PARSER_VERSION: &str = "1.0.0";
     event_type = "file.created",
     event_types = "file.modified, file.deleted, file.moved",
     adapter = "FileContentDropAdapter",
-    privacy_tier = "Secret",
-    horizons = "continuous, historical",
-    retention = "forever",
-    occurrence_identity = "anchor",
+    privacy_tier = PrivacyTier::Secret,
+    horizons(Horizon::Continuous, Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Anchor,
     access_policy = "configured_watch_roots",
     implementation = "sinexd",
     privacy_context = "fs_path",
@@ -46,8 +47,8 @@ const PARSER_VERSION: &str = "1.0.0";
     checkpoint_policy = "append_stream",
     resource_shape = "continuous_inotify",
     runner_pack = "sinexd-source",
-    checkpoint_family = "append_stream",
-    runtime_shape = "continuous",
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::Continuous,
     package_impact = "no_new_output",
     implementation_mode = "sinexd:source"
 )]

@@ -11,6 +11,7 @@
 use crate::runtime::{RuntimeResult, stream::RuntimeContext};
 use futures::future::BoxFuture;
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::{
     JsonValue, SinexError,
     events::payloads::shell::TerminalMonitoringStartedPayload,
@@ -26,10 +27,10 @@ use sinex_primitives::{
     event_type = "shell.terminal_monitoring_started",
     event_source = "terminal",
     adapter = "MonitorDriver",
-    privacy_tier = "Public",
-    horizons = "Continuous",
-    retention = "forever",
-    occurrence_identity = "natural",
+    privacy_tier = PrivacyTier::Public,
+    horizons(Horizon::Continuous),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Natural,
     access_policy = "lifecycle_hook:none",
     implementation = "sinexd",
     privacy_context = "Metadata",
@@ -37,8 +38,8 @@ use sinex_primitives::{
     checkpoint_policy = "stateless",
     resource_shape = "oneshot_bounded_memory",
     runner_pack = "sinexd-source",
-    checkpoint_family = "live_observation",
-    runtime_shape = "on_demand",
+    checkpoint_family = CheckpointFamily::LiveObservation,
+    runtime_shape = RuntimeShape::OnDemand,
     package_impact = "terminal_monitor_unit",
     implementation_mode = "sinexd:source",
     monitor_emit_fn = "emit_terminal_monitor",

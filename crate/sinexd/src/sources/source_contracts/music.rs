@@ -47,6 +47,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -113,10 +114,10 @@ pub struct SpotifyHistoryConfig;
     event_source = "spotify",
     event_type = "track.played",
     adapter = "StaticFileAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "historical",
-    retention = "forever",
-    occurrence_identity = "uuid5:(track_uri, track_name, artist_name, started_at, played_ms)",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(track_uri, track_name, artist_name, started_at, played_ms)"),
     access_policy = "personal_music_history",
     implementation = "sinexd",
     privacy_context = "Metadata",
@@ -124,8 +125,8 @@ pub struct SpotifyHistoryConfig;
     checkpoint_policy = "static_file_cursor",
     resource_shape = "file_reader",
     runner_pack = "sinexd-source",
-    checkpoint_family = "append_stream",
-    runtime_shape = "on_demand",
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
     package_impact = "spotify_extended_history_source",
     implementation_mode = "sinexd:source"
 )]

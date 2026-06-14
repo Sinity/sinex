@@ -11,6 +11,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 
 use crate::runtime::parser::dedup::ContentHashWindow;
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
@@ -78,17 +79,17 @@ pub struct ZshHistoryParserConfig;
     event_source = "shell.history",
     event_type = "command.imported",
     adapter = "AppendOnlyFileAdapter",
-    privacy_tier = "Sensitive",
-    horizons = "continuous, historical",
-    retention = "forever",
-    occurrence_identity = "anchor",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Continuous, Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Anchor,
     access_policy = "target_home_read:.zsh_history",
     privacy_context = "Command",
     material_policy = "text_history_anchor",
     checkpoint_policy = "append_stream",
     resource_shape = "linear_rows_bounded_memory",
-    checkpoint_family = "append_stream",
-    runtime_shape = "continuous",
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::Continuous,
     package_impact = "zsh_history_source"
 )]
 pub struct ZshHistoryParser {

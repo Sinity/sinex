@@ -21,6 +21,7 @@ use sinex_primitives::parser::{
 };
 use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
 use sinex_macros::SourceMeta;
+use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::temporal::Timestamp;
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
@@ -89,10 +90,10 @@ fn parse_aw_timestamp(s: &str) -> Option<Timestamp> {
     event_type = "window.active",
     event_types = "afk.changed, browser.tab.active",
     adapter = "SqliteRowAdapter",
-    privacy_tier = "Secret",
-    horizons = "historical",
-    retention = "forever",
-    occurrence_identity = "uuid5:(source, bucket_id, event_timestamp)",
+    privacy_tier = PrivacyTier::Secret,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(source, bucket_id, event_timestamp)"),
     access_policy = "target_home_read:activitywatch_sqlite",
     implementation = "sinexd",
     privacy_context = "document",
@@ -100,8 +101,8 @@ fn parse_aw_timestamp(s: &str) -> Option<Timestamp> {
     checkpoint_policy = "mutable_snapshot",
     resource_shape = "linear_rows_bounded_memory",
     runner_pack = "sinexd-source",
-    checkpoint_family = "mutable_snapshot:sqlite:bucket_event_timestamp",
-    runtime_shape = "continuous",
+    checkpoint_family = CheckpointFamily::MutableSnapshot { backing_store_kind: "sqlite", occurrence_anchor: "bucket_event_timestamp" },
+    runtime_shape = RuntimeShape::Continuous,
     package_impact = "desktop_activitywatch",
     implementation_mode = "sinexd:source"
 )]
