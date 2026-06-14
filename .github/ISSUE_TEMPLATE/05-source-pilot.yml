@@ -1,0 +1,65 @@
+name: Source Pilot
+description: Add a new Sinex source as a SourceDefinition/Adapter/Parser/admission pilot.
+title: "[source] "
+labels:
+  - type:feat
+  - area:sources
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A source is mostly a source definition plus an adapter, a parser, and
+        fixtures — not a bespoke pipeline. Fill every field below. See
+        `crate/sinexd/docs/sources/source_family_pilot_template.md` for the full
+        contract and pilot ordering. Prefer the Rust-native derives —
+        `#[derive(SourceDefinition)]` (fully declarative) or `#[derive(SourceMeta)]`
+        (hand-written parser) — over manual `register_source_contract!`. Per-field
+        privacy tier and remaining-source migration are tracked in #1727.
+  - type: input
+    id: source_id
+    attributes:
+      label: Source family / id
+      description: Stable SourceId.
+      placeholder: terminal.atuin-history
+    validations:
+      required: true
+  - type: textarea
+    id: occurrence
+    attributes:
+      label: External occurrence and input materials
+      description: What real-world datapoint this observes, and what source material is registered (file/SQLite/IPC/API) plus its raw-material privacy class.
+    validations:
+      required: true
+  - type: textarea
+    id: adapter_parser
+    attributes:
+      label: Adapter shape and parser
+      description: Which InputShapeKind / InputShapeAdapter + cursor type, and the MaterialParser that interprets records.
+    validations:
+      required: true
+  - type: textarea
+    id: events
+    attributes:
+      label: Emitted event types, timestamp policy, occurrence key
+      description: (EventSource, EventType) pairs; how ts_orig is chosen; the (source_material_id, anchor_byte) coordinates and any object-level dedup/equivalence key (never the event id).
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Per-field privacy tier
+      description: Per-field privacy for payload fields, source-material class, parser/admission policy, and view/export rules. NOT a single source-level label.
+    validations:
+      required: true
+  - type: textarea
+    id: coverage_fixtures
+    attributes:
+      label: Source coverage, fixtures, and tests
+      description: Stale/gap/no-data behavior; the raw→adapter→parsed→admitted→view fixture chain plus a negative case; admission/property tests; readiness view row.
+    validations:
+      required: true
+  - type: textarea
+    id: binding
+    attributes:
+      label: Sinnix binding (if host-specific)
+      description: register_source_runtime_binding! + NixOS binding example, only if the source is host-specific.
