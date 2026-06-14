@@ -17,12 +17,27 @@ Use it together with:
 - [`evidence_lanes.md`](evidence_lanes.md) — occurrence vs snapshot material
   roles.
 
-> **Authoring note.** The Rust-native `#[derive(SourceDefinition)]` /
-> `#[event_field(privacy = …)]` authoring surface that generates or verifies the
-> contract, binding, parser manifest, adapter schema, and field-privacy metadata
-> is tracked in **#1727**. Until it lands, fill these fields by hand against the
-> current `SourceContract` / `SourceRuntimeBinding` / `ParserManifest` symbols;
-> the field list below is stable regardless of how the contract is authored.
+> **Authoring surface.** Prefer the Rust-native derives over hand-wiring the
+> registration sites:
+>
+> - **`#[derive(SourceDefinition)]`** — fully declarative sources. One annotated
+>   struct (`#[source_definition(...)]`) collapses all four sites:
+>   `SourceContract`, `SourceRuntimeBinding`, the `register_source!`
+>   adapter+parser factory, and a generated `MaterialParser` via the declarative
+>   parser path (field attributes `#[source(...)]`, `#[privacy(...)]`,
+>   `#[timestamp(...)]`, `#[occurrence_key]`, `#[event_dispatch(...)]`).
+> - **`#[derive(SourceMeta)]`** — the imperative sibling. Collapses the three
+>   registration sites but keeps your hand-written `impl MaterialParser`. Use it
+>   when the parser needs logic the declarative DSL can't express (stateful
+>   dedup, multi-line state machines, multi-event fan-out, custom timestamps).
+> - **Manual `register_source_contract!` + `register_source_runtime_binding!`** —
+>   the pre-derive form; still valid and used by many existing sources, but a new
+>   source should reach for a derive first.
+>
+> Per-field privacy *tier* (distinct from the field-level `ProcessingContext` /
+> `SensitivityHint` hints that exist today) and migration of the remaining manual
+> registrations are tracked in **#1727 (SNX-41)**. The required-field list below
+> is stable regardless of which authoring path you choose.
 
 ## Required fields (every source issue)
 
@@ -75,9 +90,11 @@ readiness view row        the source surfaces in a runtime readiness/coverage vi
 
 ## Pilot order
 
-Land the foundational source-definition surface (**#1727**, plus the coherence /
-identity work in #1682 / #1685) first, then implement pilots in dependency order
-so each one exercises a new capability against known data:
+The `SourceDefinition` / `SourceMeta` derives are landed; the per-field privacy
+tier and the coherence / identity work (**#1727**, #1682, #1685) are still in
+progress. Implement pilots in dependency order so each one exercises a new
+capability against known data, deferring a field's policy detail to its tracking
+issue rather than blocking the pilot:
 
 1. `terminal.atuin-history` — proves the source-definition path with a simple,
    well-understood SQLite source.

@@ -11,8 +11,10 @@ body:
         A source is mostly a source definition plus an adapter, a parser, and
         fixtures — not a bespoke pipeline. Fill every field below. See
         `crate/sinexd/docs/sources/source_family_pilot_template.md` for the full
-        contract and pilot ordering. The Rust-native authoring macro is tracked
-        in #1727; until it lands, fill the contract by hand.
+        contract and pilot ordering. Prefer the Rust-native derives —
+        `#[derive(SourceDefinition)]` (fully declarative) or `#[derive(SourceMeta)]`
+        (hand-written parser) — over manual `register_source_contract!`. Per-field
+        privacy tier and remaining-source migration are tracked in #1727.
   - type: input
     id: source_id
     attributes:
