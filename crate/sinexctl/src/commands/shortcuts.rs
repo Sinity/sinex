@@ -865,9 +865,13 @@ impl RecentCommand {
         }));
 
         if let Some(output) = render_envelope(&envelope, &envelope.payload.cards, format)? {
-            // Trim trailing newline added by render_envelope (ndjson) before println! adds one
+            // render_envelope's ndjson arm already terminates each line with '\n';
+            // only add a trailing newline for non-empty output that lacks one
+            // (json/yaml). An empty result (e.g. ndjson with zero events) must
+            // stay empty — a blank line is not a valid NDJSON record (Codex
+            // review, PR #1766).
             print!("{output}");
-            if !output.ends_with('\n') {
+            if !output.is_empty() && !output.ends_with('\n') {
                 println!();
             }
             return Ok(());
