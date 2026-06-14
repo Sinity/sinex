@@ -52,9 +52,11 @@
 //! sessions; the `session_id` provides the stable external key.
 
 use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -74,7 +76,7 @@ register_source_contract! {
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
         occurrence_identity: OccurrenceIdentity::Uuid5From("(content_hash, session_id)"),
-        access_policy: "personal_ai_conversations",
+        access_scope: AccessScope::StagedExport,
     }
 }
 
@@ -87,16 +89,12 @@ register_source_runtime_binding! {
     .implementation("polylogue-daemon")
     .adapter("ExternalProducer")
     .output_event_type("integration.polylogue.session_indexed")
-    .privacy_context("Document")
-    .material_policy("external_producer_virtual_material")
-    .checkpoint_policy("external_producer")
-    .resource_shape("nats_publisher")
+    .privacy_context(ProcessingContext::Document)
+    .resource_profile(ResourceProfile::LiveWatcher)
     .source_id("integration.polylogue")
-    .runner_pack("external")
+    .runner_pack(RunnerPack::External)
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("integration_polylogue_source")
-    .implementation_mode("external:polylogue-daemon")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }

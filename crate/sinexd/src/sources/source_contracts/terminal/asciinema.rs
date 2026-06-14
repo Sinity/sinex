@@ -15,7 +15,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_primitives::domain::{EventSource, EventType};
@@ -76,14 +76,11 @@ pub struct AsciinemaParserConfig;
     horizons(Horizon::Historical),
     retention = RetentionPolicy::Forever,
     occurrence_identity = OccurrenceIdentity::Uuid5From("(session_id, record_type[, line_index])"),
-    access_policy = "target_data_read:captures/asciinema",
-    privacy_context = "Command",
-    material_policy = "directory_file",
-    checkpoint_policy = "mutable_snapshot",
-    resource_shape = "directory_tree_files",
+    access_scope = AccessScope::TargetData { path: "captures/asciinema" },
+    privacy_context = ProcessingContext::Command,
+    resource_profile = ResourceProfile::DirectoryScan,
     checkpoint_family = CheckpointFamily::MutableSnapshot { backing_store_kind: "directory", occurrence_anchor: "file_path_fingerprint" },
     runtime_shape = RuntimeShape::Continuous,
-    package_impact = "asciinema_source"
 )]
 pub struct AsciinemaParser;
 

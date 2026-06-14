@@ -4,7 +4,7 @@ use crate::runtime::parser::{
     FileDropEventKind, FileDropRecordMetadata, MaterialParser, ParserError,
 };
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{DeviceType, UdevAction};
 use sinex_primitives::events::payloads::system::{
@@ -38,17 +38,13 @@ use std::collections::HashMap;
     horizons(Horizon::Continuous),
     retention = RetentionPolicy::Forever,
     occurrence_identity = OccurrenceIdentity::Anchor,
-    access_policy = "udev_monitor_read",
+    access_scope = AccessScope::KernelUevents,
     implementation = "sinexd",
-    privacy_context = "Metadata",
-    material_policy = "udev_anchor",
-    checkpoint_policy = "live_observation",
-    resource_shape = "event_emitter",
-    runner_pack = "sinexd-source",
+    privacy_context = ProcessingContext::Metadata,
+    resource_profile = ResourceProfile::LiveWatcher,
+    runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::LiveObservation,
     runtime_shape = RuntimeShape::Continuous,
-    package_impact = "system_udev_source",
-    implementation_mode = "sinexd:source"
 )]
 pub struct UdevParser;
 

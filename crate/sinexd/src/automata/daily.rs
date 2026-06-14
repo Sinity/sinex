@@ -267,10 +267,11 @@ pub type DailySummarizerRuntime = WindowedAdapter<DailySummarizer>;
 
 // --- Source descriptor (issue #690 / #734) ---
 
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
-    CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
+    AccessScope, CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
     OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
-    RetentionPolicy as ContractRetentionPolicy, RuntimeShape as ContractRuntimeShape,
+    ResourceProfile, RetentionPolicy as ContractRetentionPolicy, RunnerPack, RuntimeShape as ContractRuntimeShape,
     SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
@@ -288,7 +289,7 @@ register_source_contract! {
         occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
             "(source, day_bucket, parent_event_ids)",
         ),
-        access_policy: "event_stream_read",
+        access_scope: AccessScope::Internal,
     }
 }
 
@@ -301,16 +302,12 @@ register_source_runtime_binding! {
     .implementation("sinexd")
     .adapter("AutomatonRuntime")
     .output_event_type("activity.summary.daily")
-    .privacy_context("inherits_from_parents")
-    .material_policy("derived_parents")
-    .checkpoint_policy("append_stream")
-    .resource_shape("event_stream_consumer")
+    .privacy_context(ProcessingContext::Metadata)
+    .resource_profile(ResourceProfile::EventStreamConsumer)
     .source_id("daily-summarizer")
-    .runner_pack("sinexd")
+    .runner_pack(RunnerPack::InProcess)
     .checkpoint_family(ContractCheckpointFamily::AppendStream)
     .runtime_shape(ContractRuntimeShape::Continuous)
-    .package_impact("no_new_output")
-    .implementation_mode("in_process:sinexd")
     .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }

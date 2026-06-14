@@ -11,7 +11,8 @@
 use crate::runtime::{RuntimeResult, stream::RuntimeContext};
 use futures::future::BoxFuture;
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::privacy::ProcessingContext;
+use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::{
     JsonValue, SinexError,
     events::payloads::shell::TerminalMonitoringStartedPayload,
@@ -31,17 +32,13 @@ use sinex_primitives::{
     horizons(Horizon::Continuous),
     retention = RetentionPolicy::Forever,
     occurrence_identity = OccurrenceIdentity::Natural,
-    access_policy = "lifecycle_hook:none",
+    access_scope = AccessScope::Internal,
     implementation = "sinexd",
-    privacy_context = "Metadata",
-    material_policy = "synthetic_oneshot",
-    checkpoint_policy = "stateless",
-    resource_shape = "oneshot_bounded_memory",
-    runner_pack = "sinexd-source",
+    privacy_context = ProcessingContext::Metadata,
+    resource_profile = ResourceProfile::Oneshot,
+    runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::LiveObservation,
     runtime_shape = RuntimeShape::OnDemand,
-    package_impact = "terminal_monitor_unit",
-    implementation_mode = "sinexd:source",
     monitor_emit_fn = "emit_terminal_monitor",
     monitor_phase = "ServiceStart",
 )]

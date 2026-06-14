@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -87,17 +87,13 @@ pub struct RaindropParserConfig;
     horizons(Horizon::Historical),
     retention = RetentionPolicy::Forever,
     occurrence_identity = OccurrenceIdentity::Uuid5From("(raindrop_id, url, created)"),
-    access_policy = "personal_bookmarks",
+    access_scope = AccessScope::StagedExport,
     implementation = "sinexd",
-    privacy_context = "Metadata",
-    material_policy = "static_export_file",
-    checkpoint_policy = "static_file_cursor",
-    resource_shape = "file_reader",
-    runner_pack = "sinexd-source",
+    privacy_context = ProcessingContext::Metadata,
+    resource_profile = ResourceProfile::BoundedFile,
+    runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::OnDemand,
-    package_impact = "raindrop_bookmarks_source",
-    implementation_mode = "sinexd:source"
 )]
 pub struct RaindropBookmarkParser;
 

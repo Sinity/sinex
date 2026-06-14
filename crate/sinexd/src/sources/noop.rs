@@ -12,9 +12,11 @@ use crate::runtime::{
 };
 use serde::{Deserialize, Serialize};
 use sinex_primitives::source_contracts::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceBuildImpact, SourceContract, SourceRuntimeBinding, SubjectRef,
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
 };
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -31,7 +33,7 @@ register_source_contract! {
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,
         occurrence_identity: OccurrenceIdentity::Uuid5From("(source)"),
-        access_policy: "none",
+        access_scope: AccessScope::Internal,
     }
 }
 
@@ -44,16 +46,12 @@ register_source_runtime_binding! {
     .implementation("sinexd")
     .adapter("SourceDriverRuntime")
     .output_event_type("noop")
-    .privacy_context("none")
-    .material_policy("none")
-    .checkpoint_policy("live_observation")
-    .resource_shape("event_emitter")
+    .privacy_context(ProcessingContext::Metadata)
+    .resource_profile(ResourceProfile::LiveWatcher)
     .source_id("noop")
-    .runner_pack("sinexd-source")
+    .runner_pack(RunnerPack::SinexdSource)
     .checkpoint_family(CheckpointFamily::LiveObservation)
     .runtime_shape(RuntimeShape::Continuous)
-    .package_impact("noop_source")
-    .implementation_mode("sinexd:source")
     .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
