@@ -225,8 +225,12 @@ pub struct ApiCursorConfig {
 pub struct ApiCursorPosition {
     /// The cursor string to pass to the next page fetch.
     ///
-    /// `None` means either the source hasn't been fetched yet or the entire
-    /// stream has been consumed (the last page had no `next_cursor`).
+    /// `None` here means the entire stream has been consumed (the last page had
+    /// no `next_cursor`) — a *terminal* checkpoint. A brand-new source that has
+    /// never been fetched is represented by the absence of any
+    /// `ApiCursorPosition` (i.e. `open(cursor = None)`), not by this field, so
+    /// the two states are distinguishable and `open` does not re-import a
+    /// completed source on restart.
     pub last_cursor: Option<String>,
     /// ETag from the last completed page response.
     pub last_etag: Option<String>,
@@ -383,12 +387,22 @@ where
         config: &Self::Config,
         cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
-        // Runtime checkpoint takes priority; fall back to config.initial_cursor.
-        let start_cursor: Option<String> = cursor
-            .as_ref()
-            .and_then(|c| c.last_cursor.as_deref())
-            .or(config.initial_cursor.as_deref())
-            .map(str::to_owned);
+        // Disambiguate the three startup states via the `Option<ApiCursorPosition>`
+        // wrapper. A terminal checkpoint and a brand-new source both carry
+        // `last_cursor == None`, so flattening them together (the old
+        // `and_then(..).or(initial_cursor)`) re-imported the whole history on
+        // every restart after completion (Codex review, PR #1772):
+        //   - no checkpoint                  → brand-new source: start at initial_cursor
+        //   - checkpoint, last_cursor = Some → resume from the saved cursor
+        //   - checkpoint, last_cursor = None → prior run consumed the final page;
+        //                                      resuming would re-import, so stop.
+        let start_cursor: Option<String> = match cursor.as_ref() {
+            Some(pos) => match pos.last_cursor.as_deref() {
+                Some(saved) => Some(saved.to_owned()),
+                None => return Ok(stream::empty().boxed()),
+            },
+            None => config.initial_cursor.clone(),
+        };
 
         let mut all_records: Vec<ParserResult<SourceRecord>> = Vec::new();
         let mut current_cursor: Option<String> = start_cursor;
@@ -823,6 +837,40 @@ mod tests {
         let val: serde_json::Value =
             serde_json::from_slice(&records[0].as_ref().unwrap().bytes).unwrap();
         assert_eq!(val["p"], 2);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_checkpoint_does_not_reimport() -> xtask::sandbox::TestResult<()> {
+        // A checkpoint whose last_cursor is None is terminal — the prior run
+        // consumed the final page. open() must yield nothing rather than restart
+        // from the beginning (or config.initial_cursor) and re-import the whole
+        // history on every poll/restart (Codex review, PR #1772).
+        let pages = vec![
+            vec![serde_json::json!({"p": 0})],
+            vec![serde_json::json!({"p": 1})],
+        ];
+        let client = MockClient::new(pages);
+        let adapter = ApiCursorAdapter::new(client).with_retry(RetryPolicy::never());
+
+        let config = ApiCursorConfig {
+            initial_cursor: Some("0".to_owned()),
+        };
+        let terminal = Some(ApiCursorPosition {
+            last_cursor: None,
+            last_etag: Some("etag-final".to_owned()),
+        });
+        let stream = adapter
+            .open(dummy_material_id(), &config, terminal)
+            .await
+            .unwrap();
+        let records: Vec<_> = stream.collect().await;
+
+        assert!(
+            records.is_empty(),
+            "terminal checkpoint must not re-import; got {} records",
+            records.len()
+        );
         Ok(())
     }
 
