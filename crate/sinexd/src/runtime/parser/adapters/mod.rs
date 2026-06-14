@@ -17,8 +17,10 @@
 //! | [`UnixSocketStreamAdapter`] | `UnixSocket` | `()` (anchor-only) | Line-delimited socket (e.g. Hyprland IPC) |
 //! | [`ClipboardPollingAdapter`] | `Polling` | `()` (anchor-only) | Clipboard change detection |
 //! | [`DirectoryWalkAdapter`] | `DirectoryWalk` | `BTreeMap<path, fingerprint>` | Recursive walk with fingerprint dedup |
+//! | [`ApiCursorAdapter`] | `ApiCursor` | `ApiCursorPosition` | Paginated REST API with cursor |
 
 pub mod adapter_schemas;
+mod api_cursor;
 mod append_only_file;
 mod chained;
 mod clipboard_polling;
@@ -31,6 +33,12 @@ mod sqlite_row;
 mod sqlite_snapshot;
 mod static_file;
 mod unix_socket_stream;
+
+// ApiCursor adapter (#1746).
+pub use api_cursor::{
+    ApiClient, ApiFetchError, ApiFetchPage, ApiCursorAdapter, ApiCursorConfig,
+    ApiCursorPosition, RetryPolicy,
+};
 
 // Existing adapters.
 pub use append_only_file::{AppendOnlyCursor, AppendOnlyFileAdapter, AppendOnlyFileConfig};
@@ -81,6 +89,8 @@ pub use adapter_schemas::{AdapterSchema, all_adapter_schemas};
 #[cfg(feature = "messaging")]
 use crate::runtime::parser::InputShapeAdapterExt;
 
+#[cfg(feature = "messaging")]
+impl<C: api_cursor::ApiClient + 'static> InputShapeAdapterExt for api_cursor::ApiCursorAdapter<C> {}
 #[cfg(feature = "messaging")]
 impl InputShapeAdapterExt for append_only_file::AppendOnlyFileAdapter {}
 #[cfg(feature = "messaging")]

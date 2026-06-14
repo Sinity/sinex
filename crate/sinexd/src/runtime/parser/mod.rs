@@ -30,6 +30,14 @@ mod weechat;
 pub use adapter_source::{AdapterBackedSource, AdapterModuleState, AdapterSourceConfig};
 
 pub use adapters::{
+    // ApiCursor adapter (#1746).
+    ApiClient,
+    ApiFetchError,
+    ApiFetchPage,
+    ApiCursorAdapter,
+    ApiCursorConfig,
+    ApiCursorPosition,
+    RetryPolicy,
     // Adapter JSON Schema export (#1238).
     AdapterSchema,
     // Existing adapters.
