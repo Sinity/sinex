@@ -166,6 +166,72 @@ async fn weechat_descriptor_registered() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn source_meta_weechat_registers_production_and_companion_parsers() -> TestResult<()> {
+    use sinex_primitives::source_contracts::{all_source_contracts, source_runtime_bindings};
+
+    let weechat = sui("weechat");
+    let weechat_contract = all_source_contracts()
+        .find(|contract| contract.id == "weechat")
+        .expect("weechat SourceContract must be registered");
+    for event_type in ["irc.message", "irc.join", "irc.part", "irc.server_notice"] {
+        assert!(
+            weechat_contract
+                .event_types
+                .iter()
+                .any(|(source, declared)| *source == "irc" && *declared == event_type),
+            "weechat contract must declare irc/{event_type}"
+        );
+    }
+    assert!(
+        source_runtime_bindings().any(|binding| {
+            binding.source_id == "weechat"
+                && binding.adapter == "AppendOnlyFileAdapter"
+                && binding.output_event_type == "irc.message"
+                && !binding.proposed
+        }),
+        "weechat must register its live AppendOnlyFileAdapter runtime binding"
+    );
+    assert!(
+        find_source_factory(&weechat).is_some(),
+        "weechat production adapter-backed source factory must be registered"
+    );
+    assert!(
+        find_parser_factory(&weechat).is_some(),
+        "weechat production parser dispatch must be registered"
+    );
+
+    let companion = sui("weechat.message");
+    assert!(
+        all_source_contracts().any(|contract| {
+            contract.id == "weechat.message"
+                && contract
+                    .event_types
+                    .iter()
+                    .any(|(source, declared)| *source == "irc" && *declared == "irc.message")
+        }),
+        "weechat.message companion SourceContract must be registered"
+    );
+    assert!(
+        source_runtime_bindings().any(|binding| {
+            binding.source_id == "weechat.message"
+                && binding.adapter == "AppendOnlyFileAdapter"
+                && binding.output_event_type == "irc.message"
+                && !binding.proposed
+        }),
+        "weechat.message must register its live parser runtime binding"
+    );
+    assert!(
+        find_parser_factory(&companion).is_some(),
+        "weechat.message parser-only dispatch must be registered"
+    );
+    assert!(
+        find_source_factory(&companion).is_none(),
+        "weechat.message must preserve parser-only behavior"
+    );
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // 7. SourceMeta-migrated terminal sources still register all three sites
 // ---------------------------------------------------------------------------

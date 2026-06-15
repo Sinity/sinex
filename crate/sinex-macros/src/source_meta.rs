@@ -27,6 +27,9 @@
 //! its parser type, so no separate marker struct is needed. The struct must
 //! already provide `Default` (every imperative parser here derives it) — the
 //! factory constructs the parser via `Default::default()`.
+//! Sources whose registration metadata must live on a separate marker struct
+//! may set `factory_parser = SomeParserType` to keep the factory wired to the
+//! real parser implementation.
 //!
 //! # Cross-crate note
 //!
@@ -114,6 +117,10 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                 }
                 "factory_adapter" => {
                     out.factory_adapter = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
+                "factory_parser" => {
+                    out.factory_parser = Some(parse_enum_path_attr(&meta)?);
                     return Ok(());
                 }
                 "driver" => {
