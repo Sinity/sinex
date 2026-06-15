@@ -691,6 +691,7 @@ async fn verify_postgresql_service(messages: &mut Vec<String>) -> RuntimeResult<
 
 async fn test_postgresql_connectivity() -> RuntimeResult<Value> {
     let database_url = super::resolve_database_url()?;
+    log_redacted_database_url_for_diagnostics(&database_url);
 
     let pool = connect_preflight_database_pool(&database_url).await?;
     let version: String = sqlx::query_scalar("SELECT version()")
@@ -704,6 +705,15 @@ async fn test_postgresql_connectivity() -> RuntimeResult<Value> {
         "connection_string": redact_password(&database_url),
         "session_limits": "preflight_bounded"
     }))
+}
+
+/// Emit a database-URL diagnostic after redacting credential material at the
+/// logging boundary.
+pub fn log_redacted_database_url_for_diagnostics(database_url: &str) {
+    debug!(
+        database_url = %redact_password(database_url),
+        "Preflight database URL diagnostic"
+    );
 }
 
 async fn verify_external_dependencies(messages: &mut Vec<String>) -> RuntimeResult<Value> {
