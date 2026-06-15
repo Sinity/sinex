@@ -139,6 +139,21 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+
+    /// Export the static source/privacy coverage matrix.
+    ///
+    /// The matrix joins compiled source contracts, runtime bindings, parser
+    /// manifests, and declarative field metadata where available. With
+    /// `--check`, the committed artifact is verified rather than written.
+    ExportPrivacyCoverageMatrix {
+        /// Output path (defaults to the committed artifact path, relative to CWD).
+        #[arg(long)]
+        output: Option<String>,
+
+        /// Verify only; do not write. Exits non-zero if the artifact is stale.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 fn parse_kv(s: &str) -> Result<(String, String), String> {
@@ -189,6 +204,9 @@ async fn main() -> color_eyre::Result<()> {
             extra_env,
         } => scan_source(source, service_name, runtime_config, extra_args, extra_env).await,
         Command::ExportSourceCatalog { output, check } => export_source_catalog(output, check),
+        Command::ExportPrivacyCoverageMatrix { output, check } => {
+            export_privacy_coverage_matrix(output, check)
+        }
     }
 }
 
@@ -209,6 +227,29 @@ fn export_source_catalog(output: Option<String>, check: bool) -> color_eyre::Res
         println!("source catalog written: {path}");
     } else {
         println!("source catalog already up to date: {path}");
+    }
+    Ok(())
+}
+
+fn export_privacy_coverage_matrix(output: Option<String>, check: bool) -> color_eyre::Result<()> {
+    use sinexd::sources::privacy_coverage::{
+        PRIVACY_COVERAGE_ARTIFACT_PATH, export_privacy_coverage_matrix,
+    };
+
+    let path = output.unwrap_or_else(|| PRIVACY_COVERAGE_ARTIFACT_PATH.to_string());
+    let changed = export_privacy_coverage_matrix(std::path::Path::new(&path), check)?;
+
+    if check {
+        if changed {
+            color_eyre::eyre::bail!(
+                "privacy coverage matrix artifact {path} is stale; run `sinexd export-privacy-coverage-matrix` to regenerate"
+            );
+        }
+        println!("privacy coverage matrix up to date: {path}");
+    } else if changed {
+        println!("privacy coverage matrix written: {path}");
+    } else {
+        println!("privacy coverage matrix already up to date: {path}");
     }
     Ok(())
 }

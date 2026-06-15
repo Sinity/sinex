@@ -1,0 +1,5226 @@
+{
+  "schema_version": 1,
+  "caveats": [
+    "static matrix only; does not apply DB/user privacy policy",
+    "declarative parser field rows are metadata-only and do not prove runtime redaction",
+    "imperative parser field coverage is unavailable until explicitly declared",
+    "query, recent, TUI, and log surfaces are intentionally not claimed by this artifact"
+  ],
+  "entries": [
+    {
+      "source_id": "ai-session-chatgpt",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "chatgpt",
+            "ai.message"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "ai-session-chatgpt",
+        "namespace": "ai_session",
+        "occurrence_identity": {
+          "key": "(session_id, message_id)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "StaticFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "ai_session",
+        "id": "ai-session-chatgpt",
+        "implementation": "sinexd",
+        "output_event_type": "ai.message",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "ai-session-chatgpt",
+        "subject": "source:ai-session-chatgpt"
+      },
+      "parser_manifest": {
+        "parser_id": "chatgpt-ai-session",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "static_file"
+        ],
+        "source_id": "ai-session-chatgpt",
+        "declared_event_types": [
+          [
+            "chatgpt",
+            "ai.message"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "description": "Parses ChatGPT data export conversations-NNN.json. Reconstructs the canonical thread by walking from current_node to root. Emits one ai.message event per text-content message. Tool-use and non-text content nodes are skipped."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "ai-session-claude",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "claude",
+            "ai.message"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "ai-session-claude",
+        "namespace": "ai_session",
+        "occurrence_identity": {
+          "key": "(session_id, message_id)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "StaticFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "ai_session",
+        "id": "ai-session-claude",
+        "implementation": "sinexd",
+        "output_event_type": "ai.message",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "ai-session-claude",
+        "subject": "source:ai-session-claude"
+      },
+      "parser_manifest": {
+        "parser_id": "claude-ai-session",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "static_file"
+        ],
+        "source_id": "ai-session-claude",
+        "declared_event_types": [
+          [
+            "claude",
+            "ai.message"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "description": "Parses Claude GDPR export conversations.json. Emits one ai.message event per chat message. Content text is tagged Document for admission-layer suppression."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "analytics",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "derived.activity-window",
+            "activity.window.summary"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "analytics",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(source, parent_event_ids)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "analytics",
+        "implementation": "sinexd",
+        "output_event_type": "activity.window.summary",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "analytics",
+        "subject": "source:analytics"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "blob-storage",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "blob_storage",
+            "blob.retrieved"
+          ],
+          [
+            "blob_storage",
+            "blob.ingested"
+          ],
+          [
+            "blob_storage",
+            "blob.verified"
+          ],
+          [
+            "blob_storage",
+            "storage.statistics"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "blob-storage",
+        "namespace": "infra",
+        "occurrence_identity": {
+          "kind": "natural"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "EmbeddedEmitter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "infra",
+        "id": "blob-storage",
+        "implementation": "sinex-primitives::blob",
+        "output_event_type": "blob.retrieved",
+        "privacy_context": "metadata",
+        "proposed": true,
+        "resource_profile": "embedded_emitter",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "blob-storage",
+        "subject": "source:blob-storage"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "browser.history",
+      "source_contract": {
+        "access_scope": {
+          "path": "browser_history",
+          "scope": "target_home"
+        },
+        "event_types": [
+          [
+            "webhistory",
+            "page.visited"
+          ]
+        ],
+        "horizons": [
+          "continuous",
+          "historical"
+        ],
+        "id": "browser.history",
+        "namespace": "web",
+        "occurrence_identity": {
+          "key": "(source, browser_profile, visit_id)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "secret",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "backing_store_kind": "sqlite",
+          "kind": "mutable_snapshot",
+          "occurrence_anchor": "visit_id"
+        },
+        "domain": "web",
+        "id": "browser.history",
+        "implementation": "sinexd",
+        "output_event_type": "page.visited",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "bounded_stream",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "browser.history",
+        "subject": "source:browser.history"
+      },
+      "parser_manifest": {
+        "parser_id": "browser-history",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "sqlite_query",
+          "append_only_file",
+          "subprocess"
+        ],
+        "source_id": "browser.history",
+        "declared_event_types": [
+          [
+            "webhistory",
+            "page.visited"
+          ]
+        ],
+        "privacy_contexts": [
+          "clipboard",
+          "metadata"
+        ],
+        "description": "Parses browser history from SQLite DBs and JSONL dump files."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "daily-summarizer",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "derived.daily-summarizer",
+            "activity.summary.daily"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "daily-summarizer",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(source, day_bucket, parent_event_ids)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "daily-summarizer",
+        "implementation": "sinexd",
+        "output_event_type": "activity.summary.daily",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "daily-summarizer",
+        "subject": "source:daily-summarizer"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "desktop.activitywatch",
+      "source_contract": {
+        "access_scope": {
+          "path": "activitywatch_sqlite",
+          "scope": "target_home"
+        },
+        "event_types": [
+          [
+            "activitywatch",
+            "window.active"
+          ],
+          [
+            "activitywatch",
+            "afk.changed"
+          ],
+          [
+            "activitywatch",
+            "browser.tab.active"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "desktop.activitywatch",
+        "namespace": "desktop",
+        "occurrence_identity": {
+          "key": "(source, bucket_id, event_timestamp)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "secret",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "SqliteRowAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "backing_store_kind": "sqlite",
+          "kind": "mutable_snapshot",
+          "occurrence_anchor": "bucket_event_timestamp"
+        },
+        "domain": "desktop",
+        "id": "desktop.activitywatch",
+        "implementation": "sinexd",
+        "output_event_type": "window.active",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "bounded_stream",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "desktop.activitywatch",
+        "subject": "source:desktop.activitywatch"
+      },
+      "parser_manifest": {
+        "parser_id": "activitywatch-sqlite",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "sqlite_query"
+        ],
+        "source_id": "desktop.activitywatch",
+        "declared_event_types": [
+          [
+            "activitywatch",
+            "window.active"
+          ],
+          [
+            "activitywatch",
+            "afk.changed"
+          ],
+          [
+            "activitywatch",
+            "browser.tab.active"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "sensitivity_hints": [
+          "free_text",
+          "potentially_sensitive"
+        ],
+        "description": "Parses ActivityWatch SQLite events into typed window/afk/browser events."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "desktop.clipboard",
+      "source_contract": {
+        "access_scope": {
+          "scope": "runtime_bridge",
+          "surface": "clipboard"
+        },
+        "event_types": [
+          [
+            "clipboard",
+            "clipboard.copied"
+          ],
+          [
+            "clipboard",
+            "clipboard.selected"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "desktop.clipboard",
+        "namespace": "desktop",
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "privacy_tier": "secret",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "ClipboardPollingAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "desktop",
+        "id": "desktop.clipboard",
+        "implementation": "sinexd",
+        "output_event_type": "clipboard.copied",
+        "privacy_context": "clipboard",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "desktop.clipboard",
+        "subject": "source:desktop.clipboard"
+      },
+      "parser_manifest": {
+        "parser_id": "clipboard-poller",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "polling"
+        ],
+        "source_id": "desktop.clipboard",
+        "declared_event_types": [
+          [
+            "clipboard",
+            "clipboard.copied"
+          ],
+          [
+            "clipboard",
+            "clipboard.selected"
+          ]
+        ],
+        "privacy_contexts": [
+          "clipboard"
+        ],
+        "description": "Parses clipboard polling records into clipboard change events."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "desktop.notification",
+      "source_contract": {
+        "access_scope": {
+          "scope": "session_bus"
+        },
+        "event_types": [
+          [
+            "dbus",
+            "notification.sent"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "desktop.notification",
+        "namespace": "desktop",
+        "occurrence_identity": {
+          "key": "(app_name, summary, body, ts)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "DbusStreamAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "desktop",
+        "id": "desktop.notification",
+        "implementation": "live-capture",
+        "output_event_type": "notification.sent",
+        "privacy_context": "notification",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "live",
+        "runtime_shape": "continuous",
+        "source_id": "desktop.notification",
+        "subject": "source:desktop.notification"
+      },
+      "parser_manifest": {
+        "parser_id": "desktop-notification",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [],
+        "source_id": "desktop.notification",
+        "declared_event_types": [
+          [
+            "dbus",
+            "notification.sent"
+          ]
+        ],
+        "privacy_contexts": [
+          "notification"
+        ],
+        "description": "Captures desktop notifications via D-Bus"
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "desktop.notification.action",
+      "source_contract": {
+        "access_scope": {
+          "scope": "session_bus"
+        },
+        "event_types": [
+          [
+            "dbus",
+            "notification.action_invoked"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "desktop.notification.action",
+        "namespace": "desktop",
+        "occurrence_identity": {
+          "key": "(notification_id, action_key)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "DbusStreamAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "desktop",
+        "id": "desktop.notification.action",
+        "implementation": "live-capture",
+        "output_event_type": "notification.action_invoked",
+        "privacy_context": "notification",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "live",
+        "runtime_shape": "continuous",
+        "source_id": "desktop.notification.action",
+        "subject": "source:desktop.notification.action"
+      },
+      "parser_manifest": {
+        "parser_id": "desktop-notification-action",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [],
+        "source_id": "desktop.notification.action",
+        "declared_event_types": [
+          [
+            "dbus",
+            "notification.action_invoked"
+          ]
+        ],
+        "privacy_contexts": [
+          "notification"
+        ],
+        "description": "Captures notification action invocations via D-Bus"
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "desktop.notification.closed",
+      "source_contract": {
+        "access_scope": {
+          "scope": "session_bus"
+        },
+        "event_types": [
+          [
+            "dbus",
+            "notification.closed"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "desktop.notification.closed",
+        "namespace": "desktop",
+        "occurrence_identity": {
+          "key": "(notification_id)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "public",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "DbusStreamAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "desktop",
+        "id": "desktop.notification.closed",
+        "implementation": "live-capture",
+        "output_event_type": "notification.closed",
+        "privacy_context": "notification",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "live",
+        "runtime_shape": "continuous",
+        "source_id": "desktop.notification.closed",
+        "subject": "source:desktop.notification.closed"
+      },
+      "parser_manifest": {
+        "parser_id": "desktop-notification-closed",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [],
+        "source_id": "desktop.notification.closed",
+        "declared_event_types": [
+          [
+            "dbus",
+            "notification.closed"
+          ]
+        ],
+        "privacy_contexts": [
+          "notification"
+        ],
+        "description": "Captures notification close events via D-Bus"
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "desktop.window-manager",
+      "source_contract": {
+        "access_scope": {
+          "scope": "runtime_bridge",
+          "surface": "window_manager"
+        },
+        "event_types": [
+          [
+            "wm.hyprland",
+            "window.opened"
+          ],
+          [
+            "wm.hyprland",
+            "window.closed"
+          ],
+          [
+            "wm.hyprland",
+            "window.focused"
+          ],
+          [
+            "wm.hyprland",
+            "window.moved"
+          ],
+          [
+            "wm.hyprland",
+            "window.title_changed"
+          ],
+          [
+            "wm.hyprland",
+            "workspace.switched"
+          ],
+          [
+            "wm.hyprland",
+            "monitor.focused"
+          ],
+          [
+            "wm.hyprland",
+            "state.captured"
+          ],
+          [
+            "wm.hyprland",
+            "wm.unhandled"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "desktop.window-manager",
+        "namespace": "desktop",
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "UnixSocketStreamAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "desktop",
+        "id": "desktop.window-manager",
+        "implementation": "sinexd",
+        "output_event_type": "window.opened",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "desktop.window-manager",
+        "subject": "source:desktop.window-manager"
+      },
+      "parser_manifest": {
+        "parser_id": "hyprland-ipc",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "unix_socket"
+        ],
+        "source_id": "desktop.window-manager",
+        "declared_event_types": [
+          [
+            "wm.hyprland",
+            "window.opened"
+          ],
+          [
+            "wm.hyprland",
+            "window.closed"
+          ],
+          [
+            "wm.hyprland",
+            "window.focused"
+          ],
+          [
+            "wm.hyprland",
+            "window.moved"
+          ],
+          [
+            "wm.hyprland",
+            "window.title_changed"
+          ],
+          [
+            "wm.hyprland",
+            "workspace.switched"
+          ],
+          [
+            "wm.hyprland",
+            "monitor.focused"
+          ],
+          [
+            "wm.hyprland",
+            "state.captured"
+          ],
+          [
+            "wm.hyprland",
+            "wm.unhandled"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "sensitivity_hints": [
+          "free_text",
+          "potentially_sensitive"
+        ],
+        "description": "Parses Hyprland IPC socket events into typed window-manager events."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "docs-library-index",
+      "source_contract": {
+        "access_scope": {
+          "scope": "library_root"
+        },
+        "event_types": [
+          [
+            "docs-library",
+            "document.indexed"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "docs-library-index",
+        "namespace": "library",
+        "occurrence_identity": {
+          "key": "(source, path, content_hash)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "DirectoryWalkAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "library",
+        "id": "docs-library-index",
+        "implementation": "sinexd",
+        "output_event_type": "document.indexed",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "docs-library-index",
+        "subject": "source:docs-library-index"
+      },
+      "parser_manifest": {
+        "parser_id": "docs-library-index",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "directory_walk"
+        ],
+        "source_id": "docs-library-index",
+        "declared_event_types": [
+          [
+            "docs-library",
+            "document.indexed"
+          ]
+        ],
+        "privacy_contexts": [
+          "metadata"
+        ],
+        "description": "Indexes the local document library as metadata events."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "document-parser",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "document-parser",
+            "document.parsed"
+          ],
+          [
+            "document-parser",
+            "document.chunked"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "document-parser",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(source, parent_event_id, output_event_type, chunk_index)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "document-parser",
+        "implementation": "sinexd",
+        "output_event_type": "document.parsed",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "document-parser",
+        "subject": "source:document-parser"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "document.staging",
+      "source_contract": {
+        "access_scope": {
+          "scope": "configured_roots"
+        },
+        "event_types": [
+          [
+            "document-source",
+            "document.ingested"
+          ]
+        ],
+        "horizons": [
+          "continuous",
+          "historical"
+        ],
+        "id": "document.staging",
+        "namespace": "document",
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "privacy_tier": "secret",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "DocumentStagingParser",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "document",
+        "id": "document.staging",
+        "implementation": "sinexd",
+        "output_event_type": "document.ingested",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "oneshot",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "document.staging",
+        "subject": "source:document.staging"
+      },
+      "parser_manifest": {
+        "parser_id": "document-staging",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "file_drop"
+        ],
+        "source_id": "document.staging",
+        "declared_event_types": [
+          [
+            "document-source",
+            "document.ingested"
+          ],
+          [
+            "knowledge",
+            "tag.applied"
+          ]
+        ],
+        "privacy_contexts": [
+          "metadata"
+        ],
+        "sensitivity_hints": [
+          "free_text",
+          "potentially_sensitive",
+          "source_path"
+        ],
+        "description": "Stages document files and emits document.ingested + auto-tag derived events"
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "email.mailbox",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "email",
+            "email.message.received"
+          ],
+          [
+            "email",
+            "email.message.sent"
+          ]
+        ],
+        "horizons": [
+          "historical",
+          "continuous"
+        ],
+        "id": "email.mailbox",
+        "namespace": "email",
+        "occurrence_identity": {
+          "key": "(message_id, folder)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AppendOnlyFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "email",
+        "id": "email.mailbox",
+        "implementation": "staged-parser",
+        "output_event_type": "email.message.sent",
+        "privacy_context": "document",
+        "proposed": true,
+        "resource_profile": "bounded_file",
+        "runner_pack": "staged",
+        "runtime_shape": "scheduled",
+        "source_id": "email.mailbox",
+        "subject": "source:email.mailbox.sent"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "entity-enricher",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "entity-enricher",
+            "entity.enriched"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "entity-enricher",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(entity_id, observation_window)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "entity-enricher",
+        "implementation": "sinexd",
+        "output_event_type": "entity.enriched",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "entity-enricher",
+        "subject": "source:entity-enricher"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "entity-extractor",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "entity-extractor",
+            "entity.extracted"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "entity-extractor",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(source, parent_event_id, entity_type, raw_name)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "entity-extractor",
+        "implementation": "sinexd",
+        "output_event_type": "entity.extracted",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "entity-extractor",
+        "subject": "source:entity-extractor"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "entity-resolver",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "entity-resolver",
+            "entity.resolved"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "entity-resolver",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(entity_type, canonical_name)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "entity-resolver",
+        "implementation": "sinexd",
+        "output_event_type": "entity.resolved",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "entity-resolver",
+        "subject": "source:entity-resolver"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "facebook-messenger-thread",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "messenger",
+            "message.sent"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "facebook-messenger-thread",
+        "namespace": "messaging",
+        "occurrence_identity": {
+          "key": "(thread_name, sender_name, timestamp_ms, text_hint)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "StaticFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "messaging",
+        "id": "facebook-messenger-thread",
+        "implementation": "sinexd",
+        "output_event_type": "message.sent",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "facebook-messenger-thread",
+        "subject": "source:facebook-messenger-thread"
+      },
+      "parser_manifest": {
+        "parser_id": "facebook-messenger-thread",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "static_file"
+        ],
+        "source_id": "facebook-messenger-thread",
+        "declared_event_types": [
+          [
+            "messenger",
+            "message.sent"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "description": "Parses Facebook Messenger GDPR export thread JSON files. Preserves participants + sender + text; drops media blob references and reaction details (count only)."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "fs",
+      "source_contract": {
+        "access_scope": {
+          "scope": "configured_roots"
+        },
+        "event_types": [
+          [
+            "fs-watcher",
+            "file.created"
+          ],
+          [
+            "fs-watcher",
+            "file.modified"
+          ],
+          [
+            "fs-watcher",
+            "file.deleted"
+          ],
+          [
+            "fs-watcher",
+            "file.moved"
+          ]
+        ],
+        "horizons": [
+          "continuous",
+          "historical"
+        ],
+        "id": "fs",
+        "namespace": "filesystem",
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "privacy_tier": "secret",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "FileContentDropAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "filesystem",
+        "id": "fs",
+        "implementation": "sinexd",
+        "output_event_type": "file.created",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "fs",
+        "subject": "source:fs"
+      },
+      "parser_manifest": {
+        "parser_id": "fs",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "file_drop"
+        ],
+        "source_id": "fs",
+        "declared_event_types": [
+          [
+            "fs-watcher",
+            "file.created"
+          ],
+          [
+            "fs-watcher",
+            "file.modified"
+          ],
+          [
+            "fs-watcher",
+            "file.deleted"
+          ],
+          [
+            "fs-watcher",
+            "file.moved"
+          ]
+        ],
+        "privacy_contexts": [
+          "metadata"
+        ],
+        "description": "Maps FileDropAdapter records to filesystem event payloads."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "git-commit-history",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "git",
+            "commit.created"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "git-commit-history",
+        "namespace": "vcs",
+        "occurrence_identity": {
+          "key": "(commit_sha, repo_path)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "StaticFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "vcs",
+        "id": "git-commit-history",
+        "implementation": "sinexd",
+        "output_event_type": "commit.created",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "git-commit-history",
+        "subject": "source:git-commit-history"
+      },
+      "parser_manifest": {
+        "parser_id": "git-commit-history",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "static_file"
+        ],
+        "source_id": "git-commit-history",
+        "declared_event_types": [
+          [
+            "git",
+            "commit.created"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "description": "Parses a git repository's commit history via `git log` and emits one commit.created event per commit. Captures author/committer identity, subject, body, and per-commit diff stats where available."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "health",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "health-aggregator",
+            "health.aggregated_report"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "health",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(source, component_scope, parent_event_ids)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "public",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "health",
+        "implementation": "sinexd",
+        "output_event_type": "health.aggregated_report",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "health",
+        "subject": "source:health"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "hledger-journal",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "ledger",
+            "transaction.posted"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "hledger-journal",
+        "namespace": "finance",
+        "occurrence_identity": {
+          "key": "(date, description, first_explicit_posting_amount)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "StaticFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "finance",
+        "id": "hledger-journal",
+        "implementation": "sinexd",
+        "output_event_type": "transaction.posted",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "hledger-journal",
+        "subject": "source:hledger-journal"
+      },
+      "parser_manifest": {
+        "parser_id": "hledger-journal",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "static_file"
+        ],
+        "source_id": "hledger-journal",
+        "declared_event_types": [
+          [
+            "ledger",
+            "transaction.posted"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "description": "Parses an hledger/ledger plain-text journal into one transaction.posted event per transaction block. Supports the personal Payee|Narration pipe convention on the header line."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "hourly-summarizer",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "derived.hourly-summarizer",
+            "activity.summary.hourly"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "hourly-summarizer",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(source, hour_bucket, parent_event_ids)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "hourly-summarizer",
+        "implementation": "sinexd",
+        "output_event_type": "activity.summary.hourly",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "hourly-summarizer",
+        "subject": "source:hourly-summarizer"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "instruction-expectation-reconciler",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "runtime.instruction",
+            "expectation.status"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "instruction-expectation-reconciler",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(instruction_id, desired_event_source, desired_event_type)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "instruction-expectation-reconciler",
+        "implementation": "sinexd",
+        "output_event_type": "expectation.status",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "instruction-expectation-reconciler",
+        "subject": "source:instruction-expectation-reconciler"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "integration.polylogue",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "integration.polylogue",
+            "integration.polylogue.session_indexed"
+          ]
+        ],
+        "horizons": [
+          "continuous",
+          "historical"
+        ],
+        "id": "integration.polylogue",
+        "namespace": "integration",
+        "occurrence_identity": {
+          "key": "(content_hash, session_id)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "ExternalProducer",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "integration",
+        "id": "integration.polylogue",
+        "implementation": "polylogue-daemon",
+        "output_event_type": "integration.polylogue.session_indexed",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "external",
+        "runtime_shape": "continuous",
+        "source_id": "integration.polylogue",
+        "subject": "source:integration.polylogue"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "knowledgebase-vault",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "knowledgebase",
+            "note.observed"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "knowledgebase-vault",
+        "namespace": "knowledge",
+        "occurrence_identity": {
+          "key": "(path, body_text_hash)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "DirectoryWalkAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "knowledge",
+        "id": "knowledgebase-vault",
+        "implementation": "sinexd",
+        "output_event_type": "note.observed",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "knowledgebase-vault",
+        "subject": "source:knowledgebase-vault"
+      },
+      "parser_manifest": {
+        "parser_id": "knowledgebase-vault",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "directory_walk"
+        ],
+        "source_id": "knowledgebase-vault",
+        "declared_event_types": [
+          [
+            "knowledgebase",
+            "note.observed"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "description": "Mirrors an Obsidian-style PKM vault into sinex. One note.observed event per .md file; extracts front-matter, inline tags, wikilink graph edges, and a BLAKE3 body hash for change detection."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "media.audio",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "media.audio",
+            "media.audio.transcription"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "media.audio",
+        "namespace": "media",
+        "occurrence_identity": {
+          "key": "(device_id, audio_chunk_hash)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AppendOnlyFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "media",
+        "id": "media.audio",
+        "implementation": "proposed",
+        "output_event_type": "media.audio.transcription",
+        "privacy_context": "document",
+        "proposed": true,
+        "resource_profile": "live_watcher",
+        "runner_pack": "staged",
+        "runtime_shape": "continuous",
+        "source_id": "media.audio",
+        "subject": "source:media.audio"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "media.screen",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "media.screen",
+            "media.screen.ocr"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "media.screen",
+        "namespace": "media",
+        "occurrence_identity": {
+          "key": "(display_id, capture_hash)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AppendOnlyFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "media",
+        "id": "media.screen",
+        "implementation": "proposed",
+        "output_event_type": "media.screen.ocr",
+        "privacy_context": "document",
+        "proposed": true,
+        "resource_profile": "live_watcher",
+        "runner_pack": "staged",
+        "runtime_shape": "continuous",
+        "source_id": "media.screen",
+        "subject": "source:media.screen"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "noop",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "noop",
+        "namespace": "sinex",
+        "occurrence_identity": {
+          "key": "(source)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "public",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "SourceDriverRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "sinex",
+        "id": "noop",
+        "implementation": "sinexd",
+        "output_event_type": "noop",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "noop",
+        "subject": "source:noop"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "raindrop-bookmarks",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "raindrop",
+            "bookmark.created"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "raindrop-bookmarks",
+        "namespace": "web",
+        "occurrence_identity": {
+          "key": "(raindrop_id, url, created)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "StaticFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "web",
+        "id": "raindrop-bookmarks",
+        "implementation": "sinexd",
+        "output_event_type": "bookmark.created",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "raindrop-bookmarks",
+        "subject": "source:raindrop-bookmarks"
+      },
+      "parser_manifest": {
+        "parser_id": "raindrop-bookmarks",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "static_file"
+        ],
+        "source_id": "raindrop-bookmarks",
+        "declared_event_types": [
+          [
+            "raindrop",
+            "bookmark.created"
+          ]
+        ],
+        "privacy_contexts": [
+          "metadata"
+        ],
+        "description": "Parses Raindrop CSV bookmark exports into typed bookmark.created events. Drops the cover-image CDN URL and free-text highlights column."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "reddit-gdpr-comments",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "reddit",
+            "social.comment.posted"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "reddit-gdpr-comments",
+        "namespace": "social",
+        "occurrence_identity": {
+          "key": "(reddit_id, subreddit)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "StaticFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "social",
+        "id": "reddit-gdpr-comments",
+        "implementation": "sinexd",
+        "output_event_type": "social.comment.posted",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "reddit-gdpr-comments",
+        "subject": "source:reddit-gdpr-comments"
+      },
+      "parser_manifest": {
+        "parser_id": "reddit-gdpr-comments",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "static_file"
+        ],
+        "source_id": "reddit-gdpr-comments",
+        "declared_event_types": [
+          [
+            "reddit",
+            "social.comment.posted"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "description": "Parses Reddit GDPR comments.csv into typed social.comment.posted events. Drops ip, gildings, and media columns."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "reddit-gdpr-posts",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "reddit",
+            "social.post.created"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "reddit-gdpr-posts",
+        "namespace": "social",
+        "occurrence_identity": {
+          "key": "(reddit_id, subreddit)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "StaticFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "social",
+        "id": "reddit-gdpr-posts",
+        "implementation": "sinexd",
+        "output_event_type": "social.post.created",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "reddit-gdpr-posts",
+        "subject": "source:reddit-gdpr-posts"
+      },
+      "parser_manifest": {
+        "parser_id": "reddit-gdpr-posts",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "static_file"
+        ],
+        "source_id": "reddit-gdpr-posts",
+        "declared_event_types": [
+          [
+            "reddit",
+            "social.post.created"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "description": "Parses Reddit GDPR posts.csv into typed social.post.created events. Drops ip and gildings columns."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "relation-extractor",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "relation-extractor",
+            "entity.related"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "relation-extractor",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(source_entity_id, target_entity_id, relation_type)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "relation-extractor",
+        "implementation": "sinexd",
+        "output_event_type": "entity.related",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "relation-extractor",
+        "subject": "source:relation-extractor"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "session-detector",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "derived.session-detector",
+            "activity.session.boundary"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "session-detector",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(source, parent_event_ids)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "session-detector",
+        "implementation": "sinexd",
+        "output_event_type": "activity.session.boundary",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "session-detector",
+        "subject": "source:session-detector"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "sinex-automaton-error",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "sinex",
+            "automaton.error"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "sinex-automaton-error",
+        "namespace": "infra",
+        "occurrence_identity": {
+          "kind": "natural"
+        },
+        "privacy_tier": "public",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "EmbeddedEmitter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "infra",
+        "id": "sinex-automaton-error",
+        "implementation": "sinexd",
+        "output_event_type": "automaton.error",
+        "privacy_context": "metadata",
+        "proposed": true,
+        "resource_profile": "embedded_emitter",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "sinex-automaton-error",
+        "subject": "source:sinex-automaton-error"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "sinex-metrics",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "sinex",
+            "metric.counter"
+          ],
+          [
+            "sinex",
+            "metric.gauge"
+          ],
+          [
+            "sinex",
+            "metric.histogram"
+          ],
+          [
+            "sinex",
+            "health.status"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "sinex-metrics",
+        "namespace": "infra",
+        "occurrence_identity": {
+          "kind": "natural"
+        },
+        "privacy_tier": "public",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "EmbeddedEmitter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "infra",
+        "id": "sinex-metrics",
+        "implementation": "sinex-primitives::metrics",
+        "output_event_type": "metric.counter",
+        "privacy_context": "metadata",
+        "proposed": true,
+        "resource_profile": "embedded_emitter",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "sinex-metrics",
+        "subject": "source:sinex-metrics"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "sinex-runtime-telemetry",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "sinexd.source",
+            "processing.stats"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "sinex-runtime-telemetry",
+        "namespace": "infra",
+        "occurrence_identity": {
+          "kind": "natural"
+        },
+        "privacy_tier": "public",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "EmbeddedEmitter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "infra",
+        "id": "sinex-runtime-telemetry",
+        "implementation": "sinexd",
+        "output_event_type": "processing.stats",
+        "privacy_context": "metadata",
+        "proposed": true,
+        "resource_profile": "embedded_emitter",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "sinex-runtime-telemetry",
+        "subject": "source:sinex-runtime-telemetry"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "sinexd-api-telemetry",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "sinexd.api",
+            "request.stats"
+          ],
+          [
+            "sinexd.api",
+            "rate_limit.exceeded"
+          ],
+          [
+            "sinexd.api",
+            "pool.stats"
+          ],
+          [
+            "sinexd.api",
+            "replay.stats"
+          ],
+          [
+            "sinexd.api",
+            "gateway.rpc.call"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "sinexd-api-telemetry",
+        "namespace": "infra",
+        "occurrence_identity": {
+          "kind": "natural"
+        },
+        "privacy_tier": "public",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "EmbeddedEmitter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "infra",
+        "id": "sinexd-api-telemetry",
+        "implementation": "sinexd",
+        "output_event_type": "request.stats",
+        "privacy_context": "metadata",
+        "proposed": true,
+        "resource_profile": "embedded_emitter",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "sinexd-api-telemetry",
+        "subject": "source:sinexd-api-telemetry"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "sinexd-event-engine-telemetry",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "sinexd.event_engine",
+            "batch.stats"
+          ],
+          [
+            "sinexd.event_engine",
+            "stream.stats"
+          ],
+          [
+            "sinexd.event_engine",
+            "assembly.stats"
+          ],
+          [
+            "sinexd.event_engine",
+            "consumer.startup_snapshot"
+          ],
+          [
+            "sinexd.event_engine",
+            "consumer.startup_replay_risk"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "sinexd-event-engine-telemetry",
+        "namespace": "infra",
+        "occurrence_identity": {
+          "kind": "natural"
+        },
+        "privacy_tier": "public",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "EmbeddedEmitter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "infra",
+        "id": "sinexd-event-engine-telemetry",
+        "implementation": "sinexd",
+        "output_event_type": "stream.stats",
+        "privacy_context": "metadata",
+        "proposed": true,
+        "resource_profile": "embedded_emitter",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "sinexd-event-engine-telemetry",
+        "subject": "source:sinexd-event-engine-telemetry"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "sinexd-lifecycle",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "sinex",
+            "process.started"
+          ],
+          [
+            "sinex",
+            "process.degraded"
+          ],
+          [
+            "sinex",
+            "process.failed"
+          ],
+          [
+            "sinex",
+            "process.shutdown"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "sinexd-lifecycle",
+        "namespace": "infra",
+        "occurrence_identity": {
+          "kind": "natural"
+        },
+        "privacy_tier": "public",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "EmbeddedEmitter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "infra",
+        "id": "sinexd-lifecycle",
+        "implementation": "sinex-primitives::process",
+        "output_event_type": "process.started",
+        "privacy_context": "metadata",
+        "proposed": true,
+        "resource_profile": "embedded_emitter",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "sinexd-lifecycle",
+        "subject": "source:sinexd-lifecycle"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "sleep-merged-summary",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "samsung-health",
+            "sleep.session"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "sleep-merged-summary",
+        "namespace": "health",
+        "occurrence_identity": {
+          "key": "(sh_datauuid)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "StaticFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "health",
+        "id": "sleep-merged-summary",
+        "implementation": "sinexd",
+        "output_event_type": "sleep.session",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "sleep-merged-summary",
+        "subject": "source:sleep-merged-summary"
+      },
+      "parser_manifest": {
+        "parser_id": "sleep-merged-summary",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "static_file"
+        ],
+        "source_id": "sleep-merged-summary",
+        "declared_event_types": [
+          [
+            "samsung-health",
+            "sleep.session"
+          ]
+        ],
+        "privacy_contexts": [
+          "metadata"
+        ],
+        "description": "Parses the merged Samsung Health + Sleep As Android sleep summary CSV into typed sleep.session events. Surfaces Samsung HR aggregates + per-stage event counts and the SA-side user comment."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "spotify-extended-history",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "spotify",
+            "track.played"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "spotify-extended-history",
+        "namespace": "music",
+        "occurrence_identity": {
+          "key": "(track_uri, track_name, artist_name, started_at, played_ms)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "StaticFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "music",
+        "id": "spotify-extended-history",
+        "implementation": "sinexd",
+        "output_event_type": "track.played",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "spotify-extended-history",
+        "subject": "source:spotify-extended-history"
+      },
+      "parser_manifest": {
+        "parser_id": "spotify-extended-history",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "static_file"
+        ],
+        "source_id": "spotify-extended-history",
+        "declared_event_types": [
+          [
+            "spotify",
+            "track.played"
+          ]
+        ],
+        "privacy_contexts": [
+          "metadata"
+        ],
+        "description": "Parses Spotify Extended Streaming History JSON exports into typed track.played events. Preserves both provider and inferred skip semantics; drops IP/user-agent fields."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "system.dbus",
+      "source_contract": {
+        "access_scope": {
+          "scope": "session_bus"
+        },
+        "event_types": [
+          [
+            "dbus",
+            "signal.received"
+          ],
+          [
+            "dbus",
+            "method.called"
+          ],
+          [
+            "dbus",
+            "power.state_changed"
+          ],
+          [
+            "dbus",
+            "bluetooth.device_changed"
+          ],
+          [
+            "dbus",
+            "network.state_changed"
+          ],
+          [
+            "dbus",
+            "device.connected"
+          ],
+          [
+            "dbus",
+            "media.state_changed"
+          ],
+          [
+            "dbus",
+            "mount.event"
+          ],
+          [
+            "dbus",
+            "notification.sent"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "system.dbus",
+        "namespace": "system",
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "DbusStreamAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "system",
+        "id": "system.dbus",
+        "implementation": "sinexd",
+        "output_event_type": "signal.received",
+        "privacy_context": "dbus",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "system.dbus",
+        "subject": "source:system.dbus"
+      },
+      "parser_manifest": {
+        "parser_id": "system.dbus",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "dbus_subscription"
+        ],
+        "source_id": "system.dbus",
+        "declared_event_types": [
+          [
+            "dbus",
+            "signal.received"
+          ],
+          [
+            "dbus",
+            "method.called"
+          ],
+          [
+            "dbus",
+            "power.state_changed"
+          ],
+          [
+            "dbus",
+            "bluetooth.device_changed"
+          ],
+          [
+            "dbus",
+            "network.state_changed"
+          ],
+          [
+            "dbus",
+            "device.connected"
+          ],
+          [
+            "dbus",
+            "media.state_changed"
+          ],
+          [
+            "dbus",
+            "mount.event"
+          ],
+          [
+            "dbus",
+            "notification.sent"
+          ]
+        ],
+        "privacy_contexts": [
+          "dbus",
+          "notification"
+        ],
+        "description": "Dispatches D-Bus signals to 9 typed payload types."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "system.journald",
+      "source_contract": {
+        "access_scope": {
+          "scope": "systemd_journal"
+        },
+        "event_types": [
+          [
+            "journald",
+            "entry.written"
+          ],
+          [
+            "journald",
+            "sync.completed"
+          ]
+        ],
+        "horizons": [
+          "continuous",
+          "historical"
+        ],
+        "id": "system.journald",
+        "namespace": "system",
+        "occurrence_identity": {
+          "key": "(source, journal_cursor)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "JournalctlStreamAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "journal"
+        },
+        "domain": "system",
+        "id": "system.journald",
+        "implementation": "sinexd",
+        "output_event_type": "entry.written",
+        "privacy_context": "journal",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "system.journald",
+        "subject": "source:system.journald"
+      },
+      "parser_manifest": {
+        "parser_id": "system.journald",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "subprocess"
+        ],
+        "source_id": "system.journald",
+        "declared_event_types": [
+          [
+            "journald",
+            "entry.written"
+          ],
+          [
+            "journald",
+            "sync.completed"
+          ]
+        ],
+        "privacy_contexts": [
+          "journal",
+          "command"
+        ],
+        "description": "Parses journald JSON lines into entry.written and sync.completed events."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "system.monitor",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "system",
+            "monitoring.started"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "system.monitor",
+        "namespace": "system",
+        "occurrence_identity": {
+          "kind": "natural"
+        },
+        "privacy_tier": "public",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "MonitorDriver",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "system",
+        "id": "system.monitor",
+        "implementation": "sinexd",
+        "output_event_type": "monitoring.started",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "oneshot",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "system.monitor",
+        "subject": "source:system.monitor"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "system.systemd",
+      "source_contract": {
+        "access_scope": {
+          "scope": "systemd_journal"
+        },
+        "event_types": [
+          [
+            "systemd",
+            "unit.started"
+          ],
+          [
+            "systemd",
+            "unit.stopped"
+          ],
+          [
+            "systemd",
+            "unit.failed"
+          ],
+          [
+            "systemd",
+            "unit.reloaded"
+          ],
+          [
+            "systemd",
+            "timer.triggered"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "system.systemd",
+        "namespace": "system",
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "JournalctlStreamAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "journal"
+        },
+        "domain": "system",
+        "id": "system.systemd",
+        "implementation": "sinexd",
+        "output_event_type": "unit.started",
+        "privacy_context": "journal",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "system.systemd",
+        "subject": "source:system.systemd"
+      },
+      "parser_manifest": {
+        "parser_id": "system.systemd",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "subprocess"
+        ],
+        "source_id": "system.systemd",
+        "declared_event_types": [
+          [
+            "systemd",
+            "unit.started"
+          ],
+          [
+            "systemd",
+            "unit.stopped"
+          ],
+          [
+            "systemd",
+            "unit.failed"
+          ],
+          [
+            "systemd",
+            "unit.reloaded"
+          ],
+          [
+            "systemd",
+            "timer.triggered"
+          ]
+        ],
+        "privacy_contexts": [
+          "journal"
+        ],
+        "description": "Parses systemd unit lifecycle events from journald JSON lines."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "system.udev",
+      "source_contract": {
+        "access_scope": {
+          "scope": "kernel_uevents"
+        },
+        "event_types": [
+          [
+            "udev",
+            "device.connected"
+          ],
+          [
+            "udev",
+            "device.disconnected"
+          ],
+          [
+            "udev",
+            "device.changed"
+          ],
+          [
+            "udev",
+            "device.driver_changed"
+          ],
+          [
+            "udev",
+            "device.other"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "system.udev",
+        "namespace": "system",
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "FileDropAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "system",
+        "id": "system.udev",
+        "implementation": "sinexd",
+        "output_event_type": "device.connected",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "system.udev",
+        "subject": "source:system.udev"
+      },
+      "parser_manifest": {
+        "parser_id": "system.udev",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "file_drop"
+        ],
+        "source_id": "system.udev",
+        "declared_event_types": [
+          [
+            "udev",
+            "device.connected"
+          ],
+          [
+            "udev",
+            "device.disconnected"
+          ],
+          [
+            "udev",
+            "device.changed"
+          ],
+          [
+            "udev",
+            "device.driver_changed"
+          ],
+          [
+            "udev",
+            "device.other"
+          ]
+        ],
+        "privacy_contexts": [
+          "metadata"
+        ],
+        "description": "Maps FileDropAdapter inotify records to udev device events."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "tag-applier",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "knowledge-graph",
+            "knowledge.tag_applied"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "tag-applier",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(source, parent_event_id, tag_name)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "tag-applier",
+        "implementation": "sinexd",
+        "output_event_type": "knowledge.tag_applied",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "tag-applier",
+        "subject": "source:tag-applier"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "terminal-canonicalizer",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "canonical.terminal",
+            "command.canonical"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "terminal-canonicalizer",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(source, parent_event_id)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "terminal-canonicalizer",
+        "implementation": "sinexd",
+        "output_event_type": "command.canonical",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "terminal-canonicalizer",
+        "subject": "source:terminal-canonicalizer"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "terminal.asciinema",
+      "source_contract": {
+        "access_scope": {
+          "path": "captures/asciinema",
+          "scope": "target_data"
+        },
+        "event_types": [
+          [
+            "terminal.asciinema",
+            "session.recorded"
+          ],
+          [
+            "terminal.asciinema",
+            "session.prompt"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "terminal.asciinema",
+        "namespace": "terminal",
+        "occurrence_identity": {
+          "key": "(session_id, record_type[, line_index])",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "DirectoryWalkAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "backing_store_kind": "directory",
+          "kind": "mutable_snapshot",
+          "occurrence_anchor": "file_path_fingerprint"
+        },
+        "domain": "terminal",
+        "id": "terminal.asciinema",
+        "implementation": "sinexd",
+        "output_event_type": "session.recorded",
+        "privacy_context": "command",
+        "proposed": false,
+        "resource_profile": "directory_scan",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "terminal.asciinema",
+        "subject": "source:terminal.asciinema"
+      },
+      "parser_manifest": {
+        "parser_id": "asciinema-session",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "directory_walk"
+        ],
+        "source_id": "terminal.asciinema",
+        "declared_event_types": [
+          [
+            "terminal.asciinema",
+            "session.recorded"
+          ],
+          [
+            "terminal.asciinema",
+            "session.prompt"
+          ]
+        ],
+        "privacy_contexts": [
+          "command",
+          "metadata"
+        ],
+        "description": "Parses staged Asciinema session recordings into session and prompt events."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "terminal.atuin-history",
+      "source_contract": {
+        "access_scope": {
+          "path": ".local/share/atuin/history.db",
+          "scope": "target_home"
+        },
+        "event_types": [
+          [
+            "shell.atuin",
+            "command.executed"
+          ]
+        ],
+        "horizons": [
+          "continuous",
+          "historical"
+        ],
+        "id": "terminal.atuin-history",
+        "namespace": "terminal",
+        "occurrence_identity": {
+          "kind": "natural"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "SqliteRowAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "backing_store_kind": "sqlite",
+          "kind": "mutable_snapshot",
+          "occurrence_anchor": "atuin_history_id"
+        },
+        "domain": "terminal",
+        "id": "terminal.atuin-history",
+        "implementation": "sinexd",
+        "output_event_type": "command.executed",
+        "privacy_context": "command",
+        "proposed": false,
+        "resource_profile": "bounded_stream",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "terminal.atuin-history",
+        "subject": "source:terminal.atuin-history"
+      },
+      "parser_manifest": {
+        "parser_id": "terminal.atuin-history",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "sqlite_query"
+        ],
+        "source_id": "terminal.atuin-history",
+        "declared_event_types": [
+          [
+            "shell.atuin",
+            "command.executed"
+          ]
+        ],
+        "privacy_contexts": [
+          "command"
+        ],
+        "sensitivity_hints": [
+          "free_text",
+          "credential_bearing",
+          "source_path"
+        ],
+        "description": "Declarative parser for AtuinHistoryRecord"
+      },
+      "field_metadata_status": "available",
+      "field_metadata_behavior": "metadata_only_export",
+      "field_privacy_metadata": [
+        {
+          "field_name": "rowid",
+          "field_type": "integer",
+          "field_class": "column_name",
+          "input_shape_key": "rowid",
+          "effective_privacy_context": "command",
+          "skip_payload": true,
+          "occurrence_key": true
+        },
+        {
+          "field_name": "timestamp",
+          "field_type": "integer",
+          "field_class": "column_name",
+          "input_shape_key": "timestamp",
+          "effective_privacy_context": "command",
+          "skip_payload": false,
+          "occurrence_key": false
+        },
+        {
+          "field_name": "command_string",
+          "field_type": "string",
+          "field_class": "column_name",
+          "input_shape_key": "command",
+          "effective_privacy_context": "command",
+          "sensitivity_hints": [
+            "free_text",
+            "credential_bearing"
+          ],
+          "skip_payload": false,
+          "occurrence_key": false
+        },
+        {
+          "field_name": "cwd",
+          "field_type": "string",
+          "field_class": "column_name",
+          "input_shape_key": "cwd",
+          "effective_privacy_context": "command",
+          "sensitivity_hints": [
+            "source_path"
+          ],
+          "skip_payload": false,
+          "occurrence_key": false
+        },
+        {
+          "field_name": "exit_code",
+          "field_type": "integer",
+          "field_class": "column_name",
+          "input_shape_key": "exit",
+          "effective_privacy_context": "command",
+          "skip_payload": false,
+          "occurrence_key": false
+        },
+        {
+          "field_name": "duration_ns",
+          "field_type": "integer",
+          "field_class": "column_name",
+          "input_shape_key": "duration",
+          "effective_privacy_context": "command",
+          "skip_payload": false,
+          "occurrence_key": false
+        },
+        {
+          "field_name": "atuin_history_id",
+          "field_type": "string",
+          "field_class": "column_name",
+          "input_shape_key": "id",
+          "effective_privacy_context": "command",
+          "skip_payload": false,
+          "occurrence_key": false
+        },
+        {
+          "field_name": "atuin_session_id",
+          "field_type": "string",
+          "field_class": "column_name",
+          "input_shape_key": "session",
+          "effective_privacy_context": "command",
+          "skip_payload": false,
+          "occurrence_key": false
+        },
+        {
+          "field_name": "hostname",
+          "field_type": "string",
+          "field_class": "column_name",
+          "input_shape_key": "hostname",
+          "effective_privacy_context": "command",
+          "skip_payload": false,
+          "occurrence_key": false
+        }
+      ],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": []
+    },
+    {
+      "source_id": "terminal.bash-history",
+      "source_contract": {
+        "access_scope": {
+          "path": ".bash_history",
+          "scope": "target_home"
+        },
+        "event_types": [
+          [
+            "shell.history",
+            "command.imported"
+          ]
+        ],
+        "horizons": [
+          "continuous",
+          "historical"
+        ],
+        "id": "terminal.bash-history",
+        "namespace": "terminal",
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AppendOnlyFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "terminal",
+        "id": "terminal.bash-history",
+        "implementation": "sinexd",
+        "output_event_type": "command.imported",
+        "privacy_context": "command",
+        "proposed": false,
+        "resource_profile": "bounded_stream",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "terminal.bash-history",
+        "subject": "source:terminal.bash-history"
+      },
+      "parser_manifest": {
+        "parser_id": "bash-history",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "append_only_file"
+        ],
+        "source_id": "terminal.bash-history",
+        "declared_event_types": [
+          [
+            "shell.history",
+            "command.imported"
+          ]
+        ],
+        "privacy_contexts": [
+          "command"
+        ],
+        "description": "Parses bash plain-text history lines into command.imported events."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "terminal.fish-history",
+      "source_contract": {
+        "access_scope": {
+          "path": ".local/share/fish/fish_history",
+          "scope": "target_home"
+        },
+        "event_types": [
+          [
+            "shell.history",
+            "command.imported"
+          ]
+        ],
+        "horizons": [
+          "continuous",
+          "historical"
+        ],
+        "id": "terminal.fish-history",
+        "namespace": "terminal",
+        "occurrence_identity": {
+          "kind": "natural"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "SqliteRowAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "backing_store_kind": "sqlite",
+          "kind": "mutable_snapshot",
+          "occurrence_anchor": "fish_history_row_id"
+        },
+        "domain": "terminal",
+        "id": "terminal.fish-history",
+        "implementation": "sinexd",
+        "output_event_type": "command.imported",
+        "privacy_context": "command",
+        "proposed": false,
+        "resource_profile": "bounded_stream",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "terminal.fish-history",
+        "subject": "source:terminal.fish-history"
+      },
+      "parser_manifest": {
+        "parser_id": "terminal.fish-history",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "sqlite_query"
+        ],
+        "source_id": "terminal.fish-history",
+        "declared_event_types": [
+          [
+            "shell.history",
+            "command.imported"
+          ]
+        ],
+        "privacy_contexts": [
+          "command"
+        ],
+        "sensitivity_hints": [
+          "free_text",
+          "credential_bearing"
+        ],
+        "description": "Declarative parser for FishHistoryRecord"
+      },
+      "field_metadata_status": "available",
+      "field_metadata_behavior": "metadata_only_export",
+      "field_privacy_metadata": [
+        {
+          "field_name": "rowid",
+          "field_type": "integer",
+          "field_class": "column_name",
+          "input_shape_key": "rowid",
+          "effective_privacy_context": "command",
+          "skip_payload": true,
+          "occurrence_key": true
+        },
+        {
+          "field_name": "command",
+          "field_type": "string",
+          "field_class": "column_name",
+          "input_shape_key": "command",
+          "effective_privacy_context": "command",
+          "sensitivity_hints": [
+            "free_text",
+            "credential_bearing"
+          ],
+          "skip_payload": false,
+          "occurrence_key": false
+        },
+        {
+          "field_name": "when",
+          "field_type": "integer",
+          "field_class": "column_name",
+          "input_shape_key": "when",
+          "effective_privacy_context": "command",
+          "skip_payload": false,
+          "occurrence_key": false
+        }
+      ],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": []
+    },
+    {
+      "source_id": "terminal.monitor",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "terminal",
+            "shell.terminal_monitoring_started"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "terminal.monitor",
+        "namespace": "terminal",
+        "occurrence_identity": {
+          "kind": "natural"
+        },
+        "privacy_tier": "public",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "MonitorDriver",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "terminal",
+        "id": "terminal.monitor",
+        "implementation": "sinexd",
+        "output_event_type": "shell.terminal_monitoring_started",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "oneshot",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "terminal.monitor",
+        "subject": "source:terminal.monitor"
+      },
+      "parser_manifest": null,
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "terminal.text-history",
+      "source_contract": {
+        "access_scope": {
+          "path": "shell_history_text",
+          "scope": "target_home"
+        },
+        "event_types": [
+          [
+            "shell.history",
+            "command.imported"
+          ]
+        ],
+        "horizons": [
+          "continuous",
+          "historical"
+        ],
+        "id": "terminal.text-history",
+        "namespace": "terminal",
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AppendOnlyFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "terminal",
+        "id": "terminal.text-history",
+        "implementation": "sinexd",
+        "output_event_type": "command.imported",
+        "privacy_context": "command",
+        "proposed": false,
+        "resource_profile": "bounded_stream",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "terminal.text-history",
+        "subject": "source:terminal.text-history"
+      },
+      "parser_manifest": {
+        "parser_id": "text-history",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "append_only_file"
+        ],
+        "source_id": "terminal.text-history",
+        "declared_event_types": [
+          [
+            "shell.history",
+            "command.imported"
+          ]
+        ],
+        "privacy_contexts": [
+          "command"
+        ],
+        "description": "Parses generic plain-text history files into command.imported events."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "terminal.zsh-history",
+      "source_contract": {
+        "access_scope": {
+          "path": ".zsh_history",
+          "scope": "target_home"
+        },
+        "event_types": [
+          [
+            "shell.history",
+            "command.imported"
+          ]
+        ],
+        "horizons": [
+          "continuous",
+          "historical"
+        ],
+        "id": "terminal.zsh-history",
+        "namespace": "terminal",
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AppendOnlyFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "terminal",
+        "id": "terminal.zsh-history",
+        "implementation": "sinexd",
+        "output_event_type": "command.imported",
+        "privacy_context": "command",
+        "proposed": false,
+        "resource_profile": "bounded_stream",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "continuous",
+        "source_id": "terminal.zsh-history",
+        "subject": "source:terminal.zsh-history"
+      },
+      "parser_manifest": {
+        "parser_id": "zsh-history",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "append_only_file"
+        ],
+        "source_id": "terminal.zsh-history",
+        "declared_event_types": [
+          [
+            "shell.history",
+            "command.imported"
+          ]
+        ],
+        "privacy_contexts": [
+          "command"
+        ],
+        "description": "Parses zsh history files (with optional extended-history prefix) into command.imported events."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "weechat",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "irc",
+            "irc.join"
+          ],
+          [
+            "irc",
+            "irc.part"
+          ],
+          [
+            "irc",
+            "irc.server_notice"
+          ],
+          [
+            "irc",
+            "irc.message"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "weechat",
+        "namespace": "irc",
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AppendOnlyFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "irc",
+        "id": "weechat",
+        "implementation": "sinexd",
+        "output_event_type": "irc.message",
+        "privacy_context": "command",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "weechat",
+        "subject": "source:weechat"
+      },
+      "parser_manifest": {
+        "parser_id": "weechat-log",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "append_only_file"
+        ],
+        "source_id": "weechat",
+        "declared_event_types": [
+          [
+            "irc",
+            "irc.join"
+          ],
+          [
+            "irc",
+            "irc.part"
+          ],
+          [
+            "irc",
+            "irc.server_notice"
+          ],
+          [
+            "irc",
+            "irc.message"
+          ]
+        ],
+        "privacy_contexts": [
+          "command"
+        ],
+        "description": "Parses WeeChat IRC client log files into typed IRC events."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "weechat.message",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "irc",
+            "irc.message"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "weechat.message",
+        "namespace": "irc",
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AppendOnlyFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "irc",
+        "id": "weechat.message",
+        "implementation": "sinexd",
+        "output_event_type": "irc.message",
+        "privacy_context": "command",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "weechat.message",
+        "subject": "source:weechat.message"
+      },
+      "parser_manifest": {
+        "parser_id": "weechat-message-declarative",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "append_only_file"
+        ],
+        "source_id": "weechat.message",
+        "declared_event_types": [
+          [
+            "weechat",
+            "irc.message"
+          ]
+        ],
+        "privacy_contexts": [
+          "command"
+        ],
+        "description": "Declarative parser for WeeChatMessageRecord"
+      },
+      "field_metadata_status": "available",
+      "field_metadata_behavior": "metadata_only_export",
+      "field_privacy_metadata": [
+        {
+          "field_name": "raw_timestamp",
+          "field_type": "string",
+          "field_class": "column_index",
+          "input_shape_key": "column_0",
+          "effective_privacy_context": "command",
+          "skip_payload": false,
+          "occurrence_key": false
+        },
+        {
+          "field_name": "prefix",
+          "field_type": "string",
+          "field_class": "column_index",
+          "input_shape_key": "column_1",
+          "effective_privacy_context": "command",
+          "skip_payload": false,
+          "occurrence_key": false
+        },
+        {
+          "field_name": "message",
+          "field_type": "string",
+          "field_class": "column_index",
+          "input_shape_key": "column_2",
+          "effective_privacy_context": "command",
+          "skip_payload": false,
+          "occurrence_key": false
+        }
+      ],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": []
+    },
+    {
+      "source_id": "wykop-entries",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "wykop",
+            "social.entry.created"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "wykop-entries",
+        "namespace": "social",
+        "occurrence_identity": {
+          "key": "(entry_id)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "StaticFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "social",
+        "id": "wykop-entries",
+        "implementation": "sinexd",
+        "output_event_type": "social.entry.created",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "wykop-entries",
+        "subject": "source:wykop-entries"
+      },
+      "parser_manifest": {
+        "parser_id": "wykop-entries",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "static_file"
+        ],
+        "source_id": "wykop-entries",
+        "declared_event_types": [
+          [
+            "wykop",
+            "social.entry.created"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "description": "Parses Wykop entries JSONL export into typed social.entry.created events. One event per JSONL line."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    },
+    {
+      "source_id": "wykop-entry-comments",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "wykop",
+            "social.entry_comment.posted"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "wykop-entry-comments",
+        "namespace": "social",
+        "occurrence_identity": {
+          "key": "(comment_id)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "StaticFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "social",
+        "id": "wykop-entry-comments",
+        "implementation": "sinexd",
+        "output_event_type": "social.entry_comment.posted",
+        "privacy_context": "document",
+        "proposed": false,
+        "resource_profile": "bounded_file",
+        "runner_pack": "sinexd_source",
+        "runtime_shape": "on_demand",
+        "source_id": "wykop-entry-comments",
+        "subject": "source:wykop-entry-comments"
+      },
+      "parser_manifest": {
+        "parser_id": "wykop-entry-comments",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "static_file"
+        ],
+        "source_id": "wykop-entry-comments",
+        "declared_event_types": [
+          [
+            "wykop",
+            "social.entry_comment.posted"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "description": "Parses Wykop entry comments JSONL export into typed social.entry_comment.posted events. One event per JSONL line."
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "not_applicable"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
+    }
+  ]
+}

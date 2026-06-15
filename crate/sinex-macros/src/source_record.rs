@@ -411,6 +411,10 @@ pub(crate) fn generate_material_parser(
                     Self::parser_spec().required_input_keys()
                 }
 
+                fn field_privacy_metadata(&self) -> Vec<_sdk_parser::ParserFieldPrivacyMetadata> {
+                    collect_field_privacy_metadata(Self::parser_spec())
+                }
+
                 #baseline_adapter_config_impl
 
                 #parse_record_impl
@@ -457,6 +461,46 @@ pub(crate) fn generate_material_parser(
                     }
                 }
                 seen
+            }
+
+            fn collect_field_privacy_metadata(
+                spec: &_sdk_parser::DeclarativeParserSpec,
+            ) -> Vec<_sdk_parser::ParserFieldPrivacyMetadata> {
+                spec.fields
+                    .iter()
+                    .map(|field| _sdk_parser::ParserFieldPrivacyMetadata {
+                        field_name: field.name.clone(),
+                        field_type: field_type_label(field.field_type).to_string(),
+                        field_class: field_source_label(&field.source).to_string(),
+                        input_shape_key: field.input_shape_key(),
+                        effective_privacy_context: field
+                            .privacy_context
+                            .unwrap_or(spec.default_privacy_context),
+                        sensitivity_hints: field.sensitivity.clone(),
+                        skip_payload: field.skip_payload,
+                        occurrence_key: field.occurrence_key,
+                        suppress_if: field.suppress_if.clone(),
+                    })
+                    .collect()
+            }
+
+            fn field_type_label(field_type: _sdk_parser::FieldType) -> &'static str {
+                match field_type {
+                    _sdk_parser::FieldType::String => "string",
+                    _sdk_parser::FieldType::Integer => "integer",
+                    _sdk_parser::FieldType::Number => "number",
+                    _sdk_parser::FieldType::Boolean => "boolean",
+                    _sdk_parser::FieldType::Json => "json",
+                }
+            }
+
+            fn field_source_label(source: &_sdk_parser::FieldSource) -> &'static str {
+                match source {
+                    _sdk_parser::FieldSource::JsonPointer { .. } => "json_pointer",
+                    _sdk_parser::FieldSource::ColumnIndex { .. } => "column_index",
+                    _sdk_parser::FieldSource::ColumnName { .. } => "column_name",
+                    _sdk_parser::FieldSource::RawLine => "raw_line",
+                }
             }
         };
     };
