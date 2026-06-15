@@ -66,15 +66,15 @@
     },
     {
       "surface": "logs_and_diagnostics",
-      "behavior": "fixture_password_url_redacted_in_tracing_output",
+      "behavior": "preflight_url_password_redacted_at_tracing_callsite",
       "evidence": [
         "crate/sinex-primitives/src/utils/url_redaction.rs",
         "crate/sinexd/src/runtime/preflight/database.rs::redact_password",
-        "crate/sinexd/src/runtime/preflight/services.rs::redact_password",
+        "crate/sinexd/src/runtime/preflight/services.rs::log_redacted_database_url_for_diagnostics",
         "crate/sinexd/tests/sources/privacy_coverage_matrix_test.rs::privacy_coverage_log_diagnostic_omits_fixture_secret"
       ],
       "caveats": [
-        "covers diagnostic paths that route credentials through URL password redaction before logging; arbitrary tracing payloads remain outside this guarantee"
+        "covers database URL diagnostics that route raw credential-bearing input through URL password redaction at the tracing callsite; arbitrary tracing payloads remain outside this guarantee"
       ]
     },
     {
@@ -160,14 +160,23 @@
         ],
         "description": "Parses ChatGPT data export conversations-NNN.json. Reconstructs the canonical thread by walking from current_node to root. Emits one ai.message event per text-content message. Tool-use and non-text content nodes are skipped."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -243,14 +252,23 @@
         ],
         "description": "Parses Claude GDPR export conversations.json. Emits one ai.message event per chat message. Content text is tagged Document for admission-layer suppression."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -309,14 +327,23 @@
         "subject": "source:analytics"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -386,14 +413,23 @@
         "subject": "source:blob-storage"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "embedded_emitter",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -476,14 +512,24 @@
         ],
         "description": "Parses browser history from SQLite DBs and JSONL dump files."
       },
+      "source_material_class": {
+        "access_scope": {
+          "path": "browser_history",
+          "scope": "target_home"
+        },
+        "resource_profile": "bounded_stream",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -542,14 +588,23 @@
         "subject": "source:daily-summarizer"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -648,14 +703,24 @@
         ],
         "description": "Parses ActivityWatch SQLite events into typed window/afk/browser events."
       },
+      "source_material_class": {
+        "access_scope": {
+          "path": "activitywatch_sqlite",
+          "scope": "target_home"
+        },
+        "resource_profile": "bounded_stream",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -739,14 +804,24 @@
         ],
         "description": "Parses clipboard polling records into clipboard change events."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "runtime_bridge",
+          "surface": "clipboard"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -820,14 +895,23 @@
         ],
         "description": "Captures desktop notifications via D-Bus"
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "session_bus"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -901,14 +985,23 @@
         ],
         "description": "Captures notification action invocations via D-Bus"
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "session_bus"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -982,14 +1075,23 @@
         ],
         "description": "Captures notification close events via D-Bus"
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "session_bus"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_public_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_public_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1133,14 +1235,24 @@
         ],
         "description": "Parses Hyprland IPC socket events into typed window-manager events."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "runtime_bridge",
+          "surface": "window_manager"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1216,14 +1328,23 @@
         ],
         "description": "Indexes the local document library as metadata events."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "library_root"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1286,14 +1407,23 @@
         "subject": "source:document-parser"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -1378,14 +1508,23 @@
         ],
         "description": "Stages document files and emits document.ingested + auto-tag derived events"
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "configured_roots"
+        },
+        "resource_profile": "oneshot",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1449,14 +1588,23 @@
         "subject": "source:email.mailbox.sent"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -1515,14 +1663,23 @@
         "subject": "source:entity-enricher"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -1581,14 +1738,23 @@
         "subject": "source:entity-extractor"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -1647,14 +1813,23 @@
         "subject": "source:entity-resolver"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -1730,14 +1905,23 @@
         ],
         "description": "Parses Facebook Messenger GDPR export thread JSON files. Preserves participants + sender + text; drops media blob references and reaction details (count only)."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1837,14 +2021,23 @@
         ],
         "description": "Maps FileDropAdapter records to filesystem event payloads."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "configured_roots"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1920,14 +2113,23 @@
         ],
         "description": "Parses a git repository's commit history via `git log` and emits one commit.created event per commit. Captures author/committer identity, subject, body, and per-commit diff stats where available."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1986,14 +2188,23 @@
         "subject": "source:health"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_public_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_public_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2069,14 +2280,23 @@
         ],
         "description": "Parses an hledger/ledger plain-text journal into one transaction.posted event per transaction block. Supports the personal Payee|Narration pipe convention on the header line."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -2135,14 +2355,23 @@
         "subject": "source:hourly-summarizer"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2201,14 +2430,23 @@
         "subject": "source:instruction-expectation-reconciler"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2268,14 +2506,23 @@
         "subject": "source:integration.polylogue"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2351,14 +2598,23 @@
         ],
         "description": "Mirrors an Obsidian-style PKM vault into sinex. One note.observed event per .md file; extracts front-matter, inline tags, wikilink graph edges, and a BLAKE3 body hash for change detection."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -2417,14 +2673,23 @@
         "subject": "source:media.audio"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2483,14 +2748,23 @@
         "subject": "source:media.screen"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2544,14 +2818,23 @@
         "subject": "source:noop"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_public_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_public_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2618,7 +2901,7 @@
         "source_id": "privacy.fixture.sensitive-record",
         "declared_event_types": [
           [
-            "privacy",
+            "privacy.fixture",
             "privacy.fixture.record"
           ]
         ],
@@ -2634,6 +2917,14 @@
           "credential_bearing"
         ],
         "description": "Declarative parser for PrivacyFixtureSensitiveRecord"
+      },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
       "field_metadata_status": "available",
       "field_metadata_behavior": "metadata_only_export",
@@ -2677,10 +2968,11 @@
         }
       ],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_field_metadata",
         "privacy_export": "metadata_only_export_with_field_hints",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_with_field_hints",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": []
     },
@@ -2754,14 +3046,23 @@
         ],
         "description": "Parses Raindrop CSV bookmark exports into typed bookmark.created events. Drops the cover-image CDN URL and free-text highlights column."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -2837,14 +3138,23 @@
         ],
         "description": "Parses Reddit GDPR comments.csv into typed social.comment.posted events. Drops ip, gildings, and media columns."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -2920,14 +3230,23 @@
         ],
         "description": "Parses Reddit GDPR posts.csv into typed social.post.created events. Drops ip and gildings columns."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -2986,14 +3305,23 @@
         "subject": "source:relation-extractor"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3052,14 +3380,23 @@
         "subject": "source:session-detector"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3117,14 +3454,23 @@
         "subject": "source:sinex-automaton-error"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "embedded_emitter",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_public_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_public_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3194,14 +3540,23 @@
         "subject": "source:sinex-metrics"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "embedded_emitter",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_public_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_public_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3259,14 +3614,23 @@
         "subject": "source:sinex-runtime-telemetry"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "embedded_emitter",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_public_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_public_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3340,14 +3704,23 @@
         "subject": "source:sinexd-api-telemetry"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "embedded_emitter",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_public_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_public_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3421,14 +3794,23 @@
         "subject": "source:sinexd-event-engine-telemetry"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "embedded_emitter",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_public_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_public_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3498,14 +3880,23 @@
         "subject": "source:sinexd-lifecycle"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "embedded_emitter",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_public_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_public_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3581,14 +3972,23 @@
         ],
         "description": "Parses the merged Samsung Health + Sleep As Android sleep summary CSV into typed sleep.session events. Surfaces Samsung HR aggregates + per-stage event counts and the SA-side user comment."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -3664,14 +4064,23 @@
         ],
         "description": "Parses Spotify Extended Streaming History JSON exports into typed track.played events. Preserves both provider and inferred skip semantics; drops IP/user-agent fields."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -3811,14 +4220,23 @@
         ],
         "description": "Dispatches D-Bus signals to 9 typed payload types."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "session_bus"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -3904,14 +4322,23 @@
         ],
         "description": "Parses journald JSON lines into entry.written and sync.completed events."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "systemd_journal"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -3969,14 +4396,23 @@
         "subject": "source:system.monitor"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "oneshot",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_public_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_public_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -4083,14 +4519,23 @@
         ],
         "description": "Parses systemd unit lifecycle events from journald JSON lines."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "systemd_journal"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -4197,14 +4642,23 @@
         ],
         "description": "Maps FileDropAdapter inotify records to udev device events."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "kernel_uevents"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -4263,14 +4717,23 @@
         "subject": "source:tag-applier"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -4329,14 +4792,23 @@
         "subject": "source:terminal-canonicalizer"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -4424,14 +4896,24 @@
         ],
         "description": "Parses staged Asciinema session recordings into session and prompt events."
       },
+      "source_material_class": {
+        "access_scope": {
+          "path": "captures/asciinema",
+          "scope": "target_data"
+        },
+        "resource_profile": "directory_scan",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -4514,6 +4996,15 @@
           "source_path"
         ],
         "description": "Declarative parser for AtuinHistoryRecord"
+      },
+      "source_material_class": {
+        "access_scope": {
+          "path": ".local/share/atuin/history.db",
+          "scope": "target_home"
+        },
+        "resource_profile": "bounded_stream",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
       "field_metadata_status": "available",
       "field_metadata_behavior": "metadata_only_export",
@@ -4608,10 +5099,11 @@
         }
       ],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_field_metadata",
         "privacy_export": "metadata_only_export_with_field_hints",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_with_field_hints",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": []
     },
@@ -4686,14 +5178,24 @@
         ],
         "description": "Parses bash plain-text history lines into command.imported events."
       },
+      "source_material_class": {
+        "access_scope": {
+          "path": ".bash_history",
+          "scope": "target_home"
+        },
+        "resource_profile": "bounded_stream",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -4776,6 +5278,15 @@
         ],
         "description": "Declarative parser for FishHistoryRecord"
       },
+      "source_material_class": {
+        "access_scope": {
+          "path": ".local/share/fish/fish_history",
+          "scope": "target_home"
+        },
+        "resource_profile": "bounded_stream",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "available",
       "field_metadata_behavior": "metadata_only_export",
       "field_privacy_metadata": [
@@ -4812,10 +5323,11 @@
         }
       ],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_field_metadata",
         "privacy_export": "metadata_only_export_with_field_hints",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_with_field_hints",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": []
     },
@@ -4871,14 +5383,23 @@
         "subject": "source:terminal.monitor"
       },
       "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "oneshot",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_public_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_public_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -4955,14 +5476,24 @@
         ],
         "description": "Parses generic plain-text history files into command.imported events."
       },
+      "source_material_class": {
+        "access_scope": {
+          "path": "shell_history_text",
+          "scope": "target_home"
+        },
+        "resource_profile": "bounded_stream",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -5039,14 +5570,24 @@
         ],
         "description": "Parses zsh history files (with optional extended-history prefix) into command.imported events."
       },
+      "source_material_class": {
+        "access_scope": {
+          "path": ".zsh_history",
+          "scope": "target_home"
+        },
+        "resource_profile": "bounded_stream",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -5145,14 +5686,23 @@
         ],
         "description": "Parses WeeChat IRC client log files into typed IRC events."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -5227,6 +5777,14 @@
         ],
         "description": "Declarative parser for WeeChatMessageRecord"
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "available",
       "field_metadata_behavior": "metadata_only_export",
       "field_privacy_metadata": [
@@ -5259,10 +5817,11 @@
         }
       ],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_field_metadata",
         "privacy_export": "metadata_only_export_with_field_hints",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_with_field_hints",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": []
     },
@@ -5336,14 +5895,23 @@
         ],
         "description": "Parses Wykop entries JSONL export into typed social.entry.created events. One event per JSONL line."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -5419,14 +5987,23 @@
         ],
         "description": "Parses Wykop entry comments JSONL export into typed social.entry_comment.posted events. One event per JSONL line."
       },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "resource_profile": "bounded_file",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
       "field_metadata_status": "unavailable",
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
-        "public_rpc_errors": "public_error_details_only",
-        "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"

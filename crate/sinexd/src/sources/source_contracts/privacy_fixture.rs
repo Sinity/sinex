@@ -16,6 +16,7 @@ use sinex_primitives::source_contracts::{
     id = "privacy-fixture-sensitive-record",
     source_id = "privacy.fixture.sensitive-record",
     input_shape = "tab_separated",
+    event_source = "privacy.fixture",
     event_type = "privacy.fixture.record",
     default_privacy_context = "Metadata"
 )]

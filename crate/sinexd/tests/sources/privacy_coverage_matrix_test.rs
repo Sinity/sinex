@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
-use sinex_primitives::utils::{InvalidUrlPolicy, redact_url_password_for_diagnostics};
+use sinexd::runtime::preflight::services::log_redacted_database_url_for_diagnostics;
 use sinexd::sources::privacy_coverage::{
     PRIVACY_COVERAGE_ARTIFACT_PATH, render_privacy_coverage_matrix,
 };
@@ -75,7 +75,11 @@ async fn privacy_coverage_matrix_includes_source_contract_privacy_tiers() -> Tes
     );
     assert_eq!(
         weechat["surface_behaviors"]["query_recent_tui_logs"],
-        "operator_authorized_raw_read_not_safe_export"
+        "operator_authorized_sensitive_raw_read_not_safe_export"
+    );
+    assert_eq!(
+        weechat["surface_behaviors"]["basis"],
+        "source_contract_runtime_binding_and_parser_field_metadata"
     );
     assert!(
         !matrix["caveats"]
@@ -114,6 +118,18 @@ async fn privacy_coverage_matrix_includes_sensitive_fixture_source() -> TestResu
 
     assert_eq!(fixture["source_contract"]["privacy_tier"], "sensitive");
     assert_eq!(fixture["runtime_binding"]["proposed"], true);
+    assert_eq!(
+        fixture["parser_manifest"]["declared_event_types"],
+        serde_json::json!([["privacy.fixture", "privacy.fixture.record"]])
+    );
+    assert_eq!(
+        fixture["source_material_class"]["capture_class"],
+        "static_catalog_material_source"
+    );
+    assert_eq!(
+        fixture["source_material_class"]["resource_profile"],
+        "bounded_file"
+    );
     assert_eq!(fixture["field_metadata_status"], "available");
     assert_eq!(
         fixture["surface_behaviors"]["privacy_export"],
@@ -121,7 +137,15 @@ async fn privacy_coverage_matrix_includes_sensitive_fixture_source() -> TestResu
     );
     assert_eq!(
         fixture["surface_behaviors"]["query_recent_tui_logs"],
-        "operator_authorized_raw_read_not_safe_export"
+        "operator_authorized_sensitive_raw_read_not_safe_export"
+    );
+    assert_eq!(
+        fixture["surface_behaviors"]["basis"],
+        "source_contract_runtime_binding_and_parser_field_metadata"
+    );
+    assert_eq!(
+        fixture["surface_behaviors"]["mcp_search_fixture"],
+        "global_gateway_fixture_redacted_with_field_hints"
     );
 
     let fields = fixture["field_privacy_metadata"]
@@ -200,7 +224,7 @@ async fn privacy_coverage_matrix_records_operator_surface_audit_rows() -> TestRe
     );
     assert_eq!(
         surface("logs_and_diagnostics")["behavior"],
-        "fixture_password_url_redacted_in_tracing_output"
+        "preflight_url_password_redacted_at_tracing_callsite"
     );
     assert_eq!(
         surface("query_recent_watch")["behavior"],
@@ -234,25 +258,21 @@ async fn privacy_coverage_surface_rows_carry_evidence_and_caveats() -> TestResul
 async fn privacy_coverage_log_diagnostic_omits_fixture_secret() -> TestResult<()> {
     let fixture_secret = "fixture-secret-password";
     let diagnostic_url = format!("postgresql://operator:{fixture_secret}@db.local/sinex");
-    let redacted =
-        redact_url_password_for_diagnostics(&diagnostic_url, InvalidUrlPolicy::RedactedMarker);
     let captured = CapturedLogs::default();
     let subscriber = tracing_subscriber::fmt()
         .with_ansi(false)
+        .with_max_level(tracing::Level::DEBUG)
         .without_time()
         .with_writer(captured.clone())
         .finish();
 
     tracing::subscriber::with_default(subscriber, || {
-        tracing::info!(
-            database_url = %redacted,
-            "privacy fixture diagnostic"
-        );
+        log_redacted_database_url_for_diagnostics(&diagnostic_url);
     });
 
     let output = captured.output();
     assert!(
-        output.contains("privacy fixture diagnostic"),
+        output.contains("Preflight database URL diagnostic"),
         "test must capture the diagnostic log line: {output}"
     );
     assert!(

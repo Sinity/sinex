@@ -11,7 +11,8 @@ use serde::Serialize;
 use serde_json::Value;
 use sinex_primitives::parser::{ParserFieldPrivacyMetadata, ParserManifest};
 use sinex_primitives::source_contracts::{
-    SourceContract, SourceRuntimeBinding, all_source_contracts, source_runtime_bindings,
+    PrivacyTier, SourceContract, SourceRuntimeBinding, all_source_contracts,
+    source_runtime_bindings,
 };
 
 use crate::sources::dispatch::parser_inventory_records;
@@ -37,6 +38,7 @@ pub struct PrivacyCoverageEntry {
     source_contract: Value,
     runtime_binding: Option<Value>,
     parser_manifest: Option<ParserManifest>,
+    source_material_class: SourceMaterialClass,
     field_metadata_status: &'static str,
     field_metadata_behavior: &'static str,
     field_privacy_metadata: Vec<ParserFieldPrivacyMetadata>,
@@ -45,7 +47,16 @@ pub struct PrivacyCoverageEntry {
 }
 
 #[derive(Debug, Serialize)]
+pub struct SourceMaterialClass {
+    access_scope: Value,
+    resource_profile: Option<Value>,
+    capture_class: &'static str,
+    caveat: &'static str,
+}
+
+#[derive(Debug, Serialize)]
 pub struct SurfaceBehaviors {
+    basis: &'static str,
     privacy_export: &'static str,
     public_rpc_errors: &'static str,
     mcp_search_fixture: &'static str,
@@ -92,12 +103,15 @@ pub fn build_privacy_coverage_matrix() -> PrivacyCoverageMatrix {
                     "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred",
                 );
             }
+            let surface_behaviors =
+                derive_surface_behaviors(contract, binding.is_some(), parser.is_some(), has_fields);
 
             PrivacyCoverageEntry {
                 source_id: contract.id.to_string(),
                 source_contract: to_json_value(contract),
                 runtime_binding: binding.map(to_json_value),
                 parser_manifest: parser.map(|record| record.manifest.clone()),
+                source_material_class: derive_source_material_class(contract, binding),
                 field_metadata_status: if has_fields {
                     "available"
                 } else {
@@ -109,16 +123,7 @@ pub fn build_privacy_coverage_matrix() -> PrivacyCoverageMatrix {
                     "unclassified"
                 },
                 field_privacy_metadata: fields,
-                surface_behaviors: SurfaceBehaviors {
-                    privacy_export: if has_fields {
-                        "metadata_only_export_with_field_hints"
-                    } else {
-                        "metadata_only_export_source_level_only"
-                    },
-                    public_rpc_errors: "public_error_details_only",
-                    mcp_search_fixture: "fixture_redacted",
-                    query_recent_tui_logs: "operator_authorized_raw_read_not_safe_export",
-                },
+                surface_behaviors,
                 caveats,
             }
         })
@@ -134,6 +139,62 @@ pub fn build_privacy_coverage_matrix() -> PrivacyCoverageMatrix {
         ],
         surface_audit: surface_audit_coverage(),
         entries,
+    }
+}
+
+fn derive_source_material_class(
+    contract: &SourceContract,
+    binding: Option<&SourceRuntimeBinding>,
+) -> SourceMaterialClass {
+    SourceMaterialClass {
+        access_scope: to_json_value(contract.access_scope),
+        resource_profile: binding.map(|binding| to_json_value(binding.resource_profile)),
+        capture_class: "static_catalog_material_source",
+        caveat: "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile",
+    }
+}
+
+fn derive_surface_behaviors(
+    contract: &SourceContract,
+    has_binding: bool,
+    has_parser: bool,
+    has_fields: bool,
+) -> SurfaceBehaviors {
+    let basis = match (has_binding, has_parser, has_fields) {
+        (_, _, true) if has_binding => "source_contract_runtime_binding_and_parser_field_metadata",
+        (_, _, true) => "source_contract_and_parser_field_metadata",
+        (_, true, false) if has_binding => "source_contract_runtime_binding_and_parser_manifest",
+        (_, true, false) => "source_contract_and_parser_manifest",
+        (true, false, false) => "source_contract_runtime_binding_only",
+        (false, false, false) => "source_contract_only",
+    };
+    let sensitive_or_secret = matches!(
+        contract.privacy_tier,
+        PrivacyTier::Sensitive | PrivacyTier::Secret
+    );
+
+    SurfaceBehaviors {
+        basis,
+        privacy_export: if has_fields {
+            "metadata_only_export_with_field_hints"
+        } else {
+            "metadata_only_export_source_level_only"
+        },
+        public_rpc_errors: if sensitive_or_secret {
+            "global_public_error_details_only_for_sensitive_source"
+        } else {
+            "global_public_error_details_only_for_public_source"
+        },
+        mcp_search_fixture: if has_fields {
+            "global_gateway_fixture_redacted_with_field_hints"
+        } else {
+            "global_gateway_fixture_redacted_source_level_only"
+        },
+        query_recent_tui_logs: if sensitive_or_secret {
+            "operator_authorized_sensitive_raw_read_not_safe_export"
+        } else {
+            "operator_authorized_public_raw_read_not_safe_export"
+        },
     }
 }
 
@@ -198,15 +259,15 @@ fn surface_audit_coverage() -> Vec<SurfaceAuditCoverage> {
         },
         SurfaceAuditCoverage {
             surface: "logs_and_diagnostics",
-            behavior: "fixture_password_url_redacted_in_tracing_output",
+            behavior: "preflight_url_password_redacted_at_tracing_callsite",
             evidence: &[
                 "crate/sinex-primitives/src/utils/url_redaction.rs",
                 "crate/sinexd/src/runtime/preflight/database.rs::redact_password",
-                "crate/sinexd/src/runtime/preflight/services.rs::redact_password",
+                "crate/sinexd/src/runtime/preflight/services.rs::log_redacted_database_url_for_diagnostics",
                 "crate/sinexd/tests/sources/privacy_coverage_matrix_test.rs::privacy_coverage_log_diagnostic_omits_fixture_secret",
             ],
             caveats: &[
-                "covers diagnostic paths that route credentials through URL password redaction before logging; arbitrary tracing payloads remain outside this guarantee",
+                "covers database URL diagnostics that route raw credential-bearing input through URL password redaction at the tracing callsite; arbitrary tracing payloads remain outside this guarantee",
             ],
         },
         SurfaceAuditCoverage {
