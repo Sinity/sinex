@@ -1373,7 +1373,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn privacy_export_omits_payload_and_snippet_material() -> xtask::sandbox::TestResult<()> {
+    async fn privacy_export_renderers_omit_payload_and_snippet_material()
+    -> xtask::sandbox::TestResult<()> {
         let event = Event {
             id: Some(Id::from_uuid(Uuid::from_u128(1))),
             source: EventSource::from_static("terminal"),
@@ -1422,18 +1423,43 @@ mod tests {
             },
         );
 
-        let encoded = serde_json::to_string(&report)?;
         assert_eq!(report.exported_events, 1);
         assert_eq!(report.scope.sources, vec!["terminal".to_string()]);
         assert!(report.scope.text_search_used);
-        assert!(encoded.contains("metadata_only_payloads_and_snippets_omitted"));
+
+        for format in [
+            OutputFormat::Table,
+            OutputFormat::Json,
+            OutputFormat::Ndjson,
+            OutputFormat::Yaml,
+        ] {
+            let rendered = render_privacy_export_report(&report, format)?;
+            assert!(
+                rendered.contains("metadata_only_payloads_and_snippets_omitted"),
+                "{format:?} should disclose metadata-only export policy"
+            );
+            assert!(
+                !rendered.contains("TOKEN=secret"),
+                "{format:?} leaked snippet or payload text"
+            );
+            assert!(
+                !rendered.contains("/home/sinity/private"),
+                "{format:?} leaked payload path material"
+            );
+            assert!(
+                !rendered.contains("\"payload\""),
+                "{format:?} should not render raw payload fields"
+            );
+            assert!(
+                !rendered.contains("\"snippet\""),
+                "{format:?} should not render raw snippet fields"
+            );
+        }
+
+        let encoded = serde_json::to_string(&report)?;
         assert!(encoded.contains("\"payload_redacted\":true"));
         assert!(encoded.contains("\"snippet_redacted\":true"));
         assert!(encoded.contains("\"associated_blob_count\":1"));
-        assert!(!encoded.contains("TOKEN=secret"));
-        assert!(!encoded.contains("/home/sinity/private"));
-        assert!(!encoded.contains("\"payload\""));
-        assert!(!encoded.contains("\"snippet\""));
         Ok(())
     }
 

@@ -13,7 +13,8 @@ use sinex_primitives::Uuid;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
-    MaterialAnchor, ParsedEventIntent, ParserContext, ParserManifest, SourceId, SourceRecord,
+    MaterialAnchor, ParsedEventIntent, ParserContext, ParserFieldPrivacyMetadata, ParserManifest,
+    SourceId, SourceRecord,
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -47,6 +48,9 @@ pub trait ErasedParser: Send + Sync {
     /// Return the parser's manifest.
     fn manifest(&self) -> ParserManifest;
 
+    /// Return parser-declared field-level privacy metadata.
+    fn field_privacy_metadata(&self) -> Vec<ParserFieldPrivacyMetadata>;
+
     /// Parse a single source record, returning a boxed future.
     fn parse_record_erased<'a>(
         &'a mut self,
@@ -61,6 +65,10 @@ where
 {
     fn manifest(&self) -> ParserManifest {
         sinex_primitives::parser::MaterialParser::manifest(self)
+    }
+
+    fn field_privacy_metadata(&self) -> Vec<ParserFieldPrivacyMetadata> {
+        sinex_primitives::parser::MaterialParser::field_privacy_metadata(self)
     }
 
     fn parse_record_erased<'a>(
@@ -104,6 +112,33 @@ static PARSER_REGISTRY: LazyLock<HashMap<&'static str, ParserFactoryFn>> = LazyL
 #[must_use]
 pub fn find_parser_factory(source_id: &SourceId) -> Option<ParserFactoryFn> {
     PARSER_REGISTRY.get(source_id.as_str()).copied()
+}
+
+/// Read-only parser inventory entry for audit/reporting surfaces.
+#[derive(Debug, Clone)]
+pub struct ParserInventoryRecord {
+    pub source_id: String,
+    pub manifest: ParserManifest,
+    pub field_privacy_metadata: Vec<ParserFieldPrivacyMetadata>,
+}
+
+/// Enumerate parser factories, manifests, and field metadata from the compiled
+/// source inventory.
+#[must_use]
+pub fn parser_inventory_records() -> Vec<ParserInventoryRecord> {
+    let mut records = PARSER_REGISTRY
+        .iter()
+        .map(|(source_id, factory_fn)| {
+            let parser = factory_fn();
+            ParserInventoryRecord {
+                source_id: (*source_id).to_string(),
+                manifest: parser.manifest(),
+                field_privacy_metadata: parser.field_privacy_metadata(),
+            }
+        })
+        .collect::<Vec<_>>();
+    records.sort_by(|a, b| a.source_id.cmp(&b.source_id));
+    records
 }
 
 // =============================================================================

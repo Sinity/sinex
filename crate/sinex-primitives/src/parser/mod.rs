@@ -705,6 +705,16 @@ pub trait MaterialParser: Send + Sync {
         Vec::new()
     }
 
+    /// Parser-declared field-level privacy metadata.
+    ///
+    /// Generated declarative parsers derive this from their
+    /// [`DeclarativeParserSpec`]. Imperative parsers default to no field rows
+    /// until they explicitly declare a stable field contract.
+    #[must_use]
+    fn field_privacy_metadata(&self) -> Vec<ParserFieldPrivacyMetadata> {
+        Vec::new()
+    }
+
     /// Parse a single source record into zero or more event intents.
     async fn parse_record(
         &mut self,
@@ -958,6 +968,43 @@ pub struct ParserManifest {
     /// Human-readable description.
     #[serde(default)]
     pub description: String,
+}
+
+/// Field-level privacy metadata declared by a parser.
+///
+/// This is descriptive metadata for inventory and audit tooling. It does not
+/// apply redaction by itself, and an empty set means "unavailable", not "safe".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParserFieldPrivacyMetadata {
+    /// Field name in the emitted payload.
+    pub field_name: String,
+
+    /// Coerced field value class, e.g. `string` or `integer`.
+    pub field_type: String,
+
+    /// Source-record class, e.g. `json_pointer`, `column_index`, or `raw_line`.
+    pub field_class: String,
+
+    /// Source-record structural key when one exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_shape_key: Option<String>,
+
+    /// Effective privacy context after applying the parser default.
+    pub effective_privacy_context: crate::privacy::ProcessingContext,
+
+    /// Semantic sensitivity hints declared for this field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sensitivity_hints: Vec<crate::privacy::SensitivityHint>,
+
+    /// True when the field is excluded from emitted payloads.
+    pub skip_payload: bool,
+
+    /// True when the field participates in the parser occurrence key.
+    pub occurrence_key: bool,
+
+    /// Binding predicate that can suppress the field or whole event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suppress_if: Option<SuppressPredicate>,
 }
 
 // =============================================================================
