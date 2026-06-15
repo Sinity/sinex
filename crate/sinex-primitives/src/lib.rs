@@ -25,6 +25,7 @@ pub mod parser;
 pub mod primitives;
 pub mod privacy;
 pub mod query;
+pub mod relations;
 pub mod rpc;
 pub mod runtime_target;
 pub mod schema_constraints;
@@ -73,6 +74,10 @@ pub mod prelude {
         LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PayloadFilter,
         QueryResultEvent, SortDirection, SourceMaterialLinkInfo, SourceStatsEntry,
         SubscriptionFilter, TimeBucketEntry, TimeRange, TimeSeriesOrder,
+    };
+    pub use crate::relations::{
+        EventRelationExpr, EvidenceRef, EvidenceRole, EvidenceWindow, ExpansionTrace, ObservedRange,
+        SameField, TimeBasis, TimeQuality,
     };
     pub use crate::temporal::OffsetDateTime;
 }
