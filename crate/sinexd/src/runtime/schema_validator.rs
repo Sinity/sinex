@@ -125,9 +125,18 @@ impl RuntimeSchemaValidator {
             compiled += 1;
         }
 
-        // Atomic update of caches
-        *self.schemas.write() = new_schemas;
-        *self.lookup.write() = new_lookup;
+        // Atomic update of caches: hold both write guards together so a
+        // concurrent validate() can never observe the schemas map swapped
+        // while the lookup map is still stale (or vice-versa). That window —
+        // two separate `write()` calls with a removal in between — produced
+        // spurious "schema cache is inconsistent" errors. Lock order
+        // (schemas then lookup) matches fetch_schema_from_db().
+        {
+            let mut schemas = self.schemas.write();
+            let mut lookup = self.lookup.write();
+            *schemas = new_schemas;
+            *lookup = new_lookup;
+        }
 
         info!(
             compiled,
@@ -157,36 +166,43 @@ impl RuntimeSchemaValidator {
         event_type: &str,
         payload: &JsonValue,
     ) -> RuntimeResult<Uuid> {
-        // Try cache first
-        let schema_id_opt = {
+        // Cache-first: resolve the id AND its compiled validator under both
+        // read guards held together, so a concurrent atomic cache swap can
+        // never hand us an id whose schema row was already removed. Lock order
+        // (schemas then lookup) matches the writers.
+        let cached = {
+            let schemas = self.schemas.read();
             let lookup = self.lookup.read();
             lookup
                 .get(&(source.to_string(), event_type.to_string()))
                 .copied()
+                .map(|id| (id, schemas.get(&id).cloned()))
         };
 
-        let schema_id = if let Some(id) = schema_id_opt {
-            id
-        } else {
-            // Cache miss - try DB hydration or error in edge mode
-            if self.is_edge_mode() {
-                // Edge mode: strict validation - must have schema in cache
-                return Err(crate::runtime::SinexError::validation(format!(
-                    "Schema not available in cache for {source}.{event_type} (edge mode - cache-only)"
+        let (schema_id, validator) = match cached {
+            Some((id, Some(validator))) => (id, validator),
+            Some((id, None)) => {
+                // lookup and schemas are now updated atomically, so a present
+                // key with a missing schema is a genuine inconsistency.
+                return Err(crate::runtime::SinexError::processing(format!(
+                    "Schema cache is inconsistent for {source}.{event_type} (schema_id={id})"
                 )));
             }
-            self.fetch_schema_from_db(source, event_type).await?
-        };
-
-        // Get compiled validator
-        let validator = {
-            let schemas = self.schemas.read();
-            if let Some(v) = schemas.get(&schema_id) {
-                v.clone()
-            } else {
-                return Err(crate::runtime::SinexError::processing(format!(
-                    "Schema cache is inconsistent for {source}.{event_type} (schema_id={schema_id})"
-                )));
+            None => {
+                // Cache miss - hydrate from DB or error in edge mode.
+                if self.is_edge_mode() {
+                    // Edge mode: strict validation - must have schema in cache
+                    return Err(crate::runtime::SinexError::validation(format!(
+                        "Schema not available in cache for {source}.{event_type} (edge mode - cache-only)"
+                    )));
+                }
+                let id = self.fetch_schema_from_db(source, event_type).await?;
+                let validator = self.schemas.read().get(&id).cloned().ok_or_else(|| {
+                    crate::runtime::SinexError::processing(format!(
+                        "Schema cache is inconsistent for {source}.{event_type} (schema_id={id})"
+                    ))
+                })?;
+                (id, validator)
             }
         };
 
@@ -346,6 +362,59 @@ impl RuntimeSchemaValidator {
         self.lookup
             .write()
             .insert((source.to_string(), event_type.to_string()), schema_id);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use xtask::sandbox::prelude::*;
+
+    fn simple_schema() -> JsonValue {
+        json!({
+            "type": "object",
+            "properties": { "n": { "type": "integer" } },
+            "required": ["n"]
+        })
+    }
+
+    #[sinex_test]
+    async fn validate_succeeds_for_registered_schema() -> TestResult<()> {
+        let validator = RuntimeSchemaValidator::new();
+        let schema_id = Uuid::now_v7();
+        validator.register_test_schema(schema_id, "test", "event", &simple_schema())?;
+
+        let id = validator.validate("test", "event", &json!({ "n": 1 })).await?;
+        assert_eq!(id, schema_id);
+
+        let err = validator
+            .validate("test", "event", &json!({ "n": "not-an-int" }))
+            .await
+            .expect_err("schema-violating payload must be rejected");
+        assert!(err.to_string().contains("Schema validation failed"));
+        Ok(())
+    }
+
+    // Regression for the schema-cache split-write race: the validator now holds
+    // both read guards together, so a lookup key whose compiled schema is absent
+    // is a genuine inconsistency (no longer a transient window). validate() must
+    // surface a clean error rather than panic or mis-route.
+    #[sinex_test]
+    async fn validate_reports_inconsistency_for_orphan_lookup_entry() -> TestResult<()> {
+        let validator = RuntimeSchemaValidator::new();
+        let schema_id = Uuid::now_v7();
+        validator.register_test_schema(schema_id, "test", "event", &simple_schema())?;
+
+        // Drop the compiled schema while leaving the lookup entry in place.
+        validator.schemas.write().remove(&schema_id);
+
+        let err = validator
+            .validate("test", "event", &json!({ "n": 1 }))
+            .await
+            .expect_err("orphan lookup entry must yield an inconsistency error");
+        assert!(err.to_string().contains("inconsistent"));
         Ok(())
     }
 }
