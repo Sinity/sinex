@@ -93,6 +93,10 @@ name = "effective_config_test"
 path = "tests/event_engine/effective_config_test.rs"
 
 [[test]]
+name = "admission_test"
+path = "tests/event_engine/admission_test.rs"
+
+[[test]]
 name = "browser_history_parser_test"
 path = "tests/sources/browser_history_parser_test.rs"
 
