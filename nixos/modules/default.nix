@@ -1765,6 +1765,18 @@ in
             description = "Document parser automaton. Consumes `document.ingested` and `command.canonical` events, emits `document.parsed` + `document.chunked` derived events.";
           };
 
+          embeddingProducer = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable embedding producer automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Embedding producer automaton. Consumes `document.chunked` events, emits `document.embedded` derived events keyed by a model-effect composite key.";
+          };
+
           tagApplier = mkOption {
             type = submodule {
               options = {
