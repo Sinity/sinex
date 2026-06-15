@@ -84,7 +84,7 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::Value as JsonValue;
+use serde_json::{Value as JsonValue, json};
 use tracing::{debug, info, warn};
 
 use sinex_primitives::events::Event;
@@ -99,11 +99,14 @@ use sinex_primitives::privacy::{
 use sinex_primitives::rpc::sources::SourceCaveat;
 use sinex_primitives::temporal::Timestamp;
 
+#[cfg(feature = "db")]
+use sinex_db::DbPoolExt;
+
 use crate::runtime::RuntimeResult;
 use crate::runtime::acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy,
 };
-use crate::runtime::parser::adapters::SqliteSnapshotLane;
+use crate::runtime::parser::adapters::{LatestSqliteSnapshotEvidence, SqliteSnapshotLane};
 use crate::runtime::parser::{
     BindingConfig, DriftEvent, InputShapeAdapter, InputShapeAdapterExt, MaterialParser,
     SourceRecord, SourceRecordFingerprint,
@@ -411,6 +414,11 @@ where
     /// `snapshot_task`; both are `Some` together or both are `None`.
     snapshot_shutdown: Option<tokio::sync::watch::Sender<bool>>,
 
+    /// Latest successful SQLite snapshot captured by the optional snapshot
+    /// lane. Row-stream materialization reads this to create `BACKED_BY`
+    /// evidence links from row materials to the strongest substrate material.
+    sqlite_snapshot_evidence: LatestSqliteSnapshotEvidence,
+
     /// NATS control listener that mirrors private-mode broadcasts into the
     /// configured local state directory for this adapter-backed source.
     private_mode_control_task: Option<tokio::task::JoinHandle<()>>,
@@ -461,6 +469,7 @@ where
             rotation_policy: RotationPolicy::default(),
             snapshot_task: None,
             snapshot_shutdown: None,
+            sqlite_snapshot_evidence: LatestSqliteSnapshotEvidence::default(),
             private_mode_control_task: None,
             poll_interval: Duration::from_secs(30),
             _phantom: PhantomData,
@@ -639,6 +648,71 @@ where
         })
     }
 
+    async fn link_latest_sqlite_snapshot_backing_material(
+        &self,
+        row_material_id: Id<SourceMaterial>,
+    ) {
+        let Some(snapshot) = self.sqlite_snapshot_evidence.latest() else {
+            return;
+        };
+
+        let row_material_uuid = row_material_id.to_uuid();
+        if row_material_uuid == snapshot.material_id {
+            return;
+        }
+
+        #[cfg(feature = "db")]
+        {
+            let Some(pool) = self.runtime.as_ref().and_then(|runtime| {
+                runtime
+                    .handles()
+                    .db_pool()
+                    .map(std::clone::Clone::clone)
+            }) else {
+                debug!(
+                    source = self.source_id,
+                    row_material_id = %row_material_uuid,
+                    snapshot_material_id = %snapshot.material_id,
+                    "SQLite snapshot evidence link skipped; runtime has no DB pool"
+                );
+                return;
+            };
+
+            let metadata = json!({
+                "evidence_role": "sqlite_snapshot",
+                "source_identifier": snapshot.source_identifier,
+                "source_path": snapshot.source_path,
+                "content_hash_blake3": snapshot.content_hash_blake3,
+                "size_bytes": snapshot.size_bytes,
+            });
+
+            match pool
+                .source_materials()
+                .link_backing_material(row_material_uuid, snapshot.material_id, metadata)
+                .await
+            {
+                Ok(_) => debug!(
+                    source = self.source_id,
+                    row_material_id = %row_material_uuid,
+                    snapshot_material_id = %snapshot.material_id,
+                    "linked SQLite row material to snapshot evidence"
+                ),
+                Err(error) => warn!(
+                    source = self.source_id,
+                    row_material_id = %row_material_uuid,
+                    snapshot_material_id = %snapshot.material_id,
+                    error = %error,
+                    "failed to link SQLite row material to snapshot evidence"
+                ),
+            }
+        }
+
+        #[cfg(not(feature = "db"))]
+        {
+            let _ = row_material_id;
+        }
+    }
+
     /// Open the adapter, drain all records through the parser, emit each
     /// `ParsedEventIntent` via the runtime, and append record bytes to the
     /// long-lived stream material.
@@ -787,6 +861,8 @@ where
             };
 
             let material_id = materialized.material_id;
+            self.link_latest_sqlite_snapshot_backing_material(material_id)
+                .await;
             if let Some(cursor) = next_cursor {
                 state.cursor = Some(cursor);
             }
@@ -994,7 +1070,8 @@ where
                     .expect("acquisition_manager set above"),
             );
             let (tx, rx) = tokio::sync::watch::channel(false);
-            let lane = SqliteSnapshotLane::new(spec, manager);
+            let lane = SqliteSnapshotLane::new(spec, manager)
+                .with_latest_evidence(self.sqlite_snapshot_evidence.clone());
             let unit_id = self.source_id;
             let handle = tokio::spawn(async move {
                 let result = lane.run(rx).await;
@@ -1405,6 +1482,8 @@ mod tests {
     };
     use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
     use sinex_primitives::{HostName, JsonValue, SinexError};
+    use sinex_db::repositories::source_material_relation_types;
+    use sinex_db::DbPoolExt;
     use std::collections::HashMap;
     use tokio::sync::mpsc;
     use xtask::sandbox::prelude::{TestContext, TestResult, WaitHelpers, sinex_test};
@@ -1672,6 +1751,53 @@ mod tests {
                 ServiceInfo::new(
                     "adapter-append-failure-test".to_string(),
                     "adapter-append-failure-test".to_string(),
+                    HostName::from_static("test-host"),
+                    work_dir_path,
+                    false,
+                    format!("instance-{}", Uuid::now_v7().simple()),
+                    env!("CARGO_PKG_VERSION").to_string(),
+                    None,
+                ),
+                handles,
+                HashMap::new(),
+                work_dir_utf8,
+            ),
+            event_receiver,
+        ))
+    }
+
+    async fn make_adapter_runtime_with_db(
+        ctx: &TestContext,
+    ) -> TestResult<(RuntimeContext, mpsc::Receiver<Event<JsonValue>>)> {
+        let kv = ctx.checkpoint_kv().await?;
+        let checkpoint_manager = Arc::new(CheckpointManager::new(
+            kv,
+            "adapter-snapshot-link-test".to_string(),
+            "test-group".to_string(),
+            format!("test-consumer-{}", Uuid::now_v7().simple()),
+        ));
+        let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+        let emitter = EventEmitter::new(event_sender, false);
+        let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+        let handles = RuntimeHandles::new(
+            ctx.pool().clone(),
+            checkpoint_manager,
+            emitter,
+            EventTransport::Nats(publisher),
+            None,
+            None,
+        );
+        let work_dir = tempfile::tempdir()?;
+        let work_dir_path = work_dir.keep();
+        let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
+            SinexError::validation("temporary work dir should be UTF-8")
+                .with_context("path", path.display().to_string())
+        })?;
+        Ok((
+            RuntimeContext::new(
+                ServiceInfo::new(
+                    "adapter-snapshot-link-test".to_string(),
+                    "adapter-snapshot-link-test".to_string(),
                     HostName::from_static("test-host"),
                     work_dir_path,
                     false,
@@ -2170,6 +2296,75 @@ mod tests {
         )
         .expect("intent conversion");
         assert_eq!(event.equivalence_key, None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn sqlite_snapshot_evidence_link_is_idempotent(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (runtime, _events) = make_adapter_runtime_with_db(&ctx).await?;
+        let row_material_id = Uuid::now_v7();
+        let snapshot_material_id = Uuid::now_v7();
+
+        ctx.pool()
+            .source_materials()
+            .register_external_in_flight(
+                row_material_id,
+                "stream",
+                Some("test://sqlite-row-stream"),
+                json!({"test": "row"}),
+                Timestamp::now(),
+            )
+            .await?;
+        ctx.pool()
+            .source_materials()
+            .register_external_in_flight(
+                snapshot_material_id,
+                "file",
+                Some("test://sqlite-snapshot"),
+                json!({"test": "snapshot"}),
+                Timestamp::now(),
+            )
+            .await?;
+
+        let mut source = AdapterBackedSource::<TestAdapter, EmittingParser>::new("test.sqlite");
+        source.runtime = Some(runtime);
+        source
+            .sqlite_snapshot_evidence
+            .update(crate::runtime::parser::adapters::SqliteSnapshotEvidence {
+                material_id: snapshot_material_id,
+                source_identifier: "test.sqlite.snapshot".to_string(),
+                source_path: "/tmp/test.sqlite".to_string(),
+                content_hash_blake3: "abc123".to_string(),
+                size_bytes: 123,
+            });
+
+        let row_material = Id::<SourceMaterial>::from_uuid(row_material_id);
+        source
+            .link_latest_sqlite_snapshot_backing_material(row_material)
+            .await;
+        source
+            .link_latest_sqlite_snapshot_backing_material(row_material)
+            .await;
+
+        let links = ctx
+            .pool()
+            .source_materials()
+            .links_from(row_material_id)
+            .await?;
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].to_material_id, snapshot_material_id);
+        assert_eq!(
+            links[0].relation_type,
+            source_material_relation_types::BACKED_BY
+        );
+        assert_eq!(links[0].metadata["evidence_role"], "sqlite_snapshot");
+        assert_eq!(
+            links[0].metadata["source_identifier"],
+            "test.sqlite.snapshot"
+        );
+        assert_eq!(links[0].metadata["content_hash_blake3"], "abc123");
+        assert_eq!(links[0].metadata["size_bytes"], 123);
         Ok(())
     }
 }

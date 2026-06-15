@@ -44,6 +44,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::time::Duration;
 
 use schemars::JsonSchema;
@@ -53,6 +54,7 @@ use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
 use sinex_primitives::SinexError;
+use sinex_primitives::Uuid;
 
 use crate::runtime::RuntimeResult;
 use crate::runtime::acquisition_manager::AcquisitionManager;
@@ -157,6 +159,64 @@ impl SnapshotLaneSpec {
     }
 }
 
+/// Latest successfully captured SQLite snapshot material for a source.
+///
+/// `AdapterBackedSource` owns one shared handle and gives a clone to the
+/// parallel snapshot lane. The lane updates it after material finalization;
+/// row-event materialization reads it to create `BACKED_BY` links from row
+/// stream materials to the strongest available substrate material.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqliteSnapshotEvidence {
+    pub material_id: Uuid,
+    pub source_identifier: String,
+    pub source_path: String,
+    pub content_hash_blake3: String,
+    pub size_bytes: usize,
+}
+
+#[derive(Debug, Default)]
+struct LatestSqliteSnapshotEvidenceInner {
+    latest: RwLock<Option<SqliteSnapshotEvidence>>,
+}
+
+/// Shared latest-snapshot state for the decoupled SQLite snapshot lane.
+#[derive(Debug, Clone, Default)]
+pub struct LatestSqliteSnapshotEvidence {
+    inner: Arc<LatestSqliteSnapshotEvidenceInner>,
+}
+
+impl LatestSqliteSnapshotEvidence {
+    /// Store the latest successful snapshot evidence.
+    pub fn update(&self, evidence: SqliteSnapshotEvidence) {
+        match self.inner.latest.write() {
+            Ok(mut latest) => {
+                *latest = Some(evidence);
+            }
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "latest SQLite snapshot evidence lock poisoned; dropping update"
+                );
+            }
+        }
+    }
+
+    /// Return the latest successful snapshot evidence, if any.
+    #[must_use]
+    pub fn latest(&self) -> Option<SqliteSnapshotEvidence> {
+        match self.inner.latest.read() {
+            Ok(latest) => latest.clone(),
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "latest SQLite snapshot evidence lock poisoned; treating as absent"
+                );
+                None
+            }
+        }
+    }
+}
+
 /// The running snapshot lane.
 ///
 /// Instantiated by [`AdapterBackedSource::initialize`] when the adapter
@@ -166,6 +226,7 @@ impl SnapshotLaneSpec {
 pub struct SqliteSnapshotLane {
     spec: SnapshotLaneSpec,
     acquisition_manager: Arc<AcquisitionManager>,
+    latest_evidence: Option<LatestSqliteSnapshotEvidence>,
     /// Hash of the most recent snapshot's content, if any.
     last_hash: Option<[u8; 32]>,
     /// Count of snapshots successfully published. Exposed for tests.
@@ -179,9 +240,17 @@ impl SqliteSnapshotLane {
         Self {
             spec,
             acquisition_manager,
+            latest_evidence: None,
             last_hash: None,
             snapshots_captured: 0,
         }
+    }
+
+    /// Publish successful snapshot material IDs to an adapter-side linker.
+    #[must_use]
+    pub fn with_latest_evidence(mut self, latest: LatestSqliteSnapshotEvidence) -> Self {
+        self.latest_evidence = Some(latest);
+        self
     }
 
     /// Number of snapshots successfully captured. Exposed for tests.
@@ -293,12 +362,22 @@ impl SqliteSnapshotLane {
             written = end;
         }
 
+        let material_id = handle.material_id;
         self.acquisition_manager
             .finalize(handle, "snapshot-lane-interval")
             .await?;
 
         self.last_hash = Some(hash);
         self.snapshots_captured += 1;
+        if let Some(latest) = &self.latest_evidence {
+            latest.update(SqliteSnapshotEvidence {
+                material_id,
+                source_identifier: self.spec.source_identifier.clone(),
+                source_path: self.spec.path.display().to_string(),
+                content_hash_blake3: hex_full(&hash),
+                size_bytes: bytes.len(),
+            });
+        }
         info!(
             path = %self.spec.path.display(),
             size_bytes = bytes.len(),
@@ -406,6 +485,37 @@ mod tests {
         assert_eq!(lane.snapshots_captured(), 0);
         lane.capture_once().await?;
         assert_eq!(lane.snapshots_captured(), 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn capture_once_publishes_latest_snapshot_evidence(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let work_dir = tempfile::tempdir()?;
+        let manager = make_acquisition_manager(work_dir.path(), ctx.nats_client(), "snap-latest");
+
+        let db = make_sqlite_db_with_payload("latest");
+        let spec = SnapshotLaneSpec {
+            path: db.path().to_path_buf(),
+            source_identifier: "test.atuin.snapshot".to_string(),
+            interval: Duration::from_hours(1),
+            dedup_by_content_hash: true,
+        };
+        let latest = LatestSqliteSnapshotEvidence::default();
+        let mut lane = SqliteSnapshotLane::new(spec, Arc::clone(&manager))
+            .with_latest_evidence(latest.clone());
+
+        assert!(latest.latest().is_none());
+        lane.capture_once().await?;
+
+        let evidence = latest
+            .latest()
+            .ok_or_else(|| SinexError::processing("missing latest snapshot evidence"))?;
+        assert_ne!(evidence.material_id, Uuid::nil());
+        assert_eq!(evidence.source_identifier, "test.atuin.snapshot");
+        assert_eq!(evidence.source_path, db.path().display().to_string());
+        assert_eq!(evidence.size_bytes, std::fs::metadata(db.path())?.len() as usize);
+        assert!(!evidence.content_hash_blake3.is_empty());
         Ok(())
     }
 
