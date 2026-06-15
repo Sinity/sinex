@@ -1,9 +1,14 @@
 //! NATS listener for parse commands dispatched by the gateway replay engine.
 //!
-//! The gateway's replay execution publishes `SourceParseCommand` to
-//! `sinex.control.sources.{source_id}.parse` for staged-source replay (#1060).
-//! This listener subscribes to that subject and dispatches to the appropriate
-//! parser capability via the provided dispatch function.
+//! The gateway's replay execution publishes `SourceParseCommand` to the
+//! environment-namespaced `{env}.sinex.control.sources.{source_id}.parse`
+//! subject (`env.nats_subject(ControlSubject::source_parse(..))`) for
+//! staged-source replay (#1060). This listener subscribes to that same
+//! namespaced subject and dispatches to the appropriate parser capability via
+//! the provided dispatch function. Binding the bare, un-namespaced subject
+//! silently misses every gateway request (the environment name defaults to
+//! `dev` and is never empty), which is the subscriber-timeout this listener
+//! exists to eliminate (#1780).
 
 use async_nats::Client;
 use futures::StreamExt;
@@ -52,7 +57,13 @@ pub async fn spawn_parse_listener(
     pool: PgPool,
     content_store: Arc<ContentStoreManager>,
 ) -> Result<tokio::task::JoinHandle<()>, async_nats::SubscribeError> {
-    let subject = ControlSubject::source_parse(source_id);
+    // Subscribe on the environment-namespaced control subject so the gateway
+    // replay engine — which publishes to
+    // `env.nats_subject(ControlSubject::source_parse(..))` — actually reaches
+    // this listener. The scan control path namespaces on both ends; parse must
+    // match it or every gateway parse-replay request times out (#1780).
+    let subject = sinex_primitives::environment::environment()
+        .nats_subject(&ControlSubject::source_parse(source_id));
     let mut subscription = client.subscribe(subject.clone()).await?;
 
     let source_id = source_id.to_string();
