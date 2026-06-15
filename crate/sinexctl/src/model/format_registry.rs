@@ -232,6 +232,12 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML_DOT)
             .with_note("dot format is equivalent to json for query results"),
     );
+    m.insert(
+        "relations",
+        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
+            "ndjson emits one supporting EvidenceRef per line (envelope metadata omitted)",
+        ),
+    );
 
     // ── Trace ────────────────────────────────────────────────────────────────
     m.insert(
@@ -789,8 +795,8 @@ fn family_for_path(path: &str) -> CommandFamily {
     let root = path.split_once(' ').map_or(path, |(root, _)| root);
     match root {
         "gateway" | "core" => CommandFamily::Gateway,
-        "query" | "trace" | "recent" | "errors" | "watch" | "context" | "explain" | "verify"
-        | "now" | "modules" | "status" => CommandFamily::Query,
+        "query" | "relations" | "trace" | "recent" | "errors" | "watch" | "context" | "explain"
+        | "verify" | "now" | "modules" | "status" => CommandFamily::Query,
         "automata" | "replay" | "dlq" | "ops" | "audit" | "lifecycle" | "privacy" | "blob" => {
             CommandFamily::Operate
         }
@@ -997,6 +1003,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "dlq purge" => &[methods::DLQ_PURGE],
         "query" | "recent" | "errors" | "context" | "report today" | "report yesterday"
         | "report calendar" | "timeline" => &[methods::EVENTS_QUERY],
+        "relations" => &[methods::EVENTS_RELATION_EVIDENCE],
         "verify baseline" => &[],
         "trace" | "explain" => &[methods::EVENTS_LINEAGE],
         "watch" => &[],
@@ -1385,6 +1392,7 @@ mod tests {
         };
 
         assert_eq!(effect_for("query"), Some(CommandEffect::ReadOnly));
+        assert_eq!(effect_for("relations"), Some(CommandEffect::ReadOnly));
         assert_eq!(effect_for("watch"), Some(CommandEffect::Streaming));
         assert_eq!(effect_for("completions"), Some(CommandEffect::Local));
         assert_eq!(effect_for("dlq requeue"), Some(CommandEffect::Mutating));

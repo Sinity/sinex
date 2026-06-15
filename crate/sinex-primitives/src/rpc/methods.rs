@@ -24,6 +24,7 @@ pub const PRIVACY_POLICY_FIELD_UNBIND: &str = "privacy.policy.field.unbind";
 pub const EVENTS_QUERY: &str = "events.query";
 pub const EVENTS_CARDS: &str = "events.cards";
 pub const EVENTS_LINEAGE: &str = "events.lineage";
+pub const EVENTS_RELATION_EVIDENCE: &str = "events.relation_evidence";
 
 // Curation
 pub const CURATION_PROPOSALS_LIST: &str = "curation.proposals.list";

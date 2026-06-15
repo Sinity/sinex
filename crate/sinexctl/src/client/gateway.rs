@@ -36,8 +36,9 @@ use sinex_primitives::rpc::{
         DocumentsSearchRequest, DocumentsSearchResponse,
     },
     events::{
-        EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD, EventsAnnotateRequest,
-        EventsAnnotateResponse,
+        EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD,
+        EVENTS_RELATION_EVIDENCE_METHOD, EventsAnnotateRequest, EventsAnnotateResponse,
+        EventsRelationEvidenceRequest,
     },
     health::{
         HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD, HealthEffectRecordRequest,
@@ -192,6 +193,8 @@ use sinex_primitives::RuntimeTargetGatewayTokenRole;
 use sinex_primitives::query::{
     EventQuery, EventQueryResult, LineageQuery, LineageResult, SubscriptionFilter,
 };
+use sinex_primitives::relations::EvidenceWindow;
+use sinex_primitives::views::ViewEnvelope;
 
 /// Gateway RPC client
 #[derive(Clone)]
@@ -960,6 +963,15 @@ impl GatewayClient {
     /// Trace provenance lineage for an event
     pub async fn trace_lineage(&self, query: LineageQuery) -> Result<LineageResult> {
         self.call_typed(EVENTS_LINEAGE_METHOD, &query).await
+    }
+
+    /// Evaluate a relation expression over live events.
+    pub async fn relation_evidence(
+        &self,
+        request: EventsRelationEvidenceRequest,
+    ) -> Result<ViewEnvelope<EvidenceWindow>> {
+        self.call_typed(EVENTS_RELATION_EVIDENCE_METHOD, &request)
+            .await
     }
 
     /// Record an annotation against an event.
