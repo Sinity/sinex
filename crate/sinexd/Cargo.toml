@@ -77,6 +77,10 @@ name = "pipeline_resilience_test"
 path = "tests/event_engine/pipeline_resilience_test.rs"
 
 [[test]]
+name = "jetstream_idempotency_property_test"
+path = "tests/event_engine/jetstream_idempotency_property_test.rs"
+
+[[test]]
 name = "browser_history_parser_test"
 path = "tests/sources/browser_history_parser_test.rs"
 
