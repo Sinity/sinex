@@ -96,6 +96,11 @@ pub(crate) struct RegistrationAttrs {
     /// Optional Rust adapter type path used only for `register_source!`
     /// factory wiring. The binding keeps `adapter` as deployment metadata.
     pub factory_adapter: Option<TokenStream>,
+    /// Optional Rust parser type path used only for `register_source!` factory
+    /// wiring. Most `SourceMeta` derives are placed on the parser type itself;
+    /// this override covers sources whose metadata marker lives separately
+    /// from the production parser implementation.
+    pub factory_parser: Option<TokenStream>,
     /// Optional SourceDriver type path for sources whose parser dispatch and
     /// runtime lifecycle are separate registrations.
     pub driver_factory: Option<TokenStream>,
@@ -324,6 +329,10 @@ pub(crate) fn generate_factory_registration(
     attrs: &RegistrationAttrs,
 ) -> syn::Result<TokenStream> {
     let id = &attrs.id;
+    let parser_path = attrs
+        .factory_parser
+        .clone()
+        .unwrap_or_else(|| quote!(#parser_name));
 
     // Monitor-emit form: the adapter fires an emit fn at a lifecycle phase
     // rather than running a parser, so there is no parser to wire. Emits
@@ -352,7 +361,7 @@ pub(crate) fn generate_factory_registration(
         quote! {
             crate::register_source!(
                 source_id: #id,
-                parser: #parser_name,
+                parser: #parser_path,
             );
         }
     } else {
@@ -366,7 +375,7 @@ pub(crate) fn generate_factory_registration(
             crate::register_source!(
                 source_id: #id,
                 adapter: #adapter_path,
-                parser: #parser_name,
+                parser: #parser_path,
             );
         }
     };

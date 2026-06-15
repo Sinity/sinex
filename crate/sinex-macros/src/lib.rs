@@ -233,6 +233,9 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 /// Sources whose deployment metadata adapter string differs from the Rust
 /// adapter type used by `register_source!` can set
 /// `factory_adapter = SomeAdapterAlias`.
+/// Sources whose registration metadata lives on a marker struct can set
+/// `factory_parser = SomeParserType` to wire the factory to a different
+/// hand-written parser type.
 /// Sources whose runtime lifecycle uses a separate `SourceDriver` can also set
 /// `driver = SomeDriverType`.
 ///
@@ -255,7 +258,7 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 /// (`ProcessingContext::*`), `resource_profile` (`ResourceProfile::*`),
 /// `runner_pack` (`RunnerPack::*`), `checkpoint_family`, `runtime_shape`, and
 /// `proposed = true`. `factory_adapter` is also written as a Rust type path.
-/// `driver` is written as a Rust type path.
+/// `factory_parser` and `driver` are written as Rust type paths.
 ///
 /// Unlike `SourceDefinition` there are no parser-spec keys (`input_shape`,
 /// `default_privacy_context`, `version`, `baseline_adapter_config`) — those
