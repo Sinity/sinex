@@ -177,4 +177,34 @@ mod tests {
         assert!(!output.contains(":TYPE:_default"));
         Ok(())
     }
+
+    #[sinex_test]
+    async fn completion_dynamic_vocab_omits_sensitive_fixture_material() -> TestResult<()> {
+        let forbidden = [
+            "secret_fixture_value",
+            "TOKEN=secret",
+            "/home/sinity/private",
+            "AWS_SECRET_ACCESS_KEY",
+            "OPENAI_API_KEY",
+        ];
+        let sources = completion_sources().join("\n");
+        let event_types = completion_event_types().join("\n");
+        let zsh = postprocess_zsh(":SOURCE:_default :EVENT_TYPE:_default :TYPE:_default");
+
+        for sample in forbidden {
+            assert!(
+                !sources.contains(sample),
+                "completion source vocabulary leaked sensitive fixture material: {sample}"
+            );
+            assert!(
+                !event_types.contains(sample),
+                "completion event-type vocabulary leaked sensitive fixture material: {sample}"
+            );
+            assert!(
+                !zsh.contains(sample),
+                "zsh completion script leaked sensitive fixture material: {sample}"
+            );
+        }
+        Ok(())
+    }
 }
