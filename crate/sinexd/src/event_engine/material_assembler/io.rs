@@ -37,6 +37,7 @@ use uuid::Uuid;
 struct SliceStagingIoHook {
     entered: tokio::sync::Notify,
     release: tokio::sync::Notify,
+    pause_next: std::sync::atomic::AtomicBool,
 }
 
 #[cfg(test)]
@@ -923,6 +924,7 @@ pub(super) async fn sync_staged_file_for_finalization(
 
 /// Remove the persisted state directory for a material
 pub(super) async fn cleanup_state(assembler: &MaterialAssembler, material_id: Uuid) {
+    let _ = assembler.slice_io_locks.remove(&material_id);
     let path = assembler.state_root.join(material_id.to_string());
     cleanup_state_path(&path).await;
 }
@@ -1219,6 +1221,8 @@ pub(super) async fn handle_slice(
             temp_path,
             staged_sync,
         } => {
+            let slice_io_lock = assembler.slice_io_lock(material_id);
+            let _slice_io_guard = slice_io_lock.lock().await;
             notify_slice_staging_io_for_tests().await;
             stage_slice_file(material_id, &temp_path, &pending_write, &data, staged_sync).await?;
             let mut state = state_handle.lock().await;
@@ -1234,6 +1238,20 @@ pub(super) async fn handle_slice(
             flush_buffered_slices(assembler, &mut state, material_id).await?;
         }
         DeferredSliceIo::BufferOutOfOrder { buffer_path, data } => {
+            let slice_io_lock = assembler.slice_io_lock(material_id);
+            let _slice_io_guard = slice_io_lock.lock().await;
+            {
+                let state = state_handle.lock().await;
+                if state.buffered_slices.contains_key(&offset) {
+                    debug!(
+                        material_id = %material_id,
+                        offset,
+                        expected = state.expected_offset,
+                        "Ignoring duplicate buffered slice after I/O lock wait"
+                    );
+                    return Ok(());
+                }
+            }
             persist_buffered_slice_to_path(&buffer_path, offset, &data).await?;
             let mut state = state_handle.lock().await;
             if state.buffered_slices.contains_key(&offset) {
@@ -1467,6 +1485,32 @@ async fn commit_pending_slice_write(
     staged_synced_after_write: bool,
 ) -> EventEngineResult<()> {
     let expected_size_after_write = checked_pending_write_end(material_id, pending_write)?;
+    match state.pending_write.as_ref() {
+        Some(current)
+            if current.offset == pending_write.offset
+                && current.len == pending_write.len
+                && current.slice_count_delta == pending_write.slice_count_delta => {}
+        None if state.expected_offset >= expected_size_after_write => {
+            debug!(
+                material_id = %material_id,
+                offset = pending_write.offset,
+                len = pending_write.len,
+                expected_offset = state.expected_offset,
+                "Ignoring duplicate slice whose pending write was already committed"
+            );
+            return Ok(());
+        }
+        other => {
+            return Err(SinexError::invalid_state(
+                "pending_write changed before slice commit",
+            )
+            .with_context("material_id", material_id.to_string())
+            .with_context("pending_offset", pending_write.offset.to_string())
+            .with_context("pending_len", pending_write.len.to_string())
+            .with_context("state_pending_write", format!("{other:?}"))
+            .with_context("state_expected_offset", state.expected_offset.to_string()));
+        }
+    }
 
     state.staged_bytes_since_sync = state
         .staged_bytes_since_sync
@@ -1594,8 +1638,10 @@ async fn notify_slice_staging_io_for_tests() {
         .ok()
         .and_then(|guard| guard.clone());
     if let Some(hook) = hook {
-        hook.entered.notify_waiters();
-        hook.release.notified().await;
+        if hook.pause_next.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            hook.entered.notify_waiters();
+            hook.release.notified().await;
+        }
     }
 }
 
@@ -1747,6 +1793,7 @@ mod tests {
         let hook = Arc::new(SliceStagingIoHook {
             entered: tokio::sync::Notify::new(),
             release: tokio::sync::Notify::new(),
+            pause_next: std::sync::atomic::AtomicBool::new(true),
         });
         {
             let mut slot = SLICE_STAGING_IO_HOOK
@@ -1782,6 +1829,69 @@ mod tests {
         let state = state_handle.lock().await;
         assert_eq!(state.expected_offset, 5);
         assert!(state.pending_write.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn handle_slice_serializes_duplicate_staging_io(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let mut state = assembler.create_placeholder_state(material_id).await?;
+        state.phase = AssemblyPhase::Accumulating;
+        let temp_path = state.temp_path.clone();
+        let state_handle = assembler.insert_state_handle(material_id, state);
+        let assembler = Arc::new(assembler);
+
+        let hook = Arc::new(SliceStagingIoHook {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+            pause_next: std::sync::atomic::AtomicBool::new(true),
+        });
+        {
+            let mut slot = SLICE_STAGING_IO_HOOK
+                .lock()
+                .map_err(|_| SinexError::invalid_state("slice staging hook mutex poisoned"))?;
+            *slot = Some(hook.clone());
+        }
+
+        let first_entered = hook.entered.notified();
+        let first_assembler = assembler.clone();
+        let first = tokio::spawn(async move {
+            handle_slice(&first_assembler, material_id, 0, b"first".to_vec()).await
+        });
+        timeout(Duration::from_secs(Timeouts::SHORT), first_entered).await?;
+
+        let second_assembler = assembler.clone();
+        let second = tokio::spawn(async move {
+            handle_slice(&second_assembler, material_id, 0, b"first".to_vec()).await
+        });
+        tokio::task::yield_now().await;
+        {
+            let guard = state_handle
+                .try_lock()
+                .expect("state mutex should stay free while duplicate waits on I/O lock");
+            assert_eq!(guard.expected_offset, 0);
+            assert!(guard.pending_write.is_some());
+        }
+
+        hook.release.notify_waiters();
+        first.await??;
+        second.await??;
+        {
+            let mut slot = SLICE_STAGING_IO_HOOK
+                .lock()
+                .map_err(|_| SinexError::invalid_state("slice staging hook mutex poisoned"))?;
+            *slot = None;
+        }
+
+        let state = state_handle.lock().await;
+        assert_eq!(state.expected_offset, 5);
+        assert_eq!(state.slice_count, 1);
+        assert!(state.pending_write.is_none());
+        drop(state);
+        let bytes = fs::read(&temp_path).await?;
+        assert_eq!(bytes, b"first");
         Ok(())
     }
 
