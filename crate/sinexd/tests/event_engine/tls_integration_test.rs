@@ -15,6 +15,10 @@ use xtask::sandbox::{
     timing::{Timeouts, WaitHelpers},
 };
 
+#[path = "support.rs"]
+mod support;
+use support::admission_envelope;
+
 /// Helper to publish a test event directly to `JetStream`.
 ///
 /// The caller must pre-register `material_id` in the database before calling this
@@ -51,7 +55,10 @@ async fn publish_test_event(
         ),
     );
     nats_client
-        .publish(subject, serde_json::to_vec(&event)?.into())
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope(source, event))?.into(),
+        )
         .await?;
     nats_client.flush().await?;
 
