@@ -78,12 +78,12 @@ use sinex_primitives::rpc::{
         PrivacyPolicyDictionaryAddRequest, PrivacyPolicyFieldBindRequest,
         PrivacyPolicyFieldBindResponse, PrivacyPolicyFieldUnbindRequest,
         PrivacyPolicyFieldUnbindResponse, PrivacyPolicyListRequest, PrivacyPolicyListResponse,
-        PrivacyPolicyMutationResponse, PrivacyPolicyRuleAddRequest,
-        PrivacyPolicyRuleRemoveRequest, PrivacyPolicyRuleRemoveResponse,
-        PrivacyPolicyRuleSetEnabledRequest, PrivacyPolicyRuleSetEnabledResponse,
-        PrivacyPolicyScopeBindRequest, PrivacyPolicySeedBuiltinRequest,
-        PrivacyPolicySeedBuiltinResponse, PrivateModeDisableRequest, PrivateModeEnableRequest,
-        PrivateModeStateResponse, PrivateModeStatusRequest,
+        PrivacyPolicyMutationResponse, PrivacyPolicyRuleAddRequest, PrivacyPolicyRuleRemoveRequest,
+        PrivacyPolicyRuleRemoveResponse, PrivacyPolicyRuleSetEnabledRequest,
+        PrivacyPolicyRuleSetEnabledResponse, PrivacyPolicyScopeBindRequest,
+        PrivacyPolicySeedBuiltinRequest, PrivacyPolicySeedBuiltinResponse,
+        PrivateModeDisableRequest, PrivateModeEnableRequest, PrivateModeStateResponse,
+        PrivateModeStatusRequest,
     },
     replay::{
         REPLAY_APPROVE_OPERATION_METHOD, REPLAY_CANCEL_OPERATION_METHOD,
@@ -123,7 +123,10 @@ use sinex_primitives::rpc::{
         SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
     },
     shadow::{SHADOW_LIST_METHOD, ShadowListRequest, ShadowListResponse},
-    source_status::{SOURCES_STATUS_METHOD, SourcesStatusRequest, SourcesStatusResponse},
+    source_status::{
+        SOURCES_STATUS_METHOD, SOURCES_STATUS_VIEW_METHOD, SourcesStatusRequest,
+        SourcesStatusResponse, SourcesStatusViewRequest,
+    },
     sources::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_LIST_METHOD,
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
@@ -194,7 +197,7 @@ use sinex_primitives::query::{
     EventQuery, EventQueryResult, LineageQuery, LineageResult, SubscriptionFilter,
 };
 use sinex_primitives::relations::EvidenceWindow;
-use sinex_primitives::views::ViewEnvelope;
+use sinex_primitives::views::{SourceCoverageListView, ViewEnvelope};
 
 /// Gateway RPC client
 #[derive(Clone)]
@@ -626,6 +629,12 @@ impl GatewayClient {
             recent_window_secs,
         };
         self.call_typed(SOURCES_STATUS_METHOD, &req).await
+    }
+
+    /// List source coverage/readiness status as the operator ViewEnvelope surface.
+    pub async fn sources_status_view(&self) -> Result<ViewEnvelope<SourceCoverageListView>> {
+        self.call_typed(SOURCES_STATUS_VIEW_METHOD, &SourcesStatusViewRequest {})
+            .await
     }
 
     /// List all modules, optionally filtered by role.
