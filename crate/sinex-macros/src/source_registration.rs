@@ -72,6 +72,9 @@ pub(crate) struct RegistrationAttrs {
     /// `None` => generator supplies the default path.
     pub runtime_shape: Option<TokenStream>,
     pub capabilities: Vec<String>,
+    /// Mark the runtime binding as future-state metadata rather than a live
+    /// deployment binding.
+    pub proposed: bool,
 
     // Monitor-emit factory form. A monitor source's adapter (e.g. MonitorDriver)
     // fires an emit fn at a lifecycle phase instead of running a `MaterialParser`
@@ -216,6 +219,7 @@ pub(crate) fn generate_source_runtime_binding(
         let caps = attrs.capabilities.iter();
         quote!(.capabilities(&[ #(#caps),* ]))
     };
+    let proposed = attrs.proposed;
 
     Ok(quote! {
         ::sinex_primitives::source_contracts::__register::inventory::submit! {
@@ -235,6 +239,7 @@ pub(crate) fn generate_source_runtime_binding(
             .checkpoint_family(#checkpoint_family)
             .runtime_shape(#runtime_shape)
             .build_impact(::sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
+            .proposed(#proposed)
             .build()
         }
     })

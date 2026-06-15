@@ -140,6 +140,11 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                     out.access_scope = Some(parse_enum_expr_attr(&meta)?);
                     return Ok(());
                 }
+                "proposed" => {
+                    let value: syn::LitBool = meta.value()?.parse()?;
+                    out.proposed = value.value;
+                    return Ok(());
+                }
                 _ => {}
             }
             let s: syn::LitStr = meta.value()?.parse()?;
