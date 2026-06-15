@@ -5,6 +5,7 @@
 extern crate self as sinex_primitives;
 
 pub mod activity;
+pub mod authority;
 pub mod constants;
 #[cfg(feature = "nats")]
 pub mod coordination;
@@ -136,5 +137,8 @@ pub use units::{Bytes, Seconds};
 pub use validation::{
     sanitize_filename_component, validate_json, validate_json_value, validate_path,
     validate_path_within_root,
+};
+pub use authority::{
+    DuplicateCandidatePayload, FinalizerRegistration, Judgment, JudgmentVerdict, ProposalKind,
 };
 pub use views::*;
