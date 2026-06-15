@@ -116,6 +116,10 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                     out.factory_adapter = Some(parse_enum_path_attr(&meta)?);
                     return Ok(());
                 }
+                "driver" => {
+                    out.driver_factory = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
                 "checkpoint_family" => {
                     out.checkpoint_family = Some(parse_enum_expr_attr(&meta)?);
                     return Ok(());
@@ -167,11 +171,18 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                 "implementation" => out.implementation = Some(v),
                 "capabilities" => out.capabilities = split_csv(&v),
                 "factory" => match v.as_str() {
-                    "adapter_parser" => out.register_factory = true,
+                    "adapter_parser" => {
+                        out.register_factory = true;
+                        out.parser_only_factory = false;
+                    }
+                    "parser" => {
+                        out.register_factory = true;
+                        out.parser_only_factory = true;
+                    }
                     "none" => out.register_factory = false,
                     other => {
                         return Err(meta.error(format!(
-                            "unknown source_meta factory mode '{other}' (expected: adapter_parser, none)"
+                            "unknown source_meta factory mode '{other}' (expected: adapter_parser, parser, none)"
                         )));
                     }
                 },
