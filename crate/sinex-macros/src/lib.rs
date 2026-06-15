@@ -129,6 +129,8 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
         default,
         event_dispatch,
         carry_across_records,
+        transform,
+        validate,
     )
 )]
 pub fn derive_source_record(input: TokenStream) -> TokenStream {
@@ -143,7 +145,8 @@ pub fn derive_source_record(input: TokenStream) -> TokenStream {
 /// into a single annotated struct. Site 4 reuses the exact declarative-parser
 /// code path of [`macro@SourceRecord`]; the field attributes
 /// (`#[source(...)]`, `#[privacy(...)]`, `#[timestamp(...)]`,
-/// `#[occurrence_key]`, `#[event_dispatch(...)]`) are identical.
+/// `#[occurrence_key]`, `#[event_dispatch(...)]`, `#[transform(...)]`,
+/// `#[validate(...)]`) are identical.
 ///
 /// # Struct attribute
 ///
@@ -183,6 +186,8 @@ pub fn derive_source_record(input: TokenStream) -> TokenStream {
         default,
         event_dispatch,
         carry_across_records,
+        transform,
+        validate,
     )
 )]
 pub fn derive_source_definition(input: TokenStream) -> TokenStream {
