@@ -1,83 +1,62 @@
 //! Media capture source contracts — audio transcription + screen OCR (#1043).
 
+use sinex_macros::SourceMeta;
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
-    SourceRuntimeBinding, SubjectRef,
+    RetentionPolicy, RunnerPack, RuntimeShape,
 };
-use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
-// register_source_contract!: escape-hatch pending #1761 (proposed stub sources
-// with proposed(true) builder flag not yet in SourceMeta/SourceDefinition DSL;
-// two contracts per file).
+// Proposed metadata-only sources: the contracts and runtime bindings document
+// planned source surfaces, but no parser/source factories are registered until
+// the corresponding runtime exists.
 
 // ── audio.transcription ────────────────────────────────────────────────
 
-register_source_contract! {
-    SourceContract {
-        id: "media.audio",
-        namespace: "media",
-        event_types: &[("media.audio", "media.audio.transcription")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Continuous],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(device_id, audio_chunk_hash)"),
-        access_scope: AccessScope::StagedExport,
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:media.audio"),
-        "media.audio",
-        "media",
-    )
-    .implementation("proposed")
-    .adapter("AppendOnlyFileAdapter")
-    .output_event_type("media.audio.transcription")
-    .privacy_context(ProcessingContext::Document)
-    .resource_profile(ResourceProfile::LiveWatcher)
-    .source_id("media.audio")
-    .runner_pack(RunnerPack::Staged)
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::Continuous)
-    .build_impact(SourceBuildImpact::ZERO)
-    .proposed(true)
-    .build()
-}
+#[derive(SourceMeta)]
+#[source_meta(
+    id = "media.audio",
+    namespace = "media",
+    event_type = "media.audio.transcription",
+    event_source = "media.audio",
+    adapter = "AppendOnlyFileAdapter",
+    implementation = "proposed",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Continuous),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(device_id, audio_chunk_hash)"),
+    access_scope = AccessScope::StagedExport,
+    privacy_context = ProcessingContext::Document,
+    resource_profile = ResourceProfile::LiveWatcher,
+    runner_pack = RunnerPack::Staged,
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::Continuous,
+    proposed = true,
+    factory = "none"
+)]
+pub struct MediaAudioProposal;
 
 // ── media.screen ────────────────────────────────────────────────────────
 
-register_source_contract! {
-    SourceContract {
-        id: "media.screen",
-        namespace: "media",
-        event_types: &[("media.screen", "media.screen.ocr")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Continuous],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(display_id, capture_hash)"),
-        access_scope: AccessScope::StagedExport,
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:media.screen"),
-        "media.screen",
-        "media",
-    )
-    .implementation("proposed")
-    .adapter("AppendOnlyFileAdapter")
-    .output_event_type("media.screen.ocr")
-    .privacy_context(ProcessingContext::Document)
-    .resource_profile(ResourceProfile::LiveWatcher)
-    .source_id("media.screen")
-    .runner_pack(RunnerPack::Staged)
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::Continuous)
-    .build_impact(SourceBuildImpact::ZERO)
-    .proposed(true)
-    .build()
-}
+#[derive(SourceMeta)]
+#[source_meta(
+    id = "media.screen",
+    namespace = "media",
+    event_type = "media.screen.ocr",
+    event_source = "media.screen",
+    adapter = "AppendOnlyFileAdapter",
+    implementation = "proposed",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Continuous),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(display_id, capture_hash)"),
+    access_scope = AccessScope::StagedExport,
+    privacy_context = ProcessingContext::Document,
+    resource_profile = ResourceProfile::LiveWatcher,
+    runner_pack = RunnerPack::Staged,
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::Continuous,
+    proposed = true,
+    factory = "none"
+)]
+pub struct MediaScreenProposal;

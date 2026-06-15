@@ -219,6 +219,7 @@ impl SourceDefinitionAttrs {
             checkpoint_family: self.checkpoint_family.clone(),
             runtime_shape: self.runtime_shape.clone(),
             capabilities: self.capabilities.clone(),
+            proposed: false,
             // SourceDefinition is the declarative adapter+parser form; it never
             // uses the monitor-emit factory shape.
             monitor_emit_fn: None,
