@@ -350,16 +350,16 @@ async fn polylogue_external_producer_metadata_fixture_admits(ctx: TestContext) -
             assert_eq!(admitted.event.source.as_str(), "integration.polylogue");
             assert_eq!(
                 admitted.event.event_type.as_str(),
-                "integration.polylogue.conversation_indexed"
+                "integration.polylogue.session_indexed"
             );
             assert_eq!(
                 admitted.event.payload["raw_text_included"],
                 serde_json::Value::Null
             );
             assert_eq!(admitted.event.payload["message_count"], 42);
-            assert_eq!(admitted.event.payload["provider"], "claude_code");
+            assert_eq!(admitted.event.payload["origin"], "claude_code");
             assert_eq!(
-                admitted.event.payload["conversation_id"],
+                admitted.event.payload["session_id"],
                 "claude-code:session-018f"
             );
         }
