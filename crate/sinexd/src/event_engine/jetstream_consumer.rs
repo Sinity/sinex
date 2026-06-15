@@ -335,12 +335,33 @@ enum SourceMaterialSettlement {
     RoutedToDlq,
 }
 
+/// Extract the failed event's id from a raw-ingress payload.
+///
+/// Durable ingress carries an [`EventIntent`] envelope (#1149) whose events live
+/// under `events[]`, so the id is `events[0].id`; legacy/escape-hatch flat events
+/// carry a top-level `id`. DLQ dedupe identity and the `Event-Id` header derive
+/// from this, so both formats must resolve.
+fn dlq_event_id(payload: &JsonValue) -> Option<String> {
+    payload
+        .get("id")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            payload
+                .get("events")
+                .and_then(|events| events.as_array())
+                .and_then(|events| events.first())
+                .and_then(|event| event.get("id"))
+                .and_then(|value| value.as_str())
+        })
+        .map(str::to_owned)
+}
+
 fn dlq_publish_msg_id(
     msg: &jetstream::Message,
     original_nats_msg_id: Option<&str>,
     original_payload: &JsonValue,
 ) -> String {
-    if let Some(event_id) = original_payload.get("id").and_then(|value| value.as_str()) {
+    if let Some(event_id) = dlq_event_id(original_payload) {
         return format!("dlq.{event_id}");
     }
 
@@ -2669,10 +2690,7 @@ impl JetStreamConsumer {
 
         let dlq_publish_msg_id =
             dlq_publish_msg_id(msg, original_nats_msg_id.as_deref(), &original_payload);
-        let original_event_id = original_payload
-            .get("id")
-            .and_then(|value| value.as_str())
-            .map(str::to_owned);
+        let original_event_id = dlq_event_id(&original_payload);
 
         let dlq_entry = DlqEntry {
             nats_msg_id: original_nats_msg_id,
@@ -2852,6 +2870,31 @@ mod tests {
     // Inline because the behavior under test is a private validation-mapping helper.
     use super::*;
     use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn dlq_event_id_reads_envelope_and_flat_payloads() -> TestResult<()> {
+        // EventIntent envelope (#1149) — durable ingress: id is events[0].id.
+        let envelope = serde_json::json!({
+            "envelope_version": "1",
+            "source_id": "s", "parser_id": "p", "parser_version": "1.0.0",
+            "events": [ { "id": "ev-1", "source": "s", "event_type": "t" } ],
+            "admitted_at": "2026-01-01T00:00:00Z", "admitted_by": "h",
+        });
+        assert_eq!(dlq_event_id(&envelope).as_deref(), Some("ev-1"));
+
+        // Legacy / escape-hatch flat event — top-level id.
+        let flat = serde_json::json!({ "id": "ev-2", "source": "s", "event_type": "t" });
+        assert_eq!(dlq_event_id(&flat).as_deref(), Some("ev-2"));
+
+        // Top-level id wins when both are present.
+        let both = serde_json::json!({ "id": "top", "events": [ { "id": "nested" } ] });
+        assert_eq!(dlq_event_id(&both).as_deref(), Some("top"));
+
+        // Neither present → None (DLQ falls back to msg-id / payload-hash dedupe).
+        let neither = serde_json::json!({ "events": [] });
+        assert_eq!(dlq_event_id(&neither), None);
+        Ok(())
+    }
 
     #[sinex_test]
     async fn schema_not_found_is_accepted_leniently() -> TestResult<()> {
