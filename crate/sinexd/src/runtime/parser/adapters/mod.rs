@@ -60,7 +60,11 @@ pub use directory_walk::{
 };
 pub use sqlite_row::{SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor};
 #[cfg(feature = "messaging")]
-pub use sqlite_snapshot::{SnapshotLaneSpec, SqliteSnapshotConfig, SqliteSnapshotLane};
+pub use sqlite_snapshot::{
+    LatestSqliteSnapshotEvidence, SnapshotLaneSpec, SqliteSnapshotConfig, SqliteSnapshotLane,
+};
+#[cfg(all(feature = "messaging", test))]
+pub use sqlite_snapshot::SqliteSnapshotEvidence;
 pub use static_file::{StaticFileAdapter, StaticFileConfig, StaticFileCursor};
 
 // New adapters.
