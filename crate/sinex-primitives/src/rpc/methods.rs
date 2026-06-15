@@ -94,6 +94,7 @@ pub const AUTOMATA_STATUS: &str = "automata.status";
 
 // SourceStatus
 pub const SOURCES_STATUS: &str = "sources.status";
+pub const SOURCES_STATUS_VIEW: &str = "sources.status.view";
 
 // Instructions
 pub const INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH: &str = "instructions.hyprland.workspace_switch";

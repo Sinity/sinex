@@ -153,8 +153,9 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     // ── RuntimeModule ─────────────────────────────────────────────────────────────────
     m.insert(
         "runtime list",
-        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML)
-            .with_note("ndjson emits one RuntimeModule object per line (envelope metadata omitted)"),
+        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
+            "ndjson emits one RuntimeModule object per line (envelope metadata omitted)",
+        ),
     );
     m.insert(
         "runtime status",
@@ -162,7 +163,9 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert(
         "sources status",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
+        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
+            "ndjson emits one SourceCoverageView object per line (envelope metadata omitted)",
+        ),
     );
     m.insert(
         "runtime drain",
@@ -639,8 +642,9 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert("status", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "recent",
-        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML)
-            .with_note("ndjson emits one EventCardView object per line (envelope metadata omitted)"),
+        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
+            "ndjson emits one EventCardView object per line (envelope metadata omitted)",
+        ),
     );
     m.insert("errors", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
@@ -984,7 +988,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::EVENTS_QUERY,
         ],
         "runtime status" => &[methods::COORDINATION_INSTANCE_HEALTH],
-        "sources status" => &[methods::SOURCES_STATUS],
+        "sources status" => &[methods::SOURCES_STATUS_VIEW],
         "runtime drain" => &[methods::RUNTIME_DRAIN],
         "runtime resume" => &[methods::RUNTIME_RESUME],
         "runtime set-horizon" => &[methods::RUNTIME_SET_HORIZON],

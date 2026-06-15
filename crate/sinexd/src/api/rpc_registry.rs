@@ -72,7 +72,7 @@ use sinex_primitives::rpc::{
         SEMANTIC_LANES_SET_STATUS_METHOD,
     },
     shadow::{SHADOW_CREATE_METHOD, SHADOW_DELETE_METHOD, SHADOW_LIST_METHOD},
-    source_status::SOURCES_STATUS_METHOD,
+    source_status::{SOURCES_STATUS_METHOD, SOURCES_STATUS_VIEW_METHOD},
     sources::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_CREATE_METHOD,
         SOURCES_BINDINGS_LIST_METHOD, SOURCES_BINDINGS_RESOLVE_METHOD,
@@ -641,10 +641,10 @@ fn build_registry_impl() -> RpcRegistry {
         handle_sources_continuity_list, handle_sources_coverage, handle_sources_drift_list,
         handle_sources_list, handle_sources_presets_list, handle_sources_readiness_get,
         handle_sources_readiness_list, handle_sources_show, handle_sources_stage,
-        handle_sources_status, handle_store_blob, handle_system_health, handle_system_ping,
-        handle_system_version, handle_tasks_cancel, handle_tasks_complete, handle_tasks_create,
-        handle_tasks_list, handle_tasks_state_get, handle_tasks_status_set, handle_tasks_update,
-        handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
+        handle_sources_status, handle_sources_status_view, handle_store_blob, handle_system_health,
+        handle_system_ping, handle_system_version, handle_tasks_cancel, handle_tasks_complete,
+        handle_tasks_create, handle_tasks_list, handle_tasks_state_get, handle_tasks_status_set,
+        handle_tasks_update, handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
         handle_telemetry_current_device_state, handle_telemetry_current_health,
         handle_telemetry_event_engine_batch_stats, handle_telemetry_event_engine_validation,
         handle_telemetry_file_activity, handle_telemetry_gateway_stats,
@@ -759,6 +759,10 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(RUNTIME_HEALTH_METHOD, boxed!(handle_runtime_health))
         .pool_typed_rpc(AUTOMATA_STATUS_METHOD, boxed!(handle_automata_status))
         .pool_typed_rpc(SOURCES_STATUS_METHOD, boxed!(handle_sources_status))
+        .pool_typed_rpc(
+            SOURCES_STATUS_VIEW_METHOD,
+            boxed!(handle_sources_status_view),
+        )
         // Source material inventory (ReadOnly)
         .pool_typed_rpc(SOURCES_LIST_METHOD, boxed!(handle_sources_list))
         .pool_typed_rpc(SOURCES_SHOW_METHOD, boxed!(handle_sources_show))

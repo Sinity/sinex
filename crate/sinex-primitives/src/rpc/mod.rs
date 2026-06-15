@@ -203,6 +203,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         health::HEALTH_EFFECT_RECORD_METHOD.info(),
         health::HEALTH_INTAKE_RECORD_METHOD.info(),
         source_status::SOURCES_STATUS_METHOD.info(),
+        source_status::SOURCES_STATUS_VIEW_METHOD.info(),
         instructions::INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD.info(),
         lifecycle::LIFECYCLE_ARCHIVE_METHOD.info(),
         lifecycle::LIFECYCLE_RESTORE_METHOD.info(),

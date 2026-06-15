@@ -14,6 +14,7 @@ pub const VIEW_ENVELOPE_SCHEMA_VERSION: &str = "sinex.view-envelope/v3";
 pub const EVENT_CARD_LIST_SCHEMA_VERSION: &str = "sinex.event-card-list/v3";
 pub const OPERATION_JOB_LIST_SCHEMA_VERSION: &str = "sinex.operation-job-list/v1";
 pub const OPERATION_VIEW_SCHEMA_VERSION: &str = "sinex.operation-view/v1";
+pub const SOURCE_COVERAGE_LIST_SCHEMA_VERSION: &str = "sinex.source-coverage-list/v1";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -38,6 +39,84 @@ pub enum SinexObjectKind {
     Caveat,
     RpcMethod,
     Command,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceCoverageReadiness {
+    Ready,
+    Proposed,
+    MissingMaterial,
+    MissingEvents,
+    MissingBinding,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceCoverageContinuity {
+    Active,
+    MaterialOnly,
+    EventOnly,
+    Gapped,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SourcePrivacyPosture {
+    pub tier: String,
+    pub context: String,
+    #[serde(default)]
+    pub proposed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CoverageGapView {
+    pub kind: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SourceCoverageView {
+    pub source_id: String,
+    pub namespace: String,
+    pub event_types: Vec<String>,
+    pub readiness: SourceCoverageReadiness,
+    pub continuity: SourceCoverageContinuity,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_material_at: Option<Timestamp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_event_at: Option<Timestamp>,
+    pub material_count: i64,
+    pub event_count: i64,
+    pub binding_count: usize,
+    pub live_binding_count: usize,
+    pub proposed_binding_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gaps: Vec<CoverageGapView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<CaveatView>,
+    pub privacy: SourcePrivacyPosture,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<ActionAvailability>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SourceCoverageListView {
+    pub schema_version: String,
+    pub count: usize,
+    pub sources: Vec<SourceCoverageView>,
+}
+
+impl SourceCoverageListView {
+    #[must_use]
+    pub fn new(sources: Vec<SourceCoverageView>) -> Self {
+        let count = sources.len();
+        Self {
+            schema_version: SOURCE_COVERAGE_LIST_SCHEMA_VERSION.to_string(),
+            count,
+            sources,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -611,20 +690,43 @@ impl OperationView {
     ///
     /// Accepts the raw `operation_type` string and converts it to [`OperationKind`].
     #[must_use]
-    pub fn from_rpc(id: String, operation_type: &str, operator: String,
-        status: OperationStatus, duration_ms: Option<i32>,
-        result_message: Option<String>, scope: Option<JsonValue>,
-        preview_summary: Option<JsonValue>) -> Self
-    {
+    pub fn from_rpc(
+        id: String,
+        operation_type: &str,
+        operator: String,
+        status: OperationStatus,
+        duration_ms: Option<i32>,
+        result_message: Option<String>,
+        scope: Option<JsonValue>,
+        preview_summary: Option<JsonValue>,
+    ) -> Self {
         let kind = OperationKind::from(operation_type);
         let actions = operation_actions(&id, &kind, &status);
-        Self { id, kind, operator, status, duration_ms, result_message, scope, preview_summary, actions }
+        Self {
+            id,
+            kind,
+            operator,
+            status,
+            duration_ms,
+            result_message,
+            scope,
+            preview_summary,
+            actions,
+        }
     }
 }
 
-fn operation_actions(id: &str, kind: &OperationKind, status: &OperationStatus) -> Vec<ActionAvailability> {
-    let is_terminal = matches!(status, OperationStatus::Success | OperationStatus::Failed | OperationStatus::Cancelled);
-    let can_cancel = !is_terminal && matches!(status, OperationStatus::Running | OperationStatus::Pending);
+fn operation_actions(
+    id: &str,
+    kind: &OperationKind,
+    status: &OperationStatus,
+) -> Vec<ActionAvailability> {
+    let is_terminal = matches!(
+        status,
+        OperationStatus::Success | OperationStatus::Failed | OperationStatus::Cancelled
+    );
+    let can_cancel =
+        !is_terminal && matches!(status, OperationStatus::Running | OperationStatus::Pending);
 
     vec![
         ActionAvailability::read("ops.show", "Show", ActionAvailabilityState::Enabled)
@@ -632,8 +734,16 @@ fn operation_actions(id: &str, kind: &OperationKind, status: &OperationStatus) -
         ActionAvailability {
             id: "ops.cancel".to_string(),
             label: "Cancel".to_string(),
-            state: if can_cancel { ActionAvailabilityState::Enabled } else { ActionAvailabilityState::Disabled },
-            reason: if is_terminal { Some("operation is already in a terminal state".to_string()) } else { None },
+            state: if can_cancel {
+                ActionAvailabilityState::Enabled
+            } else {
+                ActionAvailabilityState::Disabled
+            },
+            reason: if is_terminal {
+                Some("operation is already in a terminal state".to_string())
+            } else {
+                None
+            },
             command_hint: Some(format!("sinexctl ops cancel {id}")),
             rpc_method: None,
             side_effect: ActionSideEffect::Write,
@@ -644,7 +754,9 @@ fn operation_actions(id: &str, kind: &OperationKind, status: &OperationStatus) -
         ActionAvailability {
             id: "ops.replay".to_string(),
             label: "Replay".to_string(),
-            state: if matches!(kind, OperationKind::Replay) && matches!(status, OperationStatus::Failed | OperationStatus::Cancelled) {
+            state: if matches!(kind, OperationKind::Replay)
+                && matches!(status, OperationStatus::Failed | OperationStatus::Cancelled)
+            {
                 ActionAvailabilityState::Enabled
             } else {
                 ActionAvailabilityState::Unavailable
@@ -777,6 +889,51 @@ mod tests {
             EVENT_CARD_LIST_SCHEMA_VERSION
         );
         assert_eq!(value["payload"]["count"], 0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_coverage_list_view_serializes_status_shape() -> xtask::TestResult<()> {
+        let view = SourceCoverageView {
+            source_id: "fixture.source".to_string(),
+            namespace: "fixture".to_string(),
+            event_types: vec!["fixture/fixture.event".to_string()],
+            readiness: SourceCoverageReadiness::Ready,
+            continuity: SourceCoverageContinuity::Active,
+            last_material_at: None,
+            last_event_at: None,
+            material_count: 2,
+            event_count: 3,
+            binding_count: 1,
+            live_binding_count: 1,
+            proposed_binding_count: 0,
+            gaps: Vec::new(),
+            caveats: Vec::new(),
+            privacy: SourcePrivacyPosture {
+                tier: "sensitive".to_string(),
+                context: "command".to_string(),
+                proposed: false,
+            },
+            actions: vec![ActionAvailability::read(
+                "sources.readiness",
+                "Readiness",
+                ActionAvailabilityState::Enabled,
+            )],
+        };
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.status",
+            SourceCoverageListView::new(vec![view]),
+        );
+
+        let value = serde_json::to_value(&envelope)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(
+            value["payload"]["schema_version"],
+            SOURCE_COVERAGE_LIST_SCHEMA_VERSION
+        );
+        assert_eq!(value["payload"]["sources"][0]["readiness"], "ready");
+        assert_eq!(value["payload"]["sources"][0]["continuity"], "active");
         Ok(())
     }
 

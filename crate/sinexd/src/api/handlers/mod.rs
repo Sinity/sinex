@@ -76,7 +76,7 @@ pub use semantic::{
     handle_semantic_lane_set_status, handle_semantic_lanes_list,
 };
 pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
-pub use source_status::handle_sources_status;
+pub use source_status::{handle_sources_status, handle_sources_status_view};
 
 pub use content::{handle_retrieve_blob, handle_store_blob};
 pub use coordination::{
@@ -92,12 +92,12 @@ pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use privacy::{
     handle_privacy_policy_backend_add, handle_privacy_policy_dictionary_add,
     handle_privacy_policy_field_bind, handle_privacy_policy_field_unbind,
-    handle_privacy_policy_list, handle_privacy_policy_rule_add,
-    handle_privacy_policy_rule_remove, handle_privacy_policy_rule_set_enabled,
-    handle_privacy_policy_scope_bind, handle_privacy_policy_seed_builtin,
-    handle_private_mode_disable, handle_private_mode_disable_service,
-    handle_private_mode_enable, handle_private_mode_enable_service,
-    handle_private_mode_status, handle_private_mode_status_service,
+    handle_privacy_policy_list, handle_privacy_policy_rule_add, handle_privacy_policy_rule_remove,
+    handle_privacy_policy_rule_set_enabled, handle_privacy_policy_scope_bind,
+    handle_privacy_policy_seed_builtin, handle_private_mode_disable,
+    handle_private_mode_disable_service, handle_private_mode_enable,
+    handle_private_mode_enable_service, handle_private_mode_status,
+    handle_private_mode_status_service,
 };
 pub use runtime_presence::{handle_runtime_health, handle_runtime_list_active};
 pub use sources::{
