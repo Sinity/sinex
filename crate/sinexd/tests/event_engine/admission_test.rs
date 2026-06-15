@@ -3,7 +3,7 @@ use sinexd::event_engine::{
     AdmissionDecision, AdmissionRejectionKind, AdmissionService, AdmittedEvent, CandidateEvent,
     CandidateEventMetadata, IngestEventValidator,
 };
-use sinex_primitives::{DynamicPayload, Id, JsonValue, SourceMaterial, Uuid, events::Event};
+use sinex_primitives::{DynamicPayload, Id, JsonValue, SourceMaterial, Timestamp, Uuid, events::Event};
 use sqlx::Row;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -28,6 +28,10 @@ fn material_event(
         .build()?
         .to_json_event()?;
     event.id = Some(Id::from_uuid(event_id));
+    // Direct AdmissionService tests bypass the consumer's #1570 Prong B ts_orig
+    // resolution (which reads raw.temporal_ledger), so set an explicit ts_orig
+    // to represent the post-resolution event the persistence stage validates.
+    event.ts_orig = Some(Timestamp::now());
     Ok(event)
 }
 
@@ -79,6 +83,10 @@ async fn admission_service_persists_direct_candidate_without_nats(
     .build()?
     .to_json_event()?;
     event.id = Some(Id::from_uuid(event_id));
+    // Direct AdmissionService tests bypass the consumer's #1570 Prong B ts_orig
+    // resolution (which reads raw.temporal_ledger), so set an explicit ts_orig
+    // to represent the post-resolution event the persistence stage validates.
+    event.ts_orig = Some(Timestamp::now());
 
     let service = AdmissionService::new(
         ctx.pool.clone(),
@@ -122,6 +130,10 @@ async fn admission_service_rejects_direct_negative_anchor(ctx: TestContext) -> T
     .build()?
     .to_json_event()?;
     event.id = Some(Id::from_uuid(event_id));
+    // Direct AdmissionService tests bypass the consumer's #1570 Prong B ts_orig
+    // resolution (which reads raw.temporal_ledger), so set an explicit ts_orig
+    // to represent the post-resolution event the persistence stage validates.
+    event.ts_orig = Some(Timestamp::now());
 
     let service = AdmissionService::new(
         ctx.pool.clone(),
@@ -164,6 +176,10 @@ async fn admission_candidate_metadata_stamps_existing_event_columns(
     .build()?
     .to_json_event()?;
     event.id = Some(Id::from_uuid(event_id));
+    // Direct AdmissionService tests bypass the consumer's #1570 Prong B ts_orig
+    // resolution (which reads raw.temporal_ledger), so set an explicit ts_orig
+    // to represent the post-resolution event the persistence stage validates.
+    event.ts_orig = Some(Timestamp::now());
 
     let service = AdmissionService::new(
         ctx.pool.clone(),
@@ -245,6 +261,10 @@ async fn admission_plan_reports_tombstoned_disposition(ctx: TestContext) -> Test
     .build()?
     .to_json_event()?;
     event.id = Some(Id::from_uuid(event_id));
+    // Direct AdmissionService tests bypass the consumer's #1570 Prong B ts_orig
+    // resolution (which reads raw.temporal_ledger), so set an explicit ts_orig
+    // to represent the post-resolution event the persistence stage validates.
+    event.ts_orig = Some(Timestamp::now());
 
     let service = AdmissionService::new(
         ctx.pool.clone(),
