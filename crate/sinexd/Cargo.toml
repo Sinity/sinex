@@ -25,6 +25,26 @@ name = "events_consumer_integration_test"
 path = "tests/event_engine/events_consumer_integration_test.rs"
 
 [[test]]
+name = "schema_sync_test"
+path = "tests/event_engine/schema_sync_test.rs"
+
+[[test]]
+name = "jetstream_stream_name_test"
+path = "tests/event_engine/jetstream_stream_name_test.rs"
+
+[[test]]
+name = "material_ready_set_inline_test"
+path = "tests/event_engine/material_ready_set_inline_test.rs"
+
+[[test]]
+name = "config_security_test"
+path = "tests/event_engine/config_security_test.rs"
+
+[[test]]
+name = "validator_schema_order_test"
+path = "tests/event_engine/validator_schema_order_test.rs"
+
+[[test]]
 name = "browser_history_parser_test"
 path = "tests/sources/browser_history_parser_test.rs"
 
