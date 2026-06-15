@@ -225,6 +225,7 @@ impl SourceDefinitionAttrs {
             monitor_emit_fn: None,
             monitor_phase: None,
             register_factory: true,
+            factory_adapter: None,
             extra_bindings: Vec::new(),
         }
     }
