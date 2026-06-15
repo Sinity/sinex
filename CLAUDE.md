@@ -1,7 +1,7 @@
 # Sinex Agent Memory
 
 > Personal event-driven capture platform. Rust, NATS JetStream, PostgreSQL (TimescaleDB + pgvector).
-> ~473K lines of Rust (1114 `.rs` files under `crate/`, `tests/`, and `xtask/`), 14 workspace members, no trusted production dataset yet. Pre-release
+> ~464K lines of Rust (1052 `.rs` files under `crate/`, `tests/`, and `xtask/`), 14 workspace members, no trusted production dataset yet. Pre-release
 > software for a single AuDHD user. Deployed on `sinnix-prime` with `sinex.enable = true`.
 
 ---
