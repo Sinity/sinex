@@ -90,6 +90,9 @@ pub(crate) struct RegistrationAttrs {
     /// only contract + binding metadata; no parser or source factory should be
     /// registered for them.
     pub register_factory: bool,
+    /// Optional Rust adapter type path used only for `register_source!`
+    /// factory wiring. The binding keeps `adapter` as deployment metadata.
+    pub factory_adapter: Option<TokenStream>,
     /// Additional runtime bindings for one source contract.
     pub extra_bindings: Vec<RuntimeBindingAttrs>,
 }
@@ -343,12 +346,17 @@ pub(crate) fn generate_factory_registration(
         });
     }
 
-    let adapter_ident = adapter_type_ident(&attrs.adapter)?;
+    let adapter_path = if let Some(adapter) = &attrs.factory_adapter {
+        quote!(#adapter)
+    } else {
+        let adapter_ident = adapter_type_ident(&attrs.adapter)?;
+        quote!(crate::runtime::parser::#adapter_ident)
+    };
 
     Ok(quote! {
         crate::register_source!(
             source_id: #id,
-            adapter: crate::runtime::parser::#adapter_ident,
+            adapter: #adapter_path,
             parser: #parser_name,
         );
     })

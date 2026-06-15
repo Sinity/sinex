@@ -12,6 +12,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sinex_macros::SourceMeta;
 use tracing::warn;
 
 use crate::runtime::parser::{
@@ -19,8 +20,7 @@ use crate::runtime::parser::{
 };
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
-    SourceRuntimeBinding, SubjectRef,
+    RetentionPolicy, RunnerPack, RuntimeShape,
 };
 use sinex_primitives::{
     domain::{EventSource, EventType},
@@ -31,52 +31,6 @@ use sinex_primitives::{
     privacy::ProcessingContext,
     temporal::Timestamp,
 };
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
-
-// ---------------------------------------------------------------------------
-// Source contract
-// ---------------------------------------------------------------------------
-
-// register_source_contract!: escape-hatch pending #1761 (SourceDefinition/SourceMeta
-// DSL v1 cannot express ChainedAdapter dual-leg sources).
-register_source_contract! {
-    SourceContract {
-        id: "browser.history",
-        namespace: "web",
-        event_types: &[
-            ("webhistory", "page.visited"),
-        ],
-        privacy_tier: PrivacyTier::Secret,
-        horizons: &[Horizon::Continuous, Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From(
-            "(source, browser_profile, visit_id)",
-        ),
-        access_scope: AccessScope::TargetHome { path: "browser_history" },
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:browser.history"),
-        "browser.history",
-        "web",
-    )
-    .implementation("sinexd")
-    .adapter("ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>")
-    .output_event_type("page.visited")
-    .privacy_context(ProcessingContext::Metadata)
-    .resource_profile(ResourceProfile::BoundedStream)
-    .source_id("browser.history")
-    .runner_pack(RunnerPack::SinexdSource)
-    .checkpoint_family(CheckpointFamily::MutableSnapshot {
-        backing_store_kind: "sqlite",
-        occurrence_anchor: "visit_id",
-    })
-    .runtime_shape(RuntimeShape::Continuous)
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
 
 // ---------------------------------------------------------------------------
 // Timestamp heuristic (mirrors sinex-browser-source logic)
@@ -194,7 +148,31 @@ pub struct BrowserHistoryParserConfig {}
 /// - `"primary/"` → `SQLite` row JSON (columns from `SqliteRowAdapter`).
 /// - `"secondary/"` → JSONL dump file line.
 /// - No prefix → assume `SQLite` (direct test invocation).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "browser.history",
+    namespace = "web",
+    event_type = "page.visited",
+    event_source = "webhistory",
+    adapter = "ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>",
+    implementation = "sinexd",
+    privacy_tier = PrivacyTier::Secret,
+    horizons(Horizon::Continuous, Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(source, browser_profile, visit_id)"),
+    access_scope = AccessScope::TargetHome {
+        path: "browser_history"
+    },
+    privacy_context = ProcessingContext::Metadata,
+    resource_profile = ResourceProfile::BoundedStream,
+    runner_pack = RunnerPack::SinexdSource,
+    checkpoint_family = CheckpointFamily::MutableSnapshot {
+        backing_store_kind: "sqlite",
+        occurrence_anchor: "visit_id",
+    },
+    runtime_shape = RuntimeShape::Continuous,
+    factory_adapter = BrowserHistoryAdapter
+)]
 pub struct BrowserHistoryParser;
 
 const PARSER_ID: &str = "browser-history";
@@ -591,9 +569,3 @@ fn build_intent(
 /// Chained adapter: primary = `SQLite` history DB rows, secondary = dump file lines.
 pub type BrowserHistoryAdapter =
     ChainedAdapter<crate::runtime::parser::SqliteRowAdapter, AppendOnlyFileAdapter>;
-
-crate::register_source!(
-    source_id: "browser.history",
-    adapter: BrowserHistoryAdapter,
-    parser: BrowserHistoryParser,
-);
