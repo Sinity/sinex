@@ -1,5 +1,6 @@
 //! Shared human/agent view DTOs.
 
+use crate::domain::{OperationKind, OperationStatus};
 use crate::events::Event;
 use crate::ids::Id;
 use crate::query::QueryResultEvent;
@@ -11,6 +12,8 @@ use serde_json::json;
 
 pub const VIEW_ENVELOPE_SCHEMA_VERSION: &str = "sinex.view-envelope/v3";
 pub const EVENT_CARD_LIST_SCHEMA_VERSION: &str = "sinex.event-card-list/v3";
+pub const OPERATION_JOB_LIST_SCHEMA_VERSION: &str = "sinex.operation-job-list/v1";
+pub const OPERATION_VIEW_SCHEMA_VERSION: &str = "sinex.operation-view/v1";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -564,6 +567,121 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Operation views
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Read-only view of a single `core.operations_log` row rendered for operator
+/// and agent consumption.
+///
+/// Wraps the raw `OperationRecord` from `sinex-db`, replacing the untyped
+/// `operation_type: String` with the typed [`OperationKind`] registry and
+/// surfacing stable, named fields without exposing DB-internal identifiers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct OperationView {
+    /// Stable hex ID of this operation (UUID, opaque to callers).
+    pub id: String,
+    /// Typed classification of the operation.
+    pub kind: OperationKind,
+    /// Actor that submitted the operation (actor_id from auth context).
+    pub operator: String,
+    /// Terminal result status of the operation.
+    pub status: OperationStatus,
+    /// Wall-clock duration in milliseconds, `null` while still running.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i32>,
+    /// Human-readable result message set on completion or failure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_message: Option<String>,
+    /// JSONB scope payload that scoped this operation (e.g. event ID range).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<JsonValue>,
+    /// Summary JSONB produced at completion, suitable for display.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_summary: Option<JsonValue>,
+    /// Quick-access action hints for operator UIs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<ActionAvailability>,
+}
+
+impl OperationView {
+    /// Construct from the RPC `Operation` type from `sinex-primitives::rpc::ops`.
+    ///
+    /// Accepts the raw `operation_type` string and converts it to [`OperationKind`].
+    #[must_use]
+    pub fn from_rpc(id: String, operation_type: &str, operator: String,
+        status: OperationStatus, duration_ms: Option<i32>,
+        result_message: Option<String>, scope: Option<JsonValue>,
+        preview_summary: Option<JsonValue>) -> Self
+    {
+        let kind = OperationKind::from(operation_type);
+        let actions = operation_actions(&id, &kind, &status);
+        Self { id, kind, operator, status, duration_ms, result_message, scope, preview_summary, actions }
+    }
+}
+
+fn operation_actions(id: &str, kind: &OperationKind, status: &OperationStatus) -> Vec<ActionAvailability> {
+    let is_terminal = matches!(status, OperationStatus::Success | OperationStatus::Failed | OperationStatus::Cancelled);
+    let can_cancel = !is_terminal && matches!(status, OperationStatus::Running | OperationStatus::Pending);
+
+    vec![
+        ActionAvailability::read("ops.show", "Show", ActionAvailabilityState::Enabled)
+            .with_command_hint(format!("sinexctl ops show {id}")),
+        ActionAvailability {
+            id: "ops.cancel".to_string(),
+            label: "Cancel".to_string(),
+            state: if can_cancel { ActionAvailabilityState::Enabled } else { ActionAvailabilityState::Disabled },
+            reason: if is_terminal { Some("operation is already in a terminal state".to_string()) } else { None },
+            command_hint: Some(format!("sinexctl ops cancel {id}")),
+            rpc_method: None,
+            side_effect: ActionSideEffect::Write,
+            requires_confirmation: false,
+            dry_run_available: false,
+            audit_output_ref: None,
+        },
+        ActionAvailability {
+            id: "ops.replay".to_string(),
+            label: "Replay".to_string(),
+            state: if matches!(kind, OperationKind::Replay) && matches!(status, OperationStatus::Failed | OperationStatus::Cancelled) {
+                ActionAvailabilityState::Enabled
+            } else {
+                ActionAvailabilityState::Unavailable
+            },
+            reason: if !matches!(kind, OperationKind::Replay) {
+                Some("replay action only available for replay operations".to_string())
+            } else {
+                None
+            },
+            command_hint: Some(format!("sinexctl replay submit --ref-op {id}")),
+            rpc_method: None,
+            side_effect: ActionSideEffect::Write,
+            requires_confirmation: true,
+            dry_run_available: true,
+            audit_output_ref: None,
+        },
+    ]
+}
+
+/// Payload carried inside a [`ViewEnvelope`] for `sinexctl ops jobs list`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct OperationJobListView {
+    pub schema_version: String,
+    pub count: usize,
+    pub jobs: Vec<OperationView>,
+}
+
+impl OperationJobListView {
+    #[must_use]
+    pub fn new(jobs: Vec<OperationView>) -> Self {
+        let count = jobs.len();
+        Self {
+            schema_version: OPERATION_JOB_LIST_SCHEMA_VERSION.to_string(),
+            count,
+            jobs,
+        }
+    }
 }
 
 #[cfg(test)]
