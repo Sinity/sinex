@@ -67,6 +67,11 @@ xtask check --full
 xtask test --impact-mode=off --all
 ```
 
+`xtask check --forbidden` also runs the
+[coherence-boundary check](checks/coherence-boundary.md), which keeps generic
+runtime/library code free of deployment-local `/realm` assumptions, Lynchpin
+product semantics, and stale duplicate-dependency vocabulary claims.
+
 Hosted GitHub workflows have their own implementation details. Those are not
 the normal desktop command surface. Use `xtask docs schema-bundle` when you need
 to refresh or verify the tracked `schemas/` contract bundle itself.

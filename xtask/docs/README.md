@@ -15,6 +15,7 @@ development.
 - [`command-guide.md`](command-guide.md): concise, high-signal operator guide for the commands humans and agents should actually remember and reach for.
 - [`command-reference.md`](command-reference.md): generated public command tree with the current flags and subcommands.
 - [`verification.md`](verification.md): performance contracts, verification lanes, and CI-parity details.
+- [`checks/coherence-boundary.md`](checks/coherence-boundary.md): forbidden-pattern guard for runtime deployment assumptions and duplicate-dependency vocabulary drift.
 - [`../.config/ast-grep/README.md`](../.config/ast-grep/README.md): generated rule catalog for the repo's `ast-grep` policy surface.
 - [`sandbox/README.md`](sandbox/README.md): test harness architecture and sandbox patterns.
 - [`cloud-agent-lane.md`](cloud-agent-lane.md): bounded cloud-sandbox lane and sidecar setup.
