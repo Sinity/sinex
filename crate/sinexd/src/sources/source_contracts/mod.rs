@@ -20,6 +20,7 @@ pub mod media;
 pub mod messaging;
 pub mod music;
 pub mod polylogue;
+pub mod privacy_fixture;
 pub mod social;
 pub mod system;
 pub mod terminal;
