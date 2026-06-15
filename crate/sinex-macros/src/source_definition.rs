@@ -227,6 +227,7 @@ impl SourceDefinitionAttrs {
             register_factory: true,
             parser_only_factory: false,
             factory_adapter: None,
+            factory_parser: None,
             driver_factory: None,
             extra_bindings: Vec::new(),
         }

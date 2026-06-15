@@ -17,63 +17,43 @@
 //!    under "weechat.message" (not "weechat") to avoid shadowing the production
 //!    parser.
 //!
-//! Both registrations are performed at link time via `inventory::submit!`.
-//! No match arms.
+//! Both registrations are performed at link time via `#[derive(SourceMeta)]`
+//! and `#[derive(SourceRecord)]`. No match arms.
 
-use crate::register_source;
-use crate::runtime::parser::{AppendOnlyFileAdapter, WeeChatLogParser};
-use sinex_macros::SourceRecord;
+use crate::runtime::parser::WeeChatLogParser;
+use sinex_macros::{SourceMeta, SourceRecord};
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
-    SourceRuntimeBinding, SubjectRef,
+    RetentionPolicy, RunnerPack, RuntimeShape,
 };
-use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // ---------------------------------------------------------------------------
 // Source contract — "weechat"
 // ---------------------------------------------------------------------------
 
-// register_source_contract!: escape-hatch pending #1761 (two distinct parsers
-// registered separately: WeeChatMessageRecord + WeeChatLogParser; SourceMeta
-// cannot express multi-parser registrations under one source id).
-register_source_contract! {
-    SourceContract {
-        id: "weechat",
-        namespace: "irc",
-        event_types: &[
-            ("irc", "irc.join"),
-            ("irc", "irc.part"),
-            ("irc", "irc.server_notice"),
-            ("irc", "irc.message"),
-        ],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Anchor,
-        access_scope: AccessScope::StagedExport,
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:weechat"),
-        "weechat",
-        "irc",
-    )
-    .implementation("sinexd")
-    .adapter("AppendOnlyFileAdapter")
-    .output_event_type("irc.message")
-    .privacy_context(ProcessingContext::Command)
-    .resource_profile(ResourceProfile::LiveWatcher)
-    .source_id("weechat")
-    .runner_pack(RunnerPack::SinexdSource)
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
+#[derive(SourceMeta)]
+#[source_meta(
+    id = "weechat",
+    namespace = "irc",
+    event_source = "irc",
+    event_type = "irc.message",
+    event_types = "irc.join, irc.part, irc.server_notice",
+    adapter = "AppendOnlyFileAdapter",
+    implementation = "sinexd",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Anchor,
+    access_scope = AccessScope::StagedExport,
+    privacy_context = ProcessingContext::Command,
+    resource_profile = ResourceProfile::LiveWatcher,
+    runner_pack = RunnerPack::SinexdSource,
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
+    factory_parser = WeeChatLogParser
+)]
+pub struct WeeChatSourceMeta;
 
 // ---------------------------------------------------------------------------
 // Declarative companion — WeeChatMessageRecord (#[derive(SourceRecord)])
@@ -91,13 +71,32 @@ register_source_runtime_binding! {
 // timestamp format (WeeChat uses "YYYY-MM-DD HH:MM:SS"). This companion
 // demonstrates the path works; the production parser covers full semantics.
 
-#[derive(SourceRecord, Default, Debug, Clone)]
+#[derive(SourceRecord, SourceMeta, Default, Debug, Clone)]
 #[source_record(
     id = "weechat-message-declarative",
     source_id = "weechat.message",
     input_shape = "tab_separated",
     event_type = "irc.message",
     default_privacy_context = "Command"
+)]
+#[source_meta(
+    id = "weechat.message",
+    namespace = "irc",
+    event_source = "irc",
+    event_type = "irc.message",
+    adapter = "AppendOnlyFileAdapter",
+    implementation = "sinexd",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Anchor,
+    access_scope = AccessScope::StagedExport,
+    privacy_context = ProcessingContext::Command,
+    resource_profile = ResourceProfile::LiveWatcher,
+    runner_pack = RunnerPack::SinexdSource,
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
+    factory = "parser"
 )]
 pub struct WeeChatMessageRecord {
     /// Raw timestamp string from the log line (column 0).
@@ -115,61 +114,3 @@ pub struct WeeChatMessageRecord {
     #[required]
     pub message: String,
 }
-
-register_source!(source_id: "weechat.message", parser: WeeChatMessageRecord);
-
-// ---------------------------------------------------------------------------
-// Source contract — "weechat.message" (declarative companion)
-// ---------------------------------------------------------------------------
-
-register_source_contract! {
-    SourceContract {
-        id: "weechat.message",
-        namespace: "irc",
-        event_types: &[("irc", "irc.message")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Anchor,
-        access_scope: AccessScope::StagedExport,
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:weechat.message"),
-        "weechat.message",
-        "irc",
-    )
-    .implementation("sinexd")
-    .adapter("AppendOnlyFileAdapter")
-    .output_event_type("irc.message")
-    .privacy_context(ProcessingContext::Command)
-    .resource_profile(ResourceProfile::LiveWatcher)
-    .source_id("weechat.message")
-    .runner_pack(RunnerPack::SinexdSource)
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
-
-// ---------------------------------------------------------------------------
-// Source factory — Phase 3 (Wave A substrate).
-//
-// The WeeChat source is file-based and runs through
-// AppendOnlyFileAdapter + WeeChatLogParser. `register_source!`
-// wires both the parser dispatch (for replay) and the source factory (for
-// continuous ingestion) in one call.
-//
-// Config JSON expected at runtime:
-//   { "path": "/path/to/weechat.log", "skip_empty": true }
-//
-// This is the canonical example; Wave-B folds follow the same pattern.
-// ---------------------------------------------------------------------------
-
-crate::register_source!(
-    source_id: "weechat",
-    adapter: AppendOnlyFileAdapter,
-    parser: WeeChatLogParser,
-);
