@@ -54,14 +54,17 @@ async fn constructs_from_args() -> TestResult<()> {
 #[sinex_test]
 async fn defaults_read_process_environment() -> TestResult<()> {
     let mut env = EnvGuard::new();
-    env.set("DATABASE_URL", "postgresql://env/example");
     env.set("SINEX_NATS_URL", "tls://env-nats:4222");
     env.set("SINEX_NATS_REQUIRE_TLS", "1");
     env.set("SINEX_EVENT_ENGINE_WORK_DIR", "/tmp/sinexd-env-config");
 
     let config = EventEngineConfig::default();
 
-    assert_eq!(config.database_url, "postgresql://env/example");
+    // `database_url` is the intentional exception: `Default` uses the namespaced
+    // fallback and leaves `DATABASE_URL` resolution to the fallible loaders
+    // (`from_args`/`from_env`) so an invalid operator value fails honestly. That
+    // behavior is pinned by config.rs's
+    // `default_config_uses_namespaced_fallback_not_database_url_env`.
     assert_eq!(config.nats.url, "tls://env-nats:4222");
     assert!(config.nats.require_tls);
     assert_eq!(
