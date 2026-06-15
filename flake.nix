@@ -252,6 +252,86 @@
             touch "$out"
           '';
 
+          sourceCatalogEvalCheck =
+            let
+              catalog = import ./nixos/modules/lib/source-catalog.nix { lib = pkgs.lib; };
+              consumerConfig = nixpkgs.lib.nixosSystem {
+                modules = [
+                  (
+                    { lib, ... }:
+                    {
+                      nixpkgs.hostPlatform = system;
+                      nixpkgs.overlays = [ pgJsonschemaOverlay ];
+                      boot.isContainer = true;
+                      boot.loader.grub.enable = false;
+                      fileSystems."/" = {
+                        device = "none";
+                        fsType = "tmpfs";
+                      };
+                      services.sinex = {
+                        enable = true;
+                        package = pkgs.runCommand "sinexd-catalog-eval-package" { } "mkdir -p $out/bin";
+                        adminPackage = pkgs.runCommand "xtask-catalog-eval-package" { } "mkdir -p $out/bin";
+                        cliPackage = null;
+                        users.target = "catalog-user";
+                        database.enable = lib.mkForce false;
+                        nats.enable = lib.mkForce false;
+                        nats.autoSetup = lib.mkForce false;
+                        lifecycle.preflight.enable = false;
+                        lifecycle.updates.enable = false;
+                        sources.document.runOnBoot = false;
+                        sources.document.schedule = null;
+                      };
+                      users.users.catalog-user = {
+                        isNormalUser = true;
+                        home = "/home/catalog-user";
+                      };
+                      system.stateVersion = "24.05";
+                    }
+                  )
+                  ./nixos
+                ];
+              };
+              sinexdServiceConfig = consumerConfig.config.systemd.services.sinexd.serviceConfig;
+              sinexdEnv = sinexdServiceConfig.Environment or [ ];
+              hasSourceManifestEnv =
+                builtins.any
+                  (value: pkgs.lib.hasPrefix "SINEX_SOURCE_BINDINGS_PATH=" value)
+                  sinexdEnv;
+              consumerAssertions =
+                if !hasSourceManifestEnv then
+                  throw "source catalog consumer did not render SINEX_SOURCE_BINDINGS_PATH"
+                else if !(sinexdServiceConfig ? MemoryMax) then
+                  throw "source catalog consumer did not render catalog-derived sinexd MemoryMax"
+                else { sinexdMemoryMax = sinexdServiceConfig.MemoryMax; };
+              requiredSources = catalog.requireFieldsFor [
+                "fs"
+                "terminal.atuin-history"
+                "terminal.bash-history"
+                "terminal.fish-history"
+                "terminal.monitor"
+                "terminal.zsh-history"
+                "browser.history"
+                "desktop.activitywatch"
+                "desktop.clipboard"
+                "desktop.window-manager"
+                "document.staging"
+                "system.dbus"
+                "system.journald"
+                "system.monitor"
+                "system.systemd"
+                "system.udev"
+              ];
+              evalSummary = builtins.toJSON {
+                inherit (catalog) entryCount schemaVersion;
+                inherit (consumerAssertions) sinexdMemoryMax;
+                required = builtins.attrNames requiredSources;
+              };
+            in
+            pkgs.runCommand "source-catalog-eval" { } ''
+              printf '%s\n' ${pkgs.lib.escapeShellArg evalSummary} > "$out"
+            '';
+
         in
         rec {
           packages = sinexPackages;
@@ -260,6 +340,7 @@
 
           checks = vmCheckOutputs // {
             flake-format = nixFormatCheck;
+            source-catalog-eval = sourceCatalogEvalCheck;
           };
 
           devShells.default =

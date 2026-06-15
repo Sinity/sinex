@@ -85,7 +85,7 @@ in
             default = defaultTimeout;
             description = "Maximum seconds to wait before flushing a partial batch.";
           };
-        };
+                };
       };
     resourceModule =
       { defaultMemory
@@ -1271,7 +1271,7 @@ in
                 };
             '';
           };
-                };
+        };
       };
       default = { };
       description = "Sinex runtime lifecycle and shared client configuration.";
@@ -1369,8 +1369,8 @@ in
             };
             resources = mkOption {
               type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; });
-              default = { };
-              description = "Filesystem source runtime resource limits. Defaults to an 8G soft MemoryHigh watermark; hard caps remain opt-in.";
+              default = null;
+              description = "Filesystem source runtime resource limits. Null uses the generated source catalog limits for fs.";
             };
             env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
             extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };

@@ -7,6 +7,7 @@ let
   databaseRuntime = import ./lib/database-runtime.nix { inherit lib pkgs; };
   secretResolution = import ./lib/secret-resolution.nix { inherit lib; };
   automataLib = import ./lib/automata.nix { inherit lib; };
+  sourceCatalog = import ./lib/source-catalog.nix { inherit lib; };
   inherit (systemdHardening) mkHelperServiceConfig;
   inherit (databaseRuntime)
     mkDatabasePasswordExec
@@ -282,8 +283,16 @@ let
   resolveResources = nodeResources:
     if nodeResources == null then runtimeCfg.defaults.resources else nodeResources;
 
+  resolveSourceResources = sourceId: nodeResources:
+    if nodeResources == null then sourceCatalog.resourceDefaultsFor sourceId else nodeResources;
+
   resolveInstances = nodeInstances:
     if nodeInstances == null then runtimeCfg.defaults.instances else nodeInstances;
+
+  resolveSourceInstances = sourceId: nodeInstances:
+    if nodeInstances == null then sourceCatalog.instanceDefaultFor sourceId else nodeInstances;
+
+  catalogMetadataFor = sourceId: sourceCatalog.manifestMetadataFor sourceId;
 
   renderResources = resources: {
     MemoryHigh = resources.memoryHigh;
@@ -639,6 +648,7 @@ let
             // optionalAttrs ((runtimeOverlay.supplementaryGroups or [ ]) != [ ]) {
               SupplementaryGroups = unique runtimeOverlay.supplementaryGroups;
             }
+            // optionalAttrs ((runtimeOverlay.serviceConfig or { }) != { } && coreCfg.api.resources.memoryMax == null) runtimeOverlay.serviceConfig
           );
         path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ]
           ++ (runtimeOverlay.path or [ ]);
@@ -673,8 +683,8 @@ let
   mkFilesystemBindings =
     let
       sat = sourceCfg.filesystem;
-      instances = resolveInstances sat.instances;
-      resources = resolveResources sat.resources;
+      instances = resolveSourceInstances "fs" sat.instances;
+      resources = resolveSourceResources "fs" sat.resources;
       runtimeConfig = {
         watch_paths = sat.watchPaths;
         max_depth = 10;
@@ -693,6 +703,7 @@ let
           adapterType = null;
           adapterConfig = runtimeConfig;
           inherit instances resources;
+          catalogMetadata = catalogMetadataFor "fs";
           extraArgs = sat.extraArgs;
           extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
           serviceConfigOverrides = { };
@@ -708,8 +719,6 @@ let
   mkTerminalGlue =
     let
       sat = sourceCfg.terminal;
-      instances = resolveInstances sat.instances;
-      resources = resolveResources sat.resources;
       effectiveHistorySources =
         if sat.historySources != [ ] then sat.historySources
         else if targetHome == null then [ ]
@@ -869,34 +878,43 @@ let
       # systemd units anymore.
       serviceConfigOverrides = { };
       terminalBindings =
-        if instances <= 0 then { }
-        else
-          listToAttrs (
-            map
-              (group: nameValuePair group.sourceId {
+        listToAttrs (
+          map
+            (group:
+              let
+                instances = resolveSourceInstances group.sourceId sat.instances;
+                resources = resolveSourceResources group.sourceId sat.resources;
+              in
+              nameValuePair group.sourceId {
                 enable = true;
                 description = "Terminal history (${group.sourceId})";
                 adapterType = mkSourceDriverAdapterType group;
                 adapterConfig = mkSourceDriverAdapterConfig group;
                 inherit instances resources serviceConfigOverrides;
+                catalogMetadata = catalogMetadataFor group.sourceId;
                 extraArgs = sat.extraArgs;
                 extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
               })
-              sourceUnitGroups
-          );
-      monitorBinding = {
-        "terminal.monitor" = {
-          enable = true;
-          description = "Terminal monitoring lifecycle event (hosted source binding)";
-          adapterType = null;
-          adapterConfig = { };
-          instances = 1;
-          inherit resources;
-          extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
-          serviceConfigOverrides = { };
-          extraArgs = [ ];
+            sourceUnitGroups
+        );
+      monitorBinding =
+        let
+          resources = resolveSourceResources "terminal.monitor" sat.resources;
+        in
+        {
+          "terminal.monitor" = {
+            enable = true;
+            description = "Terminal monitoring lifecycle event (hosted source binding)";
+            adapterType = null;
+            adapterConfig = { };
+            instances = resolveSourceInstances "terminal.monitor" sat.instances;
+            inherit resources;
+            catalogMetadata = catalogMetadataFor "terminal.monitor";
+            extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
+            serviceConfigOverrides = { };
+            extraArgs = [ ];
+          };
         };
-      };
       # Post-collapse: all source bindings fold into sinexd.service. The
       # ACL setup must run before sinexd so the in-process terminal source
       # units can traverse target-user paths.
@@ -925,7 +943,6 @@ let
   mkDesktopGlue =
     let
       sat = sourceCfg.desktop;
-      resources = resolveResources sat.resources;
       clipboardEnv = if sat.clipboard.enable then { SINEX_CLIPBOARD = "1"; } else { SINEX_CLIPBOARD = "0"; };
       bridgeEnvFile = "${runtimeDir}/desktop-target.env";
       defaultRuntimeRoot =
@@ -1210,20 +1227,25 @@ let
           };
         };
       # Shared fields for all desktop source contracts.
-      mkDesktopBinding = description: adapterConfig: gated: {
-        enable = sat.enable;
-        inherit description;
-        adapterType = null;
-        adapterConfig = adapterConfig;
-        instances = 1;
-        inherit resources;
-        afterUnits = runtimeRootUnits;
-        wantsUnits = runtimeRootUnits;
-        extraArgs = sat.extraArgs;
-        extraEnv = desktopExtraEnv;
-        unitPath = [ pkgs.hyprland ];
-        serviceConfigOverrides = desktopServiceConfigOverrides;
-      } // (if gated then { gated = true; } else { });
+      mkDesktopBinding = sourceId: description: adapterConfig: gated:
+        let
+          resources = resolveSourceResources sourceId sat.resources;
+        in
+        {
+          enable = sat.enable;
+          inherit description;
+          adapterType = null;
+          adapterConfig = adapterConfig;
+          instances = resolveSourceInstances sourceId sat.instances;
+          inherit resources;
+          catalogMetadata = catalogMetadataFor sourceId;
+          afterUnits = runtimeRootUnits;
+          wantsUnits = runtimeRootUnits;
+          extraArgs = sat.extraArgs;
+          extraEnv = desktopExtraEnv;
+          unitPath = [ pkgs.hyprland ];
+          serviceConfigOverrides = desktopServiceConfigOverrides;
+        } // (if gated then { gated = true; } else { });
       # desktop.activitywatch only supplies `path`; query/table come from
       # the Rust source's default_config (schema validation skipped).
       # desktop.window-manager resolves its socket from the bridge-written
@@ -1234,10 +1256,10 @@ let
         # which makes SQLite's immutable=1 path fail SQLITE_CANTOPEN. Without
         # this override the worker spams "unable to open database file" every
         # 30 s. The rest of the SqliteRow defaults stay (read_only=true, etc.).
-        "desktop.activitywatch" = mkDesktopBinding "ActivityWatch SQLite (hosted source binding)" { path = activitywatchDbPath; immutable = false; } false;
-        "desktop.window-manager" = mkDesktopBinding "Desktop window manager (hosted source binding)" { } false;
+        "desktop.activitywatch" = mkDesktopBinding "desktop.activitywatch" "ActivityWatch SQLite (hosted source binding)" { path = activitywatchDbPath; immutable = false; } false;
+        "desktop.window-manager" = mkDesktopBinding "desktop.window-manager" "Desktop window manager (hosted source binding)" { } false;
       } // optionalAttrs sat.clipboard.enable {
-        "desktop.clipboard" = mkDesktopBinding "Desktop clipboard (hosted source binding)" { } false;
+        "desktop.clipboard" = mkDesktopBinding "desktop.clipboard" "Desktop clipboard (hosted source binding)" { } false;
       };
     in
     {
@@ -1260,8 +1282,8 @@ let
   mkBrowserGlue =
     let
       sat = sourceCfg.browser;
-      instances = resolveInstances sat.instances;
-      resources = resolveResources sat.resources;
+      instances = resolveSourceInstances "browser.history" sat.instances;
+      resources = resolveSourceResources "browser.history" sat.resources;
       # Post-Wave-B fold (#1081): browser.history uses
       # ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>. The
       # ChainedConfig shape is `{primary, secondary, interleaved}` where
@@ -1384,6 +1406,7 @@ let
             secondary = { path = secondaryDumpPath; };
           };
           inherit instances resources;
+          catalogMetadata = catalogMetadataFor "browser.history";
           extraArgs = sat.extraArgs;
           extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
           serviceConfigOverrides = browserServiceConfigOverrides;
@@ -1404,7 +1427,6 @@ let
   mkSystemGlue =
     let
       sat = sourceCfg.system;
-      resources = resolveResources sat.resources;
       # Post-Wave-B fold (#1081): system source contracts share this config blob.
       # Each parser only reads what its source-specific code touches.
       runtimeConfig = {
@@ -1467,8 +1489,9 @@ let
         inherit description;
         adapterType = null;
         adapterConfig = runtimeConfig;
-        instances = 1;
-        inherit resources;
+        instances = resolveSourceInstances id sat.instances;
+        resources = resolveSourceResources id sat.resources;
+        catalogMetadata = catalogMetadataFor id;
         extraArgs = sat.extraArgs;
         extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
         serviceConfigOverrides = { };
@@ -1487,8 +1510,9 @@ let
           description = "System monitoring lifecycle event (hosted source binding)";
           adapterType = null;
           adapterConfig = { };
-          instances = 1;
-          inherit resources;
+          instances = resolveSourceInstances "system.monitor" sat.instances;
+          resources = resolveSourceResources "system.monitor" sat.resources;
+          catalogMetadata = catalogMetadataFor "system.monitor";
           extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
           serviceConfigOverrides = { };
           extraArgs = [ ];
@@ -1502,7 +1526,7 @@ let
   mkDocumentUnits =
     let
       sat = sourceCfg.document;
-      resources = resolveResources sat.resources;
+      resources = resolveSourceResources "document.staging" sat.resources;
       documentRoots = unique (map toString effectiveDocumentRoots);
       runtimeConfig = builtins.toJSON {
         supported_mime_types = sat.supportedMimeTypes;
@@ -1727,6 +1751,7 @@ let
             instances = binding.instances or 1;
             runtimeConfig = binding.adapterConfig or { };
             extraArgs = binding.extraArgs or [ ];
+            catalogMetadata = binding.catalogMetadata or null;
             instanceList = range 1 instances;
           in
           if enable && !gated then
@@ -1737,11 +1762,29 @@ let
                 service_name = "source-driver-${id}-${toString idx}";
                 runtime_config = runtimeConfig;
                 extra_args = extraArgs;
+                catalog_metadata = catalogMetadata;
               })
               instanceList
           else [ ]
         )
         (attrNames allDomainBindings);
+
+  activeCatalogSourceIds =
+    if !sourceRuntimeEnabled then [ ]
+    else
+      concatMap
+        (id:
+          let
+            binding = allDomainBindings.${id} or { };
+            enable = binding.enable or false;
+            gated = binding.gated or false;
+            instances = binding.instances or 1;
+          in
+          if enable && !gated then map (_: id) (range 1 instances) else [ ]
+        )
+        (attrNames allDomainBindings);
+
+  activeCatalogUnitLimits = sourceCatalog.unitMemoryLimitFor activeCatalogSourceIds;
 
   sourceBindingsManifestFile =
     if activeManifestBindings == [ ] then null
@@ -1754,7 +1797,10 @@ let
 
   coreServices = mkCoreServices {
     automataEnabledList = automataEnabledNames;
-    inherit sourceBindingsManifestFile runtimeOverlay;
+    inherit sourceBindingsManifestFile;
+    runtimeOverlay = runtimeOverlay // {
+      serviceConfig = activeCatalogUnitLimits;
+    };
   };
 
   # Preflight only needs to guard the collapsed sinexd unit. Source
