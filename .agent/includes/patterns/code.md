@@ -73,7 +73,19 @@ let safe_json = validate_json(json_string)?;
 let normalized = normalize_unicode(input)?;
 ```
 
-### Privacy Engine
+### Privacy / Redaction
+
+Redaction is **centralized**, not per-source. The event engine applies a single
+`redact_batch` chokepoint to every admitted event — material *and* derived —
+before persistence (`event_engine/policy.rs:634`, called from
+`jetstream_consumer.rs:2235`). Rules come from the DB-backed `privacy.*` policy
+tables, edited via `sinexctl privacy`. With no operator-configured rules the
+chokepoint is a pass-through: **the default is zero redaction** until the
+operator opts in. This is by design for a single-user, zero-production-data
+deployment — redaction is an optional convenience feature, not a multi-tenant
+security boundary.
+
+The primitive engine is the rule compiler/catalog behind that policy:
 
 ```rust
 use sinex_primitives::privacy::{self, ProcessingContext};
@@ -85,19 +97,12 @@ if result.suppressed { /* drop the field */ }
 // Strategies: Redact, Encrypt (XChaCha20-Poly1305), Hash (BLAKE3 MAC), Suppress
 ```
 
-**Coverage:** Source contracts are expected to call `privacy::engine()` on
-sensitive fields. Path-bearing source contracts use `redact_metadata()` with
-`ProcessingContext::Metadata`; check the concrete implementation under
-`crate/sinexd/src/sources/source_contracts/` before making a coverage claim.
-The old per-domain ingestor crate paths (and the `sinex-source` crate)
-no longer exist after the Wave-B fold.
-
-**Open privacy question:** The `Metadata` context only fires the home-prefix collapse rule.
-Secret-bearing filenames (e.g. `id_rsa`, `~/.aws/credentials`) receive path-redaction but not
-catalog-pattern redaction. Whether that is correct is a privacy-policy question tracked separately.
-
-Automata don't re-invoke the engine; they rely on upstream redaction. Anything that leaks at the
-ingestor boundary persists into derived events.
+Source contracts do **not** invoke `privacy::engine()` directly (there are no
+non-test callers in `sinexd`); they declare a `privacy_tier` / `ProcessingContext`
+as metadata and rely on the central chokepoint. Because redaction runs once over
+all admitted events, derived/automaton output is covered by the same policy as
+source events — there is no per-source "leak that persists into derived events"
+class once a rule is configured.
 
 ---
 

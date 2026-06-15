@@ -42,7 +42,7 @@ Application code checks at boundaries, but violations can reach the check.
 
 | What's validated | Where | Gap |
 |------------------|-------|-----|
-| Privacy engine (secret detection) | `sinexd::sources`, before NATS publish | No automata use privacy engine — derived events inherit source leaks |
+| Privacy redaction (policy-driven) | `sinexd::event_engine`, central `redact_batch` chokepoint before persistence (`policy.rs:634` ← `jetstream_consumer.rs:2235`) | DB-backed `privacy.*` policy; **defaults to zero redaction** until the operator opts in. One chokepoint covers material AND derived events |
 | Schema validation | `sinexd::event_engine`, before persistence | Lenient: unknown types pass. `payload_schema_id` IS bound and written on every insert path (single, batched VALUES, COPY staging, DLQ replay) — see `crate/sinex-db/src/repositories/events/persistence.rs` |
 | Path traversal protection | `validate_path()` at API boundary | Only called where explicitly used |
 | JSON depth/size limits | `validate_json()` at API boundary | Only called where explicitly used |
@@ -65,7 +65,7 @@ No automated enforcement. Correctness depends on developer discipline.
 |------------|-----------------|
 | `operation_id` honesty | Callers can claim any ID (safety gate, not security) |
 | Payload-to-material correspondence | Event can claim any anchor_byte — no cross-check with blob content |
-| Privacy invocation in source parsers | Parsers can omit `privacy::engine()` calls; no compile-time or lint check that a `SourceContract` with `privacy_tier != Public` actually invokes the engine. **Top Wave-B regression risk.** |
+| `privacy_tier` declaration accuracy | A `SourceContract` declares a `privacy_tier` / `ProcessingContext`, but nothing checks the declared tier matches a field's actual sensitivity. Redaction itself is centralized (Level 4 chokepoint), so this is declaration-metadata accuracy, not a per-parser invocation gap. Single-user / zero-prod-data: low impact |
 | Health check truthfulness | Defaults to `true` — no verification of actual health |
 | `module_run_id` tracking | Wired in heartbeat emitter (`heartbeat.rs:204`), event engine (`service.rs:432`), and stream runner (`initialize.rs:157`); not set in source-contract construction sites (ingestors, automata outputs) |
 
