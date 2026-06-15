@@ -733,7 +733,7 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
     let mut sub = scope
         .ctx()
         .nats_client()
-        .subscribe(format!("{confirmation_prefix}.*"))
+        .subscribe(format!("{confirmation_prefix}.>"))
         .await?;
 
     let mut event_ids = Vec::new();
@@ -748,36 +748,63 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
         event_ids.push(event_id);
     }
 
-    let mut confirmed = std::collections::HashSet::new();
-    while confirmed.len() < event_ids.len() {
+    // Per #1306, confirmations are a per-(source,event_type) watermark: a single
+    // confirmation whose event_id is the latest persisted event of this kind
+    // implies all earlier same-kind events (event_id <= watermark) are confirmed.
+    // The 5 events here share one kind, so wait for a watermark covering the last
+    // published event rather than expecting one confirmation per event.
+    let last_event_id = event_ids
+        .last()
+        .expect("published at least one event")
+        .to_string();
+    loop {
         let msg = tokio::time::timeout(StdDuration::from_secs(Timeouts::SHORT), sub.next())
             .await
             .map_err(|_| {
                 color_eyre::eyre::eyre!(
-                    "timed out waiting for confirmation on {confirmation_prefix}.*"
+                    "timed out waiting for confirmation watermark on {confirmation_prefix}.>"
                 )
             })?
             .ok_or_else(|| {
-                color_eyre::eyre::eyre!("confirmation stream closed for {confirmation_prefix}.*")
+                color_eyre::eyre::eyre!("confirmation stream closed for {confirmation_prefix}.>")
             })?;
 
         let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
-        let event_id = payload["event_id"]
+        let watermark = payload["event_id"]
             .as_str()
             .ok_or_else(|| color_eyre::eyre::eyre!("confirmation missing event_id"))?;
         assert_eq!(payload["persisted"], serde_json::Value::Bool(true));
 
-        let persisted = scope
-            .ctx()
-            .pool
-            .events()
-            .get_by_id(Uuid::from_str(event_id)?.into())
-            .await?;
+        // The watermark's own event must already be persisted when observed.
         ensure!(
-            persisted.is_some(),
+            scope
+                .ctx()
+                .pool
+                .events()
+                .get_by_id(Uuid::from_str(watermark)?.into())
+                .await?
+                .is_some(),
             "confirmation observed before event persistence"
         );
-        confirmed.insert(event_id.to_string());
+
+        if watermark == last_event_id {
+            break;
+        }
+    }
+
+    // The watermark covering the last event implies every same-kind event is
+    // persisted; verify each explicitly.
+    for event_id in &event_ids {
+        ensure!(
+            scope
+                .ctx()
+                .pool
+                .events()
+                .get_by_id((*event_id).into())
+                .await?
+                .is_some(),
+            "all published events must be persisted under the confirmation watermark"
+        );
     }
 
     Ok(())
