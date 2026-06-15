@@ -208,3 +208,29 @@ async fn source_meta_terminal_sources_fully_registered() -> TestResult<()> {
     }
     Ok(())
 }
+
+#[sinex_test]
+async fn source_meta_external_producer_registers_metadata_without_factory() -> TestResult<()> {
+    use sinex_primitives::source_contracts::{all_source_contracts, source_runtime_bindings};
+
+    let source_id = sui("integration.polylogue");
+    assert!(
+        all_source_contracts().any(|contract| contract.id == "integration.polylogue"),
+        "external producer must still register its SourceContract"
+    );
+    assert!(
+        source_runtime_bindings().any(|binding| {
+            binding.source_id == "integration.polylogue" && binding.adapter == "ExternalProducer"
+        }),
+        "external producer must still register its SourceRuntimeBinding"
+    );
+    assert!(
+        find_source_factory(&source_id).is_none(),
+        "external producer must not register a source factory"
+    );
+    assert!(
+        find_parser_factory(&source_id).is_none(),
+        "external producer must not register a parser factory"
+    );
+    Ok(())
+}

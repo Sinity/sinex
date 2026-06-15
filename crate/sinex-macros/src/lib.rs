@@ -212,6 +212,12 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 /// its parser type. The struct must provide `Default` (the factory constructs
 /// the parser via `Default::default()`).
 ///
+/// External producers that publish `EventIntent` envelopes themselves can set
+/// `factory = "none"` to emit only the `SourceContract` and
+/// `SourceRuntimeBinding` registration sites. That mode intentionally skips
+/// `register_source!` factory wiring and does not require the marker struct to
+/// implement `Default`.
+///
 /// # Struct attribute
 ///
 /// `#[source_meta(...)]` keys:
@@ -219,7 +225,8 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 /// String-literal keys — Required: `id`, `namespace`, `event_type`,
 /// `event_source`, `adapter`. Optional: `implementation`, `event_types` (extra
 /// comma-separated emitted types), `capabilities`, and for monitor-emit sources
-/// `monitor_emit_fn` / `monitor_phase`.
+/// `monitor_emit_fn` / `monitor_phase`. External producers may set
+/// `factory = "none"`; the default is `factory = "adapter_parser"`.
 ///
 /// Typed enum-path/expression keys (written as Rust paths) — Required:
 /// `occurrence_identity` (e.g. `OccurrenceIdentity::Anchor`). Optional:

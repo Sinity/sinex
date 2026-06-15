@@ -51,50 +51,40 @@
 //! `(content_hash, session_id)` — the content hash detects changed
 //! sessions; the `session_id` provides the stable external key.
 
+use sinex_macros::SourceMeta;
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
-    SourceRuntimeBinding, SubjectRef,
+    RetentionPolicy, RunnerPack, RuntimeShape,
 };
-use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Source contract + binding
 // ─────────────────────────────────────────────────────────────────────────────
 
-// register_source_contract!: escape-hatch pending #1761 (ExternalProducer —
-// Polylogue daemon publishes directly to NATS; sinexd carries no parser for
-// this source and no register_source! call is needed; contract-only registration
-// is valid but unsupported by SourceMeta which always emits factory wiring).
-register_source_contract! {
-    SourceContract {
-        id: "integration.polylogue",
-        namespace: "integration",
-        event_types: &[("integration.polylogue", "integration.polylogue.session_indexed")],
-        privacy_tier: PrivacyTier::Sensitive,
-        horizons: &[Horizon::Continuous, Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Uuid5From("(content_hash, session_id)"),
-        access_scope: AccessScope::StagedExport,
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:integration.polylogue"),
-        "integration.polylogue",
-        "integration",
-    )
-    .implementation("polylogue-daemon")
-    .adapter("ExternalProducer")
-    .output_event_type("integration.polylogue.session_indexed")
-    .privacy_context(ProcessingContext::Document)
-    .resource_profile(ResourceProfile::LiveWatcher)
-    .source_id("integration.polylogue")
-    .runner_pack(RunnerPack::External)
-    .checkpoint_family(CheckpointFamily::LiveObservation)
-    .runtime_shape(RuntimeShape::Continuous)
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
+/// Polylogue daemon external-producer metadata.
+///
+/// `factory = "none"` is load-bearing: sinexd must not register a parser or
+/// source factory for this source because the Polylogue daemon publishes
+/// admitted envelopes directly to NATS.
+#[derive(SourceMeta)]
+#[source_meta(
+    id = "integration.polylogue",
+    namespace = "integration",
+    event_type = "integration.polylogue.session_indexed",
+    event_source = "integration.polylogue",
+    adapter = "ExternalProducer",
+    implementation = "polylogue-daemon",
+    privacy_tier = PrivacyTier::Sensitive,
+    horizons(Horizon::Continuous, Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(content_hash, session_id)"),
+    access_scope = AccessScope::StagedExport,
+    privacy_context = ProcessingContext::Document,
+    resource_profile = ResourceProfile::LiveWatcher,
+    runner_pack = RunnerPack::External,
+    checkpoint_family = CheckpointFamily::LiveObservation,
+    runtime_shape = RuntimeShape::Continuous,
+    factory = "none"
+)]
+pub struct PolylogueExternalProducer;

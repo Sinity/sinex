@@ -78,7 +78,10 @@ fn derive_source_meta_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
 /// `baseline_adapter_config`) — those belong to the declarative parser, which
 /// `SourceMeta` does not generate.
 fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<RegistrationAttrs> {
-    let mut out = RegistrationAttrs::default();
+    let mut out = RegistrationAttrs {
+        register_factory: true,
+        ..RegistrationAttrs::default()
+    };
     let mut found = false;
 
     for attr in attrs {
@@ -150,6 +153,15 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                 "event_types" => out.additional_event_types = split_csv(&v),
                 "implementation" => out.implementation = Some(v),
                 "capabilities" => out.capabilities = split_csv(&v),
+                "factory" => match v.as_str() {
+                    "adapter_parser" => out.register_factory = true,
+                    "none" => out.register_factory = false,
+                    other => {
+                        return Err(meta.error(format!(
+                            "unknown source_meta factory mode '{other}' (expected: adapter_parser, none)"
+                        )));
+                    }
+                },
                 "monitor_emit_fn" => out.monitor_emit_fn = Some(v),
                 "monitor_phase" => out.monitor_phase = Some(v),
                 other => {
