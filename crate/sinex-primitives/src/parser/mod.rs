@@ -998,9 +998,9 @@ pub struct ParserContext {
 
 pub use declarative::{
     CarrySpec, DeclarativeParser, DeclarativeParserSpec, Discriminator, DiscriminatorCase,
-    DiscriminatorFallback, FieldSource, FieldSpec, FieldType, InputFormat, StatefulCarryPolicy,
-    StatefulDeclarativeParser, SuppressPredicate, TimestampFallback, TimestampFormat,
-    TimestampSpec,
+    DiscriminatorFallback, FieldSource, FieldSpec, FieldTransform, FieldType, FieldValidator,
+    InputFormat, StatefulCarryPolicy, StatefulDeclarativeParser, SuppressPredicate,
+    TimestampFallback, TimestampFormat, TimestampSpec,
 };
 pub use fingerprint::{DriftAccumulator, DriftEvent, SourceRecordFingerprint};
 

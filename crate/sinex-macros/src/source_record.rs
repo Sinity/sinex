@@ -3,7 +3,8 @@
 //! Generates a `&'static DeclarativeParserSpec` constant + `impl MaterialParser`
 //! for a struct, from the struct's `#[source_record(...)]` attribute and its
 //! fields' `#[source]` / `#[privacy]` / `#[timestamp]` / `#[occurrence_key]` /
-//! `#[suppress_if]` / `#[required]` / `#[skip]` / `#[default]` attributes.
+//! `#[suppress_if]` / `#[required]` / `#[skip]` / `#[default]` /
+//! `#[transform]` / `#[validate]` attributes.
 //!
 //! See `crate/sinexd/docs/declarative_parser.md` for the locked
 //! design.
@@ -579,6 +580,9 @@ pub(crate) struct FieldDecl {
     event_dispatch: Vec<(String, String)>, // (discriminator_value, event_type)
     // Extension F: carry_across_records
     carry: Option<CarryDecl>,
+    // Extension G: validation / normalization hooks (#1750)
+    transform: Option<TransformDecl>,
+    validate: Option<ValidatorDecl>,
 }
 
 /// Parsed `#[carry_across_records(...)]` attribute.
@@ -587,6 +591,26 @@ struct CarryDecl {
     policy: String,
     from_carry: Option<String>,
     clear_on_use: bool,
+}
+
+/// Parsed `#[transform(...)]` attribute (#1750).
+#[derive(Debug)]
+enum TransformDecl {
+    /// `#[transform(split_first = ":")]`
+    SplitFirst { separator: String },
+}
+
+/// Parsed `#[validate(...)]` attribute (#1750).
+#[derive(Debug)]
+enum ValidatorDecl {
+    /// `#[validate(int_range(min = .., max = ..))]`
+    IntRange { min: i64, max: i64 },
+    /// `#[validate(i32)]`
+    I32,
+    /// `#[validate(timestamp_nanos)]`
+    TimestampNanos,
+    /// `#[validate(non_empty)]`
+    NonEmptyString,
 }
 
 #[derive(Debug)]
@@ -637,6 +661,8 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
     let mut suppress_if: Option<SuppressDecl> = None;
     let mut event_dispatch: Vec<(String, String)> = Vec::new();
     let mut carry: Option<CarryDecl> = None;
+    let mut transform: Option<TransformDecl> = None;
+    let mut validate: Option<ValidatorDecl> = None;
 
     for attr in &field.attrs {
         let path = match attr.path().get_ident() {
@@ -787,6 +813,13 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
             "carry_across_records" => {
                 carry = Some(parse_carry_attr(attr)?);
             }
+            // --- Extension G (#1750): #[transform(...)] / #[validate(...)] ---
+            "transform" => {
+                transform = Some(parse_transform_attr(attr)?);
+            }
+            "validate" => {
+                validate = Some(parse_validate_attr(attr)?);
+            }
             _ => {} // Other attributes (serde, etc.) ignored.
         }
     }
@@ -830,6 +863,83 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
         suppress_if,
         event_dispatch,
         carry,
+        transform,
+        validate,
+    })
+}
+
+/// Parse `#[transform(split_first = ":")]` (#1750).
+fn parse_transform_attr(attr: &syn::Attribute) -> syn::Result<TransformDecl> {
+    let mut transform: Option<TransformDecl> = None;
+    attr.parse_nested_meta(|meta| {
+        if meta.path.is_ident("split_first") {
+            let v: syn::LitStr = meta.value()?.parse()?;
+            transform = Some(TransformDecl::SplitFirst {
+                separator: v.value(),
+            });
+            Ok(())
+        } else {
+            Err(meta.error(
+                "unknown transform; expected #[transform(split_first = \"<sep>\")]",
+            ))
+        }
+    })?;
+    transform.ok_or_else(|| {
+        Error::new_spanned(
+            attr,
+            "empty #[transform(...)]; expected #[transform(split_first = \"<sep>\")]",
+        )
+    })
+}
+
+/// Parse `#[validate(...)]` (#1750). Accepted forms:
+/// `#[validate(i32)]`, `#[validate(timestamp_nanos)]`, `#[validate(non_empty)]`,
+/// and `#[validate(int_range(min = .., max = ..))]`.
+fn parse_validate_attr(attr: &syn::Attribute) -> syn::Result<ValidatorDecl> {
+    let mut validator: Option<ValidatorDecl> = None;
+    attr.parse_nested_meta(|meta| {
+        if meta.path.is_ident("i32") {
+            validator = Some(ValidatorDecl::I32);
+            Ok(())
+        } else if meta.path.is_ident("timestamp_nanos") {
+            validator = Some(ValidatorDecl::TimestampNanos);
+            Ok(())
+        } else if meta.path.is_ident("non_empty") {
+            validator = Some(ValidatorDecl::NonEmptyString);
+            Ok(())
+        } else if meta.path.is_ident("int_range") {
+            let mut min: Option<i64> = None;
+            let mut max: Option<i64> = None;
+            meta.parse_nested_meta(|inner| {
+                if inner.path.is_ident("min") {
+                    let v: syn::LitInt = inner.value()?.parse()?;
+                    min = Some(v.base10_parse()?);
+                    Ok(())
+                } else if inner.path.is_ident("max") {
+                    let v: syn::LitInt = inner.value()?.parse()?;
+                    max = Some(v.base10_parse()?);
+                    Ok(())
+                } else {
+                    Err(inner.error("expected int_range(min = .., max = ..)"))
+                }
+            })?;
+            let min = min.ok_or_else(|| meta.error("int_range: missing 'min'"))?;
+            let max = max.ok_or_else(|| meta.error("int_range: missing 'max'"))?;
+            validator = Some(ValidatorDecl::IntRange { min, max });
+            Ok(())
+        } else {
+            Err(meta.error(
+                "unknown validator; expected one of: i32, timestamp_nanos, non_empty, \
+                 int_range(min = .., max = ..)",
+            ))
+        }
+    })?;
+    validator.ok_or_else(|| {
+        Error::new_spanned(
+            attr,
+            "empty #[validate(...)]; expected one of: i32, timestamp_nanos, non_empty, \
+             int_range(min = .., max = ..)",
+        )
     })
 }
 
@@ -1184,6 +1294,27 @@ fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
         quote!(None)
     };
 
+    let transform_token = match &d.transform {
+        Some(TransformDecl::SplitFirst { separator }) => {
+            quote!(Some(_sdk_parser::FieldTransform::SplitFirst { separator: #separator.into() }))
+        }
+        None => quote!(None),
+    };
+
+    let validate_token = match &d.validate {
+        Some(ValidatorDecl::IntRange { min, max }) => {
+            quote!(Some(_sdk_parser::FieldValidator::IntRange { min: #min, max: #max }))
+        }
+        Some(ValidatorDecl::I32) => quote!(Some(_sdk_parser::FieldValidator::I32)),
+        Some(ValidatorDecl::TimestampNanos) => {
+            quote!(Some(_sdk_parser::FieldValidator::TimestampNanos))
+        }
+        Some(ValidatorDecl::NonEmptyString) => {
+            quote!(Some(_sdk_parser::FieldValidator::NonEmptyString))
+        }
+        None => quote!(None),
+    };
+
     Ok(quote!(_sdk_parser::FieldSpec {
         name: #name.into(),
         source: #source_token,
@@ -1197,6 +1328,8 @@ fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
         timestamp: #timestamp_token,
         suppress_if: #suppress_token,
         carry: #carry_token,
+        transform: #transform_token,
+        validate: #validate_token,
     }))
 }
 

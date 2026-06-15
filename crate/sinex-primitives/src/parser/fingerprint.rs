@@ -1452,6 +1452,8 @@ mod tests {
                 timestamp: None,
                 suppress_if: None,
                 carry: None,
+                transform: None,
+                validate: None,
             }],
             discriminator: None,
         };

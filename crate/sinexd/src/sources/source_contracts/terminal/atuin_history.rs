@@ -16,14 +16,17 @@
 //! are exported through the parser manifest for the DB/user policy layer and
 //! never auto-act (#1611).
 //!
-//! # Migration note (#1727 slice 1 follow-up)
+//! # Migration note (#1727 slice 1 follow-up, resolved by #1750)
 //!
-//! The previous imperative `AtuinHistoryParser` performed two validations the
-//! declarative DSL v1 cannot yet express: `host:user` hostname normalization
-//! and timestamp range checks. Under the declarative parser these become
-//! runtime concerns rather than typed-at-construction checks. Restoring them as
-//! declarative validation hooks is tracked as a follow-up referenced from the
-//! source-definition PR.
+//! The previous imperative `AtuinHistoryParser` performed validations the
+//! declarative DSL v1 could not express. Those are now restored as declarative
+//! field hooks (#1750):
+//!   - `#[transform(split_first = ":")]` on `hostname` recovers the
+//!     `host:user` → `host` normalization (`normalize_atuin_hostname`).
+//!   - `#[validate(timestamp_nanos)]` on `timestamp` recovers the nanosecond
+//!     range check.
+//!   - `#[validate(i32)]` on `exit_code` recovers the exit-code narrowing
+//!     check.
 
 use sinex_macros::SourceDefinition;
 use sinex_primitives::privacy::ProcessingContext;
@@ -68,6 +71,7 @@ pub struct AtuinHistoryRecord {
     /// Command start time, unix nanoseconds.
     #[source(column_name = "timestamp")]
     #[timestamp(format = "unix_seconds_nanos", fallback = "material_timing")]
+    #[validate(timestamp_nanos)]
     pub timestamp: i64,
 
     /// Executed command line.
@@ -84,6 +88,7 @@ pub struct AtuinHistoryRecord {
     /// Process exit code (defaults to 0 when absent).
     #[source(column_name = "exit")]
     #[default = "0"]
+    #[validate(i32)]
     pub exit_code: i64,
 
     /// Command duration in nanoseconds (defaults to 0 when absent).
@@ -99,7 +104,103 @@ pub struct AtuinHistoryRecord {
     #[source(column_name = "session")]
     pub atuin_session_id: String,
 
-    /// Originating hostname (`host:user` form; not normalized in DSL v1).
+    /// Originating hostname. Atuin stores `host:user`; the `split_first`
+    /// transform collapses it to the host segment (#1750).
     #[source(column_name = "hostname")]
+    #[transform(split_first = ":")]
     pub hostname: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_primitives::Id;
+    use sinex_primitives::parser::{
+        BindingConfig, DeclarativeParser, MaterialAnchor, ParserContext, ParserError, SourceId,
+        SourceRecord,
+    };
+    use sinex_primitives::temporal::Timestamp;
+    use xtask::sandbox::prelude::*;
+
+    fn ctx() -> ParserContext {
+        ParserContext {
+            source_id: SourceId::from_static("terminal.atuin-history"),
+            source_material_id: Id::from_uuid(uuid::Uuid::nil()),
+            record_anchor: MaterialAnchor::SqliteRow {
+                table: "history".into(),
+                rowid: 1,
+            },
+            operation_id: uuid::Uuid::nil(),
+            job_id: uuid::Uuid::nil(),
+            host: "test-host".into(),
+            acquisition_time: Timestamp::now(),
+        }
+    }
+
+    fn record(json: &str) -> SourceRecord {
+        SourceRecord {
+            material_id: Id::from_uuid(uuid::Uuid::nil()),
+            anchor: MaterialAnchor::SqliteRow {
+                table: "history".into(),
+                rowid: 1,
+            },
+            bytes: json.as_bytes().to_vec(),
+            logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    /// Atuin parity (#1750): `host:user` hostname is normalized to the host
+    /// segment via the declarative `split_first` transform.
+    #[sinex_test]
+    async fn hostname_is_normalized_to_host_segment() -> TestResult<()> {
+        let row = r#"{
+            "rowid": 1,
+            "timestamp": 1700000000000000000,
+            "command": "ls -la",
+            "cwd": "/home/me",
+            "exit": 0,
+            "duration": 1000,
+            "id": "atuin-id-1",
+            "session": "session-1",
+            "hostname": "myhost:myuser"
+        }"#;
+        let intents = DeclarativeParser::evaluate(
+            AtuinHistoryRecord::parser_spec(),
+            &record(row),
+            &ctx(),
+            &BindingConfig::default(),
+        )?;
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].payload["hostname"], "myhost");
+        // rowid is the occurrence anchor (skipped from payload).
+        assert!(intents[0].payload.get("rowid").is_none());
+        Ok(())
+    }
+
+    /// Atuin parity (#1750): an exit code outside `i32` range is rejected by
+    /// the declarative `validate(i32)` hook.
+    #[sinex_test]
+    async fn out_of_range_exit_code_is_rejected() -> TestResult<()> {
+        let row = r#"{
+            "rowid": 2,
+            "timestamp": 1700000000000000000,
+            "command": "true",
+            "cwd": "/home/me",
+            "exit": 9999999999,
+            "duration": 1000,
+            "id": "atuin-id-2",
+            "session": "session-1",
+            "hostname": "myhost"
+        }"#;
+        let result = DeclarativeParser::evaluate(
+            AtuinHistoryRecord::parser_spec(),
+            &record(row),
+            &ctx(),
+            &BindingConfig::default(),
+        );
+        assert!(matches!(result, Err(ParserError::Field(_))));
+        Ok(())
+    }
 }
