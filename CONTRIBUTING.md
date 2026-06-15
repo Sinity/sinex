@@ -40,7 +40,7 @@ Document each bypass in the PR body.
 ### I/O pressure during development
 
 Heavy compilation is itself the dominant source of build-time I/O: a full
-`xtask check --lint` over the ~473K-LOC workspace writes a large volume of
+`xtask check --lint` over the ~464K-LOC workspace writes a large volume of
 rustc/clippy artifacts, and with incremental builds enabled and sccache disabled
 in the devshell that artifact churn — not the running stack — is what drives host
 I/O during a build. The live sinex stack adds a baseline (self-telemetry) on top,
