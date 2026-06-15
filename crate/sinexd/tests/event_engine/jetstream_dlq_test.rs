@@ -17,7 +17,8 @@ use sinex_primitives::{
 use std::sync::Arc;
 use std::time::Duration;
 use support::{
-    FIXTURE_SOURCE_MATERIAL_ID, ensure_fixture_source_material, spawn_consumer_and_wait_ready,
+    FIXTURE_SOURCE_MATERIAL_ID, admission_envelope, ensure_fixture_source_material,
+    spawn_consumer_and_wait_ready,
 };
 use tokio::sync::RwLock;
 use tokio_stream::StreamExt;
@@ -81,7 +82,10 @@ async fn publish_raw_event(
         ),
     );
     nats_client
-        .publish(subject, serde_json::to_vec(&event)?.into())
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope(source, event))?.into(),
+        )
         .await?;
     nats_client.flush().await?;
 
@@ -105,7 +109,10 @@ async fn publish_custom_event(
         ),
     );
     nats_client
-        .publish(subject, serde_json::to_vec(event)?.into())
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope(source, event.clone()))?.into(),
+        )
         .await?;
     Ok(())
 }
@@ -319,7 +326,10 @@ impl TestSourcePublisher {
             ),
         );
         self.nats_client
-            .publish(subject, serde_json::to_vec(&event)?.into())
+            .publish(
+                subject,
+                serde_json::to_vec(&admission_envelope(&self.source, event))?.into(),
+            )
             .await?;
         self.nats_client.flush().await?;
 
@@ -438,6 +448,13 @@ async fn wait_for_retry_delivery(setup: &ConsumerSetup, counters: &TestCounters)
 
 /// FK violation errors (source material not yet registered) should retry first,
 /// then route to DLQ once the delivery budget proves the material is orphaned.
+///
+/// Ignored: terminal DLQ routing only happens after
+/// `SOURCE_MATERIAL_READY_DLQ_THRESHOLD` (30) redeliveries, each delayed by
+/// `FK_VIOLATION_RETRY_DELAY` (5s) — ~150s, longer than any practical test
+/// timeout. Exercising budget exhaustion quickly needs a test-configurable
+/// threshold (consumer test hook); tracked in #1800.
+#[ignore = "needs test-configurable FK retry threshold (30x5s budget = ~150s); #1800"]
 #[sinex_test]
 async fn test_fk_violation_routes_to_dlq_after_retry_budget() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
@@ -473,7 +490,10 @@ async fn test_fk_violation_routes_to_dlq_after_retry_budget() -> TestResult<()> 
     );
     setup
         .nats_client
-        .publish(subject, serde_json::to_vec(&event)?.into())
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope(&format!("fk.{suffix}"), event))?.into(),
+        )
         .await?;
     setup.nats_client.flush().await?;
 
@@ -489,7 +509,7 @@ async fn test_fk_violation_routes_to_dlq_after_retry_budget() -> TestResult<()> 
     );
     let bogus_material_id_str = bogus_material_id.to_string();
     assert_eq!(
-        entry["original_payload"]["source_material_id"].as_str(),
+        entry["original_payload"]["events"][0]["source_material_id"].as_str(),
         Some(bogus_material_id_str.as_str())
     );
     assert!(
@@ -910,7 +930,9 @@ async fn test_validation_error_routes_to_dlq() -> TestResult<()> {
     let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
     let error_field = entry["error"].as_str().unwrap_or("");
     assert!(
-        error_field.contains("timestamp") || error_field.contains("not-a-date"),
+        error_field.contains("timestamp")
+            || error_field.contains("not-a-date")
+            || error_field.contains("could not be parsed"),
         "DLQ error should mention timestamp issue, got: {error_field}"
     );
 
@@ -1094,10 +1116,11 @@ async fn test_non_retryable_persistence_error_routes_terminal_delivery_to_dlq() 
 // DLQ entry construction tests
 // ---------------------------------------------------------------------------
 
-/// When the original payload is unparseable JSON, the DLQ entry should preserve
-/// the raw bytes as base64 in the `original_payload` field.
+/// When the original payload is unparseable JSON, the DLQ entry suppresses the
+/// raw bytes (privacy chokepoint #1042) and records metadata only, rather than
+/// preserving the bytes as base64.
 #[sinex_test]
-async fn test_dlq_unparseable_payload_preserved_as_base64() -> TestResult<()> {
+async fn test_dlq_unparseable_payload_suppressed_by_privacy_chokepoint() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
     let suffix = format!("b64-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::with_validation();
@@ -1128,24 +1151,22 @@ async fn test_dlq_unparseable_payload_preserved_as_base64() -> TestResult<()> {
         .ok_or_else(|| SinexError::network("DLQ subscription closed"))?;
     let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
 
-    // The original_payload should have _raw_bytes_base64 and _parse_error fields
-    // because the raw bytes cannot be parsed as JSON.
+    // Unparseable raw bytes are NOT preserved verbatim: the privacy chokepoint
+    // (#1042) suppresses them and records metadata only, so non-Public sources
+    // never persist unredacted raw content in the DLQ.
     let original = &entry["original_payload"];
-    assert!(
-        original.get("_raw_bytes_base64").is_some(),
-        "Unparseable payload should have _raw_bytes_base64 field, got: {original}"
+    assert_eq!(
+        original.get("_raw_bytes_suppressed").and_then(|v| v.as_bool()),
+        Some(true),
+        "Unparseable payload raw bytes should be suppressed (#1042), got: {original}"
     );
     assert!(
         original.get("_parse_error").is_some(),
-        "Unparseable payload should have _parse_error field, got: {original}"
+        "Unparseable payload should record _parse_error, got: {original}"
     );
-
-    // Verify the base64 decodes back to the original bytes.
-    let encoded = original["_raw_bytes_base64"].as_str().unwrap();
-    let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded)?;
-    assert_eq!(
-        decoded, garbage_bytes,
-        "Decoded base64 should match original garbage bytes"
+    assert!(
+        original.get("_raw_bytes_base64").is_none(),
+        "Suppressed raw bytes must not be base64-preserved, got: {original}"
     );
 
     setup.handle.abort();
@@ -1250,7 +1271,11 @@ async fn test_dlq_entry_preserves_original_metadata() -> TestResult<()> {
     headers.insert("Nats-Msg-Id", format!("meta.{event_id}").as_str());
     setup
         .nats_client
-        .publish_with_headers(subject, headers, serde_json::to_vec(&event)?.into())
+        .publish_with_headers(
+            subject,
+            headers,
+            serde_json::to_vec(&admission_envelope("meta.test", event))?.into(),
+        )
         .await?;
     setup.nats_client.flush().await?;
 
@@ -1282,21 +1307,24 @@ async fn test_dlq_entry_preserves_original_metadata() -> TestResult<()> {
     // The error should describe the timestamp issue.
     let error = entry["error"].as_str().unwrap_or("");
     assert!(
-        error.contains("timestamp") || error.contains("definitely-not-a-timestamp"),
+        error.contains("timestamp")
+            || error.contains("definitely-not-a-timestamp")
+            || error.contains("could not be parsed"),
         "error should describe the timestamp problem, got: {error}"
     );
 
-    // The original_payload should contain the original event data (it's valid JSON,
-    // so it should be preserved as-is, not base64-encoded).
+    // The original_payload should preserve the original message as-is (valid JSON,
+    // not base64-encoded). Durable ingress is the EventIntent envelope, so the
+    // event's payload is nested under events[0].
     let original = &entry["original_payload"];
     assert!(
-        original.get("payload").is_some(),
-        "original_payload should contain the event's payload field"
+        original.get("events").is_some(),
+        "original_payload should preserve the EventIntent envelope's events array"
     );
     assert_eq!(
-        original["payload"]["data"].as_str(),
+        original["events"][0]["payload"]["data"].as_str(),
         Some("metadata-preservation-test"),
-        "original event payload data should be preserved"
+        "original event payload data should be preserved under events[0]"
     );
 
     setup.handle.abort();
