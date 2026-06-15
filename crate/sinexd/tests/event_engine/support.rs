@@ -11,6 +11,33 @@ use xtask::sandbox::timing::Timeouts;
 
 pub const FIXTURE_SOURCE_MATERIAL_ID: &str = "00000000-0000-7000-8000-000000000000";
 
+/// Wrap a single raw event in an `EventIntent` admission envelope.
+///
+/// Durable ingress on `events.raw.*` is envelope-only since #1149
+/// (`Admission::admit_intent_bytes`): producers publish an `EventIntent`, not a
+/// bare event. These integration tests predate that envelope, so they build the
+/// inner event and wrap it here. The inner event shape is unchanged.
+#[allow(dead_code)] // Shared across integration-test crates; each crate compiles its own copy.
+pub fn admission_envelope(source_id: &str, event: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "envelope_version": "1",
+        "source_id": source_id,
+        "parser_id": format!("{source_id}-parser"),
+        "parser_version": "1.0.0",
+        "events": [event],
+        "admitted_at": sinex_primitives::temporal::now().format_rfc3339(),
+        "admitted_by": "test-host",
+    })
+}
+
+/// Per-kind confirmation subject (#1306): confirmations are published per
+/// `(source, event_type)` watermark at `<prefix><source>.<event_type>`, not per
+/// event id.
+#[allow(dead_code)] // Shared across integration-test crates; each crate compiles its own copy.
+pub fn confirmation_subject_for(prefix: &str, source: &str, event_type: &str) -> String {
+    format!("{prefix}{source}.{event_type}")
+}
+
 #[allow(dead_code)] // Shared across integration-test crates; each crate compiles its own copy.
 pub async fn ensure_fixture_source_material(pool: &DbPool) -> color_eyre::Result<()> {
     sqlx::query!(
