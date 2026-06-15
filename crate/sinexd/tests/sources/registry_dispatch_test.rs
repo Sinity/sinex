@@ -363,3 +363,37 @@ async fn source_meta_browser_history_registers_chained_adapter_factory() -> Test
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn source_meta_document_staging_registers_parser_and_driver() -> TestResult<()> {
+    use sinex_primitives::source_contracts::{all_source_contracts, source_runtime_bindings};
+
+    let source_id = sui("document.staging");
+    let contract = all_source_contracts()
+        .find(|contract| contract.id == "document.staging")
+        .expect("document staging SourceContract must be registered");
+    assert!(
+        contract.event_types.iter().any(|(source, event_type)| {
+            *source == "document-source" && *event_type == "document.ingested"
+        }),
+        "document staging contract must declare document-source/document.ingested"
+    );
+    assert!(
+        source_runtime_bindings().any(|binding| {
+            binding.source_id == "document.staging"
+                && binding.adapter == "DocumentStagingParser"
+                && binding.output_event_type == "document.ingested"
+                && !binding.proposed
+        }),
+        "document staging must register live parser runtime metadata"
+    );
+    assert!(
+        find_parser_factory(&source_id).is_some(),
+        "document staging must register parser dispatch"
+    );
+    assert!(
+        find_source_factory(&source_id).is_some(),
+        "document staging must register the source-driver factory"
+    );
+    Ok(())
+}
