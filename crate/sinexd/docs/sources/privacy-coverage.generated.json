@@ -66,14 +66,15 @@
     },
     {
       "surface": "logs_and_diagnostics",
-      "behavior": "password_url_redaction_and_public_error_boundaries",
+      "behavior": "fixture_password_url_redacted_in_tracing_output",
       "evidence": [
         "crate/sinex-primitives/src/utils/url_redaction.rs",
         "crate/sinexd/src/runtime/preflight/database.rs::redact_password",
-        "crate/sinexd/src/runtime/preflight/services.rs::redact_password"
+        "crate/sinexd/src/runtime/preflight/services.rs::redact_password",
+        "crate/sinexd/tests/sources/privacy_coverage_matrix_test.rs::privacy_coverage_log_diagnostic_omits_fixture_secret"
       ],
       "caveats": [
-        "this row covers known URL/password diagnostics; it is not a guarantee that arbitrary tracing payloads are privacy-scrubbed"
+        "covers diagnostic paths that route credentials through URL password redaction before logging; arbitrary tracing payloads remain outside this guarantee"
       ]
     },
     {
@@ -163,10 +164,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -246,10 +247,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -312,10 +313,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -389,10 +390,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -479,10 +480,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -545,10 +546,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -651,10 +652,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -742,10 +743,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -823,10 +824,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -904,10 +905,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -985,10 +986,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1136,10 +1137,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1219,10 +1220,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1289,10 +1290,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -1381,10 +1382,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1452,10 +1453,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -1518,10 +1519,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -1584,10 +1585,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -1650,10 +1651,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -1733,10 +1734,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1840,10 +1841,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1923,10 +1924,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -1989,10 +1990,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2072,10 +2073,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -2138,10 +2139,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2204,10 +2205,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2271,10 +2272,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2354,10 +2355,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -2420,10 +2421,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2486,10 +2487,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2547,14 +2548,141 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
       ]
+    },
+    {
+      "source_id": "privacy.fixture.sensitive-record",
+      "source_contract": {
+        "access_scope": {
+          "scope": "staged_export"
+        },
+        "event_types": [
+          [
+            "privacy.fixture",
+            "privacy.fixture.record"
+          ]
+        ],
+        "horizons": [
+          "historical"
+        ],
+        "id": "privacy.fixture.sensitive-record",
+        "namespace": "privacy",
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "days": 1,
+          "kind": "days"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AppendOnlyFileAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "privacy",
+        "id": "privacy.fixture.sensitive-record",
+        "implementation": "fixture-metadata",
+        "output_event_type": "privacy.fixture.record",
+        "privacy_context": "metadata",
+        "proposed": true,
+        "resource_profile": "bounded_file",
+        "runner_pack": "staged",
+        "runtime_shape": "on_demand",
+        "source_id": "privacy.fixture.sensitive-record",
+        "subject": "source:privacy.fixture.sensitive-record"
+      },
+      "parser_manifest": {
+        "parser_id": "privacy-fixture-sensitive-record",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "append_only_file"
+        ],
+        "source_id": "privacy.fixture.sensitive-record",
+        "declared_event_types": [
+          [
+            "privacy",
+            "privacy.fixture.record"
+          ]
+        ],
+        "privacy_contexts": [
+          "metadata",
+          "document",
+          "command"
+        ],
+        "sensitivity_hints": [
+          "source_path",
+          "free_text",
+          "potentially_sensitive",
+          "credential_bearing"
+        ],
+        "description": "Declarative parser for PrivacyFixtureSensitiveRecord"
+      },
+      "field_metadata_status": "available",
+      "field_metadata_behavior": "metadata_only_export",
+      "field_privacy_metadata": [
+        {
+          "field_name": "source_path",
+          "field_type": "string",
+          "field_class": "column_index",
+          "input_shape_key": "column_0",
+          "effective_privacy_context": "metadata",
+          "sensitivity_hints": [
+            "source_path"
+          ],
+          "skip_payload": false,
+          "occurrence_key": false
+        },
+        {
+          "field_name": "free_text",
+          "field_type": "string",
+          "field_class": "column_index",
+          "input_shape_key": "column_1",
+          "effective_privacy_context": "document",
+          "sensitivity_hints": [
+            "free_text",
+            "potentially_sensitive"
+          ],
+          "skip_payload": false,
+          "occurrence_key": false
+        },
+        {
+          "field_name": "credential_material",
+          "field_type": "string",
+          "field_class": "column_index",
+          "input_shape_key": "column_2",
+          "effective_privacy_context": "command",
+          "sensitivity_hints": [
+            "credential_bearing"
+          ],
+          "skip_payload": false,
+          "occurrence_key": false
+        }
+      ],
+      "surface_behaviors": {
+        "privacy_export": "metadata_only_export_with_field_hints",
+        "public_rpc_errors": "public_error_details_only",
+        "mcp_search_fixture": "fixture_redacted",
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
+      },
+      "caveats": []
     },
     {
       "source_id": "raindrop-bookmarks",
@@ -2630,10 +2758,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -2713,10 +2841,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -2796,10 +2924,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -2862,10 +2990,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2928,10 +3056,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -2993,10 +3121,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3070,10 +3198,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3135,10 +3263,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3216,10 +3344,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3297,10 +3425,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3374,10 +3502,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3457,10 +3585,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -3540,10 +3668,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -3687,10 +3815,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -3780,10 +3908,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -3845,10 +3973,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -3959,10 +4087,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -4073,10 +4201,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -4139,10 +4267,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -4205,10 +4333,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -4300,10 +4428,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -4480,10 +4608,10 @@
         }
       ],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_with_field_hints",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": []
     },
@@ -4562,10 +4690,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -4684,10 +4812,10 @@
         }
       ],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_with_field_hints",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": []
     },
@@ -4747,10 +4875,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "no parser factory is registered for this source in sinexd"
@@ -4831,10 +4959,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -4915,10 +5043,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -5021,10 +5149,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -5131,10 +5259,10 @@
         }
       ],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_with_field_hints",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": []
     },
@@ -5212,10 +5340,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
@@ -5295,10 +5423,10 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "privacy_export": "metadata_only_export",
+        "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "public_error_details_only",
         "mcp_search_fixture": "fixture_redacted",
-        "query_recent_tui_logs": "not_applicable"
+        "query_recent_tui_logs": "operator_authorized_raw_read_not_safe_export"
       },
       "caveats": [
         "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"

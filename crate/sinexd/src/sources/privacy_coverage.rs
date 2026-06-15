@@ -110,10 +110,14 @@ pub fn build_privacy_coverage_matrix() -> PrivacyCoverageMatrix {
                 },
                 field_privacy_metadata: fields,
                 surface_behaviors: SurfaceBehaviors {
-                    privacy_export: "metadata_only_export",
+                    privacy_export: if has_fields {
+                        "metadata_only_export_with_field_hints"
+                    } else {
+                        "metadata_only_export_source_level_only"
+                    },
                     public_rpc_errors: "public_error_details_only",
                     mcp_search_fixture: "fixture_redacted",
-                    query_recent_tui_logs: "not_applicable",
+                    query_recent_tui_logs: "operator_authorized_raw_read_not_safe_export",
                 },
                 caveats,
             }
@@ -194,14 +198,15 @@ fn surface_audit_coverage() -> Vec<SurfaceAuditCoverage> {
         },
         SurfaceAuditCoverage {
             surface: "logs_and_diagnostics",
-            behavior: "password_url_redaction_and_public_error_boundaries",
+            behavior: "fixture_password_url_redacted_in_tracing_output",
             evidence: &[
                 "crate/sinex-primitives/src/utils/url_redaction.rs",
                 "crate/sinexd/src/runtime/preflight/database.rs::redact_password",
                 "crate/sinexd/src/runtime/preflight/services.rs::redact_password",
+                "crate/sinexd/tests/sources/privacy_coverage_matrix_test.rs::privacy_coverage_log_diagnostic_omits_fixture_secret",
             ],
             caveats: &[
-                "this row covers known URL/password diagnostics; it is not a guarantee that arbitrary tracing payloads are privacy-scrubbed",
+                "covers diagnostic paths that route credentials through URL password redaction before logging; arbitrary tracing payloads remain outside this guarantee",
             ],
         },
         SurfaceAuditCoverage {
