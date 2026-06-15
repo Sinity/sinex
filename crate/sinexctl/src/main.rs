@@ -539,6 +539,10 @@ fn command_path(cmd: &Commands) -> String {
             OpsCommands::List { .. } => "ops list".to_string(),
             OpsCommands::Get { .. } => "ops get".to_string(),
             OpsCommands::Cancel { .. } => "ops cancel".to_string(),
+            OpsCommands::Jobs(jobs_cmd) => match jobs_cmd {
+                sinexctl::commands::ops::JobsCommands::List { .. } => "ops jobs list".to_string(),
+                sinexctl::commands::ops::JobsCommands::Show { .. } => "ops jobs show".to_string(),
+            },
         },
         Commands::Privacy(cmd) => cmd.command_path().to_string(),
         Commands::Audit(_) => "audit".to_string(),

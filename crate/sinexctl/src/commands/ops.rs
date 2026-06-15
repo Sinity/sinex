@@ -1,10 +1,11 @@
 use clap::Subcommand;
 use serde_json::Value;
 use sinex_primitives::rpc::ops::{Operation as OpsOperation, OpsStartResponse};
+use sinex_primitives::views::{OperationJobListView, OperationView, ViewEnvelope};
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{CommandOutput, with_spinner_result};
+use crate::fmt::{CommandOutput, render_envelope, with_spinner_result};
 use crate::model::OutputFormat;
 
 /// Operations log commands
@@ -72,6 +73,50 @@ pub enum OpsCommands {
         #[arg(long, short = 'r')]
         reason: Option<String>,
     },
+
+    /// Read-only job view — enumerate and inspect operations via ViewEnvelope
+    #[command(subcommand)]
+    Jobs(JobsCommands),
+}
+
+/// Read-only operation job surface (rendered through ViewEnvelope)
+#[derive(Debug, Subcommand)]
+#[command(after_help = "\
+EXAMPLES:
+    # List recent operations (all kinds)
+    sinexctl ops jobs list
+
+    # List only replay jobs
+    sinexctl ops jobs list -t replay
+
+    # List failed jobs, JSON output
+    sinexctl ops jobs list -s failed --format json
+
+    # Show a specific operation
+    sinexctl ops jobs show 01HQ2KM...
+")]
+pub enum JobsCommands {
+    /// List operations as a ViewEnvelope (all kinds, or filtered)
+    #[command(alias = "ls")]
+    List {
+        /// Filter by operation kind (replay, archive, restore, purge, tombstone)
+        #[arg(long, short = 't')]
+        kind: Option<String>,
+
+        /// Filter by result status (running, success, failed, cancelled, pending)
+        #[arg(long, short = 's')]
+        status: Option<String>,
+
+        /// Maximum number of results
+        #[arg(long, short = 'n', default_value = "50")]
+        limit: i64,
+    },
+
+    /// Show a single operation as a ViewEnvelope
+    Show {
+        /// Operation ID
+        operation_id: String,
+    },
 }
 
 impl OpsCommands {
@@ -126,9 +171,131 @@ impl OpsCommands {
                     println!("Reason: {r}");
                 }
             }
+            Self::Jobs(jobs_cmd) => {
+                jobs_cmd.execute(client, format).await?;
+            }
         }
         Ok(())
     }
+}
+
+impl JobsCommands {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        match self {
+            Self::List { kind, status, limit } => {
+                let operations = client
+                    .ops_list(kind.clone(), status.clone(), Some(*limit))
+                    .await?;
+
+                let views: Vec<OperationView> = operations
+                    .iter()
+                    .map(operation_to_view)
+                    .collect();
+
+                let envelope = ViewEnvelope::new(
+                    "sinexctl.ops.jobs.list",
+                    OperationJobListView::new(views.clone()),
+                )
+                .with_query_echo(serde_json::json!({
+                    "kind": kind,
+                    "status": status,
+                    "limit": limit,
+                }));
+
+                if let Some(output) = render_envelope(&envelope, &views, format)? {
+                    print!("{output}");
+                    if !output.is_empty() && !output.ends_with('\n') {
+                        println!();
+                    }
+                    return Ok(());
+                }
+                // Table format — human rendering
+                if envelope.payload.jobs.is_empty() {
+                    println!("No operations found.");
+                } else {
+                    println!("{}", format_jobs_list_table(&envelope.payload.jobs));
+                }
+            }
+            Self::Show { operation_id } => {
+                let operation = client.ops_get(operation_id).await?;
+                let view = operation_to_view(&operation);
+
+                let envelope = ViewEnvelope::new("sinexctl.ops.jobs.show", view.clone());
+
+                if let Some(output) = render_envelope(&envelope, &[view.clone()], format)? {
+                    print!("{output}");
+                    if !output.is_empty() && !output.ends_with('\n') {
+                        println!();
+                    }
+                    return Ok(());
+                }
+                // Table format — human rendering
+                println!("{}", format_job_show_table(&view));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Convert the RPC `Operation` type to an [`OperationView`] for CLI rendering.
+fn operation_to_view(op: &OpsOperation) -> OperationView {
+    OperationView::from_rpc(
+        op.id.clone(),
+        &op.operation_type,
+        op.operator.clone(),
+        op.result_status,
+        op.duration_ms,
+        op.result_message.clone(),
+        op.scope.clone(),
+        op.preview_summary.clone(),
+    )
+}
+
+/// Format ops jobs list as a human-readable table.
+fn format_jobs_list_table(views: &[OperationView]) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("{}\n", "─".repeat(80)));
+    for view in views {
+        output.push_str(&format!("ID:       {}\n", view.id));
+        output.push_str(&format!("Kind:     {}\n", view.kind));
+        output.push_str(&format!("Status:   {}\n", view.status));
+        output.push_str(&format!("Operator: {}\n", view.operator));
+        if let Some(ms) = view.duration_ms {
+            output.push_str(&format!("Duration: {ms} ms\n"));
+        }
+        if let Some(msg) = view.result_message.as_deref() {
+            output.push_str(&format!("Message:  {msg}\n"));
+        }
+        output.push_str(&format!("{}\n", "─".repeat(80)));
+    }
+    output
+}
+
+/// Format a single ops job as a human-readable detail view.
+fn format_job_show_table(view: &OperationView) -> String {
+    let mut output = String::new();
+    output.push_str("Operation Job:\n");
+    output.push_str(&format!("  ID:       {}\n", view.id));
+    output.push_str(&format!("  Kind:     {}\n", view.kind));
+    output.push_str(&format!("  Status:   {}\n", view.status));
+    output.push_str(&format!("  Operator: {}\n", view.operator));
+    if let Some(ms) = view.duration_ms {
+        output.push_str(&format!("  Duration: {ms} ms\n"));
+    }
+    if let Some(msg) = view.result_message.as_deref() {
+        output.push_str(&format!("  Message:  {msg}\n"));
+    }
+    if let Some(scope) = view.scope.as_ref() {
+        if let Ok(pretty) = serde_json::to_string_pretty(scope) {
+            output.push_str(&format!("  Scope:\n{pretty}\n"));
+        }
+    }
+    if let Some(summary) = view.preview_summary.as_ref() {
+        if let Ok(pretty) = serde_json::to_string_pretty(summary) {
+            output.push_str(&format!("  Summary:\n{pretty}\n"));
+        }
+    }
+    output
 }
 
 /// Format ops start response as table

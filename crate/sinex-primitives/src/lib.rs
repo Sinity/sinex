@@ -93,7 +93,7 @@ pub use deployment_readiness::{
 };
 pub use domain::{
     ControlSubject, EventName, EventSource, EventType, HostName, MaterialStatus,
-    OperationRunStatus, RecordedPath, SanitizedPath, ServiceName, SourceIdentifier,
+    OperationKind, OperationRunStatus, RecordedPath, SanitizedPath, ServiceName, SourceIdentifier,
     SourceMaterialFormat, SourceMaterialTimingInfoType,
 };
 pub use domain_reducer::{
