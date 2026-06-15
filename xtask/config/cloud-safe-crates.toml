@@ -6,8 +6,9 @@
 # (Claude Code Web, Codex Cloud). "Safe" means:
 #
 #   1. No `sqlx::query!` / `sqlx::query_as!` macros at compile time
-#      (those require either a live Postgres URL via DATABASE_URL or a
-#      prepared `.sqlx/` cache committed to the repo).
+#      (those require a live Postgres URL via DATABASE_URL; this repo keeps
+#      no offline `.sqlx/` query cache, so DB-backed crates cannot compile
+#      without a live database).
 #   2. No `std::process::Command` invocations of `nats-server`, `postgres`,
 #      `docker`, or similar external binaries during normal test runs.
 #   3. No `tokio::net::TcpListener` / `UdpSocket` bound at module-init
