@@ -71,7 +71,8 @@ fn derive_source_definition_inner(input: &DeriveInput) -> syn::Result<TokenStrea
     }
 
     // --- Site 4: declarative MaterialParser (shared with SourceRecord). ---
-    let parser_tokens = generate_material_parser(struct_name, &attrs.parser_spec_attrs(), &field_decls)?;
+    let parser_tokens =
+        generate_material_parser(struct_name, &attrs.parser_spec_attrs(), &field_decls)?;
 
     // --- Sites 1–3: contract, binding, factory (shared with SourceMeta). ---
     let contract_tokens = generate_source_contract(&registration, &declared_types)?;
@@ -222,6 +223,7 @@ impl SourceDefinitionAttrs {
             // uses the monitor-emit factory shape.
             monitor_emit_fn: None,
             monitor_phase: None,
+            register_factory: true,
         }
     }
 }
@@ -304,9 +306,9 @@ fn parse_source_definition_attrs(attrs: &[syn::Attribute]) -> syn::Result<Source
                 "implementation" => out.implementation = Some(v),
                 "capabilities" => out.capabilities = split_csv(&v),
                 other => {
-                    return Err(meta.error(format!(
-                        "unknown source_definition attribute '{other}'"
-                    )));
+                    return Err(
+                        meta.error(format!("unknown source_definition attribute '{other}'"))
+                    );
                 }
             }
             Ok(())
