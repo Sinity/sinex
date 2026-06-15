@@ -210,6 +210,7 @@ pub struct MaterialAssembler {
     namespace: Option<String>,
     content_store: Arc<MaterialContentStore>,
     assembler_state: Arc<DashMap<Uuid, Arc<Mutex<AssemblerState>>>>,
+    slice_io_locks: Arc<DashMap<Uuid, Arc<Mutex<()>>>>,
     state_root: PathBuf,
     dlq_subject: String,
     slices_max_ack_pending: i64,
@@ -310,6 +311,7 @@ impl MaterialAssembler {
             namespace,
             content_store,
             assembler_state: Arc::new(DashMap::new()),
+            slice_io_locks: Arc::new(DashMap::new()),
             state_root,
             dlq_subject,
             slices_max_ack_pending,
@@ -568,6 +570,17 @@ impl MaterialAssembler {
         }
     }
 
+    fn slice_io_lock(&self, material_id: Uuid) -> Arc<Mutex<()>> {
+        match self.slice_io_locks.entry(material_id) {
+            dashmap::mapref::entry::Entry::Occupied(existing) => existing.get().clone(),
+            dashmap::mapref::entry::Entry::Vacant(vacant) => {
+                let lock = Arc::new(Mutex::new(()));
+                vacant.insert(lock.clone());
+                lock
+            }
+        }
+    }
+
     /// Build a placeholder assembler state for materials whose slices arrive before the begin message.
     async fn create_placeholder_state(
         &self,
@@ -709,6 +722,7 @@ impl MaterialAssembler {
             namespace: self.namespace.clone(),
             content_store: self.content_store.clone(),
             assembler_state: self.assembler_state.clone(),
+            slice_io_locks: self.slice_io_locks.clone(),
             state_root: self.state_root.clone(),
             dlq_subject: self.dlq_subject.clone(),
             slices_max_ack_pending: self.slices_max_ack_pending,
