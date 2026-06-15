@@ -22,8 +22,9 @@ use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 use xtask::sandbox::{ChaosInjector, TestHooks, TestSnapshot};
 
 use support::{
-    FIXTURE_SOURCE_MATERIAL_ID, consume_one_stream_message, ensure_fixture_source_material,
-    spawn_consumer_and_wait_ready, wait_for_last_stream_message_by_subject,
+    FIXTURE_SOURCE_MATERIAL_ID, admission_envelope, confirmation_subject_for,
+    consume_one_stream_message, ensure_fixture_source_material, spawn_consumer_and_wait_ready,
+    wait_for_last_stream_message_by_subject,
 };
 
 /// Helper for publishing test events with a specific source to NATS.
@@ -75,6 +76,7 @@ impl TestSourcePublisher {
             "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
             "anchor_byte": 0,
         });
+        let envelope = admission_envelope(&self.source, event);
 
         let subject = env.nats_subject_with_namespace(
             self.namespace.as_deref(),
@@ -85,7 +87,7 @@ impl TestSourcePublisher {
             ),
         );
         self.nats_client
-            .publish(subject, serde_json::to_vec(&event)?.into())
+            .publish(subject, serde_json::to_vec(&envelope)?.into())
             .await?;
         self.nats_client.flush().await?;
 
@@ -136,6 +138,7 @@ async fn publish_event(
         "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
         "anchor_byte": 0,
     });
+    let envelope = admission_envelope(source, event);
 
     let subject = env.nats_subject_with_namespace(
         Some(namespace),
@@ -146,7 +149,7 @@ async fn publish_event(
         ),
     );
     nats_client
-        .publish(subject, serde_json::to_vec(&event)?.into())
+        .publish(subject, serde_json::to_vec(&envelope)?.into())
         .await?;
     nats_client.flush().await?;
 
@@ -299,11 +302,10 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
             .await?;
 
     let event_id = Uuid::now_v7();
-    let confirmation_subject = format!(
-        "{}.{}",
-        ctx.env()
-            .nats_subject_with_namespace(Some(&setup.namespace), "events.confirmations"),
-        event_id
+    let confirmation_subject = confirmation_subject_for(
+        &setup.topology.confirmations_prefix,
+        &format!("retry.{suffix}"),
+        "transient.failure",
     );
     let mut confirmation_sub = setup
         .nats_client
@@ -399,7 +401,11 @@ async fn jetstream_consumer_isolates_poison_row_without_rolling_back_committed_s
 
     let good_event_id = Uuid::now_v7();
     let bad_event_id = Uuid::now_v7();
-    let confirmation_subject = format!("{}{}", setup.topology.confirmations_prefix, good_event_id);
+    let confirmation_subject = confirmation_subject_for(
+        &setup.topology.confirmations_prefix,
+        &format!("split.good.{suffix}"),
+        "batch.split.good",
+    );
     let mut confirmation_sub = setup
         .nats_client
         .subscribe(confirmation_subject.clone())
@@ -442,11 +448,19 @@ async fn jetstream_consumer_isolates_poison_row_without_rolling_back_committed_s
     // in the same pull batch before isolating the poisoned row.
     setup
         .nats_client
-        .publish(good_subject, serde_json::to_vec(&good_event)?.into())
+        .publish(
+            good_subject,
+            serde_json::to_vec(&admission_envelope(&format!("split.good.{suffix}"), good_event))?
+                .into(),
+        )
         .await?;
     setup
         .nats_client
-        .publish(bad_subject, serde_json::to_vec(&bad_event)?.into())
+        .publish(
+            bad_subject,
+            serde_json::to_vec(&admission_envelope(&format!("split.bad.{suffix}"), bad_event))?
+                .into(),
+        )
         .await?;
     setup.nats_client.flush().await?;
 
@@ -561,7 +575,11 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
         )
         .await?;
 
-    let confirmation_subject = format!("{}{}", setup.topology.confirmations_prefix, event_id);
+    let confirmation_subject = confirmation_subject_for(
+        &setup.topology.confirmations_prefix,
+        &format!("confirm.{suffix}"),
+        "confirmation.test",
+    );
     let msg = wait_for_last_stream_message_by_subject(
         &setup.js,
         &setup.topology.confirmations_stream,
@@ -634,7 +652,11 @@ async fn jetstream_consumer_queues_durable_confirmation_retries_without_raw_rede
     )
     .await?;
 
-    let confirmation_subject = format!("{}{}", setup.topology.confirmations_prefix, event_id);
+    let confirmation_subject = confirmation_subject_for(
+        &setup.topology.confirmations_prefix,
+        &format!("confirm-retry.{suffix}"),
+        "confirmation.retry",
+    );
     let msg = wait_for_last_stream_message_by_subject(
         &setup.js,
         &setup.topology.confirmations_stream,
@@ -709,7 +731,9 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
 }
 
 #[sinex_test]
-async fn jetstream_consumer_routes_missing_ts_orig_to_dlq(ctx: TestContext) -> TestResult<()> {
+async fn jetstream_consumer_resolves_missing_ts_orig_at_persistence(
+    ctx: TestContext,
+) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let suffix = format!(
         "missing-ts-orig-{}",
@@ -751,29 +775,22 @@ async fn jetstream_consumer_routes_missing_ts_orig_to_dlq(ctx: TestContext) -> T
     );
     setup
         .nats_client
-        .publish(subject, serde_json::to_vec(&event)?.into())
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope(&source, event))?.into(),
+        )
         .await?;
     setup.nats_client.flush().await?;
 
-    let msg = timeout(Duration::from_secs(Timeouts::SHORT), dlq_sub.next())
-        .await
-        .map_err(|_| eyre!("timed out waiting for missing-ts_orig DLQ entry"))?
-        .ok_or_else(|| eyre!("DLQ subscription closed"))?;
-    let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+    // #1570 Prong B: a material event may arrive with ts_orig = None; the event
+    // engine resolves it from the source-material timing tier at the persistence
+    // stage rather than rejecting it. The event must persist, not route to DLQ.
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::STANDARD).await?;
     assert!(
-        entry["error"]
-            .as_str()
-            .unwrap_or("")
-            .contains("missing ts_orig"),
-        "DLQ error should mention missing ts_orig, got: {entry:?}"
-    );
-    assert!(
-        ctx.pool
-            .events()
-            .get_by_id(event_id.into())
-            .await?
-            .is_none(),
-        "events missing ts_orig must not persist"
+        timeout(Duration::from_secs(Timeouts::SHORT), dlq_sub.next())
+            .await
+            .is_err(),
+        "a material event missing ts_orig must be resolved and persisted, not routed to DLQ"
     );
 
     setup.handle.abort();
@@ -1313,8 +1330,9 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
         errors.push(error);
     }
 
-    // Invalid ts_orig on valid JSON produces "Invalid timestamp or field format" (the
-    // payload IS valid JSON, but typed deserialization fails on the bad timestamp).
+    // Invalid ts_orig: the bad timestamp lives inside the EventIntent envelope's
+    // typed `Event`, so deserialization of the envelope fails with a timestamp
+    // parse error ("... the 'year' component could not be parsed ...").
     // Malformed raw bytes produce "Parse error" (not even valid JSON).
     // The DB hook produces "Persistence error".
     assert!(
@@ -1322,9 +1340,11 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
         "Expected parse error (raw bytes) in DLQ: {errors:?}"
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| { e.contains("Invalid timestamp") || e.contains("invalid-timestamp") }),
+        errors.iter().any(|e| {
+            e.contains("Invalid timestamp")
+                || e.contains("invalid-timestamp")
+                || e.contains("could not be parsed")
+        }),
         "Expected timestamp-related error in DLQ: {errors:?}"
     );
     assert!(
@@ -1396,7 +1416,10 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
                     .map_err(|e| SinexError::network(e.to_string()))?
                     .state
                     .messages;
-                Ok::<bool, SinexError>(msgs >= 20)
+                // Per #1306, confirmations are per-(source,event_type) watermark
+                // with max_messages_per_subject = 1, so 20 same-kind events
+                // compact to a single confirmation message.
+                Ok::<bool, SinexError>(msgs >= 1)
             }
         },
         Timeouts::SHORT,
@@ -1427,7 +1450,8 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
     };
 
     snapshot.assert_events_persisted(20)?;
-    snapshot.assert_confirmations_received(20)?;
+    // One per-kind confirmation watermark covers all 20 same-kind events (#1306).
+    snapshot.assert_confirmations_received(1)?;
     snapshot.assert_no_dlq_entries()?;
 
     setup.handle.abort();
@@ -1496,7 +1520,11 @@ async fn jetstream_consumer_bisect_isolates_multiple_poison_rows_in_large_batch(
         };
         setup
             .nats_client
-            .publish(subject, serde_json::to_vec(&event)?.into())
+            .publish(
+                subject,
+                serde_json::to_vec(&admission_envelope(&format!("scale-split.{suffix}"), event))?
+                    .into(),
+            )
             .await?;
     }
     setup.nats_client.flush().await?;

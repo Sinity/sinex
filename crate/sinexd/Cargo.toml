@@ -21,6 +21,10 @@ name = "privacy_policy_test"
 path = "tests/event_engine/privacy_policy_test.rs"
 
 [[test]]
+name = "events_consumer_integration_test"
+path = "tests/event_engine/events_consumer_integration_test.rs"
+
+[[test]]
 name = "browser_history_parser_test"
 path = "tests/sources/browser_history_parser_test.rs"
 
