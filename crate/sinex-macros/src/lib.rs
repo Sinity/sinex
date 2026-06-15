@@ -222,6 +222,12 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 /// runtime binding as non-live while still keeping the contract visible in the
 /// source inventory.
 ///
+/// Sources with one semantic contract and several runtime bindings can add
+/// repeated `binding(...)` entries. Each extra binding must specify
+/// `event_type = "..."` and may override `subject`, `implementation`,
+/// `adapter`, `privacy_context`, `resource_profile`, `runner_pack`,
+/// `checkpoint_family`, `runtime_shape`, `capabilities`, and `proposed`.
+///
 /// # Struct attribute
 ///
 /// `#[source_meta(...)]` keys:
@@ -231,6 +237,7 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 /// comma-separated emitted types), `capabilities`, and for monitor-emit sources
 /// `monitor_emit_fn` / `monitor_phase`. External producers may set
 /// `factory = "none"`; the default is `factory = "adapter_parser"`.
+/// Extra runtime bindings use nested `binding(event_type = "...", ...)`.
 ///
 /// Typed enum-path/expression keys (written as Rust paths) — Required:
 /// `occurrence_identity` (e.g. `OccurrenceIdentity::Anchor`). Optional:
