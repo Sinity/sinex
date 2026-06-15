@@ -33,6 +33,16 @@ use tokio::{fs, fs::File, io::AsyncReadExt, io::AsyncWriteExt};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+#[cfg(test)]
+struct SliceStagingIoHook {
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+static SLICE_STAGING_IO_HOOK: std::sync::Mutex<Option<std::sync::Arc<SliceStagingIoHook>>> =
+    std::sync::Mutex::new(None);
+
 /// Restore persisted assembler state on startup by replaying the WAL
 ///
 /// # Edge Cases
@@ -1031,6 +1041,21 @@ pub(super) async fn handle_slice(
     // Update last slice received timestamp
     state.last_slice_received = Timestamp::now();
 
+    enum DeferredSliceIo {
+        None,
+        StageInOrder {
+            pending_write: PendingWrite,
+            temp_path: PathBuf,
+            staged_sync: bool,
+        },
+        BufferOutOfOrder {
+            buffer_path: PathBuf,
+            data: Vec<u8>,
+        },
+    }
+
+    let mut deferred_io = DeferredSliceIo::None;
+
     use std::cmp::Ordering;
     match offset.cmp(&state.expected_offset) {
         Ordering::Equal => {
@@ -1068,8 +1093,27 @@ pub(super) async fn handle_slice(
                 return Ok(());
             }
 
-            append_slice_data(assembler, &mut state, material_id, &data).await?;
-            flush_buffered_slices(assembler, &mut state, material_id).await?;
+            let pending_write =
+                prepare_pending_slice_write(assembler, &mut state, material_id, &data).await?;
+            let staged_bytes_after_write = state
+                .staged_bytes_since_sync
+                .saturating_add(pending_write.len as i64);
+            let staged_sync = assembler
+                .durability_policy
+                .staged_sync_decision(
+                    super::durability::StagedDurabilityCounters {
+                        bytes_since_sync: staged_bytes_after_write,
+                        elapsed_since_sync: state.last_staged_sync.elapsed(),
+                    },
+                    false,
+                )
+                .should_sync();
+
+            deferred_io = DeferredSliceIo::StageInOrder {
+                pending_write,
+                temp_path: state.temp_path.clone(),
+                staged_sync,
+            };
         }
         Ordering::Greater => {
             if state.buffered_slices.contains_key(&offset) {
@@ -1145,11 +1189,65 @@ pub(super) async fn handle_slice(
                     return Ok(());
                 }
 
-                let buffer_path = persist_buffered_slice(&mut state, offset, &data).await?;
+                let buffers_dir = state.buffers_dir();
+                deferred_io = DeferredSliceIo::BufferOutOfOrder {
+                    buffer_path: buffers_dir.join(format!("{offset}.bin")),
+                    data: data.clone(),
+                };
+            }
+        }
+        Ordering::Less => {
+            debug!(material_id = %material_id, offset, expected = state.expected_offset, "Ignoring duplicate or overlapping slice");
+        }
+    }
+
+    // No longer calling persist_state() here!
+    // Slice application is logged inside append_slice_data via WAL
+
+    let should_finalize = state.phase != AssemblyPhase::PendingBegin && state.pending_end.is_some();
+    let hold_ms = hold_start.elapsed().as_millis() as u64;
+    tracing::Span::current().record("lock_hold_ms", hold_ms);
+    if hold_ms > 100 {
+        warn!(material_id = %material_id, hold_ms, "Long lock hold in handle_slice");
+    }
+    drop(state);
+
+    match deferred_io {
+        DeferredSliceIo::None => {}
+        DeferredSliceIo::StageInOrder {
+            pending_write,
+            temp_path,
+            staged_sync,
+        } => {
+            notify_slice_staging_io_for_tests().await;
+            stage_slice_file(material_id, &temp_path, &pending_write, &data, staged_sync).await?;
+            let mut state = state_handle.lock().await;
+            commit_pending_slice_write(
+                assembler,
+                &mut state,
+                material_id,
+                &data,
+                &pending_write,
+                staged_sync,
+            )
+            .await?;
+            flush_buffered_slices(assembler, &mut state, material_id).await?;
+        }
+        DeferredSliceIo::BufferOutOfOrder { buffer_path, data } => {
+            persist_buffered_slice_to_path(&buffer_path, offset, &data).await?;
+            let mut state = state_handle.lock().await;
+            if state.buffered_slices.contains_key(&offset) {
+                if let Err(error) = fs::remove_file(&buffer_path).await {
+                    warn!(
+                        path = %buffer_path.display(),
+                        error = %error,
+                        "Failed to remove duplicate buffered slice file"
+                    );
+                }
+            } else {
                 state.buffered_bytes = state.buffered_bytes.saturating_add(data.len() as i64);
                 state.buffered_slices.insert(offset, buffer_path.clone());
 
-                // Log buffering event
                 append_wal_entry(
                     assembler,
                     &mut state,
@@ -1168,21 +1266,7 @@ pub(super) async fn handle_slice(
                 );
             }
         }
-        Ordering::Less => {
-            debug!(material_id = %material_id, offset, expected = state.expected_offset, "Ignoring duplicate or overlapping slice");
-        }
     }
-
-    // No longer calling persist_state() here!
-    // Slice application is logged inside append_slice_data via WAL
-
-    let should_finalize = state.phase != AssemblyPhase::PendingBegin && state.pending_end.is_some();
-    let hold_ms = hold_start.elapsed().as_millis() as u64;
-    tracing::Span::current().record("lock_hold_ms", hold_ms);
-    if hold_ms > 100 {
-        warn!(material_id = %material_id, hold_ms, "Long lock hold in handle_slice");
-    }
-    drop(state);
 
     if should_finalize {
         assembler
@@ -1202,7 +1286,20 @@ async fn append_slice_data(
     material_id: Uuid,
     data: &[u8],
 ) -> EventEngineResult<()> {
-    let pending_write = if let Some(existing) = state.pending_write.clone() {
+    let pending_write = prepare_pending_slice_write(assembler, state, material_id, data).await?;
+    stage_slice_for_locked_state(assembler, state, material_id, data, &pending_write).await?;
+    commit_pending_slice_write(assembler, state, material_id, data, &pending_write, false).await?;
+
+    Ok(())
+}
+
+async fn prepare_pending_slice_write(
+    assembler: &MaterialAssembler,
+    state: &mut AssemblerState,
+    material_id: Uuid,
+    data: &[u8],
+) -> EventEngineResult<PendingWrite> {
+    if let Some(existing) = state.pending_write.clone() {
         if existing.offset != state.expected_offset || existing.len != data.len() {
             return Err(
                 SinexError::invalid_state("pending_write does not match retried slice")
@@ -1213,7 +1310,7 @@ async fn append_slice_data(
                     .with_context("incoming_len", data.len().to_string()),
             );
         }
-        existing
+        Ok(existing)
     } else {
         let pending_write = PendingWrite {
             offset: state.expected_offset,
@@ -1227,10 +1324,15 @@ async fn append_slice_data(
             WalEntry::Checkpoint(checkpoint_snapshot(state)),
         )
         .await?;
-        pending_write
-    };
+        Ok(pending_write)
+    }
+}
 
-    let expected_size_after_write = pending_write
+fn checked_pending_write_end(
+    material_id: Uuid,
+    pending_write: &PendingWrite,
+) -> EventEngineResult<i64> {
+    pending_write
         .offset
         .checked_add(pending_write.len as i64)
         .ok_or_else(|| {
@@ -1238,7 +1340,17 @@ async fn append_slice_data(
                 .with_context("material_id", material_id.to_string())
                 .with_context("offset", pending_write.offset.to_string())
                 .with_context("len", pending_write.len.to_string())
-        })?;
+        })
+}
+
+async fn stage_slice_for_locked_state(
+    assembler: &MaterialAssembler,
+    state: &mut AssemblerState,
+    material_id: Uuid,
+    data: &[u8],
+    pending_write: &PendingWrite,
+) -> EventEngineResult<()> {
+    let expected_size_after_write = checked_pending_write_end(material_id, pending_write)?;
 
     let actual_size = staged_file_size_bytes(&state.temp_path).await?;
     match actual_size {
@@ -1288,13 +1400,86 @@ async fn append_slice_data(
         }
     }
 
+    Ok(())
+}
+
+async fn stage_slice_file(
+    material_id: Uuid,
+    temp_path: &Path,
+    pending_write: &PendingWrite,
+    data: &[u8],
+    sync_after_write: bool,
+) -> EventEngineResult<()> {
+    let expected_size_after_write = checked_pending_write_end(material_id, pending_write)?;
+    let actual_size = staged_file_size_bytes(temp_path).await?;
+    match actual_size {
+        size if size == pending_write.offset => {
+            let mut file = File::options()
+                .create(true)
+                .append(true)
+                .open(temp_path)
+                .await
+                .map_err(|e| {
+                    SinexError::io(format!("Failed to reopen staging file for {material_id}"))
+                        .with_source(e)
+                })?;
+            file.write_all(data).await.map_err(|e| {
+                SinexError::io(format!("Failed to write slice for {material_id}")).with_source(e)
+            })?;
+            file.flush().await.map_err(|e| {
+                SinexError::io(format!("Failed to flush staged material for {material_id}"))
+                    .with_source(e)
+            })?;
+            if sync_after_write {
+                file.sync_data().await.map_err(|e| {
+                    SinexError::io(format!("Failed to sync staged material for {material_id}"))
+                        .with_source(e)
+                })?;
+            }
+        }
+        size if size == expected_size_after_write => {
+            debug!(
+                material_id = %material_id,
+                offset = pending_write.offset,
+                len = pending_write.len,
+                "Resuming slice commit from previously staged bytes"
+            );
+        }
+        size => {
+            return Err(SinexError::invalid_state(
+                "slice staging file is inconsistent with pending_write",
+            )
+            .with_context("material_id", material_id.to_string())
+            .with_context("pending_offset", pending_write.offset.to_string())
+            .with_context("pending_len", pending_write.len.to_string())
+            .with_context("actual_size", size.to_string()));
+        }
+    }
+    Ok(())
+}
+
+async fn commit_pending_slice_write(
+    assembler: &MaterialAssembler,
+    state: &mut AssemblerState,
+    material_id: Uuid,
+    data: &[u8],
+    pending_write: &PendingWrite,
+    staged_synced_after_write: bool,
+) -> EventEngineResult<()> {
+    let expected_size_after_write = checked_pending_write_end(material_id, pending_write)?;
+
     state.staged_bytes_since_sync = state
         .staged_bytes_since_sync
         .saturating_add(pending_write.len as i64);
-    assembler
-        .durability_policy
-        .sync_staged_file_if_needed(state, material_id, false)
-        .await?;
+    if staged_synced_after_write {
+        state.staged_bytes_since_sync = 0;
+        state.last_staged_sync = Instant::now();
+    } else {
+        assembler
+            .durability_policy
+            .sync_staged_file_if_needed(state, material_id, false)
+            .await?;
+    }
 
     append_wal_entry(
         assembler,
@@ -1370,17 +1555,18 @@ async fn flush_buffered_slices(
     Ok(())
 }
 
-async fn persist_buffered_slice(
-    state: &mut AssemblerState,
+async fn persist_buffered_slice_to_path(
+    buffer_path: &Path,
     offset: i64,
     data: &[u8],
-) -> EventEngineResult<PathBuf> {
-    let buffers_dir = state.buffers_dir();
-    fs::create_dir_all(&buffers_dir)
+) -> EventEngineResult<()> {
+    let buffers_dir = buffer_path
+        .parent()
+        .ok_or_else(|| SinexError::invalid_state("buffered slice path has no parent"))?;
+    fs::create_dir_all(buffers_dir)
         .await
         .map_err(|e| SinexError::io("Failed to create buffer dir").with_source(e))?;
 
-    let buffer_path = buffers_dir.join(format!("{offset}.bin"));
     let temp_path = buffers_dir.join(format!("{}.{}.tmp", offset, Uuid::now_v7()));
     let mut file = fs::OpenOptions::new()
         .create_new(true)
@@ -1395,12 +1581,26 @@ async fn persist_buffered_slice(
     // reconstructable. The WAL records that we're expecting this offset; if the buffer file
     // is corrupt/empty after crash, recovery re-requests from JetStream. Trade-off: higher
     // throughput vs. slightly longer recovery on crash during heavy out-of-order ingestion.
-    fs::rename(&temp_path, &buffer_path)
+    fs::rename(&temp_path, buffer_path)
         .await
         .map_err(|e| SinexError::io("Failed to persist buffered slice").with_source(e))?;
-
-    Ok(buffer_path)
+    Ok(())
 }
+
+#[cfg(test)]
+async fn notify_slice_staging_io_for_tests() {
+    let hook = SLICE_STAGING_IO_HOOK
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    if let Some(hook) = hook {
+        hook.entered.notify_waiters();
+        hook.release.notified().await;
+    }
+}
+
+#[cfg(not(test))]
+async fn notify_slice_staging_io_for_tests() {}
 
 /// Import the assembled material into the runtime content store.
 pub(super) async fn import_into_content_store(
@@ -1428,6 +1628,7 @@ mod tests {
     use serde_json::json;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
+    use std::sync::Arc;
     use tokio::time::timeout;
     use tokio_stream::StreamExt;
     use xtask::sandbox::prelude::*;
@@ -1528,6 +1729,59 @@ mod tests {
         sync_staged_file_for_finalization(&assembler, &mut state, material_id).await?;
 
         assert_eq!(state.staged_bytes_since_sync, 0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn handle_slice_releases_state_lock_before_staging_io(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let mut state = assembler.create_placeholder_state(material_id).await?;
+        state.phase = AssemblyPhase::Accumulating;
+        let state_handle = assembler.insert_state_handle(material_id, state);
+        let assembler = Arc::new(assembler);
+
+        let hook = Arc::new(SliceStagingIoHook {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        {
+            let mut slot = SLICE_STAGING_IO_HOOK
+                .lock()
+                .map_err(|_| SinexError::invalid_state("slice staging hook mutex poisoned"))?;
+            *slot = Some(hook.clone());
+        }
+
+        let entered = hook.entered.notified();
+        let task_assembler = assembler.clone();
+        let join = tokio::spawn(async move {
+            handle_slice(&task_assembler, material_id, 0, b"first".to_vec()).await
+        });
+
+        timeout(Duration::from_secs(Timeouts::SHORT), entered).await?;
+        {
+            let guard = state_handle
+                .try_lock()
+                .expect("state mutex should be free while staged file I/O is pending");
+            assert_eq!(guard.pending_write.as_ref().map(|write| write.offset), Some(0));
+            assert_eq!(guard.expected_offset, 0);
+        }
+
+        hook.release.notify_waiters();
+        join.await??;
+        {
+            let mut slot = SLICE_STAGING_IO_HOOK
+                .lock()
+                .map_err(|_| SinexError::invalid_state("slice staging hook mutex poisoned"))?;
+            *slot = None;
+        }
+
+        let state = state_handle.lock().await;
+        assert_eq!(state.expected_offset, 5);
+        assert!(state.pending_write.is_none());
         Ok(())
     }
 
