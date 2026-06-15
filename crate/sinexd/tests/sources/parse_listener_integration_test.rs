@@ -10,7 +10,8 @@ use camino::Utf8PathBuf;
 use color_eyre::eyre::eyre;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::source_materials::SourceMaterial as SourceMaterialRegistration;
-use sinex_primitives::Uuid;
+use sinex_primitives::environment::environment;
+use sinex_primitives::{ControlSubject, Uuid};
 use sinexd::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
 use sinexd::sources::dispatch::{ParserDispatchFn, default_parser_dispatch, test_parser_dispatch};
 use sinexd::sources::parse_listener::{SourceParseAck, SourceParseCommand, spawn_parse_listener};
@@ -100,7 +101,11 @@ async fn spawn_listener(
     )
     .await
     .map_err(|e| eyre!("spawn failed: {e}"))?;
-    let subject = format!("sinex.control.sources.{source_id}.parse");
+    // Address the listener on the exact subject the gateway replay engine
+    // publishes to: the environment-namespaced control subject (#1780). The
+    // bare `sinex.control.sources.{id}.parse` would never reach the listener
+    // in any real environment.
+    let subject = environment().nats_subject(&ControlSubject::source_parse(source_id));
     Ok((handle, subject, content_store, tmp))
 }
 
@@ -237,6 +242,113 @@ async fn parse_listener_rejects_mismatched_source(ctx: TestContext) -> TestResul
         calls.lock().unwrap().len(),
         0,
         "dispatch should not run for a mismatched source"
+    );
+
+    handle.abort();
+    Ok(())
+}
+
+/// #1780 regression guard: the listener must bind the *environment-namespaced*
+/// control subject the gateway replay engine publishes to, not the bare one.
+///
+/// The gateway sends parse-replay commands to
+/// `env.nats_subject(ControlSubject::source_parse(id))` (e.g.
+/// `dev.sinex.control.sources.weechat.parse`). A listener bound to the bare
+/// `sinex.control.sources.weechat.parse` receives nothing and the gateway
+/// request times out — the exact failure #1780 exists to eliminate. This test
+/// fails on the pre-fix wiring: the bare subject would answer and the
+/// namespaced subject would have no responder.
+#[sinex_test]
+async fn parse_listener_binds_gateway_namespaced_subject_not_bare(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let source_id = "weechat";
+    let (handle, _calls, namespaced_subject, content_store, _tmp) =
+        spawn_recording_listener(&ctx, source_id).await?;
+    let client = ctx.nats_client();
+
+    let bare_subject = format!("sinex.control.sources.{source_id}.parse");
+    assert_ne!(
+        bare_subject, namespaced_subject,
+        "the environment must namespace control subjects; otherwise this test is vacuous"
+    );
+
+    let payload = b"2024-01-15 14:23:45\tsinity\thello world";
+    let material_id = stage_material(&ctx, &content_store, "weechat.log", payload).await?;
+
+    // The bare subject must have no responder: the listener is not bound there.
+    let bare_result = client
+        .request(
+            bare_subject.clone(),
+            serde_json::to_vec(&parse_command(source_id, Some(material_id)))?.into(),
+        )
+        .await;
+    assert!(
+        bare_result.is_err(),
+        "bare subject '{bare_subject}' must have no responder; the listener binds the namespaced subject"
+    );
+
+    // The gateway's namespaced subject must reach the live listener and ack.
+    let ack = request_parse_ack(
+        &client,
+        &namespaced_subject,
+        &parse_command(source_id, Some(material_id)),
+    )
+    .await?;
+    assert!(
+        ack.accepted,
+        "namespaced gateway subject must reach a live subscriber: {:?}",
+        ack.error
+    );
+
+    handle.abort();
+    Ok(())
+}
+
+/// #1780 AC: the parse ack reports parse *acceptance and outcome*, not durable
+/// completion of event application. The listener dispatches the parser and acks
+/// with the parsed-intent count; it does not itself persist events. Durable
+/// completion is observed separately by the replay path, which acks and then
+/// polls operation state (`replay_control::execution::replay_writer`,
+/// `dispatch_staged_source_replay`). This pins that an accepted ack leaves
+/// `core.events` untouched for the parsed material.
+#[sinex_test]
+async fn parse_listener_ack_is_parse_outcome_not_durable_completion(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let source_id = "weechat";
+    let (handle, subject, content_store, _tmp) =
+        spawn_listener(&ctx, source_id, default_parser_dispatch()).await?;
+    let client = ctx.nats_client();
+
+    let payload = b"2024-01-15 14:23:45\tsinity\thello world";
+    let material_id = stage_material(&ctx, &content_store, "weechat.log", payload).await?;
+
+    let cmd = parse_command(source_id, Some(material_id));
+    let ack = request_parse_ack(&client, &subject, &cmd).await?;
+
+    assert!(ack.accepted, "parse should be accepted: {:?}", ack.error);
+    assert_eq!(
+        ack.event_count,
+        Some(1),
+        "ack carries the parse outcome (intent count), the parse-acceptance signal"
+    );
+
+    // The ack is not durable event application: the listener discards the
+    // parsed intents (it only counts them), so nothing reaches the event engine
+    // and no row is persisted for this material.
+    let persisted: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM core.events WHERE source_material_id = $1",
+        material_id
+    )
+    .fetch_one(ctx.pool())
+    .await?
+    .unwrap_or(0);
+    assert_eq!(
+        persisted, 0,
+        "an accepted parse ack must not durably apply events; completion is observed separately by the replay path"
     );
 
     handle.abort();
