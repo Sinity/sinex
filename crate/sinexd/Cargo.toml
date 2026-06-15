@@ -49,6 +49,10 @@ name = "dlq_schema_validation_test"
 path = "tests/event_engine/dlq_schema_validation_test.rs"
 
 [[test]]
+name = "envelope_admission_test"
+path = "tests/event_engine/envelope_admission_test.rs"
+
+[[test]]
 name = "browser_history_parser_test"
 path = "tests/sources/browser_history_parser_test.rs"
 
