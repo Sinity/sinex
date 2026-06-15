@@ -78,7 +78,6 @@ reviews:
     - "!**/*.arrow"
 
     # Generated caches
-    - "!.sqlx/**"
     - "!**/target/**"
     - "!**/node_modules/**"
 
