@@ -8,6 +8,7 @@
 use crate::domain::{HealthStatus, ModuleName};
 use crate::env as shared_env;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
+use crate::views::{SourceCoverageListView, ViewEnvelope};
 use crate::{Result, Timestamp, Uuid};
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +29,17 @@ pub const SOURCES_STATUS_METHOD: RpcMethod<SourcesStatusRequest, SourcesStatusRe
         RpcMutability::ReadOnly,
     );
 
+pub const SOURCES_STATUS_VIEW_METHOD: RpcMethod<
+    SourcesStatusViewRequest,
+    ViewEnvelope<SourceCoverageListView>,
+> = RpcMethod::new(
+    methods::SOURCES_STATUS_VIEW,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
 /// Request: `sources.status`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcesStatusRequest {
@@ -38,6 +50,10 @@ pub struct SourcesStatusRequest {
     #[serde(default = "default_recent_window_secs")]
     pub recent_window_secs: u64,
 }
+
+/// Request: `sources.status.view`
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourcesStatusViewRequest {}
 
 impl Default for SourcesStatusRequest {
     fn default() -> Self {
