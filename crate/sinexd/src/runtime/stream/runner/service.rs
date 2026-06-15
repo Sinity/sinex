@@ -151,6 +151,12 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         #[cfg(feature = "messaging")]
         self.start_command_listener();
 
+        // Start the per-source parse listener (#1780) so gateway parse-replay
+        // commands reach a live subscriber with a real PgPool + ContentStoreManager.
+        // No-ops for non-source modules and without a DB pool.
+        #[cfg(all(feature = "messaging", feature = "db"))]
+        self.start_parse_listener().await;
+
         let service_result = match module_kind {
             ModuleKind::Source => {
                 // Source startup sequence: Snapshot -> Gap-fill -> Continuous

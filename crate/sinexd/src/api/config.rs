@@ -300,20 +300,11 @@ fn default_tcp_listen() -> String {
 }
 
 fn default_content_store_path() -> String {
-    // Check shared env key first; gateway-specific key is handled by the macro
-    // (it reads SINEX_API_CONTENT_STORE_PATH and overrides this default).
-    if let Ok(v) = std::env::var("SINEX_CONTENT_STORE_PATH") {
-        return v;
-    }
-    std::env::var("HOME").map_or_else(
-        |_| {
-            sinex_primitives::environment::environment()
-                .work_directory("content-store")
-                .to_string_lossy()
-                .into_owned()
-        },
-        |home| format!("{home}/.local/share/sinex/content-store"),
-    )
+    // Shared resolver (reads SINEX_CONTENT_STORE_PATH); the gateway-specific key
+    // is handled by the macro (it reads SINEX_API_CONTENT_STORE_PATH and
+    // overrides this default). Source runtimes resolve from the same shared
+    // resolver so gateway and sources address one CAS.
+    crate::runtime::content_store::default_content_store_path()
 }
 
 fn default_state_dir() -> PathBuf {
