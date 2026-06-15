@@ -11,6 +11,10 @@ use tokio::sync::RwLock;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
 
+#[path = "support.rs"]
+mod support;
+use support::{admission_envelope, ensure_fixture_source_material};
+
 /// Helper to publish a test event directly to `JetStream`.
 async fn publish_event(
     nats_client: &async_nats::Client,
@@ -46,7 +50,10 @@ async fn publish_event(
         ),
     );
     nats_client
-        .publish(subject, serde_json::to_vec(&event)?.into())
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope(source, event))?.into(),
+        )
         .await?;
     nats_client.flush().await?;
 
@@ -64,6 +71,7 @@ async fn start_consumer(
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
     let validator = IngestEventValidator::new(strict_validation);
     let env = ctx.env();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
