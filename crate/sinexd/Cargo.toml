@@ -101,6 +101,10 @@ name = "jetstream_dlq_test"
 path = "tests/event_engine/jetstream_dlq_test.rs"
 
 [[test]]
+name = "ingest_service_test"
+path = "tests/event_engine/ingest_service_test.rs"
+
+[[test]]
 name = "browser_history_parser_test"
 path = "tests/sources/browser_history_parser_test.rs"
 
