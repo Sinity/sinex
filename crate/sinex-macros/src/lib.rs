@@ -228,6 +228,10 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 /// `adapter`, `privacy_context`, `resource_profile`, `runner_pack`,
 /// `checkpoint_family`, `runtime_shape`, `capabilities`, and `proposed`.
 ///
+/// Sources whose deployment metadata adapter string differs from the Rust
+/// adapter type used by `register_source!` can set
+/// `factory_adapter = SomeAdapterAlias`.
+///
 /// # Struct attribute
 ///
 /// `#[source_meta(...)]` keys:
@@ -245,7 +249,7 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 /// (e.g. `AccessScope::TargetHome { path: ".." }`), `privacy_context`
 /// (`ProcessingContext::*`), `resource_profile` (`ResourceProfile::*`),
 /// `runner_pack` (`RunnerPack::*`), `checkpoint_family`, `runtime_shape`, and
-/// `proposed = true`.
+/// `proposed = true`. `factory_adapter` is also written as a Rust type path.
 ///
 /// Unlike `SourceDefinition` there are no parser-spec keys (`input_shape`,
 /// `default_privacy_context`, `version`, `baseline_adapter_config`) — those

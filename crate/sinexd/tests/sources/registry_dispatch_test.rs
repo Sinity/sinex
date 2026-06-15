@@ -328,3 +328,38 @@ async fn source_meta_email_source_registers_multiple_proposed_bindings() -> Test
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn source_meta_browser_history_registers_chained_adapter_factory() -> TestResult<()> {
+    use sinex_primitives::source_contracts::{all_source_contracts, source_runtime_bindings};
+
+    let source_id = sui("browser.history");
+    let contract = all_source_contracts()
+        .find(|contract| contract.id == "browser.history")
+        .expect("browser history SourceContract must be registered");
+    assert!(
+        contract
+            .event_types
+            .iter()
+            .any(|(source, event_type)| *source == "webhistory" && *event_type == "page.visited"),
+        "browser history contract must declare webhistory/page.visited"
+    );
+    assert!(
+        source_runtime_bindings().any(|binding| {
+            binding.source_id == "browser.history"
+                && binding.adapter == "ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>"
+                && binding.output_event_type == "page.visited"
+                && !binding.proposed
+        }),
+        "browser history must register live chained-adapter runtime metadata"
+    );
+    assert!(
+        find_source_factory(&source_id).is_some(),
+        "browser history must register a source factory"
+    );
+    assert!(
+        find_parser_factory(&source_id).is_some(),
+        "browser history must register a parser factory"
+    );
+    Ok(())
+}

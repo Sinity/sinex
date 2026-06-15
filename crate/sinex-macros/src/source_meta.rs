@@ -112,6 +112,10 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                     out.runtime_shape = Some(parse_enum_path_attr(&meta)?);
                     return Ok(());
                 }
+                "factory_adapter" => {
+                    out.factory_adapter = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
                 "checkpoint_family" => {
                     out.checkpoint_family = Some(parse_enum_expr_attr(&meta)?);
                     return Ok(());
