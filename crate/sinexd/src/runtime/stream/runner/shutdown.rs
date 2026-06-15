@@ -48,6 +48,13 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             )
             .await,
         );
+        // Parse listener (#1780) holds a NATS subscription with no clean-exit
+        // signal; aborted directly after the grace period (like the consumer).
+        Self::push_shutdown_error(
+            &mut shutdown_errors,
+            "parse listener",
+            Self::shutdown_task(&mut self.parse_listener_handle, None, "parse listener").await,
+        );
         Self::push_shutdown_error(
             &mut shutdown_errors,
             "coordination",

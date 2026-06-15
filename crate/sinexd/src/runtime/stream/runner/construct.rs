@@ -43,6 +43,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             consumer_handle: None,
             command_listener_shutdown: None,
             command_listener_handle: None,
+            parse_listener_handle: None,
             processing_model: ProcessingModel::StatelessWorker,
             leader_state: None,
         }
