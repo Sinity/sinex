@@ -41,9 +41,9 @@ use quote::quote;
 use syn::{DeriveInput, Error, parse_macro_input};
 
 use crate::source_registration::{
-    RegistrationAttrs, generate_factory_registration, generate_source_contract,
-    generate_source_runtime_binding, parse_enum_expr_attr, parse_enum_path_attr,
-    parse_enum_path_list_attr, split_csv,
+    RegistrationAttrs, RuntimeBindingAttrs, generate_factory_registration,
+    generate_source_contract, generate_source_runtime_binding, parse_enum_expr_attr,
+    parse_enum_path_attr, parse_enum_path_list_attr, split_csv,
 };
 
 pub fn derive_source_meta_impl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -99,6 +99,10 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
             // (e.g. `PrivacyTier::Public`); `horizons` is a typed path list
             // (`horizons(Horizon::Continuous, ..)`); all other keys take a
             // string literal.
+            if key == "binding" {
+                out.extra_bindings.push(parse_runtime_binding_attr(&meta)?);
+                return Ok(());
+            }
             match key.as_str() {
                 "privacy_tier" => {
                     out.privacy_tier = Some(parse_enum_path_attr(&meta)?);
@@ -211,5 +215,63 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
         ));
     }
 
+    Ok(out)
+}
+
+fn parse_runtime_binding_attr(
+    meta: &syn::meta::ParseNestedMeta<'_>,
+) -> syn::Result<RuntimeBindingAttrs> {
+    let mut out = RuntimeBindingAttrs::default();
+    meta.parse_nested_meta(|nested| {
+        let key = nested
+            .path
+            .get_ident()
+            .map(std::string::ToString::to_string)
+            .ok_or_else(|| nested.error("expected binding attribute key"))?;
+        match key.as_str() {
+            "privacy_context" => {
+                out.privacy_context = Some(parse_enum_path_attr(&nested)?);
+                return Ok(());
+            }
+            "resource_profile" => {
+                out.resource_profile = Some(parse_enum_path_attr(&nested)?);
+                return Ok(());
+            }
+            "runner_pack" => {
+                out.runner_pack = Some(parse_enum_path_attr(&nested)?);
+                return Ok(());
+            }
+            "checkpoint_family" => {
+                out.checkpoint_family = Some(parse_enum_expr_attr(&nested)?);
+                return Ok(());
+            }
+            "runtime_shape" => {
+                out.runtime_shape = Some(parse_enum_path_attr(&nested)?);
+                return Ok(());
+            }
+            "proposed" => {
+                let value: syn::LitBool = nested.value()?.parse()?;
+                out.proposed = Some(value.value);
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        let s: syn::LitStr = nested.value()?.parse()?;
+        let value = s.value();
+        match key.as_str() {
+            "subject" => out.subject = Some(value),
+            "event_type" => out.event_type = Some(value),
+            "implementation" => out.implementation = Some(value),
+            "adapter" => out.adapter = Some(value),
+            "capabilities" => out.capabilities = split_csv(&value),
+            other => return Err(nested.error(format!("unknown source_meta binding attribute '{other}'"))),
+        }
+        Ok(())
+    })?;
+
+    if out.event_type.is_none() {
+        return Err(meta.error("source_meta binding: missing required 'event_type'"));
+    }
     Ok(out)
 }

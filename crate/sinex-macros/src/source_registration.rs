@@ -90,6 +90,25 @@ pub(crate) struct RegistrationAttrs {
     /// only contract + binding metadata; no parser or source factory should be
     /// registered for them.
     pub register_factory: bool,
+    /// Additional runtime bindings for one source contract.
+    pub extra_bindings: Vec<RuntimeBindingAttrs>,
+}
+
+/// Optional overrides for additional runtime bindings emitted by
+/// `#[derive(SourceMeta)]`.
+#[derive(Debug, Default)]
+pub(crate) struct RuntimeBindingAttrs {
+    pub subject: Option<String>,
+    pub event_type: Option<String>,
+    pub implementation: Option<String>,
+    pub adapter: Option<String>,
+    pub privacy_context: Option<TokenStream>,
+    pub resource_profile: Option<TokenStream>,
+    pub runner_pack: Option<TokenStream>,
+    pub checkpoint_family: Option<TokenStream>,
+    pub runtime_shape: Option<TokenStream>,
+    pub capabilities: Vec<String>,
+    pub proposed: Option<bool>,
 }
 
 impl RegistrationAttrs {
@@ -184,42 +203,80 @@ pub(crate) fn generate_source_contract(
 pub(crate) fn generate_source_runtime_binding(
     attrs: &RegistrationAttrs,
 ) -> syn::Result<TokenStream> {
+    let primary = generate_one_source_runtime_binding(attrs, None)?;
+    let mut extra = Vec::with_capacity(attrs.extra_bindings.len());
+    for binding in &attrs.extra_bindings {
+        extra.push(generate_one_source_runtime_binding(attrs, Some(binding))?);
+    }
+
+    Ok(quote! {
+        #primary
+        #(#extra)*
+    })
+}
+
+fn generate_one_source_runtime_binding(
+    attrs: &RegistrationAttrs,
+    binding: Option<&RuntimeBindingAttrs>,
+) -> syn::Result<TokenStream> {
     let id = &attrs.id;
     let namespace = &attrs.namespace;
-    let subject = format!("source:{id}");
+    let subject = binding
+        .and_then(|binding| binding.subject.as_deref())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("source:{id}"));
 
-    let implementation = attrs.implementation.as_deref().unwrap_or("sinexd");
-    let adapter = &attrs.adapter;
-    let output_event_type = &attrs.event_type;
+    let implementation = binding
+        .and_then(|binding| binding.implementation.as_deref())
+        .or(attrs.implementation.as_deref())
+        .unwrap_or("sinexd");
+    let adapter = binding
+        .and_then(|binding| binding.adapter.as_deref())
+        .unwrap_or(&attrs.adapter);
+    let output_event_type = binding
+        .and_then(|binding| binding.event_type.as_deref())
+        .unwrap_or(&attrs.event_type);
 
     // Typed enum tokens emitted verbatim; absent attributes fall back to a
     // fully-qualified default path (resolves without an import in the source).
-    let privacy_context = attrs
-        .privacy_context
-        .clone()
+    let privacy_context = binding
+        .and_then(|binding| binding.privacy_context.clone())
+        .or_else(|| attrs.privacy_context.clone())
         .unwrap_or_else(|| quote!(::sinex_primitives::privacy::ProcessingContext::Metadata));
-    let resource_profile = attrs.resource_profile.clone().unwrap_or_else(|| {
-        quote!(::sinex_primitives::source_contracts::ResourceProfile::BoundedFile)
-    });
-    let runner_pack = attrs
-        .runner_pack
-        .clone()
+    let resource_profile = binding
+        .and_then(|binding| binding.resource_profile.clone())
+        .or_else(|| attrs.resource_profile.clone())
+        .unwrap_or_else(|| {
+            quote!(::sinex_primitives::source_contracts::ResourceProfile::BoundedFile)
+        });
+    let runner_pack = binding
+        .and_then(|binding| binding.runner_pack.clone())
+        .or_else(|| attrs.runner_pack.clone())
         .unwrap_or_else(|| quote!(::sinex_primitives::source_contracts::RunnerPack::SinexdSource));
-    let checkpoint_family = attrs.checkpoint_family.clone().unwrap_or_else(|| {
-        quote!(::sinex_primitives::source_contracts::CheckpointFamily::AppendStream)
-    });
-    let runtime_shape = attrs
-        .runtime_shape
-        .clone()
+    let checkpoint_family = binding
+        .and_then(|binding| binding.checkpoint_family.clone())
+        .or_else(|| attrs.checkpoint_family.clone())
+        .unwrap_or_else(|| {
+            quote!(::sinex_primitives::source_contracts::CheckpointFamily::AppendStream)
+        });
+    let runtime_shape = binding
+        .and_then(|binding| binding.runtime_shape.clone())
+        .or_else(|| attrs.runtime_shape.clone())
         .unwrap_or_else(|| quote!(::sinex_primitives::source_contracts::RuntimeShape::Continuous));
 
-    let capabilities_call = if attrs.capabilities.is_empty() {
+    let capabilities = binding
+        .filter(|binding| !binding.capabilities.is_empty())
+        .map(|binding| &binding.capabilities)
+        .unwrap_or(&attrs.capabilities);
+    let capabilities_call = if capabilities.is_empty() {
         quote!()
     } else {
-        let caps = attrs.capabilities.iter();
+        let caps = capabilities.iter();
         quote!(.capabilities(&[ #(#caps),* ]))
     };
-    let proposed = attrs.proposed;
+    let proposed = binding
+        .and_then(|binding| binding.proposed)
+        .unwrap_or(attrs.proposed);
 
     Ok(quote! {
         ::sinex_primitives::source_contracts::__register::inventory::submit! {

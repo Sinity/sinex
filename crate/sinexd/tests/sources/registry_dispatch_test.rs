@@ -273,3 +273,58 @@ async fn source_meta_proposed_media_sources_are_metadata_only() -> TestResult<()
     }
     Ok(())
 }
+
+#[sinex_test]
+async fn source_meta_email_source_registers_multiple_proposed_bindings() -> TestResult<()> {
+    use sinex_primitives::source_contracts::{all_source_contracts, source_runtime_bindings};
+
+    let source_id = sui("email.mailbox");
+    let contract = all_source_contracts()
+        .find(|contract| contract.id == "email.mailbox")
+        .expect("email mailbox SourceContract must be registered");
+    assert!(
+        contract
+            .event_types
+            .iter()
+            .any(|(_, event_type)| *event_type == "email.message.received"),
+        "email contract must declare received messages"
+    );
+    assert!(
+        contract
+            .event_types
+            .iter()
+            .any(|(_, event_type)| *event_type == "email.message.sent"),
+        "email contract must declare sent messages"
+    );
+
+    let bindings: Vec<_> = source_runtime_bindings()
+        .filter(|binding| binding.source_id == "email.mailbox")
+        .collect();
+    assert_eq!(
+        bindings.len(),
+        2,
+        "email mailbox must register received and sent runtime bindings"
+    );
+    for (subject, event_type) in [
+        ("source:email.mailbox", "email.message.received"),
+        ("source:email.mailbox.sent", "email.message.sent"),
+    ] {
+        assert!(
+            bindings.iter().any(|binding| {
+                binding.subject.as_str() == subject
+                    && binding.output_event_type == event_type
+                    && binding.proposed
+            }),
+            "email mailbox must register proposed binding {subject} -> {event_type}"
+        );
+    }
+    assert!(
+        find_source_factory(&source_id).is_none(),
+        "proposed email source must not register a source factory"
+    );
+    assert!(
+        find_parser_factory(&source_id).is_none(),
+        "proposed email source must not register a parser factory"
+    );
+    Ok(())
+}
