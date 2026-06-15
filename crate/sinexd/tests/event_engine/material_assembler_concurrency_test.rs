@@ -189,24 +189,25 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
         .await?;
     }
 
-    // Wait for ledger entries to appear for all materials, while also surfacing assembler failures.
-    let ledger_wait = async {
+    // Wait for finalization to land for all materials, while also surfacing assembler failures.
+    let finalization_wait = async {
         for (material_id, _, total_size, _) in &material_plans {
             let material_id_uuid = *material_id;
-            let expected_size = *total_size;
+            let expected_size = total_size.to_string();
             WaitHelpers::wait_for_condition(
                 || {
                     let pool = ctx.pool.clone();
+                    let expected_size = expected_size.clone();
                     async move {
                         let row = sqlx::query!(
                             r#"
                             SELECT EXISTS(
                                 SELECT 1
-                                FROM raw.temporal_ledger
-                                WHERE source_material_id = $1::uuid
-                                  AND offset_start = 0
-                                  AND offset_end = $2
-                                  AND offset_kind = 'byte'
+                                FROM raw.source_material_registry
+                                WHERE id = $1::uuid
+                                  AND status = 'completed'
+                                  AND optional_blob_id IS NOT NULL
+                                  AND metadata->>'file_size_bytes' = $2::text
                             ) AS "exists!"
                             "#,
                             material_id_uuid,
@@ -228,7 +229,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     // Also ensure the assembler task stays healthy while we wait.
     let mut handle = handle;
     tokio::select! {
-        res = ledger_wait => {
+        res = finalization_wait => {
             res?;
             handle.abort();
             let _ = (&mut handle).await;
