@@ -46,11 +46,11 @@
       "surface": "completion_scripts",
       "behavior": "formatless_static_command_metadata",
       "evidence": [
-        "crate/sinexctl/src/main.rs::formatless commands test",
-        "crate/sinexctl/src/model/format_registry.rs::validate_format_rejects_unsupported"
+        "crate/sinexctl/src/commands/completions.rs::completion_dynamic_vocab_omits_sensitive_fixture_material",
+        "crate/sinexctl/src/commands/completions.rs::zsh_postprocessor_injects_dynamic_source_and_event_type_lists"
       ],
       "caveats": [
-        "completion output is generated from clap command metadata and does not query event payloads"
+        "completion dynamic vocab is restricted to source and event-type identifiers from payload inventory"
       ]
     },
     {
