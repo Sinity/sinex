@@ -239,6 +239,19 @@ pub struct FieldSpec {
     /// The semantics depend on [`StatefulCarryPolicy`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub carry: Option<CarrySpec>,
+
+    // --- Extension G: validation / normalization hooks (#1750) ---
+    /// If `Some`, a normalization transform applied to the coerced value before
+    /// it contributes to the payload, occurrence key, or timestamp. See
+    /// [`FieldTransform`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform: Option<FieldTransform>,
+
+    /// If `Some`, a range / plausibility validator applied to the
+    /// (post-transform) value. A failed validator rejects the whole record with
+    /// a [`ParserError::Field`]. See [`FieldValidator`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validate: Option<FieldValidator>,
 }
 
 impl FieldSpec {
@@ -350,6 +363,50 @@ pub enum TimestampFallback {
     MaterialTiming,
     /// Fail the record.
     Error,
+}
+
+// =============================================================================
+// Extension G — validation / normalization hooks (#1750)
+// =============================================================================
+
+/// A declarative normalization transform applied to a field's coerced value.
+///
+/// V1 is a deliberately small, named-builtin set (not a general transform
+/// language). It exists to recover normalizations that imperative parsers
+/// performed at the field boundary and that the `SourceDefinition` migration
+/// otherwise dropped (#1750, #1727).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FieldTransform {
+    /// Keep the substring before the first occurrence of `separator`.
+    ///
+    /// This is the Atuin `host:user` → `host` normalization
+    /// (`split_once(separator)`, first segment). A no-op when the separator is
+    /// absent. Requires a string-typed value.
+    SplitFirst { separator: String },
+}
+
+/// A declarative range / plausibility validator applied to a field's
+/// (post-transform) value. A failure rejects the whole record.
+///
+/// V1 is a deliberately small, named-builtin set (not an expression language):
+/// it recovers the bounds checks imperative parsers performed (#1750, #1727).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FieldValidator {
+    /// Integer value must fall within `[min, max]` (inclusive). Use for
+    /// arbitrary numeric bounds.
+    IntRange { min: i64, max: i64 },
+    /// Integer value must fit in an `i32` (`i32::MIN..=i32::MAX`). The
+    /// narrowing check imperative parsers applied to exit codes and similar.
+    /// Equivalent to [`FieldValidator::IntRange`] with the `i32` bounds.
+    I32,
+    /// Integer nanosecond value must lie in the representable [`Timestamp`]
+    /// range (i.e. `Timestamp::from_unix_timestamp_nanos` succeeds). The
+    /// timestamp range check the imperative Atuin parser performed.
+    TimestampNanos,
+    /// String value must be non-empty after trimming surrounding whitespace.
+    NonEmptyString,
 }
 
 /// Predicate for `#[suppress_if(field = "...")]`.
@@ -505,6 +562,10 @@ fn evaluate_inner(
         };
 
         let coerced = coerce_field(&value, field.field_type, &field.name)?;
+
+        // --- Extension G: normalization transform, then validation (#1750) ---
+        let coerced = apply_transform(coerced, field.transform.as_ref(), &field.name)?;
+        apply_validator(&coerced, field.validate.as_ref(), &field.name)?;
 
         // --- Extension F: producer — store in carry-state ---
         if let Some(carry) = &field.carry {
@@ -750,6 +811,95 @@ fn coerce_field(
     }
 }
 
+/// Apply a [`FieldTransform`] to a coerced value (#1750). Returns the value
+/// unchanged when no transform is declared.
+fn apply_transform(
+    value: serde_json::Value,
+    transform: Option<&FieldTransform>,
+    field_name: &str,
+) -> Result<serde_json::Value, ParserError> {
+    let Some(transform) = transform else {
+        return Ok(value);
+    };
+    match transform {
+        FieldTransform::SplitFirst { separator } => match &value {
+            serde_json::Value::String(s) => {
+                let first = s
+                    .split_once(separator.as_str())
+                    .map_or(s.as_str(), |(head, _)| head);
+                Ok(serde_json::Value::String(first.to_string()))
+            }
+            other => Err(ParserError::Field(format!(
+                "transform split_first on '{field_name}' requires a string value, got {other:?}"
+            ))),
+        },
+    }
+}
+
+/// Apply a [`FieldValidator`] to a (post-transform) value (#1750). A failure
+/// rejects the whole record. Returns `Ok(())` when no validator is declared.
+fn apply_validator(
+    value: &serde_json::Value,
+    validator: Option<&FieldValidator>,
+    field_name: &str,
+) -> Result<(), ParserError> {
+    let Some(validator) = validator else {
+        return Ok(());
+    };
+    match validator {
+        FieldValidator::IntRange { min, max } => {
+            let n = value.as_i64().ok_or_else(|| {
+                ParserError::Field(format!(
+                    "validator int_range on '{field_name}' requires an integer value, got {value:?}"
+                ))
+            })?;
+            if n < *min || n > *max {
+                return Err(ParserError::Field(format!(
+                    "'{field_name}' = {n} is outside the permitted range [{min}, {max}]"
+                )));
+            }
+        }
+        FieldValidator::I32 => {
+            let n = value.as_i64().ok_or_else(|| {
+                ParserError::Field(format!(
+                    "validator i32 on '{field_name}' requires an integer value, got {value:?}"
+                ))
+            })?;
+            if i32::try_from(n).is_err() {
+                return Err(ParserError::Field(format!(
+                    "'{field_name}' = {n} does not fit in an i32"
+                )));
+            }
+        }
+        FieldValidator::TimestampNanos => {
+            let n = value.as_i64().ok_or_else(|| {
+                ParserError::Field(format!(
+                    "validator timestamp_nanos on '{field_name}' requires an integer value, \
+                     got {value:?}"
+                ))
+            })?;
+            if Timestamp::from_unix_timestamp_nanos(i128::from(n)).is_none() {
+                return Err(ParserError::Field(format!(
+                    "'{field_name}' = {n} ns is outside the representable timestamp range"
+                )));
+            }
+        }
+        FieldValidator::NonEmptyString => {
+            let s = value.as_str().ok_or_else(|| {
+                ParserError::Field(format!(
+                    "validator non_empty on '{field_name}' requires a string value, got {value:?}"
+                ))
+            })?;
+            if s.trim().is_empty() {
+                return Err(ParserError::Field(format!(
+                    "'{field_name}' must be a non-empty string"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn parse_timestamp(
     value: &serde_json::Value,
     spec: &TimestampSpec,
@@ -863,6 +1013,8 @@ mod tests {
                 timestamp: None,
                 suppress_if: None,
                 carry: None,
+                transform: None,
+                validate: None,
             },
             FieldSpec {
                 name: "optional".into(),
@@ -879,6 +1031,8 @@ mod tests {
                 timestamp: None,
                 suppress_if: None,
                 carry: None,
+                transform: None,
+                validate: None,
             },
             FieldSpec {
                 name: "line".into(),
@@ -893,6 +1047,8 @@ mod tests {
                 timestamp: None,
                 suppress_if: None,
                 carry: None,
+                transform: None,
+                validate: None,
             },
         ];
 
@@ -918,6 +1074,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
 
         assert_eq!(spec.required_input_keys(), vec!["column_2"]);
@@ -956,6 +1114,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -986,6 +1146,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let result = DeclarativeParser::evaluate(
             &spec,
@@ -1015,6 +1177,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1045,6 +1209,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1075,6 +1241,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1106,6 +1274,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         spec.fields.push(FieldSpec {
             name: "id".into(),
@@ -1122,6 +1292,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1162,6 +1334,8 @@ mod tests {
                 whole_event: false,
             }),
             carry: None,
+            transform: None,
+            validate: None,
         });
         let binding = BindingConfig::new().with_flag("private_mode_active", true);
         let intents = DeclarativeParser::evaluate(
@@ -1196,6 +1370,8 @@ mod tests {
                 whole_event: true,
             }),
             carry: None,
+            transform: None,
+            validate: None,
         });
         let binding = BindingConfig::new().with_flag("private_mode_active", true);
         let intents = DeclarativeParser::evaluate(
@@ -1230,6 +1406,8 @@ mod tests {
                 whole_event: false,
             }),
             carry: None,
+            transform: None,
+            validate: None,
         });
         let binding = BindingConfig::new().with_flag("private_mode_active", false);
         let intents = DeclarativeParser::evaluate(
@@ -1261,6 +1439,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1292,6 +1472,8 @@ mod tests {
                 timestamp: None,
                 suppress_if: None,
                 carry: None,
+                transform: None,
+                validate: None,
             });
             let json = format!(r#"{{"flag": {input:?}}}"#);
             let intents = DeclarativeParser::evaluate(
@@ -1327,6 +1509,8 @@ mod tests {
             }),
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1363,6 +1547,8 @@ mod tests {
             }),
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1399,6 +1585,8 @@ mod tests {
             }),
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1448,6 +1636,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         spec.fields.push(FieldSpec {
             name: "third".into(),
@@ -1462,6 +1652,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let record = SourceRecord {
             material_id: Id::from_uuid(uuid::Uuid::nil()),
@@ -1547,6 +1739,8 @@ mod tests {
             }),
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let result = DeclarativeParser::evaluate(
             &spec,
@@ -1581,6 +1775,8 @@ mod tests {
             }),
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1620,6 +1816,8 @@ mod tests {
             }),
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1653,6 +1851,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let result = DeclarativeParser::evaluate(
             &spec,
@@ -1682,6 +1882,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         // 3.14 must error for FieldType::Integer.
         let err = DeclarativeParser::evaluate(
@@ -1744,6 +1946,8 @@ mod tests {
                 whole_event: true,
             }),
             carry: None,
+            transform: None,
+            validate: None,
         });
         let binding = BindingConfig::new().with_flag("private_mode", true);
         let intents = DeclarativeParser::evaluate(
@@ -1781,6 +1985,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let record = SourceRecord {
             material_id: Id::from_uuid(uuid::Uuid::nil()),
@@ -1818,6 +2024,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1852,6 +2060,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1882,6 +2092,8 @@ mod tests {
             timestamp: None,
             suppress_if: None,
             carry: None,
+            transform: None,
+            validate: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1891,6 +2103,249 @@ mod tests {
         )
         .unwrap();
         assert_eq!(intents[0].payload["col"], "val");
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Extension G — validation / normalization hooks (#1750)
+    // -----------------------------------------------------------------------
+
+    /// Build a single-field JSON spec with a transform/validator for hook tests.
+    fn spec_with_hook(
+        name: &str,
+        pointer: &str,
+        field_type: FieldType,
+        transform: Option<FieldTransform>,
+        validate: Option<FieldValidator>,
+    ) -> DeclarativeParserSpec {
+        let mut spec = minimal_spec();
+        spec.fields.push(FieldSpec {
+            name: name.into(),
+            source: FieldSource::JsonPointer {
+                pointer: pointer.into(),
+            },
+            field_type,
+            required: true,
+            default: None,
+            skip_payload: false,
+            privacy_context: None,
+            sensitivity: Vec::new(),
+            occurrence_key: false,
+            timestamp: None,
+            suppress_if: None,
+            carry: None,
+            transform,
+            validate,
+        });
+        spec
+    }
+
+    #[sinex_test]
+    async fn transform_split_first_keeps_segment_before_separator()
+    -> xtask::sandbox::TestResult<()> {
+        // Atuin host:user -> host parity.
+        let spec = spec_with_hook(
+            "hostname",
+            "/hostname",
+            FieldType::String,
+            Some(FieldTransform::SplitFirst {
+                separator: ":".into(),
+            }),
+            None,
+        );
+        let intents = DeclarativeParser::evaluate(
+            &spec,
+            &json_record(r#"{"hostname": "myhost:myuser"}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(intents[0].payload["hostname"], "myhost");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn transform_split_first_without_separator_is_noop() -> xtask::sandbox::TestResult<()> {
+        let spec = spec_with_hook(
+            "hostname",
+            "/hostname",
+            FieldType::String,
+            Some(FieldTransform::SplitFirst {
+                separator: ":".into(),
+            }),
+            None,
+        );
+        let intents = DeclarativeParser::evaluate(
+            &spec,
+            &json_record(r#"{"hostname": "barehost"}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(intents[0].payload["hostname"], "barehost");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn validator_i32_accepts_in_range_and_rejects_overflow()
+    -> xtask::sandbox::TestResult<()> {
+        let spec = spec_with_hook(
+            "exit",
+            "/exit",
+            FieldType::Integer,
+            None,
+            Some(FieldValidator::I32),
+        );
+        // In range.
+        let ok = DeclarativeParser::evaluate(
+            &spec,
+            &json_record(r#"{"exit": 127}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(ok[0].payload["exit"], 127);
+        // Out of i32 range — rejected.
+        let err = DeclarativeParser::evaluate(
+            &spec,
+            &json_record(r#"{"exit": 9999999999}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        );
+        assert!(matches!(err, Err(ParserError::Field(_))));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn validator_int_range_rejects_out_of_bounds() -> xtask::sandbox::TestResult<()> {
+        let spec = spec_with_hook(
+            "n",
+            "/n",
+            FieldType::Integer,
+            None,
+            Some(FieldValidator::IntRange { min: 0, max: 10 }),
+        );
+        assert!(
+            DeclarativeParser::evaluate(
+                &spec,
+                &json_record(r#"{"n": 5}"#),
+                &test_ctx(),
+                &BindingConfig::default(),
+            )
+            .is_ok()
+        );
+        assert!(matches!(
+            DeclarativeParser::evaluate(
+                &spec,
+                &json_record(r#"{"n": 11}"#),
+                &test_ctx(),
+                &BindingConfig::default(),
+            ),
+            Err(ParserError::Field(_))
+        ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn validator_timestamp_nanos_accepts_integer_rejects_non_integer()
+    -> xtask::sandbox::TestResult<()> {
+        // Integer nanoseconds in range pass.
+        let int_spec = spec_with_hook(
+            "ts",
+            "/ts",
+            FieldType::Integer,
+            None,
+            Some(FieldValidator::TimestampNanos),
+        );
+        assert!(
+            DeclarativeParser::evaluate(
+                &int_spec,
+                &json_record(r#"{"ts": 1700000000000000000}"#),
+                &test_ctx(),
+                &BindingConfig::default(),
+            )
+            .is_ok()
+        );
+        // A non-integer value (Json field carrying a string) is rejected.
+        let bad_spec = spec_with_hook(
+            "ts",
+            "/ts",
+            FieldType::Json,
+            None,
+            Some(FieldValidator::TimestampNanos),
+        );
+        assert!(matches!(
+            DeclarativeParser::evaluate(
+                &bad_spec,
+                &json_record(r#"{"ts": "not-a-number"}"#),
+                &test_ctx(),
+                &BindingConfig::default(),
+            ),
+            Err(ParserError::Field(_))
+        ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn validator_non_empty_string_rejects_blank() -> xtask::sandbox::TestResult<()> {
+        let spec = spec_with_hook(
+            "id",
+            "/id",
+            FieldType::String,
+            None,
+            Some(FieldValidator::NonEmptyString),
+        );
+        assert!(
+            DeclarativeParser::evaluate(
+                &spec,
+                &json_record(r#"{"id": "abc"}"#),
+                &test_ctx(),
+                &BindingConfig::default(),
+            )
+            .is_ok()
+        );
+        assert!(matches!(
+            DeclarativeParser::evaluate(
+                &spec,
+                &json_record(r#"{"id": "   "}"#),
+                &test_ctx(),
+                &BindingConfig::default(),
+            ),
+            Err(ParserError::Field(_))
+        ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn transform_then_validate_applies_in_order() -> xtask::sandbox::TestResult<()> {
+        // SplitFirst runs before NonEmptyString: "h:u" -> "h" passes;
+        // ":only-after" -> "" fails the non-empty validator.
+        let spec = spec_with_hook(
+            "hostname",
+            "/hostname",
+            FieldType::String,
+            Some(FieldTransform::SplitFirst {
+                separator: ":".into(),
+            }),
+            Some(FieldValidator::NonEmptyString),
+        );
+        let ok = DeclarativeParser::evaluate(
+            &spec,
+            &json_record(r#"{"hostname": "h:u"}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(ok[0].payload["hostname"], "h");
+        assert!(matches!(
+            DeclarativeParser::evaluate(
+                &spec,
+                &json_record(r#"{"hostname": ":only-after"}"#),
+                &test_ctx(),
+                &BindingConfig::default(),
+            ),
+            Err(ParserError::Field(_))
+        ));
         Ok(())
     }
 }
