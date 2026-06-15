@@ -31,6 +31,7 @@ use sinex_primitives::rpc::{
     },
     events::{
         EVENTS_ANNOTATE_METHOD, EVENTS_CARDS_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD,
+        EVENTS_RELATION_EVIDENCE_METHOD,
     },
     health::{HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD},
     instructions::INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
@@ -609,12 +610,12 @@ fn build_registry_impl() -> RpcRegistry {
         handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue,
         handle_documents_get, handle_documents_get_chunks, handle_documents_get_chunks_redacted,
         handle_documents_search, handle_events_annotate, handle_events_cards,
-        handle_events_lineage, handle_events_query, handle_health_effect_record,
-        handle_health_intake_record, handle_hyprland_workspace_switch, handle_lifecycle_archive,
-        handle_lifecycle_restore, handle_lifecycle_status, handle_link_entities,
-        handle_llm_budget_report, handle_llm_prompts_list, handle_llm_route_explain,
-        handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
-        handle_privacy_policy_backend_add, handle_privacy_policy_dictionary_add,
+        handle_events_lineage, handle_events_query, handle_events_relation_evidence,
+        handle_health_effect_record, handle_health_intake_record, handle_hyprland_workspace_switch,
+        handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
+        handle_link_entities, handle_llm_budget_report, handle_llm_prompts_list,
+        handle_llm_route_explain, handle_ops_cancel, handle_ops_get, handle_ops_list,
+        handle_ops_start, handle_privacy_policy_backend_add, handle_privacy_policy_dictionary_add,
         handle_privacy_policy_field_bind, handle_privacy_policy_field_unbind,
         handle_privacy_policy_list, handle_privacy_policy_rule_add,
         handle_privacy_policy_rule_remove, handle_privacy_policy_rule_set_enabled,
@@ -671,6 +672,10 @@ fn build_registry_impl() -> RpcRegistry {
         // Composable event query methods (ReadOnly)
         .pool_typed_rpc(EVENTS_QUERY_METHOD, boxed!(handle_events_query))
         .pool_typed_rpc(EVENTS_CARDS_METHOD, boxed!(handle_events_cards))
+        .pool_typed_rpc(
+            EVENTS_RELATION_EVIDENCE_METHOD,
+            boxed!(handle_events_relation_evidence),
+        )
         .pool_typed_rpc(
             CURATION_PROPOSALS_LIST_METHOD,
             boxed!(handle_curation_list_proposals),

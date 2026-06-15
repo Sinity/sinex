@@ -10,7 +10,7 @@ use sinexctl::commands::{
     ConfigCommands, ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand,
     DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands,
     InstructionsCommand, LifecycleCommands, LlmCommand, NowCommand, OpsCommands, PrivacyCommand,
-    QueryCommand, RecentCommand, ReplayCommands, ReportCommands, RuntimeCommands,
+    QueryCommand, RecentCommand, RelationsCommand, ReplayCommands, ReportCommands, RuntimeCommands,
     RuntimePresenceCommand, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
     TasksCommand, TelemetryCommands, ThroughputCommand, TimelineCommand, TraceCommand, TuiCommand,
     VerifyCommand, WatchCommand,
@@ -135,6 +135,9 @@ enum Commands {
 
     /// Query/search events
     Query(QueryCommand),
+
+    /// Evaluate event relations over live events
+    Relations(RelationsCommand),
 
     /// Trace event provenance chain
     Trace(TraceCommand),
@@ -371,6 +374,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Replay { cmd } => cmd.execute(&client, format).await?,
                 Commands::Dlq { cmd } => cmd.execute(&client, format).await?,
                 Commands::Query(cmd) => cmd.execute(&client, format).await?,
+                Commands::Relations(cmd) => cmd.execute(&client, format).await?,
                 Commands::Trace(cmd) => cmd.execute(&client, format).await?,
                 Commands::Ops { cmd } => cmd.execute(&client, format).await?,
                 Commands::Privacy(cmd) => cmd.execute(&client, format).await?,
@@ -533,6 +537,7 @@ fn command_path(cmd: &Commands) -> String {
             DlqCommands::Purge { .. } => "dlq purge".to_string(),
         },
         Commands::Query(_) => "query".to_string(),
+        Commands::Relations(_) => "relations".to_string(),
         Commands::Trace(_) => "trace".to_string(),
         Commands::Ops { cmd } => match cmd {
             OpsCommands::Start { .. } => "ops start".to_string(),
@@ -968,6 +973,7 @@ mod tests {
     async fn format_matrix_terminal_output_contains_key_commands() -> TestResult<()> {
         let output = sinexctl::render_format_matrix_terminal();
         assert!(output.contains("query"), "matrix must list `query`");
+        assert!(output.contains("relations"), "matrix must list `relations`");
         assert!(output.contains("watch"), "matrix must list `watch`");
         assert!(
             output.contains("stream"),
@@ -976,6 +982,10 @@ mod tests {
         assert!(
             output.contains("events.query"),
             "matrix must expose exact backing RPC method names"
+        );
+        assert!(
+            output.contains("events.relation_evidence"),
+            "matrix must expose relation evidence RPC method name"
         );
         assert!(
             output.contains("privacy.private_mode.enable"),
@@ -1008,6 +1018,15 @@ mod tests {
             .expect("json list-formats output must include query");
         assert_eq!(query["backing_rpc_methods"][0], "events.query");
 
+        let relations = commands
+            .iter()
+            .find(|entry| entry["path"] == "relations")
+            .expect("json list-formats output must include relations");
+        assert_eq!(
+            relations["backing_rpc_methods"][0],
+            "events.relation_evidence"
+        );
+
         let blob_fsck = commands
             .iter()
             .find(|entry| entry["path"] == "blob fsck")
@@ -1030,6 +1049,12 @@ mod tests {
                 .any(|entry| entry["name"] == "events.query"),
             "json list-formats output must include typed RPC descriptors"
         );
+        assert!(
+            rpc_methods
+                .iter()
+                .any(|entry| entry["name"] == "events.relation_evidence"),
+            "json list-formats output must include relation evidence RPC descriptor"
+        );
 
         let mcp_surfaces = catalog["mcp_surfaces"]
             .as_array()
@@ -1042,6 +1067,21 @@ mod tests {
             source_readiness["backing_rpc_methods"][0],
             "sources.readiness.list"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn relations_command_path_parses_as_read_only_surface() -> TestResult<()> {
+        let path = parsed_command_path(&[
+            "sinexctl",
+            "relations",
+            "within",
+            "--within-secs",
+            "60",
+            "--seed-query-json",
+            "{}",
+        ])?;
+        assert_eq!(path, "relations");
         Ok(())
     }
 

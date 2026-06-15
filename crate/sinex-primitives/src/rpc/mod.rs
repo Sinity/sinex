@@ -199,6 +199,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         events::EVENTS_ANNOTATE_METHOD.info(),
         events::EVENTS_LINEAGE_METHOD.info(),
         events::EVENTS_QUERY_METHOD.info(),
+        events::EVENTS_RELATION_EVIDENCE_METHOD.info(),
         health::HEALTH_EFFECT_RECORD_METHOD.info(),
         health::HEALTH_INTAKE_RECORD_METHOD.info(),
         source_status::SOURCES_STATUS_METHOD.info(),
