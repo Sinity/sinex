@@ -61,6 +61,18 @@ name = "material_assembler_test"
 path = "tests/event_engine/material_assembler_test.rs"
 
 [[test]]
+name = "migration_lock_test"
+path = "tests/event_engine/migration_lock_test.rs"
+
+[[test]]
+name = "telemetry_persistence_test"
+path = "tests/event_engine/telemetry_persistence_test.rs"
+
+[[test]]
+name = "jetstream_stress_test"
+path = "tests/event_engine/jetstream_stress_test.rs"
+
+[[test]]
 name = "browser_history_parser_test"
 path = "tests/sources/browser_history_parser_test.rs"
 
