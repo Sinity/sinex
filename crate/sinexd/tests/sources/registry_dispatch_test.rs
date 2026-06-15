@@ -234,3 +234,42 @@ async fn source_meta_external_producer_registers_metadata_without_factory() -> T
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn source_meta_proposed_media_sources_are_metadata_only() -> TestResult<()> {
+    use sinex_primitives::source_contracts::{all_source_contracts, source_runtime_bindings};
+
+    for (source_id, event_type) in [
+        ("media.audio", "media.audio.transcription"),
+        ("media.screen", "media.screen.ocr"),
+    ] {
+        let source = sui(source_id);
+        assert!(
+            all_source_contracts().any(|contract| {
+                contract.id == source_id
+                    && contract
+                        .event_types
+                        .iter()
+                        .any(|(_, declared)| *declared == event_type)
+            }),
+            "proposed media source must still register its SourceContract"
+        );
+        assert!(
+            source_runtime_bindings().any(|binding| {
+                binding.source_id == source_id
+                    && binding.output_event_type == event_type
+                    && binding.proposed
+            }),
+            "proposed media source must still register a proposed SourceRuntimeBinding"
+        );
+        assert!(
+            find_source_factory(&source).is_none(),
+            "proposed media source must not register a source factory"
+        );
+        assert!(
+            find_parser_factory(&source).is_none(),
+            "proposed media source must not register a parser factory"
+        );
+    }
+    Ok(())
+}
