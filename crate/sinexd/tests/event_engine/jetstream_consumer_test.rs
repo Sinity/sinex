@@ -14,7 +14,8 @@ use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
 use support::{
-    FIXTURE_SOURCE_MATERIAL_ID, ensure_fixture_source_material, spawn_consumer_and_wait_ready,
+    FIXTURE_SOURCE_MATERIAL_ID, admission_envelope, confirmation_subject_for,
+    ensure_fixture_source_material, spawn_consumer_and_wait_ready,
     wait_for_last_stream_message_by_subject,
 };
 use tokio::sync::RwLock;
@@ -48,6 +49,7 @@ async fn publish_event(
         "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
         "anchor_byte": 0,
     });
+    let envelope = admission_envelope(source, event);
 
     let subject = env.nats_subject_with_namespace(
         Some(namespace),
@@ -58,7 +60,7 @@ async fn publish_event(
         ),
     );
     nats_client
-        .publish(subject, serde_json::to_vec(&event)?.into())
+        .publish(subject, serde_json::to_vec(&envelope)?.into())
         .await?;
     nats_client.flush().await?;
 
@@ -244,7 +246,10 @@ async fn consumer_accepts_db_registered_material_outside_ready_set(
     let subject =
         env.nats_subject_with_namespace(Some(&namespace), "events.raw.gateway.inline_persisted");
     nats_client
-        .publish(subject, serde_json::to_vec(&event)?.into())
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope("gateway", event))?.into(),
+        )
         .await?;
     nats_client.flush().await?;
 
@@ -300,7 +305,8 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     )
     .await?;
 
-    let confirmation_subject = format!("{}{}", ready_topology.confirmations_prefix, event_id);
+    let confirmation_subject =
+        confirmation_subject_for(&ready_topology.confirmations_prefix, "test", "test.event");
     let confirmation = wait_for_last_stream_message_by_subject(
         &js,
         &ready_topology.confirmations_stream,
@@ -381,7 +387,8 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
     // Serialize and publish through NATS
     let subject =
         env.nats_subject_with_namespace(Some(&namespace), "events.raw.offset_test.offset_check");
-    let event_json = serde_json::to_vec(&event)?;
+    let event_json =
+        serde_json::to_vec(&admission_envelope("offset-test", serde_json::to_value(&event)?))?;
     nats_client.publish(subject, event_json.into()).await?;
     nats_client.flush().await?;
 
@@ -462,7 +469,8 @@ async fn consumer_loads_externally_registered_materials_via_db_fallback(
 
     let subject = env
         .nats_subject_with_namespace(Some(&namespace), "events.raw.fallback_test.material_ready");
-    let event_json = serde_json::to_vec(&event)?;
+    let event_json =
+        serde_json::to_vec(&admission_envelope("fallback-test", serde_json::to_value(&event)?))?;
     nats_client.publish(subject, event_json.into()).await?;
     nats_client.flush().await?;
 
@@ -692,7 +700,11 @@ async fn tombstoned_event_is_acked_without_confirmation(ctx: TestContext) -> Tes
         "tombstoned event must not be persisted"
     );
 
-    let confirmation_subject = format!("{}{}", setup.topology.confirmations_prefix, event_id);
+    let confirmation_subject = confirmation_subject_for(
+        &setup.topology.confirmations_prefix,
+        "tombstone-admission",
+        "pipeline.event",
+    );
     let stream = setup
         .js
         .get_stream(&setup.topology.confirmations_stream)

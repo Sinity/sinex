@@ -53,6 +53,10 @@ name = "envelope_admission_test"
 path = "tests/event_engine/envelope_admission_test.rs"
 
 [[test]]
+name = "jetstream_consumer_test"
+path = "tests/event_engine/jetstream_consumer_test.rs"
+
+[[test]]
 name = "browser_history_parser_test"
 path = "tests/sources/browser_history_parser_test.rs"
 
