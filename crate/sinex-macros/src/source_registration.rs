@@ -81,6 +81,12 @@ pub(crate) struct RegistrationAttrs {
     // allowlist (the adapter string is still carried on the binding).
     pub monitor_emit_fn: Option<String>,
     pub monitor_phase: Option<String>,
+    /// Emit `register_source!` factory wiring.
+    ///
+    /// External producers publish `EventIntent` envelopes themselves and need
+    /// only contract + binding metadata; no parser or source factory should be
+    /// registered for them.
+    pub register_factory: bool,
 }
 
 impl RegistrationAttrs {
@@ -113,35 +119,38 @@ pub(crate) fn generate_source_contract(
 ) -> syn::Result<TokenStream> {
     let id = &attrs.id;
     let namespace = &attrs.namespace;
-    let access_scope = attrs.access_scope.clone().unwrap_or_else(|| {
-        quote!(::sinex_primitives::source_contracts::AccessScope::Internal)
-    });
+    let access_scope = attrs
+        .access_scope
+        .clone()
+        .unwrap_or_else(|| quote!(::sinex_primitives::source_contracts::AccessScope::Internal));
 
     // event_types: (event_source, event_type) pairs. All emitted under the
     // definition's event_source for v1.
     let event_source = &attrs.event_source;
-    let event_type_pairs = declared_types.iter().map(|et| {
-        quote!((#event_source, #et))
-    });
+    let event_type_pairs = declared_types.iter().map(|et| quote!((#event_source, #et)));
 
     // The author writes a typed path (`PrivacyTier::Public`); it is emitted
     // verbatim. When the attribute is absent the default path is fully
     // qualified so it resolves without requiring the source to import the enum.
-    let privacy_tier = attrs.privacy_tier.clone().unwrap_or_else(|| {
-        quote!(::sinex_primitives::source_contracts::PrivacyTier::Sensitive)
-    });
+    let privacy_tier = attrs
+        .privacy_tier
+        .clone()
+        .unwrap_or_else(|| quote!(::sinex_primitives::source_contracts::PrivacyTier::Sensitive));
 
     // Typed enum tokens emitted verbatim; absent attrs fall back to a
     // fully-qualified default path (resolves without an import in the source).
     let horizons = if attrs.horizons.is_empty() {
-        vec![quote!(::sinex_primitives::source_contracts::Horizon::Continuous)]
+        vec![quote!(
+            ::sinex_primitives::source_contracts::Horizon::Continuous
+        )]
     } else {
         attrs.horizons.clone()
     };
 
-    let retention = attrs.retention.clone().unwrap_or_else(|| {
-        quote!(::sinex_primitives::source_contracts::RetentionPolicy::Forever)
-    });
+    let retention = attrs
+        .retention
+        .clone()
+        .unwrap_or_else(|| quote!(::sinex_primitives::source_contracts::RetentionPolicy::Forever));
     let occurrence_identity = attrs.occurrence_identity.clone().ok_or_else(|| {
         Error::new(
             Span::call_site(),
@@ -182,21 +191,24 @@ pub(crate) fn generate_source_runtime_binding(
 
     // Typed enum tokens emitted verbatim; absent attributes fall back to a
     // fully-qualified default path (resolves without an import in the source).
-    let privacy_context = attrs.privacy_context.clone().unwrap_or_else(|| {
-        quote!(::sinex_primitives::privacy::ProcessingContext::Metadata)
-    });
+    let privacy_context = attrs
+        .privacy_context
+        .clone()
+        .unwrap_or_else(|| quote!(::sinex_primitives::privacy::ProcessingContext::Metadata));
     let resource_profile = attrs.resource_profile.clone().unwrap_or_else(|| {
         quote!(::sinex_primitives::source_contracts::ResourceProfile::BoundedFile)
     });
-    let runner_pack = attrs.runner_pack.clone().unwrap_or_else(|| {
-        quote!(::sinex_primitives::source_contracts::RunnerPack::SinexdSource)
-    });
+    let runner_pack = attrs
+        .runner_pack
+        .clone()
+        .unwrap_or_else(|| quote!(::sinex_primitives::source_contracts::RunnerPack::SinexdSource));
     let checkpoint_family = attrs.checkpoint_family.clone().unwrap_or_else(|| {
         quote!(::sinex_primitives::source_contracts::CheckpointFamily::AppendStream)
     });
-    let runtime_shape = attrs.runtime_shape.clone().unwrap_or_else(|| {
-        quote!(::sinex_primitives::source_contracts::RuntimeShape::Continuous)
-    });
+    let runtime_shape = attrs
+        .runtime_shape
+        .clone()
+        .unwrap_or_else(|| quote!(::sinex_primitives::source_contracts::RuntimeShape::Continuous));
 
     let capabilities_call = if attrs.capabilities.is_empty() {
         quote!()
@@ -241,6 +253,10 @@ pub(crate) fn generate_factory_registration(
     attrs: &RegistrationAttrs,
 ) -> syn::Result<TokenStream> {
     let id = &attrs.id;
+
+    if !attrs.register_factory {
+        return Ok(quote!());
+    }
 
     // Monitor-emit form: the adapter fires an emit fn at a lifecycle phase
     // rather than running a parser, so there is no parser to wire. Emits
@@ -288,9 +304,15 @@ fn adapter_type_ident(adapter: &str) -> syn::Result<Ident> {
     // sources that already wire it via the explicit `register_source!`
     // adapter+parser form.
     match adapter {
-        "SqliteRowAdapter" | "AppendOnlyFileAdapter" | "StaticFileAdapter"
-        | "DirectoryWalkAdapter" | "DbusStreamAdapter" | "JournalctlStreamAdapter"
-        | "FileDropAdapter" | "FileContentDropAdapter" | "ClipboardPollingAdapter"
+        "SqliteRowAdapter"
+        | "AppendOnlyFileAdapter"
+        | "StaticFileAdapter"
+        | "DirectoryWalkAdapter"
+        | "DbusStreamAdapter"
+        | "JournalctlStreamAdapter"
+        | "FileDropAdapter"
+        | "FileContentDropAdapter"
+        | "ClipboardPollingAdapter"
         | "UnixSocketStreamAdapter" => Ok(Ident::new(adapter, Span::call_site())),
         other => Err(Error::new(
             Span::call_site(),
@@ -343,4 +365,3 @@ pub(crate) fn parse_enum_path_list_attr(
     })?;
     Ok(paths)
 }
-
