@@ -23,6 +23,7 @@ use crate::runtime::tags;
 use async_trait::async_trait;
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
+use sinex_macros::SourceMeta;
 use sinex_primitives::{
     domain::{EventSource, EventType},
     events::{
@@ -36,53 +37,10 @@ use sinex_primitives::{
     privacy::{ProcessingContext, SensitivityHint},
     source_contracts::{
         AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-        RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
-        SourceRuntimeBinding, SubjectRef,
+        RetentionPolicy, RunnerPack, RuntimeShape,
     },
     temporal::Timestamp,
 };
-use sinex_primitives::{register_source_contract, register_source_runtime_binding};
-
-// ---------------------------------------------------------------------------
-// Source contract — "document.staging"
-// ---------------------------------------------------------------------------
-
-// register_source_contract!: escape-hatch pending #1761 (custom imperative
-// document runtime with ExternalProducer-shaped dispatch and acquisition logic
-// beyond SourceMeta's registration scope).
-register_source_contract! {
-    SourceContract {
-        id: "document.staging",
-        namespace: "document",
-        event_types: &[
-            ("document-source", "document.ingested"),
-        ],
-        privacy_tier: PrivacyTier::Secret,
-        horizons: &[Horizon::Continuous, Horizon::Historical],
-        retention: RetentionPolicy::Forever,
-        occurrence_identity: OccurrenceIdentity::Anchor,
-        access_scope: AccessScope::ConfiguredRoots,
-    }
-}
-
-register_source_runtime_binding! {
-    SourceRuntimeBinding::builder(
-        SubjectRef::from_static("source:document.staging"),
-        "document.staging",
-        "document",
-    )
-    .implementation("sinexd")
-    .adapter("DocumentStagingParser")
-    .output_event_type("document.ingested")
-    .privacy_context(ProcessingContext::Document)
-    .resource_profile(ResourceProfile::Oneshot)
-    .source_id("document.staging")
-    .runner_pack(RunnerPack::SinexdSource)
-    .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .build_impact(SourceBuildImpact::ZERO)
-    .build()
-}
 
 // ---------------------------------------------------------------------------
 // DocumentStagingParser — imperative MaterialParser
@@ -103,7 +61,27 @@ pub struct DocumentStagingParserConfig {}
 ///
 /// Used in the dispatch path (replay, testing). The full ingestion path uses
 /// `DocumentSourceDriver` registered via `register_source!`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, SourceMeta)]
+#[source_meta(
+    id = "document.staging",
+    namespace = "document",
+    event_type = "document.ingested",
+    event_source = "document-source",
+    adapter = "DocumentStagingParser",
+    implementation = "sinexd",
+    privacy_tier = PrivacyTier::Secret,
+    horizons(Horizon::Continuous, Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Anchor,
+    access_scope = AccessScope::ConfiguredRoots,
+    privacy_context = ProcessingContext::Document,
+    resource_profile = ResourceProfile::Oneshot,
+    runner_pack = RunnerPack::SinexdSource,
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
+    factory = "parser",
+    driver = super::runtime::DocumentSourceDriver
+)]
 pub struct DocumentStagingParser;
 
 #[async_trait]
@@ -203,15 +181,3 @@ impl MaterialParser for DocumentStagingParser {
         Ok(intents)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Registrations
-// ---------------------------------------------------------------------------
-
-crate::register_source!(source_id: "document.staging", parser: DocumentStagingParser);
-
-// The full source runtime lifecycle uses DocumentSourceDriver; see `super::runtime`.
-// It is a `SourceDriver` implementation that manages its own checkpoint state
-// (`manages_own_checkpoints: true`) and supports snapshot + historical scans
-// but not continuous mode.
-crate::register_source!(source_id: "document.staging", driver: super::runtime::DocumentSourceDriver);
