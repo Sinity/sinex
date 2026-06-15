@@ -57,6 +57,10 @@ name = "jetstream_consumer_test"
 path = "tests/event_engine/jetstream_consumer_test.rs"
 
 [[test]]
+name = "material_assembler_test"
+path = "tests/event_engine/material_assembler_test.rs"
+
+[[test]]
 name = "browser_history_parser_test"
 path = "tests/sources/browser_history_parser_test.rs"
 
