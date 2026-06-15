@@ -16,6 +16,7 @@ rec {
     (mkSpec "hourlySummarizer" "hourly_summarizer" "hourly" "Sinex hourly activity summarizer")
     (mkSpec "dailySummarizer" "daily_summarizer" "daily" "Sinex daily activity summarizer")
     (mkSpec "documentParser" "document_parser" "document-parser" "Sinex document parser automaton")
+    (mkSpec "embeddingProducer" "embedding_producer" "embedding-producer" "Sinex document chunk embedding producer")
     (mkSpec "tagApplier" "tag_applier" "tag-applier" "Sinex rule-based tag applier automaton")
     (mkSpec "instructionReconciler" "instruction_reconciler" "instruction-reconciler" "Sinex instruction expectation reconciler")
     (mkSpec "entityExtractor" "entity_extractor" "entity-extractor" "Sinex entity extractor automaton")
