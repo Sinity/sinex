@@ -2076,6 +2076,77 @@ impl std::str::FromStr for ModuleState {
 
 /// Result status of an operation in the operations log.
 ///
+/// Typed registry over the `operation_type` strings stored in `core.operations_log`.
+///
+/// The five managed kinds are enforced by the DB `core.start_operation()` function
+/// (see `sinex-schema/src/apply.rs`). `Other` captures future or non-managed
+/// kinds without breaking deserialization.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationKind {
+    /// Full re-ingestion of source material through the pipeline
+    Replay,
+    /// Move events to cold storage (live → archive)
+    Archive,
+    /// Move events back from cold storage (archive → live)
+    Restore,
+    /// Purge events from storage entirely
+    Purge,
+    /// Schedule permanent deletion with operator approval
+    Tombstone,
+    /// An operation kind not in the managed set (forward-compat)
+    #[serde(untagged)]
+    Other(String),
+}
+
+impl OperationKind {
+    /// Return the canonical string representation stored in `operations_log`.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Replay => "replay",
+            Self::Archive => "archive",
+            Self::Restore => "restore",
+            Self::Purge => "purge",
+            Self::Tombstone => "tombstone",
+            Self::Other(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for OperationKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for OperationKind {
+    type Err = !;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "replay" => Self::Replay,
+            "archive" => Self::Archive,
+            "restore" => Self::Restore,
+            "purge" => Self::Purge,
+            "tombstone" => Self::Tombstone,
+            other => Self::Other(other.to_string()),
+        })
+    }
+}
+
+impl From<&str> for OperationKind {
+    fn from(s: &str) -> Self {
+        s.parse().unwrap_or_else(|_| Self::Other(s.to_string()))
+    }
+}
+
+impl From<String> for OperationKind {
+    fn from(s: String) -> Self {
+        OperationKind::from(s.as_str())
+    }
+}
+
 /// Matches the values stored in `core.operations_log.result_status`.
 ///
 /// The `Display` rendering is the on-disk representation. The
@@ -2091,6 +2162,7 @@ impl std::str::FromStr for ModuleState {
     Hash,
     serde::Serialize,
     serde::Deserialize,
+    JsonSchema,
     sinex_macros::DbCheck,
 )]
 #[serde(rename_all = "snake_case")]
