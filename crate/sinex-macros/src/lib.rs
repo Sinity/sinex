@@ -217,6 +217,8 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 /// `SourceRuntimeBinding` registration sites. That mode intentionally skips
 /// `register_source!` factory wiring and does not require the marker struct to
 /// implement `Default`.
+/// Sources that need parser dispatch but not an adapter-backed runtime can set
+/// `factory = "parser"`.
 ///
 /// Future-state metadata can set `proposed = true`, which marks the generated
 /// runtime binding as non-live while still keeping the contract visible in the
@@ -231,6 +233,8 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 /// Sources whose deployment metadata adapter string differs from the Rust
 /// adapter type used by `register_source!` can set
 /// `factory_adapter = SomeAdapterAlias`.
+/// Sources whose runtime lifecycle uses a separate `SourceDriver` can also set
+/// `driver = SomeDriverType`.
 ///
 /// # Struct attribute
 ///
@@ -240,7 +244,8 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 /// `event_source`, `adapter`. Optional: `implementation`, `event_types` (extra
 /// comma-separated emitted types), `capabilities`, and for monitor-emit sources
 /// `monitor_emit_fn` / `monitor_phase`. External producers may set
-/// `factory = "none"`; the default is `factory = "adapter_parser"`.
+/// `factory = "none"`; parser-only sources may set `factory = "parser"`; the
+/// default is `factory = "adapter_parser"`.
 /// Extra runtime bindings use nested `binding(event_type = "...", ...)`.
 ///
 /// Typed enum-path/expression keys (written as Rust paths) — Required:
@@ -250,6 +255,7 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 /// (`ProcessingContext::*`), `resource_profile` (`ResourceProfile::*`),
 /// `runner_pack` (`RunnerPack::*`), `checkpoint_family`, `runtime_shape`, and
 /// `proposed = true`. `factory_adapter` is also written as a Rust type path.
+/// `driver` is written as a Rust type path.
 ///
 /// Unlike `SourceDefinition` there are no parser-spec keys (`input_shape`,
 /// `default_privacy_context`, `version`, `baseline_adapter_config`) — those

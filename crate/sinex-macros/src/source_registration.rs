@@ -90,9 +90,15 @@ pub(crate) struct RegistrationAttrs {
     /// only contract + binding metadata; no parser or source factory should be
     /// registered for them.
     pub register_factory: bool,
+    /// Emit parser dispatch only instead of adapter-backed source factory
+    /// wiring.
+    pub parser_only_factory: bool,
     /// Optional Rust adapter type path used only for `register_source!`
     /// factory wiring. The binding keeps `adapter` as deployment metadata.
     pub factory_adapter: Option<TokenStream>,
+    /// Optional SourceDriver type path for sources whose parser dispatch and
+    /// runtime lifecycle are separate registrations.
+    pub driver_factory: Option<TokenStream>,
     /// Additional runtime bindings for one source contract.
     pub extra_bindings: Vec<RuntimeBindingAttrs>,
 }
@@ -319,16 +325,14 @@ pub(crate) fn generate_factory_registration(
 ) -> syn::Result<TokenStream> {
     let id = &attrs.id;
 
-    if !attrs.register_factory {
-        return Ok(quote!());
-    }
-
     // Monitor-emit form: the adapter fires an emit fn at a lifecycle phase
     // rather than running a parser, so there is no parser to wire. Emits
     // `register_source!(emit_at:, emit:)` verbatim, bypassing the
     // `adapter_type_ident` allowlist (the adapter string is still carried on the
     // binding for deployment metadata).
-    if let Some(emit_fn) = &attrs.monitor_emit_fn {
+    let factory_tokens = if !attrs.register_factory {
+        quote!()
+    } else if let Some(emit_fn) = &attrs.monitor_emit_fn {
         let phase = attrs.monitor_phase.as_deref().ok_or_else(|| {
             Error::new(
                 Span::call_site(),
@@ -337,28 +341,50 @@ pub(crate) fn generate_factory_registration(
         })?;
         let emit_ident = Ident::new(emit_fn, Span::call_site());
         let phase_ident = Ident::new(phase, Span::call_site());
-        return Ok(quote! {
+        quote! {
             crate::register_source!(
                 source_id: #id,
                 emit_at: crate::sources::monitor_driver::MonitorPhase::#phase_ident,
                 emit: #emit_ident,
             );
-        });
-    }
-
-    let adapter_path = if let Some(adapter) = &attrs.factory_adapter {
-        quote!(#adapter)
+        }
+    } else if attrs.parser_only_factory {
+        quote! {
+            crate::register_source!(
+                source_id: #id,
+                parser: #parser_name,
+            );
+        }
     } else {
-        let adapter_ident = adapter_type_ident(&attrs.adapter)?;
-        quote!(crate::runtime::parser::#adapter_ident)
+        let adapter_path = if let Some(adapter) = &attrs.factory_adapter {
+            quote!(#adapter)
+        } else {
+            let adapter_ident = adapter_type_ident(&attrs.adapter)?;
+            quote!(crate::runtime::parser::#adapter_ident)
+        };
+        quote! {
+            crate::register_source!(
+                source_id: #id,
+                adapter: #adapter_path,
+                parser: #parser_name,
+            );
+        }
+    };
+
+    let driver_tokens = if let Some(driver) = &attrs.driver_factory {
+        quote! {
+            crate::register_source!(
+                source_id: #id,
+                driver: #driver,
+            );
+        }
+    } else {
+        quote!()
     };
 
     Ok(quote! {
-        crate::register_source!(
-            source_id: #id,
-            adapter: #adapter_path,
-            parser: #parser_name,
-        );
+        #factory_tokens
+        #driver_tokens
     })
 }
 
