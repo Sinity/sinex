@@ -437,6 +437,20 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                                         }
                                     });
                                 }
+                                Some(ControlCommandKind::Parse) => {
+                                    // Parse replay is owned by the dedicated
+                                    // per-source parse listener (see
+                                    // `start_parse_listener` /
+                                    // `sources::parse_listener`). This wildcard
+                                    // subscription also receives `.parse`; skip
+                                    // it here so the parse listener is the sole
+                                    // responder (no double-reply, no spurious
+                                    // unsupported-subject warning).
+                                    debug!(
+                                        module = %loop_module_name,
+                                        "Parse command observed by command listener; handled by dedicated parse listener"
+                                    );
+                                }
                                 None => {
                                     warn!(
                                         module = %loop_module_name,
@@ -454,5 +468,115 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
 
         self.command_listener_shutdown = Some(shutdown_tx);
         self.command_listener_handle = Some(handle);
+    }
+}
+
+#[cfg(all(feature = "messaging", feature = "db"))]
+impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+    /// Start the per-source NATS parse listener (#1780).
+    ///
+    /// The gateway replay engine dispatches `SourceParseCommand` to
+    /// `sinex.control.sources.<source_id>.parse` for staged-source parse replay
+    /// and waits for an ack. Without a live subscriber that request times out
+    /// even though the parser path exists. This starts one listener per enabled
+    /// source with a live `PgPool` + shared `ContentStoreManager`, so a parse
+    /// command loads the real source-material bytes (registry → blob → CAS) and
+    /// acks; missing material fails closed (see `sources::parse_listener`).
+    ///
+    /// Source-only: automata receive re-derived events via `JetStream` and never
+    /// parse source material. The join handle is owned by the runner and aborted
+    /// on shutdown. This complements the local adapter → parser → admission path,
+    /// which stays direct; the listener serves replay/control commands addressed
+    /// to a running source runtime.
+    pub(super) async fn start_parse_listener(&mut self) {
+        if self.module.module_kind() != ModuleKind::Source {
+            return;
+        }
+
+        let handles = match &self.handles {
+            Some(h) => h.clone(),
+            None => {
+                warn!("Cannot start parse listener: handles not initialized");
+                return;
+            }
+        };
+        let service_info = match &self.service_info {
+            Some(s) => s.clone(),
+            None => {
+                warn!("Cannot start parse listener: service info not initialized");
+                return;
+            }
+        };
+        let Some(source_id) = service_info.source_id().map(str::to_string) else {
+            warn!(
+                module = %service_info.control_identity(),
+                "Cannot start parse listener: module has no source_id"
+            );
+            return;
+        };
+
+        let nats_client = match handles.transport().nats_publisher() {
+            Ok(publisher) => publisher.nats_client().clone(),
+            Err(e) => {
+                warn!(error = %e, "Cannot start parse listener: NATS transport required");
+                return;
+            }
+        };
+
+        let Some(pool) = handles.db_pool().cloned() else {
+            warn!(
+                source_id = %source_id,
+                "Cannot start parse listener: database pool required"
+            );
+            return;
+        };
+
+        // Resolve the SHARED content store (same SINEX_CONTENT_STORE_PATH the
+        // gateway uses) so parse replay reads the CAS that ingestion wrote.
+        let content_store_config = crate::runtime::content_store::ContentStoreConfig {
+            root_path: camino::Utf8PathBuf::from(
+                crate::runtime::content_store::default_content_store_path(),
+            ),
+            ..Default::default()
+        };
+        let content_store = match crate::runtime::content_store::ContentStoreManager::new(
+            content_store_config,
+            pool.clone(),
+            None,
+        ) {
+            Ok(cs) => Arc::new(cs),
+            Err(e) => {
+                warn!(
+                    source_id = %source_id,
+                    error = %e,
+                    "Cannot start parse listener: content store init failed"
+                );
+                return;
+            }
+        };
+
+        let dispatch = crate::sources::dispatch::default_parser_dispatch();
+
+        match crate::sources::parse_listener::spawn_parse_listener(
+            nats_client,
+            &source_id,
+            dispatch,
+            pool,
+            content_store,
+        )
+        .await
+        {
+            Ok(handle) => {
+                info!(source_id = %source_id, "Parse listener started");
+                self.parse_listener_handle = Some(handle);
+            }
+            Err(e) => {
+                warn!(
+                    source_id = %source_id,
+                    error = %e,
+                    "Failed to start parse listener"
+                );
+            }
+        }
     }
 }

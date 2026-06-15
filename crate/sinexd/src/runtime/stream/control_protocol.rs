@@ -14,6 +14,12 @@ pub(super) enum ControlCommandKind {
     Scan,
     Drain,
     Resume,
+    /// Staged-source parse replay. The command listener subscribes to
+    /// `sinex.control.sources.<source_id>.*`, which also receives `.parse`, but
+    /// parse is owned by the dedicated per-source parse listener
+    /// (`sources::parse_listener`). Routing it here lets the command listener
+    /// recognize and skip it deliberately instead of logging it as unsupported.
+    Parse,
 }
 
 #[cfg(feature = "messaging")]
@@ -24,8 +30,42 @@ pub(super) fn control_command_kind(subject: &str) -> Option<ControlCommandKind> 
         Some(ControlCommandKind::Drain)
     } else if subject.ends_with(".resume") {
         Some(ControlCommandKind::Resume)
+    } else if subject.ends_with(".parse") {
+        Some(ControlCommandKind::Parse)
     } else {
         None
+    }
+}
+
+#[cfg(all(test, feature = "messaging"))]
+mod tests {
+    use super::{ControlCommandKind, control_command_kind};
+
+    #[test]
+    fn classifies_known_control_subjects() {
+        assert_eq!(
+            control_command_kind("sinex.control.sources.weechat.scan"),
+            Some(ControlCommandKind::Scan)
+        );
+        assert_eq!(
+            control_command_kind("sinex.control.sources.weechat.drain"),
+            Some(ControlCommandKind::Drain)
+        );
+        assert_eq!(
+            control_command_kind("sinex.control.sources.weechat.resume"),
+            Some(ControlCommandKind::Resume)
+        );
+        // `.parse` must classify as Parse so the command listener's wildcard
+        // subscription skips it deliberately (the dedicated parse listener
+        // responds) instead of treating it as an unsupported subject.
+        assert_eq!(
+            control_command_kind("sinex.control.sources.weechat.parse"),
+            Some(ControlCommandKind::Parse)
+        );
+        assert_eq!(
+            control_command_kind("sinex.control.sources.weechat.unknown"),
+            None
+        );
     }
 }
 

@@ -191,6 +191,29 @@ async fn run_command_async(
         .map_err(|e| SinexError::processing(context).with_source(e))
 }
 
+/// Resolve the shared content-store root path.
+///
+/// Reads `SINEX_CONTENT_STORE_PATH` (the shared key), falling back to
+/// `$HOME/.local/share/sinex/content-store` or the environment work directory.
+/// Both the gateway (`GatewayConfig::content_store_path`) and source runtimes
+/// resolve from this same key so they address one CAS — replay reading source
+/// material must hit the exact store that ingestion wrote, or it fails closed.
+#[must_use]
+pub fn default_content_store_path() -> String {
+    if let Ok(v) = std::env::var("SINEX_CONTENT_STORE_PATH") {
+        return v;
+    }
+    std::env::var("HOME").map_or_else(
+        |_| {
+            sinex_primitives::environment::environment()
+                .work_directory("content-store")
+                .to_string_lossy()
+                .into_owned()
+        },
+        |home| format!("{home}/.local/share/sinex/content-store"),
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentStoreConfig {
     pub root_path: Utf8PathBuf,

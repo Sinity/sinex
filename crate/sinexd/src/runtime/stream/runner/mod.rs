@@ -68,6 +68,10 @@ pub struct RuntimeRunner<T: RuntimeModule> {
     consumer_handle: Option<tokio::task::JoinHandle<()>>,
     command_listener_shutdown: Option<watch::Sender<bool>>,
     command_listener_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Per-source parse listener join handle (#1780). Started in service mode for
+    /// source modules; aborted on shutdown. No shutdown channel: the listener
+    /// holds a NATS subscription and is aborted directly (like `consumer_handle`).
+    parse_listener_handle: Option<tokio::task::JoinHandle<()>>,
     processing_model: ProcessingModel,
     leader_state: Option<LeaderState>,
 }
