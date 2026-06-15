@@ -8,11 +8,9 @@
 //! production callers (#1063).
 
 use crate::TableDef;
-use crate::primitives::Uuid;
 use sea_query::{
     Alias, ColumnDef, Expr, Iden, Index, IndexCreateStatement, Table, TableCreateStatement,
 };
-use sqlx::FromRow;
 
 /// **Table: `core.model_effects`**
 ///
@@ -93,21 +91,6 @@ impl ModelEffects {
     }
 }
 
-/// Row returned by repository queries.
-#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
-pub struct ModelEffectRow {
-    pub id: Uuid,
-    pub provider: String,
-    pub model: String,
-    pub prompt_hash: String,
-    pub schema_hash: Option<String>,
-    pub input_hash: String,
-    pub composite_key: String,
-    pub output: String,
-    pub output_hash: String,
-    pub replay_policy: String,
-    pub recorded_at: time::OffsetDateTime,
-    pub recorded_by: String,
-    pub source_module_name: Option<String>,
-    pub source_event_id: Option<Uuid>,
-}
+// The row type returned by `pool.model_effects()` queries lives with the
+// repository in sinex-db (`crate::models::model_effect::ModelEffectRow`); the
+// schema crate only owns the table definition.
