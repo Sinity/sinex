@@ -14,6 +14,10 @@ use tokio::sync::RwLock;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
+#[path = "support.rs"]
+mod support;
+use support::{FIXTURE_SOURCE_MATERIAL_ID, admission_envelope, ensure_fixture_source_material};
+
 async fn wait_for_dlq_count(js: &jetstream::Context, stream: &str, count: u64) -> TestResult<()> {
     WaitHelpers::wait_for_condition(
         || {
@@ -73,6 +77,7 @@ async fn test_schema_violation_routes_to_dlq() -> TestResult<()> {
     let js = async_nats::jetstream::new(nats_client.clone());
     let pool = ctx.pool.clone();
     let env = ctx.env();
+    ensure_fixture_source_material(&pool).await?;
 
     // 1. Register Strict Schema
     let repo = SchemaManagementRepository::new(&pool);
@@ -148,14 +153,19 @@ async fn test_schema_violation_routes_to_dlq() -> TestResult<()> {
         "event_type": "test.schema_violation",
         "payload": payload,
         "ts_orig": sinex_primitives::temporal::now(),
-        "host": "test-host"
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 0
     });
 
     let publish_subject = ctx
         .pipeline_namespace()
         .subject("events.raw.test.test_schema_violation");
     nats_client
-        .publish(publish_subject, serde_json::to_vec(&event)?.into())
+        .publish(
+            publish_subject,
+            serde_json::to_vec(&admission_envelope("test", event))?.into(),
+        )
         .await?;
 
     // 4. Wait for DLQ
