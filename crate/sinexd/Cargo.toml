@@ -45,6 +45,10 @@ name = "validator_schema_order_test"
 path = "tests/event_engine/validator_schema_order_test.rs"
 
 [[test]]
+name = "dlq_schema_validation_test"
+path = "tests/event_engine/dlq_schema_validation_test.rs"
+
+[[test]]
 name = "browser_history_parser_test"
 path = "tests/sources/browser_history_parser_test.rs"
 
