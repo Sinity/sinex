@@ -11,9 +11,12 @@
 //!
 //! # Cursor semantics
 //!
-//! [`ApiCursorAdapter`] eagerly walks all pages in [`InputShapeAdapter::open`]
-//! and yields one [`SourceRecord`] per API record. Cursor advancement is
-//! per-record:
+//! [`ApiCursorAdapter`] lazily fetches pages in [`InputShapeAdapter::open`],
+//! yielding one [`SourceRecord`] per API record. Each page is only fetched
+//! once the consumer is ready for more records, enabling per-page
+//! checkpointing and ensuring a late-page failure does not discard progress
+//! from earlier pages that have already been yielded and checkpointed.
+//! Cursor advancement is per-record:
 //!
 //! - Records that are **not** the last in their page carry the **start** cursor
 //!   of that page (so a mid-page failure retries the full page from the same
@@ -308,6 +311,51 @@ pub struct ApiCursorAdapter<C: ApiClient> {
     retry: RetryPolicy,
 }
 
+/// Fetch one page from `client` with exponential-backoff retry.
+///
+/// Extracted as a free function so the `open()` lazy-unfold closure can call
+/// it without holding a reference to `ApiCursorAdapter` across an await point.
+async fn fetch_page<C: ApiClient>(
+    client: &C,
+    retry: RetryPolicy,
+    cursor: Option<&str>,
+) -> Result<ApiFetchPage<C::Record>, ApiFetchError> {
+    let mut last_error: Option<Box<dyn Error + Send + Sync + 'static>> = None;
+
+    for attempt in 0..retry.max_attempts {
+        if attempt > 0 {
+            let delay = retry.delay_for_attempt(attempt);
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+        }
+        match client.fetch(cursor).await {
+            Ok(page) => return Ok(page),
+            Err(e) => last_error = Some(Box::new(e)),
+        }
+    }
+
+    Err(ApiFetchError::Exhausted {
+        attempts: retry.max_attempts,
+        source: last_error.unwrap_or_else(|| {
+            // max_attempts == 0 is degenerate; surface a synthetic error.
+            struct ZeroAttempts;
+            impl fmt::Display for ZeroAttempts {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("retry policy max_attempts was zero")
+                }
+            }
+            impl fmt::Debug for ZeroAttempts {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("ZeroAttempts")
+                }
+            }
+            impl Error for ZeroAttempts {}
+            Box::new(ZeroAttempts)
+        }),
+    })
+}
+
 impl<C: ApiClient + 'static> ApiCursorAdapter<C> {
     /// Build a new adapter with the default [`RetryPolicy`].
     #[must_use]
@@ -325,45 +373,6 @@ impl<C: ApiClient + 'static> ApiCursorAdapter<C> {
         self
     }
 
-    async fn fetch_with_retry(
-        &self,
-        cursor: Option<&str>,
-    ) -> Result<ApiFetchPage<C::Record>, ApiFetchError> {
-        let mut last_error: Option<Box<dyn Error + Send + Sync + 'static>> = None;
-
-        for attempt in 0..self.retry.max_attempts {
-            if attempt > 0 {
-                let delay = self.retry.delay_for_attempt(attempt);
-                if !delay.is_zero() {
-                    tokio::time::sleep(delay).await;
-                }
-            }
-            match self.client.fetch(cursor).await {
-                Ok(page) => return Ok(page),
-                Err(e) => last_error = Some(Box::new(e)),
-            }
-        }
-
-        Err(ApiFetchError::Exhausted {
-            attempts: self.retry.max_attempts,
-            source: last_error.unwrap_or_else(|| {
-                // max_attempts == 0 is degenerate; surface a synthetic error.
-                struct ZeroAttempts;
-                impl fmt::Display for ZeroAttempts {
-                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                        f.write_str("retry policy max_attempts was zero")
-                    }
-                }
-                impl fmt::Debug for ZeroAttempts {
-                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                        f.write_str("ZeroAttempts")
-                    }
-                }
-                impl Error for ZeroAttempts {}
-                Box::new(ZeroAttempts)
-            }),
-        })
-    }
 }
 
 #[async_trait]
@@ -375,12 +384,18 @@ where
     type Cursor = ApiCursorPosition;
     const KIND: InputShapeKind = InputShapeKind::ApiCursor;
 
-    /// Walk all pages from the given cursor position, collecting every
-    /// record into a single in-memory stream.
+    /// Lazily walk pages from the given cursor position, yielding records
+    /// one page at a time.
     ///
-    /// Pages are fetched eagerly to completion. For sources with large
-    /// page counts, callers can split work across multiple `open()` calls
-    /// by persisting the cursor checkpoint between calls.
+    /// Pages are fetched on-demand: the next page is only fetched once the
+    /// consumer has polled past the last record of the previous page. This
+    /// enables the runtime to checkpoint after each page and means a
+    /// late-page failure does not discard progress from earlier pages that
+    /// have already been yielded.
+    ///
+    /// A fetch failure surfaces as an `Err` item in the returned stream
+    /// followed by stream termination; no records from the failed page are
+    /// yielded.
     async fn open(
         &self,
         material_id: Id<SourceMaterial>,
@@ -404,58 +419,84 @@ where
             None => config.initial_cursor.clone(),
         };
 
-        let mut all_records: Vec<ParserResult<SourceRecord>> = Vec::new();
-        let mut current_cursor: Option<String> = start_cursor;
-        let mut page_index: u64 = 0;
+        let client = Arc::clone(&self.client);
+        let retry = self.retry;
 
-        loop {
-            let page = self
-                .fetch_with_retry(current_cursor.as_deref())
-                .await
-                .map_err(|e| ParserError::Adapter(e.to_string()))?;
+        // State: None = exhausted, Some((cursor, page_index)) = next page to fetch.
+        //
+        // Each unfold step fetches exactly one page and yields its records as a
+        // Vec. flat_map(stream::iter) flattens the per-page vecs into individual
+        // SourceRecord items so the consumer sees a single flat stream.
+        let page_stream = stream::unfold(
+            Some((start_cursor, 0u64)),
+            move |state: Option<(Option<String>, u64)>| {
+                let client = Arc::clone(&client);
+                async move {
+                    let (current_cursor, page_index) = state?;
 
-            let next_cursor = page.next_cursor.clone();
-            let etag = page.etag.clone();
-            let total = page.records.len();
+                    let page =
+                        match fetch_page(client.as_ref(), retry, current_cursor.as_deref()).await {
+                            Ok(p) => p,
+                            Err(e) => {
+                                // Surface the fetch error as a single Err item, then
+                                // terminate the stream (next_state = None).
+                                let err = Err(ParserError::Adapter(e.to_string()));
+                                return Some((vec![err], None));
+                            }
+                        };
 
-            for (idx, record) in page.records.into_iter().enumerate() {
-                // Mid-page records carry the pre-page cursor → retry re-fetches
-                // the same page. Only the last record carries the next-page cursor.
-                let (cursor_after, etag_after) = if idx + 1 == total {
-                    (next_cursor.as_deref(), etag.as_deref())
-                } else {
-                    (current_cursor.as_deref(), None)
-                };
+                    let next_page_cursor = page.next_cursor.clone();
+                    let etag = page.etag.clone();
+                    let total = page.records.len();
 
-                let bytes = serde_json::to_vec(&record).map_err(|e| {
-                    ParserError::Adapter(format!("failed to serialize api record: {e}"))
-                })?;
+                    let records: Vec<ParserResult<SourceRecord>> = page
+                        .records
+                        .into_iter()
+                        .enumerate()
+                        .map(|(idx, record)| {
+                            // Mid-page records carry the pre-page cursor → retry
+                            // re-fetches the same page. Only the last record of
+                            // each page carries the next-page cursor.
+                            let (cursor_after, etag_after) = if idx + 1 == total {
+                                (next_page_cursor.as_deref(), etag.as_deref())
+                            } else {
+                                (current_cursor.as_deref(), None)
+                            };
 
-                let metadata = build_record_metadata(cursor_after, etag_after, page_index);
+                            let bytes = serde_json::to_vec(&record).map_err(|e| {
+                                ParserError::Adapter(format!(
+                                    "failed to serialize api record: {e}"
+                                ))
+                            })?;
+                            let metadata =
+                                build_record_metadata(cursor_after, etag_after, page_index);
 
-                all_records.push(Ok(SourceRecord {
-                    material_id,
-                    anchor: MaterialAnchor::StreamFrame {
-                        material_offset: page_index,
-                        frame_index: idx as u64,
-                    },
-                    bytes,
-                    logical_path: None,
-                    source_ts_hint: None,
-                    metadata,
-                }));
-            }
+                            Ok(SourceRecord {
+                                material_id,
+                                anchor: MaterialAnchor::StreamFrame {
+                                    material_offset: page_index,
+                                    frame_index: idx as u64,
+                                },
+                                bytes,
+                                logical_path: None,
+                                source_ts_hint: None,
+                                metadata,
+                            })
+                        })
+                        .collect();
 
-            current_cursor = next_cursor.clone();
-            page_index += 1;
+                    // Advance to the next page cursor, or terminate when this was
+                    // the final page (next_page_cursor == None).
+                    let next_state = next_page_cursor
+                        .map(|nc| (Some(nc), page_index + 1));
 
-            // No next cursor → this was the final page.
-            if next_cursor.is_none() {
-                break;
-            }
-        }
+                    Some((records, next_state))
+                }
+            },
+        )
+        .flat_map(stream::iter);
 
-        Ok(stream::iter(all_records).boxed())
+        Ok(page_stream.boxed())
     }
 
     fn cursor_after(&self, record: &SourceRecord) -> ParserResult<Self::Cursor> {
@@ -698,6 +739,8 @@ mod tests {
 
     #[sinex_test]
     async fn exhausted_retries_surface_typed_error() -> xtask::sandbox::TestResult<()> {
+        // With lazy streaming, open() always succeeds; the fetch error arrives
+        // as the first Err item in the stream rather than from open() itself.
         let client = MockClient::new(vec![vec![serde_json::json!({"never": "succeeds"})]])
             .with_transient_failures(999);
         let adapter = ApiCursorAdapter::new(client).with_retry(RetryPolicy {
@@ -707,20 +750,113 @@ mod tests {
             jitter_ratio: 0.0,
         });
 
-        let result = adapter
+        let stream = adapter
             .open(dummy_material_id(), &ApiCursorConfig::default(), None)
-            .await;
+            .await
+            .expect("open() must succeed even when the first page fetch will fail");
 
-        match result {
+        let items: Vec<_> = stream.collect().await;
+        assert_eq!(items.len(), 1, "expected exactly one error item in the stream");
+        match &items[0] {
             Err(ParserError::Adapter(msg)) => {
                 assert!(
                     msg.contains("exhausted after 3 attempts"),
-                    "expected exhausted error, got: {msg}"
+                    "expected exhausted error message, got: {msg}"
                 );
             }
-            Ok(_) => panic!("expected Adapter error on exhausted retries, got Ok"),
-            Err(e) => panic!("expected Adapter error on exhausted retries, got Err({e})"),
+            Ok(_) => panic!("expected Err item in stream, got Ok"),
+            Err(e) => panic!("expected Adapter error, got: {e}"),
         }
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Laziness proof — pages must be fetched one at a time, not upfront.
+    // -------------------------------------------------------------------------
+
+    /// A mock client that exposes a shared fetch counter so tests can observe
+    /// exactly how many page fetches have occurred at any point in the stream.
+    struct TrackedMockClient {
+        pages: Vec<Vec<serde_json::Value>>,
+        fetch_count: Arc<AtomicU32>,
+    }
+
+    impl ApiClient for TrackedMockClient {
+        type Record = serde_json::Value;
+        type Error = MockError;
+
+        async fn fetch(
+            &self,
+            cursor: Option<&str>,
+        ) -> Result<ApiFetchPage<Self::Record>, Self::Error> {
+            self.fetch_count.fetch_add(1, Ordering::SeqCst);
+
+            let page_idx: usize = cursor.and_then(|c| c.parse().ok()).unwrap_or(0);
+            let records = self.pages.get(page_idx).cloned().unwrap_or_default();
+            let next_page = page_idx + 1;
+            let next_cursor = if next_page < self.pages.len() {
+                Some(next_page.to_string())
+            } else {
+                None
+            };
+            Ok(ApiFetchPage { records, next_cursor, etag: None })
+        }
+    }
+
+    #[sinex_test]
+    async fn pages_fetched_lazily_one_at_a_time() -> xtask::sandbox::TestResult<()> {
+        let fetch_count = Arc::new(AtomicU32::new(0));
+        let client = TrackedMockClient {
+            pages: vec![
+                vec![serde_json::json!({"page": 0, "i": 0}), serde_json::json!({"page": 0, "i": 1})],
+                vec![serde_json::json!({"page": 1, "i": 0})],
+            ],
+            fetch_count: Arc::clone(&fetch_count),
+        };
+        let adapter = ApiCursorAdapter::new(client).with_retry(RetryPolicy::never());
+
+        let mut stream = adapter
+            .open(dummy_material_id(), &ApiCursorConfig::default(), None)
+            .await
+            .unwrap();
+
+        // Stream not yet polled — no page should have been fetched.
+        assert_eq!(
+            fetch_count.load(Ordering::SeqCst),
+            0,
+            "no page should be fetched before the stream is polled"
+        );
+
+        // Poll the first record (page 0, record 0). This triggers the first fetch.
+        let _ = stream.next().await.expect("expected a record");
+        assert_eq!(
+            fetch_count.load(Ordering::SeqCst),
+            1,
+            "exactly one page should be fetched after consuming the first record"
+        );
+
+        // Poll the second record (page 0, record 1). Still only page 0 fetched.
+        let _ = stream.next().await.expect("expected a record");
+        assert_eq!(
+            fetch_count.load(Ordering::SeqCst),
+            1,
+            "still one page fetched after consuming the second record of page 0"
+        );
+
+        // Poll the third record (page 1, record 0). This triggers the second fetch.
+        let _ = stream.next().await.expect("expected a record");
+        assert_eq!(
+            fetch_count.load(Ordering::SeqCst),
+            2,
+            "second page should be fetched only when the consumer advances past page 0"
+        );
+
+        // Stream should now be exhausted.
+        assert!(
+            stream.next().await.is_none(),
+            "stream should be exhausted after all records"
+        );
+        assert_eq!(fetch_count.load(Ordering::SeqCst), 2, "total pages fetched should be 2");
         Ok(())
     }
 
