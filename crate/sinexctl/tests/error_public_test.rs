@@ -81,7 +81,7 @@ async fn test_format_public_rpc_error_details_uses_stable_category() -> TestResu
 }
 
 #[sinex_test]
-async fn test_format_public_rpc_error_details_preserves_dev_error_payload() -> TestResult<()> {
+async fn test_format_public_rpc_error_details_omits_sensitive_context() -> TestResult<()> {
     let data = serde_json::json!({
         "error_id": "018f0000-0000-7000-8000-000000000000",
         "public": {
@@ -99,8 +99,10 @@ async fn test_format_public_rpc_error_details_preserves_dev_error_payload() -> T
     });
 
     let details = format_public_rpc_error_details(&data);
-    assert!(details.contains("\"error\""));
-    assert!(details.contains("SELECT token FROM auth"));
+    assert!(details.contains("kind=database"));
+    assert!(details.contains("status=500"));
     assert!(details.contains("018f0000-0000-7000-8000-000000000000"));
+    assert!(!details.contains("\"error\""));
+    assert!(!details.contains("SELECT token FROM auth"));
     Ok(())
 }

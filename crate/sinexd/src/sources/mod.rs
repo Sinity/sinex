@@ -12,6 +12,7 @@ pub mod monitor_driver;
 pub mod noop;
 pub mod parse_listener;
 pub mod parsers;
+pub mod privacy_coverage;
 pub mod registry;
 pub mod runner;
 pub mod source_contracts;

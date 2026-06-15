@@ -36,26 +36,37 @@ pub fn enhance_rpc_error(method: &str, err: Report) -> Report {
 /// Format sanitized JSON-RPC error metadata returned by the gateway.
 ///
 /// The gateway includes stable machine-readable `kind_name`/`status_code`
-/// fields in production error data. Keep this helper tolerant so older or
-/// hand-written JSON-RPC responses still display their raw data.
+/// fields in production error data. If a development diagnostic payload is
+/// present, prefer the nested public payload and omit private context.
 #[must_use]
 pub fn format_public_rpc_error_details(data: &Value) -> String {
     let Some(object) = data.as_object() else {
         return format!("\nDetails: {data}");
     };
 
-    if object.contains_key("error") {
-        return format!("\nDetails: {data}");
-    }
+    let public_data = object.get("public").unwrap_or(data);
+    let Some(public_object) = public_data.as_object() else {
+        return if object.contains_key("error") {
+            "\nDetails: private_error_context_omitted".to_string()
+        } else {
+            format!("\nDetails: {public_data}")
+        };
+    };
 
-    let kind = object
+    let kind = public_object
         .get("kind_name")
         .and_then(Value::as_str)
-        .or_else(|| object.get("kind").and_then(Value::as_str));
-    let status = object.get("status_code").and_then(Value::as_u64);
-    let error_id = object.get("error_id").and_then(Value::as_str);
+        .or_else(|| public_object.get("kind").and_then(Value::as_str));
+    let status = public_object.get("status_code").and_then(Value::as_u64);
+    let error_id = public_object
+        .get("error_id")
+        .and_then(Value::as_str)
+        .or_else(|| object.get("error_id").and_then(Value::as_str));
 
     if kind.is_none() && status.is_none() && error_id.is_none() {
+        if object.contains_key("error") {
+            return "\nDetails: private_error_context_omitted".to_string();
+        }
         return format!("\nDetails: {data}");
     }
 

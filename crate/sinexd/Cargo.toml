@@ -125,6 +125,10 @@ name = "source_catalog_drift_test"
 path = "tests/sources/source_catalog_drift_test.rs"
 
 [[test]]
+name = "privacy_coverage_matrix_test"
+path = "tests/sources/privacy_coverage_matrix_test.rs"
+
+[[test]]
 name = "parse_listener_integration_test"
 path = "tests/sources/parse_listener_integration_test.rs"
 
