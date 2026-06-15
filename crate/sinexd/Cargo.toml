@@ -85,6 +85,10 @@ name = "pipeline_integration_test"
 path = "tests/event_engine/pipeline_integration_test.rs"
 
 [[test]]
+name = "tls_integration_test"
+path = "tests/event_engine/tls_integration_test.rs"
+
+[[test]]
 name = "browser_history_parser_test"
 path = "tests/sources/browser_history_parser_test.rs"
 
