@@ -17,6 +17,40 @@ mod help_tests {
     use super::*;
 
     #[sinex_test]
+    async fn bare_sinexctl_renders_command_center() -> TestResult<()> {
+        sinexctl()
+            .args(["--format", "table"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Sinex command center"))
+            .stdout(predicate::str::contains("Primary actions"))
+            .stdout(predicate::str::contains("sinexctl now"))
+            .stdout(predicate::str::contains("Root groups"))
+            .stdout(predicate::str::contains("sources"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn bare_sinexctl_json_is_view_envelope() -> TestResult<()> {
+        let output = sinexctl().args(["--format", "json"]).output()?;
+
+        assert!(
+            output.status.success(),
+            "bare sinexctl -f json failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout)?;
+        let value: serde_json::Value = serde_json::from_str(&stdout)?;
+
+        assert_eq!(value["schema_version"], "sinex.view-envelope/v3");
+        assert_eq!(value["source_surface"], "sinexctl.command_center");
+        assert_eq!(value["payload"]["schema_version"], 1);
+        assert_eq!(value["payload"]["primary_actions"][0]["command"], "sinexctl now");
+        assert_eq!(value["payload"]["root_groups"][0]["root"], "sources");
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_help_flag() -> TestResult<()> {
         sinexctl()
             .arg("--help")
