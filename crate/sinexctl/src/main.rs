@@ -1165,6 +1165,18 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn validate_format_rejects_ndjson_for_finite_view_envelopes() -> TestResult<()> {
+        for command in ["events recent", "sources status"] {
+            let result = sinexctl::validate_format(command, sinexctl::OutputFormat::Ndjson);
+            assert!(
+                result.is_err(),
+                "{command} is a finite ViewEnvelope and must reject ndjson"
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn formatless_commands_are_not_format_consumers() -> TestResult<()> {
         // Formatless commands ignore --format; a config `default_format` must
         // not be validated against them.

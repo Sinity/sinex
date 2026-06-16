@@ -8,7 +8,7 @@ use tabled::{builder::Builder, settings::Style};
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{CommandOutput, render_envelope};
+use crate::fmt::{CommandOutput, print_finite_envelope, render_finite_envelope};
 use crate::model::OutputFormat;
 
 /// Show source coverage/readiness status.
@@ -26,29 +26,11 @@ pub struct SourceStatusCommand {}
 impl SourceStatusCommand {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let envelope = client.sources_status_view().await?;
-        if matches!(
-            format,
-            OutputFormat::Json | OutputFormat::Yaml | OutputFormat::Ndjson
-        ) {
-            if let Some(rendered) = render_envelope(&envelope, &envelope.payload.sources, format)? {
-                print_machine_output(&rendered);
-            }
-        } else {
-            CommandOutput::single(envelope, format_sources_status_table).display(&format)?;
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
         }
+        CommandOutput::single(envelope, format_sources_status_table).display(&format)?;
         Ok(())
-    }
-}
-
-fn print_machine_output(rendered: &str) {
-    print!("{}", machine_output_for_print(rendered));
-}
-
-fn machine_output_for_print(rendered: &str) -> std::borrow::Cow<'_, str> {
-    if rendered.is_empty() || rendered.ends_with('\n') {
-        std::borrow::Cow::Borrowed(rendered)
-    } else {
-        std::borrow::Cow::Owned(format!("{rendered}\n"))
     }
 }
 
@@ -179,8 +161,8 @@ mod tests {
             SourceCoverageListView::new(vec![fixture_source()]),
         );
 
-        let json = render_envelope(&envelope, &envelope.payload.sources, OutputFormat::Json)?
-            .expect("json renders envelope");
+        let json =
+            render_finite_envelope(&envelope, OutputFormat::Json)?.expect("json renders envelope");
         let value: serde_json::Value = serde_json::from_str(&json)?;
 
         assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
@@ -193,29 +175,15 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn ndjson_print_output_has_no_extra_blank_record() -> xtask::TestResult<()> {
+    async fn finite_machine_render_rejects_ndjson() -> xtask::TestResult<()> {
         let envelope = ViewEnvelope::new(
             "sinexctl.sources.status",
             SourceCoverageListView::new(vec![fixture_source()]),
         );
 
-        let ndjson = render_envelope(&envelope, &envelope.payload.sources, OutputFormat::Ndjson)?
-            .expect("ndjson renders source rows");
-        let printed = machine_output_for_print(&ndjson);
+        let err = render_finite_envelope(&envelope, OutputFormat::Ndjson).unwrap_err();
 
-        assert!(printed.ends_with('\n'));
-        let lines: Vec<&str> = printed.split('\n').collect();
-        assert_eq!(
-            lines.len(),
-            2,
-            "one source row must produce exactly one JSON line plus the terminating separator"
-        );
-        assert!(
-            lines[1].is_empty(),
-            "ndjson must not contain an extra blank record"
-        );
-        let source: serde_json::Value = serde_json::from_str(lines[0])?;
-        assert_eq!(source["source_id"], "fixture.source");
+        assert!(err.to_string().contains("ndjson"));
         Ok(())
     }
 }
