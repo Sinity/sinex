@@ -20,20 +20,20 @@ use sinex_primitives::query::{
 };
 use sinex_primitives::rpc::dlq::{DlqMessagePeek, DlqPeekResponse};
 use sinex_primitives::rpc::lifecycle::LifecycleStatusResponse;
-use sinex_primitives::rpc::ops::Operation as OpsOperation;
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::rpc::replay::{ReplayOperation, ReplayState};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, EventCardListView,
-    EventCardView, OperationView, PrivacyStateKind, SinexObjectKind, SourceCoverageContinuity,
-    SourceCoverageReadiness, SourceCoverageView,
+    EventCardView, OperationJobListView, OperationView, PrivacyStateKind, SinexObjectKind,
+    SourceCoverageContinuity, SourceCoverageReadiness, SourceCoverageView,
 };
 use std::io;
 use std::time::Instant;
 use time::Duration;
 
 use crate::client::GatewayClient;
+use crate::commands::ops::operations_to_views;
 use crate::fmt::{format_bytes, format_heartbeat_age};
 use sinex_primitives::rpc::coordination::InstanceInfo;
 use sinex_primitives::rpc::dlq::DlqListResponse;
@@ -96,7 +96,7 @@ struct App {
     modules: Vec<InstanceInfo>,
     dlq_stats: Option<DlqListResponse>,
     dlq_peek: Option<DlqPeekResponse>,
-    ops_operations: Vec<OpsOperation>,
+    ops_jobs: OperationJobListView,
     replay_operations: Vec<ReplayOperation>,
     lifecycle_status: Option<LifecycleStatusResponse>,
     private_mode: Option<PrivateModeStateResponse>,
@@ -127,7 +127,7 @@ impl App {
             modules: Vec::new(),
             dlq_stats: None,
             dlq_peek: None,
-            ops_operations: Vec::new(),
+            ops_jobs: OperationJobListView::new(Vec::new()),
             replay_operations: Vec::new(),
             lifecycle_status: None,
             private_mode: None,
@@ -330,7 +330,9 @@ impl App {
 
     async fn refresh_operations_and_state(&mut self) {
         match self.client.ops_list(None, None, Some(10)).await {
-            Ok(operations) => self.ops_operations = operations,
+            Ok(operations) => {
+                self.ops_jobs = OperationJobListView::new(operations_to_views(&operations));
+            }
             Err(e) => {
                 if self.error.is_none() {
                     self.error = Some(format!("Failed to fetch operations: {e}"));
@@ -902,7 +904,7 @@ fn operations_room_cards(app: &App) -> Vec<OperationRoomCard> {
             .take(6)
             .map(replay_operation_card),
     );
-    cards.extend(app.ops_operations.iter().take(6).map(ops_operation_card));
+    cards.extend(app.ops_jobs.jobs.iter().take(6).map(ops_operation_card));
     cards.push(dlq_operation_card(app));
     if let Some(card) = automaton_dlq_card(app) {
         cards.push(card);
@@ -1012,18 +1014,7 @@ fn replay_caveats(operation: &ReplayOperation) -> Vec<String> {
     caveats
 }
 
-fn ops_operation_card(operation: &OpsOperation) -> OperationRoomCard {
-    let view = OperationView::from_rpc(
-        operation.id.clone(),
-        &operation.operation_type,
-        operation.operator.clone(),
-        operation.result_status,
-        operation.duration_ms,
-        operation.result_message.clone(),
-        operation.scope.clone(),
-        operation.preview_summary.clone(),
-    );
-
+fn ops_operation_card(view: &OperationView) -> OperationRoomCard {
     OperationRoomCard {
         title: format!("operation {} ({})", view.id, view.kind),
         authority: "ops".to_string(),
@@ -2383,7 +2374,7 @@ mod tests {
             modules: Vec::new(),
             dlq_stats: None,
             dlq_peek: None,
-            ops_operations: Vec::new(),
+            ops_jobs: OperationJobListView::new(Vec::new()),
             replay_operations: Vec::new(),
             lifecycle_status: None,
             private_mode: None,
@@ -2523,16 +2514,16 @@ mod tests {
 
     #[sinex_test]
     async fn operation_room_ops_card_uses_shared_operation_actions() -> TestResult<()> {
-        let operation = OpsOperation {
-            id: "op-fixture".to_string(),
-            operation_type: "replay".to_string(),
-            operator: "operator.local".to_string(),
-            scope: Some(serde_json::json!({"source": "fixture"})),
-            result_status: OperationStatus::Failed,
-            result_message: Some("done".to_string()),
-            preview_summary: Some(serde_json::json!({"events": 12})),
-            duration_ms: Some(42),
-        };
+        let operation = OperationView::from_rpc(
+            "op-fixture".to_string(),
+            "replay",
+            "operator.local".to_string(),
+            OperationStatus::Failed,
+            Some(42),
+            Some("done".to_string()),
+            Some(serde_json::json!({"source": "fixture"})),
+            Some(serde_json::json!({"events": 12})),
+        );
 
         let card = ops_operation_card(&operation);
         let actions = card
