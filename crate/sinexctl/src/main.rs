@@ -7,11 +7,10 @@ use sinex_primitives::rpc::{RpcMethodInfo, method_catalog};
 use sinex_primitives::views::ViewEnvelope;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
-    ConfigCommands, ContextCommand, CoreCommands, CompletionEndpointCommand, RecordCommand,
-    DemoCommand, DlqCommands, DocumentsCommand, EventsCommand, GatewayCommands, LifecycleCommands,
-    MetricsCommands, NowCommand, OpsCommands, PrivacyCommand, ReplayCommands, RuntimeCommands,
-    SemanticCommand, SourcesCommand, StateCommands, StatusCommand, TasksCommand, TuiCommand,
-    VerifyCommand,
+    ConfigCommands, CoreCommands, CompletionEndpointCommand, RecordCommand, DlqCommands,
+    DocumentsCommand, EventsCommand, GatewayCommands, LifecycleCommands, MetricsCommands,
+    NowCommand, OpsCommands, PrivacyCommand, ReplayCommands, RuntimeCommands, SemanticCommand,
+    SourcesCommand, StateCommands, StatusCommand, TasksCommand, TuiCommand,
 };
 use sinexctl::commands::lifecycle::TombstoneCommands;
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
@@ -135,9 +134,6 @@ enum Commands {
         cmd: ConfigCommands,
     },
 
-    /// Seed database with deterministic fake events for testing/demos
-    Demo(DemoCommand),
-
     /// Source material inventory and staging
     Sources(SourcesCommand),
 
@@ -162,12 +158,6 @@ enum Commands {
     // ===== Shortcut Commands =====
     /// Quick system status check
     Status(StatusCommand),
-
-    /// Show activity context for session resumption ("what was I doing?")
-    Context(ContextCommand),
-
-    /// Check bounded runtime evidence and optional smoke probes
-    Verify(VerifyCommand),
 
     /// Show what's happening right now — dashboard view
     Now(NowCommand),
@@ -261,7 +251,9 @@ async fn main() -> color_eyre::Result<()> {
 
     match command {
         Commands::Config { cmd } => cmd.execute(format)?,
-        Commands::Demo(cmd) => cmd.execute().await?,
+        Commands::Ops {
+            cmd: OpsCommands::Demo(cmd),
+        } => cmd.execute().await?,
         Commands::Ops {
             cmd: OpsCommands::Blob(cmd),
         } => cmd.execute(format).await?,
@@ -277,11 +269,13 @@ async fn main() -> color_eyre::Result<()> {
                 .transpose()?;
             cmd.execute(client.as_ref(), format).await?;
         }
-        // `sinexctl verify --sources` (alone) is a static descriptor /
+        // `sinexctl ops verify --sources` (alone) is a static descriptor /
         // payload coverage check that does not need a gateway connection
         // or auth token. Short-circuit so it can be run in CI without
         // requiring a live deployment.
-        Commands::Verify(cmd) if cmd.is_source_contracts_only() => {
+        Commands::Ops {
+            cmd: OpsCommands::Verify(cmd),
+        } if cmd.is_source_contracts_only() => {
             cmd.execute_source_contracts_only(format)?;
         }
         other => {
@@ -296,7 +290,9 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Privacy(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),
-                Commands::Demo(_) => unreachable!("Demo command handled above"),
+                Commands::Ops {
+                    cmd: OpsCommands::Demo(_),
+                } => unreachable!("Ops demo command handled above"),
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
                 Commands::Record(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
@@ -307,8 +303,6 @@ async fn main() -> color_eyre::Result<()> {
                     cmd.execute(&client, config.runtime_target.as_ref(), format)
                         .await?;
                 }
-                Commands::Context(cmd) => cmd.execute(&client, format).await?,
-                Commands::Verify(cmd) => cmd.execute(&client, format).await?,
                 Commands::Now(cmd) => cmd.execute(&client, format).await?,
                 Commands::Complete(_) => unreachable!("Complete command handled above"),
             }
@@ -603,6 +597,8 @@ fn command_path(cmd: &Commands) -> String {
                 StateCommands::Restore(_) => "ops state restore".to_string(),
             },
             OpsCommands::Instructions(cmd) => prefixed("ops", instructions_command_path(cmd)),
+            OpsCommands::Verify(cmd) => prefixed("ops", cmd.command_path().to_string()),
+            OpsCommands::Demo(_) => "ops demo".to_string(),
         },
         Commands::Privacy(cmd) => cmd.command_path().to_string(),
         Commands::Tui(_) => "tui".to_string(),
@@ -612,7 +608,6 @@ fn command_path(cmd: &Commands) -> String {
             ConfigCommands::Path => "config path".to_string(),
             ConfigCommands::Edit => "config edit".to_string(),
         },
-        Commands::Demo(_) => "demo".to_string(),
         Commands::Docs(cmd) => {
             use sinexctl::commands::documents::DocumentsSubcommand;
             match cmd.subcommand() {
@@ -698,8 +693,6 @@ fn command_path(cmd: &Commands) -> String {
         }
         Commands::Metrics { cmd } => cmd.command_path().to_string(),
         Commands::Status(_) => "status".to_string(),
-        Commands::Context(_) => "context".to_string(),
-        Commands::Verify(cmd) => cmd.command_path().to_string(),
         Commands::Now(_) => "now".to_string(),
         Commands::Complete(_) => "_complete".to_string(),
     }
@@ -828,9 +821,9 @@ mod tests {
         let command = Cli::command();
         let mut paths = BTreeSet::new();
         collect(&mut Vec::new(), &command, &mut paths);
-        // `verify` has an optional `baseline` subcommand; the parent command
+        // `ops verify` has an optional `baseline` subcommand; the parent command
         // itself remains executable and needs a format-capability entry.
-        paths.insert("verify".to_string());
+        paths.insert("ops verify".to_string());
         // Hidden, executable completion endpoint: omitted from public help but
         // still format-consuming and covered by the registry.
         paths.insert("_complete".to_string());
@@ -1187,8 +1180,8 @@ mod tests {
         // Formatless commands ignore --format; a config `default_format` must
         // not be validated against them.
         assert!(
-            !sinexctl::command_consumes_format("demo"),
-            "demo is formatless"
+            !sinexctl::command_consumes_format("ops demo"),
+            "ops demo is formatless"
         );
         assert!(
             sinexctl::command_consumes_format("runtime list"),
