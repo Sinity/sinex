@@ -914,15 +914,19 @@
                   PATH="$entry''${rest:+:$rest}"
                 }
                 export SINEX_DEV_ROOT="$PWD"
-                export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
+                _sinex_checkout_hash="$(printf '%s' "$SINEX_DEV_ROOT" | sha256sum | cut -c1-12)"
+                _sinex_user="''${USER:-$(id -un)}"
+                _sinex_cache_base="/var/cache/sinex/$_sinex_user/$_sinex_checkout_hash"
+                export SINEX_DEV_STATE_DIR="$_sinex_cache_base/dev-state"
                 export SINEX_DEV_TOOLCHAIN="${rustToolchain.name}"
                 if [ -z "''${SINEX_DEV_CACHE_ROOT:-}" ]; then
-                  export SINEX_DEV_CACHE_ROOT="$SINEX_DEV_ROOT/.sinex/cache"
+                  export SINEX_DEV_CACHE_ROOT="$_sinex_cache_base"
                 fi
                 if [ -z "''${CARGO_TARGET_DIR:-}" ]; then
                   export CARGO_TARGET_DIR="$SINEX_DEV_CACHE_ROOT/target"
                 fi
-                mkdir -p "$SINEX_DEV_CACHE_ROOT" "$CARGO_TARGET_DIR"
+                mkdir -p "$SINEX_DEV_CACHE_ROOT" "$CARGO_TARGET_DIR" "$SINEX_DEV_STATE_DIR"
+                chattr +C "$SINEX_DEV_CACHE_ROOT" "$SINEX_DEV_STATE_DIR" 2>/dev/null || true
                 # Disable sccache for the sinex dev loop. The system (sinnix
                 # build-policy.nix) exports RUSTC_WRAPPER=sccache globally, but
                 # sccache bypasses incremental compilation and gives ~0 on the
@@ -951,7 +955,6 @@
                 export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run"
                 export PGHOST="$SINEX_DEV_STATE_DIR/run"
                 export PGPORT="${toString pgPort}"
-                _sinex_checkout_hash="$(printf '%s' "$PWD" | sha256sum | cut -c1-12)"
                 _sinex_checkout_hash_hex="$(printf '%s' "$_sinex_checkout_hash" | cut -c1-2)"
                 _sinex_checkout_hash_byte="$((16#$_sinex_checkout_hash_hex))"
                 export SINEX_DEV_GATEWAY_PORT="$((19000 + _sinex_checkout_hash_byte))"
