@@ -558,7 +558,7 @@ fn event_ref(event_id: Option<&str>) -> SinexObjectRef {
     let mut ref_ = SinexObjectRef::new(SinexObjectKind::Event, id).with_label(short_id(id));
     if event_id.is_some() {
         ref_ = ref_
-            .with_command_hint(format!("sinexctl trace {id}"))
+            .with_command_hint(format!("sinexctl events trace {id}"))
             .with_rpc_method("events.lineage");
     }
     ref_
@@ -594,7 +594,7 @@ fn provenance_refs(provenance: &Provenance) -> (Vec<SinexObjectRef>, Vec<SinexOb
                 .map(|id| {
                     SinexObjectRef::new(SinexObjectKind::Event, id.to_string())
                         .with_label(short_id(&id.to_string()))
-                        .with_command_hint(format!("sinexctl trace {id}"))
+                        .with_command_hint(format!("sinexctl events trace {id}"))
                         .with_rpc_method("events.lineage")
                 })
                 .collect();
@@ -607,11 +607,11 @@ fn event_actions(event_id: Option<&str>) -> Vec<ActionAvailability> {
     match event_id {
         Some(id) => vec![
             ActionAvailability::read("event.trace", "Trace", ActionAvailabilityState::Enabled)
-                .with_command_hint(format!("sinexctl trace {id}"))
+                .with_command_hint(format!("sinexctl events trace {id}"))
                 .with_rpc_method("events.lineage"),
             ActionAvailability::read("event.inspect", "Inspect", ActionAvailabilityState::Target)
                 .with_reason("multi-pane event inspector is tracked separately")
-                .with_command_hint(format!("sinexctl trace {id}"))
+                .with_command_hint(format!("sinexctl events inspect {id}"))
                 .with_rpc_method("events.query"),
         ],
         None => vec![
