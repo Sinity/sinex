@@ -17,11 +17,11 @@ use crate::model::OutputFormat;
 #[derive(Debug, Subcommand)]
 #[command(after_help = "\
 EXAMPLES:
-    sinexctl telemetry current-health
-    sinexctl telemetry gateway-stats --from 24h
-    sinexctl telemetry metric-counters --from 6h --limit 20
-    sinexctl telemetry event-engine-batch-stats --from 12h -f json
-    sinexctl telemetry event-engine-validation
+    sinexctl metrics telemetry current-health
+    sinexctl metrics telemetry gateway-stats --from 24h
+    sinexctl metrics telemetry metric-counters --from 6h --limit 20
+    sinexctl metrics telemetry event-engine-batch-stats --from 12h -f json
+    sinexctl metrics telemetry event-engine-validation
 ")]
 pub enum TelemetryCommands {
     /// Latest component health-status rows

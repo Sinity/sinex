@@ -36,7 +36,7 @@ pub const DEFAULT_LATENCY_RESERVOIR: usize = 1024;
 
 /// Throughput window length. Bigger window = more stable EPS reading, smaller
 /// window = faster reaction to load spikes. One minute matches what operators
-/// expect from `sinexctl automata` at a glance.
+/// expect from `sinexctl runtime automata` at a glance.
 pub const THROUGHPUT_WINDOW: Duration = Duration::from_mins(1);
 
 /// Fixed-capacity ring buffer of latency samples for percentile queries.
