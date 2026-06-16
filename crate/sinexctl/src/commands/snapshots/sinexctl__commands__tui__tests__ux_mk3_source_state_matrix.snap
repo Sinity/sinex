@@ -6,37 +6,42 @@ expression: matrix
   {
     "caveats": [],
     "cockpit_state": "ready",
+    "continuity": "active",
     "fixture": "ux.runtime.ready",
-    "status": "available"
+    "readiness": "ready"
   },
   {
     "caveats": [],
-    "cockpit_state": "stale",
-    "fixture": "ux.runtime.stale",
-    "status": "stale"
+    "cockpit_state": "unparsed",
+    "continuity": "material-only",
+    "fixture": "ux.runtime.material-only",
+    "readiness": "ready"
   },
   {
     "caveats": [
       "parser.version_drift"
     ],
     "cockpit_state": "drift",
+    "continuity": "active",
     "fixture": "ux.runtime.drift",
-    "status": "partial"
+    "readiness": "ready"
   },
   {
     "caveats": [
       "material.staged_unparsed"
     ],
     "cockpit_state": "unparsed",
+    "continuity": "material-only",
     "fixture": "ux.runtime.unparsed",
-    "status": "partial"
+    "readiness": "missing-events"
   },
   {
     "caveats": [
       "policy.raw_material_blocked"
     ],
     "cockpit_state": "blocked",
+    "continuity": "unknown",
     "fixture": "ux.runtime.blocked",
-    "status": "blocked"
+    "readiness": "missing-binding"
   }
 ]

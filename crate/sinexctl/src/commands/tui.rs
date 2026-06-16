@@ -23,14 +23,11 @@ use sinex_primitives::rpc::lifecycle::LifecycleStatusResponse;
 use sinex_primitives::rpc::ops::Operation as OpsOperation;
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::rpc::replay::{ReplayOperation, ReplayState};
-use sinex_primitives::rpc::sources::{
-    SourceReadiness, SourceReadinessStatus, SourcesReadinessListRequest,
-};
-use sinex_primitives::sources::continuity::{SourceContinuityReport, SourcesContinuityListRequest};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, EventCardListView,
-    EventCardView, OperationView, PrivacyStateKind, SinexObjectKind,
+    EventCardView, OperationView, PrivacyStateKind, SinexObjectKind, SourceCoverageContinuity,
+    SourceCoverageReadiness, SourceCoverageView,
 };
 use std::io;
 use std::time::Instant;
@@ -103,8 +100,7 @@ struct App {
     replay_operations: Vec<ReplayOperation>,
     lifecycle_status: Option<LifecycleStatusResponse>,
     private_mode: Option<PrivateModeStateResponse>,
-    source_readiness: Vec<SourceReadiness>,
-    source_continuity: Vec<SourceContinuityReport>,
+    source_coverage: Vec<SourceCoverageView>,
     recent_events: Vec<EventCardView>,
     recent_event_rows: Vec<QueryResultEvent>,
     gateway_version: String,
@@ -135,8 +131,7 @@ impl App {
             replay_operations: Vec::new(),
             lifecycle_status: None,
             private_mode: None,
-            source_readiness: Vec::new(),
-            source_continuity: Vec::new(),
+            source_coverage: Vec::new(),
             recent_events: Vec::new(),
             recent_event_rows: Vec::new(),
             gateway_version: String::from("unknown"),
@@ -211,7 +206,7 @@ impl App {
             Tab::Dashboard => 0,
             Tab::Operations => operations_room_cards(self).len(),
             Tab::Modules => self.modules.len(),
-            Tab::Sources => self.source_readiness.len(),
+            Tab::Sources => self.source_coverage.len(),
             Tab::Events => self.recent_events.len(),
             Tab::Dlq => 0, // DLQ shows stats, not a navigable list
         }
@@ -369,30 +364,14 @@ impl App {
     }
 
     async fn refresh_sources_and_events(&mut self) {
-        match self
-            .client
-            .sources_readiness_list(SourcesReadinessListRequest::default())
-            .await
-        {
+        match self.client.sources_status_view().await {
             Ok(resp) => {
-                self.source_readiness = resp.sources;
+                self.source_coverage = resp.payload.sources;
                 self.clamp_selection();
             }
             Err(e) => {
                 if self.error.is_none() {
-                    self.error = Some(format!("Failed to fetch source readiness: {e}"));
-                }
-            }
-        }
-        match self
-            .client
-            .sources_continuity_list(SourcesContinuityListRequest::default())
-            .await
-        {
-            Ok(resp) => self.source_continuity = resp.reports,
-            Err(e) => {
-                if self.error.is_none() {
-                    self.error = Some(format!("Failed to fetch source continuity: {e}"));
+                    self.error = Some(format!("Failed to fetch source status: {e}"));
                 }
             }
         }
@@ -1418,13 +1397,11 @@ fn render_sources(f: &mut Frame, area: Rect, app: &App) {
         .split(area);
 
     let items: Vec<ListItem> = app
-        .source_readiness
+        .source_coverage
         .iter()
         .enumerate()
         .map(|(index, source)| {
             let state = source_cockpit_state(source);
-            let continuity = source_continuity_for(app, &source.source_family);
-            let gaps = continuity.map_or(0, |report| report.gaps.len());
             let style = if index == app.selected_index {
                 Style::default()
                     .fg(source_state_color(state))
@@ -1432,32 +1409,34 @@ fn render_sources(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 Style::default().fg(source_state_color(state))
             };
-            let parser = source
-                .parser_id
-                .as_ref()
-                .map_or_else(|| "-".to_string(), std::string::ToString::to_string);
+            let event_types = event_types_summary(source);
+            let actions = source
+                .actions
+                .iter()
+                .filter(|action| action.state == ActionAvailabilityState::Enabled)
+                .count();
             ListItem::new(format!(
-                "{:<10} {:<12} {} | parser {} | mat {} evt {} | gaps {}",
+                "{:<10} {:<14} {} | ns {} | type {} | mat {} evt {} | gaps {} | act {}",
                 source_state_label(state),
-                source.source_family,
-                truncate_chars(&source.source_identifier, 34),
-                parser,
+                continuity_label(source.continuity),
+                truncate_chars(&source.source_id, 34),
+                source.namespace,
+                truncate_chars(&event_types, 24),
                 source.material_count,
-                source
-                    .parsed_event_count
-                    .map_or_else(|| "-".to_string(), |count| count.to_string()),
-                gaps
+                source.event_count,
+                source.gaps.len(),
+                actions
             ))
             .style(style)
         })
         .collect();
 
     let empty_label = if app.loading {
-        "Loading source readiness..."
+        "Loading source status..."
     } else if app.error.is_some() {
-        "Source readiness unavailable; see status footer"
+        "Source status unavailable; see status footer"
     } else {
-        "No source readiness records"
+        "No source status records"
     };
     let list = List::new(if items.is_empty() {
         vec![ListItem::new(empty_label)]
@@ -1467,8 +1446,8 @@ fn render_sources(f: &mut Frame, area: Rect, app: &App) {
     .block(
         Block::default()
             .title(format!(
-                "Sources ({} readiness rows)",
-                app.source_readiness.len()
+                "Sources ({} coverage rows)",
+                app.source_coverage.len()
             ))
             .borders(Borders::ALL),
     );
@@ -1477,7 +1456,7 @@ fn render_sources(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_source_detail(f: &mut Frame, area: Rect, app: &App) {
-    let Some(source) = app.source_readiness.get(app.selected_index) else {
+    let Some(source) = app.source_coverage.get(app.selected_index) else {
         let message = if app.loading {
             "Loading selected source..."
         } else if app.error.is_some() {
@@ -1499,7 +1478,6 @@ fn render_source_detail(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let state = source_cockpit_state(source);
-    let continuity = source_continuity_for(app, &source.source_family);
     let mut lines = vec![
         Line::from(vec![
             Span::styled("State  ", Style::default().fg(Color::DarkGray)),
@@ -1512,38 +1490,43 @@ fn render_source_detail(f: &mut Frame, area: Rect, app: &App) {
         ]),
         Line::from(vec![
             Span::styled("Source  ", Style::default().fg(Color::DarkGray)),
-            Span::raw(source.source_identifier.clone()),
+            Span::raw(source.source_id.clone()),
         ]),
         Line::from(vec![
-            Span::styled("Family  ", Style::default().fg(Color::DarkGray)),
-            Span::raw(source.source_family.clone()),
+            Span::styled("Namespace  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(source.namespace.clone()),
         ]),
         Line::from(vec![
-            Span::styled("Parser  ", Style::default().fg(Color::DarkGray)),
-            Span::raw(
-                source
-                    .parser_id
-                    .as_ref()
-                    .map_or_else(|| "unknown".to_string(), std::string::ToString::to_string),
-            ),
+            Span::styled("Readiness  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(readiness_label(source.readiness)),
         ]),
         Line::from(vec![
-            Span::styled("Fresh  ", Style::default().fg(Color::DarkGray)),
-            Span::raw(
-                source
-                    .freshness_seconds
-                    .map_or_else(|| "unknown".to_string(), |secs| format!("{secs}s")),
-            ),
+            Span::styled("Continuity  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(continuity_label(source.continuity)),
         ]),
         Line::from(vec![
             Span::styled("Counts  ", Style::default().fg(Color::DarkGray)),
             Span::raw(format!(
-                "{} material(s), {} parsed event(s)",
-                source.material_count,
-                source
-                    .parsed_event_count
-                    .map_or_else(|| "unknown".to_string(), |count| count.to_string())
+                "{} material(s), {} event(s), {} binding(s)",
+                source.material_count, source.event_count, source.binding_count
             )),
+        ]),
+        Line::from(vec![
+            Span::styled("Privacy  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!(
+                "{}/{}{}",
+                source.privacy.tier,
+                source.privacy.context,
+                if source.privacy.proposed {
+                    " (proposed)"
+                } else {
+                    ""
+                }
+            )),
+        ]),
+        Line::from(vec![
+            Span::styled("Event Types  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(event_types_summary(source)),
         ]),
         Line::from(""),
         Line::from(Span::styled(
@@ -1552,43 +1535,18 @@ fn render_source_detail(f: &mut Frame, area: Rect, app: &App) {
         )),
     ];
 
-    match continuity {
-        Some(report) if !report.gaps.is_empty() => {
-            let gap = &report.gaps[0];
-            lines.push(Line::from(format!(
-                "{} gap(s), first range {} -> {}",
-                report.gaps.len(),
-                gap.from_ts,
-                gap.to_ts
-            )));
-            lines.push(Line::from(format!(
-                "Affected source: {}",
-                report.source_family
-            )));
-            lines.push(Line::from(format!(
-                "Likely cause: {}",
-                gap.attribution.as_deref().unwrap_or("continuity gap")
-            )));
-            lines.push(Line::from(format!(
-                "Supporting evidence: {} material(s), {} event(s)",
-                report.material_count, report.event_count
-            )));
-            lines.push(Line::from(format!(
-                "Explain command: sinexctl sources explain-gap {} --at {}",
-                report.source_family.as_str(),
-                gap.from_ts
-            )));
-        }
-        Some(report) => {
-            lines.push(Line::from(format!(
-                "No measured continuity gaps; {} material(s), {} event(s)",
-                report.material_count, report.event_count
-            )));
-        }
-        None => {
-            lines.push(Line::from(
-                "No continuity report for this source family yet.",
-            ));
+    if source.gaps.is_empty() {
+        lines.push(Line::from(format!(
+            "No DTO-reported continuity gaps; {} material(s), {} event(s)",
+            source.material_count, source.event_count
+        )));
+    } else {
+        lines.push(Line::from(format!(
+            "{} DTO-reported gap(s)",
+            source.gaps.len()
+        )));
+        for gap in source.gaps.iter().take(4) {
+            lines.push(Line::from(format!("{}: {}", gap.kind, gap.message)));
         }
     }
 
@@ -1601,33 +1559,37 @@ fn render_source_detail(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from("none"));
     } else {
         for caveat in source.caveats.iter().take(8) {
-            lines.push(Line::from(format!(
-                "{} [{:?}] {}",
-                caveat.code, caveat.severity, caveat.message
-            )));
-            if let Some(evidence) = &caveat.evidence_ref {
-                lines.push(Line::from(format!("  evidence: {evidence}")));
+            lines.push(Line::from(format!("{} {}", caveat.id, caveat.message)));
+            if let Some(ref_) = &caveat.ref_ {
+                lines.push(Line::from(format!("  ref: {}", ref_.id)));
             }
         }
     }
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Next Commands",
+        "Actions",
         Style::default().add_modifier(Modifier::BOLD),
     )));
-    lines.push(Line::from(format!(
-        "sinexctl sources readiness {} --family {}",
-        source.source_identifier, source.source_family
-    )));
-    lines.push(Line::from(format!(
-        "sinexctl sources continuity --source {}",
-        source.source_identifier
-    )));
-    lines.push(Line::from(format!(
-        "sinexctl sources continuity {}",
-        source.source_family
-    )));
+    if source.actions.is_empty() {
+        lines.push(Line::from("none"));
+    } else {
+        for action in source.actions.iter().take(8) {
+            lines.push(Line::from(format!(
+                "{} [{}] {}",
+                action.label,
+                source_action_state_label(action.state),
+                action
+                    .command_hint
+                    .as_deref()
+                    .or(action.rpc_method.as_deref())
+                    .unwrap_or(&action.id)
+            )));
+            if let Some(reason) = &action.reason {
+                lines.push(Line::from(format!("  reason: {reason}")));
+            }
+        }
+    }
     if matches!(state, SourceCockpitState::Unparsed) {
         lines.push(Line::from(
             "Explore Bridge [target] - staged-but-unparsed material (#1062)",
@@ -1652,42 +1614,52 @@ fn render_source_detail(f: &mut Frame, area: Rect, app: &App) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SourceCockpitState {
     Ready,
-    Partial,
-    Stale,
-    Missing,
+    Proposed,
+    MaterialOnly,
+    EventOnly,
+    MissingMaterial,
+    MissingEvents,
+    MissingBinding,
     Drift,
     Unparsed,
     Blocked,
     Unknown,
 }
 
-fn source_cockpit_state(source: &SourceReadiness) -> SourceCockpitState {
+fn source_cockpit_state(source: &SourceCoverageView) -> SourceCockpitState {
     if source_has_drift_caveat(source) {
         return SourceCockpitState::Drift;
     }
-    if source_has_unparsed_caveat(source)
-        || (source.material_count > 0 && source.parsed_event_count == Some(0))
+    if source
+        .actions
+        .iter()
+        .any(|action| action.state == ActionAvailabilityState::Disabled)
+    {
+        return SourceCockpitState::Blocked;
+    }
+    if source_has_unparsed_caveat(source) || (source.material_count > 0 && source.event_count == 0)
     {
         return SourceCockpitState::Unparsed;
     }
-    match source.status {
-        SourceReadinessStatus::Available => SourceCockpitState::Ready,
-        SourceReadinessStatus::Partial => SourceCockpitState::Partial,
-        SourceReadinessStatus::Stale => SourceCockpitState::Stale,
-        SourceReadinessStatus::Missing => SourceCockpitState::Missing,
-        SourceReadinessStatus::Blocked | SourceReadinessStatus::Disabled => {
-            SourceCockpitState::Blocked
+    match (source.readiness, source.continuity) {
+        (SourceCoverageReadiness::Ready, SourceCoverageContinuity::Active) => {
+            SourceCockpitState::Ready
         }
-        SourceReadinessStatus::Error | SourceReadinessStatus::Unknown => {
-            SourceCockpitState::Unknown
-        }
+        (SourceCoverageReadiness::Proposed, _) => SourceCockpitState::Proposed,
+        (SourceCoverageReadiness::MissingMaterial, _) => SourceCockpitState::MissingMaterial,
+        (SourceCoverageReadiness::MissingEvents, _) => SourceCockpitState::MissingEvents,
+        (SourceCoverageReadiness::MissingBinding, _) => SourceCockpitState::MissingBinding,
+        (_, SourceCoverageContinuity::MaterialOnly) => SourceCockpitState::MaterialOnly,
+        (_, SourceCoverageContinuity::EventOnly) => SourceCockpitState::EventOnly,
+        (_, SourceCoverageContinuity::Gapped) => SourceCockpitState::Unparsed,
+        (_, SourceCoverageContinuity::Unknown) => SourceCockpitState::Unknown,
     }
 }
 
-fn source_has_drift_caveat(source: &SourceReadiness) -> bool {
+fn source_has_drift_caveat(source: &SourceCoverageView) -> bool {
     source.caveats.iter().any(|caveat| {
         matches!(
-            caveat.code.as_str(),
+            caveat.id.as_str(),
             "parser.version_drift"
                 | "source.shape_changed"
                 | "parser.required_field_missing"
@@ -1696,10 +1668,10 @@ fn source_has_drift_caveat(source: &SourceReadiness) -> bool {
     })
 }
 
-fn source_has_unparsed_caveat(source: &SourceReadiness) -> bool {
+fn source_has_unparsed_caveat(source: &SourceCoverageView) -> bool {
     source.caveats.iter().any(|caveat| {
         matches!(
-            caveat.code.as_str(),
+            caveat.id.as_str(),
             "material.staged_unparsed" | "parser.no_binding" | "parser.jobs_untracked"
         )
     })
@@ -1708,9 +1680,12 @@ fn source_has_unparsed_caveat(source: &SourceReadiness) -> bool {
 fn source_state_label(state: SourceCockpitState) -> &'static str {
     match state {
         SourceCockpitState::Ready => "ready",
-        SourceCockpitState::Partial => "partial",
-        SourceCockpitState::Stale => "stale",
-        SourceCockpitState::Missing => "missing",
+        SourceCockpitState::Proposed => "proposed",
+        SourceCockpitState::MaterialOnly => "material-only",
+        SourceCockpitState::EventOnly => "event-only",
+        SourceCockpitState::MissingMaterial => "missing-material",
+        SourceCockpitState::MissingEvents => "missing-events",
+        SourceCockpitState::MissingBinding => "missing-binding",
         SourceCockpitState::Drift => "drift",
         SourceCockpitState::Unparsed => "unparsed",
         SourceCockpitState::Blocked => "blocked",
@@ -1721,8 +1696,12 @@ fn source_state_label(state: SourceCockpitState) -> &'static str {
 fn source_state_color(state: SourceCockpitState) -> Color {
     match state {
         SourceCockpitState::Ready => Color::Green,
-        SourceCockpitState::Partial | SourceCockpitState::Stale => Color::Yellow,
-        SourceCockpitState::Missing
+        SourceCockpitState::Proposed
+        | SourceCockpitState::MaterialOnly
+        | SourceCockpitState::EventOnly
+        | SourceCockpitState::MissingMaterial
+        | SourceCockpitState::MissingEvents => Color::Yellow,
+        SourceCockpitState::MissingBinding
         | SourceCockpitState::Drift
         | SourceCockpitState::Unparsed
         | SourceCockpitState::Blocked => Color::Red,
@@ -1730,13 +1709,44 @@ fn source_state_color(state: SourceCockpitState) -> Color {
     }
 }
 
-fn source_continuity_for<'a>(
-    app: &'a App,
-    source_family: &str,
-) -> Option<&'a SourceContinuityReport> {
-    app.source_continuity
-        .iter()
-        .find(|report| report.source_family.as_str() == source_family)
+fn readiness_label(readiness: SourceCoverageReadiness) -> &'static str {
+    match readiness {
+        SourceCoverageReadiness::Ready => "ready",
+        SourceCoverageReadiness::Proposed => "proposed",
+        SourceCoverageReadiness::MissingMaterial => "missing-material",
+        SourceCoverageReadiness::MissingEvents => "missing-events",
+        SourceCoverageReadiness::MissingBinding => "missing-binding",
+    }
+}
+
+fn continuity_label(continuity: SourceCoverageContinuity) -> &'static str {
+    match continuity {
+        SourceCoverageContinuity::Active => "active",
+        SourceCoverageContinuity::MaterialOnly => "material-only",
+        SourceCoverageContinuity::EventOnly => "event-only",
+        SourceCoverageContinuity::Gapped => "gapped",
+        SourceCoverageContinuity::Unknown => "unknown",
+    }
+}
+
+fn event_types_summary(source: &SourceCoverageView) -> String {
+    match source.event_types.len() {
+        0 => "-".to_string(),
+        1 => source.event_types[0].clone(),
+        n => format!("{} (+{})", source.event_types[0], n - 1),
+    }
+}
+
+fn source_action_state_label(state: ActionAvailabilityState) -> &'static str {
+    match state {
+        ActionAvailabilityState::Enabled => "enabled",
+        ActionAvailabilityState::Disabled => "disabled",
+        ActionAvailabilityState::Target => "target",
+        ActionAvailabilityState::Loading => "loading",
+        ActionAvailabilityState::Dangerous => "dangerous",
+        ActionAvailabilityState::Partial => "partial",
+        ActionAvailabilityState::Unavailable => "unavailable",
+    }
 }
 
 fn render_events(f: &mut Frame, area: Rect, app: &App) {
@@ -2270,72 +2280,159 @@ fn render_dlq(f: &mut Frame, area: Rect, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::ClientConfig;
     use ratatui::backend::TestBackend;
     use sinex_primitives::domain::OperationStatus;
-    use sinex_primitives::rpc::sources::{
-        CaveatSeverity, SourceCaveat, SourceReadinessCost, caveat_codes,
-    };
     use sinex_primitives::views::{
-        CaveatView, EventSourceView, EventTimestampView, PrivacyStateView, SinexObjectRef,
+        CaveatView, CoverageGapView, EventSourceView, EventTimestampView, PrivacyStateView,
+        SinexObjectRef, SourcePrivacyPosture,
     };
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
     async fn ux_mk3_source_state_matrix_snapshot() -> TestResult<()> {
         let rows = [
-            readiness_fixture(
+            coverage_fixture(
                 "ux.runtime.ready",
-                SourceReadinessStatus::Available,
+                SourceCoverageReadiness::Ready,
+                SourceCoverageContinuity::Active,
                 Vec::new(),
-                Some(12),
-            ),
-            readiness_fixture(
-                "ux.runtime.stale",
-                SourceReadinessStatus::Stale,
+                12,
                 Vec::new(),
-                Some(900_000),
+                Vec::new(),
             ),
-            readiness_fixture(
+            coverage_fixture(
+                "ux.runtime.material-only",
+                SourceCoverageReadiness::Ready,
+                SourceCoverageContinuity::MaterialOnly,
+                Vec::new(),
+                0,
+                Vec::new(),
+                Vec::new(),
+            ),
+            coverage_fixture(
                 "ux.runtime.drift",
-                SourceReadinessStatus::Partial,
-                vec![caveat(
-                    caveat_codes::PARSER_VERSION_DRIFT,
-                    "parser version drift",
-                )],
-                Some(30),
+                SourceCoverageReadiness::Ready,
+                SourceCoverageContinuity::Active,
+                vec![caveat("parser.version_drift", "parser version drift")],
+                30,
+                Vec::new(),
+                Vec::new(),
             ),
-            readiness_fixture(
+            coverage_fixture(
                 "ux.runtime.unparsed",
-                SourceReadinessStatus::Partial,
+                SourceCoverageReadiness::MissingEvents,
+                SourceCoverageContinuity::MaterialOnly,
                 vec![caveat(
-                    caveat_codes::MATERIAL_STAGED_UNPARSED,
+                    "material.staged_unparsed",
                     "material staged but not parsed",
                 )],
-                Some(30),
+                0,
+                vec![CoverageGapView {
+                    kind: "material-only".to_string(),
+                    message: "material has not produced events".to_string(),
+                }],
+                Vec::new(),
             ),
-            readiness_fixture(
+            coverage_fixture(
                 "ux.runtime.blocked",
-                SourceReadinessStatus::Blocked,
+                SourceCoverageReadiness::MissingBinding,
+                SourceCoverageContinuity::Unknown,
                 vec![caveat(
-                    caveat_codes::POLICY_RAW_MATERIAL_BLOCKED,
+                    "policy.raw_material_blocked",
                     "policy blocks raw material",
                 )],
-                None,
+                0,
+                Vec::new(),
+                vec![ActionAvailability::read(
+                    "sources.readiness",
+                    "Readiness",
+                    ActionAvailabilityState::Disabled,
+                )
+                .with_reason("binding unavailable")],
             ),
         ];
         let matrix = rows
             .iter()
             .map(|source| {
                 serde_json::json!({
-                    "fixture": source.source_identifier,
-                    "status": format!("{:?}", source.status).to_lowercase(),
+                    "fixture": source.source_id,
+                    "readiness": readiness_label(source.readiness),
+                    "continuity": continuity_label(source.continuity),
                     "cockpit_state": source_state_label(source_cockpit_state(source)),
-                    "caveats": source.caveats.iter().map(|c| c.code.as_str()).collect::<Vec<_>>(),
+                    "caveats": source.caveats.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
                 })
             })
             .collect::<Vec<_>>();
 
         insta::assert_json_snapshot!("ux_mk3_source_state_matrix", matrix);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_detail_renders_shared_coverage_actions() -> TestResult<()> {
+        let mut terminal = Terminal::new(TestBackend::new(96, 24))?;
+        let app = App {
+            current_tab: Tab::Sources,
+            should_quit: false,
+            client: GatewayClient::new(ClientConfig {
+                token: Some("fixture-token".to_string()),
+                ..ClientConfig::default()
+            })?,
+            refresh_interval: 0,
+            modules: Vec::new(),
+            dlq_stats: None,
+            dlq_peek: None,
+            ops_operations: Vec::new(),
+            replay_operations: Vec::new(),
+            lifecycle_status: None,
+            private_mode: None,
+            source_coverage: vec![coverage_fixture(
+                "ux.runtime.actions",
+                SourceCoverageReadiness::Ready,
+                SourceCoverageContinuity::Gapped,
+                vec![caveat("parser.jobs_untracked", "parser jobs are untracked")],
+                4,
+                vec![CoverageGapView {
+                    kind: "gapped".to_string(),
+                    message: "latest material has no parsed event".to_string(),
+                }],
+                vec![
+                    ActionAvailability::read(
+                        "sources.readiness",
+                        "Readiness",
+                        ActionAvailabilityState::Enabled,
+                    )
+                    .with_command_hint("sinexctl sources readiness ux.runtime.actions"),
+                    ActionAvailability::read(
+                        "sources.continuity",
+                        "Continuity",
+                        ActionAvailabilityState::Target,
+                    )
+                    .with_rpc_method("sources.continuity"),
+                ],
+            )],
+            recent_events: Vec::new(),
+            recent_event_rows: Vec::new(),
+            gateway_version: "fixture".to_string(),
+            loading: false,
+            last_refresh: Instant::now(),
+            error: None,
+            selected_index: 0,
+            show_help: false,
+            copy_menu_open: false,
+            copy_index: 0,
+            payload_raw: false,
+            feedback: None,
+        };
+
+        terminal.draw(|f| render_source_detail(f, f.area(), &app))?;
+
+        let rendered = buffer_to_text(terminal.backend().buffer());
+        assert!(rendered.contains("Readiness [enabled]"));
+        assert!(rendered.contains("sinexctl sources readiness ux.runtime.actions"));
+        assert!(rendered.contains("Continuity [target] sources.continuity"));
+        assert!(rendered.contains("latest material has no parsed event"));
         Ok(())
     }
 
@@ -2463,35 +2560,44 @@ mod tests {
         Ok(())
     }
 
-    fn readiness_fixture(
+    fn coverage_fixture(
         id: &str,
-        status: SourceReadinessStatus,
-        caveats: Vec<SourceCaveat>,
-        parsed_event_count: Option<u64>,
-    ) -> SourceReadiness {
-        SourceReadiness {
-            binding_id: None,
-            source_family: "ux-mk3".to_string(),
-            source_id: None,
-            parser_id: None,
-            source_identifier: id.to_string(),
-            status,
-            cost: SourceReadinessCost::LocalFast,
-            freshness_seconds: Some(30),
+        readiness: SourceCoverageReadiness,
+        continuity: SourceCoverageContinuity,
+        caveats: Vec<CaveatView>,
+        event_count: i64,
+        gaps: Vec<CoverageGapView>,
+        actions: Vec<ActionAvailability>,
+    ) -> SourceCoverageView {
+        SourceCoverageView {
+            source_id: id.to_string(),
+            namespace: "ux-mk3".to_string(),
+            event_types: vec!["ux-mk3/event.fixture".to_string()],
+            readiness,
+            continuity,
+            last_material_at: Some(Timestamp::UNIX_EPOCH),
+            last_event_at: Some(Timestamp::UNIX_EPOCH),
             material_count: 1,
-            parsed_event_count,
-            last_success_at: Some("2026-05-24T12:00:00Z".to_string()),
+            event_count,
+            binding_count: 1,
+            live_binding_count: 1,
+            proposed_binding_count: 0,
+            gaps,
             caveats,
-            evidence: serde_json::json!({"fixture": id}),
+            privacy: SourcePrivacyPosture {
+                tier: "sensitive".to_string(),
+                context: "metadata".to_string(),
+                proposed: false,
+            },
+            actions,
         }
     }
 
-    fn caveat(code: &str, message: &str) -> SourceCaveat {
-        SourceCaveat {
-            code: code.to_string(),
-            severity: CaveatSeverity::Degraded,
+    fn caveat(code: &str, message: &str) -> CaveatView {
+        CaveatView {
+            id: code.to_string(),
             message: message.to_string(),
-            evidence_ref: Some("ux-mk3/fixture".to_string()),
+            ref_: Some(SinexObjectRef::new(SinexObjectKind::Caveat, code)),
         }
     }
 
