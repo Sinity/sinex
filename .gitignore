@@ -11,6 +11,8 @@ Thumbs.db
 .vscode/
 .mcp.json
 
+.serena/
+
 # Rust
 target/
 **/target/
