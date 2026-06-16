@@ -1404,6 +1404,22 @@ fn check_disk_pressure(ctx: &crate::command::CommandContext, is_interactive: boo
         |_| workspace_root().join("target"),
         std::path::PathBuf::from,
     );
+    match crate::cache_hygiene::enforce_global_retention_for_target(&target_dir) {
+        Ok(Some(report)) if report.deleted_roots() > 0 => {
+            if is_interactive {
+                eprintln!(
+                    "   Global Sinex cache retention deleted {} stale roots ({:.2} GB reclaimed; {:.2} GB remain).",
+                    report.deleted_roots(),
+                    report.deleted_bytes() as f64 / 1e9,
+                    report.total_after_bytes as f64 / 1e9,
+                );
+            }
+        }
+        Ok(Some(_)) | Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(error = %error, "global sinex cache retention failed during preflight");
+        }
+    }
     let Ok(usage) = crate::cache_hygiene::disk_usage(&target_dir) else {
         return Ok(());
     };

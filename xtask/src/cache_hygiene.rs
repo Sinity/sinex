@@ -19,7 +19,8 @@
 //! for the bounded enforcement.
 
 use color_eyre::eyre::{Context, Result, eyre};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
@@ -48,6 +49,16 @@ pub const REFUSE_PERCENT: f64 = 90.0;
 /// mount can be above `REFUSE_PERCENT` while still having hundreds of GiB free,
 /// which is enough headroom for Sinex build and test artifacts.
 pub const REFUSE_MIN_FREE_GB: f64 = 50.0;
+/// Default total budget for one user's `/var/cache/sinex` cache roots.
+///
+/// The active checkout target can be tens of GiB on its own, so this is a
+/// retention budget for stale sibling roots rather than a hard per-checkout
+/// cap.
+pub const DEFAULT_GLOBAL_CACHE_MAX_GB: f64 = 160.0;
+/// Keep a small number of the newest inactive roots even when the global cache
+/// is over budget. This preserves one or two recent branch pivots without
+/// letting abandoned worktree roots accumulate indefinitely.
+pub const DEFAULT_GLOBAL_CACHE_KEEP_INACTIVE: usize = 2;
 
 #[derive(Debug, Clone)]
 pub struct DiskUsage {
@@ -124,6 +135,38 @@ pub struct ReclaimReport {
     pub after: Option<DiskUsage>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GlobalCacheRootReport {
+    pub path: PathBuf,
+    pub bytes: u64,
+    pub active: bool,
+    pub referenced_by_running_process: bool,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GlobalCacheRetentionReport {
+    pub user_cache_root: PathBuf,
+    pub budget_bytes: u64,
+    pub total_before_bytes: u64,
+    pub total_after_bytes: u64,
+    pub active_cache_root: Option<PathBuf>,
+    pub roots: Vec<GlobalCacheRootReport>,
+}
+
+impl GlobalCacheRetentionReport {
+    #[must_use]
+    pub fn deleted_bytes(&self) -> u64 {
+        self.total_before_bytes
+            .saturating_sub(self.total_after_bytes)
+    }
+
+    #[must_use]
+    pub fn deleted_roots(&self) -> usize {
+        self.roots.iter().filter(|root| root.deleted).count()
+    }
+}
+
 /// Reclaim space from `target_dir`.
 ///
 /// Runs `cargo-sweep --time 30 --recursive` if available, then prunes
@@ -172,6 +215,199 @@ pub fn reclaim(target_dir: &Path) -> Result<ReclaimReport> {
 
     report.after = disk_usage(target_dir).ok();
     Ok(report)
+}
+
+/// Reclaim stale sibling roots under `/var/cache/sinex/<user>`.
+///
+/// This covers the agent-worktree failure mode that per-target reclaim cannot:
+/// each worktree gets its own cache root, the worktree is removed, and the
+/// now-unreachable target tree remains outside the active checkout's
+/// `$CARGO_TARGET_DIR`.
+pub fn enforce_global_retention_for_target(
+    target_dir: &Path,
+) -> Result<Option<GlobalCacheRetentionReport>> {
+    let Some((user_cache_root, active_root)) = sinex_cache_scope_for_target(target_dir) else {
+        return Ok(None);
+    };
+
+    enforce_global_retention(&user_cache_root, Some(&active_root))
+        .map(Some)
+        .with_context(|| {
+            format!(
+                "enforce global sinex cache retention for {}",
+                user_cache_root.display()
+            )
+        })
+}
+
+fn enforce_global_retention(
+    user_cache_root: &Path,
+    active_root: Option<&Path>,
+) -> Result<GlobalCacheRetentionReport> {
+    let budget_bytes = global_cache_budget_bytes();
+    let keep_inactive = global_cache_keep_inactive();
+    let referenced_roots = running_process_cache_roots(user_cache_root);
+    let active_root = active_root.map(Path::to_path_buf);
+
+    let mut roots = Vec::new();
+    for entry in std::fs::read_dir(user_cache_root)
+        .with_context(|| format!("read {}", user_cache_root.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let bytes = dir_size_bytes(&path).unwrap_or(0);
+        let active = active_root.as_deref() == Some(path.as_path());
+        let referenced_by_running_process = referenced_roots.contains(&path);
+        roots.push(GlobalCacheRootReport {
+            path,
+            bytes,
+            active,
+            referenced_by_running_process,
+            deleted: false,
+        });
+    }
+
+    roots.sort_by_key(|root| {
+        (
+            root.active,
+            root.referenced_by_running_process,
+            std::cmp::Reverse(root_modified_time(&root.path)),
+        )
+    });
+
+    let total_before = roots.iter().map(|root| root.bytes).sum::<u64>();
+    let mut total_after = total_before;
+
+    let mut inactive_kept = 0usize;
+    for root in &mut roots {
+        if total_after <= budget_bytes {
+            break;
+        }
+        if root.active || root.referenced_by_running_process {
+            continue;
+        }
+        if inactive_kept < keep_inactive {
+            inactive_kept += 1;
+            continue;
+        }
+        if std::fs::remove_dir_all(&root.path).is_ok() {
+            total_after = total_after.saturating_sub(root.bytes);
+            root.deleted = true;
+        }
+    }
+
+    Ok(GlobalCacheRetentionReport {
+        user_cache_root: user_cache_root.to_path_buf(),
+        budget_bytes,
+        total_before_bytes: total_before,
+        total_after_bytes: total_after,
+        active_cache_root: active_root,
+        roots,
+    })
+}
+
+fn global_cache_budget_bytes() -> u64 {
+    let gb = std::env::var("SINEX_GLOBAL_CACHE_MAX_GB")
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| *value > 0.0)
+        .unwrap_or(DEFAULT_GLOBAL_CACHE_MAX_GB);
+    (gb * 1024.0 * 1024.0 * 1024.0) as u64
+}
+
+fn global_cache_keep_inactive() -> usize {
+    std::env::var("SINEX_GLOBAL_CACHE_KEEP_INACTIVE")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_GLOBAL_CACHE_KEEP_INACTIVE)
+}
+
+fn sinex_user_cache_root_for_target(target_dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    let target_dir = target_dir
+        .canonicalize()
+        .unwrap_or_else(|_| target_dir.to_path_buf());
+    let components: Vec<_> = target_dir.components().collect();
+    let sinex_idx = components.windows(3).position(|window| {
+        window[0].as_os_str() == OsStr::new("var")
+            && window[1].as_os_str() == OsStr::new("cache")
+            && window[2].as_os_str() == OsStr::new("sinex")
+    })?;
+
+    let user_idx = sinex_idx + 3;
+    let root_idx = sinex_idx + 4;
+    components.get(root_idx)?;
+
+    let mut user_cache_root = PathBuf::new();
+    for component in &components[..=user_idx] {
+        user_cache_root.push(component.as_os_str());
+    }
+
+    let mut active_root = user_cache_root.clone();
+    active_root.push(components[root_idx].as_os_str());
+    Some((user_cache_root, active_root))
+}
+
+fn running_process_cache_roots(user_cache_root: &Path) -> BTreeSet<PathBuf> {
+    let mut roots = BTreeSet::new();
+    let Ok(proc_entries) = std::fs::read_dir("/proc") else {
+        return roots;
+    };
+    let user_prefix = user_cache_root.to_string_lossy();
+
+    for entry in proc_entries.flatten() {
+        let file_name = entry.file_name();
+        if file_name.to_string_lossy().parse::<u32>().is_err() {
+            continue;
+        }
+        let cmdline_path = entry.path().join("cmdline");
+        let Ok(raw) = std::fs::read(&cmdline_path) else {
+            continue;
+        };
+        if raw.is_empty() {
+            continue;
+        }
+        let normalized = raw
+            .iter()
+            .map(|byte| if *byte == 0 { b' ' } else { *byte })
+            .collect::<Vec<_>>();
+        let command = String::from_utf8_lossy(&normalized);
+        let Some(offset) = command.find(user_prefix.as_ref()) else {
+            continue;
+        };
+        let tail = &command[offset + user_prefix.len()..];
+        let mut parts = tail.trim_start_matches('/').split('/');
+        let Some(root_name) = parts.next().filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        roots.insert(user_cache_root.join(root_name));
+    }
+
+    roots
+}
+
+fn sinex_cache_scope_for_target(target_dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    sinex_user_cache_root_for_target(target_dir).or_else(sinnix_workspace_cache_scope)
+}
+
+fn sinnix_workspace_cache_scope() -> Option<(PathBuf, PathBuf)> {
+    let user = std::env::var("USER").ok()?;
+    let user_cache_root = PathBuf::from("/var/cache/sinex").join(user);
+    if !user_cache_root.is_dir() {
+        return None;
+    }
+    let active_root = user_cache_root.join(crate::config::workspace_hash(
+        &crate::config::workspace_root(),
+    ));
+    Some((user_cache_root, active_root))
+}
+
+fn root_modified_time(path: &Path) -> SystemTime {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH)
 }
 
 fn incremental_keep_per_crate() -> usize {
@@ -258,7 +494,7 @@ fn dir_size_bytes(dir: &Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
+    use xtask::sandbox::prelude::{EnvGuard, sinex_test};
 
     #[sinex_test]
     async fn prune_keeps_newest_n_per_crate() -> xtask::sandbox::TestResult<()> {
@@ -325,6 +561,100 @@ mod tests {
             percent_used: 92.0,
         };
         assert!(nearly_full_mount.refuse());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn global_retention_deletes_stale_inactive_roots_over_budget()
+    -> xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let user_root = temp.path().join("var/cache/sinex/sinity");
+        let active = user_root.join("active");
+        let stale = user_root.join("stale");
+        std::fs::create_dir_all(active.join("target"))?;
+        std::fs::create_dir_all(stale.join("target"))?;
+        std::fs::write(active.join("target/artifact"), vec![0u8; 1024])?;
+        std::fs::write(stale.join("target/artifact"), vec![0u8; 1024])?;
+
+        let mut env = EnvGuard::with_keys(&[
+            "SINEX_GLOBAL_CACHE_MAX_GB",
+            "SINEX_GLOBAL_CACHE_KEEP_INACTIVE",
+        ]);
+        env.set("SINEX_GLOBAL_CACHE_MAX_GB", "0.000001");
+        env.set("SINEX_GLOBAL_CACHE_KEEP_INACTIVE", "0");
+
+        let report = enforce_global_retention(&user_root, Some(&active))?;
+
+        assert!(active.exists(), "active cache root must be preserved");
+        assert!(
+            !stale.exists(),
+            "inactive stale cache root should be removed"
+        );
+        assert_eq!(report.deleted_roots(), 1);
+        assert!(report.deleted_bytes() >= 1024);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn global_retention_preserves_configured_recent_inactive_roots()
+    -> xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let user_root = temp.path().join("var/cache/sinex/sinity");
+        let active = user_root.join("active");
+        let old = user_root.join("old");
+        let recent = user_root.join("recent");
+        for root in [&active, &old, &recent] {
+            std::fs::create_dir_all(root.join("target"))?;
+            std::fs::write(root.join("target/artifact"), vec![0u8; 1024])?;
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        let mut env = EnvGuard::with_keys(&[
+            "SINEX_GLOBAL_CACHE_MAX_GB",
+            "SINEX_GLOBAL_CACHE_KEEP_INACTIVE",
+        ]);
+        env.set("SINEX_GLOBAL_CACHE_MAX_GB", "0.000001");
+        env.set("SINEX_GLOBAL_CACHE_KEEP_INACTIVE", "1");
+
+        let report = enforce_global_retention(&user_root, Some(&active))?;
+
+        assert!(active.exists(), "active cache root must be preserved");
+        assert!(recent.exists(), "newest inactive cache root should be kept");
+        assert!(!old.exists(), "older inactive cache root should be removed");
+        assert_eq!(report.deleted_roots(), 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn target_path_maps_to_user_cache_root_and_active_root() -> xtask::sandbox::TestResult<()>
+    {
+        let temp = tempfile::tempdir()?;
+        let target = temp
+            .path()
+            .join("var/cache/sinex/sinity/active/target/debug");
+        std::fs::create_dir_all(&target)?;
+
+        let (user_root, active_root) =
+            sinex_user_cache_root_for_target(&target).expect("target should map to cache roots");
+
+        assert_eq!(user_root, temp.path().join("var/cache/sinex/sinity"));
+        assert_eq!(
+            active_root,
+            temp.path().join("var/cache/sinex/sinity/active")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn non_var_target_does_not_map_to_cache_root() -> xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let target = temp.path().join(".sinex/cache/target");
+        std::fs::create_dir_all(&target)?;
+
+        assert!(
+            sinex_user_cache_root_for_target(&target).is_none(),
+            "checkout-local target dirs are not themselves Sinnix cache roots"
+        );
         Ok(())
     }
 }
