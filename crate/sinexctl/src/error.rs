@@ -175,7 +175,9 @@ fn enhance_not_found_error(method: &str, err: &Report) -> Report {
         | methods::REPLAY_EXECUTE_OPERATION
         | methods::REPLAY_CANCEL_OPERATION
         | methods::REPLAY_OPERATION_STATUS
-        | methods::REPLAY_LIST_OPERATIONS => "Use 'sinexctl ops replay list' to see replay operations",
+        | methods::REPLAY_LIST_OPERATIONS => {
+            "Use 'sinexctl ops replay list' to see replay operations"
+        }
         _ => "Use 'sinexctl --help' to see available commands",
     };
 
@@ -196,7 +198,7 @@ fn auth_error_help() -> &'static str {
     "Troubleshooting:\n\
      • Set token: export SINEX_API_TOKEN=your-token\n\
      • Or use token file: --token-file ~/.config/sinex/token\n\
-     • Verify token is valid: sinexctl gateway ping\n\
+     • Verify token is valid: sinexctl runtime gateway ping\n\
      • Check token permissions in gateway config"
 }
 

@@ -1,11 +1,12 @@
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::rpc::coordination::{InstanceInfo, InstanceHealthResponse};
+use sinex_primitives::rpc::coordination::{InstanceHealthResponse, InstanceInfo};
+use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::views::ViewEnvelope;
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::commands::{AutomataCommand, RuntimePresenceCommand};
+use crate::commands::{AutomataCommand, GatewayCommands, RuntimePresenceCommand};
 use crate::fmt::{CommandOutput, format_table_runtime, render_envelope, with_spinner_result};
 use crate::model::{OutputFormat, RuntimeModuleRole};
 
@@ -50,6 +51,12 @@ EXAMPLES:
     # Show automata runtime status
     sinexctl runtime automata
 
+    # Check gateway reachability through the runtime surface
+    sinexctl runtime gateway ping
+
+    # Check full system health
+    sinexctl runtime health
+
     # Drain a runtime module for maintenance
     sinexctl runtime drain terminal-source
 
@@ -72,6 +79,15 @@ pub enum RuntimeCommands {
 
     /// Show automata runtime status
     Automata(AutomataCommand),
+
+    /// Gateway reachability and version operations
+    Gateway {
+        #[command(subcommand)]
+        cmd: GatewayCommands,
+    },
+
+    /// Check system health
+    Health,
 
     /// Show runtime module status
     Status {
@@ -109,16 +125,13 @@ impl RuntimeCommands {
         match self {
             Self::List { role } => {
                 let modules = client.list_runtime(*role).await?;
-                let envelope = ViewEnvelope::new(
-                    "sinexctl.runtime.list",
-                    RuntimeModuleListView::new(modules),
-                )
-                .with_query_echo(serde_json::json!({
-                    "role": role,
-                }));
+                let envelope =
+                    ViewEnvelope::new("sinexctl.runtime.list", RuntimeModuleListView::new(modules))
+                        .with_query_echo(serde_json::json!({
+                            "role": role,
+                        }));
 
-                if let Some(output) =
-                    render_envelope(&envelope, &envelope.payload.modules, format)?
+                if let Some(output) = render_envelope(&envelope, &envelope.payload.modules, format)?
                 {
                     // Empty ndjson (zero modules) must stay empty — a blank line
                     // is not a valid NDJSON record (Codex review, PR #1766).
@@ -141,6 +154,13 @@ impl RuntimeCommands {
             Self::Automata(cmd) => {
                 cmd.execute(client, format).await?;
             }
+            Self::Gateway { cmd } => {
+                cmd.execute(client, format).await?;
+            }
+            Self::Health => {
+                let health = client.health().await?;
+                CommandOutput::single(health, format_health_table).display(&format)?;
+            }
             Self::Status { module } => {
                 let response = client.runtime_status(module).await?;
                 CommandOutput::single(response, format_runtime_status_table).display(&format)?;
@@ -159,7 +179,7 @@ impl RuntimeCommands {
                     format!("Runtime module {module} resumed"),
                     client.resume_runtime(module),
                 )
-            .await?;
+                .await?;
             }
             Self::SetHorizon { module, horizon } => {
                 with_spinner_result(
@@ -172,6 +192,62 @@ impl RuntimeCommands {
         }
         Ok(())
     }
+}
+
+/// Format system health as table
+fn format_health_table(health: &SystemHealthResponse) -> String {
+    use sinex_primitives::domain::HealthStatus;
+    let status_icon = match health.status {
+        HealthStatus::Healthy => "✓",
+        HealthStatus::Degraded => "⚠",
+        _ => "✗",
+    };
+
+    let mut output = String::new();
+    output.push_str(&format!(
+        "System Health: {} {} (healthy: {}, serving: {})\n",
+        status_icon, health.status, health.healthy, health.serving
+    ));
+    if !health.degradation_reasons.is_empty() {
+        output.push_str("Degradation Reasons:\n");
+        for reason in &health.degradation_reasons {
+            output.push_str(&format!("  - {reason}\n"));
+        }
+    }
+    output.push('\n');
+    output.push_str("Components:\n");
+    output.push_str(&format!(
+        "  Database: {} (connected: {})\n",
+        health.components.database.status, health.components.database.connected
+    ));
+    output.push_str(&format!(
+        "  NATS: {} (connected: {})\n",
+        health.components.nats.status, health.components.nats.connected
+    ));
+    if let Some(latency_ms) = health.components.nats.latency_ms {
+        output.push_str(&format!("    Latency: {latency_ms:.2} ms\n"));
+    }
+    if let Some(ref detail) = health.components.nats.detail {
+        output.push_str(&format!("    Detail: {detail}\n"));
+    }
+    output.push_str(&format!(
+        "  Replay Control: {} (enabled: {}, connected: {})\n",
+        health.components.replay_control.status,
+        health.components.replay_control.enabled,
+        health.components.replay_control.connected
+    ));
+    if let Some(ref err) = health.components.replay_control.last_error {
+        output.push_str(&format!("    Last error: {err}\n"));
+    }
+    output.push_str(&format!(
+        "  SSE Confirmations: {} (connected: {})\n",
+        health.components.sse_confirmation.status, health.components.sse_confirmation.connected
+    ));
+    if let Some(ref detail) = health.components.sse_confirmation.detail {
+        output.push_str(&format!("    Detail: {detail}\n"));
+    }
+
+    output
 }
 
 /// Format runtime module status as table
@@ -215,8 +291,8 @@ fn format_runtime_status_table(response: &InstanceHealthResponse) -> String {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::*;
     use super::RUNTIME_MODULE_LIST_SCHEMA_VERSION;
+    use super::*;
     use sinex_primitives::domain::{HostName, InstanceId, ModuleKind};
     use sinex_primitives::temporal::Timestamp;
     use sinex_primitives::views::VIEW_ENVELOPE_SCHEMA_VERSION;
@@ -291,11 +367,17 @@ mod tests {
                 .expect("ndjson must return Some");
 
             if count == 0 {
-                assert!(output.is_empty(), "ndjson with 0 modules must produce empty output");
+                assert!(
+                    output.is_empty(),
+                    "ndjson with 0 modules must produce empty output"
+                );
                 continue;
             }
 
-            assert!(output.ends_with('\n'), "ndjson output must end with a newline");
+            assert!(
+                output.ends_with('\n'),
+                "ndjson output must end with a newline"
+            );
 
             let lines: Vec<&str> = output.trim_end_matches('\n').split('\n').collect();
             assert_eq!(
@@ -306,9 +388,7 @@ mod tests {
 
             for (i, line) in lines.iter().enumerate() {
                 let parsed: serde_json::Value = serde_json::from_str(line).map_err(|e| {
-                    color_eyre::eyre::eyre!(
-                        "ndjson line {i} did not parse (count={count}): {e}"
-                    )
+                    color_eyre::eyre::eyre!("ndjson line {i} did not parse (count={count}): {e}")
                 })?;
                 assert!(
                     parsed.get("instance_id").is_some(),
@@ -333,8 +413,14 @@ mod tests {
         assert!(result.is_err(), "dot must return Err for a non-graph view");
 
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("dot"), "error must name the rejected format: {msg}");
-        assert!(msg.contains("graph"), "error must explain why dot is rejected: {msg}");
+        assert!(
+            msg.contains("dot"),
+            "error must name the rejected format: {msg}"
+        );
+        assert!(
+            msg.contains("graph"),
+            "error must explain why dot is rejected: {msg}"
+        );
         Ok(())
     }
 

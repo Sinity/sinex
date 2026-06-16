@@ -6,13 +6,13 @@ use sinex_primitives::RuntimeTargetDescriptor;
 use sinex_primitives::rpc::{RpcMethodInfo, method_catalog};
 use sinex_primitives::views::ViewEnvelope;
 use sinexctl::client::{ClientConfig, GatewayClient};
-use sinexctl::commands::{
-    ConfigCommands, CoreCommands, CompletionEndpointCommand, RecordCommand, DlqCommands,
-    DocumentsCommand, EventsCommand, GatewayCommands, LifecycleCommands, MetricsCommands,
-    NowCommand, OpsCommands, PrivacyCommand, ReplayCommands, RuntimeCommands, SemanticCommand,
-    SourcesCommand, StateCommands, StatusCommand, TasksCommand, TuiCommand,
-};
 use sinexctl::commands::lifecycle::TombstoneCommands;
+use sinexctl::commands::{
+    CompletionEndpointCommand, ConfigCommands, DlqCommands, DocumentsCommand, EventsCommand,
+    LifecycleCommands, MetricsCommands, NowCommand, OpsCommands, PrivacyCommand, RecordCommand,
+    ReplayCommands, RuntimeCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
+    TasksCommand, TuiCommand,
+};
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
 use sinexctl::model::OutputFormat;
@@ -92,18 +92,6 @@ fn load_runtime_target_override(
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Gateway operations
-    Gateway {
-        #[command(subcommand)]
-        cmd: GatewayCommands,
-    },
-
-    /// Core system operations
-    Core {
-        #[command(subcommand)]
-        cmd: CoreCommands,
-    },
-
     /// Runtime module operations
     Runtime {
         #[command(subcommand)]
@@ -165,7 +153,6 @@ enum Commands {
     /// Structured completion endpoint for shell and picker frontends
     #[command(name = "_complete", hide = true)]
     Complete(CompletionEndpointCommand),
-
 }
 
 #[tokio::main]
@@ -282,8 +269,6 @@ async fn main() -> color_eyre::Result<()> {
             let client_config = ClientConfig::from(&config);
             let client = GatewayClient::new(client_config)?;
             match other {
-                Commands::Gateway { cmd } => cmd.execute(&client, format).await?,
-                Commands::Core { cmd } => cmd.execute(&client, format).await?,
                 Commands::Runtime { cmd } => cmd.execute(&client, format).await?,
                 Commands::Events { cmd } => cmd.execute(&client, format).await?,
                 Commands::Ops { cmd } => cmd.execute(&client, format).await?,
@@ -487,8 +472,10 @@ fn render_command_center_table(view: &CommandCenterView) {
         println!();
         println!(
             "{}",
-            style("Shortcut roots still exist during the #1735 migration; prefer the groups above.")
-                .yellow()
+            style(
+                "Shortcut roots still exist during the #1735 migration; prefer the groups above."
+            )
+            .yellow()
         );
     }
 }
@@ -557,15 +544,15 @@ fn command_path(cmd: &Commands) -> String {
         BlobCommands, ConfigCommands, GatewayCommands, OpsCommands, RuntimeCommands,
     };
     match cmd {
-        Commands::Gateway { cmd } => match cmd {
-            GatewayCommands::Ping => "gateway ping".to_string(),
-            GatewayCommands::Version => "gateway version".to_string(),
-        },
-        Commands::Core { .. } => "core health".to_string(),
         Commands::Runtime { cmd } => match cmd {
             RuntimeCommands::List { .. } => "runtime list".to_string(),
             RuntimeCommands::Modules(_) => "runtime modules".to_string(),
             RuntimeCommands::Automata(_) => "runtime automata".to_string(),
+            RuntimeCommands::Gateway { cmd } => match cmd {
+                GatewayCommands::Ping => "runtime gateway ping".to_string(),
+                GatewayCommands::Version => "runtime gateway version".to_string(),
+            },
+            RuntimeCommands::Health => "runtime health".to_string(),
             RuntimeCommands::Status { .. } => "runtime status".to_string(),
             RuntimeCommands::Drain { .. } => "runtime drain".to_string(),
             RuntimeCommands::Resume { .. } => "runtime resume".to_string(),
@@ -702,7 +689,9 @@ fn prefixed(prefix: &str, path: String) -> String {
     format!("{prefix} {path}")
 }
 
-fn instructions_command_path(cmd: &sinexctl::commands::instructions::InstructionsCommand) -> String {
+fn instructions_command_path(
+    cmd: &sinexctl::commands::instructions::InstructionsCommand,
+) -> String {
     use sinexctl::commands::instructions::InstructionsSubcommand;
     match cmd.subcommand() {
         InstructionsSubcommand::HyprlandWorkspace(_) => {
@@ -1202,11 +1191,26 @@ mod tests {
     #[sinex_test]
     async fn command_path_preserves_format_registry_leaf_commands() -> TestResult<()> {
         let cases = [
-            (vec!["sinexctl", "ops", "dlq", "requeue", "--all"], "ops dlq requeue"),
-            (vec!["sinexctl", "ops", "dlq", "purge", "--confirm"], "ops dlq purge"),
+            (
+                vec!["sinexctl", "ops", "dlq", "requeue", "--all"],
+                "ops dlq requeue",
+            ),
+            (
+                vec!["sinexctl", "ops", "dlq", "purge", "--confirm"],
+                "ops dlq purge",
+            ),
             (vec!["sinexctl", "config", "init"], "config init"),
             (vec!["sinexctl", "config", "path"], "config path"),
             (vec!["sinexctl", "config", "edit"], "config edit"),
+            (
+                vec!["sinexctl", "runtime", "gateway", "ping"],
+                "runtime gateway ping",
+            ),
+            (
+                vec!["sinexctl", "runtime", "gateway", "version"],
+                "runtime gateway version",
+            ),
+            (vec!["sinexctl", "runtime", "health"], "runtime health"),
             (
                 vec!["sinexctl", "metrics", "report", "yesterday"],
                 "metrics report yesterday",
@@ -1427,7 +1431,10 @@ mod tests {
                 ],
                 "semantic curation finalize",
             ),
-            (vec!["sinexctl", "semantic", "llm", "prompts"], "semantic llm prompts"),
+            (
+                vec!["sinexctl", "semantic", "llm", "prompts"],
+                "semantic llm prompts",
+            ),
             (
                 vec![
                     "sinexctl",
@@ -1501,12 +1508,7 @@ mod tests {
             ),
             (
                 vec![
-                    "sinexctl",
-                    "semantic",
-                    "lane",
-                    "list",
-                    "--status",
-                    "planned",
+                    "sinexctl", "semantic", "lane", "list", "--status", "planned",
                 ],
                 "semantic lane list",
             ),
