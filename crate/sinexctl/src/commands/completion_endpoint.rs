@@ -686,6 +686,8 @@ mod tests {
             "documents",
             "semantics",
             "completions",
+            "status",
+            "now",
         ] {
             assert!(
                 !values.contains(removed),
