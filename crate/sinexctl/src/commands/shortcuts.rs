@@ -1,4 +1,4 @@
-use crate::fmt::{format_json, format_yaml, render_envelope};
+use crate::fmt::{format_yaml, render_envelope};
 use crate::model::OutputFormat;
 use crate::parse::parse_duration;
 use clap::Args;
@@ -16,7 +16,9 @@ use sinex_primitives::rpc::sources::{
     SourceReadiness, SourceReadinessStatus, SourcesReadinessListRequest,
 };
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::views::{EventCardListView, EventCardView, ViewEnvelope};
+use sinex_primitives::views::{
+    EventCardListView, EventCardView, EventErrorListView, ViewEnvelope,
+};
 use sinex_primitives::{
     RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusWarning, RuntimeTargetDescriptor,
     RuntimeTargetKind,
@@ -642,7 +644,10 @@ mod status_tests {
     use sinex_primitives::privacy::{
         PRIVATE_MODE_STATE_RELATIVE_PATH, RuntimePrivateModeState, save_private_mode_state,
     };
+    use sinex_primitives::query::QueryResultEvent;
     use sinex_primitives::rpc::sources::SourceReadinessCost;
+    use sinex_primitives::testing::event_fixture;
+    use sinex_primitives::views::{EVENT_ERROR_LIST_SCHEMA_VERSION, VIEW_ENVELOPE_SCHEMA_VERSION};
     use xtask::sandbox::prelude::sinex_test;
 
     fn readiness(status: SourceReadinessStatus) -> SourceReadiness {
@@ -661,6 +666,49 @@ mod status_tests {
             caveats: Vec::new(),
             evidence: serde_json::Value::Null,
         }
+    }
+
+    fn error_event_fixture() -> QueryResultEvent {
+        QueryResultEvent {
+            event: event_fixture(
+                sinex_primitives::EventSource::from_static("test"),
+                sinex_primitives::EventType::from_static("test.error"),
+                json!({ "message": "error: fixture" }),
+            ),
+            relevance_score: None,
+            snippet: Some("error: fixture".to_string()),
+        }
+    }
+
+    #[sinex_test]
+    async fn errors_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
+        let output = render_errors_machine_output(
+            &[error_event_fixture()],
+            "24h",
+            OutputFormat::Json,
+        )?
+        .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(value["source_surface"], "sinexctl.errors");
+        assert_eq!(value["query_echo"]["since"], "24h");
+        assert_eq!(
+            value["payload"]["schema_version"],
+            EVENT_ERROR_LIST_SCHEMA_VERSION
+        );
+        assert_eq!(value["payload"]["since"], "24h");
+        assert_eq!(value["payload"]["count"], 1);
+        assert_eq!(value["payload"]["cards"][0]["event_type"], "test.error");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn errors_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<()> {
+        let result =
+            render_errors_machine_output(&[error_event_fixture()], "24h", OutputFormat::Ndjson);
+        assert!(result.is_err(), "errors must remain a finite view");
+        Ok(())
     }
 
     #[sinex_test]
@@ -975,26 +1023,9 @@ impl ErrorsCommand {
             _ => vec![],
         };
 
-        match format {
-            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-                let payload = json!({
-                    "since": self.since,
-                    "count": events.len(),
-                    "events": events,
-                });
-                println!("{}", format_json(&payload)?);
-                return Ok(());
-            }
-            OutputFormat::Yaml => {
-                let payload = json!({
-                    "since": self.since,
-                    "count": events.len(),
-                    "events": events,
-                });
-                println!("{}", format_yaml(&payload)?);
-                return Ok(());
-            }
-            OutputFormat::Table => {}
+        if let Some(output) = render_errors_machine_output(&events, &self.since, format)? {
+            println!("{output}");
+            return Ok(());
         }
 
         if events.is_empty() {
@@ -1043,6 +1074,28 @@ impl ErrorsCommand {
         }
 
         Ok(())
+    }
+}
+
+fn render_errors_machine_output(
+    events: &[sinex_primitives::query::QueryResultEvent],
+    since: &str,
+    format: OutputFormat,
+) -> Result<Option<String>> {
+    match format {
+        OutputFormat::Table => Ok(None),
+        OutputFormat::Json | OutputFormat::Yaml => {
+            let envelope = ViewEnvelope::new(
+                "sinexctl.errors",
+                EventErrorListView::from_query_events(since, events),
+            )
+            .with_query_echo(json!({ "since": since }));
+
+            render_envelope(&envelope, &envelope.payload.cards, format)
+        }
+        OutputFormat::Ndjson | OutputFormat::Dot => Err(color_eyre::eyre::eyre!(
+            "errors is a finite view; use json, yaml, or table"
+        )),
     }
 }
 
