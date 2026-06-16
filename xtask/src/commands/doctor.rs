@@ -578,6 +578,40 @@ fn execute_reclaim(ctx: &CommandContext, result: &mut CommandResult) {
             result.warnings.push(format!("--reclaim failed: {error}"));
         }
     }
+
+    match crate::cache_hygiene::enforce_global_retention_for_target(&target_dir) {
+        Ok(Some(report)) => {
+            if ctx.is_human() {
+                let budget_gb = report.budget_bytes as f64 / 1e9;
+                let before_gb = report.total_before_bytes as f64 / 1e9;
+                let after_gb = report.total_after_bytes as f64 / 1e9;
+                println!(
+                    "Global cache retention: {:.2} GB -> {:.2} GB under {} ({:.0} GB budget; {} roots deleted).",
+                    before_gb,
+                    after_gb,
+                    report.user_cache_root.display(),
+                    budget_gb,
+                    report.deleted_roots(),
+                );
+            }
+            merge_result_data(
+                result,
+                "global_cache_retention",
+                serde_json::to_value(&report).unwrap_or_else(
+                    |error| serde_json::json!({ "serialization_error": error.to_string() }),
+                ),
+            );
+        }
+        Ok(None) => {}
+        Err(error) => {
+            if ctx.is_human() {
+                eprintln!("Global cache retention failed: {error}");
+            }
+            result
+                .warnings
+                .push(format!("global cache retention failed: {error}"));
+        }
+    }
 }
 
 fn merge_result_data(result: &mut CommandResult, key: &str, value: serde_json::Value) {
