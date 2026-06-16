@@ -74,6 +74,9 @@ mod help_tests {
             .stdout(predicate::str::contains("  state").not())
             .stdout(predicate::str::contains("  admin").not())
             .stdout(predicate::str::contains("  declare").not())
+            .stdout(predicate::str::contains("  curation").not())
+            .stdout(predicate::str::contains("  llm").not())
+            .stdout(predicate::str::contains("  instructions").not())
             .stdout(predicate::str::contains("relations").not())
             .stdout(predicate::str::contains("documents").not())
             .stdout(predicate::str::contains("semantics").not())
@@ -96,7 +99,21 @@ mod help_tests {
             .stdout(predicate::str::contains("lifecycle"))
             .stdout(predicate::str::contains("audit"))
             .stdout(predicate::str::contains("blob"))
-            .stdout(predicate::str::contains("state"));
+            .stdout(predicate::str::contains("state"))
+            .stdout(predicate::str::contains("instructions"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn semantic_help_contains_nested_semantic_surfaces() -> TestResult<()> {
+        sinexctl()
+            .args(["semantic", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("epoch"))
+            .stdout(predicate::str::contains("lane"))
+            .stdout(predicate::str::contains("curation"))
+            .stdout(predicate::str::contains("llm"));
         Ok(())
     }
 
@@ -301,11 +318,11 @@ mod help_tests {
     async fn test_instructions_hyprland_help_mentions_default_socket_resolution() -> TestResult<()>
     {
         sinexctl()
-            .args(["instructions", "hyprland-workspace", "--help"])
+            .args(["ops", "instructions", "hyprland-workspace", "--help"])
             .assert()
             .success()
             .stdout(predicate::str::contains(
-                "sinexctl instructions hyprland-workspace --workspace 4\n",
+                "sinexctl ops instructions hyprland-workspace --workspace 4\n",
             ))
             .stdout(predicate::str::contains("--socket-path"))
             .stdout(predicate::str::contains("XDG_RUNTIME_DIR"))
