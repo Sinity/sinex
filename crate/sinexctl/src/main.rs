@@ -9,11 +9,11 @@ use sinexctl::AdminCommands;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AuditCommand, BlobCommands, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands,
-    CurationCommand, DeclareCommand, DemoCommand, DlqCommands, DocumentsCommand, EventsCommand,
-    GatewayCommands, InstructionsCommand, LifecycleCommands, LlmCommand, MetricsCommands,
-    NowCommand, OpsCommands, PrivacyCommand, RelationsCommand, ReplayCommands, RuntimeCommands,
-    SemanticCommand, SourcesCommand, StateCommands, StatusCommand, TasksCommand, TuiCommand,
-    VerifyCommand,
+    CompletionEndpointCommand, CurationCommand, DeclareCommand, DemoCommand, DlqCommands,
+    DocumentsCommand, EventsCommand, GatewayCommands, InstructionsCommand, LifecycleCommands,
+    LlmCommand, MetricsCommands, NowCommand, OpsCommands, PrivacyCommand, RelationsCommand,
+    ReplayCommands, RuntimeCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
+    TasksCommand, TuiCommand, VerifyCommand,
 };
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
@@ -221,6 +221,10 @@ enum Commands {
     /// Generate shell completions
     Completions(CompletionsCommand),
 
+    /// Structured completion endpoint for shell and picker frontends
+    #[command(name = "_complete", hide = true)]
+    Complete(CompletionEndpointCommand),
+
     /// Administrative operations (backup, maintenance)
     Admin {
         #[command(subcommand)]
@@ -323,6 +327,13 @@ async fn main() -> color_eyre::Result<()> {
         // `sinexctl state` snapshot/restore commands are local filesystem,
         // database, and service operations that do not use gateway RPC.
         Commands::State { cmd } => cmd.execute(format)?,
+        Commands::Complete(cmd) => {
+            let client_config = ClientConfig::from(&config);
+            let client = (config.token.is_some() || config.token_file.is_some())
+                .then(|| GatewayClient::new(client_config))
+                .transpose()?;
+            cmd.execute(client.as_ref(), format).await?;
+        }
         // `sinexctl verify --sources` (alone) is a static descriptor /
         // payload coverage check that does not need a gateway connection
         // or auth token. Short-circuit so it can be run in CI without
@@ -366,6 +377,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Context(cmd) => cmd.execute(&client, format).await?,
                 Commands::Verify(cmd) => cmd.execute(&client, format).await?,
                 Commands::Now(cmd) => cmd.execute(&client, format).await?,
+                Commands::Complete(_) => unreachable!("Complete command handled above"),
                 Commands::Completions(_) => unreachable!("Completions command handled above"),
                 Commands::Admin { .. } => unreachable!("Admin command handled above"),
             }
@@ -803,6 +815,7 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Verify(cmd) => cmd.command_path().to_string(),
         Commands::Now(_) => "now".to_string(),
         Commands::Completions(_) => "completions".to_string(),
+        Commands::Complete(_) => "_complete".to_string(),
         Commands::Admin { cmd } => {
             use sinexctl::admin::AdminCommands;
             match cmd {
@@ -867,6 +880,9 @@ mod tests {
         // `verify` has an optional `baseline` subcommand; the parent command
         // itself remains executable and needs a format-capability entry.
         paths.insert("verify".to_string());
+        // Hidden, executable completion endpoint: omitted from public help but
+        // still format-consuming and covered by the registry.
+        paths.insert("_complete".to_string());
         paths
     }
 
