@@ -1,4 +1,4 @@
-//! `sinexctl semantics` - semantic epoch and shadow-lane operator commands.
+//! `sinexctl semantic` - semantic epoch and shadow-lane operator commands.
 
 use clap::{Args, Subcommand};
 use color_eyre::Result;

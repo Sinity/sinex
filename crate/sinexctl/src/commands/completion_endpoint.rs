@@ -393,6 +393,8 @@ fn grammar_candidates(
         ("ops", "operation records and jobs"),
         ("privacy", "private mode and policy posture"),
         ("tasks", "task projection and lifecycle"),
+        ("docs", "document search, retrieval, and chunk browsing"),
+        ("semantic", "semantic epochs and shadow-lane inspection"),
         ("metrics", "telemetry, throughput, and reports"),
         ("config", "local preferences and runtime targets"),
         ("tui", "interactive operator workbench"),
@@ -649,6 +651,10 @@ mod tests {
             "throughput",
             "telemetry",
             "report",
+            "relations",
+            "documents",
+            "semantics",
+            "completions",
         ] {
             assert!(
                 !values.contains(removed),

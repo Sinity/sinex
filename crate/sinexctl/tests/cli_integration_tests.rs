@@ -1,6 +1,6 @@
 //! CLI integration tests for sinexctl
 //!
-//! These tests verify CLI argument parsing, help text, completions,
+//! These tests verify CLI argument parsing, help text, completion,
 //! and error handling without requiring a running gateway.
 
 use assert_cmd::Command;
@@ -65,14 +65,19 @@ mod help_tests {
             .stdout(predicate::str::contains("ops"))
             .stdout(predicate::str::contains("audit"))
             .stdout(predicate::str::contains("blob"))
+            .stdout(predicate::str::contains("docs"))
+            .stdout(predicate::str::contains("semantic"))
             .stdout(predicate::str::contains("metrics"))
             .stdout(predicate::str::contains("config"))
             .stdout(predicate::str::contains("sources"))
+            .stdout(predicate::str::contains("relations").not())
+            .stdout(predicate::str::contains("documents").not())
+            .stdout(predicate::str::contains("semantics").not())
             .stdout(predicate::str::contains("  dlq").not())
             .stdout(predicate::str::contains("  replay").not())
             .stdout(predicate::str::contains("  lifecycle").not())
             .stdout(predicate::str::contains("_complete").not())
-            .stdout(predicate::str::contains("completions"));
+            .stdout(predicate::str::contains("completions").not());
         Ok(())
     }
 
@@ -234,7 +239,7 @@ mod help_tests {
     #[sinex_test]
     async fn test_dlq_help() -> TestResult<()> {
         sinexctl()
-            .args(["dlq", "--help"])
+            .args(["ops", "dlq", "--help"])
             .assert()
             .success()
             .stdout(predicate::str::contains("Dead letter queue"))
@@ -248,7 +253,7 @@ mod help_tests {
     #[sinex_test]
     async fn test_replay_help() -> TestResult<()> {
         sinexctl()
-            .args(["replay", "--help"])
+            .args(["ops", "replay", "--help"])
             .assert()
             .success()
             .stdout(predicate::str::contains("Replay operations"))
@@ -387,57 +392,37 @@ mod version_tests {
     }
 }
 
-mod completions_tests {
+mod completion_endpoint_tests {
     use super::*;
 
     #[sinex_test]
-    async fn test_bash_completions() -> TestResult<()> {
+    async fn public_completions_root_is_removed() -> TestResult<()> {
         sinexctl()
             .args(["completions", "bash"])
             .assert()
-            .success()
-            .stdout(predicate::str::contains("_sinexctl"))
-            .stdout(predicate::str::contains("complete"));
+            .failure()
+            .stderr(predicate::str::contains("unrecognized subcommand"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_zsh_completions() -> TestResult<()> {
+    async fn structured_completion_replaces_shell_script_generator() -> TestResult<()> {
         sinexctl()
-            .args(["completions", "zsh"])
+            .args([
+                "_complete",
+                "--line",
+                "sinexctl ",
+                "--cursor",
+                "9",
+                "--format",
+                "json",
+            ])
             .assert()
             .success()
-            .stdout(predicate::str::contains("#compdef sinexctl"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_fish_completions() -> TestResult<()> {
-        sinexctl()
-            .args(["completions", "fish"])
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("complete -c sinexctl"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_powershell_completions() -> TestResult<()> {
-        sinexctl()
-            .args(["completions", "powershell"])
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("sinexctl"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_elvish_completions() -> TestResult<()> {
-        sinexctl()
-            .args(["completions", "elvish"])
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("sinexctl"));
+            .stdout(predicate::str::contains("\"candidates\""))
+            .stdout(predicate::str::contains("\"events\""))
+            .stdout(predicate::str::contains("\"docs\""))
+            .stdout(predicate::str::contains("\"semantic\""));
         Ok(())
     }
 }

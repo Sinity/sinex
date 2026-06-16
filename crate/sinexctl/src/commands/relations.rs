@@ -14,13 +14,13 @@ use crate::model::OutputFormat;
 #[command(after_help = "\
 EXAMPLES:
     # Find events within five minutes of seed hits
-    sinexctl relations within --within-secs 300 --seed-query-json '{\"event_types\":[\"command.executed\"],\"limit\":10}'
+    sinexctl events relations within --within-secs 300 --seed-query-json '{\"event_types\":[\"command.executed\"],\"limit\":10}'
 
     # Compare seed hits to an explicit candidate query
-    sinexctl relations overlaps --seed-query-json '{\"sources\":[\"terminal.atuin-history\"]}' --candidate-query-json '{\"sources\":[\"desktop.hyprland\"]}'
+    sinexctl events relations overlaps --seed-query-json '{\"sources\":[\"terminal.atuin-history\"]}' --candidate-query-json '{\"sources\":[\"desktop.hyprland\"]}'
 
     # Match candidates that share a payload field with seeds
-    sinexctl relations same --field payload:project --seed-query-json '{\"limit\":20}'
+    sinexctl events relations same --field payload:project --seed-query-json '{\"limit\":20}'
 ")]
 pub struct RelationsCommand {
     #[command(subcommand)]
@@ -96,7 +96,7 @@ impl RelationsCommand {
 
     #[must_use]
     pub fn command_path(&self) -> &'static str {
-        self.command_path_with_root("relations")
+        self.command_path_with_root("events relations")
     }
 
     #[must_use]
@@ -112,12 +112,12 @@ impl RelationsCommand {
             (RelationsSubcommand::Sequence { .. }, "events relations") => {
                 "events relations sequence"
             }
-            (RelationsSubcommand::Within { .. }, _) => "relations within",
-            (RelationsSubcommand::Overlaps { .. }, _) => "relations overlaps",
-            (RelationsSubcommand::Before { .. }, _) => "relations before",
-            (RelationsSubcommand::After { .. }, _) => "relations after",
-            (RelationsSubcommand::Same { .. }, _) => "relations same",
-            (RelationsSubcommand::Sequence { .. }, _) => "relations sequence",
+            (RelationsSubcommand::Within { .. }, _) => "events relations within",
+            (RelationsSubcommand::Overlaps { .. }, _) => "events relations overlaps",
+            (RelationsSubcommand::Before { .. }, _) => "events relations before",
+            (RelationsSubcommand::After { .. }, _) => "events relations after",
+            (RelationsSubcommand::Same { .. }, _) => "events relations same",
+            (RelationsSubcommand::Sequence { .. }, _) => "events relations sequence",
         }
     }
 }
@@ -307,7 +307,7 @@ mod tests {
         let help = RelationsCommand::command().render_long_help().to_string();
         assert!(
             help.contains("--seed-query-json"),
-            "relations command must expose the seed query input"
+            "events relations command must expose the seed query input"
         );
     }
 }

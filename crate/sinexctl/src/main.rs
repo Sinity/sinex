@@ -8,12 +8,12 @@ use sinex_primitives::views::ViewEnvelope;
 use sinexctl::AdminCommands;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
-    AuditCommand, BlobCommands, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands,
+    AuditCommand, BlobCommands, ConfigCommands, ContextCommand, CoreCommands,
     CompletionEndpointCommand, CurationCommand, DeclareCommand, DemoCommand, DlqCommands,
     DocumentsCommand, EventsCommand, GatewayCommands, InstructionsCommand, LifecycleCommands,
-    LlmCommand, MetricsCommands, NowCommand, OpsCommands, PrivacyCommand, RelationsCommand,
-    ReplayCommands, RuntimeCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
-    TasksCommand, TuiCommand, VerifyCommand,
+    LlmCommand, MetricsCommands, NowCommand, OpsCommands, PrivacyCommand, ReplayCommands,
+    RuntimeCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand, TasksCommand,
+    TuiCommand, VerifyCommand,
 };
 use sinexctl::commands::lifecycle::TombstoneCommands;
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
@@ -119,9 +119,6 @@ enum Commands {
         cmd: RuntimeCommands,
     },
 
-    /// Evaluate event relations over live events
-    Relations(RelationsCommand),
-
     /// Event search, inspection, lineage, streaming, and annotation
     Events {
         #[command(subcommand)]
@@ -174,13 +171,13 @@ enum Commands {
     Curation(CurationCommand),
 
     /// Semantic epoch and shadow-lane commands
-    Semantics(SemanticCommand),
+    Semantic(SemanticCommand),
 
     /// LLM prompt, routing, and budget read surfaces
     Llm(LlmCommand),
 
     /// Document search, retrieval, and chunk browsing
-    Documents(DocumentsCommand),
+    Docs(DocumentsCommand),
 
     /// Metrics, telemetry, and activity reports
     Metrics {
@@ -200,9 +197,6 @@ enum Commands {
 
     /// Show what's happening right now — dashboard view
     Now(NowCommand),
-
-    /// Generate shell completions
-    Completions(CompletionsCommand),
 
     /// Structured completion endpoint for shell and picker frontends
     #[command(name = "_complete", hide = true)]
@@ -281,12 +275,11 @@ async fn main() -> color_eyre::Result<()> {
     // `Table` is the universal human default and is never rejected. An explicit
     // `--format` is always validated. A non-`Table` format inherited from a
     // config `default_format` is validated only for commands that actually
-    // consume a format — formatless commands (`completions`, `demo`, `tui`;
-    // empty supported set) ignore `--format`, so a config default must not make
-    // them fail (Codex review, PR #1773). This still closes the original bypass
-    // where `default_format = "ndjson"` reached a format-consuming command that
-    // does not support ndjson and emitted pretty JSON under an ndjson default
-    // (Codex review, PR #1766).
+    // consume a format — formatless commands (`demo`, `tui`; empty supported
+    // set) ignore `--format`, so a config default must not make them fail. This
+    // still closes the original bypass where `default_format = "ndjson"` reached
+    // a format-consuming command that does not support ndjson and emitted pretty
+    // JSON under an ndjson default (Codex review, PR #1766).
     let path = command_path(&command);
     let format_is_explicit = cli_value_is_explicit(&matches, "format");
     if format_is_explicit
@@ -299,10 +292,6 @@ async fn main() -> color_eyre::Result<()> {
 
     match command {
         Commands::Config { cmd } => cmd.execute(format)?,
-        Commands::Completions(cmd) => {
-            let mut clap_cmd = Cli::command();
-            cmd.execute(&mut clap_cmd)?;
-        }
         Commands::Demo(cmd) => cmd.execute().await?,
         Commands::Blob { cmd } => cmd.execute(format).await?,
         // `sinexctl admin` commands are local operations — no gateway needed.
@@ -332,7 +321,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Blob { .. } => unreachable!("Blob command handled above"),
                 Commands::Core { cmd } => cmd.execute(&client, format).await?,
                 Commands::Runtime { cmd } => cmd.execute(&client, format).await?,
-                Commands::Relations(cmd) => cmd.execute(&client, format).await?,
                 Commands::Events { cmd } => cmd.execute(&client, format).await?,
                 Commands::Ops { cmd } => cmd.execute(&client, format).await?,
                 Commands::Privacy(cmd) => cmd.execute(&client, format).await?,
@@ -346,9 +334,9 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Instructions(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
                 Commands::Curation(cmd) => cmd.execute(&client, format).await?,
-                Commands::Semantics(cmd) => cmd.execute(&client, format).await?,
+                Commands::Semantic(cmd) => cmd.execute(&client, format).await?,
                 Commands::Llm(cmd) => cmd.execute(&client, format).await?,
-                Commands::Documents(cmd) => cmd.execute(&client, format).await?,
+                Commands::Docs(cmd) => cmd.execute(&client, format).await?,
                 Commands::Metrics { cmd } => cmd.execute(&client, format).await?,
                 Commands::Status(cmd) => {
                     cmd.execute(&client, config.runtime_target.as_ref(), format)
@@ -358,7 +346,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Verify(cmd) => cmd.execute(&client, format).await?,
                 Commands::Now(cmd) => cmd.execute(&client, format).await?,
                 Commands::Complete(_) => unreachable!("Complete command handled above"),
-                Commands::Completions(_) => unreachable!("Completions command handled above"),
                 Commands::Admin { .. } => unreachable!("Admin command handled above"),
             }
         }
@@ -500,6 +487,14 @@ fn command_center_view(config: &Config, format: OutputFormat) -> CommandCenterVi
                 purpose: "task projection and lifecycle",
             },
             CommandCenterRootGroup {
+                root: "docs",
+                purpose: "document search, retrieval, and chunk browsing",
+            },
+            CommandCenterRootGroup {
+                root: "semantic",
+                purpose: "semantic epochs and shadow-lane inspection",
+            },
+            CommandCenterRootGroup {
                 root: "config",
                 purpose: "local preferences and runtime target inspection",
             },
@@ -624,7 +619,6 @@ fn command_path(cmd: &Commands) -> String {
             RuntimeCommands::Resume { .. } => "runtime resume".to_string(),
             RuntimeCommands::SetHorizon { .. } => "runtime set-horizon".to_string(),
         },
-        Commands::Relations(cmd) => cmd.command_path().to_string(),
         Commands::Events { cmd } => cmd.command_path().to_string(),
         Commands::Ops { cmd } => match cmd {
             OpsCommands::Start { .. } => "ops start".to_string(),
@@ -649,12 +643,12 @@ fn command_path(cmd: &Commands) -> String {
             ConfigCommands::Edit => "config edit".to_string(),
         },
         Commands::Demo(_) => "demo".to_string(),
-        Commands::Documents(cmd) => {
+        Commands::Docs(cmd) => {
             use sinexctl::commands::documents::DocumentsSubcommand;
             match cmd.subcommand() {
-                DocumentsSubcommand::Search(_) => "documents search".to_string(),
-                DocumentsSubcommand::Get(_) => "documents get".to_string(),
-                DocumentsSubcommand::Chunks(_) => "documents chunks".to_string(),
+                DocumentsSubcommand::Search(_) => "docs search".to_string(),
+                DocumentsSubcommand::Get(_) => "docs get".to_string(),
+                DocumentsSubcommand::Chunks(_) => "docs chunks".to_string(),
             }
         }
         Commands::Sources(cmd) => {
@@ -722,32 +716,32 @@ fn command_path(cmd: &Commands) -> String {
                 CurationSubcommand::Finalize(_) => "curation finalize".to_string(),
             }
         }
-        Commands::Semantics(cmd) => {
+        Commands::Semantic(cmd) => {
             use sinexctl::commands::semantic::{
                 SemanticEpochSubcommand, SemanticLaneSubcommand, SemanticSubcommand,
             };
             match cmd.subcommand() {
                 SemanticSubcommand::Epoch(epoch) => match epoch.subcommand() {
-                    SemanticEpochSubcommand::Create(_) => "semantics epoch create".to_string(),
-                    SemanticEpochSubcommand::List(_) => "semantics epoch list".to_string(),
+                    SemanticEpochSubcommand::Create(_) => "semantic epoch create".to_string(),
+                    SemanticEpochSubcommand::List(_) => "semantic epoch list".to_string(),
                 },
                 SemanticSubcommand::Lane(lane) => match lane.subcommand() {
-                    SemanticLaneSubcommand::Create(_) => "semantics lane create".to_string(),
-                    SemanticLaneSubcommand::List(_) => "semantics lane list".to_string(),
-                    SemanticLaneSubcommand::Status(_) => "semantics lane status".to_string(),
-                    SemanticLaneSubcommand::Discard(_) => "semantics lane discard".to_string(),
-                    SemanticLaneSubcommand::Outputs(_) => "semantics lane outputs".to_string(),
+                    SemanticLaneSubcommand::Create(_) => "semantic lane create".to_string(),
+                    SemanticLaneSubcommand::List(_) => "semantic lane list".to_string(),
+                    SemanticLaneSubcommand::Status(_) => "semantic lane status".to_string(),
+                    SemanticLaneSubcommand::Discard(_) => "semantic lane discard".to_string(),
+                    SemanticLaneSubcommand::Outputs(_) => "semantic lane outputs".to_string(),
                     SemanticLaneSubcommand::SeedCanonicalGraph(_) => {
-                        "semantics lane seed-canonical-graph".to_string()
+                        "semantic lane seed-canonical-graph".to_string()
                     }
                     SemanticLaneSubcommand::SeedEntityEvents(_) => {
-                        "semantics lane seed-entity-events".to_string()
+                        "semantic lane seed-entity-events".to_string()
                     }
                     SemanticLaneSubcommand::WriteOutputs(_) => {
-                        "semantics lane write-outputs".to_string()
+                        "semantic lane write-outputs".to_string()
                     }
-                    SemanticLaneSubcommand::Diffs(_) => "semantics lane diffs".to_string(),
-                    SemanticLaneSubcommand::Compare(_) => "semantics lane compare".to_string(),
+                    SemanticLaneSubcommand::Diffs(_) => "semantic lane diffs".to_string(),
+                    SemanticLaneSubcommand::Compare(_) => "semantic lane compare".to_string(),
                 },
             }
         }
@@ -764,7 +758,6 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Context(_) => "context".to_string(),
         Commands::Verify(cmd) => cmd.command_path().to_string(),
         Commands::Now(_) => "now".to_string(),
-        Commands::Completions(_) => "completions".to_string(),
         Commands::Complete(_) => "_complete".to_string(),
         Commands::Admin { cmd } => {
             use sinexctl::admin::AdminCommands;
@@ -1117,8 +1110,8 @@ mod tests {
 
         let relations = commands
             .iter()
-            .find(|entry| entry["path"] == "relations within")
-            .expect("json list-formats output must include relations within");
+            .find(|entry| entry["path"] == "events relations within")
+            .expect("json list-formats output must include events relations within");
         assert_eq!(
             relations["backing_rpc_methods"][0],
             "events.relation_evidence"
@@ -1168,9 +1161,10 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn relations_command_path_parses_as_read_only_surface() -> TestResult<()> {
+    async fn events_relations_command_path_parses_as_read_only_surface() -> TestResult<()> {
         let path = parsed_command_path(&[
             "sinexctl",
+            "events",
             "relations",
             "within",
             "--within-secs",
@@ -1178,7 +1172,7 @@ mod tests {
             "--seed-query-json",
             "{}",
         ])?;
-        assert_eq!(path, "relations within");
+        assert_eq!(path, "events relations within");
         Ok(())
     }
 
@@ -1227,12 +1221,7 @@ mod tests {
     #[sinex_test]
     async fn formatless_commands_are_not_format_consumers() -> TestResult<()> {
         // Formatless commands ignore --format; a config `default_format` must
-        // not be validated against them, or `sinexctl completions bash` would
-        // fail under `default_format = "json"`/`"yaml"` (Codex review, PR #1773).
-        assert!(
-            !sinexctl::command_consumes_format("completions"),
-            "completions is formatless"
-        );
+        // not be validated against them.
         assert!(
             !sinexctl::command_consumes_format("demo"),
             "demo is formatless"
@@ -1474,17 +1463,17 @@ mod tests {
             (
                 vec![
                     "sinexctl",
-                    "semantics",
+                    "semantic",
                     "lane",
                     "seed-canonical-graph",
                     "0196ed62-8f7a-7000-8000-000000000001",
                 ],
-                "semantics lane seed-canonical-graph",
+                "semantic lane seed-canonical-graph",
             ),
             (
                 vec![
                     "sinexctl",
-                    "semantics",
+                    "semantic",
                     "epoch",
                     "create",
                     "--name",
@@ -1498,16 +1487,16 @@ mod tests {
                     "--config-hash",
                     "config",
                 ],
-                "semantics epoch create",
+                "semantic epoch create",
             ),
             (
-                vec!["sinexctl", "semantics", "epoch", "list"],
-                "semantics epoch list",
+                vec!["sinexctl", "semantic", "epoch", "list"],
+                "semantic epoch list",
             ),
             (
                 vec![
                     "sinexctl",
-                    "semantics",
+                    "semantic",
                     "lane",
                     "create",
                     "--name",
@@ -1523,77 +1512,77 @@ mod tests {
                     "--purpose",
                     "fixture",
                 ],
-                "semantics lane create",
+                "semantic lane create",
             ),
             (
                 vec![
                     "sinexctl",
-                    "semantics",
+                    "semantic",
                     "lane",
                     "list",
                     "--status",
                     "planned",
                 ],
-                "semantics lane list",
+                "semantic lane list",
             ),
             (
                 vec![
                     "sinexctl",
-                    "semantics",
+                    "semantic",
                     "lane",
                     "status",
                     "0196ed62-8f7a-7000-8000-000000000001",
                     "--status",
                     "running",
                 ],
-                "semantics lane status",
+                "semantic lane status",
             ),
             (
                 vec![
                     "sinexctl",
-                    "semantics",
+                    "semantic",
                     "lane",
                     "discard",
                     "0196ed62-8f7a-7000-8000-000000000001",
                 ],
-                "semantics lane discard",
+                "semantic lane discard",
             ),
             (
                 vec![
                     "sinexctl",
-                    "semantics",
+                    "semantic",
                     "lane",
                     "outputs",
                     "0196ed62-8f7a-7000-8000-000000000001",
                 ],
-                "semantics lane outputs",
+                "semantic lane outputs",
             ),
             (
                 vec![
                     "sinexctl",
-                    "semantics",
+                    "semantic",
                     "lane",
                     "write-outputs",
                     "0196ed62-8f7a-7000-8000-000000000001",
                     "--outputs-json",
                     r#"{"entities":[],"relations":[]}"#,
                 ],
-                "semantics lane write-outputs",
+                "semantic lane write-outputs",
             ),
             (
                 vec![
                     "sinexctl",
-                    "semantics",
+                    "semantic",
                     "lane",
                     "diffs",
                     "0196ed62-8f7a-7000-8000-000000000001",
                 ],
-                "semantics lane diffs",
+                "semantic lane diffs",
             ),
             (
                 vec![
                     "sinexctl",
-                    "semantics",
+                    "semantic",
                     "lane",
                     "compare",
                     "--baseline-lane-id",
@@ -1601,7 +1590,7 @@ mod tests {
                     "--candidate-lane-id",
                     "0196ed62-8f7a-7000-8000-000000000002",
                 ],
-                "semantics lane compare",
+                "semantic lane compare",
             ),
             (
                 vec![

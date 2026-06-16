@@ -16,8 +16,8 @@ expression: buffer_to_text(terminal.backend().buffer())
 │error: fixture replay failed after preview                                        │
 │                                                                                  │
 │Actions                                                                           │
-│status [current] — sinexctl replay status op-fixture                              │
-│execute [dangerous] — sinexctl replay execute op-fixture                          │
+│status [current] — sinexctl ops replay status op-fixture                          │
+│execute [dangerous] — sinexctl ops replay execute op-fixture                      │
 │context pack [target] — not implemented: context pack                             │
 │                                                                                  │
 │Audit                                                                             │

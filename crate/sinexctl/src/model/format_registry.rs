@@ -127,8 +127,8 @@ const NONE: &[OutputFormat] = &[];
 /// Keys match the command path as it appears in `sinexctl --help`, using
 /// space-separated segments (e.g. `"runtime list"`, `"ops replay plan"`).
 ///
-/// Commands that produce no user-visible output (e.g. `completions`,
-/// `tui`, `demo`) appear with an empty supported set and a note explaining
+/// Commands that produce no user-visible output (e.g. `tui`, `demo`) appear
+/// with an empty supported set and a note explaining
 /// why `--format` is not applicable.
 #[must_use]
 pub fn build() -> HashMap<&'static str, FormatCapability> {
@@ -230,21 +230,6 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert("ops dlq purge", FormatCapability::single_shot(TABLE_ONLY));
 
     // ── Query ────────────────────────────────────────────────────────────────
-    for path in [
-        "relations after",
-        "relations before",
-        "relations overlaps",
-        "relations same",
-        "relations sequence",
-        "relations within",
-    ] {
-        m.insert(
-            path,
-            FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
-                "ndjson emits one supporting EvidenceRef per line (envelope metadata omitted)",
-            ),
-        );
-    }
     m.insert(
         "events query",
         FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
@@ -496,51 +481,51 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "semantics epoch create",
+        "semantic epoch create",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "semantics epoch list",
+        "semantic epoch list",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "semantics lane create",
+        "semantic lane create",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "semantics lane compare",
+        "semantic lane compare",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "semantics lane list",
+        "semantic lane list",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "semantics lane status",
+        "semantic lane status",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "semantics lane discard",
+        "semantic lane discard",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "semantics lane outputs",
+        "semantic lane outputs",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "semantics lane seed-canonical-graph",
+        "semantic lane seed-canonical-graph",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "semantics lane seed-entity-events",
+        "semantic lane seed-entity-events",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "semantics lane write-outputs",
+        "semantic lane write-outputs",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "semantics lane diffs",
+        "semantic lane diffs",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -694,15 +679,15 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Documents ────────────────────────────────────────────────────────────
     m.insert(
-        "documents search",
+        "docs search",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "documents get",
+        "docs get",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "documents chunks",
+        "docs chunks",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
@@ -752,12 +737,6 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
             .with_note("writes directly to the database; --format is not applicable"),
     );
 
-    // ── Completions ──────────────────────────────────────────────────────────
-    m.insert(
-        "completions",
-        FormatCapability::single_shot(NONE)
-            .with_note("emits shell completion script; --format is not applicable"),
-    );
     m.insert(
         "_complete",
         FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML)
@@ -858,12 +837,12 @@ fn family_for_path(path: &str) -> CommandFamily {
     let root = path.split_once(' ').map_or(path, |(root, _)| root);
     match root {
         "gateway" | "core" => CommandFamily::Gateway,
-        "events" | "relations" | "context" | "verify" | "now" | "status" => CommandFamily::Query,
+        "events" | "context" | "verify" | "now" | "status" => CommandFamily::Query,
         "runtime" | "replay" | "dlq" | "ops" | "audit" | "lifecycle" | "privacy" | "blob" => {
             CommandFamily::Operate
         }
         "sources" => CommandFamily::Sources,
-        "declare" | "instructions" | "tasks" | "curation" | "semantics" | "llm" | "documents" => {
+        "declare" | "instructions" | "tasks" | "curation" | "semantic" | "llm" | "docs" => {
             CommandFamily::Domain
         }
         "metrics" => CommandFamily::Telemetry,
@@ -927,14 +906,14 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "ops replay preview",
         "ops replay run",
         "ops replay submit",
-        "semantics epoch create",
-        "semantics lane compare",
-        "semantics lane create",
-        "semantics lane discard",
-        "semantics lane seed-canonical-graph",
-        "semantics lane seed-entity-events",
-        "semantics lane status",
-        "semantics lane write-outputs",
+        "semantic epoch create",
+        "semantic lane compare",
+        "semantic lane create",
+        "semantic lane discard",
+        "semantic lane seed-canonical-graph",
+        "semantic lane seed-entity-events",
+        "semantic lane status",
+        "semantic lane write-outputs",
         "shadow create",
         "shadow delete",
         "sources annotate",
@@ -1001,14 +980,14 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "ops replay cancel"
         | "ops replay execute"
         | "ops replay submit"
-        | "semantics epoch create"
-        | "semantics lane compare"
-        | "semantics lane create"
-        | "semantics lane discard"
-        | "semantics lane seed-canonical-graph"
-        | "semantics lane seed-entity-events"
-        | "semantics lane status"
-        | "semantics lane write-outputs"
+        | "semantic epoch create"
+        | "semantic lane compare"
+        | "semantic lane create"
+        | "semantic lane discard"
+        | "semantic lane seed-canonical-graph"
+        | "semantic lane seed-entity-events"
+        | "semantic lane status"
+        | "semantic lane write-outputs"
         | "sources annotate"
         | "sources archive"
         | "sources bindings create"
@@ -1066,13 +1045,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "ops dlq purge" => &[methods::DLQ_PURGE],
         "context" | "events query" | "events recent" | "events errors" | "events timeline"
         | "metrics report today" | "metrics report yesterday" | "metrics report calendar" => &[methods::EVENTS_QUERY],
-        "relations after"
-        | "relations before"
-        | "relations overlaps"
-        | "relations same"
-        | "relations sequence"
-        | "relations within"
-        | "events relations after"
+        "events relations after"
         | "events relations before"
         | "events relations overlaps"
         | "events relations same"
@@ -1140,20 +1113,20 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "curation proposals" => &[methods::CURATION_PROPOSALS_LIST],
         "curation judge" => &[methods::CURATION_JUDGMENTS_RECORD],
         "curation finalize" => &[methods::CURATION_FINALIZE],
-        "semantics epoch create" => &[methods::SEMANTIC_EPOCHS_CREATE],
-        "semantics epoch list" => &[methods::SEMANTIC_EPOCHS_LIST],
-        "semantics lane create" => &[methods::SEMANTIC_LANES_CREATE],
-        "semantics lane list" => &[methods::SEMANTIC_LANES_LIST],
-        "semantics lane status" => &[methods::SEMANTIC_LANES_SET_STATUS],
-        "semantics lane discard" => &[methods::SEMANTIC_LANES_DISCARD],
-        "semantics lane outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_LIST],
-        "semantics lane seed-canonical-graph" => {
+        "semantic epoch create" => &[methods::SEMANTIC_EPOCHS_CREATE],
+        "semantic epoch list" => &[methods::SEMANTIC_EPOCHS_LIST],
+        "semantic lane create" => &[methods::SEMANTIC_LANES_CREATE],
+        "semantic lane list" => &[methods::SEMANTIC_LANES_LIST],
+        "semantic lane status" => &[methods::SEMANTIC_LANES_SET_STATUS],
+        "semantic lane discard" => &[methods::SEMANTIC_LANES_DISCARD],
+        "semantic lane outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_LIST],
+        "semantic lane seed-canonical-graph" => {
             &[methods::SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH]
         }
-        "semantics lane seed-entity-events" => &[methods::SEMANTIC_LANE_OUTPUTS_SEED_ENTITY_EVENTS],
-        "semantics lane write-outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_WRITE],
-        "semantics lane diffs" => &[methods::SEMANTIC_LANE_DIFFS_LIST],
-        "semantics lane compare" => &[methods::SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION],
+        "semantic lane seed-entity-events" => &[methods::SEMANTIC_LANE_OUTPUTS_SEED_ENTITY_EVENTS],
+        "semantic lane write-outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_WRITE],
+        "semantic lane diffs" => &[methods::SEMANTIC_LANE_DIFFS_LIST],
+        "semantic lane compare" => &[methods::SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION],
         "llm prompts" => &[methods::LLM_PROMPTS_LIST],
         "llm route-explain" => &[methods::LLM_ROUTE_EXPLAIN],
         "llm budget-report" => &[methods::LLM_BUDGET_REPORT],
@@ -1181,9 +1154,9 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "metrics telemetry event-engine-batch-stats" => &[methods::TELEMETRY_EVENT_ENGINE_BATCH_STATS],
         "metrics telemetry event-engine-validation" => &[methods::TELEMETRY_EVENT_ENGINE_VALIDATION],
         "metrics throughput" => &[methods::TELEMETRY_THROUGHPUT],
-        "documents search" => &[methods::DOCUMENTS_SEARCH],
-        "documents get" => &[methods::DOCUMENTS_GET],
-        "documents chunks" => &[methods::DOCUMENTS_GET_CHUNKS],
+        "docs search" => &[methods::DOCUMENTS_SEARCH],
+        "docs get" => &[methods::DOCUMENTS_GET],
+        "docs chunks" => &[methods::DOCUMENTS_GET_CHUNKS],
         "_complete" => &[],
         _ => &[],
     }
@@ -1224,7 +1197,7 @@ pub fn validate_format(command_path: &str, format: OutputFormat) -> Result<(), S
 /// Return `true` if the command renders by output format (its declared
 /// capability set is non-empty).
 ///
-/// Formatless commands (`completions`, `demo`, `tui`) are registered with an
+/// Formatless commands (`demo`, `tui`) are registered with an
 /// empty supported set and ignore `--format` entirely, so they return `false`.
 /// Callers use this to decide whether a non-`Table` format inherited from a
 /// config `default_format` should be validated: a config default must not make
@@ -1399,13 +1372,13 @@ mod tests {
 
     #[sinex_test]
     async fn validate_format_rejects_unsupported() -> xtask::sandbox::TestResult<()> {
-        let result = validate_format("completions", OutputFormat::Json);
-        assert!(result.is_err(), "completions should reject json");
+        let result = validate_format("_complete", OutputFormat::Dot);
+        assert!(result.is_err(), "_complete should reject dot");
         let msg = result.unwrap_err();
-        assert!(msg.contains("completions"), "error should name the command");
+        assert!(msg.contains("_complete"), "error should name the command");
         assert!(
-            msg.contains("none"),
-            "error should say no formats supported"
+            msg.contains("Dot"),
+            "error should name the unsupported format"
         );
         Ok(())
     }
@@ -1481,16 +1454,12 @@ mod tests {
 
         assert_eq!(effect_for("events query"), Some(CommandEffect::ReadOnly));
         assert_eq!(
-            effect_for("relations within"),
-            Some(CommandEffect::ReadOnly)
-        );
-        assert_eq!(
             effect_for("events relations within"),
             Some(CommandEffect::ReadOnly)
         );
         assert_eq!(effect_for("events watch"), Some(CommandEffect::Streaming));
         assert_eq!(effect_for("events annotate"), Some(CommandEffect::Mutating));
-        assert_eq!(effect_for("completions"), Some(CommandEffect::Local));
+        assert_eq!(effect_for("_complete"), Some(CommandEffect::ReadOnly));
         assert_eq!(effect_for("ops dlq requeue"), Some(CommandEffect::Mutating));
         assert_eq!(
             effect_for("privacy private-mode enable"),
@@ -1708,7 +1677,6 @@ mod tests {
             "events query",
             "events inspect",
             "events annotate",
-            "relations within",
             "events relations within",
             "status",
             "runtime automata",
