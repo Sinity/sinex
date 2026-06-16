@@ -70,7 +70,27 @@ mod help_tests {
             .stdout(predicate::str::contains("metrics"))
             .stdout(predicate::str::contains("config"))
             .stdout(predicate::str::contains("sources"))
+            .stdout(predicate::str::contains("_complete").not())
             .stdout(predicate::str::contains("completions"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn structured_complete_is_hidden_but_callable() -> TestResult<()> {
+        sinexctl()
+            .args([
+                "_complete",
+                "--line",
+                "sinexctl events source:wm",
+                "--cursor",
+                "24",
+                "--format",
+                "json",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("\"schema_version\""))
+            .stdout(predicate::str::contains("source:wm.hyprland"));
         Ok(())
     }
 
