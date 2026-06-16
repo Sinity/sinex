@@ -31,12 +31,24 @@ impl SourceStatusCommand {
             OutputFormat::Json | OutputFormat::Yaml | OutputFormat::Ndjson
         ) {
             if let Some(rendered) = render_envelope(&envelope, &envelope.payload.sources, format)? {
-                println!("{rendered}");
+                print_machine_output(&rendered);
             }
         } else {
             CommandOutput::single(envelope, format_sources_status_table).display(&format)?;
         }
         Ok(())
+    }
+}
+
+fn print_machine_output(rendered: &str) {
+    print!("{}", machine_output_for_print(rendered));
+}
+
+fn machine_output_for_print(rendered: &str) -> std::borrow::Cow<'_, str> {
+    if rendered.is_empty() || rendered.ends_with('\n') {
+        std::borrow::Cow::Borrowed(rendered)
+    } else {
+        std::borrow::Cow::Owned(format!("{rendered}\n"))
     }
 }
 
@@ -177,6 +189,33 @@ mod tests {
             value["payload"]["sources"][0]["source_id"],
             "fixture.source"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ndjson_print_output_has_no_extra_blank_record() -> xtask::TestResult<()> {
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.status",
+            SourceCoverageListView::new(vec![fixture_source()]),
+        );
+
+        let ndjson = render_envelope(&envelope, &envelope.payload.sources, OutputFormat::Ndjson)?
+            .expect("ndjson renders source rows");
+        let printed = machine_output_for_print(&ndjson);
+
+        assert!(printed.ends_with('\n'));
+        let lines: Vec<&str> = printed.split('\n').collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "one source row must produce exactly one JSON line plus the terminating separator"
+        );
+        assert!(
+            lines[1].is_empty(),
+            "ndjson must not contain an extra blank record"
+        );
+        let source: serde_json::Value = serde_json::from_str(lines[0])?;
+        assert_eq!(source["source_id"], "fixture.source");
         Ok(())
     }
 }
