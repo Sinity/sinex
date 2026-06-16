@@ -45,10 +45,10 @@ impl BlobCommands {
 #[command(after_help = "\
 EXAMPLES:
     # Show content-store keys that are unused and have no DB blob row
-    sinexctl blob sweep-orphans
+    sinexctl ops blob sweep-orphans
 
     # Actually drop those orphaned keys from the large-object backend
-    sinexctl blob sweep-orphans --apply
+    sinexctl ops blob sweep-orphans --apply
 ")]
 pub struct BlobSweepOrphansCommand {
     /// Content-store root path.
@@ -171,10 +171,10 @@ fn format_blob_sweep_summary(summary: &BlobSweepSummary) -> String {
 #[command(after_help = "\
 EXAMPLES:
     # Check local CAS integrity (dry-run)
-    sinexctl blob fsck
+    sinexctl ops blob fsck
 
     # Remove orphaned CAS files
-    sinexctl blob fsck --apply
+    sinexctl ops blob fsck --apply
 ")]
 pub struct BlobFsckCommand {
     /// Content-store root path.
@@ -302,10 +302,10 @@ fn format_blob_fsck_summary(summary: &BlobFsckSummary) -> String {
 #[command(after_help = "\
 EXAMPLES:
     # Dry-run migration from git-annex to local CAS
-    sinexctl blob migrate --from git-annex --to local-cas
+    sinexctl ops blob migrate --from git-annex --to local-cas
 
     # Execute migration
-    sinexctl blob migrate --from git-annex --to local-cas --apply
+    sinexctl ops blob migrate --from git-annex --to local-cas --apply
 ")]
 pub struct BlobMigrateCommand {
     /// Content-store root path.
@@ -606,13 +606,13 @@ fn format_blob_migrate_summary(summary: &BlobMigrateSummary) -> String {
 #[command(after_help = "\
 EXAMPLES:
     # Verify every event with anchor_payload_hash set
-    sinexctl blob verify-integrity
+    sinexctl ops blob verify-integrity
 
     # Verify only events from one source material
-    sinexctl blob verify-integrity --material-id 019e5be2-...
+    sinexctl ops blob verify-integrity --material-id 019e5be2-...
 
     # Bound the audit to N events
-    sinexctl blob verify-integrity --limit 1000
+    sinexctl ops blob verify-integrity --limit 1000
 ")]
 pub struct BlobVerifyIntegrityCommand {
     /// Content-store root path (the directory that holds `sinex-cas/`).
