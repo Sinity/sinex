@@ -314,12 +314,17 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Ops ───────────────────────────────────────────────────────────────────
     m.insert("ops start", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("ops list", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "ops list",
+        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML)
+            .with_note("ndjson emits one OperationView per line"),
+    );
     m.insert("ops get", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("ops cancel", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "ops jobs list",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
+        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML)
+            .with_note("ndjson emits one OperationView per line"),
     );
     m.insert(
         "ops jobs show",
