@@ -11,7 +11,7 @@ use sinex_primitives::rpc::tasks::{
 use sinex_primitives::task_domain::{TaskFieldUpdate, TaskStatus};
 
 use crate::client::GatewayClient;
-use crate::commands::declare::{parse_task_external_ref, render_task_response};
+use crate::commands::record::{parse_task_external_ref, render_task_response};
 use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
 use crate::validation::parse_time_input;
