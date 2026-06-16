@@ -48,6 +48,28 @@ async fn ops_jobs_list_help_shows_expected_flags() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn ops_list_help_shows_canonical_filters() -> TestResult<()> {
+    sinexctl()
+        .args(["ops", "list", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--operation-type"))
+        .stdout(predicate::str::contains("--status"))
+        .stdout(predicate::str::contains("--limit"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_get_help_shows_operation_id_arg() -> TestResult<()> {
+    sinexctl()
+        .args(["ops", "get", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("OPERATION_ID"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_jobs_show_help_shows_operation_id_arg() -> TestResult<()> {
     sinexctl()
         .args(["ops", "jobs", "show", "--help"])
