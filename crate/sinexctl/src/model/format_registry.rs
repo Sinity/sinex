@@ -1350,6 +1350,10 @@ mod tests {
         assert!(validate_format("errors", OutputFormat::Ndjson).is_err());
         assert!(validate_format("context", OutputFormat::Json).is_ok());
         assert!(validate_format("context", OutputFormat::Ndjson).is_err());
+        assert!(validate_format("status", OutputFormat::Json).is_ok());
+        assert!(validate_format("status", OutputFormat::Ndjson).is_err());
+        assert!(validate_format("explain", OutputFormat::Json).is_ok());
+        assert!(validate_format("explain", OutputFormat::Ndjson).is_err());
         assert!(validate_format("watch", OutputFormat::Json).is_ok());
         Ok(())
     }
