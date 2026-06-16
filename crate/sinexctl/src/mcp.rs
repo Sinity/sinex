@@ -1755,7 +1755,7 @@ async fn source_readiness(client: &GatewayClient, arguments: Value) -> Result<Va
         payload["caveats"] = json!("suppressed_by_request");
     }
 
-    Ok(envelope("sinex.source_readiness", &json!(args), &payload))
+    Ok(mcp_view_envelope("sinex.source_readiness", &json!(args), &payload)?)
 }
 
 async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -1774,11 +1774,11 @@ async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<V
         serde_json::to_value(client.sources_continuity_list(request).await?)?
     };
 
-    Ok(envelope(
+    Ok(mcp_view_envelope(
         "sinex.source_continuity",
         &json!(args),
         &json!({ "result": result }),
-    ))
+    )?)
 }
 
 async fn source_drift(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -1789,11 +1789,11 @@ async fn source_drift(client: &GatewayClient, arguments: Value) -> Result<Value>
     };
     let result = serde_json::to_value(client.sources_drift_list(request).await?)?;
 
-    Ok(envelope(
+    Ok(mcp_view_envelope(
         "sinex.source_drift",
         &json!(args),
         &json!({ "result": result }),
-    ))
+    )?)
 }
 
 async fn source_gap_explain(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -1804,11 +1804,11 @@ async fn source_gap_explain(client: &GatewayClient, arguments: Value) -> Result<
             at: args.at,
         })
         .await?;
-    Ok(envelope(
+    Ok(mcp_view_envelope(
         "sinex.source_gap_explain",
         &json!(args),
         &json!({ "result": response }),
-    ))
+    )?)
 }
 
 async fn source_identifier_continuity(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -1819,11 +1819,11 @@ async fn source_identifier_continuity(client: &GatewayClient, arguments: Value) 
             material_kind: args.material_kind.clone(),
         })
         .await?;
-    Ok(envelope(
+    Ok(mcp_view_envelope(
         "sinex.source_identifier_continuity",
         &json!(args),
         &json!({ "result": response }),
-    ))
+    )?)
 }
 
 async fn privacy_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -2288,11 +2288,11 @@ async fn source_materials(client: &GatewayClient, arguments: Value) -> Result<Va
             limit: args.limit,
         })
         .await?;
-    Ok(envelope(
+    Ok(mcp_view_envelope(
         "sinex.source_materials",
         &json!(args),
         &json!({ "result": response }),
-    ))
+    )?)
 }
 
 async fn source_material(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -2305,31 +2305,31 @@ async fn source_material(client: &GatewayClient, arguments: Value) -> Result<Val
             .await?,
     )?;
     redact_raw_samples(&mut response);
-    Ok(envelope(
+    Ok(mcp_view_envelope(
         "sinex.source_material",
         &json!(args),
         &json!({ "result": response }),
-    ))
+    )?)
 }
 
 async fn source_coverage(client: &GatewayClient, arguments: Value) -> Result<Value> {
     reject_non_empty_args("sinex.source_coverage", &arguments)?;
     let response = client.sources_coverage(SourcesCoverageRequest {}).await?;
-    Ok(envelope(
+    Ok(mcp_view_envelope(
         "sinex.source_coverage",
         &json!({}),
         &json!({ "result": response }),
-    ))
+    )?)
 }
 
 async fn source_presets(client: &GatewayClient, arguments: Value) -> Result<Value> {
     reject_non_empty_args("sinex.source_presets", &arguments)?;
     let response = client.sources_presets_list().await?;
-    Ok(envelope(
+    Ok(mcp_view_envelope(
         "sinex.source_presets",
         &json!({}),
         &json!({ "result": response }),
-    ))
+    )?)
 }
 
 async fn source_bindings(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -2337,11 +2337,11 @@ async fn source_bindings(client: &GatewayClient, arguments: Value) -> Result<Val
     let response = client
         .sources_bindings_list(args.source_family.clone(), args.include_disabled)
         .await?;
-    Ok(envelope(
+    Ok(mcp_view_envelope(
         "sinex.source_bindings",
         &json!(args),
         &json!({ "result": response }),
-    ))
+    )?)
 }
 
 async fn ops_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
