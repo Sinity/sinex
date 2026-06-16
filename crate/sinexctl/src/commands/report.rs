@@ -21,10 +21,10 @@ const SESSION_SOURCE_LIMIT: i64 = 5;
 #[command(after_help = "\
 EXAMPLES:
     # Summary of today's activity
-    sinexctl report today
+    sinexctl metrics report today
 
     # Summary of yesterday's activity
-    sinexctl report yesterday
+    sinexctl metrics report yesterday
 ")]
 pub struct ReportCommand {
     #[command(subcommand)]

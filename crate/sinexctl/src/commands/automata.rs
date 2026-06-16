@@ -13,10 +13,10 @@ use crate::model::OutputFormat;
 #[command(after_help = "\
 EXAMPLES:
     # Show automata status
-    sinexctl automata
+    sinexctl runtime automata
 
     # Emit machine-readable status
-    sinexctl automata --format json
+    sinexctl runtime automata --format json
 ")]
 pub struct AutomataCommand {
     /// Heartbeat age threshold for considering an automaton live

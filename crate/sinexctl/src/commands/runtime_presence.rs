@@ -13,13 +13,13 @@ use crate::model::{OutputFormat, RuntimeModuleRole};
 #[command(after_help = "\
 EXAMPLES:
     # List all running modules
-    sinexctl modules
+    sinexctl runtime modules
 
     # Filter by capture modules
-    sinexctl modules --role capture
+    sinexctl runtime modules --role capture
 
     # Only derived (automata) modules
-    sinexctl modules --role derived
+    sinexctl runtime modules --role derived
 ")]
 pub struct RuntimePresenceCommand {
     /// Filter by role

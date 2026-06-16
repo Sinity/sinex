@@ -67,6 +67,7 @@ mod help_tests {
             .stdout(predicate::str::contains("ops"))
             .stdout(predicate::str::contains("audit"))
             .stdout(predicate::str::contains("blob"))
+            .stdout(predicate::str::contains("metrics"))
             .stdout(predicate::str::contains("config"))
             .stdout(predicate::str::contains("sources"))
             .stdout(predicate::str::contains("completions"));
@@ -159,6 +160,8 @@ mod help_tests {
             .success()
             .stdout(predicate::str::contains("Runtime module operations"))
             .stdout(predicate::str::contains("list"))
+            .stdout(predicate::str::contains("modules"))
+            .stdout(predicate::str::contains("automata"))
             .stdout(predicate::str::contains("status"))
             .stdout(predicate::str::contains("drain"))
             .stdout(predicate::str::contains("resume"))
@@ -554,7 +557,19 @@ mod shortcut_command_tests {
     #[sinex_test]
     async fn event_shortcut_roots_are_pruned() -> TestResult<()> {
         for root in [
-            "query", "recent", "errors", "watch", "trace", "annotate", "timeline", "explain",
+            "query",
+            "recent",
+            "errors",
+            "watch",
+            "trace",
+            "annotate",
+            "timeline",
+            "explain",
+            "modules",
+            "automata",
+            "throughput",
+            "telemetry",
+            "report",
         ] {
             sinexctl()
                 .args([root, "--help"])
