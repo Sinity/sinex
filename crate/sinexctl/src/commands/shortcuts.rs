@@ -1,4 +1,4 @@
-use crate::fmt::{format_yaml, render_envelope};
+use crate::fmt::{format_yaml, print_finite_envelope, render_envelope};
 use crate::model::OutputFormat;
 use crate::parse::parse_duration;
 use clap::Args;
@@ -951,16 +951,7 @@ impl RecentCommand {
                 "source": self.source,
             }));
 
-        if let Some(output) = render_envelope(&envelope, &envelope.payload.cards, format)? {
-            // render_envelope's ndjson arm already terminates each line with '\n';
-            // only add a trailing newline for non-empty output that lacks one
-            // (json/yaml). An empty result (e.g. ndjson with zero events) must
-            // stay empty — a blank line is not a valid NDJSON record (Codex
-            // review, PR #1766).
-            print!("{output}");
-            if !output.is_empty() && !output.ends_with('\n') {
-                println!();
-            }
+        if print_finite_envelope(&envelope, format)? {
             return Ok(());
         }
         // OutputFormat::Table — fall through to human rendering below
