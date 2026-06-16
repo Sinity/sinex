@@ -4,6 +4,8 @@ use crate::domain::{OperationKind, OperationStatus};
 use crate::events::Event;
 use crate::ids::Id;
 use crate::query::{Cursor, QueryResultEvent};
+use crate::rpc::sources::{SourceReadiness, SourceShapeDriftObservation};
+use crate::sources::continuity::{SourceContinuityReport, SourcesExplainGapResponse};
 use crate::temporal::Timestamp;
 use crate::{JsonValue, Provenance};
 use schemars::JsonSchema;
@@ -17,7 +19,13 @@ pub const EVENT_ERROR_LIST_SCHEMA_VERSION: &str = "sinex.event-error-list/v1";
 pub const EVENT_QUERY_LIST_SCHEMA_VERSION: &str = "sinex.event-query-list/v1";
 pub const OPERATION_JOB_LIST_SCHEMA_VERSION: &str = "sinex.operation-job-list/v1";
 pub const OPERATION_VIEW_SCHEMA_VERSION: &str = "sinex.operation-view/v1";
+pub const SOURCE_CONTINUITY_DETAIL_SCHEMA_VERSION: &str = "sinex.source-continuity-detail/v1";
+pub const SOURCE_CONTINUITY_GAP_SCHEMA_VERSION: &str = "sinex.source-continuity-gap/v1";
+pub const SOURCE_CONTINUITY_LIST_SCHEMA_VERSION: &str = "sinex.source-continuity-list/v1";
 pub const SOURCE_COVERAGE_LIST_SCHEMA_VERSION: &str = "sinex.source-coverage-list/v1";
+pub const SOURCE_DRIFT_LIST_SCHEMA_VERSION: &str = "sinex.source-drift-list/v1";
+pub const SOURCE_READINESS_DETAIL_SCHEMA_VERSION: &str = "sinex.source-readiness-detail/v1";
+pub const SOURCE_READINESS_LIST_SCHEMA_VERSION: &str = "sinex.source-readiness-list/v1";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -118,6 +126,113 @@ impl SourceCoverageListView {
             schema_version: SOURCE_COVERAGE_LIST_SCHEMA_VERSION.to_string(),
             count,
             sources,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourceReadinessListView {
+    pub schema_version: String,
+    pub count: usize,
+    pub sources: Vec<SourceReadiness>,
+}
+
+impl SourceReadinessListView {
+    #[must_use]
+    pub fn new(sources: Vec<SourceReadiness>) -> Self {
+        let count = sources.len();
+        Self {
+            schema_version: SOURCE_READINESS_LIST_SCHEMA_VERSION.to_string(),
+            count,
+            sources,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourceReadinessDetailView {
+    pub schema_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceReadiness>,
+}
+
+impl SourceReadinessDetailView {
+    #[must_use]
+    pub fn new(source: Option<SourceReadiness>) -> Self {
+        Self {
+            schema_version: SOURCE_READINESS_DETAIL_SCHEMA_VERSION.to_string(),
+            source,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourceDriftListView {
+    pub schema_version: String,
+    pub count: usize,
+    pub drifts: Vec<SourceShapeDriftObservation>,
+}
+
+impl SourceDriftListView {
+    #[must_use]
+    pub fn new(drifts: Vec<SourceShapeDriftObservation>) -> Self {
+        let count = drifts.len();
+        Self {
+            schema_version: SOURCE_DRIFT_LIST_SCHEMA_VERSION.to_string(),
+            count,
+            drifts,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourceContinuityListView {
+    pub schema_version: String,
+    pub count: usize,
+    pub reports: Vec<SourceContinuityReport>,
+}
+
+impl SourceContinuityListView {
+    #[must_use]
+    pub fn new(reports: Vec<SourceContinuityReport>) -> Self {
+        let count = reports.len();
+        Self {
+            schema_version: SOURCE_CONTINUITY_LIST_SCHEMA_VERSION.to_string(),
+            count,
+            reports,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourceContinuityDetailView {
+    pub schema_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<SourceContinuityReport>,
+}
+
+impl SourceContinuityDetailView {
+    #[must_use]
+    pub fn new(report: Option<SourceContinuityReport>) -> Self {
+        Self {
+            schema_version: SOURCE_CONTINUITY_DETAIL_SCHEMA_VERSION.to_string(),
+            report,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourceContinuityGapView {
+    pub schema_version: String,
+    pub explanation: SourcesExplainGapResponse,
+}
+
+impl SourceContinuityGapView {
+    #[must_use]
+    pub fn new(explanation: SourcesExplainGapResponse) -> Self {
+        Self {
+            schema_version: SOURCE_CONTINUITY_GAP_SCHEMA_VERSION.to_string(),
+            explanation,
         }
     }
 }
