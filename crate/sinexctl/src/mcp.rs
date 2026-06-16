@@ -53,7 +53,8 @@ use sinex_primitives::sources::continuity::{
 use sinex_primitives::task_domain::TaskStatus;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
-    CaveatView, OperationJobListView, PrivacyStateKind, PrivacyStateView, ViewEnvelope,
+    ActionSideEffect, CaveatView, OperationJobListView, OperationView, PrivacyStateKind,
+    PrivacyStateView, ViewEnvelope,
 };
 use std::io::{BufRead, Write};
 
@@ -2421,7 +2422,10 @@ async fn ops_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let response = client
         .ops_list(args.operation_type.clone(), args.status.clone(), args.limit)
         .await?;
-    let views = operations_to_views(&response);
+    let views = operations_to_views(&response)
+        .into_iter()
+        .map(mcp_read_only_operation_view)
+        .collect();
     Ok(envelope(
         "sinex.ops_list",
         &json!(args),
@@ -2432,8 +2436,14 @@ async fn ops_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
 async fn ops_get(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: OpsGetArgs = serde_json::from_value(arguments)?;
     let response = client.ops_get(&args.operation_id).await?;
-    let view = operation_to_view(&response);
+    let view = mcp_read_only_operation_view(operation_to_view(&response));
     Ok(envelope("sinex.ops_get", &json!(args), &json!(view)))
+}
+
+fn mcp_read_only_operation_view(mut view: OperationView) -> OperationView {
+    view.actions
+        .retain(|action| matches!(action.side_effect, ActionSideEffect::Read));
+    view
 }
 
 async fn lifecycle_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
