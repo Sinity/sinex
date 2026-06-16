@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 
 use crate::client::GatewayClient;
 use crate::commands::common::parse_serde_enum;
+use crate::commands::curation::CurationCommand;
+use crate::commands::llm::LlmCommand;
 use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
 use crate::validation::parse_time_input;
@@ -37,6 +39,8 @@ impl SemanticCommand {
         match &self.cmd {
             SemanticSubcommand::Epoch(cmd) => cmd.execute(client, format).await,
             SemanticSubcommand::Lane(cmd) => cmd.execute(client, format).await,
+            SemanticSubcommand::Curation(cmd) => cmd.execute(client, format).await,
+            SemanticSubcommand::Llm(cmd) => cmd.execute(client, format).await,
         }
     }
 }
@@ -47,6 +51,10 @@ pub enum SemanticSubcommand {
     Epoch(SemanticEpochCommand),
     /// Shadow-lane registry and inspection operations.
     Lane(SemanticLaneCommand),
+    /// Curation proposal and judgment commands.
+    Curation(CurationCommand),
+    /// LLM prompt, routing, and budget read surfaces.
+    Llm(LlmCommand),
 }
 
 #[derive(Debug, Args)]
