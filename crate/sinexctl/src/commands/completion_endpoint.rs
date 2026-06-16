@@ -199,7 +199,9 @@ impl RuntimeCompletionVocabulary {
 fn active_token(line: &str, cursor: usize) -> &str {
     let cursor = cursor.min(line.len());
     let prefix = &line[..cursor];
-    prefix.rsplit_once(char::is_whitespace).map_or(prefix, |(_, token)| token)
+    prefix
+        .rsplit_once(char::is_whitespace)
+        .map_or(prefix, |(_, token)| token)
 }
 
 fn active_token_start(line: &str, cursor: usize, active: &str) -> usize {
@@ -210,7 +212,8 @@ fn active_token_start(line: &str, cursor: usize, active: &str) -> usize {
 fn selected_value(line: &str, cursor: usize, key: &str) -> Option<String> {
     let cursor = cursor.min(line.len());
     line[..cursor].split_whitespace().find_map(|token| {
-        token.strip_prefix(key)
+        token
+            .strip_prefix(key)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
     })
@@ -234,7 +237,13 @@ fn build_candidates(
         .strip_prefix("type:")
         .or_else(|| active.strip_prefix("event_type:"))
     {
-        event_type_candidates(prefix, replace_start, replace_end, source.as_deref(), vocabulary)
+        event_type_candidates(
+            prefix,
+            replace_start,
+            replace_end,
+            source.as_deref(),
+            vocabulary,
+        )
     } else if let Some(prefix) = active.strip_prefix("payload.") {
         payload_key_candidates(
             prefix,
@@ -413,9 +422,9 @@ fn grammar_candidates(
         .iter()
         .map(|(value, description)| ("command-root", "Commands", *value, *description, 70))
         .chain(
-            TERMS
-                .iter()
-                .map(|(value, description)| ("query-token", "Query grammar", *value, *description, 85)),
+            TERMS.iter().map(|(value, description)| {
+                ("query-token", "Query grammar", *value, *description, 85)
+            }),
         )
         .filter(|(_, _, value, _, _)| value.starts_with(prefix))
         .map(|(kind, group, value, description, score)| {
@@ -592,9 +601,17 @@ mod tests {
         assert_eq!(candidate.replace_start, "sinexctl events ".len());
         assert_eq!(candidate.replace_end, "sinexctl events source:wm".len());
         assert_eq!(candidate.source.as_deref(), Some("wm.hyprland"));
-        assert!(candidate.stale, "static inventory candidates are stale fallback data");
+        assert!(
+            candidate.stale,
+            "static inventory candidates are stale fallback data"
+        );
         assert_eq!(candidate.danger, "none");
-        assert!(candidate.preview.as_deref().is_some_and(|preview| preview.contains("source:wm.hyprland")));
+        assert!(
+            candidate
+                .preview
+                .as_deref()
+                .is_some_and(|preview| preview.contains("source:wm.hyprland"))
+        );
         Ok(())
     }
 
@@ -664,6 +681,8 @@ mod tests {
             "context",
             "verify",
             "demo",
+            "gateway",
+            "core",
             "documents",
             "semantics",
             "completions",
