@@ -334,6 +334,42 @@ async fn mcp_trace_lineage_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_relation_evidence_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.relation_evidence",
+        json!({
+            "seed_query": {
+                "sources": ["fixture"],
+                "limit": 1
+            },
+            "relation": {
+                "relation": "within",
+                "within_secs": 300
+            }
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["source_surface"], "sinex.relation_evidence");
+    assert_eq!(response["query_echo"]["seed_query"]["sources"][0], "fixture");
+    assert_eq!(response["query_echo"]["relation"]["relation"], "within");
+    assert_eq!(
+        response["payload"]["result"]["payload"]["support_refs"][0]["object"]["id"],
+        fixture_event_id()
+    );
+    assert_eq!(
+        response["payload"]["result"]["payload"]["query"]["relation"],
+        "within"
+    );
+    assert_eq!(response["privacy_state"]["state"], "redacted");
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -516,13 +552,13 @@ async fn mcp_privacy_status_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.privacy_status", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.privacy_status");
-    assert_eq!(response["items"]["result"]["state"]["enabled"], true);
+    assert_eq!(response["source_surface"], "sinex.privacy_status");
+    assert_eq!(response["payload"]["result"]["state"]["enabled"], true);
     assert_eq!(
-        response["items"]["result"]["state"]["affected_source_classes"],
+        response["payload"]["result"]["state"]["affected_source_classes"],
         json!(["terminal"])
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     assert!(
         !response.to_string().contains("secret_fixture_value"),
         "MCP privacy status leaked raw sensitive sample text"
@@ -537,14 +573,14 @@ async fn mcp_system_health_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.system_health", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.system_health");
-    assert_eq!(response["items"]["result"]["status"], "degraded");
-    assert_eq!(response["items"]["result"]["healthy"], false);
+    assert_eq!(response["source_surface"], "sinex.system_health");
+    assert_eq!(response["payload"]["result"]["status"], "degraded");
+    assert_eq!(response["payload"]["result"]["healthy"], false);
     assert_eq!(
-        response["items"]["result"]["components"]["sse_confirmation"]["status"],
+        response["payload"]["result"]["components"]["sse_confirmation"]["status"],
         "degraded"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -568,22 +604,22 @@ async fn mcp_tasks_list_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.tasks_list");
-    assert_eq!(response["query"]["status"], "started");
-    assert_eq!(response["items"]["result"]["total"], 1);
+    assert_eq!(response["source_surface"], "sinex.tasks_list");
+    assert_eq!(response["query_echo"]["status"], "started");
+    assert_eq!(response["payload"]["result"]["total"], 1);
     assert_eq!(
-        response["items"]["result"]["tasks"][0]["title"],
+        response["payload"]["result"]["tasks"][0]["title"],
         "Expose MCP task list"
     );
     assert_eq!(
-        response["items"]["result"]["tasks"][0]["project_id"],
+        response["payload"]["result"]["tasks"][0]["project_id"],
         "sinex"
     );
     assert_eq!(
-        response["items"]["result"]["tasks"][0]["tags"],
+        response["payload"]["result"]["tasks"][0]["tags"],
         json!(["mcp"])
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -595,15 +631,15 @@ async fn mcp_task_state_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.task_state", json!({ "task_id": task_id })).await?;
 
-    assert_eq!(response["tool"], "sinex.task_state");
-    assert_eq!(response["query"]["task_id"], task_id);
-    assert_eq!(response["items"]["result"]["task_id"], task_id);
-    assert_eq!(response["items"]["result"]["event_count"], 3);
+    assert_eq!(response["source_surface"], "sinex.task_state");
+    assert_eq!(response["query_echo"]["task_id"], task_id);
+    assert_eq!(response["payload"]["result"]["task_id"], task_id);
+    assert_eq!(response["payload"]["result"]["event_count"], 3);
     assert_eq!(
-        response["items"]["result"]["state"]["title"],
+        response["payload"]["result"]["state"]["title"],
         "Expose MCP task list"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -623,14 +659,14 @@ async fn mcp_replay_operations_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.replay_operations");
-    assert_eq!(response["query"]["state"], "Planning");
+    assert_eq!(response["source_surface"], "sinex.replay_operations");
+    assert_eq!(response["query_echo"]["state"], "Planning");
     assert_eq!(
-        response["items"]["operations"][0]["operation_id"],
+        response["payload"]["operations"][0]["operation_id"],
         fixture_operation_id()
     );
-    assert_eq!(response["items"]["operations"][0]["state"], "Planning");
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["payload"]["operations"][0]["state"], "Planning");
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -646,13 +682,13 @@ async fn mcp_replay_status_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.replay_status");
+    assert_eq!(response["source_surface"], "sinex.replay_status");
     assert_eq!(
-        response["items"]["operation"]["operation_id"],
+        response["payload"]["operation"]["operation_id"],
         fixture_operation_id()
     );
-    assert_eq!(response["items"]["operation"]["state"], "Previewed");
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["payload"]["operation"]["state"], "Previewed");
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -673,23 +709,23 @@ async fn mcp_documents_search_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.documents_search");
-    assert_eq!(response["query"]["query"], "secret plan");
-    assert_eq!(response["items"]["result"]["search_mode"], "fts");
+    assert_eq!(response["source_surface"], "sinex.documents_search");
+    assert_eq!(response["query_echo"]["query"], "secret plan");
+    assert_eq!(response["payload"]["result"]["search_mode"], "fts");
     assert_eq!(
-        response["items"]["result"]["results"][0]["document_id"],
+        response["payload"]["result"]["results"][0]["document_id"],
         fixture_document_id()
     );
     assert_eq!(
-        response["items"]["result"]["results"][0]["text"]["reason"],
+        response["payload"]["result"]["results"][0]["text"]["reason"],
         "mcp_document_text_disabled"
     );
     assert_eq!(
-        response["items"]["result"]["results"][0]["headline"]["reason"],
+        response["payload"]["result"]["results"][0]["headline"]["reason"],
         "mcp_document_text_disabled"
     );
     assert_eq!(
-        response["items"]["result"]["results"][0]["side_data"]["reason"],
+        response["payload"]["result"]["results"][0]["side_data"]["reason"],
         "mcp_document_side_data_disabled"
     );
     assert!(
@@ -711,11 +747,11 @@ async fn mcp_documents_get_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.documents_get");
-    assert_eq!(response["query"]["document_id"], fixture_document_id());
-    assert_eq!(response["items"]["result"]["id"], fixture_document_id());
+    assert_eq!(response["source_surface"], "sinex.documents_get");
+    assert_eq!(response["query_echo"]["document_id"], fixture_document_id());
+    assert_eq!(response["payload"]["result"]["id"], fixture_document_id());
     assert_eq!(
-        response["items"]["result"]["side_data"]["reason"],
+        response["payload"]["result"]["side_data"]["reason"],
         "mcp_document_side_data_disabled"
     );
     assert!(
@@ -737,21 +773,21 @@ async fn mcp_documents_chunks_call_uses_redacted_gateway_fixture() -> TestResult
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.documents_chunks");
-    assert_eq!(response["query"]["document_id"], fixture_document_id());
+    assert_eq!(response["source_surface"], "sinex.documents_chunks");
+    assert_eq!(response["query_echo"]["document_id"], fixture_document_id());
     assert_eq!(
-        response["items"]["result"]["chunks"][0]["document_id"],
+        response["payload"]["result"]["chunks"][0]["document_id"],
         fixture_document_id()
     );
     assert_eq!(
-        response["items"]["result"]["chunks"][0]["redaction_reason"],
+        response["payload"]["result"]["chunks"][0]["redaction_reason"],
         "mcp_document_chunk_text_redacted"
     );
     assert_eq!(
-        response["items"]["result"]["chunks"][0]["text_redacted"],
+        response["payload"]["result"]["chunks"][0]["text_redacted"],
         true
     );
-    assert!(response["items"]["result"]["chunks"][0]["text"].is_null());
+    assert!(response["payload"]["result"]["chunks"][0]["text"].is_null());
     assert!(
         !response.to_string().contains("secret_fixture_value"),
         "MCP document chunks leaked raw document chunk text"
@@ -766,10 +802,10 @@ async fn mcp_semantic_epochs_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.semantic_epochs", json!({ "limit": 5 })).await?;
 
-    assert_eq!(response["tool"], "sinex.semantic_epochs");
-    assert_eq!(response["query"]["limit"], 5);
+    assert_eq!(response["source_surface"], "sinex.semantic_epochs");
+    assert_eq!(response["query_echo"]["limit"], 5);
     assert_eq!(
-        response["items"]["result"]["epochs"][0]["id"],
+        response["payload"]["result"]["epochs"][0]["id"],
         fixture_semantic_epoch_id()
     );
     Ok(())
@@ -787,10 +823,10 @@ async fn mcp_semantic_lanes_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.semantic_lanes");
-    assert_eq!(response["query"]["status"], "planned");
+    assert_eq!(response["source_surface"], "sinex.semantic_lanes");
+    assert_eq!(response["query_echo"]["status"], "planned");
     assert_eq!(
-        response["items"]["result"]["lanes"][0]["id"],
+        response["payload"]["result"]["lanes"][0]["id"],
         fixture_semantic_lane_id()
     );
     Ok(())
@@ -808,10 +844,10 @@ async fn mcp_semantic_lane_outputs_call_uses_gateway_fixture() -> TestResult<()>
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.semantic_lane_outputs");
-    assert_eq!(response["query"]["lane_id"], fixture_semantic_lane_id());
+    assert_eq!(response["source_surface"], "sinex.semantic_lane_outputs");
+    assert_eq!(response["query_echo"]["lane_id"], fixture_semantic_lane_id());
     assert_eq!(
-        response["items"]["result"]["outputs"][0]["output_key"],
+        response["payload"]["result"]["outputs"][0]["output_key"],
         "entity:fixture"
     );
     Ok(())
@@ -829,10 +865,10 @@ async fn mcp_semantic_lane_diffs_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.semantic_lane_diffs");
-    assert_eq!(response["query"]["lane_id"], fixture_semantic_lane_id());
+    assert_eq!(response["source_surface"], "sinex.semantic_lane_diffs");
+    assert_eq!(response["query_echo"]["lane_id"], fixture_semantic_lane_id());
     assert_eq!(
-        response["items"]["result"]["diffs"][0]["id"],
+        response["payload"]["result"]["diffs"][0]["id"],
         fixture_semantic_diff_id()
     );
     Ok(())
@@ -850,18 +886,18 @@ async fn mcp_automata_status_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.automata_status");
-    assert_eq!(response["query"]["stale_after_secs"], 120);
-    assert_eq!(response["items"]["result"]["stale_after_secs"], 120);
+    assert_eq!(response["source_surface"], "sinex.automata_status");
+    assert_eq!(response["query_echo"]["stale_after_secs"], 120);
+    assert_eq!(response["payload"]["result"]["stale_after_secs"], 120);
     assert_eq!(
-        response["items"]["result"]["automata"][0]["module_name"],
+        response["payload"]["result"]["automata"][0]["module_name"],
         "session-detector"
     );
     assert_eq!(
-        response["items"]["result"]["automata"][0]["event_lag_p99_ms"],
+        response["payload"]["result"]["automata"][0]["event_lag_p99_ms"],
         42.0
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -877,18 +913,18 @@ async fn mcp_sources_status_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.sources_status");
-    assert_eq!(response["query"]["recent_window_secs"], 60);
-    assert_eq!(response["items"]["result"]["recent_window_secs"], 60);
+    assert_eq!(response["source_surface"], "sinex.sources_status");
+    assert_eq!(response["query_echo"]["recent_window_secs"], 60);
+    assert_eq!(response["payload"]["result"]["recent_window_secs"], 60);
     assert_eq!(
-        response["items"]["result"]["sources"][0]["module_name"],
+        response["payload"]["result"]["sources"][0]["module_name"],
         "terminal.atuin-history"
     );
     assert_eq!(
-        response["items"]["result"]["sources"][0]["current_health"],
+        response["payload"]["result"]["sources"][0]["current_health"],
         "healthy"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -904,12 +940,12 @@ async fn mcp_runtime_health_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.source_health");
-    assert_eq!(response["query"]["stale_after_secs"], 120);
-    assert_eq!(response["items"]["result"]["active_count"], 2);
-    assert_eq!(response["items"]["result"]["inactive_count"], 1);
-    assert_eq!(response["items"]["result"]["unique_modules"], 3);
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.source_health");
+    assert_eq!(response["query_echo"]["stale_after_secs"], 120);
+    assert_eq!(response["payload"]["result"]["active_count"], 2);
+    assert_eq!(response["payload"]["result"]["inactive_count"], 1);
+    assert_eq!(response["payload"]["result"]["unique_modules"], 3);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -925,17 +961,17 @@ async fn mcp_runtime_active_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.sources_active");
-    assert_eq!(response["query"]["stale_after_secs"], 120);
+    assert_eq!(response["source_surface"], "sinex.sources_active");
+    assert_eq!(response["query_echo"]["stale_after_secs"], 120);
     assert_eq!(
-        response["items"]["result"]["modules"][0]["module_name"],
+        response["payload"]["result"]["modules"][0]["module_name"],
         "terminal.atuin-history"
     );
     assert_eq!(
-        response["items"]["result"]["modules"][0]["heartbeat_source"],
+        response["payload"]["result"]["modules"][0]["heartbeat_source"],
         "run"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -946,16 +982,16 @@ async fn mcp_runtime_registry_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.sources_registry", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.sources_registry");
+    assert_eq!(response["source_surface"], "sinex.sources_registry");
     assert_eq!(
-        response["items"]["result"]["modules"][0]["module_name"],
+        response["payload"]["result"]["modules"][0]["module_name"],
         "terminal.atuin-history"
     );
     assert_eq!(
-        response["items"]["result"]["modules"][0]["state"],
+        response["payload"]["result"]["modules"][0]["state"],
         "running"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -966,14 +1002,14 @@ async fn mcp_event_engine_validation_call_uses_gateway_fixture() -> TestResult<(
 
     let response = call_tool(&client, "sinex.event_engine_validation", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.event_engine_validation");
-    assert_eq!(response["items"]["snapshot"]["batch_size"], 12);
-    assert_eq!(response["items"]["snapshot"]["validation_invalid"], 0);
+    assert_eq!(response["source_surface"], "sinex.event_engine_validation");
+    assert_eq!(response["payload"]["snapshot"]["batch_size"], 12);
+    assert_eq!(response["payload"]["snapshot"]["validation_invalid"], 0);
     assert_eq!(
-        response["items"]["snapshot"]["validation_coverage_pct"],
+        response["payload"]["snapshot"]["validation_coverage_pct"],
         100.0
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -993,15 +1029,15 @@ async fn mcp_event_engine_batch_stats_call_uses_gateway_fixture() -> TestResult<
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.event_engine_batch_stats");
-    assert_eq!(response["query"]["limit"], 5);
-    assert_eq!(response["items"]["buckets"][0]["batch_count"], 3);
-    assert_eq!(response["items"]["buckets"][0]["validation_invalid"], 0);
+    assert_eq!(response["source_surface"], "sinex.event_engine_batch_stats");
+    assert_eq!(response["query_echo"]["limit"], 5);
+    assert_eq!(response["payload"]["buckets"][0]["batch_count"], 3);
+    assert_eq!(response["payload"]["buckets"][0]["validation_invalid"], 0);
     assert_eq!(
-        response["items"]["buckets"][0]["avg_validation_coverage_pct"],
+        response["payload"]["buckets"][0]["avg_validation_coverage_pct"],
         100.0
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1012,20 +1048,20 @@ async fn mcp_throughput_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.throughput", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.throughput");
+    assert_eq!(response["source_surface"], "sinex.throughput");
     assert_eq!(
-        response["items"]["result"]["per_source"][0]["source"],
+        response["payload"]["result"]["per_source"][0]["source"],
         "terminal"
     );
     assert_eq!(
-        response["items"]["result"]["per_source"][0]["events_last_1h"],
+        response["payload"]["result"]["per_source"][0]["events_last_1h"],
         120
     );
     assert_eq!(
-        response["items"]["result"]["per_component"][0]["component"],
+        response["payload"]["result"]["per_component"][0]["component"],
         "event_engine"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1036,11 +1072,11 @@ async fn mcp_recent_activity_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.recent_activity", json!({ "limit": 7 })).await?;
 
-    assert_eq!(response["tool"], "sinex.recent_activity");
-    assert_eq!(response["query"]["limit"], 7);
-    assert_eq!(response["items"]["entries"][0]["activity_type"], "command");
-    assert_eq!(response["items"]["entries"][0]["context"], "terminal");
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.recent_activity");
+    assert_eq!(response["query_echo"]["limit"], 7);
+    assert_eq!(response["payload"]["entries"][0]["activity_type"], "command");
+    assert_eq!(response["payload"]["entries"][0]["context"], "terminal");
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1060,11 +1096,11 @@ async fn mcp_command_frequency_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.command_frequency");
-    assert_eq!(response["query"]["limit"], 3);
-    assert_eq!(response["items"]["entries"][0]["command"], "xtask");
-    assert_eq!(response["items"]["entries"][0]["total_executions"], 12);
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.command_frequency");
+    assert_eq!(response["query_echo"]["limit"], 3);
+    assert_eq!(response["payload"]["entries"][0]["command"], "xtask");
+    assert_eq!(response["payload"]["entries"][0]["total_executions"], 12);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1084,14 +1120,14 @@ async fn mcp_file_activity_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.file_activity");
-    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["source_surface"], "sinex.file_activity");
+    assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(
-        response["items"]["entries"][0]["directory"],
+        response["payload"]["entries"][0]["directory"],
         "/realm/project/sinex"
     );
-    assert_eq!(response["items"]["entries"][0]["total_events"], 9);
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["payload"]["entries"][0]["total_events"], 9);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1111,11 +1147,11 @@ async fn mcp_system_state_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.system_state");
-    assert_eq!(response["query"]["limit"], 3);
-    assert_eq!(response["items"]["buckets"][0]["sample_count"], 5);
-    assert_eq!(response["items"]["buckets"][0]["avg_memory_percent"], 42.5);
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.system_state");
+    assert_eq!(response["query_echo"]["limit"], 3);
+    assert_eq!(response["payload"]["buckets"][0]["sample_count"], 5);
+    assert_eq!(response["payload"]["buckets"][0]["avg_memory_percent"], 42.5);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1135,12 +1171,12 @@ async fn mcp_window_focus_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.window_focus");
-    assert_eq!(response["query"]["limit"], 3);
-    assert_eq!(response["items"]["buckets"][0]["workspace"], "4");
-    assert_eq!(response["items"]["buckets"][0]["window_class"], "kitty");
-    assert_eq!(response["items"]["buckets"][0]["focus_event_count"], 6);
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.window_focus");
+    assert_eq!(response["query_echo"]["limit"], 3);
+    assert_eq!(response["payload"]["buckets"][0]["workspace"], "4");
+    assert_eq!(response["payload"]["buckets"][0]["window_class"], "kitty");
+    assert_eq!(response["payload"]["buckets"][0]["focus_event_count"], 6);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1151,12 +1187,12 @@ async fn mcp_current_health_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.current_health", json!({ "limit": 4 })).await?;
 
-    assert_eq!(response["tool"], "sinex.current_health");
-    assert_eq!(response["query"]["limit"], 4);
-    assert_eq!(response["items"]["entries"][0]["source"], "sinex");
-    assert_eq!(response["items"]["entries"][0]["event_type"], "health");
-    assert_eq!(response["items"]["entries"][0]["status"], "healthy");
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.current_health");
+    assert_eq!(response["query_echo"]["limit"], 4);
+    assert_eq!(response["payload"]["entries"][0]["source"], "sinex");
+    assert_eq!(response["payload"]["entries"][0]["event_type"], "health");
+    assert_eq!(response["payload"]["entries"][0]["status"], "healthy");
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1167,11 +1203,11 @@ async fn mcp_current_device_state_call_uses_gateway_fixture() -> TestResult<()> 
 
     let response = call_tool(&client, "sinex.current_device_state", json!({ "limit": 4 })).await?;
 
-    assert_eq!(response["tool"], "sinex.current_device_state");
-    assert_eq!(response["query"]["limit"], 4);
-    assert_eq!(response["items"]["entries"][0]["unit_name"], "sinexd");
-    assert_eq!(response["items"]["entries"][0]["state"], "active");
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.current_device_state");
+    assert_eq!(response["query_echo"]["limit"], 4);
+    assert_eq!(response["payload"]["entries"][0]["unit_name"], "sinexd");
+    assert_eq!(response["payload"]["entries"][0]["state"], "active");
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1182,11 +1218,11 @@ async fn mcp_gateway_stats_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.gateway_stats", telemetry_window_args()).await?;
 
-    assert_eq!(response["tool"], "sinex.gateway_stats");
-    assert_eq!(response["query"]["limit"], 3);
-    assert_eq!(response["items"]["buckets"][0]["source"], "gateway");
-    assert_eq!(response["items"]["buckets"][0]["stat_events"], 4);
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.gateway_stats");
+    assert_eq!(response["query_echo"]["limit"], 3);
+    assert_eq!(response["payload"]["buckets"][0]["source"], "gateway");
+    assert_eq!(response["payload"]["buckets"][0]["stat_events"], 4);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1197,11 +1233,11 @@ async fn mcp_stream_stats_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.stream_stats", telemetry_window_args()).await?;
 
-    assert_eq!(response["tool"], "sinex.stream_stats");
-    assert_eq!(response["query"]["limit"], 3);
-    assert_eq!(response["items"]["buckets"][0]["stream_name"], "EVENTS");
-    assert_eq!(response["items"]["buckets"][0]["sample_count"], 2);
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.stream_stats");
+    assert_eq!(response["query_echo"]["limit"], 3);
+    assert_eq!(response["payload"]["buckets"][0]["stream_name"], "EVENTS");
+    assert_eq!(response["payload"]["buckets"][0]["sample_count"], 2);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1212,11 +1248,11 @@ async fn mcp_assembly_stats_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.assembly_stats", telemetry_window_args()).await?;
 
-    assert_eq!(response["tool"], "sinex.assembly_stats");
-    assert_eq!(response["query"]["limit"], 3);
-    assert_eq!(response["items"]["buckets"][0]["total_completed"], 7);
-    assert_eq!(response["items"]["buckets"][0]["sample_count"], 3);
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.assembly_stats");
+    assert_eq!(response["query_echo"]["limit"], 3);
+    assert_eq!(response["payload"]["buckets"][0]["total_completed"], 7);
+    assert_eq!(response["payload"]["buckets"][0]["sample_count"], 3);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1227,14 +1263,14 @@ async fn mcp_source_stats_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.source_stats", telemetry_window_args()).await?;
 
-    assert_eq!(response["tool"], "sinex.source_stats");
-    assert_eq!(response["query"]["limit"], 3);
-    assert_eq!(response["items"]["buckets"][0]["module_kind"], "source");
+    assert_eq!(response["source_surface"], "sinex.source_stats");
+    assert_eq!(response["query_echo"]["limit"], 3);
+    assert_eq!(response["payload"]["buckets"][0]["module_kind"], "source");
     assert_eq!(
-        response["items"]["buckets"][0]["total_events_processed"],
+        response["payload"]["buckets"][0]["total_events_processed"],
         42
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1245,12 +1281,12 @@ async fn mcp_metric_counters_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.metric_counters", telemetry_window_args()).await?;
 
-    assert_eq!(response["tool"], "sinex.metric_counters");
-    assert_eq!(response["query"]["limit"], 3);
-    assert_eq!(response["items"]["buckets"][0]["component"], "event_engine");
-    assert_eq!(response["items"]["buckets"][0]["metric_name"], "events");
-    assert_eq!(response["items"]["buckets"][0]["total_value"], 99);
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.metric_counters");
+    assert_eq!(response["query_echo"]["limit"], 3);
+    assert_eq!(response["payload"]["buckets"][0]["component"], "event_engine");
+    assert_eq!(response["payload"]["buckets"][0]["metric_name"], "events");
+    assert_eq!(response["payload"]["buckets"][0]["total_value"], 99);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1266,13 +1302,13 @@ async fn mcp_llm_prompts_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.llm_prompts");
-    assert_eq!(response["query"]["status"], "active");
+    assert_eq!(response["source_surface"], "sinex.llm_prompts");
+    assert_eq!(response["query_echo"]["status"], "active");
     assert_eq!(
-        response["items"]["result"]["events"][0]["payload"]["redacted"],
+        response["payload"]["result"]["events"][0]["payload"]["redacted"],
         true
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1283,16 +1319,16 @@ async fn mcp_llm_route_explain_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.llm_route_explain", fixture_llm_route_args()).await?;
 
-    assert_eq!(response["tool"], "sinex.llm_route_explain");
+    assert_eq!(response["source_surface"], "sinex.llm_route_explain");
     assert_eq!(
-        response["query"]["request"]["task_kind"],
+        response["query_echo"]["request"]["task_kind"],
         "entity-extraction"
     );
     assert_eq!(
-        response["items"]["result"]["decision"]["model"],
+        response["payload"]["result"]["decision"]["model"],
         "fixture-model"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1303,11 +1339,11 @@ async fn mcp_llm_budget_report_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.llm_budget_report", json!({ "limit": 5 })).await?;
 
-    assert_eq!(response["tool"], "sinex.llm_budget_report");
-    assert_eq!(response["query"]["limit"], 5);
-    assert_eq!(response["items"]["result"]["total_rows"], 1);
-    assert_eq!(response["items"]["result"]["prompt_tokens"], 12);
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.llm_budget_report");
+    assert_eq!(response["query_echo"]["limit"], 5);
+    assert_eq!(response["payload"]["result"]["total_rows"], 1);
+    assert_eq!(response["payload"]["result"]["prompt_tokens"], 12);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1323,13 +1359,13 @@ async fn mcp_curation_proposals_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.curation_proposals");
-    assert_eq!(response["query"]["status"], "pending");
+    assert_eq!(response["source_surface"], "sinex.curation_proposals");
+    assert_eq!(response["query_echo"]["status"], "pending");
     assert_eq!(
-        response["items"]["result"]["events"][0]["payload"]["redacted"],
+        response["payload"]["result"]["events"][0]["payload"]["redacted"],
         true
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1340,10 +1376,10 @@ async fn mcp_dlq_stats_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.dlq_stats", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.dlq_stats");
-    assert_eq!(response["items"]["result"]["total_messages"], 2);
-    assert_eq!(response["items"]["result"]["total_bytes"], 512);
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.dlq_stats");
+    assert_eq!(response["payload"]["result"]["total_messages"], 2);
+    assert_eq!(response["payload"]["result"]["total_bytes"], 512);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1354,17 +1390,17 @@ async fn mcp_dlq_peek_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.dlq_peek", json!({ "limit": 2 })).await?;
 
-    assert_eq!(response["tool"], "sinex.dlq_peek");
-    assert_eq!(response["query"]["limit"], 2);
+    assert_eq!(response["source_surface"], "sinex.dlq_peek");
+    assert_eq!(response["query_echo"]["limit"], 2);
     assert_eq!(
-        response["items"]["result"]["messages"][0]["payload_redacted"],
+        response["payload"]["result"]["messages"][0]["payload_redacted"],
         true
     );
     assert_eq!(
-        response["items"]["result"]["messages"][0]["privacy_caveats"][0],
+        response["payload"]["result"]["messages"][0]["privacy_caveats"][0],
         "secret_redacted"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1430,6 +1466,30 @@ async fn mcp_source_coverage_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_sources_status_view_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.sources_status_view", json!({})).await?;
+
+    assert_eq!(response["source_surface"], "sinex.sources_status_view");
+    assert_eq!(
+        response["payload"]["result"]["source_surface"],
+        "sources.status"
+    );
+    assert_eq!(
+        response["payload"]["result"]["payload"]["sources"][0]["source_id"],
+        "terminal.atuin-history"
+    );
+    assert_eq!(
+        response["payload"]["result"]["payload"]["sources"][0]["event_count"],
+        42
+    );
+    assert_eq!(response["privacy_state"]["state"], "redacted");
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_source_presets_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -1480,13 +1540,13 @@ async fn mcp_ops_list_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.ops_list");
-    assert_eq!(response["query"]["operation_type"], "replay");
+    assert_eq!(response["source_surface"], "sinex.ops_list");
+    assert_eq!(response["query_echo"]["operation_type"], "replay");
     assert_eq!(
-        response["items"]["result"]["operations"][0]["operation_type"],
+        response["payload"]["result"]["operations"][0]["operation_type"],
         "replay"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1502,13 +1562,13 @@ async fn mcp_ops_get_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.ops_get");
-    assert_eq!(response["query"]["operation_id"], fixture_operation_id());
+    assert_eq!(response["source_surface"], "sinex.ops_get");
+    assert_eq!(response["query_echo"]["operation_id"], fixture_operation_id());
     assert_eq!(
-        response["items"]["result"]["operation"]["id"],
+        response["payload"]["result"]["operation"]["id"],
         fixture_operation_id()
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1519,10 +1579,10 @@ async fn mcp_lifecycle_status_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.lifecycle_status", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.lifecycle_status");
-    assert_eq!(response["items"]["result"]["total_events"], 42);
-    assert_eq!(response["items"]["result"]["tiers"][0]["tier"], "live");
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.lifecycle_status");
+    assert_eq!(response["payload"]["result"]["total_events"], 42);
+    assert_eq!(response["payload"]["result"]["tiers"][0]["tier"], "live");
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1538,14 +1598,14 @@ async fn mcp_audit_trail_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.audit_trail");
-    assert_eq!(response["query"]["operation_id"], fixture_operation_id());
+    assert_eq!(response["source_surface"], "sinex.audit_trail");
+    assert_eq!(response["query_echo"]["operation_id"], fixture_operation_id());
     assert_eq!(
-        response["items"]["result"]["audit_trail"]["operation"]["id"],
+        response["payload"]["result"]["audit_trail"]["operation"]["id"],
         fixture_operation_id()
     );
-    assert_eq!(response["items"]["result"]["event_count"], 1);
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["payload"]["result"]["event_count"], 1);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1561,13 +1621,13 @@ async fn mcp_coordination_instances_call_uses_gateway_fixture() -> TestResult<()
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.coordination_instances");
-    assert_eq!(response["query"]["module_kind"], "service");
+    assert_eq!(response["source_surface"], "sinex.coordination_instances");
+    assert_eq!(response["query_echo"]["module_kind"], "service");
     assert_eq!(
-        response["items"]["result"]["instances"][0]["instance_id"],
+        response["payload"]["result"]["instances"][0]["instance_id"],
         fixture_instance_id()
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1583,12 +1643,12 @@ async fn mcp_coordination_leader_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.coordination_leader");
+    assert_eq!(response["source_surface"], "sinex.coordination_leader");
     assert_eq!(
-        response["items"]["result"]["leader"]["instance_id"],
+        response["payload"]["result"]["leader"]["instance_id"],
         fixture_instance_id()
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1604,10 +1664,10 @@ async fn mcp_coordination_instance_health_call_uses_gateway_fixture() -> TestRes
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.coordination_instance_health");
-    assert_eq!(response["query"]["instance_id"], fixture_instance_id());
-    assert_eq!(response["items"]["result"]["healthy"], true);
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.coordination_instance_health");
+    assert_eq!(response["query_echo"]["instance_id"], fixture_instance_id());
+    assert_eq!(response["payload"]["result"]["healthy"], true);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1623,13 +1683,13 @@ async fn mcp_shadow_consumers_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.shadow_consumers");
-    assert_eq!(response["query"]["prefix"], "dev-fixture");
+    assert_eq!(response["source_surface"], "sinex.shadow_consumers");
+    assert_eq!(response["query_echo"]["prefix"], "dev-fixture");
     assert_eq!(
-        response["items"]["result"]["consumers"][0]["consumer_name"],
+        response["payload"]["result"]["consumers"][0]["consumer_name"],
         "dev-fixture"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1640,9 +1700,9 @@ async fn mcp_system_ping_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.system_ping", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.system_ping");
-    assert_eq!(response["items"]["result"], "pong");
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.system_ping");
+    assert_eq!(response["payload"]["result"], "pong");
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1653,9 +1713,9 @@ async fn mcp_system_version_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.system_version", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.system_version");
-    assert_eq!(response["items"]["result"], "0.4.2");
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["source_surface"], "sinex.system_version");
+    assert_eq!(response["payload"]["result"], "0.4.2");
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1753,6 +1813,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         ]
                     })
                 }
+                "events.relation_evidence" => fixture_relation_evidence_envelope(),
                 "sources.readiness.list" => json!({
                     "sources": [
                         {
@@ -2508,6 +2569,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         }
                     ]
                 }),
+                "sources.status.view" => fixture_source_status_view_envelope(),
                 "sources.presets.list" => json!({
                     "presets": [
                         {
@@ -2666,6 +2728,105 @@ fn fixture_semantic_candidate_lane_id() -> &'static str {
 
 fn fixture_semantic_diff_id() -> &'static str {
     "018f4b6b-6a4d-7c80-8000-000000000009"
+}
+
+fn fixture_relation_evidence_envelope() -> Value {
+    json!({
+        "schema_version": "sinex.view-envelope/v3",
+        "view_id": "018f4b6b-6a4d-7c80-8000-000000000010",
+        "generated_at": "2026-05-19T12:00:00Z",
+        "source_surface": "events.relation_evidence",
+        "freshness": {
+            "generated_at": "2026-05-19T12:00:00Z",
+            "stale_after_secs": null
+        },
+        "filters": null,
+        "caveats": [],
+        "payload": {
+            "seed_refs": [
+                {
+                    "kind": "event",
+                    "id": fixture_event_id(),
+                    "label": "fixture seed"
+                }
+            ],
+            "support_refs": [
+                {
+                    "object": {
+                        "kind": "event",
+                        "id": fixture_event_id(),
+                        "label": "fixture support"
+                    },
+                    "role": "support",
+                    "observed_range": {
+                        "start": "2026-05-19T12:00:00Z",
+                        "end": "2026-05-19T12:00:00Z",
+                        "basis": "source_intrinsic",
+                        "quality": "exact"
+                    },
+                    "rationale": "fixture relation evidence"
+                }
+            ],
+            "contradiction_refs": [],
+            "caveats": [],
+            "observed_range": {
+                "start": "2026-05-19T12:00:00Z",
+                "end": "2026-05-19T12:00:00Z",
+                "basis": "source_intrinsic",
+                "quality": "exact"
+            },
+            "expansion_trace": {
+                "steps": []
+            },
+            "generated_at": "2026-05-19T12:00:00Z",
+            "query": {
+                "relation": "within",
+                "within_secs": 300
+            }
+        }
+    })
+}
+
+fn fixture_source_status_view_envelope() -> Value {
+    json!({
+        "schema_version": "sinex.view-envelope/v3",
+        "view_id": "018f4b6b-6a4d-7c80-8000-000000000011",
+        "generated_at": "2026-05-19T12:00:00Z",
+        "source_surface": "sources.status",
+        "freshness": {
+            "generated_at": "2026-05-19T12:00:00Z",
+            "stale_after_secs": null
+        },
+        "filters": null,
+        "caveats": [],
+        "payload": {
+            "schema_version": "sinex.source-coverage-list/v1",
+            "count": 1,
+            "sources": [
+                {
+                    "source_id": "terminal.atuin-history",
+                    "namespace": "terminal",
+                    "event_types": ["command.executed"],
+                    "readiness": "ready",
+                    "continuity": "active",
+                    "last_material_at": "2026-05-19T11:59:00Z",
+                    "last_event_at": "2026-05-19T12:00:00Z",
+                    "material_count": 3,
+                    "event_count": 42,
+                    "binding_count": 1,
+                    "live_binding_count": 1,
+                    "proposed_binding_count": 0,
+                    "gaps": [],
+                    "caveats": [],
+                    "privacy": {
+                        "tier": "sensitive",
+                        "context": "command"
+                    },
+                    "actions": []
+                }
+            ]
+        }
+    })
 }
 
 fn fixture_instance_id() -> &'static str {
