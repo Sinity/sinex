@@ -21,6 +21,6 @@ expression: buffer_to_text(terminal.backend().buffer())
 │context pack [target] — not implemented: context pack                             │
 │                                                                                  │
 │Audit                                                                             │
-│sinexctl audit op-fixture                                                         │
+│sinexctl ops audit op-fixture                                                     │
 │                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────┘
