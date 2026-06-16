@@ -45,8 +45,11 @@ mod help_tests {
         assert_eq!(value["schema_version"], "sinex.view-envelope/v3");
         assert_eq!(value["source_surface"], "sinexctl.command_center");
         assert_eq!(value["payload"]["schema_version"], 1);
-        assert_eq!(value["payload"]["primary_actions"][0]["command"], "sinexctl now");
-        assert_eq!(value["payload"]["root_groups"][0]["root"], "sources");
+        assert_eq!(
+            value["payload"]["primary_actions"][0]["command"],
+            "sinexctl now"
+        );
+        assert_eq!(value["payload"]["root_groups"][0]["root"], "events");
         Ok(())
     }
 
@@ -58,6 +61,7 @@ mod help_tests {
             .success()
             .stdout(predicate::str::contains("Usage: sinexctl"))
             .stdout(predicate::str::contains("Commands:"))
+            .stdout(predicate::str::contains("events"))
             .stdout(predicate::str::contains("query"))
             .stdout(predicate::str::contains("dlq"))
             .stdout(predicate::str::contains("replay"))
@@ -82,6 +86,69 @@ mod help_tests {
             .stdout(predicate::str::contains("--source"))
             .stdout(predicate::str::contains("--event-type"))
             .stdout(predicate::str::contains("--interactive"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_events_help() -> TestResult<()> {
+        sinexctl()
+            .args(["events", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Event search"))
+            .stdout(predicate::str::contains("query"))
+            .stdout(predicate::str::contains("recent"))
+            .stdout(predicate::str::contains("trace"))
+            .stdout(predicate::str::contains("inspect"))
+            .stdout(predicate::str::contains("annotate"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_events_query_help() -> TestResult<()> {
+        sinexctl()
+            .args(["events", "query", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Query/search events"))
+            .stdout(predicate::str::contains("--since"))
+            .stdout(predicate::str::contains("--source"))
+            .stdout(predicate::str::contains("--event-type"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_events_inspect_help() -> TestResult<()> {
+        sinexctl()
+            .args(["events", "inspect", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Event ID"))
+            .stdout(predicate::str::contains("EXAMPLES"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_events_trace_help() -> TestResult<()> {
+        sinexctl()
+            .args(["events", "trace", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Trace event provenance chain"))
+            .stdout(predicate::str::contains("--direction"))
+            .stdout(predicate::str::contains("--max-depth"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_events_annotate_help() -> TestResult<()> {
+        sinexctl()
+            .args(["events", "annotate", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Event UUID"))
+            .stdout(predicate::str::contains("--note"))
+            .stdout(predicate::str::contains("--kind"));
         Ok(())
     }
 

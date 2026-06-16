@@ -10,7 +10,7 @@ use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
     ConfigCommands, ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand,
-    DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands,
+    DlqCommands, DocumentsCommand, ErrorsCommand, EventsCommand, ExplainCommand, GatewayCommands,
     InstructionsCommand, LifecycleCommands, LlmCommand, NowCommand, OpsCommands, PrivacyCommand,
     QueryCommand, RecentCommand, RelationsCommand, ReplayCommands, ReportCommands, RuntimeCommands,
     RuntimePresenceCommand, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
@@ -143,6 +143,12 @@ enum Commands {
 
     /// Trace event provenance chain
     Trace(TraceCommand),
+
+    /// Event search, inspection, lineage, streaming, and annotation
+    Events {
+        #[command(subcommand)]
+        cmd: EventsCommand,
+    },
 
     /// Operations log commands
     Ops {
@@ -379,6 +385,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Query(cmd) => cmd.execute(&client, format).await?,
                 Commands::Relations(cmd) => cmd.execute(&client, format).await?,
                 Commands::Trace(cmd) => cmd.execute(&client, format).await?,
+                Commands::Events { cmd } => cmd.execute(&client, format).await?,
                 Commands::Ops { cmd } => cmd.execute(&client, format).await?,
                 Commands::Privacy(cmd) => cmd.execute(&client, format).await?,
                 Commands::Audit(cmd) => cmd.execute(&client, format).await?,
@@ -505,7 +512,7 @@ fn command_center_view(config: &Config, format: OutputFormat) -> CommandCenterVi
             },
             CommandCenterAction {
                 label: "Search recent events",
-                command: "sinexctl query --since 1h",
+                command: "sinexctl events query --since 1h",
                 effect: "read",
             },
             CommandCenterAction {
@@ -525,6 +532,10 @@ fn command_center_view(config: &Config, format: OutputFormat) -> CommandCenterVi
             },
         ],
         root_groups: vec![
+            CommandCenterRootGroup {
+                root: "events",
+                purpose: "search, inspection, lineage, relations, streaming, and annotation",
+            },
             CommandCenterRootGroup {
                 root: "sources",
                 purpose: "source material, readiness, continuity, and coverage",
@@ -699,8 +710,9 @@ fn command_path(cmd: &Commands) -> String {
             DlqCommands::Purge { .. } => "dlq purge".to_string(),
         },
         Commands::Query(_) => "query".to_string(),
-        Commands::Relations(_) => "relations".to_string(),
+        Commands::Relations(cmd) => cmd.command_path().to_string(),
         Commands::Trace(_) => "trace".to_string(),
+        Commands::Events { cmd } => cmd.command_path().to_string(),
         Commands::Ops { cmd } => match cmd {
             OpsCommands::Start { .. } => "ops start".to_string(),
             OpsCommands::List { .. } => "ops list".to_string(),
@@ -1182,8 +1194,8 @@ mod tests {
 
         let relations = commands
             .iter()
-            .find(|entry| entry["path"] == "relations")
-            .expect("json list-formats output must include relations");
+            .find(|entry| entry["path"] == "relations within")
+            .expect("json list-formats output must include relations within");
         assert_eq!(
             relations["backing_rpc_methods"][0],
             "events.relation_evidence"
@@ -1243,7 +1255,7 @@ mod tests {
             "--seed-query-json",
             "{}",
         ])?;
-        assert_eq!(path, "relations");
+        assert_eq!(path, "relations within");
         Ok(())
     }
 
