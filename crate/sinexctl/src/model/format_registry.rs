@@ -232,8 +232,9 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     // ── Query ────────────────────────────────────────────────────────────────
     m.insert(
         "query",
-        FormatCapability::single_shot(TABLE_JSON_YAML_DOT)
-            .with_note("dot format is equivalent to json for query results"),
+        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
+            "ndjson emits one EventCardView object per line (envelope metadata omitted)",
+        ),
     );
     m.insert(
         "relations",
@@ -1342,8 +1343,9 @@ mod tests {
     #[sinex_test]
     async fn validate_format_accepts_supported() -> xtask::sandbox::TestResult<()> {
         assert!(validate_format("query", OutputFormat::Json).is_ok());
+        assert!(validate_format("query", OutputFormat::Ndjson).is_ok());
         assert!(validate_format("query", OutputFormat::Table).is_ok());
-        assert!(validate_format("query", OutputFormat::Dot).is_ok());
+        assert!(validate_format("query", OutputFormat::Dot).is_err());
         assert!(validate_format("watch", OutputFormat::Json).is_ok());
         Ok(())
     }
