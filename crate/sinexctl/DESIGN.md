@@ -29,9 +29,10 @@ CLI flags still win so one-off overrides remain possible.
 ## Command Families
 
 - API/system: `gateway`, `core`
-- Query/inspection: `query`, `verify` (bounded runtime evidence checks plus optional active document deployment smoke and descriptor-aware collector-surface evidence, distinguishing recent `ts_orig` samples from merely historical persisted rows, with local deployment-descriptor awareness for managed oneshot surfaces), `automata`, `status`, `recent`, `errors`, `watch`, `tui`
-- Operations: `ops`, `audit`, `replay`, `dlq`, `lifecycle`
-- Local tooling: `config`, `completions`
+- Query/inspection: `events`, `verify` (bounded runtime evidence checks plus optional active document deployment smoke and descriptor-aware collector-surface evidence, distinguishing recent `ts_orig` samples from merely historical persisted rows, with local deployment-descriptor awareness for managed oneshot surfaces), `status`, `tui`
+- Operations: `ops`
+- Domain: `docs`, `semantic`, `tasks`, `sources`, `privacy`
+- Local tooling: `config`, `_complete`
 
 ## Transport and Auth
 
@@ -49,9 +50,9 @@ CLI flags still win so one-off overrides remain possible.
 
 ## Output and UX
 
-- Output formats: `table`, `json`, `yaml`
+- Output formats: `table`, `json`, `ndjson`, `yaml`, `dot` where declared
 - Command modules own output formatting and examples
-- Shell completions are generated from Clap metadata (`sinexctl completions <shell>`)
+- Shell and picker integrations use the structured read-only `_complete` endpoint.
 
 ## Design Constraints
 
@@ -84,9 +85,8 @@ When `--format` is passed explicitly on the command line the chosen format is
 validated against the registry before the command executes:
 
 ```
-sinexctl --format dot completions
-error: command `completions` does not support --format Dot; \
-       supported: none (--format not applicable for this command)
+sinexctl --format dot _complete --line "sinexctl events " --cursor 17
+error: _complete is a finite completion view; use json, yaml, ndjson, or table
 ```
 
 ### Browsing the matrix

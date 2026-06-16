@@ -13,62 +13,23 @@ fn sinexctl() -> Command {
 }
 
 #[sinex_test]
-async fn snapshot_bash_completions_structure() -> TestResult<()> {
+async fn snapshot_structured_completion_shape() -> TestResult<()> {
     let output = sinexctl()
-        .args(["completions", "bash"])
+        .args([
+            "_complete",
+            "--line",
+            "sinexctl events source:wm",
+            "--cursor",
+            "24",
+            "--format",
+            "json",
+        ])
         .output()
-        .expect("Failed to generate bash completions");
+        .expect("Failed to run structured completion endpoint");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Verify key structural elements exist
-    assert!(
-        stdout.contains("_sinexctl"),
-        "Should define _sinexctl function"
-    );
-    assert!(
-        stdout.contains("complete"),
-        "Should have complete directive"
-    );
-    assert!(
-        stdout.contains("query") || stdout.contains("COMPREPLY"),
-        "Should reference commands"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn snapshot_fish_completions_structure() -> TestResult<()> {
-    let output = sinexctl()
-        .args(["completions", "fish"])
-        .output()
-        .expect("Failed to generate fish completions");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Verify key structural elements
-    assert!(
-        stdout.contains("complete -c sinexctl"),
-        "Should have fish complete command"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn snapshot_zsh_completions_structure() -> TestResult<()> {
-    let output = sinexctl()
-        .args(["completions", "zsh"])
-        .output()
-        .expect("Failed to generate zsh completions");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Verify key structural elements
-    assert!(
-        stdout.contains("#compdef"),
-        "Should have zsh compdef header"
-    );
-    assert!(stdout.contains("sinexctl"), "Should reference sinexctl");
+    assert!(stdout.contains("\"candidates\""), "Should return candidates");
+    assert!(stdout.contains("source:wm.hyprland"), "Should complete sources");
     Ok(())
 }
 
