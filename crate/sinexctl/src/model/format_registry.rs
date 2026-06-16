@@ -695,7 +695,6 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
 
     // ── Dashboards and finite query views ────────────────────────────────────
-    m.insert("status", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "events context",
         FormatCapability::single_shot(TABLE_JSON_YAML),
@@ -704,11 +703,6 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert(
         "ops verify baseline",
         FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
-    m.insert(
-        "now",
-        FormatCapability::single_shot(TABLE_JSON_YAML)
-            .with_note("compact dashboard; json/yaml emit full snapshot"),
     );
     m.insert(
         "runtime modules",
@@ -830,7 +824,7 @@ const fn rpc_role_rank(role: RpcRole) -> u8 {
 fn family_for_path(path: &str) -> CommandFamily {
     let root = path.split_once(' ').map_or(path, |(root, _)| root);
     match root {
-        "events" | "now" | "status" => CommandFamily::Query,
+        "events" => CommandFamily::Query,
         "runtime" | "replay" | "dlq" | "ops" | "lifecycle" | "privacy" => CommandFamily::Operate,
         "sources" => CommandFamily::Sources,
         "record" | "tasks" | "semantic" | "docs" => CommandFamily::Domain,
@@ -1000,17 +994,6 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "runtime gateway version" => &[methods::SYSTEM_VERSION],
         "runtime health" => &[methods::SYSTEM_HEALTH],
         "runtime list" | "runtime modules" => &[methods::COORDINATION_LIST_INSTANCES],
-        "status" => &[
-            methods::SYSTEM_VERSION,
-            methods::SYSTEM_HEALTH,
-            methods::COORDINATION_LIST_INSTANCES,
-            methods::DLQ_LIST,
-        ],
-        "now" => &[
-            methods::SYSTEM_HEALTH,
-            methods::COORDINATION_LIST_INSTANCES,
-            methods::TELEMETRY_RECENT_ACTIVITY,
-        ],
         "tui" => &[
             methods::SYSTEM_VERSION,
             methods::COORDINATION_LIST_INSTANCES,
@@ -1391,12 +1374,8 @@ mod tests {
         assert!(validate_format("events query", OutputFormat::Ndjson).is_ok());
         assert!(validate_format("events context", OutputFormat::Json).is_ok());
         assert!(validate_format("events context", OutputFormat::Ndjson).is_err());
-        assert!(validate_format("status", OutputFormat::Json).is_ok());
-        assert!(validate_format("status", OutputFormat::Ndjson).is_err());
         assert!(validate_format("events explain", OutputFormat::Json).is_ok());
         assert!(validate_format("events explain", OutputFormat::Ndjson).is_err());
-        assert!(validate_format("now", OutputFormat::Json).is_ok());
-        assert!(validate_format("now", OutputFormat::Ndjson).is_err());
         assert!(validate_format("events timeline", OutputFormat::Json).is_ok());
         assert!(validate_format("events timeline", OutputFormat::Ndjson).is_err());
         assert!(validate_format("events trace", OutputFormat::Json).is_ok());
@@ -1693,7 +1672,6 @@ mod tests {
             "events inspect",
             "events annotate",
             "events relations within",
-            "status",
             "events context",
             "runtime automata",
             "runtime gateway ping",
