@@ -11,9 +11,10 @@
 //! silent return.
 
 use serde_json::json;
-use sinex_db::repositories::EventRepositoryTx;
+use sinex_db::repositories::{CascadeSource, EventRepositoryTx};
 use sinex_primitives::temporal;
 use sqlx::PgPool;
+use std::collections::BTreeSet;
 use uuid::Uuid;
 use xtask::sandbox::sinex_test;
 
@@ -99,6 +100,76 @@ async fn build_chain(pool: &PgPool, depth: usize) -> color_eyre::Result<Vec<Uuid
     Ok(ids)
 }
 
+#[derive(Clone, Copy)]
+enum CascadeEngine {
+    CoreFunction,
+    RustLive,
+}
+
+#[derive(Debug)]
+struct CascadeExpansion {
+    max_depth_reached: usize,
+    ids: BTreeSet<Uuid>,
+}
+
+async fn expand_fixture(
+    pool: &PgPool,
+    roots: &[Uuid],
+    max_depth: i32,
+    engine: CascadeEngine,
+) -> color_eyre::Result<CascadeExpansion> {
+    let mut tx = pool.begin().await?;
+    let mut repo = EventRepositoryTx::new(&mut tx);
+    let session_prefix = match engine {
+        CascadeEngine::CoreFunction => "core_parity",
+        CascadeEngine::RustLive => "rust_parity",
+    };
+    let session_id = format!(
+        "{}_{}",
+        session_prefix,
+        &Uuid::now_v7().simple().to_string()[..12]
+    );
+    let table_name = repo.prepare_cascade_session(&session_id, false).await?;
+
+    let expansion = match engine {
+        CascadeEngine::CoreFunction => {
+            repo.populate_cascade_roots(&table_name, roots).await?;
+            repo.expand_cascade(&table_name, max_depth).await
+        }
+        CascadeEngine::RustLive => {
+            repo.populate_cascade_roots_from(&table_name, roots, CascadeSource::Live)
+                .await?;
+            repo.expand_cascade_from(&table_name, max_depth, CascadeSource::Live)
+                .await
+        }
+    };
+
+    let max_depth_reached = expansion?;
+    let ids = repo
+        .get_cascade_ids(&table_name)
+        .await?
+        .into_iter()
+        .collect();
+    drop(repo);
+    tx.rollback().await?;
+    Ok(CascadeExpansion {
+        max_depth_reached,
+        ids,
+    })
+}
+
+async fn expansion_error(
+    pool: &PgPool,
+    roots: &[Uuid],
+    max_depth: i32,
+    engine: CascadeEngine,
+) -> color_eyre::Result<String> {
+    let err = expand_fixture(pool, roots, max_depth, engine)
+        .await
+        .expect_err("cascade expansion should fail at the configured depth limit");
+    Ok(err.to_string())
+}
+
 #[sinex_test]
 async fn expand_cascade_raises_when_chain_exceeds_max_depth(
     ctx: TestContext,
@@ -167,5 +238,65 @@ async fn expand_cascade_succeeds_when_chain_fits_within_limit(
     );
     drop(repo);
     tx.rollback().await?;
+    Ok(())
+}
+
+#[sinex_test]
+async fn rust_live_cascade_matches_core_expand_cascade_membership(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let pool = ctx.pool.clone();
+    color_eyre::eyre::ensure!(
+        cascade_prereqs_available(&pool).await?,
+        "core.prepare_cascade_session missing; run migrations before tests"
+    );
+
+    let chain = build_chain(&pool, 6).await?;
+    let roots = &chain[..1];
+
+    let core = expand_fixture(&pool, roots, 10, CascadeEngine::CoreFunction).await?;
+    let rust = expand_fixture(&pool, roots, 10, CascadeEngine::RustLive).await?;
+
+    assert_eq!(
+        rust.ids, core.ids,
+        "Rust expand_cascade_from(CascadeSource::Live) must match core.expand_cascade membership"
+    );
+    assert_eq!(
+        rust.max_depth_reached, core.max_depth_reached,
+        "Rust expand_cascade_from(CascadeSource::Live) must report the same maximum depth"
+    );
+    assert_eq!(
+        rust.ids,
+        chain.into_iter().collect::<BTreeSet<_>>(),
+        "fixture sanity: both expanders should walk the complete chain"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn rust_live_cascade_matches_core_expand_cascade_depth_limit_error(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let pool = ctx.pool.clone();
+    color_eyre::eyre::ensure!(
+        cascade_prereqs_available(&pool).await?,
+        "core.prepare_cascade_session missing; run migrations before tests"
+    );
+
+    let chain = build_chain(&pool, 8).await?;
+    let roots = &chain[..1];
+
+    let core_error = expansion_error(&pool, roots, 4, CascadeEngine::CoreFunction).await?;
+    let rust_error = expansion_error(&pool, roots, 4, CascadeEngine::RustLive).await?;
+
+    for (engine, message) in [
+        ("core.expand_cascade", core_error),
+        ("expand_cascade_from", rust_error),
+    ] {
+        assert!(
+            message.contains("max depth") && message.contains("pending children"),
+            "{engine} must report the at-limit pending-child truncation: {message}"
+        );
+    }
     Ok(())
 }
