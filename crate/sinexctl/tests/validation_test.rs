@@ -349,8 +349,9 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.source_readiness");
-    let Some(sources) = response["items"]["result"]["sources"].as_array() else {
+    assert_eq!(response["source_surface"], "sinex.source_readiness");
+    assert_eq!(response["query_echo"]["source_family"], "terminal");
+    let Some(sources) = response["payload"]["result"]["sources"].as_array() else {
         return Err(color_eyre::eyre::eyre!(
             "source readiness response did not contain a sources array"
         ));
@@ -358,7 +359,8 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0]["source_id"], "terminal.atuin-history");
     assert_eq!(sources[0]["evidence"]["sample"], "[REDACTED]");
-    assert_eq!(response["items"]["caveats"], "suppressed_by_request");
+    assert_eq!(response["payload"]["caveats"], "suppressed_by_request");
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     assert!(
         !response.to_string().contains("secret_fixture_value"),
         "MCP fixture response leaked raw sensitive sample text"
@@ -378,17 +380,17 @@ async fn mcp_source_continuity_list_call_uses_gateway_fixture() -> TestResult<()
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.source_continuity");
-    assert_eq!(response["query"]["since"], "2026-05-19T00:00:00Z");
+    assert_eq!(response["source_surface"], "sinex.source_continuity");
+    assert_eq!(response["query_echo"]["since"], "2026-05-19T00:00:00Z");
     assert_eq!(
-        response["items"]["result"]["reports"][0]["source_family"],
+        response["payload"]["result"]["reports"][0]["source_family"],
         "terminal"
     );
     assert_eq!(
-        response["items"]["result"]["reports"][0]["gaps"][0]["kind"],
+        response["payload"]["result"]["reports"][0]["gaps"][0]["kind"],
         "private_mode"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -407,13 +409,13 @@ async fn mcp_source_drift_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.source_drift");
+    assert_eq!(response["source_surface"], "sinex.source_drift");
     assert_eq!(
-        response["items"]["result"]["drifts"][0]["source_id"],
+        response["payload"]["result"]["drifts"][0]["source_id"],
         "browser.history"
     );
     assert_eq!(
-        response["items"]["result"]["drifts"][0]["type_changes"][0]["key"],
+        response["payload"]["result"]["drifts"][0]["type_changes"][0]["key"],
         "visit_time"
     );
     Ok(())
@@ -431,17 +433,17 @@ async fn mcp_source_continuity_get_call_uses_gateway_fixture() -> TestResult<()>
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.source_continuity");
-    assert_eq!(response["query"]["source_family"], "terminal");
+    assert_eq!(response["source_surface"], "sinex.source_continuity");
+    assert_eq!(response["query_echo"]["source_family"], "terminal");
     assert_eq!(
-        response["items"]["result"]["report"]["source_family"],
+        response["payload"]["result"]["report"]["source_family"],
         "terminal"
     );
     assert_eq!(
-        response["items"]["result"]["report"]["replayability"]["raw_bytes_preserved"],
+        response["payload"]["result"]["report"]["replayability"]["raw_bytes_preserved"],
         true
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -460,17 +462,17 @@ async fn mcp_source_gap_explain_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.source_gap_explain");
-    assert_eq!(response["query"]["source_family"], "terminal");
-    assert_eq!(response["query"]["at"], "2026-05-19T12:05:00Z");
-    assert_eq!(response["items"]["result"]["gap"]["kind"], "private_mode");
+    assert_eq!(response["source_surface"], "sinex.source_gap_explain");
+    assert_eq!(response["query_echo"]["source_family"], "terminal");
+    assert_eq!(response["query_echo"]["at"], "2026-05-19T12:05:00Z");
+    assert_eq!(response["payload"]["result"]["gap"]["kind"], "private_mode");
     assert!(
-        response["items"]["result"]["explanation"]
+        response["payload"]["result"]["explanation"]
             .as_str()
             .unwrap_or_default()
             .contains("coverage gap")
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -489,21 +491,21 @@ async fn mcp_source_identifier_continuity_call_uses_gateway_fixture() -> TestRes
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.source_identifier_continuity");
+    assert_eq!(response["source_surface"], "sinex.source_identifier_continuity");
     assert_eq!(
-        response["query"]["source_identifier"],
+        response["query_echo"]["source_identifier"],
         "/realm/data/captures/fixture.jsonl"
     );
-    assert_eq!(response["query"]["material_kind"], "local_cas");
+    assert_eq!(response["query_echo"]["material_kind"], "local_cas");
     assert_eq!(
-        response["items"]["result"]["source_identifier"],
+        response["payload"]["result"]["source_identifier"],
         "/realm/data/captures/fixture.jsonl"
     );
     assert_eq!(
-        response["items"]["result"]["replayability"]["replayable"],
+        response["payload"]["result"]["replayability"]["replayable"],
         true
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1378,13 +1380,13 @@ async fn mcp_source_materials_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.source_materials");
-    assert_eq!(response["query"]["status"], "completed");
+    assert_eq!(response["source_surface"], "sinex.source_materials");
+    assert_eq!(response["query_echo"]["status"], "completed");
     assert_eq!(
-        response["items"]["result"]["materials"][0]["id"],
+        response["payload"]["result"]["materials"][0]["id"],
         fixture_material_id()
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1400,13 +1402,13 @@ async fn mcp_source_material_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.source_material");
-    assert_eq!(response["query"]["material_id"], fixture_material_id());
+    assert_eq!(response["source_surface"], "sinex.source_material");
+    assert_eq!(response["query_echo"]["material_id"], fixture_material_id());
     assert_eq!(
-        response["items"]["result"]["material"]["metadata"]["redacted"],
+        response["payload"]["result"]["material"]["metadata"]["redacted"],
         true
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1417,13 +1419,13 @@ async fn mcp_source_coverage_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.source_coverage", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.source_coverage");
-    assert_eq!(response["items"]["result"]["sources"][0]["event_count"], 42);
+    assert_eq!(response["source_surface"], "sinex.source_coverage");
+    assert_eq!(response["payload"]["result"]["sources"][0]["event_count"], 42);
     assert_eq!(
-        response["items"]["result"]["sources"][0]["material_count"],
+        response["payload"]["result"]["sources"][0]["material_count"],
         3
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1434,12 +1436,12 @@ async fn mcp_source_presets_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(&client, "sinex.source_presets", json!({})).await?;
 
-    assert_eq!(response["tool"], "sinex.source_presets");
+    assert_eq!(response["source_surface"], "sinex.source_presets");
     assert_eq!(
-        response["items"]["result"]["presets"][0]["name"],
+        response["payload"]["result"]["presets"][0]["name"],
         "terminal.atuin.default"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
@@ -1455,14 +1457,14 @@ async fn mcp_source_bindings_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.source_bindings");
-    assert_eq!(response["query"]["source_family"], "terminal");
-    assert_eq!(response["query"]["include_disabled"], true);
+    assert_eq!(response["source_surface"], "sinex.source_bindings");
+    assert_eq!(response["query_echo"]["source_family"], "terminal");
+    assert_eq!(response["query_echo"]["include_disabled"], true);
     assert_eq!(
-        response["items"]["result"]["bindings"][0]["id"],
+        response["payload"]["result"]["bindings"][0]["id"],
         "terminal-atuin-history"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
 
