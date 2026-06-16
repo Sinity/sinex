@@ -125,7 +125,7 @@ const NONE: &[OutputFormat] = &[];
 /// Build the complete format-capability registry for `sinexctl`.
 ///
 /// Keys match the command path as it appears in `sinexctl --help`, using
-/// space-separated segments (e.g. `"runtime list"`, `"replay plan"`).
+/// space-separated segments (e.g. `"runtime list"`, `"ops replay plan"`).
 ///
 /// Commands that produce no user-visible output (e.g. `completions`,
 /// `tui`, `demo`) appear with an empty supported set and a note explaining
@@ -185,49 +185,49 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Replay ───────────────────────────────────────────────────────────────
     m.insert(
-        "replay plan",
+        "ops replay plan",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "replay preview",
+        "ops replay preview",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "replay approve",
+        "ops replay approve",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "replay execute",
+        "ops replay execute",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "replay submit",
+        "ops replay submit",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "replay cancel",
+        "ops replay cancel",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "replay status",
+        "ops replay status",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "replay list",
+        "ops replay list",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
-    m.insert("replay run", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("ops replay run", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
-        "replay watch",
+        "ops replay watch",
         FormatCapability::streaming(TABLE_JSON_YAML)
             .with_note("streams progress updates until operation completes"),
     );
 
     // ── DLQ ──────────────────────────────────────────────────────────────────
-    m.insert("dlq list", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("dlq peek", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("dlq requeue", FormatCapability::single_shot(TABLE_ONLY));
-    m.insert("dlq purge", FormatCapability::single_shot(TABLE_ONLY));
+    m.insert("ops dlq list", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("ops dlq peek", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("ops dlq requeue", FormatCapability::single_shot(TABLE_ONLY));
+    m.insert("ops dlq purge", FormatCapability::single_shot(TABLE_ONLY));
 
     // ── Query ────────────────────────────────────────────────────────────────
     for path in [
@@ -577,39 +577,39 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
     m.insert(
-        "lifecycle status",
+        "ops lifecycle status",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "lifecycle archive",
+        "ops lifecycle archive",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "lifecycle restore",
+        "ops lifecycle restore",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "lifecycle tombstone create",
+        "ops lifecycle tombstone create",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "lifecycle tombstone approve",
+        "ops lifecycle tombstone approve",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "lifecycle tombstone preview",
+        "ops lifecycle tombstone preview",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "lifecycle tombstone cancel",
+        "ops lifecycle tombstone cancel",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "lifecycle tombstone list",
+        "ops lifecycle tombstone list",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "lifecycle tombstone status",
+        "ops lifecycle tombstone status",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
@@ -896,14 +896,14 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "declare health effect",
         "declare health intake",
         "declare task",
-        "dlq purge",
-        "dlq requeue",
+        "ops dlq purge",
+        "ops dlq requeue",
         "instructions hyprland-workspace",
-        "lifecycle archive",
-        "lifecycle restore",
-        "lifecycle tombstone approve",
-        "lifecycle tombstone cancel",
-        "lifecycle tombstone create",
+        "ops lifecycle archive",
+        "ops lifecycle restore",
+        "ops lifecycle tombstone approve",
+        "ops lifecycle tombstone cancel",
+        "ops lifecycle tombstone create",
         "runtime drain",
         "runtime resume",
         "runtime set-horizon",
@@ -920,13 +920,13 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "privacy policy seed builtin",
         "privacy policy scope bind",
         "privacy policy scope unbind",
-        "replay approve",
-        "replay cancel",
-        "replay execute",
-        "replay plan",
-        "replay preview",
-        "replay run",
-        "replay submit",
+        "ops replay approve",
+        "ops replay cancel",
+        "ops replay execute",
+        "ops replay plan",
+        "ops replay preview",
+        "ops replay run",
+        "ops replay submit",
         "semantics epoch create",
         "semantics lane compare",
         "semantics lane create",
@@ -965,10 +965,10 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         "admin snapshot" | "state snapshot" => &[LocalMaintenance],
         "state restore" => &[DryRun, Confirmation, LocalMaintenance],
         "blob fsck" | "blob migrate" | "blob sweep-orphans" => &[DryRun, LocalMaintenance],
-        "dlq purge" => &[RpcAuth, Confirmation],
-        "lifecycle archive" | "lifecycle restore" | "replay plan" | "replay preview"
-        | "replay run" => &[RpcAuth, DryRun],
-        "lifecycle tombstone approve" => &[RpcAuth, Confirmation],
+        "ops dlq purge" => &[RpcAuth, Confirmation],
+        "ops lifecycle archive" | "ops lifecycle restore" | "ops replay plan" | "ops replay preview"
+        | "ops replay run" => &[RpcAuth, DryRun],
+        "ops lifecycle tombstone approve" => &[RpcAuth, Confirmation],
         "events annotate"
         | "curation duplicate-judge"
         | "curation finalize"
@@ -977,10 +977,10 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "declare health effect"
         | "declare health intake"
         | "declare task"
-        | "dlq requeue"
+        | "ops dlq requeue"
         | "instructions hyprland-workspace"
-        | "lifecycle tombstone cancel"
-        | "lifecycle tombstone create"
+        | "ops lifecycle tombstone cancel"
+        | "ops lifecycle tombstone create"
         | "runtime drain"
         | "runtime resume"
         | "runtime set-horizon"
@@ -997,10 +997,10 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "privacy policy seed builtin"
         | "privacy policy scope bind"
         | "privacy policy scope unbind"
-        | "replay approve"
-        | "replay cancel"
-        | "replay execute"
-        | "replay submit"
+        | "ops replay approve"
+        | "ops replay cancel"
+        | "ops replay execute"
+        | "ops replay submit"
         | "semantics epoch create"
         | "semantics lane compare"
         | "semantics lane create"
@@ -1052,18 +1052,18 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "runtime resume" => &[methods::RUNTIME_RESUME],
         "runtime set-horizon" => &[methods::RUNTIME_SET_HORIZON],
         "runtime automata" => &[methods::AUTOMATA_STATUS],
-        "replay plan" | "replay run" => &[methods::REPLAY_CREATE_OPERATION],
-        "replay preview" => &[methods::REPLAY_PREVIEW_OPERATION],
-        "replay approve" => &[methods::REPLAY_APPROVE_OPERATION],
-        "replay execute" => &[methods::REPLAY_EXECUTE_OPERATION],
-        "replay submit" => &[methods::REPLAY_SUBMIT_OPERATION],
-        "replay cancel" => &[methods::REPLAY_CANCEL_OPERATION],
-        "replay status" | "replay watch" => &[methods::REPLAY_OPERATION_STATUS],
-        "replay list" => &[methods::REPLAY_LIST_OPERATIONS],
-        "dlq list" => &[methods::DLQ_LIST],
-        "dlq peek" => &[methods::DLQ_PEEK],
-        "dlq requeue" => &[methods::DLQ_REQUEUE],
-        "dlq purge" => &[methods::DLQ_PURGE],
+        "ops replay plan" | "ops replay run" => &[methods::REPLAY_CREATE_OPERATION],
+        "ops replay preview" => &[methods::REPLAY_PREVIEW_OPERATION],
+        "ops replay approve" => &[methods::REPLAY_APPROVE_OPERATION],
+        "ops replay execute" => &[methods::REPLAY_EXECUTE_OPERATION],
+        "ops replay submit" => &[methods::REPLAY_SUBMIT_OPERATION],
+        "ops replay cancel" => &[methods::REPLAY_CANCEL_OPERATION],
+        "ops replay status" | "ops replay watch" => &[methods::REPLAY_OPERATION_STATUS],
+        "ops replay list" => &[methods::REPLAY_LIST_OPERATIONS],
+        "ops dlq list" => &[methods::DLQ_LIST],
+        "ops dlq peek" => &[methods::DLQ_PEEK],
+        "ops dlq requeue" => &[methods::DLQ_REQUEUE],
+        "ops dlq purge" => &[methods::DLQ_PURGE],
         "context" | "events query" | "events recent" | "events errors" | "events timeline"
         | "metrics report today" | "metrics report yesterday" | "metrics report calendar" => &[methods::EVENTS_QUERY],
         "relations after"
@@ -1157,15 +1157,15 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "llm prompts" => &[methods::LLM_PROMPTS_LIST],
         "llm route-explain" => &[methods::LLM_ROUTE_EXPLAIN],
         "llm budget-report" => &[methods::LLM_BUDGET_REPORT],
-        "lifecycle status" => &[methods::LIFECYCLE_STATUS],
-        "lifecycle archive" => &[methods::LIFECYCLE_ARCHIVE],
-        "lifecycle restore" => &[methods::LIFECYCLE_RESTORE],
-        "lifecycle tombstone create" => &[methods::LIFECYCLE_TOMBSTONE_CREATE],
-        "lifecycle tombstone approve" => &[methods::LIFECYCLE_TOMBSTONE_APPROVE],
-        "lifecycle tombstone preview" => &[methods::LIFECYCLE_TOMBSTONE_PREVIEW],
-        "lifecycle tombstone cancel" => &[methods::LIFECYCLE_TOMBSTONE_CANCEL],
-        "lifecycle tombstone list" => &[methods::LIFECYCLE_TOMBSTONE_LIST],
-        "lifecycle tombstone status" => &[methods::LIFECYCLE_TOMBSTONE_STATUS],
+        "ops lifecycle status" => &[methods::LIFECYCLE_STATUS],
+        "ops lifecycle archive" => &[methods::LIFECYCLE_ARCHIVE],
+        "ops lifecycle restore" => &[methods::LIFECYCLE_RESTORE],
+        "ops lifecycle tombstone create" => &[methods::LIFECYCLE_TOMBSTONE_CREATE],
+        "ops lifecycle tombstone approve" => &[methods::LIFECYCLE_TOMBSTONE_APPROVE],
+        "ops lifecycle tombstone preview" => &[methods::LIFECYCLE_TOMBSTONE_PREVIEW],
+        "ops lifecycle tombstone cancel" => &[methods::LIFECYCLE_TOMBSTONE_CANCEL],
+        "ops lifecycle tombstone list" => &[methods::LIFECYCLE_TOMBSTONE_LIST],
+        "ops lifecycle tombstone status" => &[methods::LIFECYCLE_TOMBSTONE_STATUS],
         "metrics telemetry window-focus" => &[methods::TELEMETRY_WINDOW_FOCUS],
         "metrics telemetry command-frequency" => &[methods::TELEMETRY_COMMAND_FREQUENCY],
         "metrics telemetry file-activity" => &[methods::TELEMETRY_FILE_ACTIVITY],
@@ -1491,7 +1491,7 @@ mod tests {
         assert_eq!(effect_for("events watch"), Some(CommandEffect::Streaming));
         assert_eq!(effect_for("events annotate"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("completions"), Some(CommandEffect::Local));
-        assert_eq!(effect_for("dlq requeue"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("ops dlq requeue"), Some(CommandEffect::Mutating));
         assert_eq!(
             effect_for("privacy private-mode enable"),
             Some(CommandEffect::Mutating)
@@ -1505,8 +1505,8 @@ mod tests {
             effect_for("instructions hyprland-workspace"),
             Some(CommandEffect::Mutating)
         );
-        assert_eq!(effect_for("replay plan"), Some(CommandEffect::Mutating));
-        assert_eq!(effect_for("replay preview"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("ops replay plan"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("ops replay preview"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("state inspect"), Some(CommandEffect::ReadOnly));
         assert_eq!(effect_for("state restore"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("state snapshot"), Some(CommandEffect::Mutating));
@@ -1713,9 +1713,9 @@ mod tests {
             "status",
             "runtime automata",
             "runtime list",
-            "replay plan",
-            "replay watch",
-            "dlq list",
+            "ops replay plan",
+            "ops replay watch",
+            "ops dlq list",
         ];
         for cmd in required {
             assert!(reg.contains_key(cmd), "registry is missing `{cmd}`");
@@ -1740,8 +1740,8 @@ mod tests {
             "`events watch` must be marked streaming"
         );
         assert!(
-            reg["replay watch"].streaming,
-            "`replay watch` must be marked streaming"
+            reg["ops replay watch"].streaming,
+            "`ops replay watch` must be marked streaming"
         );
         Ok(())
     }

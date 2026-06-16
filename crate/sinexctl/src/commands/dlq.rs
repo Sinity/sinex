@@ -11,19 +11,19 @@ use crate::prompt;
 #[command(after_help = "\
 EXAMPLES:
     # Show DLQ statistics
-    sinexctl dlq list
+    sinexctl ops dlq list
 
     # Peek at messages in the DLQ
-    sinexctl dlq peek -n 5
+    sinexctl ops dlq peek -n 5
 
     # Requeue a specific message for retry
-    sinexctl dlq requeue --event-id 01HQ2KM...
+    sinexctl ops dlq requeue --event-id 01HQ2KM...
 
     # Requeue all failed messages
-    sinexctl dlq requeue --all
+    sinexctl ops dlq requeue --all
 
     # Purge all messages (requires confirmation)
-    sinexctl dlq purge --confirm
+    sinexctl ops dlq purge --confirm
 ")]
 pub enum DlqCommands {
     /// Show DLQ statistics

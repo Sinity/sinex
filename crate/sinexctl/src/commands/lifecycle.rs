@@ -38,17 +38,17 @@ TIERS:
 
 EXAMPLES:
     # Show lifecycle status
-    sinexctl lifecycle status
+    sinexctl ops lifecycle status
 
     # Archive old events
-    sinexctl lifecycle archive --before 30d --source terminal
+    sinexctl ops lifecycle archive --before 30d --source terminal
 
     # Restore archived events
-    sinexctl lifecycle restore <event_id>
+    sinexctl ops lifecycle restore <event_id>
 
     # Two-step tombstone (safer):
-    sinexctl lifecycle tombstone create --before 365d --reason 'Annual cleanup'
-    sinexctl lifecycle tombstone approve <operation_id> --yes-i-understand-data-is-gone
+    sinexctl ops lifecycle tombstone create --before 365d --reason 'Annual cleanup'
+    sinexctl ops lifecycle tombstone approve <operation_id> --yes-i-understand-data-is-gone
 ")]
 pub enum LifecycleCommands {
     /// Show lifecycle tier status (event counts, age distributions)
@@ -212,11 +212,11 @@ TWO-STEP TOMBSTONE FLOW:
     a two-step confirmation flow is required:
 
     1. CREATE: Create a tombstone operation with cascade preview
-       sinexctl lifecycle tombstone create --before 365d --reason 'Annual cleanup'
+       sinexctl ops lifecycle tombstone create --before 365d --reason 'Annual cleanup'
        -> Returns operation_id and cascade analysis
 
     2. APPROVE: Review and approve the operation (must be done within 1 hour)
-       sinexctl lifecycle tombstone approve <operation_id> --yes-i-understand-data-is-gone
+       sinexctl ops lifecycle tombstone approve <operation_id> --yes-i-understand-data-is-gone
        -> Executes the tombstone (data is permanently deleted!)
 
 OTHER COMMANDS:
@@ -630,13 +630,13 @@ fn format_tombstone_create_table(response: &TombstoneCreateResponse) -> String {
     output.push('\n');
     output.push_str("To approve and execute, run within 1 hour:\n");
     output.push_str(&format!(
-        "  sinexctl lifecycle tombstone approve {} --yes-i-understand-data-is-gone\n",
+        "  sinexctl ops lifecycle tombstone approve {} --yes-i-understand-data-is-gone\n",
         response.operation.operation_id
     ));
     output.push('\n');
     output.push_str("To cancel:\n");
     output.push_str(&format!(
-        "  sinexctl lifecycle tombstone cancel {}\n",
+        "  sinexctl ops lifecycle tombstone cancel {}\n",
         response.operation.operation_id
     ));
 

@@ -15,6 +15,7 @@ use sinexctl::commands::{
     ReplayCommands, RuntimeCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
     TasksCommand, TuiCommand, VerifyCommand,
 };
+use sinexctl::commands::lifecycle::TombstoneCommands;
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
 use sinexctl::model::OutputFormat;
@@ -118,18 +119,6 @@ enum Commands {
         cmd: RuntimeCommands,
     },
 
-    /// Replay operations
-    Replay {
-        #[command(subcommand)]
-        cmd: ReplayCommands,
-    },
-
-    /// Dead letter queue operations
-    Dlq {
-        #[command(subcommand)]
-        cmd: DlqCommands,
-    },
-
     /// Evaluate event relations over live events
     Relations(RelationsCommand),
 
@@ -192,12 +181,6 @@ enum Commands {
 
     /// Document search, retrieval, and chunk browsing
     Documents(DocumentsCommand),
-
-    /// Data lifecycle management (archive, restore, tombstone)
-    Lifecycle {
-        #[command(subcommand)]
-        cmd: LifecycleCommands,
-    },
 
     /// Metrics, telemetry, and activity reports
     Metrics {
@@ -349,8 +332,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Blob { .. } => unreachable!("Blob command handled above"),
                 Commands::Core { cmd } => cmd.execute(&client, format).await?,
                 Commands::Runtime { cmd } => cmd.execute(&client, format).await?,
-                Commands::Replay { cmd } => cmd.execute(&client, format).await?,
-                Commands::Dlq { cmd } => cmd.execute(&client, format).await?,
                 Commands::Relations(cmd) => cmd.execute(&client, format).await?,
                 Commands::Events { cmd } => cmd.execute(&client, format).await?,
                 Commands::Ops { cmd } => cmd.execute(&client, format).await?,
@@ -368,7 +349,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Semantics(cmd) => cmd.execute(&client, format).await?,
                 Commands::Llm(cmd) => cmd.execute(&client, format).await?,
                 Commands::Documents(cmd) => cmd.execute(&client, format).await?,
-                Commands::Lifecycle { cmd } => cmd.execute(&client, format).await?,
                 Commands::Metrics { cmd } => cmd.execute(&client, format).await?,
                 Commands::Status(cmd) => {
                     cmd.execute(&client, config.runtime_target.as_ref(), format)
@@ -620,10 +600,8 @@ fn operator_surface_catalog() -> OperatorSurfaceCatalog {
 
 /// Derive the registry key for a [`Commands`] variant.
 fn command_path(cmd: &Commands) -> String {
-    use sinexctl::commands::lifecycle::TombstoneCommands;
     use sinexctl::commands::{
-        ConfigCommands, DlqCommands, GatewayCommands, LifecycleCommands, OpsCommands,
-        ReplayCommands, RuntimeCommands,
+        ConfigCommands, GatewayCommands, OpsCommands, RuntimeCommands,
     };
     match cmd {
         Commands::Gateway { cmd } => match cmd {
@@ -646,24 +624,6 @@ fn command_path(cmd: &Commands) -> String {
             RuntimeCommands::Resume { .. } => "runtime resume".to_string(),
             RuntimeCommands::SetHorizon { .. } => "runtime set-horizon".to_string(),
         },
-        Commands::Replay { cmd } => match cmd {
-            ReplayCommands::Plan { .. } => "replay plan".to_string(),
-            ReplayCommands::Preview { .. } => "replay preview".to_string(),
-            ReplayCommands::Approve { .. } => "replay approve".to_string(),
-            ReplayCommands::Execute { .. } => "replay execute".to_string(),
-            ReplayCommands::Submit { .. } => "replay submit".to_string(),
-            ReplayCommands::Cancel { .. } => "replay cancel".to_string(),
-            ReplayCommands::Status { .. } => "replay status".to_string(),
-            ReplayCommands::Watch { .. } => "replay watch".to_string(),
-            ReplayCommands::List { .. } => "replay list".to_string(),
-            ReplayCommands::Run { .. } => "replay run".to_string(),
-        },
-        Commands::Dlq { cmd } => match cmd {
-            DlqCommands::List => "dlq list".to_string(),
-            DlqCommands::Peek { .. } => "dlq peek".to_string(),
-            DlqCommands::Requeue { .. } => "dlq requeue".to_string(),
-            DlqCommands::Purge { .. } => "dlq purge".to_string(),
-        },
         Commands::Relations(cmd) => cmd.command_path().to_string(),
         Commands::Events { cmd } => cmd.command_path().to_string(),
         Commands::Ops { cmd } => match cmd {
@@ -675,6 +635,9 @@ fn command_path(cmd: &Commands) -> String {
                 sinexctl::commands::ops::JobsCommands::List { .. } => "ops jobs list".to_string(),
                 sinexctl::commands::ops::JobsCommands::Show { .. } => "ops jobs show".to_string(),
             },
+            OpsCommands::Dlq(cmd) => prefixed("ops", dlq_command_path(cmd)),
+            OpsCommands::Replay(cmd) => prefixed("ops", replay_command_path(cmd)),
+            OpsCommands::Lifecycle(cmd) => prefixed("ops", lifecycle_command_path(cmd)),
         },
         Commands::Privacy(cmd) => cmd.command_path().to_string(),
         Commands::Audit(_) => "audit".to_string(),
@@ -796,19 +759,6 @@ fn command_path(cmd: &Commands) -> String {
                 LlmSubcommand::BudgetReport(_) => "llm budget-report".to_string(),
             }
         }
-        Commands::Lifecycle { cmd } => match cmd {
-            LifecycleCommands::Status(_) => "lifecycle status".to_string(),
-            LifecycleCommands::Archive(_) => "lifecycle archive".to_string(),
-            LifecycleCommands::Restore(_) => "lifecycle restore".to_string(),
-            LifecycleCommands::Tombstone(cmd) => match cmd {
-                TombstoneCommands::Create(_) => "lifecycle tombstone create".to_string(),
-                TombstoneCommands::Approve(_) => "lifecycle tombstone approve".to_string(),
-                TombstoneCommands::Preview(_) => "lifecycle tombstone preview".to_string(),
-                TombstoneCommands::Cancel(_) => "lifecycle tombstone cancel".to_string(),
-                TombstoneCommands::List(_) => "lifecycle tombstone list".to_string(),
-                TombstoneCommands::Status(_) => "lifecycle tombstone status".to_string(),
-            },
-        },
         Commands::Metrics { cmd } => cmd.command_path().to_string(),
         Commands::Status(_) => "status".to_string(),
         Commands::Context(_) => "context".to_string(),
@@ -824,6 +774,50 @@ fn command_path(cmd: &Commands) -> String {
                 AdminCommands::SnapshotRestore(_) => "admin snapshot-restore".to_string(),
             }
         }
+    }
+}
+
+fn prefixed(prefix: &str, path: String) -> String {
+    format!("{prefix} {path}")
+}
+
+fn replay_command_path(cmd: &ReplayCommands) -> String {
+    match cmd {
+        ReplayCommands::Plan { .. } => "replay plan".to_string(),
+        ReplayCommands::Preview { .. } => "replay preview".to_string(),
+        ReplayCommands::Approve { .. } => "replay approve".to_string(),
+        ReplayCommands::Execute { .. } => "replay execute".to_string(),
+        ReplayCommands::Submit { .. } => "replay submit".to_string(),
+        ReplayCommands::Cancel { .. } => "replay cancel".to_string(),
+        ReplayCommands::Status { .. } => "replay status".to_string(),
+        ReplayCommands::Watch { .. } => "replay watch".to_string(),
+        ReplayCommands::List { .. } => "replay list".to_string(),
+        ReplayCommands::Run { .. } => "replay run".to_string(),
+    }
+}
+
+fn dlq_command_path(cmd: &DlqCommands) -> String {
+    match cmd {
+        DlqCommands::List => "dlq list".to_string(),
+        DlqCommands::Peek { .. } => "dlq peek".to_string(),
+        DlqCommands::Requeue { .. } => "dlq requeue".to_string(),
+        DlqCommands::Purge { .. } => "dlq purge".to_string(),
+    }
+}
+
+fn lifecycle_command_path(cmd: &LifecycleCommands) -> String {
+    match cmd {
+        LifecycleCommands::Status(_) => "lifecycle status".to_string(),
+        LifecycleCommands::Archive(_) => "lifecycle archive".to_string(),
+        LifecycleCommands::Restore(_) => "lifecycle restore".to_string(),
+        LifecycleCommands::Tombstone(cmd) => match cmd {
+            TombstoneCommands::Create(_) => "lifecycle tombstone create".to_string(),
+            TombstoneCommands::Approve(_) => "lifecycle tombstone approve".to_string(),
+            TombstoneCommands::Preview(_) => "lifecycle tombstone preview".to_string(),
+            TombstoneCommands::Cancel(_) => "lifecycle tombstone cancel".to_string(),
+            TombstoneCommands::List(_) => "lifecycle tombstone list".to_string(),
+            TombstoneCommands::Status(_) => "lifecycle tombstone status".to_string(),
+        },
     }
 }
 
@@ -1262,8 +1256,8 @@ mod tests {
     #[sinex_test]
     async fn command_path_preserves_format_registry_leaf_commands() -> TestResult<()> {
         let cases = [
-            (vec!["sinexctl", "dlq", "requeue", "--all"], "dlq requeue"),
-            (vec!["sinexctl", "dlq", "purge", "--confirm"], "dlq purge"),
+            (vec!["sinexctl", "ops", "dlq", "requeue", "--all"], "ops dlq requeue"),
+            (vec!["sinexctl", "ops", "dlq", "purge", "--confirm"], "ops dlq purge"),
             (vec!["sinexctl", "config", "init"], "config init"),
             (vec!["sinexctl", "config", "path"], "config path"),
             (vec!["sinexctl", "config", "edit"], "config edit"),
@@ -1278,37 +1272,40 @@ mod tests {
             (
                 vec![
                     "sinexctl",
+                    "ops",
                     "lifecycle",
                     "tombstone",
                     "approve",
                     "0196ed62-8f7a-7000-8000-000000000001",
                     "--yes-i-understand-data-is-gone",
                 ],
-                "lifecycle tombstone approve",
+                "ops lifecycle tombstone approve",
             ),
             (
                 vec![
                     "sinexctl",
+                    "ops",
                     "lifecycle",
                     "tombstone",
                     "preview",
                     "0196ed62-8f7a-7000-8000-000000000001",
                 ],
-                "lifecycle tombstone preview",
+                "ops lifecycle tombstone preview",
             ),
             (
                 vec![
                     "sinexctl",
+                    "ops",
                     "lifecycle",
                     "tombstone",
                     "cancel",
                     "0196ed62-8f7a-7000-8000-000000000001",
                 ],
-                "lifecycle tombstone cancel",
+                "ops lifecycle tombstone cancel",
             ),
             (
-                vec!["sinexctl", "lifecycle", "tombstone", "list"],
-                "lifecycle tombstone list",
+                vec!["sinexctl", "ops", "lifecycle", "tombstone", "list"],
+                "ops lifecycle tombstone list",
             ),
             (
                 vec!["sinexctl", "declare", "task", "--title", "fixture"],
@@ -1609,12 +1606,13 @@ mod tests {
             (
                 vec![
                     "sinexctl",
+                    "ops",
                     "lifecycle",
                     "tombstone",
                     "status",
                     "0196ed62-8f7a-7000-8000-000000000001",
                 ],
-                "lifecycle tombstone status",
+                "ops lifecycle tombstone status",
             ),
         ];
 
