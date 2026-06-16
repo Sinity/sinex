@@ -156,8 +156,10 @@ let
   aggregateMemoryFor = sourceIds:
     foldl' (total: sourceId: total + memoryFor sourceId) 0 sourceIds;
 
+  sinexdBaseMemoryMiB = 4096;
+
   unitMemoryLimitFor = sourceIds:
-    let total = aggregateMemoryFor sourceIds;
+    let total = sinexdBaseMemoryMiB + aggregateMemoryFor sourceIds;
     in
     if sourceIds == [ ] then { }
     else { MemoryMax = "${toString total}M"; };
