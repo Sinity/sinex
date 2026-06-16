@@ -989,7 +989,7 @@ fn replay_operation_card(operation: &ReplayOperation) -> OperationRoomCard {
         affected_refs: replay_scope_refs(operation),
         caveats: replay_caveats(operation),
         actions,
-        audit_refs: vec![format!("sinexctl audit {}", operation.operation_id)],
+        audit_refs: vec![format!("sinexctl ops audit {}", operation.operation_id)],
     }
 }
 
@@ -1065,7 +1065,7 @@ fn ops_operation_card(operation: &OpsOperation) -> OperationRoomCard {
             .iter()
             .filter_map(operation_room_action_from_availability)
             .collect(),
-        audit_refs: vec![format!("sinexctl audit {}", view.id)],
+        audit_refs: vec![format!("sinexctl ops audit {}", view.id)],
     }
 }
 
@@ -2412,7 +2412,7 @@ mod tests {
                     "not implemented: context pack",
                 ),
             ],
-            audit_refs: vec!["sinexctl audit op-fixture".to_string()],
+            audit_refs: vec!["sinexctl ops audit op-fixture".to_string()],
         };
         let mut terminal = Terminal::new(TestBackend::new(84, 22))?;
         terminal.draw(|f| render_operation_card_detail(f, f.area(), &card))?;

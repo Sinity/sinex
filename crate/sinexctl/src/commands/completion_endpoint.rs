@@ -652,6 +652,7 @@ mod tests {
             "telemetry",
             "report",
             "relations",
+            "audit",
             "documents",
             "semantics",
             "completions",
