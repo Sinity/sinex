@@ -1474,17 +1474,16 @@ async fn mcp_sources_status_view_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["source_surface"], "sinex.sources_status_view");
     assert_eq!(
-        response["payload"]["result"]["source_surface"],
-        "sources.status"
+        response["payload"]["schema_version"],
+        "sinex.source-coverage-list/v1"
     );
+    assert_eq!(response["payload"]["count"], 1);
     assert_eq!(
-        response["payload"]["result"]["payload"]["sources"][0]["source_id"],
+        response["payload"]["sources"][0]["source_id"],
         "terminal.atuin-history"
     );
-    assert_eq!(
-        response["payload"]["result"]["payload"]["sources"][0]["event_count"],
-        42
-    );
+    assert_eq!(response["payload"]["sources"][0]["event_count"], 42);
+    assert!(response["payload"]["result"].is_null());
     assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
