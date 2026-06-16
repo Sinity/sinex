@@ -688,12 +688,12 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
-    // ── Shortcuts ────────────────────────────────────────────────────────────
+    // ── Dashboards and finite query views ────────────────────────────────────
     m.insert("status", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("context", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("verify", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("events context", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("ops verify", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
-        "verify baseline",
+        "ops verify baseline",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -729,7 +729,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Demo ─────────────────────────────────────────────────────────────────
     m.insert(
-        "demo",
+        "ops demo",
         FormatCapability::single_shot(NONE)
             .with_note("writes directly to the database; --format is not applicable"),
     );
@@ -818,7 +818,7 @@ fn family_for_path(path: &str) -> CommandFamily {
     let root = path.split_once(' ').map_or(path, |(root, _)| root);
     match root {
         "gateway" | "core" => CommandFamily::Gateway,
-        "events" | "context" | "verify" | "now" | "status" => CommandFamily::Query,
+        "events" | "now" | "status" => CommandFamily::Query,
         "runtime" | "replay" | "dlq" | "ops" | "lifecycle" | "privacy" => {
             CommandFamily::Operate
         }
@@ -1022,7 +1022,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "ops dlq peek" => &[methods::DLQ_PEEK],
         "ops dlq requeue" => &[methods::DLQ_REQUEUE],
         "ops dlq purge" => &[methods::DLQ_PURGE],
-        "context" | "events query" | "events recent" | "events errors" | "events timeline"
+        "events context" | "events query" | "events recent" | "events errors" | "events timeline"
         | "metrics report today" | "metrics report yesterday" | "metrics report calendar" => &[methods::EVENTS_QUERY],
         "events relations after"
         | "events relations before"
@@ -1030,7 +1030,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         | "events relations same"
         | "events relations sequence"
         | "events relations within" => &[methods::EVENTS_RELATION_EVIDENCE],
-        "verify baseline" => &[],
+        "ops verify baseline" => &[],
         "events trace" | "events inspect" | "events explain" => &[methods::EVENTS_LINEAGE],
         "events watch" => &[],
         "ops start" => &[methods::OPS_START],
@@ -1366,8 +1366,8 @@ mod tests {
     async fn validate_format_accepts_supported() -> xtask::sandbox::TestResult<()> {
         assert!(validate_format("events query", OutputFormat::Json).is_ok());
         assert!(validate_format("events query", OutputFormat::Ndjson).is_ok());
-        assert!(validate_format("context", OutputFormat::Json).is_ok());
-        assert!(validate_format("context", OutputFormat::Ndjson).is_err());
+        assert!(validate_format("events context", OutputFormat::Json).is_ok());
+        assert!(validate_format("events context", OutputFormat::Ndjson).is_err());
         assert!(validate_format("status", OutputFormat::Json).is_ok());
         assert!(validate_format("status", OutputFormat::Ndjson).is_err());
         assert!(validate_format("events explain", OutputFormat::Json).is_ok());
@@ -1665,11 +1665,14 @@ mod tests {
             "events annotate",
             "events relations within",
             "status",
+            "events context",
             "runtime automata",
             "runtime list",
             "ops replay plan",
             "ops replay watch",
             "ops dlq list",
+            "ops verify",
+            "ops demo",
         ];
         for cmd in required {
             assert!(reg.contains_key(cmd), "registry is missing `{cmd}`");

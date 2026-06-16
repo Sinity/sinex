@@ -1,4 +1,4 @@
-//! `sinexctl verify baseline` — comprehensive verification battery (#1565).
+//! `sinexctl ops verify baseline` — comprehensive verification battery (#1565).
 //!
 //! Runs a set of weighted checks across schema integrity, closure hygiene,
 //! source coverage, privacy invariants, replay integrity, drift-guard
@@ -137,7 +137,7 @@ async fn run_baseline(args: BaselineArgs, format: OutputFormat) -> Result<()> {
         println!();
         println!(
             "{}",
-            style("sinexctl verify baseline — Comprehensive Verification")
+            style("sinexctl ops verify baseline — Comprehensive Verification")
                 .bold()
                 .cyan()
         );
@@ -169,7 +169,7 @@ async fn run_baseline(args: BaselineArgs, format: OutputFormat) -> Result<()> {
         }
         OutputFormat::Dot => {
             return Err(eyre!(
-                "verify baseline does not support --format dot; use --format json|yaml|table"
+                "ops verify baseline does not support --format dot; use --format json|yaml|table"
             ));
         }
     }
