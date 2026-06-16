@@ -21,6 +21,7 @@ use sinex_primitives::rpc::curation::CurationListProposalsRequest;
 use sinex_primitives::rpc::documents::{
     DocumentsGetChunksRequest, DocumentsGetRequest, DocumentsSearchRequest,
 };
+use sinex_primitives::rpc::events::EventsRelationEvidenceRequest;
 use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmPromptsListRequest, LlmRouteExplainRequest,
 };
@@ -457,6 +458,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             read_only: true,
         },
         McpCatalogEntry {
+            name: "sinex.relation_evidence",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only relation-evidence window over live events.",
+            backing_rpc_methods: &[methods::EVENTS_RELATION_EVIDENCE],
+            read_only: true,
+        },
+        McpCatalogEntry {
             name: "sinex.source_readiness",
             kind: McpSurfaceKind::Tool,
             description: "Read-only source readiness, caveat, freshness, and cost report.",
@@ -600,6 +608,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only source liveness, health, and emission status.",
             backing_rpc_methods: &[methods::SOURCES_STATUS],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.sources_status_view",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only operator ViewEnvelope source coverage/status surface.",
+            backing_rpc_methods: &[methods::SOURCES_STATUS_VIEW],
             read_only: true,
         },
         McpCatalogEntry {
@@ -942,6 +957,28 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
+            "sinex.relation_evidence",
+            json!({
+                "type": "object",
+                "required": ["seed_query", "relation"],
+                "properties": {
+                    "seed_query": {
+                        "type": "object",
+                        "description": "EventQuery used to select seed events."
+                    },
+                    "candidate_query": {
+                        "type": "object",
+                        "description": "Optional EventQuery used to select candidate events."
+                    },
+                    "relation": {
+                        "type": "object",
+                        "description": "EventRelationExpr, e.g. {\"relation\":\"within\",\"within_secs\":300}."
+                    }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        mcp_tool(
             "sinex.source_readiness",
             json!({
                 "type": "object",
@@ -1193,6 +1230,7 @@ pub fn tools() -> Vec<McpTool> {
         mcp_tool("sinex.semantic_lane_diffs", lane_records_schema()),
         mcp_tool("sinex.automata_status", status_window_schema()),
         mcp_tool("sinex.sources_status", status_window_schema()),
+        mcp_tool("sinex.sources_status_view", empty_object_schema()),
         mcp_tool("sinex.source_health", stale_after_schema()),
         mcp_tool("sinex.sources_active", stale_after_schema()),
         mcp_tool("sinex.sources_registry", empty_object_schema()),
@@ -1591,6 +1629,7 @@ async fn call_tool_events_sources(
     let result = match name {
         "sinex.search_events" => search_events(client, arguments).await?,
         "sinex.trace_lineage" => trace_lineage(client, arguments).await?,
+        "sinex.relation_evidence" => relation_evidence(client, arguments).await?,
         "sinex.source_readiness" => source_readiness(client, arguments).await?,
         "sinex.source_continuity" => source_continuity(client, arguments).await?,
         "sinex.source_drift" => source_drift(client, arguments).await?,
@@ -1628,6 +1667,7 @@ async fn call_tool_runtime_analytics(
     let result = match name {
         "sinex.automata_status" => automata_status(client, arguments).await?,
         "sinex.sources_status" => sources_status(client, arguments).await?,
+        "sinex.sources_status_view" => sources_status_view(client, arguments).await?,
         "sinex.source_health" => runtime_health(client, arguments).await?,
         "sinex.sources_active" => runtime_active(client, arguments).await?,
         "sinex.sources_registry" => runtime_registry(client, arguments).await?,
@@ -1724,6 +1764,21 @@ async fn trace_lineage(client: &GatewayClient, arguments: Value) -> Result<Value
         "sinex.trace_lineage",
         &json!(args),
         &json!({ "result": result }),
+    )?)
+}
+
+async fn relation_evidence(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let mut request: EventsRelationEvidenceRequest = serde_json::from_value(arguments)?;
+    request.seed_query.validate()?;
+    if let Some(candidate_query) = request.candidate_query.as_mut() {
+        candidate_query.validate()?;
+    }
+
+    let response = client.relation_evidence(request.clone()).await?;
+    Ok(mcp_view_envelope(
+        "sinex.relation_evidence",
+        &json!(request),
+        &json!({ "result": response }),
     )?)
 }
 
@@ -2034,6 +2089,16 @@ async fn sources_status(client: &GatewayClient, arguments: Value) -> Result<Valu
         &json!(args),
         &json!({ "result": response }),
     ))
+}
+
+async fn sources_status_view(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.sources_status_view", &arguments)?;
+    let response = client.sources_status_view().await?;
+    Ok(mcp_view_envelope(
+        "sinex.sources_status_view",
+        &json!({}),
+        &json!({ "result": response }),
+    )?)
 }
 
 async fn runtime_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -2598,18 +2663,7 @@ fn document_side_data_redaction() -> Value {
 }
 
 fn envelope(tool: &str, query: &Value, result: &Value) -> Value {
-    json!({
-        "tool": tool,
-        "generated_at": Timestamp::now(),
-        "query": query,
-        "provenance_refs": [],
-        "caveats": ["mcp.raw_samples_redacted"],
-        "redaction": {
-            "mode": "gateway_default",
-            "raw_samples": false
-        },
-        "items": result
-    })
+    mcp_view_envelope(tool, query, result).expect("MCP ViewEnvelope serialization should not fail")
 }
 
 fn mcp_view_envelope(tool: &str, query: &Value, payload: &Value) -> Result<Value> {

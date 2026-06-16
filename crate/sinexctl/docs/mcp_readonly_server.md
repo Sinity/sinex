@@ -45,6 +45,7 @@ control plane and not an actuator.
 | `sinex.ops_list` |
 | `sinex.privacy_status` |
 | `sinex.recent_activity` |
+| `sinex.relation_evidence` |
 | `sinex.replay_operations` |
 | `sinex.replay_status` |
 | `sinex.search_events` |
@@ -68,6 +69,7 @@ control plane and not an actuator.
 | `sinex.sources_active` |
 | `sinex.sources_registry` |
 | `sinex.sources_status` |
+| `sinex.sources_status_view` |
 | `sinex.stream_stats` |
 | `sinex.system_health` |
 | `sinex.system_ping` |
@@ -140,18 +142,18 @@ explicit policy work, not a quiet addition to `crate/sinexctl/src/mcp.rs`:
 
 ## Common Response Shape
 
-Every tool response is structured JSON with:
+Every tool response is a `ViewEnvelope`-shaped structured JSON object:
 
-- `items` or a named result object, never opaque prose only;
-- `ids` for events, source materials, runs, operations, evidence;
-- `provenance_refs` when the result depends on events or materials;
-- `caveats` using stable machine-readable codes when available;
-- `redaction` metadata when fields are suppressed or summarized;
-- `generated_at` plus the query parameters that shaped the result.
+- `source_surface` names the MCP tool that produced the view;
+- `query_echo` records the query parameters that shaped the result;
+- `payload` contains the typed or JSON result object;
+- `caveats` uses stable machine-readable IDs when available;
+- `privacy_state` records redaction state when fields are suppressed or
+  summarized;
+- `generated_at` and `freshness` timestamp the view.
 
-Payload snippets default to summaries or redacted samples. Returning
-raw material bytes or private text requires an explicit future policy
-gate.
+Payload snippets default to summaries or redacted samples. Returning raw
+material bytes or private text requires an explicit future policy gate.
 
 ## Tool Schema Requirements
 
