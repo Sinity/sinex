@@ -945,36 +945,36 @@ fn replay_operation_card(operation: &ReplayOperation) -> OperationRoomCard {
         OperationRoomAction::new(
             "monitor",
             ActionAvailabilityState::Enabled,
-            format!("sinexctl replay watch {}", operation.operation_id),
+            format!("sinexctl ops replay watch {}", operation.operation_id),
         ),
         OperationRoomAction::new(
             "status",
             ActionAvailabilityState::Enabled,
-            format!("sinexctl replay status {}", operation.operation_id),
+            format!("sinexctl ops replay status {}", operation.operation_id),
         ),
     ];
     match operation.state {
         ReplayState::Planning => actions.push(OperationRoomAction::new(
             "preview",
             ActionAvailabilityState::Enabled,
-            format!("sinexctl replay preview {}", operation.operation_id),
+            format!("sinexctl ops replay preview {}", operation.operation_id),
         )),
         ReplayState::Previewed => actions.push(OperationRoomAction::new(
             "confirm",
             ActionAvailabilityState::Dangerous,
-            format!("sinexctl replay approve {}", operation.operation_id),
+            format!("sinexctl ops replay approve {}", operation.operation_id),
         )),
         ReplayState::Approved => actions.push(OperationRoomAction::new(
             "execute",
             ActionAvailabilityState::Dangerous,
-            format!("sinexctl replay execute {}", operation.operation_id),
+            format!("sinexctl ops replay execute {}", operation.operation_id),
         )),
         ReplayState::Executing | ReplayState::Cancelling | ReplayState::Committing => {
             actions.push(OperationRoomAction::new(
                 "cancel",
                 ActionAvailabilityState::Dangerous,
                 format!(
-                    "sinexctl replay cancel {} --reason <reason>",
+                    "sinexctl ops replay cancel {} --reason <reason>",
                     operation.operation_id
                 ),
             ));
@@ -982,7 +982,7 @@ fn replay_operation_card(operation: &ReplayOperation) -> OperationRoomCard {
         ReplayState::Completed | ReplayState::Failed | ReplayState::Cancelled => {}
     }
     OperationRoomCard {
-        title: format!("replay {}", operation.operation_id),
+        title: format!("ops replay {}", operation.operation_id),
         authority: "write".to_string(),
         phase: format!("{:?}", operation.state).to_lowercase(),
         progress,
@@ -1110,20 +1110,20 @@ fn dlq_operation_card(app: &App) -> OperationRoomCard {
             OperationRoomAction::new(
                 "peek",
                 ActionAvailabilityState::Enabled,
-                "sinexctl dlq peek --limit 10",
+                "sinexctl ops dlq peek --limit 10",
             ),
             OperationRoomAction::new(
                 "requeue",
                 ActionAvailabilityState::Dangerous,
-                "sinexctl dlq requeue --all",
+                "sinexctl ops dlq requeue --all",
             ),
             OperationRoomAction::new(
                 "purge",
                 ActionAvailabilityState::Dangerous,
-                "sinexctl dlq purge --confirm",
+                "sinexctl ops dlq purge --confirm",
             ),
         ],
-        audit_refs: vec!["sinexctl dlq list".to_string()],
+        audit_refs: vec!["sinexctl ops dlq list".to_string()],
     }
 }
 
@@ -1167,12 +1167,12 @@ fn automaton_dlq_card(app: &App) -> Option<OperationRoomCard> {
             OperationRoomAction::new(
                 "peek",
                 ActionAvailabilityState::Enabled,
-                "sinexctl dlq peek --limit 10",
+                "sinexctl ops dlq peek --limit 10",
             ),
             OperationRoomAction::new(
                 "requeue after repair",
                 ActionAvailabilityState::Dangerous,
-                "sinexctl dlq requeue --all",
+                "sinexctl ops dlq requeue --all",
             ),
         ],
         audit_refs: vec!["Ref #1241 automaton telemetry DLQ verification".to_string()],
@@ -1214,7 +1214,7 @@ fn lifecycle_operation_card(app: &App) -> OperationRoomCard {
         .as_ref()
         .map_or(0, |status| status.total_events);
     OperationRoomCard {
-        title: "lifecycle archive/restore/tombstone".to_string(),
+        title: "ops lifecycle archive/restore/tombstone".to_string(),
         authority: "admin".to_string(),
         phase: "guarded".to_string(),
         progress: format!("{total_events} event(s) across lifecycle tiers"),
@@ -1227,25 +1227,25 @@ fn lifecycle_operation_card(app: &App) -> OperationRoomCard {
             OperationRoomAction::new(
                 "archive dry-run",
                 ActionAvailabilityState::Enabled,
-                "sinexctl lifecycle archive --limit 1000",
+                "sinexctl ops lifecycle archive --limit 1000",
             ),
             OperationRoomAction::new(
                 "restore dry-run",
                 ActionAvailabilityState::Enabled,
-                "sinexctl lifecycle restore <event-id>...",
+                "sinexctl ops lifecycle restore <event-id>...",
             ),
             OperationRoomAction::new(
                 "tombstone preview",
                 ActionAvailabilityState::Dangerous,
-                "sinexctl lifecycle tombstone preview <operation-id>",
+                "sinexctl ops lifecycle tombstone preview <operation-id>",
             ),
             OperationRoomAction::new(
                 "tombstone approve",
                 ActionAvailabilityState::Dangerous,
-                "sinexctl lifecycle tombstone approve <operation-id>",
+                "sinexctl ops lifecycle tombstone approve <operation-id>",
             ),
         ],
-        audit_refs: vec!["sinexctl lifecycle status".to_string()],
+        audit_refs: vec!["sinexctl ops lifecycle status".to_string()],
     }
 }
 
@@ -2241,8 +2241,8 @@ fn render_dlq(f: &mut Frame, area: Rect, app: &App) {
                 ListItem::new(format!("First Sequence: {}", stats.first_seq)),
                 ListItem::new(format!("Last Sequence: {}", stats.last_seq)),
                 ListItem::new(""),
-                ListItem::new("Use 'sinexctl dlq peek' to inspect raw-ingest failures."),
-                ListItem::new("Use 'sinexctl dlq requeue --all' to retry."),
+                ListItem::new("Use 'sinexctl ops dlq peek' to inspect raw-ingest failures."),
+                ListItem::new("Use 'sinexctl ops dlq requeue --all' to retry."),
             ];
             (title, items)
         }
@@ -2399,12 +2399,12 @@ mod tests {
                 OperationRoomAction::new(
                     "status",
                     ActionAvailabilityState::Enabled,
-                    "sinexctl replay status op-fixture",
+                    "sinexctl ops replay status op-fixture",
                 ),
                 OperationRoomAction::new(
                     "execute",
                     ActionAvailabilityState::Dangerous,
-                    "sinexctl replay execute op-fixture",
+                    "sinexctl ops replay execute op-fixture",
                 ),
                 OperationRoomAction::new(
                     "context pack",
@@ -2458,7 +2458,7 @@ mod tests {
         assert!(actions.contains(&(
             "replay",
             ActionAvailabilityState::Dangerous,
-            "sinexctl replay submit --ref-op op-fixture",
+            "sinexctl ops replay submit --ref-op op-fixture",
         )));
         Ok(())
     }
