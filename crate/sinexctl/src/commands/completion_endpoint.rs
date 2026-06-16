@@ -26,11 +26,18 @@ pub struct CompletionEndpointCommand {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompletionCandidate {
     pub value: String,
+    pub insert: String,
+    pub replace_start: usize,
+    pub replace_end: usize,
+    pub display: String,
     pub kind: String,
     pub group: String,
     pub description: String,
+    pub source: Option<String>,
+    pub stale: bool,
     pub danger: String,
     pub privacy: String,
+    pub preview: Option<String>,
     pub score: u16,
 }
 
@@ -98,6 +105,7 @@ struct CompletionVocabulary {
     payload_keys_by_pair: BTreeMap<(String, String), BTreeSet<String>>,
     source_descriptions: BTreeMap<String, String>,
     source_privacy: BTreeMap<String, String>,
+    runtime_sources: BTreeSet<String>,
 }
 
 impl CompletionVocabulary {
@@ -131,7 +139,9 @@ impl CompletionVocabulary {
             self.sources.insert(source.source_id.clone());
             self.source_descriptions
                 .insert(source.source_id.clone(), source.description);
-            self.source_privacy.insert(source.source_id, source.privacy);
+            self.source_privacy
+                .insert(source.source_id.clone(), source.privacy);
+            self.runtime_sources.insert(source.source_id);
         }
         for (source, event_types) in runtime.event_types_by_source {
             let entry = self.event_types_by_source.entry(source).or_default();
@@ -192,6 +202,11 @@ fn active_token(line: &str, cursor: usize) -> &str {
     prefix.rsplit_once(char::is_whitespace).map_or(prefix, |(_, token)| token)
 }
 
+fn active_token_start(line: &str, cursor: usize, active: &str) -> usize {
+    let cursor = cursor.min(line.len());
+    cursor.saturating_sub(active.len())
+}
+
 fn selected_value(line: &str, cursor: usize, key: &str) -> Option<String> {
     let cursor = cursor.min(line.len());
     line[..cursor].split_whitespace().find_map(|token| {
@@ -210,18 +225,29 @@ fn build_candidates(
     let source = selected_value(line, cursor, "source:");
     let event_type = selected_value(line, cursor, "type:")
         .or_else(|| selected_value(line, cursor, "event_type:"));
+    let replace_start = active_token_start(line, cursor, active);
+    let replace_end = cursor.min(line.len());
 
     let mut candidates = if let Some(prefix) = active.strip_prefix("source:") {
-        source_candidates(prefix, vocabulary)
+        source_candidates(prefix, replace_start, replace_end, vocabulary)
     } else if let Some(prefix) = active
         .strip_prefix("type:")
         .or_else(|| active.strip_prefix("event_type:"))
     {
-        event_type_candidates(prefix, source.as_deref(), vocabulary)
+        event_type_candidates(prefix, replace_start, replace_end, source.as_deref(), vocabulary)
     } else if let Some(prefix) = active.strip_prefix("payload.") {
-        payload_key_candidates(prefix, source.as_deref(), event_type.as_deref(), vocabulary)
+        payload_key_candidates(
+            prefix,
+            replace_start,
+            replace_end,
+            source.as_deref(),
+            event_type.as_deref(),
+            vocabulary,
+        )
+    } else if command_context(line, cursor).as_deref() == Some("ops dlq") {
+        ops_dlq_candidates(active, replace_start, replace_end)
     } else {
-        grammar_candidates(active)
+        grammar_candidates(active, replace_start, replace_end)
     };
 
     candidates.sort_by(|left, right| {
@@ -234,33 +260,49 @@ fn build_candidates(
     candidates
 }
 
-fn source_candidates(prefix: &str, vocabulary: &CompletionVocabulary) -> Vec<CompletionCandidate> {
+fn source_candidates(
+    prefix: &str,
+    replace_start: usize,
+    replace_end: usize,
+    vocabulary: &CompletionVocabulary,
+) -> Vec<CompletionCandidate> {
     vocabulary
         .sources
         .iter()
         .filter(|source| source.starts_with(prefix))
-        .map(|source| CompletionCandidate {
-            value: format!("source:{source}"),
-            kind: "query-field-value".to_string(),
-            group: "Sources".to_string(),
-            description: vocabulary
-                .source_descriptions
-                .get(source)
-                .cloned()
-                .unwrap_or_else(|| "payload inventory source".to_string()),
-            danger: "none".to_string(),
-            privacy: vocabulary
-                .source_privacy
-                .get(source)
-                .cloned()
-                .unwrap_or_else(|| "metadata-only".to_string()),
-            score: if prefix.is_empty() { 80 } else { 100 },
+        .map(|source| {
+            let value = format!("source:{source}");
+            CompletionCandidate::new(
+                value.clone(),
+                "query-field-value",
+                "Sources",
+                vocabulary
+                    .source_descriptions
+                    .get(source)
+                    .cloned()
+                    .unwrap_or_else(|| "payload inventory source".to_string()),
+                replace_start,
+                replace_end,
+                if prefix.is_empty() { 80 } else { 100 },
+            )
+            .source(source)
+            .privacy(
+                vocabulary
+                    .source_privacy
+                    .get(source)
+                    .cloned()
+                    .unwrap_or_else(|| "metadata-only".to_string()),
+            )
+            .stale(!vocabulary.runtime_sources.contains(source))
+            .preview(format!("sinexctl events query {value}"))
         })
         .collect()
 }
 
 fn event_type_candidates(
     prefix: &str,
+    replace_start: usize,
+    replace_end: usize,
     source: Option<&str>,
     vocabulary: &CompletionVocabulary,
 ) -> Vec<CompletionCandidate> {
@@ -278,23 +320,33 @@ fn event_type_candidates(
 
     event_types
         .filter(|event_type| event_type.starts_with(prefix))
-        .map(|event_type| CompletionCandidate {
-            value: format!("type:{event_type}"),
-            kind: "query-field-value".to_string(),
-            group: "Event types".to_string(),
-            description: source.map_or_else(
-                || "payload inventory event type".to_string(),
-                |source| format!("event type for {source}"),
-            ),
-            danger: "none".to_string(),
-            privacy: "metadata-only".to_string(),
-            score: if source.is_some() { 110 } else { 90 },
+        .map(|event_type| {
+            let value = format!("type:{event_type}");
+            let mut candidate = CompletionCandidate::new(
+                value.clone(),
+                "query-field-value",
+                "Event types",
+                source.map_or_else(
+                    || "payload inventory event type".to_string(),
+                    |source| format!("event type for {source}"),
+                ),
+                replace_start,
+                replace_end,
+                if source.is_some() { 110 } else { 90 },
+            )
+            .preview(format!("sinexctl events query {value}"));
+            if let Some(source) = source {
+                candidate = candidate.source(source);
+            }
+            candidate
         })
         .collect()
 }
 
 fn payload_key_candidates(
     prefix: &str,
+    replace_start: usize,
+    replace_end: usize,
     source: Option<&str>,
     event_type: Option<&str>,
     vocabulary: &CompletionVocabulary,
@@ -311,19 +363,29 @@ fn payload_key_candidates(
         .into_iter()
         .flat_map(|keys| keys.iter())
         .filter(|key| key.starts_with(prefix))
-        .map(|key| CompletionCandidate {
-            value: format!("payload.{key}"),
-            kind: "payload-key".to_string(),
-            group: "Payload keys".to_string(),
-            description: format!("{source}/{event_type} payload key"),
-            danger: "none".to_string(),
-            privacy: "metadata-only".to_string(),
-            score: 120,
+        .map(|key| {
+            CompletionCandidate::new(
+                format!("payload.{key}"),
+                "payload-key",
+                "Payload keys",
+                format!("{source}/{event_type} payload key"),
+                replace_start,
+                replace_end,
+                120,
+            )
+            .source(source)
+            .preview(format!(
+                "sinexctl events query source:{source} type:{event_type} payload.{key}:"
+            ))
         })
         .collect()
 }
 
-fn grammar_candidates(prefix: &str) -> Vec<CompletionCandidate> {
+fn grammar_candidates(
+    prefix: &str,
+    replace_start: usize,
+    replace_end: usize,
+) -> Vec<CompletionCandidate> {
     const ROOTS: &[(&str, &str)] = &[
         ("events", "event query, inspect, trace, watch, and annotate"),
         ("sources", "source material inventory and readiness"),
@@ -353,16 +415,129 @@ fn grammar_candidates(prefix: &str) -> Vec<CompletionCandidate> {
                 .map(|(value, description)| ("query-token", "Query grammar", *value, *description, 85)),
         )
         .filter(|(_, _, value, _, _)| value.starts_with(prefix))
-        .map(|(kind, group, value, description, score)| CompletionCandidate {
-            value: value.to_string(),
-            kind: kind.to_string(),
-            group: group.to_string(),
-            description: description.to_string(),
-            danger: "none".to_string(),
-            privacy: "metadata-only".to_string(),
-            score,
+        .map(|(kind, group, value, description, score)| {
+            CompletionCandidate::new(
+                value,
+                kind,
+                group,
+                description,
+                replace_start,
+                replace_end,
+                score,
+            )
         })
         .collect()
+}
+
+fn ops_dlq_candidates(
+    prefix: &str,
+    replace_start: usize,
+    replace_end: usize,
+) -> Vec<CompletionCandidate> {
+    const ACTIONS: &[(&str, &str, &str, u16)] = &[
+        ("list", "read DLQ entries", "none", 100),
+        ("peek", "inspect one DLQ entry", "none", 95),
+        ("requeue", "requeue DLQ entries", "write", 75),
+        ("purge", "delete DLQ entries", "destructive", 50),
+    ];
+    ACTIONS
+        .iter()
+        .filter(|(value, _, _, _)| value.starts_with(prefix))
+        .map(|(value, description, danger, score)| {
+            CompletionCandidate::new(
+                *value,
+                "subcommand",
+                "DLQ actions",
+                *description,
+                replace_start,
+                replace_end,
+                *score,
+            )
+            .danger(*danger)
+            .preview(format!("sinexctl ops dlq {value}"))
+        })
+        .collect()
+}
+
+fn command_context(line: &str, cursor: usize) -> Option<String> {
+    let cursor = cursor.min(line.len());
+    let mut tokens = line[..cursor]
+        .split_whitespace()
+        .map(|token| token.to_string())
+        .collect::<Vec<_>>();
+    if line[..cursor]
+        .chars()
+        .next_back()
+        .is_some_and(char::is_whitespace)
+    {
+        tokens.push(String::new());
+    }
+    let active_is_incomplete = tokens.last().is_some_and(|token| !token.is_empty());
+    if active_is_incomplete {
+        tokens.pop();
+    }
+    match tokens.as_slice() {
+        [root, ops, dlq, ..] if root == "sinexctl" && ops == "ops" && dlq == "dlq" => {
+            Some("ops dlq".to_string())
+        }
+        [ops, dlq, ..] if ops == "ops" && dlq == "dlq" => Some("ops dlq".to_string()),
+        _ => None,
+    }
+}
+
+impl CompletionCandidate {
+    fn new(
+        value: impl Into<String>,
+        kind: impl Into<String>,
+        group: impl Into<String>,
+        description: impl Into<String>,
+        replace_start: usize,
+        replace_end: usize,
+        score: u16,
+    ) -> Self {
+        let value = value.into();
+        Self {
+            insert: value.clone(),
+            display: value.clone(),
+            value,
+            replace_start,
+            replace_end,
+            kind: kind.into(),
+            group: group.into(),
+            description: description.into(),
+            source: None,
+            stale: false,
+            danger: "none".to_string(),
+            privacy: "metadata-only".to_string(),
+            preview: None,
+            score,
+        }
+    }
+
+    fn source(mut self, source: impl Into<String>) -> Self {
+        self.source = Some(source.into());
+        self
+    }
+
+    fn stale(mut self, stale: bool) -> Self {
+        self.stale = stale;
+        self
+    }
+
+    fn danger(mut self, danger: impl Into<String>) -> Self {
+        self.danger = danger.into();
+        self
+    }
+
+    fn privacy(mut self, privacy: impl Into<String>) -> Self {
+        self.privacy = privacy.into();
+        self
+    }
+
+    fn preview(mut self, preview: impl Into<String>) -> Self {
+        self.preview = Some(preview.into());
+        self
+    }
 }
 
 fn payload_schema_keys(payload: &'static PayloadInfo) -> BTreeSet<String> {
@@ -405,12 +580,18 @@ mod tests {
     #[sinex_test]
     async fn source_completion_uses_inventory_without_gateway() -> TestResult<()> {
         let response = response("sinexctl events source:wm").await;
-        assert!(
-            response
-                .candidates
-                .iter()
-                .any(|candidate| candidate.value == "source:wm.hyprland")
-        );
+        let candidate = response
+            .candidates
+            .iter()
+            .find(|candidate| candidate.value == "source:wm.hyprland")
+            .expect("wm source should be available from static payload inventory");
+        assert_eq!(candidate.insert, "source:wm.hyprland");
+        assert_eq!(candidate.replace_start, "sinexctl events ".len());
+        assert_eq!(candidate.replace_end, "sinexctl events source:wm".len());
+        assert_eq!(candidate.source.as_deref(), Some("wm.hyprland"));
+        assert!(candidate.stale, "static inventory candidates are stale fallback data");
+        assert_eq!(candidate.danger, "none");
+        assert!(candidate.preview.as_deref().is_some_and(|preview| preview.contains("source:wm.hyprland")));
         Ok(())
     }
 
@@ -474,6 +655,22 @@ mod tests {
                 "removed root `{removed}` must not be suggested"
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ops_dlq_completion_marks_destructive_actions() -> TestResult<()> {
+        let response = response("sinexctl ops dlq p").await;
+        let purge = response
+            .candidates
+            .iter()
+            .find(|candidate| candidate.value == "purge")
+            .expect("DLQ purge should be suggested in ops dlq context");
+        assert_eq!(purge.kind, "subcommand");
+        assert_eq!(purge.danger, "destructive");
+        assert_eq!(purge.replace_start, "sinexctl ops dlq ".len());
+        assert_eq!(purge.replace_end, "sinexctl ops dlq p".len());
+        assert_eq!(purge.preview.as_deref(), Some("sinexctl ops dlq purge"));
         Ok(())
     }
 }
