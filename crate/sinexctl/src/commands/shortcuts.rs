@@ -16,9 +16,7 @@ use sinex_primitives::rpc::sources::{
     SourceReadiness, SourceReadinessStatus, SourcesReadinessListRequest,
 };
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::views::{
-    EventCardListView, EventCardView, EventErrorListView, ViewEnvelope,
-};
+use sinex_primitives::views::{EventCardListView, EventCardView, EventErrorListView, ViewEnvelope};
 use sinex_primitives::{
     RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeStatusWarning,
     RuntimeTargetDescriptor, RuntimeTargetKind,
@@ -725,16 +723,13 @@ mod status_tests {
 
     #[sinex_test]
     async fn errors_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
-        let output = render_errors_machine_output(
-            &[error_event_fixture()],
-            "24h",
-            OutputFormat::Json,
-        )?
-        .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+        let output =
+            render_errors_machine_output(&[error_event_fixture()], "24h", OutputFormat::Json)?
+                .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
         assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
-        assert_eq!(value["source_surface"], "sinexctl.errors");
+        assert_eq!(value["source_surface"], "sinexctl.events.errors");
         assert_eq!(value["query_echo"]["since"], "24h");
         assert_eq!(
             value["payload"]["schema_version"],
@@ -905,13 +900,13 @@ mod status_tests {
 #[command(after_help = "\
 EXAMPLES:
     # Last 20 events
-    sinexctl recent
+    sinexctl events recent
 
     # Last 50 events
-    sinexctl recent -n 50
+    sinexctl events recent -n 50
 
     # Last 100 events from terminal
-    sinexctl recent -n 100 --source shell.atuin
+    sinexctl events recent -n 100 --source shell.atuin
 ")]
 pub struct RecentCommand {
     /// Number of events to show
@@ -949,11 +944,12 @@ impl RecentCommand {
             _ => vec![],
         };
         let event_cards = EventCardListView::from_query_events(&events);
-        let envelope = ViewEnvelope::new("sinexctl.recent", event_cards).with_query_echo(json!({
-            "since": self.since,
-            "limit": self.limit,
-            "source": self.source,
-        }));
+        let envelope =
+            ViewEnvelope::new("sinexctl.events.recent", event_cards).with_query_echo(json!({
+                "since": self.since,
+                "limit": self.limit,
+                "source": self.source,
+            }));
 
         if let Some(output) = render_envelope(&envelope, &envelope.payload.cards, format)? {
             // render_envelope's ndjson arm already terminates each line with '\n';
@@ -1029,10 +1025,10 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
 #[command(after_help = "\
 EXAMPLES:
     # Recent errors
-    sinexctl errors
+    sinexctl events errors
 
     # Last 100 errors
-    sinexctl errors -n 100
+    sinexctl events errors -n 100
 ")]
 pub struct ErrorsCommand {
     /// Number of errors to show
@@ -1129,7 +1125,7 @@ fn render_errors_machine_output(
         OutputFormat::Table => Ok(None),
         OutputFormat::Json | OutputFormat::Yaml => {
             let envelope = ViewEnvelope::new(
-                "sinexctl.errors",
+                "sinexctl.events.errors",
                 EventErrorListView::from_query_events(since, events),
             )
             .with_query_echo(json!({ "since": since }));
@@ -1147,13 +1143,13 @@ fn render_errors_machine_output(
 #[command(after_help = "\
 EXAMPLES:
     # Watch all events
-    sinexctl watch
+    sinexctl events watch
 
     # Watch events from terminal source
-    sinexctl watch --source shell.atuin
+    sinexctl events watch --source shell.atuin
 
     # Watch process execution events
-    sinexctl watch --event-type process.started
+    sinexctl events watch --event-type process.started
 ")]
 pub struct WatchCommand {
     /// Filter by source
