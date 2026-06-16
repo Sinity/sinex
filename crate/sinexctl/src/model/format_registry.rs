@@ -236,12 +236,57 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
             "ndjson emits one EventCardView object per line (envelope metadata omitted)",
         ),
     );
+    for path in [
+        "relations after",
+        "relations before",
+        "relations overlaps",
+        "relations same",
+        "relations sequence",
+        "relations within",
+    ] {
+        m.insert(
+            path,
+            FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
+                "ndjson emits one supporting EvidenceRef per line (envelope metadata omitted)",
+            ),
+        );
+    }
     m.insert(
-        "relations",
+        "events query",
         FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
-            "ndjson emits one supporting EvidenceRef per line (envelope metadata omitted)",
+            "ndjson emits one EventCardView object per line (envelope metadata omitted)",
         ),
     );
+    m.insert(
+        "events recent",
+        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
+            "ndjson emits one EventCardView object per line (envelope metadata omitted)",
+        ),
+    );
+    m.insert(
+        "events errors",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "events watch",
+        FormatCapability::streaming(TABLE_JSON_YAML)
+            .with_note("streams NDJSON or YAML documents; table mode shows human-readable lines"),
+    );
+    for path in [
+        "events relations after",
+        "events relations before",
+        "events relations overlaps",
+        "events relations same",
+        "events relations sequence",
+        "events relations within",
+    ] {
+        m.insert(
+            path,
+            FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
+                "ndjson emits one supporting EvidenceRef per line (envelope metadata omitted)",
+            ),
+        );
+    }
 
     // ── Trace ────────────────────────────────────────────────────────────────
     m.insert(
@@ -249,12 +294,37 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML_DOT)
             .with_note("dot format emits Graphviz DOT for provenance graphs"),
     );
+    m.insert(
+        "events trace",
+        FormatCapability::single_shot(TABLE_JSON_YAML_DOT)
+            .with_note("dot format emits Graphviz DOT for provenance graphs"),
+    );
+    m.insert(
+        "events inspect",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "events explain",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "events timeline",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Ops ───────────────────────────────────────────────────────────────────
     m.insert("ops start", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("ops list", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("ops get", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("ops cancel", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "ops jobs list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "ops jobs show",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Privacy ─────────────────────────────────────────────────────────────
     m.insert(
@@ -322,6 +392,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     // ── Audit ────────────────────────────────────────────────────────────────
     m.insert("audit", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("annotate", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "events annotate",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Sources ──────────────────────────────────────────────────────────────
     m.insert(
@@ -800,8 +874,8 @@ fn family_for_path(path: &str) -> CommandFamily {
     let root = path.split_once(' ').map_or(path, |(root, _)| root);
     match root {
         "gateway" | "core" => CommandFamily::Gateway,
-        "query" | "relations" | "trace" | "recent" | "errors" | "watch" | "context" | "explain"
-        | "verify" | "now" | "modules" | "status" => CommandFamily::Query,
+        "events" | "query" | "relations" | "trace" | "recent" | "errors" | "watch" | "context"
+        | "explain" | "verify" | "now" | "modules" | "status" => CommandFamily::Query,
         "automata" | "replay" | "dlq" | "ops" | "audit" | "lifecycle" | "privacy" | "blob" => {
             CommandFamily::Operate
         }
@@ -827,6 +901,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
     let mutating = [
         "admin snapshot",
         "annotate",
+        "events annotate",
         "blob fsck",
         "blob migrate",
         "blob store",
@@ -912,6 +987,7 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "replay run" => &[RpcAuth, DryRun],
         "lifecycle tombstone approve" => &[RpcAuth, Confirmation],
         "annotate"
+        | "events annotate"
         | "curation duplicate-judge"
         | "curation finalize"
         | "curation judge"
@@ -1006,15 +1082,29 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "dlq peek" => &[methods::DLQ_PEEK],
         "dlq requeue" => &[methods::DLQ_REQUEUE],
         "dlq purge" => &[methods::DLQ_PURGE],
-        "query" | "recent" | "errors" | "context" | "report today" | "report yesterday"
+        "query" | "recent" | "errors" | "context" | "events query" | "events recent"
+        | "events errors" | "events timeline" | "report today" | "report yesterday"
         | "report calendar" | "timeline" => &[methods::EVENTS_QUERY],
-        "relations" => &[methods::EVENTS_RELATION_EVIDENCE],
+        "relations after"
+        | "relations before"
+        | "relations overlaps"
+        | "relations same"
+        | "relations sequence"
+        | "relations within"
+        | "events relations after"
+        | "events relations before"
+        | "events relations overlaps"
+        | "events relations same"
+        | "events relations sequence"
+        | "events relations within" => &[methods::EVENTS_RELATION_EVIDENCE],
         "verify baseline" => &[],
-        "trace" | "explain" => &[methods::EVENTS_LINEAGE],
-        "watch" => &[],
+        "trace" | "explain" | "events trace" | "events inspect" | "events explain" => {
+            &[methods::EVENTS_LINEAGE]
+        }
+        "watch" | "events watch" => &[],
         "ops start" => &[methods::OPS_START],
-        "ops list" => &[methods::OPS_LIST],
-        "ops get" => &[methods::OPS_GET],
+        "ops list" | "ops jobs list" => &[methods::OPS_LIST],
+        "ops get" | "ops jobs show" => &[methods::OPS_GET],
         "ops cancel" => &[methods::OPS_CANCEL],
         "privacy private-mode status" => &[methods::PRIVACY_PRIVATE_MODE_STATUS],
         "privacy private-mode enable" => &[methods::PRIVACY_PRIVATE_MODE_ENABLE],
@@ -1036,7 +1126,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         ],
         "privacy export" => &[methods::EVENTS_QUERY],
         "audit" => &[methods::AUDIT_GET],
-        "annotate" => &[methods::EVENTS_ANNOTATE],
+        "annotate" | "events annotate" => &[methods::EVENTS_ANNOTATE],
         "sources stage" => &[methods::SOURCES_STAGE],
         "sources cockpit" => &[],
         "sources list" => &[methods::SOURCES_LIST],
@@ -1343,7 +1433,9 @@ mod tests {
     #[sinex_test]
     async fn validate_format_accepts_supported() -> xtask::sandbox::TestResult<()> {
         assert!(validate_format("query", OutputFormat::Json).is_ok());
+        assert!(validate_format("events query", OutputFormat::Json).is_ok());
         assert!(validate_format("query", OutputFormat::Ndjson).is_ok());
+        assert!(validate_format("events query", OutputFormat::Ndjson).is_ok());
         assert!(validate_format("query", OutputFormat::Table).is_ok());
         assert!(validate_format("query", OutputFormat::Dot).is_err());
         assert!(validate_format("errors", OutputFormat::Json).is_ok());
@@ -1359,8 +1451,11 @@ mod tests {
         assert!(validate_format("timeline", OutputFormat::Json).is_ok());
         assert!(validate_format("timeline", OutputFormat::Ndjson).is_err());
         assert!(validate_format("trace", OutputFormat::Json).is_ok());
+        assert!(validate_format("events trace", OutputFormat::Dot).is_ok());
+        assert!(validate_format("events inspect", OutputFormat::Json).is_ok());
         assert!(validate_format("trace", OutputFormat::Ndjson).is_err());
         assert!(validate_format("watch", OutputFormat::Json).is_ok());
+        assert!(validate_format("events watch", OutputFormat::Json).is_ok());
         Ok(())
     }
 
@@ -1412,8 +1507,18 @@ mod tests {
         };
 
         assert_eq!(effect_for("query"), Some(CommandEffect::ReadOnly));
-        assert_eq!(effect_for("relations"), Some(CommandEffect::ReadOnly));
+        assert_eq!(effect_for("events query"), Some(CommandEffect::ReadOnly));
+        assert_eq!(
+            effect_for("relations within"),
+            Some(CommandEffect::ReadOnly)
+        );
+        assert_eq!(
+            effect_for("events relations within"),
+            Some(CommandEffect::ReadOnly)
+        );
         assert_eq!(effect_for("watch"), Some(CommandEffect::Streaming));
+        assert_eq!(effect_for("events watch"), Some(CommandEffect::Streaming));
+        assert_eq!(effect_for("events annotate"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("completions"), Some(CommandEffect::Local));
         assert_eq!(effect_for("dlq requeue"), Some(CommandEffect::Mutating));
         assert_eq!(
@@ -1630,6 +1735,11 @@ mod tests {
         let reg = build();
         let required = [
             "query",
+            "events query",
+            "events inspect",
+            "events annotate",
+            "relations within",
+            "events relations within",
             "trace",
             "watch",
             "status",
