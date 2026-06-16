@@ -8,12 +8,11 @@ use sinex_primitives::views::ViewEnvelope;
 use sinexctl::AdminCommands;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
-    AuditCommand, BlobCommands, ConfigCommands, ContextCommand, CoreCommands,
-    CompletionEndpointCommand, CurationCommand, DeclareCommand, DemoCommand, DlqCommands,
-    DocumentsCommand, EventsCommand, GatewayCommands, InstructionsCommand, LifecycleCommands,
-    LlmCommand, MetricsCommands, NowCommand, OpsCommands, PrivacyCommand, ReplayCommands,
-    RuntimeCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand, TasksCommand,
-    TuiCommand, VerifyCommand,
+    BlobCommands, ConfigCommands, ContextCommand, CoreCommands, CompletionEndpointCommand,
+    CurationCommand, DeclareCommand, DemoCommand, DlqCommands, DocumentsCommand, EventsCommand,
+    GatewayCommands, InstructionsCommand, LifecycleCommands, LlmCommand, MetricsCommands,
+    NowCommand, OpsCommands, PrivacyCommand, ReplayCommands, RuntimeCommands, SemanticCommand,
+    SourcesCommand, StateCommands, StatusCommand, TasksCommand, TuiCommand, VerifyCommand,
 };
 use sinexctl::commands::lifecycle::TombstoneCommands;
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
@@ -133,9 +132,6 @@ enum Commands {
 
     /// Privacy controls
     Privacy(PrivacyCommand),
-
-    /// Get audit trail for an operation
-    Audit(AuditCommand),
 
     /// Launch interactive TUI dashboard
     Tui(TuiCommand),
@@ -324,7 +320,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Events { cmd } => cmd.execute(&client, format).await?,
                 Commands::Ops { cmd } => cmd.execute(&client, format).await?,
                 Commands::Privacy(cmd) => cmd.execute(&client, format).await?,
-                Commands::Audit(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),
                 Commands::Demo(_) => unreachable!("Demo command handled above"),
@@ -632,9 +627,9 @@ fn command_path(cmd: &Commands) -> String {
             OpsCommands::Dlq(cmd) => prefixed("ops", dlq_command_path(cmd)),
             OpsCommands::Replay(cmd) => prefixed("ops", replay_command_path(cmd)),
             OpsCommands::Lifecycle(cmd) => prefixed("ops", lifecycle_command_path(cmd)),
+            OpsCommands::Audit(_) => "ops audit".to_string(),
         },
         Commands::Privacy(cmd) => cmd.command_path().to_string(),
-        Commands::Audit(_) => "audit".to_string(),
         Commands::Tui(_) => "tui".to_string(),
         Commands::Config { cmd } => match cmd {
             ConfigCommands::Init { .. } => "config init".to_string(),
@@ -1257,6 +1252,15 @@ mod tests {
             (
                 vec!["sinexctl", "metrics", "report", "calendar"],
                 "metrics report calendar",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "ops",
+                    "audit",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                ],
+                "ops audit",
             ),
             (
                 vec![
