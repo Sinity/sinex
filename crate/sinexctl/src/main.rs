@@ -8,11 +8,11 @@ use sinex_primitives::views::ViewEnvelope;
 use sinexctl::AdminCommands;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
-    BlobCommands, ConfigCommands, ContextCommand, CoreCommands, CompletionEndpointCommand,
-    CurationCommand, DeclareCommand, DemoCommand, DlqCommands, DocumentsCommand, EventsCommand,
-    GatewayCommands, InstructionsCommand, LifecycleCommands, LlmCommand, MetricsCommands,
-    NowCommand, OpsCommands, PrivacyCommand, ReplayCommands, RuntimeCommands, SemanticCommand,
-    SourcesCommand, StateCommands, StatusCommand, TasksCommand, TuiCommand, VerifyCommand,
+    ConfigCommands, ContextCommand, CoreCommands, CompletionEndpointCommand, CurationCommand,
+    DeclareCommand, DemoCommand, DlqCommands, DocumentsCommand, EventsCommand, GatewayCommands,
+    InstructionsCommand, LifecycleCommands, LlmCommand, MetricsCommands, NowCommand, OpsCommands,
+    PrivacyCommand, ReplayCommands, RuntimeCommands, SemanticCommand, SourcesCommand,
+    StateCommands, StatusCommand, TasksCommand, TuiCommand, VerifyCommand,
 };
 use sinexctl::commands::lifecycle::TombstoneCommands;
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
@@ -98,12 +98,6 @@ enum Commands {
     Gateway {
         #[command(subcommand)]
         cmd: GatewayCommands,
-    },
-
-    /// Blob maintenance commands
-    Blob {
-        #[command(subcommand)]
-        cmd: BlobCommands,
     },
 
     /// Core system operations
@@ -289,7 +283,9 @@ async fn main() -> color_eyre::Result<()> {
     match command {
         Commands::Config { cmd } => cmd.execute(format)?,
         Commands::Demo(cmd) => cmd.execute().await?,
-        Commands::Blob { cmd } => cmd.execute(format).await?,
+        Commands::Ops {
+            cmd: OpsCommands::Blob(cmd),
+        } => cmd.execute(format).await?,
         // `sinexctl admin` commands are local operations — no gateway needed.
         Commands::Admin { cmd } => cmd.execute(format)?,
         // `sinexctl state` snapshot/restore commands are local filesystem,
@@ -314,7 +310,6 @@ async fn main() -> color_eyre::Result<()> {
             let client = GatewayClient::new(client_config)?;
             match other {
                 Commands::Gateway { cmd } => cmd.execute(&client, format).await?,
-                Commands::Blob { .. } => unreachable!("Blob command handled above"),
                 Commands::Core { cmd } => cmd.execute(&client, format).await?,
                 Commands::Runtime { cmd } => cmd.execute(&client, format).await?,
                 Commands::Events { cmd } => cmd.execute(&client, format).await?,
@@ -591,18 +586,12 @@ fn operator_surface_catalog() -> OperatorSurfaceCatalog {
 /// Derive the registry key for a [`Commands`] variant.
 fn command_path(cmd: &Commands) -> String {
     use sinexctl::commands::{
-        ConfigCommands, GatewayCommands, OpsCommands, RuntimeCommands,
+        BlobCommands, ConfigCommands, GatewayCommands, OpsCommands, RuntimeCommands,
     };
     match cmd {
         Commands::Gateway { cmd } => match cmd {
             GatewayCommands::Ping => "gateway ping".to_string(),
             GatewayCommands::Version => "gateway version".to_string(),
-        },
-        Commands::Blob { cmd } => match cmd {
-            BlobCommands::SweepOrphans(_) => "blob sweep-orphans".to_string(),
-            BlobCommands::Fsck(_) => "blob fsck".to_string(),
-            BlobCommands::Migrate(_) => "blob migrate".to_string(),
-            BlobCommands::VerifyIntegrity(_) => "blob verify-integrity".to_string(),
         },
         Commands::Core { .. } => "core health".to_string(),
         Commands::Runtime { cmd } => match cmd {
@@ -628,6 +617,12 @@ fn command_path(cmd: &Commands) -> String {
             OpsCommands::Replay(cmd) => prefixed("ops", replay_command_path(cmd)),
             OpsCommands::Lifecycle(cmd) => prefixed("ops", lifecycle_command_path(cmd)),
             OpsCommands::Audit(_) => "ops audit".to_string(),
+            OpsCommands::Blob(cmd) => match cmd {
+                BlobCommands::SweepOrphans(_) => "ops blob sweep-orphans".to_string(),
+                BlobCommands::Fsck(_) => "ops blob fsck".to_string(),
+                BlobCommands::Migrate(_) => "ops blob migrate".to_string(),
+                BlobCommands::VerifyIntegrity(_) => "ops blob verify-integrity".to_string(),
+            },
         },
         Commands::Privacy(cmd) => cmd.command_path().to_string(),
         Commands::Tui(_) => "tui".to_string(),
@@ -1114,8 +1109,8 @@ mod tests {
 
         let blob_fsck = commands
             .iter()
-            .find(|entry| entry["path"] == "blob fsck")
-            .expect("json list-formats output must include blob fsck");
+            .find(|entry| entry["path"] == "ops blob fsck")
+            .expect("json list-formats output must include ops blob fsck");
         assert!(
             blob_fsck["mutation_guards"]
                 .as_array()
@@ -1261,6 +1256,17 @@ mod tests {
                     "0196ed62-8f7a-7000-8000-000000000001",
                 ],
                 "ops audit",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "ops",
+                    "blob",
+                    "fsck",
+                    "--content-store-path",
+                    "/tmp/sinex-cas",
+                ],
+                "ops blob fsck",
             ),
             (
                 vec![
