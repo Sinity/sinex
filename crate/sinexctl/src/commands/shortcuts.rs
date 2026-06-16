@@ -20,8 +20,8 @@ use sinex_primitives::views::{
     EventCardListView, EventCardView, EventErrorListView, ViewEnvelope,
 };
 use sinex_primitives::{
-    RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusWarning, RuntimeTargetDescriptor,
-    RuntimeTargetKind,
+    RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeStatusWarning,
+    RuntimeTargetDescriptor, RuntimeTargetKind,
 };
 use std::path::Path;
 
@@ -46,8 +46,6 @@ impl StatusCommand {
         runtime_target: Option<&RuntimeTargetDescriptor>,
         format: OutputFormat,
     ) -> Result<()> {
-        use sinex_primitives::RuntimeStatusSnapshot;
-
         let target = runtime_target
             .cloned()
             .unwrap_or_else(|| RuntimeTargetDescriptor {
@@ -70,19 +68,29 @@ impl StatusCommand {
             warnings,
         };
 
-        match format {
-            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-                println!("{}", serde_json::to_string_pretty(&snapshot)?);
-            }
-            OutputFormat::Yaml => {
-                println!("{}", serde_yml::to_string(&snapshot)?);
-            }
-            OutputFormat::Table => {
-                render_status_table(&snapshot, &stalled_units);
-            }
+        if let Some(output) = render_status_machine_output(&snapshot, format)? {
+            println!("{output}");
+            return Ok(());
         }
 
+        render_status_table(&snapshot, &stalled_units);
         Ok(())
+    }
+}
+
+fn render_status_machine_output(
+    snapshot: &RuntimeStatusSnapshot,
+    format: OutputFormat,
+) -> Result<Option<String>> {
+    match format {
+        OutputFormat::Table => Ok(None),
+        OutputFormat::Json | OutputFormat::Yaml => {
+            let envelope = ViewEnvelope::new("sinexctl.status", snapshot);
+            render_envelope(&envelope, &snapshot.signals, format)
+        }
+        OutputFormat::Ndjson | OutputFormat::Dot => Err(color_eyre::eyre::eyre!(
+            "status is a finite view; use json, yaml, or table"
+        )),
     }
 }
 
@@ -678,6 +686,41 @@ mod status_tests {
             relevance_score: None,
             snippet: Some("error: fixture".to_string()),
         }
+    }
+
+    #[sinex_test]
+    async fn status_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
+        let snapshot = RuntimeStatusSnapshot {
+            target: RuntimeTargetDescriptor {
+                name: "test-target".to_string(),
+                kind: RuntimeTargetKind::Test,
+                ..Default::default()
+            },
+            signals: vec![RuntimeStatusSignal {
+                name: "gateway".to_string(),
+                status: RuntimeStatusSignalStatus::Healthy,
+                source: "fixture".to_string(),
+                message: Some("ok".to_string()),
+            }],
+            warnings: Vec::new(),
+        };
+        let output = render_status_machine_output(&snapshot, OutputFormat::Json)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(value["source_surface"], "sinexctl.status");
+        assert_eq!(value["payload"]["target"]["name"], "test-target");
+        assert_eq!(value["payload"]["signals"][0]["name"], "gateway");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn status_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<()> {
+        let snapshot = RuntimeStatusSnapshot::default();
+        let result = render_status_machine_output(&snapshot, OutputFormat::Ndjson);
+        assert!(result.is_err(), "status must remain a finite view");
+        Ok(())
     }
 
     #[sinex_test]
