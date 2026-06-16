@@ -12,6 +12,7 @@ use serde_json::json;
 
 pub const VIEW_ENVELOPE_SCHEMA_VERSION: &str = "sinex.view-envelope/v3";
 pub const EVENT_CARD_LIST_SCHEMA_VERSION: &str = "sinex.event-card-list/v3";
+pub const EVENT_ERROR_LIST_SCHEMA_VERSION: &str = "sinex.event-error-list/v1";
 pub const EVENT_QUERY_LIST_SCHEMA_VERSION: &str = "sinex.event-query-list/v1";
 pub const OPERATION_JOB_LIST_SCHEMA_VERSION: &str = "sinex.operation-job-list/v1";
 pub const OPERATION_VIEW_SCHEMA_VERSION: &str = "sinex.operation-view/v1";
@@ -492,6 +493,26 @@ impl EventQueryListView {
             cards: events.iter().map(EventCardView::from_query_event).collect(),
             next_cursor,
             total_estimate,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EventErrorListView {
+    pub schema_version: String,
+    pub since: String,
+    pub count: usize,
+    pub cards: Vec<EventCardView>,
+}
+
+impl EventErrorListView {
+    #[must_use]
+    pub fn from_query_events(since: impl Into<String>, events: &[QueryResultEvent]) -> Self {
+        Self {
+            schema_version: EVENT_ERROR_LIST_SCHEMA_VERSION.to_string(),
+            since: since.into(),
+            count: events.len(),
+            cards: events.iter().map(EventCardView::from_query_event).collect(),
         }
     }
 }
@@ -1010,6 +1031,8 @@ mod tests {
         let card_schema = serde_json::to_value(schemars::schema_for!(EventCardView))?;
         let envelope_schema =
             serde_json::to_value(schemars::schema_for!(ViewEnvelope<EventCardListView>))?;
+        let error_envelope_schema =
+            serde_json::to_value(schemars::schema_for!(ViewEnvelope<EventErrorListView>))?;
         let query_envelope_schema =
             serde_json::to_value(schemars::schema_for!(ViewEnvelope<EventQueryListView>))?;
 
@@ -1028,6 +1051,10 @@ mod tests {
         assert!(
             query_envelope_schema["properties"].get("payload").is_some(),
             "query envelope schema should include the typed query-list payload"
+        );
+        assert!(
+            error_envelope_schema["properties"].get("payload").is_some(),
+            "error envelope schema should include the typed error-list payload"
         );
         Ok(())
     }
