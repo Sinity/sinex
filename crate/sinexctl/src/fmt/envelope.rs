@@ -50,6 +50,48 @@ pub fn render_envelope<T: Serialize, I: Serialize>(
     }
 }
 
+/// Render a finite [`ViewEnvelope`] in formats that preserve the whole document.
+///
+/// Unlike [`render_envelope`], this rejects `ndjson`: finite read surfaces have
+/// envelope-level metadata that would be lost in line-oriented output, and
+/// NDJSON is reserved for true streaming surfaces.
+pub fn render_finite_envelope<T: Serialize>(
+    envelope: &ViewEnvelope<T>,
+    format: OutputFormat,
+) -> Result<Option<String>> {
+    match format {
+        OutputFormat::Json => Ok(Some(serde_json::to_string_pretty(envelope)?)),
+        OutputFormat::Yaml => Ok(Some(format_yaml(envelope)?)),
+        OutputFormat::Ndjson => Err(eyre!(
+            "format `ndjson` requires a streaming view; this finite view renders as json or yaml"
+        )),
+        OutputFormat::Dot => Err(eyre!(
+            "format `dot` requires a graph view; this view is not a graph \
+             - use json, yaml, or table"
+        )),
+        OutputFormat::Table => Ok(None),
+    }
+}
+
+/// Print a finite [`ViewEnvelope`] and report whether machine rendering handled it.
+///
+/// Returns `Ok(false)` for `table`, allowing callers to fall through to their
+/// existing human renderer unchanged.
+pub fn print_finite_envelope<T: Serialize>(
+    envelope: &ViewEnvelope<T>,
+    format: OutputFormat,
+) -> Result<bool> {
+    let Some(output) = render_finite_envelope(envelope, format)? else {
+        return Ok(false);
+    };
+
+    print!("{output}");
+    if !output.is_empty() && !output.ends_with('\n') {
+        println!();
+    }
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -57,7 +99,8 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sinex_primitives::views::{
-        EVENT_CARD_LIST_SCHEMA_VERSION, EventCardListView, ViewEnvelope, VIEW_ENVELOPE_SCHEMA_VERSION,
+        EVENT_CARD_LIST_SCHEMA_VERSION, EventCardListView, VIEW_ENVELOPE_SCHEMA_VERSION,
+        ViewEnvelope,
     };
     use xtask::sandbox::sinex_test;
 
@@ -89,8 +132,9 @@ mod tests {
             let output = render_envelope(&envelope, &items, OutputFormat::Json)?
                 .expect("json must return Some");
 
-            let parsed: serde_json::Value = serde_json::from_str(&output)
-                .map_err(|e| color_eyre::eyre::eyre!("json output did not parse (count={count}): {e}"))?;
+            let parsed: serde_json::Value = serde_json::from_str(&output).map_err(|e| {
+                color_eyre::eyre::eyre!("json output did not parse (count={count}): {e}")
+            })?;
 
             assert_eq!(
                 parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION,
@@ -120,11 +164,17 @@ mod tests {
                 .expect("ndjson must return Some");
 
             if count == 0 {
-                assert!(output.is_empty(), "ndjson with 0 items must produce empty output");
+                assert!(
+                    output.is_empty(),
+                    "ndjson with 0 items must produce empty output"
+                );
                 continue;
             }
 
-            assert!(output.ends_with('\n'), "ndjson output must end with a newline");
+            assert!(
+                output.ends_with('\n'),
+                "ndjson output must end with a newline"
+            );
 
             // Strip the trailing newline before splitting so we don't get a spurious empty line
             let lines: Vec<&str> = output.trim_end_matches('\n').split('\n').collect();
@@ -165,6 +215,39 @@ mod tests {
             msg.contains("graph"),
             "error message must explain why dot is rejected: {msg}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finite_envelope_rejects_ndjson() -> xtask::TestResult<()> {
+        let envelope = fixture_envelope(1);
+
+        let result = render_finite_envelope(&envelope, OutputFormat::Ndjson);
+
+        assert!(result.is_err(), "finite views must not render as ndjson");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("ndjson"),
+            "error must name rejected format: {msg}"
+        );
+        assert!(
+            msg.contains("streaming"),
+            "error must explain ndjson is stream-only: {msg}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finite_envelope_json_preserves_whole_document() -> xtask::TestResult<()> {
+        let envelope = fixture_envelope(2);
+
+        let output = render_finite_envelope(&envelope, OutputFormat::Json)?
+            .expect("json must render finite envelope");
+        let parsed: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(parsed["source_surface"], "sinexctl.recent");
+        assert_eq!(parsed["payload"]["count"], 2);
         Ok(())
     }
 
