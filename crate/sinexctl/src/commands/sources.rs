@@ -1,5 +1,6 @@
 use clap::Args;
 use console::style;
+use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::SourceMaterialFormat;
 use sinex_primitives::rpc::sources::{
     SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
@@ -12,6 +13,7 @@ use sinex_primitives::rpc::sources::{
     CaveatSeverity, SourceReadiness, SourceReadinessStatus, SourcesReadinessGetRequest,
     SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
 };
+use sinex_primitives::rpc::sources::{SourceCoverageEntry, SourceMaterialSummary};
 use sinex_primitives::rpc::sources::{
     SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest, SourcesArchiveResponse,
     SourcesContinuityRequest, SourcesContinuityResponse, SourcesDriftListRequest,
@@ -23,10 +25,11 @@ use sinex_primitives::sources::continuity::{
     SourcesContinuityListRequest, SourcesContinuityListResponse, SourcesExplainGapRequest,
     SourcesExplainGapResponse,
 };
+use sinex_primitives::views::ViewEnvelope;
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::CommandOutput;
+use crate::fmt::{CommandOutput, print_finite_envelope};
 use crate::model::OutputFormat;
 
 use super::source_status::SourceStatusCommand;
@@ -207,6 +210,45 @@ pub struct ListCommand {
     limit: i64,
 }
 
+const SOURCE_MATERIAL_LIST_SCHEMA_VERSION: &str = "sinex.source-material-list/v1";
+const SOURCE_COVERAGE_LIST_SCHEMA_VERSION: &str = "sinex.source-coverage-list/v1";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SourceMaterialListView {
+    schema_version: String,
+    count: usize,
+    materials: Vec<SourceMaterialSummary>,
+}
+
+impl SourceMaterialListView {
+    fn new(materials: Vec<SourceMaterialSummary>) -> Self {
+        let count = materials.len();
+        Self {
+            schema_version: SOURCE_MATERIAL_LIST_SCHEMA_VERSION.to_string(),
+            count,
+            materials,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SourceCoverageListView {
+    schema_version: String,
+    count: usize,
+    sources: Vec<SourceCoverageEntry>,
+}
+
+impl SourceCoverageListView {
+    fn new(sources: Vec<SourceCoverageEntry>) -> Self {
+        let count = sources.len();
+        Self {
+            schema_version: SOURCE_COVERAGE_LIST_SCHEMA_VERSION.to_string(),
+            count,
+            sources,
+        }
+    }
+}
+
 impl ListCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let req = SourcesListRequest {
@@ -215,7 +257,18 @@ impl ListCommand {
         };
 
         let list_response: SourcesListResponse = client.sources_list(req).await?;
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.list",
+            SourceMaterialListView::new(list_response.materials.clone()),
+        )
+        .with_query_echo(serde_json::json!({
+            "status": self.status,
+            "limit": self.limit,
+        }));
 
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
         CommandOutput::single(list_response, format_source_materials_table).display(&format)?;
         Ok(())
     }
@@ -365,7 +418,17 @@ impl CoverageCommand {
         let req = SourcesCoverageRequest {};
 
         let coverage_response: SourcesCoverageResponse = client.sources_coverage(req).await?;
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.coverage",
+            SourceCoverageListView::new(coverage_response.sources.clone()),
+        )
+        .with_query_echo(serde_json::json!({
+            "limit": self.limit,
+        }));
 
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
         CommandOutput::single(coverage_response, format_coverage_table).display(&format)?;
         Ok(())
     }
@@ -1120,9 +1183,12 @@ const fn severity_label(severity: CaveatSeverity) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fmt::render_finite_envelope;
+    use sinex_primitives::domain::{MaterialStatus, SourceMaterialTimingInfoType};
     use sinex_primitives::rpc::sources::{
         SourceShapeDriftObservation, SourceShapeTypeChange, caveat_codes,
     };
+    use sinex_primitives::views::VIEW_ENVELOPE_SCHEMA_VERSION;
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
@@ -1154,6 +1220,129 @@ mod tests {
         assert!(table.contains("blocking"));
         assert!(table.contains(caveat_codes::PARSER_FIELD_TYPE_CHANGED));
         assert!(table.contains(caveat_codes::PARSER_REQUIRED_FIELD_MISSING));
+        Ok(())
+    }
+
+    fn fixture_material(id: &str) -> SourceMaterialSummary {
+        SourceMaterialSummary {
+            id: id.to_string(),
+            material_kind: "session_document".to_string(),
+            source_identifier: "fixture.source".to_string(),
+            status: MaterialStatus::Completed,
+            timing_info_type: SourceMaterialTimingInfoType::Intrinsic,
+            format: Some(SourceMaterialFormat::Jsonl),
+            contract_version: Some(1),
+            staged_at: Some("2026-06-01T00:00:00Z".to_string()),
+            staged_by: Some("test".to_string()),
+            size_bytes: Some(128),
+            mime_type: Some("application/jsonl".to_string()),
+        }
+    }
+
+    fn fixture_coverage(source_identifier: &str) -> SourceCoverageEntry {
+        SourceCoverageEntry {
+            source_identifier: source_identifier.to_string(),
+            material_kind: "session_document".to_string(),
+            earliest_ts: Some("2026-06-01T00:00:00Z".to_string()),
+            latest_ts: Some("2026-06-01T01:00:00Z".to_string()),
+            event_count: Some(7),
+            material_count: Some(2),
+        }
+    }
+
+    #[sinex_test]
+    async fn source_material_list_envelope_renders_finite_json_document() -> TestResult<()> {
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.list",
+            SourceMaterialListView::new(vec![fixture_material("material-1")]),
+        )
+        .with_query_echo(serde_json::json!({
+            "status": "completed",
+            "limit": 1,
+        }));
+
+        let rendered = render_finite_envelope(&envelope, OutputFormat::Json)?
+            .expect("json renders finite envelope");
+        let value: serde_json::Value = serde_json::from_str(&rendered)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(value["source_surface"], "sinexctl.sources.list");
+        assert_eq!(
+            value["payload"]["schema_version"],
+            SOURCE_MATERIAL_LIST_SCHEMA_VERSION
+        );
+        assert_eq!(value["payload"]["count"], 1);
+        assert_eq!(value["payload"]["materials"][0]["id"], "material-1");
+        assert_eq!(value["query_echo"]["status"], "completed");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_coverage_envelope_renders_finite_json_document() -> TestResult<()> {
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.coverage",
+            SourceCoverageListView::new(vec![fixture_coverage("fixture.source")]),
+        )
+        .with_query_echo(serde_json::json!({
+            "limit": 100,
+        }));
+
+        let rendered = render_finite_envelope(&envelope, OutputFormat::Json)?
+            .expect("json renders finite envelope");
+        let value: serde_json::Value = serde_json::from_str(&rendered)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(value["source_surface"], "sinexctl.sources.coverage");
+        assert_eq!(
+            value["payload"]["schema_version"],
+            SOURCE_COVERAGE_LIST_SCHEMA_VERSION
+        );
+        assert_eq!(value["payload"]["count"], 1);
+        assert_eq!(
+            value["payload"]["sources"][0]["source_identifier"],
+            "fixture.source"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_material_table_renderer_stays_on_raw_response() -> TestResult<()> {
+        let table = format_source_materials_table(&SourcesListResponse {
+            materials: vec![fixture_material("abcdef123456")],
+        });
+
+        assert!(table.contains("abcdef12..."));
+        assert!(table.contains("fixture.source"));
+        assert!(table.contains("completed"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_coverage_table_renderer_stays_on_raw_response() -> TestResult<()> {
+        let table = format_coverage_table(&SourcesCoverageResponse {
+            sources: vec![fixture_coverage("fixture.source")],
+        });
+
+        assert!(table.contains("fixture.source"));
+        assert!(table.contains("session_document"));
+        assert!(table.contains("7"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finite_source_views_reject_ndjson() -> TestResult<()> {
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.list",
+            SourceMaterialListView::new(vec![fixture_material("material-1")]),
+        );
+
+        let result = render_finite_envelope(&envelope, OutputFormat::Ndjson);
+
+        assert!(
+            result.is_err(),
+            "finite source views must not render ndjson"
+        );
+        assert!(result.unwrap_err().to_string().contains("streaming"));
         Ok(())
     }
 }
