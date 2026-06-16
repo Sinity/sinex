@@ -261,7 +261,7 @@ sudo systemctl start 'sinex-*'
 
 ```bash
 sinexctl status
-sinexctl telemetry current-health
+sinexctl metrics telemetry current-health
 psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM core.events;"
 ```
 

@@ -1,4 +1,4 @@
-//! `sinexctl throughput` — per-source / per-component event-rate summary.
+//! `sinexctl metrics throughput` — per-source / per-component event-rate summary.
 //!
 //! Issue #1172 AC-8. Reads `telemetry.throughput` and prints either a table
 //! (default) or JSON. The handler picks fixed 1h/24h windows on the gateway
@@ -15,8 +15,8 @@ use crate::model::OutputFormat;
 #[derive(Debug, Args)]
 #[command(after_help = "\
 EXAMPLES:
-    sinexctl throughput
-    sinexctl throughput -f json
+    sinexctl metrics throughput
+    sinexctl metrics throughput -f json
 ")]
 pub struct ThroughputCommand {}
 

@@ -16,7 +16,7 @@ sinexctl runtime list --token "$SINEX_API_TOKEN"
 sinexctl replay list --token "$SINEX_API_TOKEN"
 
 # Inspect automata runtime health and checkpoint position
-sinexctl automata --token "$SINEX_API_TOKEN"
+sinexctl runtime automata --token "$SINEX_API_TOKEN"
 
 # Run runtime evidence checks, including passive derived-signal checks, managed
 # document-scan smoke, collector-surface evidence, and historical-backfill evidence
