@@ -1346,6 +1346,8 @@ mod tests {
         assert!(validate_format("query", OutputFormat::Ndjson).is_ok());
         assert!(validate_format("query", OutputFormat::Table).is_ok());
         assert!(validate_format("query", OutputFormat::Dot).is_err());
+        assert!(validate_format("errors", OutputFormat::Json).is_ok());
+        assert!(validate_format("errors", OutputFormat::Ndjson).is_err());
         assert!(validate_format("watch", OutputFormat::Json).is_ok());
         Ok(())
     }
