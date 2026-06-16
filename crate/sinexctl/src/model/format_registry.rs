@@ -369,7 +369,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
 
     // ── Audit ────────────────────────────────────────────────────────────────
-    m.insert("audit", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("ops audit", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "events annotate",
         FormatCapability::single_shot(TABLE_JSON_YAML),
@@ -838,7 +838,7 @@ fn family_for_path(path: &str) -> CommandFamily {
     match root {
         "gateway" | "core" => CommandFamily::Gateway,
         "events" | "context" | "verify" | "now" | "status" => CommandFamily::Query,
-        "runtime" | "replay" | "dlq" | "ops" | "audit" | "lifecycle" | "privacy" | "blob" => {
+        "runtime" | "replay" | "dlq" | "ops" | "lifecycle" | "privacy" | "blob" => {
             CommandFamily::Operate
         }
         "sources" => CommandFamily::Sources,
@@ -1077,7 +1077,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::SOURCES_READINESS_LIST,
         ],
         "privacy export" => &[methods::EVENTS_QUERY],
-        "audit" => &[methods::AUDIT_GET],
+        "ops audit" => &[methods::AUDIT_GET],
         "events annotate" => &[methods::EVENTS_ANNOTATE],
         "sources stage" => &[methods::SOURCES_STAGE],
         "sources cockpit" => &[],
@@ -1466,6 +1466,7 @@ mod tests {
             Some(CommandEffect::Mutating)
         );
         assert_eq!(effect_for("privacy audit"), Some(CommandEffect::ReadOnly));
+        assert_eq!(effect_for("ops audit"), Some(CommandEffect::ReadOnly));
         assert_eq!(
             effect_for("curation finalize"),
             Some(CommandEffect::Mutating)

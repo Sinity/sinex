@@ -12,13 +12,13 @@ use crate::model::OutputFormat;
 #[command(after_help = "\
 EXAMPLES:
     # View audit trail for an operation
-    sinexctl audit 01HQ2KM...
+    sinexctl ops audit 01HQ2KM...
 
     # Output as JSON for processing
-    sinexctl audit 01HQ2KM... -f json
+    sinexctl ops audit 01HQ2KM... -f json
 
     # Output as YAML
-    sinexctl audit 01HQ2KM... -f yaml
+    sinexctl ops audit 01HQ2KM... -f yaml
 ")]
 pub struct AuditCommand {
     /// Operation ID

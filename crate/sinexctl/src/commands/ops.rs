@@ -3,6 +3,7 @@ use serde_json::Value;
 use sinex_primitives::rpc::ops::{Operation as OpsOperation, OpsStartResponse};
 use sinex_primitives::views::{OperationJobListView, OperationView, ViewEnvelope};
 
+use crate::commands::audit::AuditCommand;
 use crate::commands::dlq::DlqCommands;
 use crate::commands::lifecycle::LifecycleCommands;
 use crate::commands::replay::ReplayCommands;
@@ -92,6 +93,9 @@ pub enum OpsCommands {
     /// Data lifecycle management (archive, restore, tombstone)
     #[command(subcommand)]
     Lifecycle(LifecycleCommands),
+
+    /// Audit trail for an operation
+    Audit(AuditCommand),
 }
 
 /// Read-only operation job surface (rendered through ViewEnvelope)
@@ -217,6 +221,7 @@ impl OpsCommands {
             Self::Dlq(cmd) => cmd.execute(client, format).await?,
             Self::Replay(cmd) => cmd.execute(client, format).await?,
             Self::Lifecycle(cmd) => cmd.execute(client, format).await?,
+            Self::Audit(cmd) => cmd.execute(client, format).await?,
         }
         Ok(())
     }
