@@ -816,7 +816,7 @@ fn operation_actions(
 
     vec![
         ActionAvailability::read("ops.show", "Show", ActionAvailabilityState::Enabled)
-            .with_command_hint(format!("sinexctl ops show {id}")),
+            .with_command_hint(format!("sinexctl ops get {id}")),
         ActionAvailability {
             id: "ops.cancel".to_string(),
             label: "Cancel".to_string(),
