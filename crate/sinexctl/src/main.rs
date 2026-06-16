@@ -9,9 +9,8 @@ use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::lifecycle::TombstoneCommands;
 use sinexctl::commands::{
     CompletionEndpointCommand, ConfigCommands, DlqCommands, DocumentsCommand, EventsCommand,
-    LifecycleCommands, MetricsCommands, NowCommand, OpsCommands, PrivacyCommand, RecordCommand,
-    ReplayCommands, RuntimeCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
-    TasksCommand, TuiCommand,
+    LifecycleCommands, MetricsCommands, OpsCommands, PrivacyCommand, RecordCommand, ReplayCommands,
+    RuntimeCommands, SemanticCommand, SourcesCommand, StateCommands, TasksCommand, TuiCommand,
 };
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
@@ -142,13 +141,6 @@ enum Commands {
         #[command(subcommand)]
         cmd: MetricsCommands,
     },
-
-    // ===== Shortcut Commands =====
-    /// Quick system status check
-    Status(StatusCommand),
-
-    /// Show what's happening right now — dashboard view
-    Now(NowCommand),
 
     /// Structured completion endpoint for shell and picker frontends
     #[command(name = "_complete", hide = true)]
@@ -284,11 +276,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Semantic(cmd) => cmd.execute(&client, format).await?,
                 Commands::Docs(cmd) => cmd.execute(&client, format).await?,
                 Commands::Metrics { cmd } => cmd.execute(&client, format).await?,
-                Commands::Status(cmd) => {
-                    cmd.execute(&client, config.runtime_target.as_ref(), format)
-                        .await?;
-                }
-                Commands::Now(cmd) => cmd.execute(&client, format).await?,
                 Commands::Complete(_) => unreachable!("Complete command handled above"),
             }
         }
@@ -371,12 +358,12 @@ fn command_center_view(config: &Config, format: OutputFormat) -> CommandCenterVi
         primary_actions: vec![
             CommandCenterAction {
                 label: "Current dashboard",
-                command: "sinexctl now",
+                command: "sinexctl",
                 effect: "read",
             },
             CommandCenterAction {
                 label: "Runtime health",
-                command: "sinexctl status",
+                command: "sinexctl runtime health",
                 effect: "read",
             },
             CommandCenterAction {
@@ -679,8 +666,6 @@ fn command_path(cmd: &Commands) -> String {
             }
         }
         Commands::Metrics { cmd } => cmd.command_path().to_string(),
-        Commands::Status(_) => "status".to_string(),
-        Commands::Now(_) => "now".to_string(),
         Commands::Complete(_) => "_complete".to_string(),
     }
 }
@@ -824,7 +809,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("SINEX_API_TOKEN", "env-token");
 
-        let (matches, cli) = parse_cli(&["sinexctl", "status"])?;
+        let (matches, cli) = parse_cli(&["sinexctl", "runtime", "health"])?;
         let token_override = cli_value_is_explicit(&matches, "token")
             .then(|| cli.token.clone())
             .flatten();
@@ -840,7 +825,7 @@ mod tests {
 
     #[sinex_serial_test]
     async fn cli_token_is_treated_as_explicit_override() -> TestResult<()> {
-        let (matches, cli) = parse_cli(&["sinexctl", "--token", "cli-token", "status"])?;
+        let (matches, cli) = parse_cli(&["sinexctl", "--token", "cli-token", "runtime", "health"])?;
         let token_override = cli_value_is_explicit(&matches, "token")
             .then(|| cli.token.clone())
             .flatten();
@@ -858,7 +843,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.clear("SINEX_API_URL");
 
-        let (default_matches, default_cli) = parse_cli(&["sinexctl", "status"])?;
+        let (default_matches, default_cli) = parse_cli(&["sinexctl", "runtime", "health"])?;
         assert!(
             !cli_value_is_explicit(&default_matches, "rpc_url"),
             "default RPC URL must not be treated as an explicit override"
@@ -866,8 +851,13 @@ mod tests {
         assert_eq!(default_cli.rpc_url, None);
 
         let explicit_default = default_rpc_url();
-        let (explicit_matches, explicit_cli) =
-            parse_cli(&["sinexctl", "--rpc-url", explicit_default.as_str(), "status"])?;
+        let (explicit_matches, explicit_cli) = parse_cli(&[
+            "sinexctl",
+            "--rpc-url",
+            explicit_default.as_str(),
+            "runtime",
+            "health",
+        ])?;
         assert!(
             cli_value_is_explicit(&explicit_matches, "rpc_url"),
             "explicit --rpc-url must remain an explicit override even when equal to the default"
@@ -895,7 +885,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("SINEX_API_URL", "https://env-only:9443");
 
-        let (matches, cli) = parse_cli(&["sinexctl", "status"])?;
+        let (matches, cli) = parse_cli(&["sinexctl", "runtime", "health"])?;
         assert!(
             !cli_value_is_explicit(&matches, "rpc_url"),
             "environment-provided RPC URL must not masquerade as a command-line override"
@@ -906,14 +896,21 @@ mod tests {
 
     #[sinex_serial_test]
     async fn timeout_and_format_are_only_explicit_when_passed_on_command_line() -> TestResult<()> {
-        let (default_matches, default_cli) = parse_cli(&["sinexctl", "status"])?;
+        let (default_matches, default_cli) = parse_cli(&["sinexctl", "runtime", "health"])?;
         assert!(!cli_value_is_explicit(&default_matches, "timeout"));
         assert!(!cli_value_is_explicit(&default_matches, "format"));
         assert_eq!(default_cli.timeout, 30);
         assert!(matches!(default_cli.format, OutputFormat::Table));
 
-        let (explicit_matches, explicit_cli) =
-            parse_cli(&["sinexctl", "--timeout", "45", "--format", "json", "status"])?;
+        let (explicit_matches, explicit_cli) = parse_cli(&[
+            "sinexctl",
+            "--timeout",
+            "45",
+            "--format",
+            "json",
+            "runtime",
+            "health",
+        ])?;
         assert!(cli_value_is_explicit(&explicit_matches, "timeout"));
         assert!(cli_value_is_explicit(&explicit_matches, "format"));
         assert_eq!(explicit_cli.timeout, 45);
@@ -929,7 +926,7 @@ mod tests {
             "/tmp/sinex-runtime-target.json",
         );
 
-        let (matches, cli) = parse_cli(&["sinexctl", "status"])?;
+        let (matches, cli) = parse_cli(&["sinexctl", "runtime", "health"])?;
 
         assert_eq!(
             matches.value_source("runtime_target"),
@@ -1133,22 +1130,25 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn validate_format_rejects_dot_for_status() -> TestResult<()> {
-        let result = sinexctl::validate_format("status", sinexctl::OutputFormat::Dot);
-        assert!(result.is_err(), "status must reject dot format");
+    async fn validate_format_rejects_dot_for_runtime_health() -> TestResult<()> {
+        let result = sinexctl::validate_format("runtime health", sinexctl::OutputFormat::Dot);
+        assert!(result.is_err(), "runtime health must reject dot format");
         let msg = result.unwrap_err();
-        assert!(msg.contains("status"), "error must name the command");
+        assert!(
+            msg.contains("runtime health"),
+            "error must name the command"
+        );
         Ok(())
     }
 
     #[sinex_test]
     async fn validate_format_rejects_ndjson_for_unsupported_command() -> TestResult<()> {
-        // `status` is not wired through the ViewEnvelope ndjson path; the
+        // `runtime health` is not wired through the ViewEnvelope ndjson path; the
         // registry must reject ndjson so a config `default_format = "ndjson"`
         // cannot make it emit pretty JSON under an ndjson default (Codex
         // review, PR #1766). main() validates any non-Table effective format.
-        let result = sinexctl::validate_format("status", sinexctl::OutputFormat::Ndjson);
-        assert!(result.is_err(), "status must reject ndjson format");
+        let result = sinexctl::validate_format("runtime health", sinexctl::OutputFormat::Ndjson);
+        assert!(result.is_err(), "runtime health must reject ndjson format");
         Ok(())
     }
 

@@ -24,7 +24,7 @@ mod help_tests {
             .success()
             .stdout(predicate::str::contains("Sinex command center"))
             .stdout(predicate::str::contains("Primary actions"))
-            .stdout(predicate::str::contains("sinexctl now"))
+            .stdout(predicate::str::contains("sinexctl runtime health"))
             .stdout(predicate::str::contains("Root groups"))
             .stdout(predicate::str::contains("sources"));
         Ok(())
@@ -47,7 +47,7 @@ mod help_tests {
         assert_eq!(value["payload"]["schema_version"], 1);
         assert_eq!(
             value["payload"]["primary_actions"][0]["command"],
-            "sinexctl now"
+            "sinexctl"
         );
         assert_eq!(value["payload"]["root_groups"][0]["root"], "events");
         Ok(())
@@ -629,12 +629,10 @@ mod shortcut_command_tests {
     use super::*;
 
     #[sinex_test]
-    async fn test_status_command_exists() -> TestResult<()> {
-        sinexctl()
-            .args(["status", "--help"])
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("status"));
+    async fn status_and_now_roots_are_pruned() -> TestResult<()> {
+        for root in ["status", "now"] {
+            sinexctl().args([root, "--help"]).assert().failure();
+        }
         Ok(())
     }
 
