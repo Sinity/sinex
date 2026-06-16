@@ -25,7 +25,10 @@ use sinex_primitives::sources::continuity::{
     SourcesContinuityListRequest, SourcesContinuityListResponse, SourcesExplainGapRequest,
     SourcesExplainGapResponse,
 };
-use sinex_primitives::views::ViewEnvelope;
+use sinex_primitives::views::{
+    SourceContinuityDetailView, SourceContinuityGapView, SourceContinuityListView,
+    SourceDriftListView, SourceReadinessDetailView, SourceReadinessListView, ViewEnvelope,
+};
 
 use crate::Result;
 use crate::client::GatewayClient;
@@ -136,6 +139,16 @@ impl CockpitCommand {
             stale_after_seconds: None,
         };
         let body: SourcesReadinessGetResponse = client.sources_readiness_get(req).await?;
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.cockpit",
+            SourceReadinessDetailView::new(body.readiness.clone()),
+        )
+        .with_query_echo(serde_json::json!({
+            "filter": self.filter,
+        }));
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
         CommandOutput::single(body, format_readiness_get).display(&format)
     }
 }
@@ -647,6 +660,16 @@ impl ContinuityCommand {
                 source_family: family,
             };
             let resp: SourcesContinuityGetResponse = client.sources_continuity_get(req).await?;
+            let envelope = ViewEnvelope::new(
+                "sinexctl.sources.continuity",
+                SourceContinuityDetailView::new(resp.report.clone()),
+            )
+            .with_query_echo(serde_json::json!({
+                "family": family_str,
+            }));
+            if print_finite_envelope(&envelope, format)? {
+                return Ok(());
+            }
             CommandOutput::single(resp, format_continuity_get).display(&format)?;
             return Ok(());
         }
@@ -655,6 +678,16 @@ impl ContinuityCommand {
         let since = self.since.as_deref().map(parse_timestamp).transpose()?;
         let req = SourcesContinuityListRequest { since };
         let resp: SourcesContinuityListResponse = client.sources_continuity_list(req).await?;
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.continuity",
+            SourceContinuityListView::new(resp.reports.clone()),
+        )
+        .with_query_echo(serde_json::json!({
+            "since": since.map(|ts| ts.to_string()),
+        }));
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
         CommandOutput::single(resp, format_continuity_list).display(&format)?;
         Ok(())
     }
@@ -683,6 +716,17 @@ impl ExplainGapCommand {
             at,
         };
         let resp: SourcesExplainGapResponse = client.sources_continuity_explain_gap(req).await?;
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.explain_gap",
+            SourceContinuityGapView::new(resp.clone()),
+        )
+        .with_query_echo(serde_json::json!({
+            "family": self.family,
+            "at": self.at,
+        }));
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
         CommandOutput::single(resp, format_explain_gap).display(&format)?;
         Ok(())
     }
@@ -954,6 +998,18 @@ impl ReadinessCommand {
                 stale_after_seconds: self.stale_after_seconds,
             };
             let body: SourcesReadinessGetResponse = client.sources_readiness_get(req).await?;
+            let envelope = ViewEnvelope::new(
+                "sinexctl.sources.readiness",
+                SourceReadinessDetailView::new(body.readiness.clone()),
+            )
+            .with_query_echo(serde_json::json!({
+                "source": source,
+                "family": self.family,
+                "stale_after_seconds": self.stale_after_seconds,
+            }));
+            if print_finite_envelope(&envelope, format)? {
+                return Ok(());
+            }
             CommandOutput::single(body, format_readiness_get).display(&format)?;
         } else {
             let req = SourcesReadinessListRequest {
@@ -961,6 +1017,17 @@ impl ReadinessCommand {
                 stale_after_seconds: self.stale_after_seconds,
             };
             let body: SourcesReadinessListResponse = client.sources_readiness_list(req).await?;
+            let envelope = ViewEnvelope::new(
+                "sinexctl.sources.readiness",
+                SourceReadinessListView::new(body.sources.clone()),
+            )
+            .with_query_echo(serde_json::json!({
+                "family": self.family,
+                "stale_after_seconds": self.stale_after_seconds,
+            }));
+            if print_finite_envelope(&envelope, format)? {
+                return Ok(());
+            }
             CommandOutput::single(body, format_readiness_list).display(&format)?;
         }
         Ok(())
@@ -1095,6 +1162,17 @@ impl DriftCommand {
             limit: Some(self.limit),
         };
         let body: SourcesDriftListResponse = client.sources_drift_list(req).await?;
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.drift",
+            SourceDriftListView::new(body.drifts.clone()),
+        )
+        .with_query_echo(serde_json::json!({
+            "source": self.source_id,
+            "limit": self.limit,
+        }));
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
         CommandOutput::single(body, format_drift_list).display(&format)?;
         Ok(())
     }
@@ -1185,10 +1263,17 @@ mod tests {
     use super::*;
     use crate::fmt::render_finite_envelope;
     use sinex_primitives::domain::{MaterialStatus, SourceMaterialTimingInfoType};
+    use sinex_primitives::parser::ParserId;
     use sinex_primitives::rpc::sources::{
-        SourceShapeDriftObservation, SourceShapeTypeChange, caveat_codes,
+        SourceReadinessCost, SourceReadinessStatus, SourceShapeDriftObservation,
+        SourceShapeTypeChange, caveat_codes,
     };
-    use sinex_primitives::views::VIEW_ENVELOPE_SCHEMA_VERSION;
+    use sinex_primitives::views::{
+        SOURCE_CONTINUITY_DETAIL_SCHEMA_VERSION, SOURCE_CONTINUITY_GAP_SCHEMA_VERSION,
+        SOURCE_CONTINUITY_LIST_SCHEMA_VERSION, SOURCE_DRIFT_LIST_SCHEMA_VERSION,
+        SOURCE_READINESS_DETAIL_SCHEMA_VERSION, SOURCE_READINESS_LIST_SCHEMA_VERSION,
+        VIEW_ENVELOPE_SCHEMA_VERSION,
+    };
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
@@ -1250,6 +1335,24 @@ mod tests {
         }
     }
 
+    fn fixture_readiness(source_identifier: &str) -> SourceReadiness {
+        SourceReadiness {
+            binding_id: None,
+            source_family: "fixture".to_string(),
+            source_id: Some(SourceId::from_static("fixture.source")),
+            parser_id: Some(ParserId::from_static("fixture.parser")),
+            source_identifier: source_identifier.to_string(),
+            status: SourceReadinessStatus::Available,
+            cost: SourceReadinessCost::LocalFast,
+            freshness_seconds: Some(12),
+            material_count: 2,
+            parsed_event_count: Some(7),
+            last_success_at: Some("2026-06-01T00:00:00Z".to_string()),
+            caveats: Vec::new(),
+            evidence: serde_json::json!({"fixture": true}),
+        }
+    }
+
     #[sinex_test]
     async fn source_material_list_envelope_renders_finite_json_document() -> TestResult<()> {
         let envelope = ViewEnvelope::new(
@@ -1306,6 +1409,163 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn source_readiness_list_envelope_renders_finite_json_document() -> TestResult<()> {
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.readiness",
+            SourceReadinessListView::new(vec![fixture_readiness("fixture.source")]),
+        )
+        .with_query_echo(serde_json::json!({
+            "family": "fixture",
+            "stale_after_seconds": 60,
+        }));
+
+        let rendered = render_finite_envelope(&envelope, OutputFormat::Json)?
+            .expect("json renders finite envelope");
+        let value: serde_json::Value = serde_json::from_str(&rendered)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(value["source_surface"], "sinexctl.sources.readiness");
+        assert_eq!(
+            value["payload"]["schema_version"],
+            SOURCE_READINESS_LIST_SCHEMA_VERSION
+        );
+        assert_eq!(value["payload"]["count"], 1);
+        assert_eq!(
+            value["payload"]["sources"][0]["source_identifier"],
+            "fixture.source"
+        );
+        assert_eq!(value["payload"]["sources"][0]["status"], "available");
+        assert_eq!(value["query_echo"]["family"], "fixture");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_readiness_detail_envelope_renders_finite_json_document() -> TestResult<()> {
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.readiness",
+            SourceReadinessDetailView::new(Some(fixture_readiness("fixture.source"))),
+        )
+        .with_query_echo(serde_json::json!({
+            "source": "fixture.source",
+        }));
+
+        let rendered = render_finite_envelope(&envelope, OutputFormat::Json)?
+            .expect("json renders finite envelope");
+        let value: serde_json::Value = serde_json::from_str(&rendered)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(
+            value["payload"]["schema_version"],
+            SOURCE_READINESS_DETAIL_SCHEMA_VERSION
+        );
+        assert_eq!(
+            value["payload"]["source"]["source_identifier"],
+            "fixture.source"
+        );
+        assert_eq!(value["query_echo"]["source"], "fixture.source");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_drift_envelope_renders_finite_json_document() -> TestResult<()> {
+        let drift = SourceShapeDriftObservation {
+            checkpoint_key: "source.default.fixture".to_string(),
+            source_id: SourceId::from_static("browser.history"),
+            consumer_group: Some("default".to_string()),
+            consumer_name: Some("fixture".to_string()),
+            previous_hash: "shape-old".to_string(),
+            current_hash: "shape-new".to_string(),
+            format: "sqlite_schema".to_string(),
+            added_keys: vec!["title".to_string()],
+            removed_keys: Vec::new(),
+            type_changes: Vec::new(),
+            required_input_keys: Vec::new(),
+            observed_at: "2026-05-21T07:00:00Z".to_string(),
+        };
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.drift",
+            SourceDriftListView::new(vec![drift]),
+        )
+        .with_query_echo(serde_json::json!({
+            "source": "browser.history",
+            "limit": 1,
+        }));
+
+        let rendered = render_finite_envelope(&envelope, OutputFormat::Json)?
+            .expect("json renders finite envelope");
+        let value: serde_json::Value = serde_json::from_str(&rendered)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(value["source_surface"], "sinexctl.sources.drift");
+        assert_eq!(
+            value["payload"]["schema_version"],
+            SOURCE_DRIFT_LIST_SCHEMA_VERSION
+        );
+        assert_eq!(value["payload"]["count"], 1);
+        assert_eq!(
+            value["payload"]["drifts"][0]["source_id"],
+            "browser.history"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_continuity_empty_views_render_finite_json_documents() -> TestResult<()> {
+        let list = ViewEnvelope::new(
+            "sinexctl.sources.continuity",
+            SourceContinuityListView::new(Vec::new()),
+        );
+        let detail = ViewEnvelope::new(
+            "sinexctl.sources.continuity",
+            SourceContinuityDetailView::new(None),
+        );
+
+        let list_json = render_finite_envelope(&list, OutputFormat::Json)?
+            .expect("json renders finite envelope");
+        let list_value: serde_json::Value = serde_json::from_str(&list_json)?;
+        assert_eq!(
+            list_value["payload"]["schema_version"],
+            SOURCE_CONTINUITY_LIST_SCHEMA_VERSION
+        );
+        assert_eq!(list_value["payload"]["count"], 0);
+
+        let detail_json = render_finite_envelope(&detail, OutputFormat::Json)?
+            .expect("json renders finite envelope");
+        let detail_value: serde_json::Value = serde_json::from_str(&detail_json)?;
+        assert_eq!(
+            detail_value["payload"]["schema_version"],
+            SOURCE_CONTINUITY_DETAIL_SCHEMA_VERSION
+        );
+        assert!(detail_value["payload"].get("report").is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_continuity_gap_envelope_renders_finite_json_document() -> TestResult<()> {
+        let response = SourcesExplainGapResponse {
+            source_family: SourceFamily::new("fixture")?,
+            at: parse_timestamp("2026-06-01T00:00:00Z")?,
+            gap: None,
+            explanation: "coverage present".to_string(),
+        };
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.explain_gap",
+            SourceContinuityGapView::new(response),
+        );
+
+        let rendered = render_finite_envelope(&envelope, OutputFormat::Json)?
+            .expect("json renders finite envelope");
+        let value: serde_json::Value = serde_json::from_str(&rendered)?;
+
+        assert_eq!(
+            value["payload"]["schema_version"],
+            SOURCE_CONTINUITY_GAP_SCHEMA_VERSION
+        );
+        assert_eq!(value["payload"]["explanation"]["explanation"], "coverage present");
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn source_material_table_renderer_stays_on_raw_response() -> TestResult<()> {
         let table = format_source_materials_table(&SourcesListResponse {
             materials: vec![fixture_material("abcdef123456")],
@@ -1332,8 +1592,8 @@ mod tests {
     #[sinex_test]
     async fn finite_source_views_reject_ndjson() -> TestResult<()> {
         let envelope = ViewEnvelope::new(
-            "sinexctl.sources.list",
-            SourceMaterialListView::new(vec![fixture_material("material-1")]),
+            "sinexctl.sources.readiness",
+            SourceReadinessListView::new(vec![fixture_readiness("fixture.source")]),
         );
 
         let result = render_finite_envelope(&envelope, OutputFormat::Ndjson);
