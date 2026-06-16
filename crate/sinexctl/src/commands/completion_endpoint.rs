@@ -393,6 +393,7 @@ fn grammar_candidates(
         ("ops", "operation records and jobs"),
         ("privacy", "private mode and policy posture"),
         ("tasks", "task projection and lifecycle"),
+        ("record", "manual canonical health and task records"),
         ("docs", "document search, retrieval, and chunk browsing"),
         ("semantic", "semantic epochs and shadow-lane inspection"),
         ("metrics", "telemetry, throughput, and reports"),
@@ -666,6 +667,19 @@ mod tests {
                 "removed root `{removed}` must not be suggested"
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn grammar_completion_includes_record_root() -> TestResult<()> {
+        let response = response("sinexctl rec").await;
+        assert!(
+            response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.value == "record"),
+            "canonical record root must be suggested: {response:#?}"
+        );
         Ok(())
     }
 
