@@ -1,8 +1,13 @@
 //! Event timeline listing (#1025).
 
 use crate::Result;
+use crate::fmt::render_finite_envelope;
+use crate::model::OutputFormat;
 use clap::Args;
 use console::{Term, style};
+use serde_json::json;
+use sinex_primitives::query::QueryResultEvent;
+use sinex_primitives::views::{EventCardListView, EventCardView, ViewEnvelope};
 
 /// List recent events as a timeline with source and type columns.
 #[derive(Debug, Args)]
@@ -21,7 +26,11 @@ pub struct TimelineCommand {
 }
 
 impl TimelineCommand {
-    pub async fn execute(&self, client: &crate::client::gateway::GatewayClient) -> Result<()> {
+    pub async fn execute(
+        &self,
+        client: &crate::client::gateway::GatewayClient,
+        format: OutputFormat,
+    ) -> Result<()> {
         use sinex_primitives::domain::{EventSource, EventType};
         use sinex_primitives::query::EventQuery;
 
@@ -43,6 +52,42 @@ impl TimelineCommand {
             return Ok(());
         };
 
+        if let Some(output) = render_timeline_machine_output(
+            &events,
+            self.limit,
+            self.source.as_deref(),
+            self.event_type.as_deref(),
+            format,
+        )? {
+            print!("{output}");
+            if !output.is_empty() && !output.ends_with('\n') {
+                println!();
+            }
+            return Ok(());
+        }
+
+        render_table(&events)?;
+        Ok(())
+    }
+}
+
+fn render_timeline_machine_output(
+    events: &[QueryResultEvent],
+    limit: i64,
+    source: Option<&str>,
+    event_type: Option<&str>,
+    format: OutputFormat,
+) -> Result<Option<String>> {
+    let timeline = EventCardListView::from_query_events(events);
+    let envelope = ViewEnvelope::new("sinexctl.timeline", timeline).with_query_echo(json!({
+        "limit": limit,
+        "source": source,
+        "event_type": event_type,
+    }));
+    render_finite_envelope(&envelope, format)
+}
+
+fn render_table(events: &[QueryResultEvent]) -> Result<()> {
         let term = Term::stdout();
         term.write_line(&format!(
             "{}  {} events",
@@ -50,29 +95,46 @@ impl TimelineCommand {
             style(events.len().to_string()).cyan(),
         ))?;
 
-        for event in &events {
-            let ts = event
-                .event
-                .ts_orig
+        for event in events {
+            let card = EventCardView::from_query_event(event);
+            let ts = card
+                .timestamp
+                .original
                 .map_or_else(|| "?".into(), |t| t.to_string());
-            let source = event.event.source.as_str();
-            let etype = event.event.event_type.as_str();
-            let summary = event
-                .snippet
-                .as_deref()
-                .unwrap_or("")
-                .chars()
-                .take(80)
-                .collect::<String>();
             term.write_line(&format!(
                 "{}  {:<20} {:<30} {}",
                 style(ts.chars().take(19).collect::<String>()).dim(),
-                style(source).yellow(),
-                style(etype).green(),
-                summary,
+                style(card.source.raw).yellow(),
+                style(card.event_type).green(),
+                card.summary,
             ))?;
         }
 
+        Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask::sandbox::prelude::sinex_test;
+
+    #[sinex_test]
+    async fn timeline_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
+        let output = render_timeline_machine_output(&[], 25, Some("shell.atuin"), None, OutputFormat::Json)?
+            .expect("json should render");
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(value["source_surface"], "sinexctl.timeline");
+        assert_eq!(value["payload"]["count"], 0);
+        assert_eq!(value["query_echo"]["limit"], 25);
+        assert_eq!(value["query_echo"]["source"], "shell.atuin");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn timeline_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<()> {
+        let result = render_timeline_machine_output(&[], 100, None, None, OutputFormat::Ndjson);
+        assert!(result.is_err(), "timeline is a finite view");
         Ok(())
     }
 }
