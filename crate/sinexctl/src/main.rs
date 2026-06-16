@@ -267,9 +267,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Privacy(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),
-                Commands::Ops {
-                    cmd: OpsCommands::Demo(_),
-                } => unreachable!("Ops demo command handled above"),
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
                 Commands::Record(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
