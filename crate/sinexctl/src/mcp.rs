@@ -2105,7 +2105,7 @@ async fn sources_status_view(client: &GatewayClient, arguments: Value) -> Result
     Ok(mcp_view_envelope(
         "sinex.sources_status_view",
         &json!({}),
-        &json!({ "result": response }),
+        &json!(response.payload),
     )?)
 }
 
