@@ -740,34 +740,18 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
             .with_note("hidden structured completion endpoint; ndjson emits one candidate per line"),
     );
 
-    // ── Admin ─────────────────────────────────────────────────────────────────
     m.insert(
-        "admin snapshot",
+        "ops state snapshot",
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("quiesce-mode snapshot of postgres + NATS + CAS + state"),
     );
     m.insert(
-        "admin snapshot-inspect",
+        "ops state inspect",
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("inspect snapshot manifest and archive member coverage"),
     );
     m.insert(
-        "admin snapshot-restore",
-        FormatCapability::single_shot(TABLE_JSON_YAML)
-            .with_note("restore drill plan/execution and archive sensitivity classification"),
-    );
-    m.insert(
-        "state snapshot",
-        FormatCapability::single_shot(TABLE_JSON_YAML)
-            .with_note("quiesce-mode snapshot of postgres + NATS + CAS + state"),
-    );
-    m.insert(
-        "state inspect",
-        FormatCapability::single_shot(TABLE_JSON_YAML)
-            .with_note("inspect snapshot manifest and archive member coverage"),
-    );
-    m.insert(
-        "state restore",
+        "ops state restore",
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("restore drill plan/execution and archive sensitivity classification"),
     );
@@ -843,7 +827,6 @@ fn family_for_path(path: &str) -> CommandFamily {
             CommandFamily::Domain
         }
         "metrics" => CommandFamily::Telemetry,
-        "admin" | "state" => CommandFamily::Admin,
         "_complete" => CommandFamily::Local,
         _ => CommandFamily::Local,
     }
@@ -859,7 +842,6 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
     }
 
     let mutating = [
-        "admin snapshot",
         "events annotate",
         "ops blob fsck",
         "ops blob migrate",
@@ -918,8 +900,8 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "sources bindings create",
         "sources bindings update",
         "sources stage",
-        "state restore",
-        "state snapshot",
+        "ops state restore",
+        "ops state snapshot",
         "tasks import",
         "tasks cancel",
         "tasks complete",
@@ -938,8 +920,8 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
     use CommandMutationGuard::{Confirmation, DryRun, LocalMaintenance, RpcAuth};
 
     match path {
-        "admin snapshot" | "state snapshot" => &[LocalMaintenance],
-        "state restore" => &[DryRun, Confirmation, LocalMaintenance],
+        "ops state snapshot" => &[LocalMaintenance],
+        "ops state restore" => &[DryRun, Confirmation, LocalMaintenance],
         "ops blob fsck" | "ops blob migrate" | "ops blob sweep-orphans" => {
             &[DryRun, LocalMaintenance]
         }
@@ -1476,9 +1458,15 @@ mod tests {
         );
         assert_eq!(effect_for("ops replay plan"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("ops replay preview"), Some(CommandEffect::Mutating));
-        assert_eq!(effect_for("state inspect"), Some(CommandEffect::ReadOnly));
-        assert_eq!(effect_for("state restore"), Some(CommandEffect::Mutating));
-        assert_eq!(effect_for("state snapshot"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("ops state inspect"), Some(CommandEffect::ReadOnly));
+        assert_eq!(
+            effect_for("ops state restore"),
+            Some(CommandEffect::Mutating)
+        );
+        assert_eq!(
+            effect_for("ops state snapshot"),
+            Some(CommandEffect::Mutating)
+        );
         Ok(())
     }
 

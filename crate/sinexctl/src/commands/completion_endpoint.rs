@@ -654,6 +654,8 @@ mod tests {
             "relations",
             "audit",
             "blob",
+            "state",
+            "admin",
             "documents",
             "semantics",
             "completions",

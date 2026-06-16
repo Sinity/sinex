@@ -1,5 +1,5 @@
-//! `sinexctl admin` — operator-level commands for backup, maintenance, and
-//! horizon-3 reshaping.
+//! Internal admin implementations surfaced through canonical `sinexctl ops`
+//! commands.
 
 pub mod exec;
 pub mod manifest;

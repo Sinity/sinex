@@ -1,4 +1,4 @@
-//! `sinexctl state` — local runtime-state snapshot and restore surfaces.
+//! `sinexctl ops state` — local runtime-state snapshot and restore surfaces.
 
 use clap::Subcommand;
 use color_eyre::eyre::Result;
