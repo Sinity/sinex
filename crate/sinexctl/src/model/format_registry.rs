@@ -230,12 +230,6 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert("dlq purge", FormatCapability::single_shot(TABLE_ONLY));
 
     // ── Query ────────────────────────────────────────────────────────────────
-    m.insert(
-        "query",
-        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
-            "ndjson emits one EventCardView object per line (envelope metadata omitted)",
-        ),
-    );
     for path in [
         "relations after",
         "relations before",
@@ -289,11 +283,6 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     }
 
     // ── Trace ────────────────────────────────────────────────────────────────
-    m.insert(
-        "trace",
-        FormatCapability::single_shot(TABLE_JSON_YAML_DOT)
-            .with_note("dot format emits Graphviz DOT for provenance graphs"),
-    );
     m.insert(
         "events trace",
         FormatCapability::single_shot(TABLE_JSON_YAML_DOT)
@@ -396,7 +385,6 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Audit ────────────────────────────────────────────────────────────────
     m.insert("audit", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("annotate", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "events annotate",
         FormatCapability::single_shot(TABLE_JSON_YAML),
@@ -720,26 +708,12 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Shortcuts ────────────────────────────────────────────────────────────
     m.insert("status", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert(
-        "recent",
-        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
-            "ndjson emits one EventCardView object per line (envelope metadata omitted)",
-        ),
-    );
-    m.insert("errors", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert(
-        "watch",
-        FormatCapability::streaming(TABLE_JSON_YAML)
-            .with_note("streams NDJSON or YAML documents; table mode shows human-readable lines"),
-    );
     m.insert("context", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("explain", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("verify", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "verify baseline",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
-    m.insert("timeline", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "now",
         FormatCapability::single_shot(TABLE_JSON_YAML)
@@ -879,14 +853,16 @@ fn family_for_path(path: &str) -> CommandFamily {
     let root = path.split_once(' ').map_or(path, |(root, _)| root);
     match root {
         "gateway" | "core" => CommandFamily::Gateway,
-        "events" | "query" | "relations" | "trace" | "recent" | "errors" | "watch" | "context"
-        | "explain" | "verify" | "now" | "modules" | "status" => CommandFamily::Query,
+        "events" | "relations" | "context" | "verify" | "now" | "modules" | "status" => {
+            CommandFamily::Query
+        }
         "automata" | "replay" | "dlq" | "ops" | "audit" | "lifecycle" | "privacy" | "blob" => {
             CommandFamily::Operate
         }
         "sources" => CommandFamily::Sources,
-        "declare" | "instructions" | "tasks" | "curation" | "semantics" | "llm" | "documents"
-        | "annotate" => CommandFamily::Domain,
+        "declare" | "instructions" | "tasks" | "curation" | "semantics" | "llm" | "documents" => {
+            CommandFamily::Domain
+        }
         "telemetry" | "throughput" => CommandFamily::Telemetry,
         "report" => CommandFamily::Report,
         "admin" | "state" => CommandFamily::Admin,
@@ -905,7 +881,6 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
 
     let mutating = [
         "admin snapshot",
-        "annotate",
         "events annotate",
         "blob fsck",
         "blob migrate",
@@ -991,8 +966,7 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         "lifecycle archive" | "lifecycle restore" | "replay plan" | "replay preview"
         | "replay run" => &[RpcAuth, DryRun],
         "lifecycle tombstone approve" => &[RpcAuth, Confirmation],
-        "annotate"
-        | "events annotate"
+        "events annotate"
         | "curation duplicate-judge"
         | "curation finalize"
         | "curation judge"
@@ -1087,9 +1061,8 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "dlq peek" => &[methods::DLQ_PEEK],
         "dlq requeue" => &[methods::DLQ_REQUEUE],
         "dlq purge" => &[methods::DLQ_PURGE],
-        "query" | "recent" | "errors" | "context" | "events query" | "events recent"
-        | "events errors" | "events timeline" | "report today" | "report yesterday"
-        | "report calendar" | "timeline" => &[methods::EVENTS_QUERY],
+        "context" | "events query" | "events recent" | "events errors" | "events timeline"
+        | "report today" | "report yesterday" | "report calendar" => &[methods::EVENTS_QUERY],
         "relations after"
         | "relations before"
         | "relations overlaps"
@@ -1103,10 +1076,8 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         | "events relations sequence"
         | "events relations within" => &[methods::EVENTS_RELATION_EVIDENCE],
         "verify baseline" => &[],
-        "trace" | "explain" | "events trace" | "events inspect" | "events explain" => {
-            &[methods::EVENTS_LINEAGE]
-        }
-        "watch" | "events watch" => &[],
+        "events trace" | "events inspect" | "events explain" => &[methods::EVENTS_LINEAGE],
+        "events watch" => &[],
         "ops start" => &[methods::OPS_START],
         "ops list" | "ops jobs list" => &[methods::OPS_LIST],
         "ops get" | "ops jobs show" => &[methods::OPS_GET],
@@ -1131,7 +1102,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         ],
         "privacy export" => &[methods::EVENTS_QUERY],
         "audit" => &[methods::AUDIT_GET],
-        "annotate" | "events annotate" => &[methods::EVENTS_ANNOTATE],
+        "events annotate" => &[methods::EVENTS_ANNOTATE],
         "sources stage" => &[methods::SOURCES_STAGE],
         "sources cockpit" => &[],
         "sources list" => &[methods::SOURCES_LIST],
@@ -1437,29 +1408,22 @@ mod tests {
 
     #[sinex_test]
     async fn validate_format_accepts_supported() -> xtask::sandbox::TestResult<()> {
-        assert!(validate_format("query", OutputFormat::Json).is_ok());
         assert!(validate_format("events query", OutputFormat::Json).is_ok());
-        assert!(validate_format("query", OutputFormat::Ndjson).is_ok());
         assert!(validate_format("events query", OutputFormat::Ndjson).is_ok());
-        assert!(validate_format("query", OutputFormat::Table).is_ok());
-        assert!(validate_format("query", OutputFormat::Dot).is_err());
-        assert!(validate_format("errors", OutputFormat::Json).is_ok());
-        assert!(validate_format("errors", OutputFormat::Ndjson).is_err());
         assert!(validate_format("context", OutputFormat::Json).is_ok());
         assert!(validate_format("context", OutputFormat::Ndjson).is_err());
         assert!(validate_format("status", OutputFormat::Json).is_ok());
         assert!(validate_format("status", OutputFormat::Ndjson).is_err());
-        assert!(validate_format("explain", OutputFormat::Json).is_ok());
-        assert!(validate_format("explain", OutputFormat::Ndjson).is_err());
+        assert!(validate_format("events explain", OutputFormat::Json).is_ok());
+        assert!(validate_format("events explain", OutputFormat::Ndjson).is_err());
         assert!(validate_format("now", OutputFormat::Json).is_ok());
         assert!(validate_format("now", OutputFormat::Ndjson).is_err());
-        assert!(validate_format("timeline", OutputFormat::Json).is_ok());
-        assert!(validate_format("timeline", OutputFormat::Ndjson).is_err());
-        assert!(validate_format("trace", OutputFormat::Json).is_ok());
+        assert!(validate_format("events timeline", OutputFormat::Json).is_ok());
+        assert!(validate_format("events timeline", OutputFormat::Ndjson).is_err());
+        assert!(validate_format("events trace", OutputFormat::Json).is_ok());
         assert!(validate_format("events trace", OutputFormat::Dot).is_ok());
         assert!(validate_format("events inspect", OutputFormat::Json).is_ok());
-        assert!(validate_format("trace", OutputFormat::Ndjson).is_err());
-        assert!(validate_format("watch", OutputFormat::Json).is_ok());
+        assert!(validate_format("events trace", OutputFormat::Ndjson).is_err());
         assert!(validate_format("events watch", OutputFormat::Json).is_ok());
         Ok(())
     }
@@ -1511,7 +1475,6 @@ mod tests {
                 .map(|entry| entry.effect)
         };
 
-        assert_eq!(effect_for("query"), Some(CommandEffect::ReadOnly));
         assert_eq!(effect_for("events query"), Some(CommandEffect::ReadOnly));
         assert_eq!(
             effect_for("relations within"),
@@ -1521,7 +1484,6 @@ mod tests {
             effect_for("events relations within"),
             Some(CommandEffect::ReadOnly)
         );
-        assert_eq!(effect_for("watch"), Some(CommandEffect::Streaming));
         assert_eq!(effect_for("events watch"), Some(CommandEffect::Streaming));
         assert_eq!(effect_for("events annotate"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("completions"), Some(CommandEffect::Local));
@@ -1739,17 +1701,12 @@ mod tests {
     async fn registry_covers_key_commands() -> xtask::sandbox::TestResult<()> {
         let reg = build();
         let required = [
-            "query",
             "events query",
             "events inspect",
             "events annotate",
             "relations within",
             "events relations within",
-            "trace",
-            "watch",
             "status",
-            "recent",
-            "errors",
             "automata",
             "runtime list",
             "replay plan",
@@ -1759,13 +1716,24 @@ mod tests {
         for cmd in required {
             assert!(reg.contains_key(cmd), "registry is missing `{cmd}`");
         }
+        for removed in [
+            "query", "recent", "errors", "watch", "explain", "trace", "timeline", "annotate",
+        ] {
+            assert!(
+                !reg.contains_key(removed),
+                "event shortcut `{removed}` must not stay in the registry"
+            );
+        }
         Ok(())
     }
 
     #[sinex_test]
     async fn streaming_commands_are_marked() -> xtask::sandbox::TestResult<()> {
         let reg = build();
-        assert!(reg["watch"].streaming, "`watch` must be marked streaming");
+        assert!(
+            reg["events watch"].streaming,
+            "`events watch` must be marked streaming"
+        );
         assert!(
             reg["replay watch"].streaming,
             "`replay watch` must be marked streaming"
