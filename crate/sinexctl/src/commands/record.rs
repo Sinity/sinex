@@ -1,4 +1,4 @@
-//! `sinexctl declare` — manual canonical declarations.
+//! `sinexctl record` — manual canonical records.
 
 use clap::{Args, Subcommand};
 use color_eyre::Result;
@@ -17,63 +17,63 @@ use crate::model::OutputFormat;
 use crate::validation::parse_time_input;
 
 #[derive(Debug, Args)]
-pub struct DeclareCommand {
+pub struct RecordCommand {
     #[command(subcommand)]
-    cmd: DeclareSubcommand,
+    cmd: RecordSubcommand,
 }
 
-impl DeclareCommand {
+impl RecordCommand {
     #[must_use]
-    pub fn subcommand(&self) -> &DeclareSubcommand {
+    pub fn subcommand(&self) -> &RecordSubcommand {
         &self.cmd
     }
 
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match &self.cmd {
-            DeclareSubcommand::Health(cmd) => cmd.execute(client, format).await,
-            DeclareSubcommand::Task(cmd) => cmd.execute(client, format).await,
+            RecordSubcommand::Health(cmd) => cmd.execute(client, format).await,
+            RecordSubcommand::Task(cmd) => cmd.execute(client, format).await,
         }
     }
 }
 
 #[derive(Debug, Subcommand)]
-pub enum DeclareSubcommand {
-    /// Manually declare a health intake or effect observation.
-    Health(DeclareHealthCommand),
-    /// Manually declare a canonical task.
-    Task(DeclareTaskCommand),
+pub enum RecordSubcommand {
+    /// Manually record a health intake or effect observation.
+    Health(RecordHealthCommand),
+    /// Manually record a canonical task.
+    Task(RecordTaskCommand),
 }
 
 #[derive(Debug, Args)]
-pub struct DeclareHealthCommand {
+pub struct RecordHealthCommand {
     #[command(subcommand)]
-    cmd: DeclareHealthSubcommand,
+    cmd: RecordHealthSubcommand,
 }
 
-impl DeclareHealthCommand {
+impl RecordHealthCommand {
     #[must_use]
-    pub fn subcommand(&self) -> &DeclareHealthSubcommand {
+    pub fn subcommand(&self) -> &RecordHealthSubcommand {
         &self.cmd
     }
 
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match &self.cmd {
-            DeclareHealthSubcommand::Intake(cmd) => cmd.execute(client, format).await,
-            DeclareHealthSubcommand::Effect(cmd) => cmd.execute(client, format).await,
+            RecordHealthSubcommand::Intake(cmd) => cmd.execute(client, format).await,
+            RecordHealthSubcommand::Effect(cmd) => cmd.execute(client, format).await,
         }
     }
 }
 
 #[derive(Debug, Subcommand)]
-pub enum DeclareHealthSubcommand {
+pub enum RecordHealthSubcommand {
     /// Record structured substance intake without storing freeform notes.
-    Intake(DeclareHealthIntakeCommand),
+    Intake(RecordHealthIntakeCommand),
     /// Record a structured effect observation without storing freeform notes.
-    Effect(DeclareHealthEffectCommand),
+    Effect(RecordHealthEffectCommand),
 }
 
 #[derive(Debug, Args)]
-pub struct DeclareHealthIntakeCommand {
+pub struct RecordHealthIntakeCommand {
     /// Substance name as observed by the operator.
     #[arg(long)]
     substance: String,
@@ -115,7 +115,7 @@ pub struct DeclareHealthIntakeCommand {
     note: Option<String>,
 }
 
-impl DeclareHealthIntakeCommand {
+impl RecordHealthIntakeCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let substance = non_empty("health intake --substance", &self.substance)?;
         let dose = health_quantity(self.dose, self.unit.as_deref(), self.precision.clone())?;
@@ -137,7 +137,7 @@ impl DeclareHealthIntakeCommand {
 }
 
 #[derive(Debug, Args)]
-pub struct DeclareHealthEffectCommand {
+pub struct RecordHealthEffectCommand {
     /// Effect or state observed.
     #[arg(long)]
     effect: String,
@@ -167,7 +167,7 @@ pub struct DeclareHealthEffectCommand {
     note: Option<String>,
 }
 
-impl DeclareHealthEffectCommand {
+impl RecordHealthEffectCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let effect = non_empty("health effect --effect", &self.effect)?;
         let response = client
@@ -189,10 +189,10 @@ impl DeclareHealthEffectCommand {
 #[derive(Debug, Args)]
 #[command(after_help = "\
 EXAMPLES:
-    sinexctl declare task --title 'Fix parser drift'
-    sinexctl declare task --title 'Call accountant' --tag finance --due 2026-06-01
+    sinexctl record task --title 'Fix parser drift'
+    sinexctl record task --title 'Call accountant' --tag finance --due 2026-06-01
 ")]
-pub struct DeclareTaskCommand {
+pub struct RecordTaskCommand {
     /// Task title.
     #[arg(long)]
     title: String,
@@ -222,7 +222,7 @@ pub struct DeclareTaskCommand {
     external_refs: Vec<String>,
 }
 
-impl DeclareTaskCommand {
+impl RecordTaskCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let title = self.title.trim();
         if title.is_empty() {
@@ -246,7 +246,7 @@ impl DeclareTaskCommand {
                 priority: self.priority.clone(),
             })
             .await?;
-        render_task_response(&response, format, "Task declared")
+        render_task_response(&response, format, "Task recorded")
     }
 }
 
