@@ -8,7 +8,7 @@ use sinex_primitives::views::ViewEnvelope;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     ConfigCommands, ContextCommand, CoreCommands, CompletionEndpointCommand, CurationCommand,
-    DeclareCommand, DemoCommand, DlqCommands, DocumentsCommand, EventsCommand, GatewayCommands,
+    RecordCommand, DemoCommand, DlqCommands, DocumentsCommand, EventsCommand, GatewayCommands,
     InstructionsCommand, LifecycleCommands, LlmCommand, MetricsCommands, NowCommand, OpsCommands,
     PrivacyCommand, ReplayCommands, RuntimeCommands, SemanticCommand, SourcesCommand,
     StateCommands, StatusCommand, TasksCommand, TuiCommand, VerifyCommand,
@@ -141,8 +141,8 @@ enum Commands {
     /// Source material inventory and staging
     Sources(SourcesCommand),
 
-    /// Manual canonical declarations
-    Declare(DeclareCommand),
+    /// Manual canonical records
+    Record(RecordCommand),
 
     /// Local desired-state instructions and actuator dispatch.
     Instructions(InstructionsCommand),
@@ -307,7 +307,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Config { .. } => unreachable!("Config command handled above"),
                 Commands::Demo(_) => unreachable!("Demo command handled above"),
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
-                Commands::Declare(cmd) => cmd.execute(&client, format).await?,
+                Commands::Record(cmd) => cmd.execute(&client, format).await?,
                 Commands::Instructions(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
                 Commands::Curation(cmd) => cmd.execute(&client, format).await?,
@@ -649,17 +649,17 @@ fn command_path(cmd: &Commands) -> String {
                 SourcesSubcommand::Status(_) => "sources status".to_string(),
             }
         }
-        Commands::Declare(cmd) => {
-            use sinexctl::commands::declare::DeclareSubcommand;
+        Commands::Record(cmd) => {
+            use sinexctl::commands::record::RecordSubcommand;
             match cmd.subcommand() {
-                DeclareSubcommand::Health(health) => {
-                    use sinexctl::commands::declare::DeclareHealthSubcommand;
+                RecordSubcommand::Health(health) => {
+                    use sinexctl::commands::record::RecordHealthSubcommand;
                     match health.subcommand() {
-                        DeclareHealthSubcommand::Intake(_) => "declare health intake".to_string(),
-                        DeclareHealthSubcommand::Effect(_) => "declare health effect".to_string(),
+                        RecordHealthSubcommand::Intake(_) => "record health intake".to_string(),
+                        RecordHealthSubcommand::Effect(_) => "record health effect".to_string(),
                     }
                 }
-                DeclareSubcommand::Task(_) => "declare task".to_string(),
+                RecordSubcommand::Task(_) => "record task".to_string(),
             }
         }
         Commands::Instructions(cmd) => {
@@ -1285,13 +1285,13 @@ mod tests {
                 "ops lifecycle tombstone list",
             ),
             (
-                vec!["sinexctl", "declare", "task", "--title", "fixture"],
-                "declare task",
+                vec!["sinexctl", "record", "task", "--title", "fixture"],
+                "record task",
             ),
             (
                 vec![
                     "sinexctl",
-                    "declare",
+                    "record",
                     "health",
                     "intake",
                     "--substance",
@@ -1299,12 +1299,12 @@ mod tests {
                     "--at",
                     "2026-05-19T10:00:00Z",
                 ],
-                "declare health intake",
+                "record health intake",
             ),
             (
                 vec![
                     "sinexctl",
-                    "declare",
+                    "record",
                     "health",
                     "effect",
                     "--effect",
@@ -1312,7 +1312,7 @@ mod tests {
                     "--at",
                     "2026-05-19T11:00:00Z",
                 ],
-                "declare health effect",
+                "record health effect",
             ),
             (
                 vec![

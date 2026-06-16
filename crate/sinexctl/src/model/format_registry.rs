@@ -419,15 +419,15 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Manual Declarations / Tasks ─────────────────────────────────────────
     m.insert(
-        "declare health effect",
+        "record health effect",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "declare health intake",
+        "record health intake",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "declare task",
+        "record task",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -823,7 +823,7 @@ fn family_for_path(path: &str) -> CommandFamily {
             CommandFamily::Operate
         }
         "sources" => CommandFamily::Sources,
-        "declare" | "instructions" | "tasks" | "curation" | "semantic" | "llm" | "docs" => {
+        "record" | "instructions" | "tasks" | "curation" | "semantic" | "llm" | "docs" => {
             CommandFamily::Domain
         }
         "metrics" => CommandFamily::Telemetry,
@@ -850,10 +850,10 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "curation duplicate-judge",
         "curation finalize",
         "curation judge",
-        "declare",
-        "declare health effect",
-        "declare health intake",
-        "declare task",
+        "record",
+        "record health effect",
+        "record health intake",
+        "record task",
         "ops dlq purge",
         "ops dlq requeue",
         "instructions hyprland-workspace",
@@ -933,10 +933,10 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "curation duplicate-judge"
         | "curation finalize"
         | "curation judge"
-        | "declare"
-        | "declare health effect"
-        | "declare health intake"
-        | "declare task"
+        | "record"
+        | "record health effect"
+        | "record health intake"
+        | "record task"
         | "ops dlq requeue"
         | "instructions hyprland-workspace"
         | "ops lifecycle tombstone cancel"
@@ -1078,9 +1078,9 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::SOURCES_READINESS_LIST,
             methods::SOURCES_READINESS_GET,
         ],
-        "declare health effect" => &[methods::HEALTH_EFFECT_RECORD],
-        "declare health intake" => &[methods::HEALTH_INTAKE_RECORD],
-        "declare task" => &[methods::TASKS_CREATE],
+        "record health effect" => &[methods::HEALTH_EFFECT_RECORD],
+        "record health intake" => &[methods::HEALTH_INTAKE_RECORD],
+        "record task" => &[methods::TASKS_CREATE],
         "instructions hyprland-workspace" => &[methods::INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH],
         "tasks cancel" => &[methods::TASKS_CANCEL],
         "tasks complete" => &[methods::TASKS_COMPLETE],
