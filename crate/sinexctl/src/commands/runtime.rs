@@ -5,6 +5,7 @@ use sinex_primitives::views::ViewEnvelope;
 
 use crate::Result;
 use crate::client::GatewayClient;
+use crate::commands::{AutomataCommand, RuntimePresenceCommand};
 use crate::fmt::{CommandOutput, format_table_runtime, render_envelope, with_spinner_result};
 use crate::model::{OutputFormat, RuntimeModuleRole};
 
@@ -40,8 +41,14 @@ EXAMPLES:
     # List only source modules
     sinexctl runtime list --role source
 
+    # List running modules with health/staleness enrichment
+    sinexctl runtime modules
+
     # Check status of a specific runtime module
     sinexctl runtime status terminal-source
+
+    # Show automata runtime status
+    sinexctl runtime automata
 
     # Drain a runtime module for maintenance
     sinexctl runtime drain terminal-source
@@ -59,6 +66,12 @@ pub enum RuntimeCommands {
         #[arg(long)]
         role: Option<RuntimeModuleRole>,
     },
+
+    /// List running modules with status, health, and uptime
+    Modules(RuntimePresenceCommand),
+
+    /// Show automata runtime status
+    Automata(AutomataCommand),
 
     /// Show runtime module status
     Status {
@@ -121,6 +134,12 @@ impl RuntimeCommands {
                 } else {
                     println!("{}", format_table_runtime(&envelope.payload.modules));
                 }
+            }
+            Self::Modules(cmd) => {
+                cmd.execute(client, format).await?;
+            }
+            Self::Automata(cmd) => {
+                cmd.execute(client, format).await?;
             }
             Self::Status { module } => {
                 let response = client.runtime_status(module).await?;

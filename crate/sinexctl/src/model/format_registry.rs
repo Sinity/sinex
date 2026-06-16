@@ -181,7 +181,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
 
     // ── Automata ──────────────────────────────────────────────────────────────
-    m.insert("automata", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("runtime automata", FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── Replay ───────────────────────────────────────────────────────────────
     m.insert(
@@ -615,74 +615,74 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Telemetry ────────────────────────────────────────────────────────────
     m.insert(
-        "telemetry window-focus",
+        "metrics telemetry window-focus",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry command-frequency",
+        "metrics telemetry command-frequency",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry file-activity",
+        "metrics telemetry file-activity",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry recent-activity",
+        "metrics telemetry recent-activity",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry system-state",
+        "metrics telemetry system-state",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry source-stats",
+        "metrics telemetry source-stats",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry stream-stats",
+        "metrics telemetry stream-stats",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry gateway-stats",
+        "metrics telemetry gateway-stats",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry assembly-stats",
+        "metrics telemetry assembly-stats",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry metric-counters",
+        "metrics telemetry metric-counters",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry current-device-state",
+        "metrics telemetry current-device-state",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry current-health",
+        "metrics telemetry current-health",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry event-engine-batch-stats",
+        "metrics telemetry event-engine-batch-stats",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "telemetry event-engine-validation",
+        "metrics telemetry event-engine-validation",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
-    m.insert("throughput", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("metrics throughput", FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── Report ───────────────────────────────────────────────────────────────
     m.insert(
-        "report today",
+        "metrics report today",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "report yesterday",
+        "metrics report yesterday",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "report calendar",
+        "metrics report calendar",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
@@ -719,7 +719,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("compact dashboard; json/yaml emit full snapshot"),
     );
-    m.insert("modules", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("runtime modules", FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── TUI ──────────────────────────────────────────────────────────────────
     m.insert(
@@ -853,18 +853,15 @@ fn family_for_path(path: &str) -> CommandFamily {
     let root = path.split_once(' ').map_or(path, |(root, _)| root);
     match root {
         "gateway" | "core" => CommandFamily::Gateway,
-        "events" | "relations" | "context" | "verify" | "now" | "modules" | "status" => {
-            CommandFamily::Query
-        }
-        "automata" | "replay" | "dlq" | "ops" | "audit" | "lifecycle" | "privacy" | "blob" => {
+        "events" | "relations" | "context" | "verify" | "now" | "status" => CommandFamily::Query,
+        "runtime" | "replay" | "dlq" | "ops" | "audit" | "lifecycle" | "privacy" | "blob" => {
             CommandFamily::Operate
         }
         "sources" => CommandFamily::Sources,
         "declare" | "instructions" | "tasks" | "curation" | "semantics" | "llm" | "documents" => {
             CommandFamily::Domain
         }
-        "telemetry" | "throughput" => CommandFamily::Telemetry,
-        "report" => CommandFamily::Report,
+        "metrics" => CommandFamily::Telemetry,
         "admin" | "state" => CommandFamily::Admin,
         _ => CommandFamily::Local,
     }
@@ -1025,7 +1022,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "gateway ping" => &[methods::SYSTEM_PING],
         "gateway version" => &[methods::SYSTEM_VERSION],
         "core health" => &[methods::SYSTEM_HEALTH],
-        "runtime list" | "modules" => &[methods::COORDINATION_LIST_INSTANCES],
+        "runtime list" | "runtime modules" => &[methods::COORDINATION_LIST_INSTANCES],
         "status" => &[
             methods::SYSTEM_VERSION,
             methods::SYSTEM_HEALTH,
@@ -1048,7 +1045,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "runtime drain" => &[methods::RUNTIME_DRAIN],
         "runtime resume" => &[methods::RUNTIME_RESUME],
         "runtime set-horizon" => &[methods::RUNTIME_SET_HORIZON],
-        "automata" => &[methods::AUTOMATA_STATUS],
+        "runtime automata" => &[methods::AUTOMATA_STATUS],
         "replay plan" | "replay run" => &[methods::REPLAY_CREATE_OPERATION],
         "replay preview" => &[methods::REPLAY_PREVIEW_OPERATION],
         "replay approve" => &[methods::REPLAY_APPROVE_OPERATION],
@@ -1062,7 +1059,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "dlq requeue" => &[methods::DLQ_REQUEUE],
         "dlq purge" => &[methods::DLQ_PURGE],
         "context" | "events query" | "events recent" | "events errors" | "events timeline"
-        | "report today" | "report yesterday" | "report calendar" => &[methods::EVENTS_QUERY],
+        | "metrics report today" | "metrics report yesterday" | "metrics report calendar" => &[methods::EVENTS_QUERY],
         "relations after"
         | "relations before"
         | "relations overlaps"
@@ -1163,21 +1160,21 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "lifecycle tombstone cancel" => &[methods::LIFECYCLE_TOMBSTONE_CANCEL],
         "lifecycle tombstone list" => &[methods::LIFECYCLE_TOMBSTONE_LIST],
         "lifecycle tombstone status" => &[methods::LIFECYCLE_TOMBSTONE_STATUS],
-        "telemetry window-focus" => &[methods::TELEMETRY_WINDOW_FOCUS],
-        "telemetry command-frequency" => &[methods::TELEMETRY_COMMAND_FREQUENCY],
-        "telemetry file-activity" => &[methods::TELEMETRY_FILE_ACTIVITY],
-        "telemetry recent-activity" => &[methods::TELEMETRY_RECENT_ACTIVITY],
-        "telemetry system-state" => &[methods::TELEMETRY_SYSTEM_STATE],
-        "telemetry source-stats" => &[methods::TELEMETRY_SOURCE_STATS],
-        "telemetry stream-stats" => &[methods::TELEMETRY_STREAM_STATS],
-        "telemetry gateway-stats" => &[methods::TELEMETRY_GATEWAY_STATS],
-        "telemetry assembly-stats" => &[methods::TELEMETRY_ASSEMBLY_STATS],
-        "telemetry metric-counters" => &[methods::TELEMETRY_METRIC_COUNTERS],
-        "telemetry current-device-state" => &[methods::TELEMETRY_CURRENT_DEVICE_STATE],
-        "telemetry current-health" => &[methods::TELEMETRY_CURRENT_HEALTH],
-        "telemetry event-engine-batch-stats" => &[methods::TELEMETRY_EVENT_ENGINE_BATCH_STATS],
-        "telemetry event-engine-validation" => &[methods::TELEMETRY_EVENT_ENGINE_VALIDATION],
-        "throughput" => &[methods::TELEMETRY_THROUGHPUT],
+        "metrics telemetry window-focus" => &[methods::TELEMETRY_WINDOW_FOCUS],
+        "metrics telemetry command-frequency" => &[methods::TELEMETRY_COMMAND_FREQUENCY],
+        "metrics telemetry file-activity" => &[methods::TELEMETRY_FILE_ACTIVITY],
+        "metrics telemetry recent-activity" => &[methods::TELEMETRY_RECENT_ACTIVITY],
+        "metrics telemetry system-state" => &[methods::TELEMETRY_SYSTEM_STATE],
+        "metrics telemetry source-stats" => &[methods::TELEMETRY_SOURCE_STATS],
+        "metrics telemetry stream-stats" => &[methods::TELEMETRY_STREAM_STATS],
+        "metrics telemetry gateway-stats" => &[methods::TELEMETRY_GATEWAY_STATS],
+        "metrics telemetry assembly-stats" => &[methods::TELEMETRY_ASSEMBLY_STATS],
+        "metrics telemetry metric-counters" => &[methods::TELEMETRY_METRIC_COUNTERS],
+        "metrics telemetry current-device-state" => &[methods::TELEMETRY_CURRENT_DEVICE_STATE],
+        "metrics telemetry current-health" => &[methods::TELEMETRY_CURRENT_HEALTH],
+        "metrics telemetry event-engine-batch-stats" => &[methods::TELEMETRY_EVENT_ENGINE_BATCH_STATS],
+        "metrics telemetry event-engine-validation" => &[methods::TELEMETRY_EVENT_ENGINE_VALIDATION],
+        "metrics throughput" => &[methods::TELEMETRY_THROUGHPUT],
         "documents search" => &[methods::DOCUMENTS_SEARCH],
         "documents get" => &[methods::DOCUMENTS_GET],
         "documents chunks" => &[methods::DOCUMENTS_GET_CHUNKS],
@@ -1707,7 +1704,7 @@ mod tests {
             "relations within",
             "events relations within",
             "status",
-            "automata",
+            "runtime automata",
             "runtime list",
             "replay plan",
             "replay watch",
@@ -1718,6 +1715,7 @@ mod tests {
         }
         for removed in [
             "query", "recent", "errors", "watch", "explain", "trace", "timeline", "annotate",
+            "modules", "automata", "throughput", "telemetry", "report",
         ] {
             assert!(
                 !reg.contains_key(removed),

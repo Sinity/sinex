@@ -8,12 +8,11 @@ use sinex_primitives::views::ViewEnvelope;
 use sinexctl::AdminCommands;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
-    AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand, ConfigCommands,
-    ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand, DlqCommands,
-    DocumentsCommand, EventsCommand, GatewayCommands, InstructionsCommand, LifecycleCommands,
-    LlmCommand, NowCommand, OpsCommands, PrivacyCommand, RelationsCommand, ReplayCommands,
-    ReportCommands, RuntimeCommands, RuntimePresenceCommand, SemanticCommand, SourcesCommand,
-    StateCommands, StatusCommand, TasksCommand, TelemetryCommands, ThroughputCommand, TuiCommand,
+    AuditCommand, BlobCommands, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands,
+    CurationCommand, DeclareCommand, DemoCommand, DlqCommands, DocumentsCommand, EventsCommand,
+    GatewayCommands, InstructionsCommand, LifecycleCommands, LlmCommand, MetricsCommands,
+    NowCommand, OpsCommands, PrivacyCommand, RelationsCommand, ReplayCommands, RuntimeCommands,
+    SemanticCommand, SourcesCommand, StateCommands, StatusCommand, TasksCommand, TuiCommand,
     VerifyCommand,
 };
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
@@ -119,9 +118,6 @@ enum Commands {
         cmd: RuntimeCommands,
     },
 
-    /// Automata status
-    Automata(AutomataCommand),
-
     /// Replay operations
     Replay {
         #[command(subcommand)]
@@ -203,16 +199,10 @@ enum Commands {
         cmd: LifecycleCommands,
     },
 
-    /// Telemetry data from event-time activity views and operator read models
-    Telemetry {
+    /// Metrics, telemetry, and activity reports
+    Metrics {
         #[command(subcommand)]
-        cmd: TelemetryCommands,
-    },
-
-    /// Daily activity reports (today, yesterday)
-    Report {
-        #[command(subcommand)]
-        cmd: ReportCommands,
+        cmd: MetricsCommands,
     },
 
     // ===== Shortcut Commands =====
@@ -227,12 +217,6 @@ enum Commands {
 
     /// Show what's happening right now — dashboard view
     Now(NowCommand),
-
-    /// List running modules with status and health
-    Modules(RuntimePresenceCommand),
-
-    /// Per-source / per-component event throughput (#1172 AC-8)
-    Throughput(ThroughputCommand),
 
     /// Generate shell completions
     Completions(CompletionsCommand),
@@ -354,7 +338,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Blob { .. } => unreachable!("Blob command handled above"),
                 Commands::Core { cmd } => cmd.execute(&client, format).await?,
                 Commands::Runtime { cmd } => cmd.execute(&client, format).await?,
-                Commands::Automata(cmd) => cmd.execute(&client, format).await?,
                 Commands::Replay { cmd } => cmd.execute(&client, format).await?,
                 Commands::Dlq { cmd } => cmd.execute(&client, format).await?,
                 Commands::Relations(cmd) => cmd.execute(&client, format).await?,
@@ -375,8 +358,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Llm(cmd) => cmd.execute(&client, format).await?,
                 Commands::Documents(cmd) => cmd.execute(&client, format).await?,
                 Commands::Lifecycle { cmd } => cmd.execute(&client, format).await?,
-                Commands::Telemetry { cmd } => cmd.execute(&client, format).await?,
-                Commands::Report { cmd } => cmd.execute(&client, format).await?,
+                Commands::Metrics { cmd } => cmd.execute(&client, format).await?,
                 Commands::Status(cmd) => {
                     cmd.execute(&client, config.runtime_target.as_ref(), format)
                         .await?;
@@ -384,8 +366,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Context(cmd) => cmd.execute(&client, format).await?,
                 Commands::Verify(cmd) => cmd.execute(&client, format).await?,
                 Commands::Now(cmd) => cmd.execute(&client, format).await?,
-                Commands::Modules(cmd) => cmd.execute(&client, format).await?,
-                Commands::Throughput(cmd) => cmd.execute(&client, format).await?,
                 Commands::Completions(_) => unreachable!("Completions command handled above"),
                 Commands::Admin { .. } => unreachable!("Admin command handled above"),
             }
@@ -509,7 +489,11 @@ fn command_center_view(config: &Config, format: OutputFormat) -> CommandCenterVi
             },
             CommandCenterRootGroup {
                 root: "runtime",
-                purpose: "module liveness, registry, drain/resume, and horizons",
+                purpose: "module liveness, automata status, drain/resume, and horizons",
+            },
+            CommandCenterRootGroup {
+                root: "metrics",
+                purpose: "telemetry, throughput, and activity reports",
             },
             CommandCenterRootGroup {
                 root: "ops",
@@ -528,7 +512,7 @@ fn command_center_view(config: &Config, format: OutputFormat) -> CommandCenterVi
                 purpose: "local preferences and runtime target inspection",
             },
         ],
-        shortcuts_pending_prune: vec!["modules", "throughput"],
+        shortcuts_pending_prune: vec![],
     }
 }
 
@@ -554,12 +538,14 @@ fn render_command_center_table(view: &CommandCenterView) {
     for group in &view.root_groups {
         println!("  {:<10} {}", style(group.root).cyan(), group.purpose);
     }
-    println!();
-    println!(
-        "{}",
-        style("Shortcut roots still exist during the #1735 migration; prefer the groups above.")
-            .yellow()
-    );
+    if !view.shortcuts_pending_prune.is_empty() {
+        println!();
+        println!(
+            "{}",
+            style("Shortcut roots still exist during the #1735 migration; prefer the groups above.")
+                .yellow()
+        );
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -625,7 +611,7 @@ fn command_path(cmd: &Commands) -> String {
     use sinexctl::commands::lifecycle::TombstoneCommands;
     use sinexctl::commands::{
         ConfigCommands, DlqCommands, GatewayCommands, LifecycleCommands, OpsCommands,
-        ReplayCommands, ReportCommands, RuntimeCommands, TelemetryCommands,
+        ReplayCommands, RuntimeCommands,
     };
     match cmd {
         Commands::Gateway { cmd } => match cmd {
@@ -641,12 +627,13 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Core { .. } => "core health".to_string(),
         Commands::Runtime { cmd } => match cmd {
             RuntimeCommands::List { .. } => "runtime list".to_string(),
+            RuntimeCommands::Modules(_) => "runtime modules".to_string(),
+            RuntimeCommands::Automata(_) => "runtime automata".to_string(),
             RuntimeCommands::Status { .. } => "runtime status".to_string(),
             RuntimeCommands::Drain { .. } => "runtime drain".to_string(),
             RuntimeCommands::Resume { .. } => "runtime resume".to_string(),
             RuntimeCommands::SetHorizon { .. } => "runtime set-horizon".to_string(),
         },
-        Commands::Automata(_) => "automata".to_string(),
         Commands::Replay { cmd } => match cmd {
             ReplayCommands::Plan { .. } => "replay plan".to_string(),
             ReplayCommands::Preview { .. } => "replay preview".to_string(),
@@ -810,39 +797,11 @@ fn command_path(cmd: &Commands) -> String {
                 TombstoneCommands::Status(_) => "lifecycle tombstone status".to_string(),
             },
         },
-        Commands::Telemetry { cmd } => match cmd {
-            TelemetryCommands::CurrentHealth { .. } => "telemetry current-health".to_string(),
-            TelemetryCommands::CurrentDeviceState { .. } => {
-                "telemetry current-device-state".to_string()
-            }
-            TelemetryCommands::WindowFocus { .. } => "telemetry window-focus".to_string(),
-            TelemetryCommands::CommandFrequency { .. } => "telemetry command-frequency".to_string(),
-            TelemetryCommands::FileActivity { .. } => "telemetry file-activity".to_string(),
-            TelemetryCommands::RecentActivity { .. } => "telemetry recent-activity".to_string(),
-            TelemetryCommands::SystemState { .. } => "telemetry system-state".to_string(),
-            TelemetryCommands::GatewayStats { .. } => "telemetry gateway-stats".to_string(),
-            TelemetryCommands::StreamStats { .. } => "telemetry stream-stats".to_string(),
-            TelemetryCommands::AssemblyStats { .. } => "telemetry assembly-stats".to_string(),
-            TelemetryCommands::SourceStats { .. } => "telemetry source-stats".to_string(),
-            TelemetryCommands::MetricCounters { .. } => "telemetry metric-counters".to_string(),
-            TelemetryCommands::EventEngineBatchStats { .. } => {
-                "telemetry event-engine-batch-stats".to_string()
-            }
-            TelemetryCommands::EventEngineValidation => {
-                "telemetry event-engine-validation".to_string()
-            }
-        },
-        Commands::Report { cmd } => match cmd {
-            ReportCommands::Today => "report today".to_string(),
-            ReportCommands::Yesterday => "report yesterday".to_string(),
-            ReportCommands::Calendar(_) => "report calendar".to_string(),
-        },
+        Commands::Metrics { cmd } => cmd.command_path().to_string(),
         Commands::Status(_) => "status".to_string(),
         Commands::Context(_) => "context".to_string(),
         Commands::Verify(cmd) => cmd.command_path().to_string(),
         Commands::Now(_) => "now".to_string(),
-        Commands::Modules(_) => "modules".to_string(),
-        Commands::Throughput(_) => "throughput".to_string(),
         Commands::Completions(_) => "completions".to_string(),
         Commands::Admin { cmd } => {
             use sinexctl::admin::AdminCommands;
@@ -972,12 +931,12 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn automata_command_is_registered() -> TestResult<()> {
-        let (_matches, cli) = parse_cli(&["sinexctl", "automata"])?;
+    async fn runtime_automata_command_is_registered() -> TestResult<()> {
+        let (_matches, cli) = parse_cli(&["sinexctl", "runtime", "automata"])?;
 
         assert!(
-            matches!(cli.command, Some(Commands::Automata(_))),
-            "automata command must remain exposed as a top-level operator surface"
+            matches!(cli.command, Some(Commands::Runtime { .. })),
+            "automata command must remain exposed under the runtime operator surface"
         );
         Ok(())
     }
@@ -1292,8 +1251,14 @@ mod tests {
             (vec!["sinexctl", "config", "init"], "config init"),
             (vec!["sinexctl", "config", "path"], "config path"),
             (vec!["sinexctl", "config", "edit"], "config edit"),
-            (vec!["sinexctl", "report", "yesterday"], "report yesterday"),
-            (vec!["sinexctl", "report", "calendar"], "report calendar"),
+            (
+                vec!["sinexctl", "metrics", "report", "yesterday"],
+                "metrics report yesterday",
+            ),
+            (
+                vec!["sinexctl", "metrics", "report", "calendar"],
+                "metrics report calendar",
+            ),
             (
                 vec![
                     "sinexctl",
