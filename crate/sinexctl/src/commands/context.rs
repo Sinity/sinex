@@ -3,13 +3,18 @@ use clap::Args;
 use color_eyre::Result;
 use console::style;
 use serde_json::json;
-use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection, TimeRange};
+use sinex_primitives::query::{
+    EventQuery, EventQueryResult, QueryResultEvent, SortDirection, TimeRange,
+};
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::views::{
+    ContextSourceView, ContextSummaryView, EventCardView, ViewEnvelope,
+};
 use std::collections::HashMap;
 
 use crate::client::GatewayClient;
 use crate::fmt::format_duration_age;
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::render_envelope;
 use crate::model::OutputFormat;
 
 /// Show activity context for session resumption ("what was I doing?")
@@ -56,49 +61,10 @@ impl ContextCommand {
             _ => vec![],
         };
 
-        if !matches!(format, OutputFormat::Table) {
-            // Aggregate by source for the structured output (latest event per
-            // source). Events are already sorted Desc so first-seen wins.
-            let mut by_source: HashMap<String, &sinex_primitives::query::QueryResultEvent> =
-                HashMap::new();
-            for result_event in &events {
-                let key = result_event.event.source.as_str().to_string();
-                by_source.entry(key).or_insert(result_event);
-            }
-            let mut sources: Vec<_> = by_source.iter().collect();
-            sources.sort_by(|a, b| {
-                let ts_a = a.1.event.ts_orig.unwrap_or(Timestamp::UNIX_EPOCH);
-                let ts_b = b.1.event.ts_orig.unwrap_or(Timestamp::UNIX_EPOCH);
-                ts_b.inner().cmp(&ts_a.inner())
-            });
-
-            let source_entries: Vec<_> = sources
-                .iter()
-                .map(|(source_key, result_event)| {
-                    json!({
-                        "source": source_key,
-                        "label": display_source(source_key),
-                        "latest_ts": result_event.event.ts_orig,
-                        "latest_event": result_event,
-                    })
-                })
-                .collect();
-
-            let payload = json!({
-                "since": self.since,
-                "total_events": events.len(),
-                "source_count": by_source.len(),
-                "sources": source_entries,
-            });
-            match format {
-                OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-                    println!("{}", format_json(&payload)?);
-                }
-                OutputFormat::Yaml => {
-                    println!("{}", format_yaml(&payload)?);
-                }
-                OutputFormat::Table => unreachable!(),
-            }
+        let sources = grouped_context_sources(&events);
+        if let Some(output) = render_context_machine_output(&events, &sources, &self.since, format)?
+        {
+            println!("{output}");
             return Ok(());
         }
 
@@ -110,24 +76,6 @@ impl ContextCommand {
             );
             return Ok(());
         }
-
-        // Group by source — keep only the most-recent event per source.
-        // Events are already sorted Desc so first occurrence wins.
-        let mut by_source: HashMap<String, &sinex_primitives::query::QueryResultEvent> =
-            HashMap::new();
-        for result_event in &events {
-            let key = result_event.event.source.as_str().to_string();
-            by_source.entry(key).or_insert(result_event);
-        }
-
-        // Sort sources by recency of their latest event (most recent first).
-        let mut sources: Vec<(&String, &&sinex_primitives::query::QueryResultEvent)> =
-            by_source.iter().collect();
-        sources.sort_by(|a, b| {
-            let ts_a = a.1.event.ts_orig.unwrap_or(Timestamp::UNIX_EPOCH);
-            let ts_b = b.1.event.ts_orig.unwrap_or(Timestamp::UNIX_EPOCH);
-            ts_b.inner().cmp(&ts_a.inner())
-        });
 
         println!(
             "{} {}",
@@ -141,7 +89,7 @@ impl ContextCommand {
         // Column widths: source label padded to longest name for alignment
         let max_source_len = sources
             .iter()
-            .map(|(k, _)| display_source(k).len())
+            .map(|(source, _)| display_source(source).len())
             .max()
             .unwrap_or(10);
         let label_width = max_source_len.max(8);
@@ -168,11 +116,59 @@ impl ContextCommand {
         println!(
             "  {} events across {} sources in last {}",
             style(events.len()).bold(),
-            style(by_source.len()).bold(),
+            style(sources.len()).bold(),
             self.since,
         );
 
         Ok(())
+    }
+}
+
+fn grouped_context_sources(events: &[QueryResultEvent]) -> Vec<(String, &QueryResultEvent)> {
+    let mut by_source: HashMap<String, &QueryResultEvent> = HashMap::new();
+    for result_event in events {
+        let key = result_event.event.source.as_str().to_string();
+        by_source.entry(key).or_insert(result_event);
+    }
+
+    let mut sources: Vec<_> = by_source.into_iter().collect();
+    sources.sort_by(|a, b| {
+        let ts_a = a.1.event.ts_orig.unwrap_or(Timestamp::UNIX_EPOCH);
+        let ts_b = b.1.event.ts_orig.unwrap_or(Timestamp::UNIX_EPOCH);
+        ts_b.inner().cmp(&ts_a.inner())
+    });
+    sources
+}
+
+fn render_context_machine_output(
+    events: &[QueryResultEvent],
+    sources: &[(String, &QueryResultEvent)],
+    since: &str,
+    format: OutputFormat,
+) -> Result<Option<String>> {
+    match format {
+        OutputFormat::Table => Ok(None),
+        OutputFormat::Json | OutputFormat::Yaml => {
+            let source_views = sources
+                .iter()
+                .map(|(source, result_event)| ContextSourceView {
+                    source: source.clone(),
+                    label: display_source(source),
+                    latest_ts: result_event.event.ts_orig,
+                    latest_event: EventCardView::from_query_event(result_event),
+                })
+                .collect();
+            let envelope = ViewEnvelope::new(
+                "sinexctl.context",
+                ContextSummaryView::new(since, events.len(), source_views),
+            )
+            .with_query_echo(json!({ "since": since }));
+
+            render_envelope(&envelope, &envelope.payload.sources, format)
+        }
+        OutputFormat::Ndjson | OutputFormat::Dot => Err(color_eyre::eyre::eyre!(
+            "context is a finite view; use json, yaml, or table"
+        )),
     }
 }
 
@@ -273,5 +269,59 @@ fn truncate(s: &str, max: usize) -> String {
             .nth(max.saturating_sub(3))
             .unwrap_or(s.len());
         format!("{}...", &s[..end])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_primitives::testing::event_fixture;
+    use sinex_primitives::views::{CONTEXT_SUMMARY_SCHEMA_VERSION, VIEW_ENVELOPE_SCHEMA_VERSION};
+    use xtask::sandbox::prelude::sinex_test;
+
+    fn context_event(source: &'static str, event_type: &'static str) -> QueryResultEvent {
+        QueryResultEvent {
+            event: event_fixture(
+                sinex_primitives::EventSource::from_static(source),
+                sinex_primitives::EventType::from_static(event_type),
+                json!({ "message": "context fixture" }),
+            ),
+            relevance_score: None,
+            snippet: Some("context fixture".to_string()),
+        }
+    }
+
+    #[sinex_test]
+    async fn context_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
+        let events = vec![
+            context_event("shell.atuin", "command.executed"),
+            context_event("wm.hyprland", "window.focused"),
+        ];
+        let sources = grouped_context_sources(&events);
+        let output = render_context_machine_output(&events, &sources, "2h", OutputFormat::Json)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(value["source_surface"], "sinexctl.context");
+        assert_eq!(value["query_echo"]["since"], "2h");
+        assert_eq!(
+            value["payload"]["schema_version"],
+            CONTEXT_SUMMARY_SCHEMA_VERSION
+        );
+        assert_eq!(value["payload"]["since"], "2h");
+        assert_eq!(value["payload"]["total_events"], 2);
+        assert_eq!(value["payload"]["source_count"], 2);
+        assert_eq!(value["payload"]["sources"][0]["latest_event"]["summary"], "context fixture");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn context_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<()> {
+        let events = vec![context_event("shell.atuin", "command.executed")];
+        let sources = grouped_context_sources(&events);
+        let result = render_context_machine_output(&events, &sources, "2h", OutputFormat::Ndjson);
+        assert!(result.is_err(), "context must remain a finite view");
+        Ok(())
     }
 }

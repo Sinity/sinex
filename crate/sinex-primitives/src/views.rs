@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 pub const VIEW_ENVELOPE_SCHEMA_VERSION: &str = "sinex.view-envelope/v3";
+pub const CONTEXT_SUMMARY_SCHEMA_VERSION: &str = "sinex.context-summary/v1";
 pub const EVENT_CARD_LIST_SCHEMA_VERSION: &str = "sinex.event-card-list/v3";
 pub const EVENT_ERROR_LIST_SCHEMA_VERSION: &str = "sinex.event-error-list/v1";
 pub const EVENT_QUERY_LIST_SCHEMA_VERSION: &str = "sinex.event-query-list/v1";
@@ -465,6 +466,41 @@ impl EventCardListView {
             schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
             count: events.len(),
             cards: events.iter().map(EventCardView::from_query_event).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ContextSourceView {
+    pub source: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_ts: Option<Timestamp>,
+    pub latest_event: EventCardView,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ContextSummaryView {
+    pub schema_version: String,
+    pub since: String,
+    pub total_events: usize,
+    pub source_count: usize,
+    pub sources: Vec<ContextSourceView>,
+}
+
+impl ContextSummaryView {
+    #[must_use]
+    pub fn new(
+        since: impl Into<String>,
+        total_events: usize,
+        sources: Vec<ContextSourceView>,
+    ) -> Self {
+        Self {
+            schema_version: CONTEXT_SUMMARY_SCHEMA_VERSION.to_string(),
+            since: since.into(),
+            total_events,
+            source_count: sources.len(),
+            sources,
         }
     }
 }
@@ -1029,6 +1065,8 @@ mod tests {
     #[sinex_test]
     async fn view_schema_generation_covers_card_and_envelope() -> xtask::TestResult<()> {
         let card_schema = serde_json::to_value(schemars::schema_for!(EventCardView))?;
+        let context_envelope_schema =
+            serde_json::to_value(schemars::schema_for!(ViewEnvelope<ContextSummaryView>))?;
         let envelope_schema =
             serde_json::to_value(schemars::schema_for!(ViewEnvelope<EventCardListView>))?;
         let error_envelope_schema =
@@ -1040,6 +1078,10 @@ mod tests {
         assert!(
             card_schema["properties"].get("ref").is_some(),
             "card schema should expose the contract `ref` field"
+        );
+        assert!(
+            context_envelope_schema["properties"].get("payload").is_some(),
+            "context envelope schema should include the typed summary payload"
         );
         assert!(envelope_schema["properties"].get("payload").is_some());
         assert!(
