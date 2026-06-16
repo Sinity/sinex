@@ -1,8 +1,10 @@
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, parser::ValueSource};
 use color_eyre::eyre::eyre;
+use console::style;
 use serde::Serialize;
 use sinex_primitives::RuntimeTargetDescriptor;
 use sinex_primitives::rpc::{RpcMethodInfo, method_catalog};
+use sinex_primitives::views::ViewEnvelope;
 use sinexctl::AdminCommands;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
@@ -15,7 +17,7 @@ use sinexctl::commands::{
     TasksCommand, TelemetryCommands, ThroughputCommand, TimelineCommand, TraceCommand, TuiCommand,
     VerifyCommand, WatchCommand,
 };
-use sinexctl::fmt::format_yaml;
+use sinexctl::fmt::{format_yaml, render_finite_envelope};
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
 use sinexctl::model::OutputFormat;
 use sinexctl::{
@@ -318,9 +320,10 @@ async fn main() -> color_eyre::Result<()> {
     }
 
     let format = config.default_format;
-    let command = cli
-        .command
-        .ok_or_else(|| eyre!("a subcommand is required; see `sinexctl --help`"))?;
+    let Some(command) = cli.command else {
+        render_command_center(&config, format)?;
+        return Ok(());
+    };
 
     // Validate the effective format against the command's declared capability.
     // `Table` is the universal human default and is never rejected. An explicit
@@ -431,6 +434,165 @@ fn render_list_formats(format: OutputFormat) -> color_eyre::Result<String> {
         )),
         OutputFormat::Dot => Err(eyre!("--list-formats does not support --format dot")),
     }
+}
+
+#[derive(Debug, Serialize)]
+struct CommandCenterView {
+    schema_version: u8,
+    runtime_target: CommandCenterRuntimeTarget,
+    default_format: OutputFormat,
+    primary_actions: Vec<CommandCenterAction>,
+    root_groups: Vec<CommandCenterRootGroup>,
+    shortcuts_pending_prune: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct CommandCenterRuntimeTarget {
+    name: String,
+    rpc_url: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CommandCenterAction {
+    label: &'static str,
+    command: &'static str,
+    effect: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct CommandCenterRootGroup {
+    root: &'static str,
+    purpose: &'static str,
+}
+
+fn render_command_center(config: &Config, format: OutputFormat) -> color_eyre::Result<()> {
+    let view = command_center_view(config, format);
+    let envelope = ViewEnvelope::new("sinexctl.command_center", &view);
+
+    if let Some(output) = render_finite_envelope(&envelope, format)? {
+        print!("{output}");
+        if !output.ends_with('\n') {
+            println!();
+        }
+        return Ok(());
+    }
+
+    render_command_center_table(&view);
+    Ok(())
+}
+
+fn command_center_view(config: &Config, format: OutputFormat) -> CommandCenterView {
+    CommandCenterView {
+        schema_version: 1,
+        runtime_target: CommandCenterRuntimeTarget {
+            name: config
+                .runtime_target
+                .as_ref()
+                .map_or_else(|| "default".to_string(), |target| target.name.clone()),
+            rpc_url: config.rpc_url.clone(),
+        },
+        default_format: format,
+        primary_actions: vec![
+            CommandCenterAction {
+                label: "Current dashboard",
+                command: "sinexctl now",
+                effect: "read",
+            },
+            CommandCenterAction {
+                label: "Runtime health",
+                command: "sinexctl status",
+                effect: "read",
+            },
+            CommandCenterAction {
+                label: "Search recent events",
+                command: "sinexctl query --since 1h",
+                effect: "read",
+            },
+            CommandCenterAction {
+                label: "Source coverage",
+                command: "sinexctl sources status",
+                effect: "read",
+            },
+            CommandCenterAction {
+                label: "Operation room",
+                command: "sinexctl ops jobs list",
+                effect: "read",
+            },
+            CommandCenterAction {
+                label: "Terminal UI",
+                command: "sinexctl tui",
+                effect: "read",
+            },
+        ],
+        root_groups: vec![
+            CommandCenterRootGroup {
+                root: "sources",
+                purpose: "source material, readiness, continuity, and coverage",
+            },
+            CommandCenterRootGroup {
+                root: "runtime",
+                purpose: "module liveness, registry, drain/resume, and horizons",
+            },
+            CommandCenterRootGroup {
+                root: "ops",
+                purpose: "operation records and jobs",
+            },
+            CommandCenterRootGroup {
+                root: "privacy",
+                purpose: "private mode and policy posture",
+            },
+            CommandCenterRootGroup {
+                root: "tasks",
+                purpose: "task projection and lifecycle",
+            },
+            CommandCenterRootGroup {
+                root: "config",
+                purpose: "local preferences and runtime target inspection",
+            },
+        ],
+        shortcuts_pending_prune: vec![
+            "query",
+            "recent",
+            "errors",
+            "watch",
+            "timeline",
+            "context",
+            "explain",
+            "trace",
+            "modules",
+            "throughput",
+        ],
+    }
+}
+
+fn render_command_center_table(view: &CommandCenterView) {
+    println!("{}", style("Sinex command center").bold().cyan());
+    println!(
+        "Target: {}  {}",
+        style(&view.runtime_target.name).bold(),
+        style(&view.runtime_target.rpc_url).dim()
+    );
+    println!();
+    println!("{}", style("Primary actions").bold());
+    for action in &view.primary_actions {
+        println!(
+            "  {:<22} {:<36} {}",
+            action.label,
+            style(action.command).green(),
+            style(action.effect).dim()
+        );
+    }
+    println!();
+    println!("{}", style("Root groups").bold());
+    for group in &view.root_groups {
+        println!("  {:<10} {}", style(group.root).cyan(), group.purpose);
+    }
+    println!();
+    println!(
+        "{}",
+        style("Shortcut roots still exist during the #1735 migration; prefer the groups above.")
+            .yellow()
+    );
 }
 
 #[derive(Debug, Serialize)]
