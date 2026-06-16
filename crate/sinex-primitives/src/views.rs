@@ -967,7 +967,7 @@ fn operation_actions(
             } else {
                 None
             },
-            command_hint: Some(format!("sinexctl replay submit --ref-op {id}")),
+            command_hint: Some(format!("sinexctl ops replay submit --ref-op {id}")),
             rpc_method: None,
             side_effect: ActionSideEffect::Write,
             requires_confirmation: true,
