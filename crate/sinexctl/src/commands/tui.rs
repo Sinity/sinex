@@ -2039,22 +2039,22 @@ fn event_copy_actions(
         actions.push(EventCopyAction::available("event id", event_id.clone()));
         actions.push(EventCopyAction::available(
             "trace command",
-            format!("sinexctl trace {event_id}"),
+            format!("sinexctl events trace {event_id}"),
         ));
         actions.push(EventCopyAction::available(
             "citation",
             format!("sinex:event:{event_id}"),
         ));
         actions.push(EventCopyAction::available(
-            "explain command",
-            format!("sinexctl explain {event_id}"),
+            "inspect command",
+            format!("sinexctl events inspect {event_id}"),
         ));
     }
 
     actions.push(EventCopyAction::available(
         "reselect query",
         format!(
-            "sinexctl query --source {} --event-type {} -n 20",
+            "sinexctl events query --source {} --event-type {} -n 20",
             card.source.raw, card.event_type
         ),
     ));
@@ -2473,7 +2473,7 @@ mod tests {
             projection_badges: vec!["ux-mk3".to_string()],
             actions: vec![
                 ActionAvailability::read("trace", "Trace", ActionAvailabilityState::Enabled)
-                    .with_command_hint(format!("sinexctl trace {id}")),
+                    .with_command_hint(format!("sinexctl events trace {id}")),
                 ActionAvailability {
                     id: "redact".to_string(),
                     label: "Redact".to_string(),
