@@ -134,19 +134,17 @@ const NONE: &[OutputFormat] = &[];
 pub fn build() -> HashMap<&'static str, FormatCapability> {
     let mut m = HashMap::new();
 
-    // ── Gateway ──────────────────────────────────────────────────────────────
+    // ── Runtime Gateway / Health ─────────────────────────────────────────────
     m.insert(
-        "gateway ping",
+        "runtime gateway ping",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "gateway version",
+        "runtime gateway version",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
-
-    // ── Core ─────────────────────────────────────────────────────────────────
     m.insert(
-        "core health",
+        "runtime health",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
@@ -181,7 +179,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
 
     // ── Automata ──────────────────────────────────────────────────────────────
-    m.insert("runtime automata", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "runtime automata",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Replay ───────────────────────────────────────────────────────────────
     m.insert(
@@ -216,7 +217,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "ops replay list",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
-    m.insert("ops replay run", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "ops replay run",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
     m.insert(
         "ops replay watch",
         FormatCapability::streaming(TABLE_JSON_YAML)
@@ -224,8 +228,14 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
 
     // ── DLQ ──────────────────────────────────────────────────────────────────
-    m.insert("ops dlq list", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("ops dlq peek", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "ops dlq list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "ops dlq peek",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
     m.insert("ops dlq requeue", FormatCapability::single_shot(TABLE_ONLY));
     m.insert("ops dlq purge", FormatCapability::single_shot(TABLE_ONLY));
 
@@ -658,7 +668,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "metrics telemetry event-engine-validation",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
-    m.insert("metrics throughput", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "metrics throughput",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Report ───────────────────────────────────────────────────────────────
     m.insert(
@@ -679,10 +692,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "docs search",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
-    m.insert(
-        "docs get",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
+    m.insert("docs get", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "docs chunks",
         FormatCapability::single_shot(TABLE_JSON_YAML),
@@ -690,7 +700,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Dashboards and finite query views ────────────────────────────────────
     m.insert("status", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("events context", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "events context",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
     m.insert("ops verify", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "ops verify baseline",
@@ -701,7 +714,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("compact dashboard; json/yaml emit full snapshot"),
     );
-    m.insert("runtime modules", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "runtime modules",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── TUI ──────────────────────────────────────────────────────────────────
     m.insert(
@@ -736,8 +752,9 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     m.insert(
         "_complete",
-        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML)
-            .with_note("hidden structured completion endpoint; ndjson emits one candidate per line"),
+        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
+            "hidden structured completion endpoint; ndjson emits one candidate per line",
+        ),
     );
 
     m.insert(
@@ -817,11 +834,8 @@ const fn rpc_role_rank(role: RpcRole) -> u8 {
 fn family_for_path(path: &str) -> CommandFamily {
     let root = path.split_once(' ').map_or(path, |(root, _)| root);
     match root {
-        "gateway" | "core" => CommandFamily::Gateway,
         "events" | "now" | "status" => CommandFamily::Query,
-        "runtime" | "replay" | "dlq" | "ops" | "lifecycle" | "privacy" => {
-            CommandFamily::Operate
-        }
+        "runtime" | "replay" | "dlq" | "ops" | "lifecycle" | "privacy" => CommandFamily::Operate,
         "sources" => CommandFamily::Sources,
         "record" | "tasks" | "semantic" | "docs" => CommandFamily::Domain,
         "metrics" => CommandFamily::Telemetry,
@@ -924,7 +938,10 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
             &[DryRun, LocalMaintenance]
         }
         "ops dlq purge" => &[RpcAuth, Confirmation],
-        "ops lifecycle archive" | "ops lifecycle restore" | "ops replay plan" | "ops replay preview"
+        "ops lifecycle archive"
+        | "ops lifecycle restore"
+        | "ops replay plan"
+        | "ops replay preview"
         | "ops replay run" => &[RpcAuth, DryRun],
         "ops lifecycle tombstone approve" => &[RpcAuth, Confirmation],
         "events annotate"
@@ -983,9 +1000,9 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
 
 fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
     match path {
-        "gateway ping" => &[methods::SYSTEM_PING],
-        "gateway version" => &[methods::SYSTEM_VERSION],
-        "core health" => &[methods::SYSTEM_HEALTH],
+        "runtime gateway ping" => &[methods::SYSTEM_PING],
+        "runtime gateway version" => &[methods::SYSTEM_VERSION],
+        "runtime health" => &[methods::SYSTEM_HEALTH],
         "runtime list" | "runtime modules" => &[methods::COORDINATION_LIST_INSTANCES],
         "status" => &[
             methods::SYSTEM_VERSION,
@@ -1022,8 +1039,14 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "ops dlq peek" => &[methods::DLQ_PEEK],
         "ops dlq requeue" => &[methods::DLQ_REQUEUE],
         "ops dlq purge" => &[methods::DLQ_PURGE],
-        "events context" | "events query" | "events recent" | "events errors" | "events timeline"
-        | "metrics report today" | "metrics report yesterday" | "metrics report calendar" => &[methods::EVENTS_QUERY],
+        "events context"
+        | "events query"
+        | "events recent"
+        | "events errors"
+        | "events timeline"
+        | "metrics report today"
+        | "metrics report yesterday"
+        | "metrics report calendar" => &[methods::EVENTS_QUERY],
         "events relations after"
         | "events relations before"
         | "events relations overlaps"
@@ -1130,8 +1153,12 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "metrics telemetry metric-counters" => &[methods::TELEMETRY_METRIC_COUNTERS],
         "metrics telemetry current-device-state" => &[methods::TELEMETRY_CURRENT_DEVICE_STATE],
         "metrics telemetry current-health" => &[methods::TELEMETRY_CURRENT_HEALTH],
-        "metrics telemetry event-engine-batch-stats" => &[methods::TELEMETRY_EVENT_ENGINE_BATCH_STATS],
-        "metrics telemetry event-engine-validation" => &[methods::TELEMETRY_EVENT_ENGINE_VALIDATION],
+        "metrics telemetry event-engine-batch-stats" => {
+            &[methods::TELEMETRY_EVENT_ENGINE_BATCH_STATS]
+        }
+        "metrics telemetry event-engine-validation" => {
+            &[methods::TELEMETRY_EVENT_ENGINE_VALIDATION]
+        }
         "metrics throughput" => &[methods::TELEMETRY_THROUGHPUT],
         "docs search" => &[methods::DOCUMENTS_SEARCH],
         "docs get" => &[methods::DOCUMENTS_GET],
@@ -1455,8 +1482,14 @@ mod tests {
             Some(CommandEffect::Mutating)
         );
         assert_eq!(effect_for("ops replay plan"), Some(CommandEffect::Mutating));
-        assert_eq!(effect_for("ops replay preview"), Some(CommandEffect::Mutating));
-        assert_eq!(effect_for("ops state inspect"), Some(CommandEffect::ReadOnly));
+        assert_eq!(
+            effect_for("ops replay preview"),
+            Some(CommandEffect::Mutating)
+        );
+        assert_eq!(
+            effect_for("ops state inspect"),
+            Some(CommandEffect::ReadOnly)
+        );
         assert_eq!(
             effect_for("ops state restore"),
             Some(CommandEffect::Mutating)
@@ -1667,6 +1700,9 @@ mod tests {
             "status",
             "events context",
             "runtime automata",
+            "runtime gateway ping",
+            "runtime gateway version",
+            "runtime health",
             "runtime list",
             "ops replay plan",
             "ops replay watch",
@@ -1678,8 +1714,22 @@ mod tests {
             assert!(reg.contains_key(cmd), "registry is missing `{cmd}`");
         }
         for removed in [
-            "query", "recent", "errors", "watch", "explain", "trace", "timeline", "annotate",
-            "modules", "automata", "throughput", "telemetry", "report",
+            "query",
+            "recent",
+            "errors",
+            "watch",
+            "explain",
+            "trace",
+            "timeline",
+            "annotate",
+            "modules",
+            "automata",
+            "throughput",
+            "telemetry",
+            "report",
+            "gateway ping",
+            "gateway version",
+            "core health",
         ] {
             assert!(
                 !reg.contains_key(removed),

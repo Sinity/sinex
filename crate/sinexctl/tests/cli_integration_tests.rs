@@ -80,6 +80,8 @@ mod help_tests {
             .stdout(predicate::str::contains("  context").not())
             .stdout(predicate::str::contains("  verify").not())
             .stdout(predicate::str::contains("  demo").not())
+            .stdout(predicate::str::contains("  gateway").not())
+            .stdout(predicate::str::contains("  core").not())
             .stdout(predicate::str::contains("relations").not())
             .stdout(predicate::str::contains("documents").not())
             .stdout(predicate::str::contains("semantics").not())
@@ -229,10 +231,43 @@ mod help_tests {
             .stdout(predicate::str::contains("list"))
             .stdout(predicate::str::contains("modules"))
             .stdout(predicate::str::contains("automata"))
+            .stdout(predicate::str::contains("gateway"))
+            .stdout(predicate::str::contains("health"))
             .stdout(predicate::str::contains("status"))
             .stdout(predicate::str::contains("drain"))
             .stdout(predicate::str::contains("resume"))
             .stdout(predicate::str::contains("set-horizon"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_gateway_help() -> TestResult<()> {
+        sinexctl()
+            .args(["runtime", "gateway", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("ping"))
+            .stdout(predicate::str::contains("version"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_gateway_ping_help() -> TestResult<()> {
+        sinexctl()
+            .args(["runtime", "gateway", "ping", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Ping the gateway"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_health_help() -> TestResult<()> {
+        sinexctl()
+            .args(["runtime", "health", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Check system health"));
         Ok(())
     }
 
@@ -355,7 +390,9 @@ mod help_tests {
             .args(["ops", "blob", "--help"])
             .assert()
             .success()
-            .stdout(predicate::str::contains("Blob and content-store maintenance"))
+            .stdout(predicate::str::contains(
+                "Blob and content-store maintenance",
+            ))
             .stdout(predicate::str::contains("sweep-orphans"));
         Ok(())
     }
@@ -620,6 +657,8 @@ mod shortcut_command_tests {
             "context",
             "verify",
             "demo",
+            "gateway",
+            "core",
         ] {
             sinexctl()
                 .args([root, "--help"])
