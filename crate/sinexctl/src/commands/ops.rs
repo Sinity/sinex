@@ -5,7 +5,7 @@ use sinex_primitives::views::{OperationJobListView, OperationView, ViewEnvelope}
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{CommandOutput, render_envelope, with_spinner_result};
+use crate::fmt::{CommandOutput, print_finite_envelope, render_envelope, with_spinner_result};
 use crate::model::OutputFormat;
 
 /// Operations log commands
@@ -148,13 +148,38 @@ impl OpsCommands {
                 let operations = client
                     .ops_list(operation_type.clone(), status.clone(), Some(*limit))
                     .await?;
+                let views = operations_to_views(&operations);
+                let envelope = ViewEnvelope::new(
+                    "sinexctl.ops.list",
+                    OperationJobListView::new(views.clone()),
+                )
+                .with_query_echo(serde_json::json!({
+                    "operation_type": operation_type,
+                    "status": status,
+                    "limit": limit,
+                }));
 
-                CommandOutput::list(operations, "No operations found.", format_ops_list_table)
-                    .display(&format)?;
+                if let Some(output) = render_envelope(&envelope, &views, format)? {
+                    print_machine_output(&output);
+                    return Ok(());
+                }
+
+                if views.is_empty() {
+                    println!("No operations found.");
+                } else {
+                    println!("{}", format_jobs_list_table(&views));
+                }
             }
             Self::Get { operation_id } => {
                 let operation = client.ops_get(operation_id).await?;
-                CommandOutput::single(operation, format_ops_get_table).display(&format)?;
+                let view = operation_to_view(&operation);
+                let envelope = ViewEnvelope::new("sinexctl.ops.get", view.clone());
+
+                if print_finite_envelope(&envelope, format)? {
+                    return Ok(());
+                }
+
+                println!("{}", format_job_show_table(&view));
             }
             Self::Cancel {
                 operation_id,
@@ -182,15 +207,16 @@ impl OpsCommands {
 impl JobsCommands {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
-            Self::List { kind, status, limit } => {
+            Self::List {
+                kind,
+                status,
+                limit,
+            } => {
                 let operations = client
                     .ops_list(kind.clone(), status.clone(), Some(*limit))
                     .await?;
 
-                let views: Vec<OperationView> = operations
-                    .iter()
-                    .map(operation_to_view)
-                    .collect();
+                let views = operations_to_views(&operations);
 
                 let envelope = ViewEnvelope::new(
                     "sinexctl.ops.jobs.list",
@@ -203,10 +229,7 @@ impl JobsCommands {
                 }));
 
                 if let Some(output) = render_envelope(&envelope, &views, format)? {
-                    print!("{output}");
-                    if !output.is_empty() && !output.ends_with('\n') {
-                        println!();
-                    }
+                    print_machine_output(&output);
                     return Ok(());
                 }
                 // Table format — human rendering
@@ -222,11 +245,7 @@ impl JobsCommands {
 
                 let envelope = ViewEnvelope::new("sinexctl.ops.jobs.show", view.clone());
 
-                if let Some(output) = render_envelope(&envelope, &[view.clone()], format)? {
-                    print!("{output}");
-                    if !output.is_empty() && !output.ends_with('\n') {
-                        println!();
-                    }
+                if print_finite_envelope(&envelope, format)? {
                     return Ok(());
                 }
                 // Table format — human rendering
@@ -249,6 +268,17 @@ fn operation_to_view(op: &OpsOperation) -> OperationView {
         op.scope.clone(),
         op.preview_summary.clone(),
     )
+}
+
+fn operations_to_views(operations: &[OpsOperation]) -> Vec<OperationView> {
+    operations.iter().map(operation_to_view).collect()
+}
+
+fn print_machine_output(output: &str) {
+    print!("{output}");
+    if !output.is_empty() && !output.ends_with('\n') {
+        println!();
+    }
 }
 
 /// Format ops jobs list as a human-readable table.
@@ -308,50 +338,79 @@ fn format_ops_start_table(response: &OpsStartResponse) -> String {
     output
 }
 
-/// Format ops list as table
-fn format_ops_list_table(operations: &[OpsOperation]) -> String {
-    let mut output = String::new();
-    output.push_str("Operations:\n");
-    output.push_str(&format!("{}\n", "─".repeat(80)));
-    for op in operations {
-        output.push_str(&format!("ID: {}\n", op.id));
-        output.push_str(&format!("Type: {}\n", op.operation_type));
-        output.push_str(&format!("Status: {}\n", op.result_status));
-        output.push_str(&format!("Operator: {}\n", op.operator));
-        if let Some(duration_ms) = op.duration_ms {
-            output.push_str(&format!("Duration: {duration_ms} ms\n"));
-        }
-        if let Some(message) = op.result_message.as_deref() {
-            output.push_str(&format!("Message: {message}\n"));
-        }
-        output.push_str(&format!("{}\n", "─".repeat(80)));
-    }
-    output
-}
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
 
-/// Format ops get response as table
-fn format_ops_get_table(operation: &OpsOperation) -> String {
-    let mut output = String::new();
-    output.push_str("Operation Details:\n");
-    output.push_str(&format!("  ID: {}\n", operation.id));
-    output.push_str(&format!("  Type: {}\n", operation.operation_type));
-    output.push_str(&format!("  Status: {}\n", operation.result_status));
-    output.push_str(&format!("  Operator: {}\n", operation.operator));
-    if let Some(duration_ms) = operation.duration_ms {
-        output.push_str(&format!("  Duration: {duration_ms} ms\n"));
+    use super::*;
+    use sinex_primitives::domain::OperationStatus;
+    use xtask::sandbox::sinex_test;
+
+    fn fixture_operation(id: &str, operation_type: &str) -> OpsOperation {
+        OpsOperation {
+            id: id.to_string(),
+            operation_type: operation_type.to_string(),
+            operator: "operator.local".to_string(),
+            scope: Some(serde_json::json!({"source": "test"})),
+            result_status: OperationStatus::Success,
+            result_message: Some("complete".to_string()),
+            preview_summary: Some(serde_json::json!({"events": 2})),
+            duration_ms: Some(42),
+        }
     }
-    if let Some(message) = operation.result_message.as_deref() {
-        output.push_str(&format!("  Message: {message}\n"));
+
+    #[sinex_test]
+    async fn ops_list_json_renders_operation_view_envelope() -> xtask::TestResult<()> {
+        let operations = vec![fixture_operation("op-1", "replay")];
+        let views = operations_to_views(&operations);
+        let envelope = ViewEnvelope::new(
+            "sinexctl.ops.list",
+            OperationJobListView::new(views.clone()),
+        );
+
+        let output =
+            render_envelope(&envelope, &views, OutputFormat::Json)?.expect("json renders envelope");
+        let parsed: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(parsed["source_surface"], "sinexctl.ops.list");
+        assert_eq!(parsed["payload"]["count"], 1);
+        assert_eq!(parsed["payload"]["jobs"][0]["kind"], "replay");
+        assert!(parsed["payload"]["jobs"][0]["actions"].is_array());
+        Ok(())
     }
-    if let Some(scope) = operation.scope.as_ref()
-        && let Ok(pretty_scope) = serde_json::to_string_pretty(scope)
-    {
-        output.push_str(&format!("  Scope: {pretty_scope}\n"));
+
+    #[sinex_test]
+    async fn ops_list_ndjson_renders_operation_view_records() -> xtask::TestResult<()> {
+        let operations = vec![
+            fixture_operation("op-1", "replay"),
+            fixture_operation("op-2", "archive"),
+        ];
+        let views = operations_to_views(&operations);
+        let envelope = ViewEnvelope::new(
+            "sinexctl.ops.list",
+            OperationJobListView::new(views.clone()),
+        );
+
+        let output = render_envelope(&envelope, &views, OutputFormat::Ndjson)?
+            .expect("ndjson renders records");
+        let lines: Vec<&str> = output.trim_end_matches('\n').split('\n').collect();
+
+        assert_eq!(lines.len(), 2);
+        let first: serde_json::Value = serde_json::from_str(lines[0])?;
+        assert_eq!(first["kind"], "replay");
+        assert!(first.get("schema_version").is_none());
+        Ok(())
     }
-    if let Some(summary) = operation.preview_summary.as_ref()
-        && let Ok(pretty_summary) = serde_json::to_string_pretty(summary)
-    {
-        output.push_str(&format!("  Summary: {pretty_summary}\n"));
+
+    #[sinex_test]
+    async fn ops_get_ndjson_is_rejected_as_finite_view() -> xtask::TestResult<()> {
+        let operation = fixture_operation("op-1", "replay");
+        let view = operation_to_view(&operation);
+        let envelope = ViewEnvelope::new("sinexctl.ops.get", view);
+
+        let err = crate::fmt::render_finite_envelope(&envelope, OutputFormat::Ndjson)
+            .expect_err("finite operation view rejects ndjson");
+        assert!(err.to_string().contains("finite view"));
+        Ok(())
     }
-    output
 }
