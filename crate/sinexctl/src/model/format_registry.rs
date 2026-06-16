@@ -758,6 +758,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(NONE)
             .with_note("emits shell completion script; --format is not applicable"),
     );
+    m.insert(
+        "_complete",
+        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML)
+            .with_note("hidden structured completion endpoint; ndjson emits one candidate per line"),
+    );
 
     // ── Admin ─────────────────────────────────────────────────────────────────
     m.insert(
@@ -863,6 +868,7 @@ fn family_for_path(path: &str) -> CommandFamily {
         }
         "metrics" => CommandFamily::Telemetry,
         "admin" | "state" => CommandFamily::Admin,
+        "_complete" => CommandFamily::Local,
         _ => CommandFamily::Local,
     }
 }
@@ -1178,6 +1184,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "documents search" => &[methods::DOCUMENTS_SEARCH],
         "documents get" => &[methods::DOCUMENTS_GET],
         "documents chunks" => &[methods::DOCUMENTS_GET_CHUNKS],
+        "_complete" => &[],
         _ => &[],
     }
 }
