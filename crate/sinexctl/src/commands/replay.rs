@@ -18,10 +18,10 @@ LIFECYCLE:
 
 EXAMPLES:
     # Create a replay plan for a source
-    sinexctl replay plan --source terminal.zsh-history
+    sinexctl ops replay plan --source terminal.zsh-history
 
     # Create with scope filters
-    sinexctl replay plan --source fs --since 1h --material <UUID>
+    sinexctl ops replay plan --source fs --since 1h --material <UUID>
 
     # Preview what will be replayed. When the scope crosses material
     # boundaries (more than one source_material_id), the preview adds a
@@ -29,27 +29,27 @@ EXAMPLES:
     # material drags the aggregate down. Each row shows the material id,
     # source identifier, replayability score (out of 5), and weakness
     # dimensions (timing / anchor / blob / parser / privacy).
-    sinexctl replay preview <OPERATION_ID>
+    sinexctl ops replay preview <OPERATION_ID>
 
     # Approve and execute separately
-    sinexctl replay approve <OPERATION_ID>
-    sinexctl replay execute <OPERATION_ID>
+    sinexctl ops replay approve <OPERATION_ID>
+    sinexctl ops replay execute <OPERATION_ID>
 
     # Or use submit as shorthand for approve+execute
-    sinexctl replay submit <OPERATION_ID>
+    sinexctl ops replay submit <OPERATION_ID>
 
     # Full convenience: plan+preview+approve+execute
-    sinexctl replay run --source terminal.zsh-history --since 24h
+    sinexctl ops replay run --source terminal.zsh-history --since 24h
 
     # Watch progress
-    sinexctl replay watch <OPERATION_ID>
+    sinexctl ops replay watch <OPERATION_ID>
 
     # Cancel an operation
-    sinexctl replay cancel <OPERATION_ID> --reason 'wrong scope'
+    sinexctl ops replay cancel <OPERATION_ID> --reason 'wrong scope'
 
     # List all operations
-    sinexctl replay list
-    sinexctl replay list -f json
+    sinexctl ops replay list
+    sinexctl ops replay list -f json
 ")]
 pub enum ReplayCommands {
     /// Create a replay plan (planning state)
@@ -602,7 +602,7 @@ fn format_replay_plan_table(operation: &ReplayOperation) -> String {
     }
     output.push_str(&format!("  Created:      {}\n", operation.created_at));
     output.push_str(&format!(
-        "\nNext: sinexctl replay preview {}\n",
+        "\nNext: sinexctl ops replay preview {}\n",
         operation.operation_id
     ));
     output
@@ -760,7 +760,7 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
     }
 
     output.push_str(&format!(
-        "\nNext: sinexctl replay approve {}\n",
+        "\nNext: sinexctl ops replay approve {}\n",
         operation.operation_id
     ));
     output
@@ -772,7 +772,7 @@ fn format_replay_approve_table(operation: &ReplayOperation) -> String {
     output.push_str(&format!("  Operation ID: {}\n", operation.operation_id));
     output.push_str(&format!("  State:        {:?}\n", operation.state));
     output.push_str(&format!(
-        "\nNext: sinexctl replay execute {}\n",
+        "\nNext: sinexctl ops replay execute {}\n",
         operation.operation_id
     ));
     output
@@ -788,7 +788,7 @@ fn format_replay_execute_table(operation: &ReplayOperation) -> String {
         operation.checkpoint.total_events
     ));
     output.push_str(&format!(
-        "\nWatch: sinexctl replay watch {}\n",
+        "\nWatch: sinexctl ops replay watch {}\n",
         operation.operation_id
     ));
     output
@@ -804,7 +804,7 @@ fn format_replay_submit_table(operation: &ReplayOperation) -> String {
         operation.checkpoint.total_events
     ));
     output.push_str(&format!(
-        "\nWatch: sinexctl replay watch {}\n",
+        "\nWatch: sinexctl ops replay watch {}\n",
         operation.operation_id
     ));
     output

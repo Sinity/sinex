@@ -167,7 +167,7 @@ fn enhance_not_found_error(method: &str, err: &Report) -> Report {
         }
         methods::AUDIT_GET => "Use 'sinexctl ops list' to see all operations",
         methods::DLQ_LIST | methods::DLQ_PEEK | methods::DLQ_REQUEUE | methods::DLQ_PURGE => {
-            "Use 'sinexctl dlq list' to see all DLQ subjects"
+            "Use 'sinexctl ops dlq list' to see all DLQ subjects"
         }
         methods::REPLAY_CREATE_OPERATION
         | methods::REPLAY_PREVIEW_OPERATION
@@ -175,7 +175,7 @@ fn enhance_not_found_error(method: &str, err: &Report) -> Report {
         | methods::REPLAY_EXECUTE_OPERATION
         | methods::REPLAY_CANCEL_OPERATION
         | methods::REPLAY_OPERATION_STATUS
-        | methods::REPLAY_LIST_OPERATIONS => "Use 'sinexctl replay list' to see replay operations",
+        | methods::REPLAY_LIST_OPERATIONS => "Use 'sinexctl ops replay list' to see replay operations",
         _ => "Use 'sinexctl --help' to see available commands",
     };
 
