@@ -9,11 +9,11 @@
 sinexctl gateway ping --token "$SINEX_API_TOKEN"
 
 # Query recent events
-sinexctl query -s 1h --token "$SINEX_API_TOKEN"
+sinexctl events query -s 1h --token "$SINEX_API_TOKEN"
 
 # List runtime modules and replay operations
 sinexctl runtime list --token "$SINEX_API_TOKEN"
-sinexctl replay list --token "$SINEX_API_TOKEN"
+sinexctl ops replay list --token "$SINEX_API_TOKEN"
 
 # Inspect automata runtime health and checkpoint position
 sinexctl runtime automata --token "$SINEX_API_TOKEN"
@@ -23,24 +23,23 @@ sinexctl runtime automata --token "$SINEX_API_TOKEN"
 sinexctl verify --document-smoke --source-evidence --historical-evidence --token "$SINEX_API_TOKEN"
 
 # Inspect DLQ state
-sinexctl dlq list --token "$SINEX_API_TOKEN"
+sinexctl ops dlq list --token "$SINEX_API_TOKEN"
 ```
 
 ## Command Groups
 
 - `gateway`: API connectivity/version checks
 - `core`: system health
-- `query`: event search and filtering
+- `events`: event search, filtering, relations, tracing, and streaming
 - `verify`: bounded runtime evidence checks for pipeline activity, gateway reachability, passive derived outputs, managed document-scan smoke, enabled long-running collector surfaces, locally declared deployment surfaces, and historical backfill
 - `runtime`: list/status/drain/resume/horizon
 - `automata`: automaton runtime health, checkpoints, replay/output recency, and SDK telemetry
-- `replay`: plan/submit/watch/list
-- `dlq`: list/peek/requeue/purge
-- `ops`, `audit`: operation lifecycle and audit trail
-- `lifecycle`: archive/restore/tombstone workflows
-- `status`, `recent`, `errors`, `watch`, `tui`: operator shortcuts
+- `ops`: operations, DLQ, replay, lifecycle, and audit surfaces
+- `docs`: document search, retrieval, and chunk browsing
+- `semantic`: semantic epochs and shadow-lane inspection
+- `status`, `tui`: operator shortcuts
 - `demo`: deterministic dev data seeding
-- `config`, `completions`: local CLI management
+- `config`: local CLI management
 
 ## Connection and Auth
 
@@ -66,12 +65,10 @@ values populate the API URL, token file, and TLS material before explicit
 CLI flags are applied. `sinexctl status` prints the loaded target so live
 runtime health is tied to the descriptor that supplied the connection settings.
 
-## Completions
+## Structured Completion
 
 ```bash
-sinexctl completions bash > ~/.local/share/bash-completion/completions/sinexctl
-sinexctl completions zsh > ~/.zfunc/_sinexctl
-sinexctl completions fish > ~/.config/fish/completions/sinexctl.fish
+sinexctl _complete --line "sinexctl events source:" --cursor 24 --format json
 ```
 
 ## Local Preferences File

@@ -1,4 +1,4 @@
-//! `sinexctl documents` — document search, retrieval, and chunk browsing.
+//! `sinexctl docs` — document search, retrieval, and chunk browsing.
 //!
 //! Calls the three gateway RPC methods added in #332 part 3 (A3 #1280):
 //!   - `documents.search`  — FTS + trigram search over `core.document_chunks`
@@ -29,19 +29,19 @@ use crate::model::OutputFormat;
 #[command(after_help = "\
 EXAMPLES:
     # Full-text search for 'error handling'
-    sinexctl documents search \"error handling\" --limit 10
+    sinexctl docs search \"error handling\" --limit 10
 
     # Restrict to Dendron notes
-    sinexctl documents search \"async tokio\" --kind dendron_markdown
+    sinexctl docs search \"async tokio\" --kind dendron_markdown
 
     # Get document metadata
-    sinexctl documents get 0196ed62-8f7a-7000-8000-000000000001
+    sinexctl docs get 0196ed62-8f7a-7000-8000-000000000001
 
     # List chunks for a document
-    sinexctl documents chunks 0196ed62-8f7a-7000-8000-000000000001 --limit 5
+    sinexctl docs chunks 0196ed62-8f7a-7000-8000-000000000001 --limit 5
 
     # Machine-readable output
-    sinexctl documents search \"session\" --format json
+    sinexctl docs search \"session\" --format json
 ")]
 pub struct DocumentsCommand {
     #[command(subcommand)]
@@ -74,7 +74,7 @@ impl DocumentsCommand {
 }
 
 // ---------------------------------------------------------------------------
-// `documents search`
+// `docs search`
 // ---------------------------------------------------------------------------
 
 /// Search document chunks
@@ -206,7 +206,7 @@ fn render_search_table(response: &DocumentsSearchResponse) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// `documents get`
+// `docs get`
 // ---------------------------------------------------------------------------
 
 /// Get document metadata by ID
@@ -261,7 +261,7 @@ fn render_document_table(doc: &DocumentsGetResponse) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// `documents chunks`
+// `docs chunks`
 // ---------------------------------------------------------------------------
 
 /// List chunks for a document
