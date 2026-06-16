@@ -6,9 +6,10 @@ use sinex_primitives::rpc::{
     telemetry::RecentActivityEntry,
 };
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::views::ViewEnvelope;
 
 use crate::client::GatewayClient;
-use crate::fmt::format_heartbeat_age;
+use crate::fmt::{format_heartbeat_age, render_finite_envelope};
 use crate::model::OutputFormat;
 
 /// Show what's happening right now — recent activity, active modules, current status.
@@ -40,20 +41,25 @@ impl NowCommand {
             automata,
         };
 
-        match format {
-            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-                println!("{}", serde_json::to_string_pretty(&snapshot)?);
+        if let Some(output) = render_now_machine_output(&snapshot, format)? {
+            print!("{output}");
+            if !output.is_empty() && !output.ends_with('\n') {
+                println!();
             }
-            OutputFormat::Yaml => {
-                println!("{}", serde_yml::to_string(&snapshot)?);
-            }
-            OutputFormat::Table => {
-                render_table(&snapshot);
-            }
+            return Ok(());
         }
 
+        render_table(&snapshot);
         Ok(())
     }
+}
+
+fn render_now_machine_output<T: serde::Serialize>(
+    snapshot: &T,
+    format: OutputFormat,
+) -> Result<Option<String>> {
+    let envelope = ViewEnvelope::new("sinexctl.now", snapshot);
+    render_finite_envelope(&envelope, format)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -238,5 +244,30 @@ fn render_table(snapshot: &NowSnapshot) {
                 events
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use xtask::sandbox::prelude::sinex_test;
+
+    #[sinex_test]
+    async fn now_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
+        let output = render_now_machine_output(&json!({ "health": { "healthy": true } }), OutputFormat::Json)?
+            .expect("json should render");
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(value["source_surface"], "sinexctl.now");
+        assert_eq!(value["payload"]["health"]["healthy"], true);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn now_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<()> {
+        let result = render_now_machine_output(&json!({ "health": {} }), OutputFormat::Ndjson);
+        assert!(result.is_err(), "now is a finite view");
+        Ok(())
     }
 }

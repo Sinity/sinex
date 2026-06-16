@@ -1,16 +1,18 @@
 use clap::{Args, ValueEnum};
 use console::style;
+use serde_json::json;
 use serde_json::Value as JsonValue;
 use sinex_primitives::Uuid;
 use sinex_primitives::events::{Event, Provenance};
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::{LineageDirection, LineageNode, LineageQuery, LineageResult};
+use sinex_primitives::views::ViewEnvelope;
 use std::collections::{BTreeSet, HashSet};
 use std::io::IsTerminal;
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::render_finite_envelope;
 use crate::model::OutputFormat;
 
 /// Trace event provenance chain
@@ -114,12 +116,31 @@ impl TraceCommand {
     fn render(&self, result: &LineageResult, format: OutputFormat) -> Result<()> {
         match format {
             OutputFormat::Table => render_tree(result),
-            OutputFormat::Json | OutputFormat::Ndjson => println!("{}", format_json(result)?),
-            OutputFormat::Yaml => println!("{}", format_yaml(result)?),
+            OutputFormat::Json | OutputFormat::Yaml | OutputFormat::Ndjson => {
+                let Some(output) = render_trace_machine_output(result, &self.event_id, format)?
+                else {
+                    return Ok(());
+                };
+                print!("{output}");
+                if !output.is_empty() && !output.ends_with('\n') {
+                    println!();
+                }
+            }
             OutputFormat::Dot => println!("{}", render_dot(result)),
         }
         Ok(())
     }
+}
+
+fn render_trace_machine_output(
+    result: &LineageResult,
+    event_id: &Id<Event<JsonValue>>,
+    format: OutputFormat,
+) -> Result<Option<String>> {
+    let envelope = ViewEnvelope::new("sinexctl.trace", result).with_query_echo(json!({
+        "event_id": event_id,
+    }));
+    render_finite_envelope(&envelope, format)
 }
 
 /// Render the lineage result as a tree to stdout.
@@ -503,6 +524,48 @@ mod tests {
             dot.contains("style=dashed color=\"#6e7781\""),
             "source-material evidence link should be dashed and gray"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn trace_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
+        let root = material_event("fs", "file.created");
+        let event_id = root.id.expect("root id");
+        let output = render_trace_machine_output(
+            &LineageResult {
+                root,
+                ancestors: Vec::new(),
+                descendants: Vec::new(),
+                material_links: Vec::new(),
+            },
+            &event_id,
+            OutputFormat::Json,
+        )?
+        .expect("json should render");
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(value["source_surface"], "sinexctl.trace");
+        assert_eq!(value["query_echo"]["event_id"], event_id.to_string());
+        assert!(value["payload"].get("root").is_some());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn trace_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<()> {
+        let root = material_event("fs", "file.created");
+        let event_id = root.id.expect("root id");
+        let result = render_trace_machine_output(
+            &LineageResult {
+                root,
+                ancestors: Vec::new(),
+                descendants: Vec::new(),
+                material_links: Vec::new(),
+            },
+            &event_id,
+            OutputFormat::Ndjson,
+        );
+
+        assert!(result.is_err(), "trace is a finite graph view");
         Ok(())
     }
 }
