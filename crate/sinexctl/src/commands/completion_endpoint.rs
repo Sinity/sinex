@@ -656,6 +656,7 @@ mod tests {
             "blob",
             "state",
             "admin",
+            "declare",
             "documents",
             "semantics",
             "completions",
