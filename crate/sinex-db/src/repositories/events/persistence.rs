@@ -1510,8 +1510,9 @@ impl<'a> EventRepository<'a> {
     ///
     /// # Protocol
     /// 1. Open a transaction (`BEGIN`).
-    /// 2. Create `sinex_batch_staging` if it doesn't exist (`IF NOT EXISTS`), then
-    ///    `TRUNCATE` it so repeated calls on the same pooled connection start clean.
+    /// 2. Probe the connection-local `pg_temp` namespace and create
+    ///    `sinex_batch_staging` only when absent, then `TRUNCATE` it so
+    ///    repeated calls on the same pooled connection start clean.
     /// 3. `COPY FROM STDIN` the serialised rows (text format, tab-delimited).
     /// 4. `INSERT INTO core.events … SELECT … FROM sinex_batch_staging ON CONFLICT DO NOTHING`
     ///    with `RETURNING id::uuid` to learn which IDs were actually inserted.
@@ -1554,15 +1555,25 @@ impl<'a> EventRepository<'a> {
         // Column types are plain SQL types (UUID, TEXT, JSONB …) so COPY text format
         // can write them without UUIDv7-type complications.  The INSERT SELECT below
         // applies `::uuid` casts when copying into `core.events`.
-        let create_staging_sql = format!(
-            "CREATE TEMP TABLE IF NOT EXISTS sinex_batch_staging (
-                {staging_columns_sql}
-            )"
-        );
-        sqlx::query(&create_staging_sql)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| db_error(e, "create staging table for COPY batch insert"))?;
+        //
+        // Do not use `CREATE TEMP TABLE IF NOT EXISTS` here. PostgreSQL emits
+        // `NOTICE: relation "sinex_batch_staging" already exists, skipping`
+        // every time the table already exists, and sqlx forwards that NOTICE
+        // to the service logs. On the COPY hot path that notice dominated
+        // sinexd journald volume (#1841).
+        let staging_exists =
+            sqlx::query_scalar::<_, Option<String>>(Self::copy_staging_exists_sql())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|e| db_error(e, "probe staging table for COPY batch insert"))?;
+
+        if staging_exists.is_none() {
+            let create_staging_sql = Self::copy_staging_create_sql(&staging_columns_sql);
+            sqlx::query(&create_staging_sql)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| db_error(e, "create staging table for COPY batch insert"))?;
+        }
 
         sqlx::query("TRUNCATE sinex_batch_staging")
             .execute(&mut *tx)
@@ -1615,6 +1626,18 @@ impl<'a> EventRepository<'a> {
             inserted_count: inserted_ids.len(),
             inserted_ids: Some(inserted_ids),
         })
+    }
+
+    fn copy_staging_exists_sql() -> &'static str {
+        "SELECT to_regclass('pg_temp.sinex_batch_staging')::text"
+    }
+
+    fn copy_staging_create_sql(staging_columns_sql: &str) -> String {
+        format!(
+            "CREATE TEMP TABLE sinex_batch_staging (
+                {staging_columns_sql}
+            )"
+        )
     }
 
     // ========== Event Annotations ==========
@@ -2791,6 +2814,28 @@ mod tests {
             EventRepository::stream_batch_insert_strategy(&batch),
             Some(StreamBatchInsertStrategy::Derived)
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn copy_staging_probe_avoids_repeated_create_notice() -> Result<()> {
+        let probe_sql = EventRepository::copy_staging_exists_sql();
+        assert!(
+            probe_sql.contains("pg_temp.sinex_batch_staging"),
+            "staging-table probe must be scoped to the current connection's temp schema"
+        );
+
+        let create_sql = EventRepository::copy_staging_create_sql("id UUID");
+        assert!(
+            !create_sql.contains("IF NOT EXISTS"),
+            "COPY staging setup must not use CREATE IF NOT EXISTS; PostgreSQL emits a NOTICE \
+             on every reused temp table and sqlx forwards it to journald"
+        );
+        assert!(
+            create_sql.contains("CREATE TEMP TABLE sinex_batch_staging"),
+            "COPY staging table should still be a connection-local temporary table"
+        );
+
         Ok(())
     }
 
