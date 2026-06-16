@@ -22,13 +22,13 @@ use crate::model::OutputFormat;
 #[command(after_help = "\
 EXAMPLES:
     # What was I doing in the last 2 hours?
-    sinexctl context
+    sinexctl events context
 
     # Wider window
-    sinexctl context --since 4h
+    sinexctl events context --since 4h
 
     # Narrow to last 30 minutes
-    sinexctl context --since 30m
+    sinexctl events context --since 30m
 ")]
 pub struct ContextCommand {
     /// Time window to look back (default: last 2 hours)
@@ -167,7 +167,7 @@ fn render_context_machine_output(
             render_envelope(&envelope, &envelope.payload.sources, format)
         }
         OutputFormat::Ndjson | OutputFormat::Dot => Err(color_eyre::eyre::eyre!(
-            "context is a finite view; use json, yaml, or table"
+            "events context is a finite view; use json, yaml, or table"
         )),
     }
 }

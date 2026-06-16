@@ -7,7 +7,7 @@
 use std::env;
 use std::time::Instant;
 
-use clap::Parser;
+use clap::Args;
 use color_eyre::Result;
 use serde_json::json;
 use sinex_db::repositories::{SourceMaterial, StreamBatchRow};
@@ -22,20 +22,20 @@ const DEMO_SOURCE: &str = "sinexctl-demo";
 const BATCH_SIZE: usize = 500;
 
 /// Seed the database with deterministic fake events for testing and demos
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 #[command(after_help = "\
 EXAMPLES:
     # Seed 10 000 events with default seed
-    sinexctl demo
+    sinexctl ops demo
 
     # Deterministic seed — same args always produce same events
-    sinexctl demo --seed 42
+    sinexctl ops demo --seed 42
 
     # Smaller run
-    sinexctl demo --count 5000
+    sinexctl ops demo --count 5000
 
     # Wipe previous demo data first, then seed
-    sinexctl demo --count 5000 --clear
+    sinexctl ops demo --count 5000 --clear
 ")]
 pub struct DemoCommand {
     /// RNG seed for deterministic event generation.
