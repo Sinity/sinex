@@ -1354,6 +1354,12 @@ mod tests {
         assert!(validate_format("status", OutputFormat::Ndjson).is_err());
         assert!(validate_format("explain", OutputFormat::Json).is_ok());
         assert!(validate_format("explain", OutputFormat::Ndjson).is_err());
+        assert!(validate_format("now", OutputFormat::Json).is_ok());
+        assert!(validate_format("now", OutputFormat::Ndjson).is_err());
+        assert!(validate_format("timeline", OutputFormat::Json).is_ok());
+        assert!(validate_format("timeline", OutputFormat::Ndjson).is_err());
+        assert!(validate_format("trace", OutputFormat::Json).is_ok());
+        assert!(validate_format("trace", OutputFormat::Ndjson).is_err());
         assert!(validate_format("watch", OutputFormat::Json).is_ok());
         Ok(())
     }
