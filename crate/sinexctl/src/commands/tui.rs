@@ -29,7 +29,8 @@ use sinex_primitives::rpc::sources::{
 use sinex_primitives::sources::continuity::{SourceContinuityReport, SourcesContinuityListRequest};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
-    ActionAvailabilityState, EventCardListView, EventCardView, PrivacyStateKind, SinexObjectKind,
+    ActionAvailability, ActionAvailabilityState, ActionSideEffect, EventCardListView,
+    EventCardView, OperationView, PrivacyStateKind, SinexObjectKind,
 };
 use std::io;
 use std::time::Instant;
@@ -1033,35 +1034,57 @@ fn replay_caveats(operation: &ReplayOperation) -> Vec<String> {
 }
 
 fn ops_operation_card(operation: &OpsOperation) -> OperationRoomCard {
+    let view = OperationView::from_rpc(
+        operation.id.clone(),
+        &operation.operation_type,
+        operation.operator.clone(),
+        operation.result_status,
+        operation.duration_ms,
+        operation.result_message.clone(),
+        operation.scope.clone(),
+        operation.preview_summary.clone(),
+    );
+
     OperationRoomCard {
-        title: format!("operation {} ({})", operation.id, operation.operation_type),
+        title: format!("operation {} ({})", view.id, view.kind),
         authority: "ops".to_string(),
-        phase: format!("{:?}", operation.result_status).to_lowercase(),
-        progress: operation
+        phase: view.status.to_string(),
+        progress: view
             .duration_ms
             .map_or_else(|| "duration unknown".to_string(), |ms| format!("{ms}ms")),
-        affected_refs: operation
+        affected_refs: view
             .scope
             .as_ref()
             .map_or_else(Vec::new, |scope| vec![summarize_json_scope(scope)]),
-        caveats: operation
+        caveats: view
             .result_message
             .as_ref()
             .map_or_else(Vec::new, |message| vec![message.clone()]),
-        actions: vec![
-            OperationRoomAction::new(
-                "inspect",
-                ActionAvailabilityState::Enabled,
-                format!("sinexctl ops get {}", operation.id),
-            ),
-            OperationRoomAction::new(
-                "cancel",
-                ActionAvailabilityState::Dangerous,
-                format!("sinexctl ops cancel {} -r <reason>", operation.id),
-            ),
-        ],
-        audit_refs: vec![format!("sinexctl audit {}", operation.id)],
+        actions: view
+            .actions
+            .iter()
+            .filter_map(operation_room_action_from_availability)
+            .collect(),
+        audit_refs: vec![format!("sinexctl audit {}", view.id)],
     }
+}
+
+fn operation_room_action_from_availability(
+    action: &ActionAvailability,
+) -> Option<OperationRoomAction> {
+    let command = action.command_hint.as_ref()?;
+    let state = match (action.state, action.side_effect) {
+        (
+            ActionAvailabilityState::Enabled,
+            ActionSideEffect::Write | ActionSideEffect::Admin | ActionSideEffect::Destructive,
+        ) => ActionAvailabilityState::Dangerous,
+        (state, _) => state,
+    };
+    Some(OperationRoomAction::new(
+        action.label.to_lowercase(),
+        state,
+        command.clone(),
+    ))
 }
 
 fn dlq_operation_card(app: &App) -> OperationRoomCard {
@@ -2248,12 +2271,12 @@ fn render_dlq(f: &mut Frame, area: Rect, app: &App) {
 mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
+    use sinex_primitives::domain::OperationStatus;
     use sinex_primitives::rpc::sources::{
         CaveatSeverity, SourceCaveat, SourceReadinessCost, caveat_codes,
     };
     use sinex_primitives::views::{
-        ActionAvailability, ActionSideEffect, CaveatView, EventSourceView, EventTimestampView,
-        PrivacyStateView, SinexObjectRef,
+        CaveatView, EventSourceView, EventTimestampView, PrivacyStateView, SinexObjectRef,
     };
     use xtask::sandbox::prelude::*;
 
@@ -2398,6 +2421,45 @@ mod tests {
             "ux_mk3_operations_room_terminal_grid",
             buffer_to_text(terminal.backend().buffer())
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn operation_room_ops_card_uses_shared_operation_actions() -> TestResult<()> {
+        let operation = OpsOperation {
+            id: "op-fixture".to_string(),
+            operation_type: "replay".to_string(),
+            operator: "operator.local".to_string(),
+            scope: Some(serde_json::json!({"source": "fixture"})),
+            result_status: OperationStatus::Failed,
+            result_message: Some("done".to_string()),
+            preview_summary: Some(serde_json::json!({"events": 12})),
+            duration_ms: Some(42),
+        };
+
+        let card = ops_operation_card(&operation);
+        let actions = card
+            .actions
+            .iter()
+            .map(|action| (action.label.as_str(), action.state, action.command.as_str()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(card.title, "operation op-fixture (replay)");
+        assert!(actions.contains(&(
+            "show",
+            ActionAvailabilityState::Enabled,
+            "sinexctl ops get op-fixture",
+        )));
+        assert!(actions.contains(&(
+            "cancel",
+            ActionAvailabilityState::Disabled,
+            "sinexctl ops cancel op-fixture",
+        )));
+        assert!(actions.contains(&(
+            "replay",
+            ActionAvailabilityState::Dangerous,
+            "sinexctl replay submit --ref-op op-fixture",
+        )));
         Ok(())
     }
 
