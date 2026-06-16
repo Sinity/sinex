@@ -6,9 +6,11 @@ use sinex_primitives::query::{
 };
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::validation::query_validation::{self, DEFAULT_MAX_LIMIT};
+use sinex_primitives::views::{EventQueryListView, ViewEnvelope};
 
 use crate::Result;
 use crate::client::GatewayClient;
+use crate::fmt::render_envelope;
 use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
 use crate::prompt;
@@ -143,18 +145,29 @@ async fn execute_query(
     query: EventQuery,
     format: OutputFormat,
 ) -> Result<()> {
+    let query_echo = serde_json::to_value(&query).ok();
     let result = client.query_events(query).await?;
-    println!("{}", render_query_result(&result, format)?);
+    println!("{}", render_query_result(&result, format, query_echo)?);
     Ok(())
 }
 
-fn render_query_result(result: &EventQueryResult, format: OutputFormat) -> Result<String> {
+fn render_query_result(
+    result: &EventQueryResult,
+    format: OutputFormat,
+    query_echo: Option<serde_json::Value>,
+) -> Result<String> {
     match result {
         EventQueryResult::Events {
             events,
             next_cursor,
             total_estimate,
-        } => render_event_query_result(events, next_cursor.as_ref(), *total_estimate, format),
+        } => render_event_query_result(
+            events,
+            next_cursor.as_ref(),
+            *total_estimate,
+            format,
+            query_echo,
+        ),
         other => render_non_event_query_result(other, format),
     }
 }
@@ -164,6 +177,7 @@ fn render_event_query_result(
     next_cursor: Option<&sinex_primitives::query::Cursor>,
     total_estimate: Option<i64>,
     format: OutputFormat,
+    query_echo: Option<serde_json::Value>,
 ) -> Result<String> {
     match format {
         OutputFormat::Table => Ok(format_event_query_result_table(
@@ -171,16 +185,18 @@ fn render_event_query_result(
             next_cursor,
             total_estimate,
         )),
-        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => format_json(&EventQueryResult::Events {
-            events: events.to_vec(),
-            next_cursor: next_cursor.cloned(),
-            total_estimate,
-        }),
-        OutputFormat::Yaml => format_yaml(&EventQueryResult::Events {
-            events: events.to_vec(),
-            next_cursor: next_cursor.cloned(),
-            total_estimate,
-        }),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Yaml | OutputFormat::Dot => {
+            let view =
+                EventQueryListView::from_query_events(events, next_cursor.cloned(), total_estimate);
+            let mut envelope = ViewEnvelope::new("sinexctl.query", view);
+            if let Some(query_echo) = query_echo {
+                envelope = envelope.with_query_echo(query_echo);
+            }
+
+            render_envelope(&envelope, &envelope.payload.cards, format)?.ok_or_else(|| {
+                color_eyre::eyre::eyre!("query event results require an envelope-capable format")
+            })
+        }
     }
 }
 
@@ -611,6 +627,7 @@ mod tests {
     use sinex_primitives::temporal::Duration;
     use sinex_primitives::testing::event_fixture;
     use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
+    use sinex_primitives::views::{EVENT_QUERY_LIST_SCHEMA_VERSION, VIEW_ENVELOPE_SCHEMA_VERSION};
     use sinex_primitives::{Event, Id, JsonValue, Uuid};
     use xtask::TestResult;
     use xtask::sandbox::{sinex_proptest, sinex_test};
@@ -840,13 +857,55 @@ mod tests {
                 total_estimate: Some(42),
             },
             OutputFormat::Json,
+            Some(serde_json::json!({ "limit": 1 })),
         )?;
         let value: serde_json::Value = serde_json::from_str(&rendered)?;
 
-        assert_eq!(value["type"], serde_json::json!("events"));
-        assert_eq!(value["total_estimate"], serde_json::json!(42));
-        assert!(value["next_cursor"]["after"]["id"].is_string());
-        assert_eq!(value["events"].as_array().map(Vec::len), Some(1));
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(value["source_surface"], "sinexctl.query");
+        assert_eq!(value["query_echo"]["limit"], serde_json::json!(1));
+        assert_eq!(
+            value["payload"]["schema_version"],
+            EVENT_QUERY_LIST_SCHEMA_VERSION
+        );
+        assert_eq!(value["payload"]["total_estimate"], serde_json::json!(42));
+        assert!(value["payload"]["next_cursor"]["after"]["id"].is_string());
+        assert_eq!(value["payload"]["cards"].as_array().map(Vec::len), Some(1));
+        assert_eq!(value["payload"]["cards"][0]["event_type"], "test.event");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn render_query_result_emits_event_cards_as_ndjson() -> TestResult<()> {
+        let mut event = event_fixture(
+            sinex_primitives::EventSource::from_static("test"),
+            sinex_primitives::EventType::from_static("test.event"),
+            serde_json::json!({"message": "hello"}),
+        );
+        event.id = Some(Id::<Event<JsonValue>>::from_uuid(Uuid::now_v7()));
+
+        let rendered = render_query_result(
+            &EventQueryResult::Events {
+                events: vec![QueryResultEvent {
+                    event,
+                    relevance_score: None,
+                    snippet: Some("hello".to_string()),
+                }],
+                next_cursor: None,
+                total_estimate: None,
+            },
+            OutputFormat::Ndjson,
+            None,
+        )?;
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert_eq!(lines.len(), 1);
+        let value: serde_json::Value = serde_json::from_str(lines[0])?;
+        assert_eq!(value["event_type"], "test.event");
+        assert!(value.get("ref").is_some());
+        assert!(
+            value.get("schema_version").is_none(),
+            "ndjson should emit item cards without envelope metadata"
+        );
         Ok(())
     }
 

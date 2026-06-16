@@ -3,6 +3,7 @@ use crate::error::SinexError;
 use crate::events::Event;
 use crate::ids::Id;
 use crate::{Timestamp, Uuid};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -257,7 +258,7 @@ impl Default for EventQuery {
 }
 
 /// UUIDv7-based keyset pagination. O(1) seek instead of O(n) offset skip.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Cursor {
     #[serde(default)]
     pub after: Option<CursorAnchor>,
@@ -322,7 +323,7 @@ impl Cursor {
 }
 
 /// Stable cursor anchor for ordered event listings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CursorAnchor {
     pub id: Id<Event<JsonValue>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -4,7 +4,9 @@
 //! identifiers for domain types, preventing ID mixing at compile time.
 
 use crate::temporal::Timestamp;
+use schemars::json_schema;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -60,6 +62,20 @@ impl<T> Ord for Id<T> {
 impl<T> Hash for Id<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.uuid.hash(state);
+    }
+}
+
+impl<T> schemars::JsonSchema for Id<T> {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("Uuid")
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID string"
+        })
     }
 }
 
