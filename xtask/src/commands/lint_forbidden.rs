@@ -606,13 +606,7 @@ fn check_duplicate_vocabulary_claims() -> Result<Vec<String>> {
     let contents = std::fs::read_to_string(root.join(doc_path))
         .with_context(|| format!("failed to read {}", doc_path.display()))?;
 
-    let direct_duplicate_count = crate::deps::analyzer::WorkspaceAnalyzer::new()
-        .context("failed to create workspace dependency analyzer")?
-        .find_duplicates()
-        .context("failed to find duplicate dependencies for docs coherence check")?
-        .into_iter()
-        .filter(|duplicate| duplicate.classification.is_direct_workspace())
-        .count();
+    let direct_duplicate_count = direct_workspace_duplicate_count().ok();
 
     let mut violations =
         duplicate_claim_doc_violations(doc_path, &contents, direct_duplicate_count);
@@ -632,10 +626,20 @@ fn check_duplicate_vocabulary_claims() -> Result<Vec<String>> {
     Ok(violations)
 }
 
+fn direct_workspace_duplicate_count() -> Result<usize> {
+    Ok(crate::deps::analyzer::WorkspaceAnalyzer::new()
+        .context("failed to create workspace dependency analyzer")?
+        .find_duplicates()
+        .context("failed to find duplicate dependencies for docs coherence check")?
+        .into_iter()
+        .filter(|duplicate| duplicate.classification.is_direct_workspace())
+        .count())
+}
+
 fn duplicate_claim_doc_violations(
     doc_path: &Path,
     contents: &str,
-    direct_duplicate_count: usize,
+    direct_duplicate_count: Option<usize>,
 ) -> Vec<String> {
     let mut violations = Vec::new();
     let doc = doc_path.display();
@@ -647,7 +651,8 @@ fn duplicate_claim_doc_violations(
         ));
     }
 
-    if direct_duplicate_count > 0
+    if let Some(direct_duplicate_count) = direct_duplicate_count
+        && direct_duplicate_count > 0
         && contents.contains("Direct workspace duplicate debt is currently zero")
     {
         violations.push(format!(
@@ -1321,7 +1326,7 @@ mod tests {
         let violations = duplicate_claim_doc_violations(
             Path::new("xtask/docs/dependency-hygiene.md"),
             contents,
-            2,
+            Some(2),
         );
 
         assert_eq!(violations.len(), 1);
@@ -1336,7 +1341,7 @@ mod tests {
         let violations = duplicate_claim_doc_violations(
             Path::new("xtask/docs/dependency-hygiene.md"),
             "Duplicate versions should be reviewed by dependency owner.",
-            0,
+            Some(0),
         );
 
         assert_eq!(violations.len(), 1);
@@ -1353,7 +1358,22 @@ mod tests {
         let violations = duplicate_claim_doc_violations(
             Path::new("xtask/docs/dependency-hygiene.md"),
             contents,
-            0,
+            Some(0),
+        );
+
+        assert!(violations.is_empty(), "{violations:#?}");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn duplicate_claim_doc_keeps_source_lint_when_metadata_is_unavailable()
+    -> ::xtask::sandbox::TestResult<()> {
+        let contents = "Use `direct_workspace` / `transitive_upstream`. \
+            Direct workspace duplicate debt is currently zero.";
+        let violations = duplicate_claim_doc_violations(
+            Path::new("xtask/docs/dependency-hygiene.md"),
+            contents,
+            None,
         );
 
         assert!(violations.is_empty(), "{violations:#?}");
