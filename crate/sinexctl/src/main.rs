@@ -7,11 +7,11 @@ use sinex_primitives::rpc::{RpcMethodInfo, method_catalog};
 use sinex_primitives::views::ViewEnvelope;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
-    ConfigCommands, ContextCommand, CoreCommands, CompletionEndpointCommand, CurationCommand,
-    RecordCommand, DemoCommand, DlqCommands, DocumentsCommand, EventsCommand, GatewayCommands,
-    InstructionsCommand, LifecycleCommands, LlmCommand, MetricsCommands, NowCommand, OpsCommands,
-    PrivacyCommand, ReplayCommands, RuntimeCommands, SemanticCommand, SourcesCommand,
-    StateCommands, StatusCommand, TasksCommand, TuiCommand, VerifyCommand,
+    ConfigCommands, ContextCommand, CoreCommands, CompletionEndpointCommand, RecordCommand,
+    DemoCommand, DlqCommands, DocumentsCommand, EventsCommand, GatewayCommands, LifecycleCommands,
+    MetricsCommands, NowCommand, OpsCommands, PrivacyCommand, ReplayCommands, RuntimeCommands,
+    SemanticCommand, SourcesCommand, StateCommands, StatusCommand, TasksCommand, TuiCommand,
+    VerifyCommand,
 };
 use sinexctl::commands::lifecycle::TombstoneCommands;
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
@@ -144,20 +144,11 @@ enum Commands {
     /// Manual canonical records
     Record(RecordCommand),
 
-    /// Local desired-state instructions and actuator dispatch.
-    Instructions(InstructionsCommand),
-
     /// Task lifecycle and projection commands
     Tasks(TasksCommand),
 
-    /// Curation proposal and judgment commands
-    Curation(CurationCommand),
-
     /// Semantic epoch and shadow-lane commands
     Semantic(SemanticCommand),
-
-    /// LLM prompt, routing, and budget read surfaces
-    Llm(LlmCommand),
 
     /// Document search, retrieval, and chunk browsing
     Docs(DocumentsCommand),
@@ -308,11 +299,8 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Demo(_) => unreachable!("Demo command handled above"),
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
                 Commands::Record(cmd) => cmd.execute(&client, format).await?,
-                Commands::Instructions(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
-                Commands::Curation(cmd) => cmd.execute(&client, format).await?,
                 Commands::Semantic(cmd) => cmd.execute(&client, format).await?,
-                Commands::Llm(cmd) => cmd.execute(&client, format).await?,
                 Commands::Docs(cmd) => cmd.execute(&client, format).await?,
                 Commands::Metrics { cmd } => cmd.execute(&client, format).await?,
                 Commands::Status(cmd) => {
@@ -614,6 +602,7 @@ fn command_path(cmd: &Commands) -> String {
                 StateCommands::Inspect(_) => "ops state inspect".to_string(),
                 StateCommands::Restore(_) => "ops state restore".to_string(),
             },
+            OpsCommands::Instructions(cmd) => prefixed("ops", instructions_command_path(cmd)),
         },
         Commands::Privacy(cmd) => cmd.command_path().to_string(),
         Commands::Tui(_) => "tui".to_string(),
@@ -662,14 +651,6 @@ fn command_path(cmd: &Commands) -> String {
                 RecordSubcommand::Task(_) => "record task".to_string(),
             }
         }
-        Commands::Instructions(cmd) => {
-            use sinexctl::commands::instructions::InstructionsSubcommand;
-            match cmd.subcommand() {
-                InstructionsSubcommand::HyprlandWorkspace(_) => {
-                    "instructions hyprland-workspace".to_string()
-                }
-            }
-        }
         Commands::Tasks(cmd) => {
             use sinexctl::commands::tasks::TasksSubcommand;
             match cmd.subcommand() {
@@ -680,16 +661,6 @@ fn command_path(cmd: &Commands) -> String {
                 TasksSubcommand::Status(_) => "tasks status".to_string(),
                 TasksSubcommand::Update(_) => "tasks update".to_string(),
                 TasksSubcommand::Import(_) => "tasks import".to_string(),
-            }
-        }
-        Commands::Curation(cmd) => {
-            use sinexctl::commands::curation::CurationSubcommand;
-            match cmd.subcommand() {
-                CurationSubcommand::Proposals(_) => "curation proposals".to_string(),
-                CurationSubcommand::Duplicates(_) => "curation duplicates".to_string(),
-                CurationSubcommand::Judge(_) => "curation judge".to_string(),
-                CurationSubcommand::DuplicateJudge(_) => "curation duplicate-judge".to_string(),
-                CurationSubcommand::Finalize(_) => "curation finalize".to_string(),
             }
         }
         Commands::Semantic(cmd) => {
@@ -719,14 +690,10 @@ fn command_path(cmd: &Commands) -> String {
                     SemanticLaneSubcommand::Diffs(_) => "semantic lane diffs".to_string(),
                     SemanticLaneSubcommand::Compare(_) => "semantic lane compare".to_string(),
                 },
-            }
-        }
-        Commands::Llm(cmd) => {
-            use sinexctl::commands::llm::LlmSubcommand;
-            match cmd.subcommand() {
-                LlmSubcommand::Prompts(_) => "llm prompts".to_string(),
-                LlmSubcommand::RouteExplain(_) => "llm route-explain".to_string(),
-                LlmSubcommand::BudgetReport(_) => "llm budget-report".to_string(),
+                SemanticSubcommand::Curation(cmd) => {
+                    prefixed("semantic", curation_command_path(cmd))
+                }
+                SemanticSubcommand::Llm(cmd) => prefixed("semantic", llm_command_path(cmd)),
             }
         }
         Commands::Metrics { cmd } => cmd.command_path().to_string(),
@@ -740,6 +707,35 @@ fn command_path(cmd: &Commands) -> String {
 
 fn prefixed(prefix: &str, path: String) -> String {
     format!("{prefix} {path}")
+}
+
+fn instructions_command_path(cmd: &sinexctl::commands::instructions::InstructionsCommand) -> String {
+    use sinexctl::commands::instructions::InstructionsSubcommand;
+    match cmd.subcommand() {
+        InstructionsSubcommand::HyprlandWorkspace(_) => {
+            "instructions hyprland-workspace".to_string()
+        }
+    }
+}
+
+fn curation_command_path(cmd: &sinexctl::commands::curation::CurationCommand) -> String {
+    use sinexctl::commands::curation::CurationSubcommand;
+    match cmd.subcommand() {
+        CurationSubcommand::Proposals(_) => "curation proposals".to_string(),
+        CurationSubcommand::Duplicates(_) => "curation duplicates".to_string(),
+        CurationSubcommand::Judge(_) => "curation judge".to_string(),
+        CurationSubcommand::DuplicateJudge(_) => "curation duplicate-judge".to_string(),
+        CurationSubcommand::Finalize(_) => "curation finalize".to_string(),
+    }
+}
+
+fn llm_command_path(cmd: &sinexctl::commands::llm::LlmCommand) -> String {
+    use sinexctl::commands::llm::LlmSubcommand;
+    match cmd.subcommand() {
+        LlmSubcommand::Prompts(_) => "llm prompts".to_string(),
+        LlmSubcommand::RouteExplain(_) => "llm route-explain".to_string(),
+        LlmSubcommand::BudgetReport(_) => "llm budget-report".to_string(),
+    }
 }
 
 fn replay_command_path(cmd: &ReplayCommands) -> String {
@@ -1342,13 +1338,14 @@ mod tests {
             (
                 vec![
                     "sinexctl",
+                    "ops",
                     "instructions",
                     "hyprland-workspace",
                     "--workspace",
                     "4",
                     "--dry-run",
                 ],
-                "instructions hyprland-workspace",
+                "ops instructions hyprland-workspace",
             ),
             (
                 vec![
@@ -1387,27 +1384,29 @@ mod tests {
                 "ops state restore",
             ),
             (
-                vec!["sinexctl", "curation", "proposals"],
-                "curation proposals",
+                vec!["sinexctl", "semantic", "curation", "proposals"],
+                "semantic curation proposals",
             ),
             (
-                vec!["sinexctl", "curation", "duplicates"],
-                "curation duplicates",
+                vec!["sinexctl", "semantic", "curation", "duplicates"],
+                "semantic curation duplicates",
             ),
             (
                 vec![
                     "sinexctl",
+                    "semantic",
                     "curation",
                     "judge",
                     "0196ed62-8f7a-7000-8000-000000000001",
                     "--decision",
                     "accept",
                 ],
-                "curation judge",
+                "semantic curation judge",
             ),
             (
                 vec![
                     "sinexctl",
+                    "semantic",
                     "curation",
                     "duplicate-judge",
                     "--source",
@@ -1423,21 +1422,23 @@ mod tests {
                     "--action",
                     "merge",
                 ],
-                "curation duplicate-judge",
+                "semantic curation duplicate-judge",
             ),
             (
                 vec![
                     "sinexctl",
+                    "semantic",
                     "curation",
                     "finalize",
                     "0196ed62-8f7a-7000-8000-000000000002",
                 ],
-                "curation finalize",
+                "semantic curation finalize",
             ),
-            (vec!["sinexctl", "llm", "prompts"], "llm prompts"),
+            (vec!["sinexctl", "semantic", "llm", "prompts"], "semantic llm prompts"),
             (
                 vec![
                     "sinexctl",
+                    "semantic",
                     "llm",
                     "route-explain",
                     "--request-json",
@@ -1445,11 +1446,11 @@ mod tests {
                     "--policy-json",
                     "{}",
                 ],
-                "llm route-explain",
+                "semantic llm route-explain",
             ),
             (
-                vec!["sinexctl", "llm", "budget-report"],
-                "llm budget-report",
+                vec!["sinexctl", "semantic", "llm", "budget-report"],
+                "semantic llm budget-report",
             ),
             (
                 vec![

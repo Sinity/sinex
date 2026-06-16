@@ -1,4 +1,4 @@
-//! `sinexctl llm` — prompt/router/budget read surfaces.
+//! `sinexctl semantic llm` — prompt/router/budget read surfaces.
 
 use clap::{Args, Subcommand};
 use color_eyre::Result;

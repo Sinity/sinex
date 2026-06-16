@@ -1,4 +1,4 @@
-//! `sinexctl curation` — proposal and judgment operator commands.
+//! `sinexctl semantic curation` — proposal and judgment operator commands.
 
 use clap::{Args, Subcommand};
 use color_eyre::Result;
