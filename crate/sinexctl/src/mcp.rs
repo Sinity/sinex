@@ -50,6 +50,7 @@ use sinex_primitives::sources::continuity::{
 };
 use sinex_primitives::task_domain::TaskStatus;
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::views::{CaveatView, PrivacyStateKind, PrivacyStateView, ViewEnvelope};
 use std::io::{BufRead, Write};
 
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
@@ -1701,11 +1702,11 @@ async fn search_events(client: &GatewayClient, arguments: Value) -> Result<Value
 
     let mut result = serde_json::to_value(client.query_events(query).await?)?;
     redact_raw_samples(&mut result);
-    Ok(envelope(
+    Ok(mcp_view_envelope(
         "sinex.search_events",
         &json!(args),
         &json!({ "result": result }),
-    ))
+    )?)
 }
 
 async fn trace_lineage(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -1719,11 +1720,11 @@ async fn trace_lineage(client: &GatewayClient, arguments: Value) -> Result<Value
 
     let mut result = serde_json::to_value(client.trace_lineage(query).await?)?;
     redact_raw_samples(&mut result);
-    Ok(envelope(
+    Ok(mcp_view_envelope(
         "sinex.trace_lineage",
         &json!(args),
         &json!({ "result": result }),
-    ))
+    )?)
 }
 
 async fn source_readiness(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -2609,6 +2610,21 @@ fn envelope(tool: &str, query: &Value, result: &Value) -> Value {
         },
         "items": result
     })
+}
+
+fn mcp_view_envelope(tool: &str, query: &Value, payload: &Value) -> Result<Value> {
+    let mut envelope = ViewEnvelope::new(tool, payload.clone()).with_query_echo(query.clone());
+    envelope.caveats.push(CaveatView {
+        id: "mcp.raw_samples_redacted".to_string(),
+        message: "MCP read tools redact raw payload samples and snippets by default".to_string(),
+        ref_: None,
+    });
+    envelope.privacy_state = Some(PrivacyStateView {
+        state: PrivacyStateKind::Redacted,
+        reason: Some("gateway_default raw sample redaction".to_string()),
+    });
+
+    Ok(serde_json::to_value(envelope)?)
 }
 
 fn read_framed_request<R: BufRead>(reader: &mut R) -> Result<Option<JsonRpcRequest>> {

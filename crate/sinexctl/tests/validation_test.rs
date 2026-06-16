@@ -279,17 +279,19 @@ async fn mcp_search_events_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.search_events");
-    assert_eq!(response["items"]["result"]["type"], "events");
+    assert_eq!(response["source_surface"], "sinex.search_events");
+    assert_eq!(response["query_echo"]["sources"][0], "fixture");
+    assert_eq!(response["payload"]["result"]["type"], "events");
     assert_eq!(
-        response["items"]["result"]["events"][0]["payload"]["reason"],
+        response["payload"]["result"]["events"][0]["payload"]["reason"],
         "mcp_raw_samples_disabled"
     );
     assert_eq!(
-        response["items"]["result"]["events"][0]["snippet"],
+        response["payload"]["result"]["events"][0]["snippet"],
         "[REDACTED]"
     );
-    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["caveats"][0]["id"], "mcp.raw_samples_redacted");
     assert!(
         !response.to_string().contains("secret_fixture_value"),
         "MCP event search leaked raw payload or snippet text"
@@ -310,18 +312,20 @@ async fn mcp_trace_lineage_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["tool"], "sinex.trace_lineage");
-    assert_eq!(response["items"]["result"]["root"]["id"], event_id);
+    assert_eq!(response["source_surface"], "sinex.trace_lineage");
+    assert_eq!(response["query_echo"]["event_id"], event_id);
+    assert_eq!(response["payload"]["result"]["root"]["id"], event_id);
     assert_eq!(
-        response["items"]["result"]["root"]["payload"]["reason"],
+        response["payload"]["result"]["root"]["payload"]["reason"],
         "mcp_raw_samples_disabled"
     );
-    assert_eq!(response["items"]["result"]["ancestors"], json!([]));
+    assert_eq!(response["payload"]["result"]["ancestors"], json!([]));
     assert_eq!(
-        response["items"]["result"]["material_links"][0]["metadata"]["reason"],
+        response["payload"]["result"]["material_links"][0]["metadata"]["reason"],
         "mcp_raw_samples_disabled"
     );
-    assert_eq!(response["provenance_refs"], json!([]));
+    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["caveats"][0]["id"], "mcp.raw_samples_redacted");
     assert!(
         !response.to_string().contains("secret_fixture_value"),
         "MCP lineage leaked raw payload or material metadata text"
