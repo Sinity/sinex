@@ -21,31 +21,31 @@ use crate::validation::parse_time_input;
 #[command(after_help = "\
 EXAMPLES:
     # Search all events from last hour
-    sinexctl query -s 1h
+    sinexctl events query -s 1h
 
     # Full-text search for 'error'
-    sinexctl query -q error -s 24h
+    sinexctl events query -q error -s 24h
 
     # Resume from a previously returned pagination cursor
-    sinexctl query -s 24h --cursor-json '{\"after\":{\"id\":\"0195f3a1-7b0d-7a6f-9d8f-44a4d6d30b19\"}}'
+    sinexctl events query -s 24h --cursor-json '{\"after\":{\"id\":\"0195f3a1-7b0d-7a6f-9d8f-44a4d6d30b19\"}}'
 
     # Filter by source and event type
-    sinexctl query --source shell.atuin --event-type command.executed -s 2d
+    sinexctl events query --source shell.atuin --event-type command.executed -s 2d
 
     # Search within a date range
-    sinexctl query -s 2025-01-10 -u 2025-01-15
+    sinexctl events query -s 2025-01-10 -u 2025-01-15
 
     # Multiple sources (OR filter)
-    sinexctl query --source shell.atuin --source wm.hyprland -s 1d
+    sinexctl events query --source shell.atuin --source wm.hyprland -s 1d
 
     # Output as JSON for piping
-    sinexctl query -s 1h -f json | jq '.event_type'
+    sinexctl events query -s 1h -f json | jq '.event_type'
 
     # Output as YAML
-    sinexctl query -s 1h -f yaml
+    sinexctl events query -s 1h -f yaml
 
     # Launch interactive query builder
-    sinexctl query -i
+    sinexctl events query -i
 ")]
 pub struct QueryCommand {
     /// Launch interactive query builder
@@ -188,7 +188,7 @@ fn render_event_query_result(
         OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Yaml | OutputFormat::Dot => {
             let view =
                 EventQueryListView::from_query_events(events, next_cursor.cloned(), total_estimate);
-            let mut envelope = ViewEnvelope::new("sinexctl.query", view);
+            let mut envelope = ViewEnvelope::new("sinexctl.events.query", view);
             if let Some(query_echo) = query_echo {
                 envelope = envelope.with_query_echo(query_echo);
             }
@@ -463,7 +463,7 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
     // Show equivalent CLI command
     println!();
     println!("{}", style("Equivalent CLI command:").dim());
-    print!("  sinexctl query");
+    print!("  sinexctl events query");
     if let Some(ref t) = text {
         print!(" -q '{t}'");
     }
@@ -862,7 +862,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&rendered)?;
 
         assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
-        assert_eq!(value["source_surface"], "sinexctl.query");
+        assert_eq!(value["source_surface"], "sinexctl.events.query");
         assert_eq!(value["query_echo"]["limit"], serde_json::json!(1));
         assert_eq!(
             value["payload"]["schema_version"],

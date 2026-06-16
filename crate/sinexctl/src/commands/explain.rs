@@ -1,8 +1,8 @@
 use clap::Args;
 use color_eyre::Result;
 use console::style;
-use sinex_primitives::events::builder::Provenance;
 use serde_json::json;
+use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::query::{LineageDirection, LineageQuery, LineageResult};
 use sinex_primitives::views::ViewEnvelope;
 use sinex_primitives::{Event, Id};
@@ -14,7 +14,7 @@ use crate::model::OutputFormat;
 #[derive(Debug, Args)]
 #[command(after_help = "\
 EXAMPLES:
-    sinexctl explain 019d95af-fcd8-7aa3-b5b7-65da9e28dc12
+    sinexctl events explain 019d95af-fcd8-7aa3-b5b7-65da9e28dc12
 ")]
 pub struct ExplainCommand {
     /// Event ID to explain (`UUIDv7`)
@@ -172,7 +172,7 @@ fn render_explain_machine_output(
     match format {
         OutputFormat::Table => Ok(None),
         OutputFormat::Json | OutputFormat::Yaml => {
-            let envelope = ViewEnvelope::new("sinexctl.explain", result)
+            let envelope = ViewEnvelope::new("sinexctl.events.explain", result)
                 .with_query_echo(json!({ "event_id": event_id }));
             render_envelope(&envelope, &result.ancestors, format)
         }
@@ -220,13 +220,16 @@ mod tests {
     #[sinex_test]
     async fn explain_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
         let result = lineage_fixture();
-        let output =
-            render_explain_machine_output(&result, "01912345-6789-7abc-def0-123456789abc", OutputFormat::Json)?
-                .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+        let output = render_explain_machine_output(
+            &result,
+            "01912345-6789-7abc-def0-123456789abc",
+            OutputFormat::Json,
+        )?
+        .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
         assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
-        assert_eq!(value["source_surface"], "sinexctl.explain");
+        assert_eq!(value["source_surface"], "sinexctl.events.explain");
         assert_eq!(
             value["query_echo"]["event_id"],
             "01912345-6789-7abc-def0-123456789abc"

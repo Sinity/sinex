@@ -8,14 +8,13 @@ use sinex_primitives::views::ViewEnvelope;
 use sinexctl::AdminCommands;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
-    AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
-    ConfigCommands, ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand,
-    DlqCommands, DocumentsCommand, ErrorsCommand, EventsCommand, ExplainCommand, GatewayCommands,
-    InstructionsCommand, LifecycleCommands, LlmCommand, NowCommand, OpsCommands, PrivacyCommand,
-    QueryCommand, RecentCommand, RelationsCommand, ReplayCommands, ReportCommands, RuntimeCommands,
-    RuntimePresenceCommand, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
-    TasksCommand, TelemetryCommands, ThroughputCommand, TimelineCommand, TraceCommand, TuiCommand,
-    VerifyCommand, WatchCommand,
+    AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand, ConfigCommands,
+    ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand, DlqCommands,
+    DocumentsCommand, EventsCommand, GatewayCommands, InstructionsCommand, LifecycleCommands,
+    LlmCommand, NowCommand, OpsCommands, PrivacyCommand, RelationsCommand, ReplayCommands,
+    ReportCommands, RuntimeCommands, RuntimePresenceCommand, SemanticCommand, SourcesCommand,
+    StateCommands, StatusCommand, TasksCommand, TelemetryCommands, ThroughputCommand, TuiCommand,
+    VerifyCommand,
 };
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
@@ -135,14 +134,8 @@ enum Commands {
         cmd: DlqCommands,
     },
 
-    /// Query/search events
-    Query(QueryCommand),
-
     /// Evaluate event relations over live events
     Relations(RelationsCommand),
-
-    /// Trace event provenance chain
-    Trace(TraceCommand),
 
     /// Event search, inspection, lineage, streaming, and annotation
     Events {
@@ -164,9 +157,6 @@ enum Commands {
 
     /// Launch interactive TUI dashboard
     Tui(TuiCommand),
-
-    /// Interactive event timeline browser
-    Timeline(TimelineCommand),
 
     /// Configuration management
     Config {
@@ -229,20 +219,8 @@ enum Commands {
     /// Quick system status check
     Status(StatusCommand),
 
-    /// Show recent events (last hour by default)
-    Recent(RecentCommand),
-
-    /// Show recent errors only
-    Errors(ErrorsCommand),
-
-    /// Watch events in real-time
-    Watch(WatchCommand),
-
     /// Show activity context for session resumption ("what was I doing?")
     Context(ContextCommand),
-
-    /// Explain a single event: full details, provenance, payload
-    Explain(ExplainCommand),
 
     /// Check bounded runtime evidence and optional smoke probes
     Verify(VerifyCommand),
@@ -255,9 +233,6 @@ enum Commands {
 
     /// Per-source / per-component event throughput (#1172 AC-8)
     Throughput(ThroughputCommand),
-
-    /// Annotate an event with a typed note (#1172 AC-9)
-    Annotate(AnnotateCommand),
 
     /// Generate shell completions
     Completions(CompletionsCommand),
@@ -382,15 +357,12 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Automata(cmd) => cmd.execute(&client, format).await?,
                 Commands::Replay { cmd } => cmd.execute(&client, format).await?,
                 Commands::Dlq { cmd } => cmd.execute(&client, format).await?,
-                Commands::Query(cmd) => cmd.execute(&client, format).await?,
                 Commands::Relations(cmd) => cmd.execute(&client, format).await?,
-                Commands::Trace(cmd) => cmd.execute(&client, format).await?,
                 Commands::Events { cmd } => cmd.execute(&client, format).await?,
                 Commands::Ops { cmd } => cmd.execute(&client, format).await?,
                 Commands::Privacy(cmd) => cmd.execute(&client, format).await?,
                 Commands::Audit(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
-                Commands::Timeline(cmd) => cmd.execute(&client, format).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),
                 Commands::Demo(_) => unreachable!("Demo command handled above"),
                 Commands::State { .. } => unreachable!("State command handled above"),
@@ -409,16 +381,11 @@ async fn main() -> color_eyre::Result<()> {
                     cmd.execute(&client, config.runtime_target.as_ref(), format)
                         .await?;
                 }
-                Commands::Recent(cmd) => cmd.execute(&client, format).await?,
-                Commands::Errors(cmd) => cmd.execute(&client, format).await?,
-                Commands::Watch(cmd) => cmd.execute(&client, format).await?,
                 Commands::Context(cmd) => cmd.execute(&client, format).await?,
-                Commands::Explain(cmd) => cmd.execute(&client, format).await?,
                 Commands::Verify(cmd) => cmd.execute(&client, format).await?,
                 Commands::Now(cmd) => cmd.execute(&client, format).await?,
                 Commands::Modules(cmd) => cmd.execute(&client, format).await?,
                 Commands::Throughput(cmd) => cmd.execute(&client, format).await?,
-                Commands::Annotate(cmd) => cmd.execute(&client, format).await?,
                 Commands::Completions(_) => unreachable!("Completions command handled above"),
                 Commands::Admin { .. } => unreachable!("Admin command handled above"),
             }
@@ -561,18 +528,7 @@ fn command_center_view(config: &Config, format: OutputFormat) -> CommandCenterVi
                 purpose: "local preferences and runtime target inspection",
             },
         ],
-        shortcuts_pending_prune: vec![
-            "query",
-            "recent",
-            "errors",
-            "watch",
-            "timeline",
-            "context",
-            "explain",
-            "trace",
-            "modules",
-            "throughput",
-        ],
+        shortcuts_pending_prune: vec!["modules", "throughput"],
     }
 }
 
@@ -709,9 +665,7 @@ fn command_path(cmd: &Commands) -> String {
             DlqCommands::Requeue { .. } => "dlq requeue".to_string(),
             DlqCommands::Purge { .. } => "dlq purge".to_string(),
         },
-        Commands::Query(_) => "query".to_string(),
         Commands::Relations(cmd) => cmd.command_path().to_string(),
-        Commands::Trace(_) => "trace".to_string(),
         Commands::Events { cmd } => cmd.command_path().to_string(),
         Commands::Ops { cmd } => match cmd {
             OpsCommands::Start { .. } => "ops start".to_string(),
@@ -726,7 +680,6 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Privacy(cmd) => cmd.command_path().to_string(),
         Commands::Audit(_) => "audit".to_string(),
         Commands::Tui(_) => "tui".to_string(),
-        Commands::Timeline(_) => "timeline".to_string(),
         Commands::Config { cmd } => match cmd {
             ConfigCommands::Init { .. } => "config init".to_string(),
             ConfigCommands::Show => "config show".to_string(),
@@ -885,16 +838,11 @@ fn command_path(cmd: &Commands) -> String {
             ReportCommands::Calendar(_) => "report calendar".to_string(),
         },
         Commands::Status(_) => "status".to_string(),
-        Commands::Recent(_) => "recent".to_string(),
-        Commands::Errors(_) => "errors".to_string(),
-        Commands::Watch(_) => "watch".to_string(),
         Commands::Context(_) => "context".to_string(),
-        Commands::Explain(_) => "explain".to_string(),
         Commands::Verify(cmd) => cmd.command_path().to_string(),
         Commands::Now(_) => "now".to_string(),
         Commands::Modules(_) => "modules".to_string(),
         Commands::Throughput(_) => "throughput".to_string(),
-        Commands::Annotate(_) => "annotate".to_string(),
         Commands::Completions(_) => "completions".to_string(),
         Commands::Admin { cmd } => {
             use sinexctl::admin::AdminCommands;
@@ -1146,12 +1094,18 @@ mod tests {
     #[sinex_test]
     async fn format_matrix_terminal_output_contains_key_commands() -> TestResult<()> {
         let output = sinexctl::render_format_matrix_terminal();
-        assert!(output.contains("query"), "matrix must list `query`");
+        assert!(
+            output.contains("events query"),
+            "matrix must list `events query`"
+        );
         assert!(output.contains("relations"), "matrix must list `relations`");
-        assert!(output.contains("watch"), "matrix must list `watch`");
+        assert!(
+            output.contains("events watch"),
+            "matrix must list `events watch`"
+        );
         assert!(
             output.contains("stream"),
-            "matrix must mark `watch` as streaming"
+            "matrix must mark `events watch` as streaming"
         );
         assert!(
             output.contains("events.query"),
@@ -1188,8 +1142,8 @@ mod tests {
             .expect("operator surface catalog must contain command rows");
         let query = commands
             .iter()
-            .find(|entry| entry["path"] == "query")
-            .expect("json list-formats output must include query");
+            .find(|entry| entry["path"] == "events query")
+            .expect("json list-formats output must include events query");
         assert_eq!(query["backing_rpc_methods"][0], "events.query");
 
         let relations = commands
@@ -1324,8 +1278,8 @@ mod tests {
     #[sinex_test]
     async fn validate_format_accepts_dot_for_trace() -> TestResult<()> {
         assert!(
-            sinexctl::validate_format("trace", sinexctl::OutputFormat::Dot).is_ok(),
-            "trace must accept dot format"
+            sinexctl::validate_format("events trace", sinexctl::OutputFormat::Dot).is_ok(),
+            "events trace must accept dot format"
         );
         Ok(())
     }

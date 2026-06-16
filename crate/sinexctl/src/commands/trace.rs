@@ -1,7 +1,7 @@
 use clap::{Args, ValueEnum};
 use console::style;
-use serde_json::json;
 use serde_json::Value as JsonValue;
+use serde_json::json;
 use sinex_primitives::Uuid;
 use sinex_primitives::events::{Event, Provenance};
 use sinex_primitives::ids::Id;
@@ -20,25 +20,25 @@ use crate::model::OutputFormat;
 #[command(after_help = "\
 EXAMPLES:
     # Trace full provenance (ancestors + descendants) for an event
-    sinexctl trace 01912345-6789-7abc-def0-123456789abc
+    sinexctl events trace 01912345-6789-7abc-def0-123456789abc
 
     # Trace only ancestors (towards raw materials)
-    sinexctl trace 01912345-... --direction ancestors
+    sinexctl events trace 01912345-... --direction ancestors
 
     # Trace only descendants (derived events)
-    sinexctl trace 01912345-... --direction descendants
+    sinexctl events trace 01912345-... --direction descendants
 
     # Limit traversal depth
-    sinexctl trace 01912345-... --max-depth 3
+    sinexctl events trace 01912345-... --max-depth 3
 
     # Output as JSON for piping
-    sinexctl trace 01912345-... -f json
+    sinexctl events trace 01912345-... -f json
 
     # Output as Graphviz DOT for rendering
-    sinexctl trace 01912345-... -f dot | dot -Tsvg > provenance.svg
+    sinexctl events trace 01912345-... -f dot | dot -Tsvg > provenance.svg
 
     # Live-poll and re-render every 5 seconds
-    sinexctl trace 01912345-... --follow 5
+    sinexctl events trace 01912345-... --follow 5
 ")]
 pub struct TraceCommand {
     /// Event ID to trace provenance for (UUID)
@@ -137,7 +137,7 @@ fn render_trace_machine_output(
     event_id: &Id<Event<JsonValue>>,
     format: OutputFormat,
 ) -> Result<Option<String>> {
-    let envelope = ViewEnvelope::new("sinexctl.trace", result).with_query_echo(json!({
+    let envelope = ViewEnvelope::new("sinexctl.events.trace", result).with_query_echo(json!({
         "event_id": event_id,
     }));
     render_finite_envelope(&envelope, format)
@@ -544,7 +544,7 @@ mod tests {
         .expect("json should render");
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
-        assert_eq!(value["source_surface"], "sinexctl.trace");
+        assert_eq!(value["source_surface"], "sinexctl.events.trace");
         assert_eq!(value["query_echo"]["event_id"], event_id.to_string());
         assert!(value["payload"].get("root").is_some());
         Ok(())
