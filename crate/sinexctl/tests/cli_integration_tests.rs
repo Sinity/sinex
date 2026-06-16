@@ -70,6 +70,8 @@ mod help_tests {
             .stdout(predicate::str::contains("sources"))
             .stdout(predicate::str::contains("  audit").not())
             .stdout(predicate::str::contains("  blob").not())
+            .stdout(predicate::str::contains("  state").not())
+            .stdout(predicate::str::contains("  admin").not())
             .stdout(predicate::str::contains("relations").not())
             .stdout(predicate::str::contains("documents").not())
             .stdout(predicate::str::contains("semantics").not())
@@ -91,7 +93,8 @@ mod help_tests {
             .stdout(predicate::str::contains("replay"))
             .stdout(predicate::str::contains("lifecycle"))
             .stdout(predicate::str::contains("audit"))
-            .stdout(predicate::str::contains("blob"));
+            .stdout(predicate::str::contains("blob"))
+            .stdout(predicate::str::contains("state"));
         Ok(())
     }
 

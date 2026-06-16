@@ -8,6 +8,7 @@ use crate::commands::blob::BlobCommands;
 use crate::commands::dlq::DlqCommands;
 use crate::commands::lifecycle::LifecycleCommands;
 use crate::commands::replay::ReplayCommands;
+use crate::commands::state::StateCommands;
 use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::{CommandOutput, print_finite_envelope, render_envelope, with_spinner_result};
@@ -101,6 +102,10 @@ pub enum OpsCommands {
     /// Blob and content-store maintenance
     #[command(subcommand)]
     Blob(BlobCommands),
+
+    /// Runtime state snapshot and restore operations
+    #[command(subcommand)]
+    State(StateCommands),
 }
 
 /// Read-only operation job surface (rendered through ViewEnvelope)
@@ -228,6 +233,7 @@ impl OpsCommands {
             Self::Lifecycle(cmd) => cmd.execute(client, format).await?,
             Self::Audit(cmd) => cmd.execute(client, format).await?,
             Self::Blob(cmd) => cmd.execute(format).await?,
+            Self::State(cmd) => cmd.execute(format)?,
         }
         Ok(())
     }

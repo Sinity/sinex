@@ -1,4 +1,4 @@
-//! Tests for `sinexctl admin snapshot` and the `sinexctl state` snapshot aliases.
+//! Tests for `sinexctl ops state` snapshot surfaces.
 //!
 //! These tests exercise the snapshot command using a tempdir-based fake state
 //! directory.  They do NOT require a live Postgres or NATS instance — instead
@@ -65,17 +65,17 @@ fn registered_fixture_source_ids() -> Vec<String> {
 #[sinex_test]
 async fn state_snapshot_help_points_to_restore_drill() -> TestResult<()> {
     let output = sinexctl_bin()
-        .args(["state", "snapshot", "--help"])
+        .args(["ops", "state", "snapshot", "--help"])
         .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
-        "state snapshot help must exit 0\nstdout: {stdout}\nstderr: {}",
+        "ops state snapshot help must exit 0\nstdout: {stdout}\nstderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        stdout.contains("sinexctl state restore --archive <archive>"),
+        stdout.contains("sinexctl ops state restore --archive <archive>"),
         "help should point operators at the restore drill command\nstdout: {stdout}"
     );
     assert!(
@@ -532,8 +532,8 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
     Ok(())
 }
 
-/// `sinexctl state snapshot` is the operator-facing route to the same
-/// implementation as `admin snapshot`.
+/// `sinexctl ops state snapshot` is the operator-facing route to the snapshot
+/// implementation.
 #[sinex_test]
 async fn state_snapshot_dry_run_uses_snapshot_implementation() -> xtask::sandbox::TestResult<()> {
     let state_dir = make_fake_state_dir()?;
@@ -542,6 +542,7 @@ async fn state_snapshot_dry_run_uses_snapshot_implementation() -> xtask::sandbox
 
     let output = sinexctl_bin()
         .args([
+            "ops",
             "state",
             "snapshot",
             "--output",
@@ -558,7 +559,7 @@ async fn state_snapshot_dry_run_uses_snapshot_implementation() -> xtask::sandbox
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "state snapshot dry-run must use the snapshot implementation\nstdout: {stdout}\nstderr: {stderr}"
+        "ops state snapshot dry-run must use the snapshot implementation\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
         stdout.contains("dry-run"),
@@ -612,7 +613,7 @@ async fn state_snapshot_live_mode_dry_run_reports_estimates() -> xtask::sandbox:
     Ok(())
 }
 
-/// `admin snapshot-inspect` reads manifest.json from the compressed archive
+/// `ops state inspect` reads manifest.json from the compressed archive
 /// and validates that non-empty manifest component paths exist in the tar.
 #[sinex_test]
 async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox::TestResult<()> {
@@ -633,8 +634,9 @@ async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox
 
     let output = sinexctl_bin()
         .args([
-            "admin",
-            "snapshot-inspect",
+            "ops",
+            "state",
+            "inspect",
             "--archive",
             &archive_path.to_string_lossy(),
             "--format",
@@ -645,7 +647,7 @@ async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "snapshot-inspect must exit 0\nstdout: {stdout}\nstderr: {stderr}"
+        "ops state inspect must exit 0\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
         stdout.contains("\"snapshot_id\":\"01970a7f-391b-7000-8000-000000000001\""),
@@ -655,7 +657,7 @@ async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox
     Ok(())
 }
 
-/// `admin snapshot-restore --dry-run` validates archive structure and returns
+/// `ops state restore --dry-run` validates archive structure and returns
 /// a non-destructive restore drill plan.
 #[sinex_test]
 async fn snapshot_restore_dry_run_reports_plan_and_policy() -> xtask::sandbox::TestResult<()> {
@@ -696,8 +698,9 @@ async fn snapshot_restore_dry_run_reports_plan_and_policy() -> xtask::sandbox::T
 
     let output = sinexctl_bin()
         .args([
-            "admin",
-            "snapshot-restore",
+            "ops",
+            "state",
+            "restore",
             "--archive",
             &archive_path.to_string_lossy(),
             "--target-dir",
@@ -711,7 +714,7 @@ async fn snapshot_restore_dry_run_reports_plan_and_policy() -> xtask::sandbox::T
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "snapshot-restore dry-run must exit 0\nstdout: {stdout}\nstderr: {stderr}"
+        "ops state restore dry-run must exit 0\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
         stdout.contains("\"archive_sensitivity\""),
@@ -806,8 +809,9 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
     let binary_target = target_parent.path().join("binary-target");
     let output = sinexctl_bin()
         .args([
-            "admin",
-            "snapshot-restore",
+            "ops",
+            "state",
+            "restore",
             "--archive",
             &archive_path.to_string_lossy(),
             "--target-dir",
@@ -822,7 +826,7 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "snapshot-restore execute must exit 0\nstdout: {stdout}\nstderr: {stderr}"
+        "ops state restore execute must exit 0\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
         stdout.contains("\"observed_checks\""),

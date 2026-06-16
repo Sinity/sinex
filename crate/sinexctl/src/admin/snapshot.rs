@@ -1,4 +1,4 @@
-//! `sinexctl admin snapshot` — backup of the complete sinex runtime state
+//! Snapshot implementation for the `sinexctl ops state` command surface.
 //! surface.
 //!
 //! Captures Postgres (via `pg_dump`), NATS `JetStream` state, the CAS blob
@@ -65,26 +65,26 @@ impl Component {
 #[command(after_help = "\
 EXAMPLES:
     # Snapshot to /var/backup/sinex with defaults (zstd level 3, all components)
-    sinexctl state snapshot --output /var/backup/sinex/2026-05-15.sinex.tar.zst
+    sinexctl ops state snapshot --output /var/backup/sinex/2026-05-15.sinex.tar.zst
 
     # Higher compression for archival
-    sinexctl state snapshot --output /var/backup/sinex/latest.sinex.tar.zst --compression 15
+    sinexctl ops state snapshot --output /var/backup/sinex/latest.sinex.tar.zst --compression 15
 
     # Estimate sizes without writing anything
-    sinexctl state snapshot --output /var/backup/sinex/latest.sinex.tar.zst --dry-run
+    sinexctl ops state snapshot --output /var/backup/sinex/latest.sinex.tar.zst --dry-run
 
     # Capture without stopping services for urgent forensic preservation
-    sinexctl state snapshot --output /var/backup/sinex/live.sinex.tar.zst --mode live
+    sinexctl ops state snapshot --output /var/backup/sinex/live.sinex.tar.zst --mode live
 
     # Automatically stop services and snapshot postgres + CAS only
-    sinexctl state snapshot --output /var/backup/sinex/pg-cas.tar.zst \\
+    sinexctl ops state snapshot --output /var/backup/sinex/pg-cas.tar.zst \\
         --components postgres,cas --auto-stop
 
 RESTORE:
     Inspect and drill before any live restore:
-        sinexctl state inspect --archive <archive>
-        sinexctl state restore --archive <archive> --target-dir /tmp/restore-drill --dry-run
-        sinexctl state restore --archive <archive> --target-dir /tmp/restore-drill \\
+        sinexctl ops state inspect --archive <archive>
+        sinexctl ops state restore --archive <archive> --target-dir /tmp/restore-drill --dry-run
+        sinexctl ops state restore --archive <archive> --target-dir /tmp/restore-drill \\
             --confirm-restore --allow-active-services
     See crate/sinexctl/docs/state_snapshot.md for the full restore runbook.
 ")]
@@ -139,7 +139,7 @@ pub struct AdminSnapshotCommand {
 #[derive(Debug, Parser)]
 #[command(after_help = "\
 EXAMPLES:
-    sinexctl state inspect --archive /var/backup/sinex/latest.sinex.tar.zst
+    sinexctl ops state inspect --archive /var/backup/sinex/latest.sinex.tar.zst
 
 NOTES:
     This reads manifest.json from the archive and checks that non-empty
@@ -155,7 +155,7 @@ pub struct AdminSnapshotInspectCommand {
 #[derive(Debug, Parser)]
 #[command(after_help = "\
 EXAMPLES:
-    sinexctl state restore --archive /var/backup/sinex/latest.sinex.tar.zst \\
+    sinexctl ops state restore --archive /var/backup/sinex/latest.sinex.tar.zst \\
         --target-dir /tmp/sinex-restore-drill --dry-run
 
 NOTES:
