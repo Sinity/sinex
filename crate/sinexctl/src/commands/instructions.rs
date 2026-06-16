@@ -1,4 +1,4 @@
-//! `sinexctl instructions` - typed local instruction admission commands.
+//! `sinexctl ops instructions` - typed local instruction admission commands.
 
 use clap::{Args, Subcommand};
 use color_eyre::Result;
@@ -41,9 +41,9 @@ pub enum InstructionsSubcommand {
 #[derive(Debug, Args)]
 #[command(after_help = "\
 EXAMPLES:
-    sinexctl instructions hyprland-workspace --workspace 4
-    sinexctl instructions hyprland-workspace --workspace 4 --socket-path /run/user/1000/hypr/.../.socket.sock
-    sinexctl instructions hyprland-workspace --workspace 4 --dry-run -f json
+    sinexctl ops instructions hyprland-workspace --workspace 4
+    sinexctl ops instructions hyprland-workspace --workspace 4 --socket-path /run/user/1000/hypr/.../.socket.sock
+    sinexctl ops instructions hyprland-workspace --workspace 4 --dry-run -f json
 ")]
 pub struct HyprlandWorkspaceCommand {
     /// Desired Hyprland workspace id.

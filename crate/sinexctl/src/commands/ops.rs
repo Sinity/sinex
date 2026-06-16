@@ -6,6 +6,7 @@ use sinex_primitives::views::{OperationJobListView, OperationView, ViewEnvelope}
 use crate::commands::audit::AuditCommand;
 use crate::commands::blob::BlobCommands;
 use crate::commands::dlq::DlqCommands;
+use crate::commands::instructions::InstructionsCommand;
 use crate::commands::lifecycle::LifecycleCommands;
 use crate::commands::replay::ReplayCommands;
 use crate::commands::state::StateCommands;
@@ -106,6 +107,9 @@ pub enum OpsCommands {
     /// Runtime state snapshot and restore operations
     #[command(subcommand)]
     State(StateCommands),
+
+    /// Local desired-state instructions and actuator dispatch
+    Instructions(InstructionsCommand),
 }
 
 /// Read-only operation job surface (rendered through ViewEnvelope)
@@ -234,6 +238,7 @@ impl OpsCommands {
             Self::Audit(cmd) => cmd.execute(client, format).await?,
             Self::Blob(cmd) => cmd.execute(format).await?,
             Self::State(cmd) => cmd.execute(format)?,
+            Self::Instructions(cmd) => cmd.execute(client, format).await?,
         }
         Ok(())
     }

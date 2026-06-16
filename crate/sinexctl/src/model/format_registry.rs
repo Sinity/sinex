@@ -431,7 +431,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "instructions hyprland-workspace",
+        "ops instructions hyprland-workspace",
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("admits a typed Hyprland workspace desired-state instruction"),
     );
@@ -461,23 +461,23 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "curation proposals",
+        "semantic curation proposals",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "curation duplicates",
+        "semantic curation duplicates",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "curation judge",
+        "semantic curation judge",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "curation duplicate-judge",
+        "semantic curation duplicate-judge",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "curation finalize",
+        "semantic curation finalize",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -529,15 +529,15 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "llm prompts",
+        "semantic llm prompts",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "llm route-explain",
+        "semantic llm route-explain",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "llm budget-report",
+        "semantic llm budget-report",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -823,9 +823,7 @@ fn family_for_path(path: &str) -> CommandFamily {
             CommandFamily::Operate
         }
         "sources" => CommandFamily::Sources,
-        "record" | "instructions" | "tasks" | "curation" | "semantic" | "llm" | "docs" => {
-            CommandFamily::Domain
-        }
+        "record" | "tasks" | "semantic" | "docs" => CommandFamily::Domain,
         "metrics" => CommandFamily::Telemetry,
         "_complete" => CommandFamily::Local,
         _ => CommandFamily::Local,
@@ -847,16 +845,16 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "ops blob migrate",
         "ops blob store",
         "ops blob sweep-orphans",
-        "curation duplicate-judge",
-        "curation finalize",
-        "curation judge",
+        "semantic curation duplicate-judge",
+        "semantic curation finalize",
+        "semantic curation judge",
         "record",
         "record health effect",
         "record health intake",
         "record task",
         "ops dlq purge",
         "ops dlq requeue",
-        "instructions hyprland-workspace",
+        "ops instructions hyprland-workspace",
         "ops lifecycle archive",
         "ops lifecycle restore",
         "ops lifecycle tombstone approve",
@@ -930,15 +928,15 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "ops replay run" => &[RpcAuth, DryRun],
         "ops lifecycle tombstone approve" => &[RpcAuth, Confirmation],
         "events annotate"
-        | "curation duplicate-judge"
-        | "curation finalize"
-        | "curation judge"
+        | "semantic curation duplicate-judge"
+        | "semantic curation finalize"
+        | "semantic curation judge"
         | "record"
         | "record health effect"
         | "record health intake"
         | "record task"
         | "ops dlq requeue"
-        | "instructions hyprland-workspace"
+        | "ops instructions hyprland-workspace"
         | "ops lifecycle tombstone cancel"
         | "ops lifecycle tombstone create"
         | "runtime drain"
@@ -1081,7 +1079,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "record health effect" => &[methods::HEALTH_EFFECT_RECORD],
         "record health intake" => &[methods::HEALTH_INTAKE_RECORD],
         "record task" => &[methods::TASKS_CREATE],
-        "instructions hyprland-workspace" => &[methods::INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH],
+        "ops instructions hyprland-workspace" => &[methods::INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH],
         "tasks cancel" => &[methods::TASKS_CANCEL],
         "tasks complete" => &[methods::TASKS_COMPLETE],
         "tasks list" => &[methods::TASKS_LIST],
@@ -1089,11 +1087,11 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "tasks status" => &[methods::TASKS_STATUS_SET],
         "tasks update" => &[methods::TASKS_UPDATE],
         "tasks import" => &[methods::TASKS_CREATE],
-        "curation duplicates" => &[methods::CURATION_DUPLICATE_CANDIDATES_LIST],
-        "curation duplicate-judge" => &[methods::CURATION_DUPLICATE_JUDGMENTS_RECORD],
-        "curation proposals" => &[methods::CURATION_PROPOSALS_LIST],
-        "curation judge" => &[methods::CURATION_JUDGMENTS_RECORD],
-        "curation finalize" => &[methods::CURATION_FINALIZE],
+        "semantic curation duplicates" => &[methods::CURATION_DUPLICATE_CANDIDATES_LIST],
+        "semantic curation duplicate-judge" => &[methods::CURATION_DUPLICATE_JUDGMENTS_RECORD],
+        "semantic curation proposals" => &[methods::CURATION_PROPOSALS_LIST],
+        "semantic curation judge" => &[methods::CURATION_JUDGMENTS_RECORD],
+        "semantic curation finalize" => &[methods::CURATION_FINALIZE],
         "semantic epoch create" => &[methods::SEMANTIC_EPOCHS_CREATE],
         "semantic epoch list" => &[methods::SEMANTIC_EPOCHS_LIST],
         "semantic lane create" => &[methods::SEMANTIC_LANES_CREATE],
@@ -1108,9 +1106,9 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "semantic lane write-outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_WRITE],
         "semantic lane diffs" => &[methods::SEMANTIC_LANE_DIFFS_LIST],
         "semantic lane compare" => &[methods::SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION],
-        "llm prompts" => &[methods::LLM_PROMPTS_LIST],
-        "llm route-explain" => &[methods::LLM_ROUTE_EXPLAIN],
-        "llm budget-report" => &[methods::LLM_BUDGET_REPORT],
+        "semantic llm prompts" => &[methods::LLM_PROMPTS_LIST],
+        "semantic llm route-explain" => &[methods::LLM_ROUTE_EXPLAIN],
+        "semantic llm budget-report" => &[methods::LLM_BUDGET_REPORT],
         "ops lifecycle status" => &[methods::LIFECYCLE_STATUS],
         "ops lifecycle archive" => &[methods::LIFECYCLE_ARCHIVE],
         "ops lifecycle restore" => &[methods::LIFECYCLE_RESTORE],
@@ -1449,11 +1447,11 @@ mod tests {
         assert_eq!(effect_for("privacy audit"), Some(CommandEffect::ReadOnly));
         assert_eq!(effect_for("ops audit"), Some(CommandEffect::ReadOnly));
         assert_eq!(
-            effect_for("curation finalize"),
+            effect_for("semantic curation finalize"),
             Some(CommandEffect::Mutating)
         );
         assert_eq!(
-            effect_for("instructions hyprland-workspace"),
+            effect_for("ops instructions hyprland-workspace"),
             Some(CommandEffect::Mutating)
         );
         assert_eq!(effect_for("ops replay plan"), Some(CommandEffect::Mutating));
