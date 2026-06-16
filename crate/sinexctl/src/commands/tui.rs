@@ -1261,17 +1261,17 @@ fn state_snapshot_operation_card() -> OperationRoomCard {
             OperationRoomAction::new(
                 "snapshot",
                 ActionAvailabilityState::Enabled,
-                "sinexctl state snapshot",
+                "sinexctl ops state snapshot",
             ),
             OperationRoomAction::new(
                 "inspect",
                 ActionAvailabilityState::Enabled,
-                "sinexctl state inspect --archive <archive>",
+                "sinexctl ops state inspect --archive <archive>",
             ),
             OperationRoomAction::new(
                 "restore plan",
                 ActionAvailabilityState::Dangerous,
-                "sinexctl state restore --archive <archive> --target-dir <dir> --dry-run",
+                "sinexctl ops state restore --archive <archive> --target-dir <dir> --dry-run",
             ),
         ],
         audit_refs: vec!["state snapshot artifact path".to_string()],

@@ -5,7 +5,6 @@ use serde::Serialize;
 use sinex_primitives::RuntimeTargetDescriptor;
 use sinex_primitives::rpc::{RpcMethodInfo, method_catalog};
 use sinex_primitives::views::ViewEnvelope;
-use sinexctl::AdminCommands;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     ConfigCommands, ContextCommand, CoreCommands, CompletionEndpointCommand, CurationCommand,
@@ -142,12 +141,6 @@ enum Commands {
     /// Source material inventory and staging
     Sources(SourcesCommand),
 
-    /// Runtime state snapshot and restore operations
-    State {
-        #[command(subcommand)]
-        cmd: StateCommands,
-    },
-
     /// Manual canonical declarations
     Declare(DeclareCommand),
 
@@ -192,11 +185,6 @@ enum Commands {
     #[command(name = "_complete", hide = true)]
     Complete(CompletionEndpointCommand),
 
-    /// Administrative operations (backup, maintenance)
-    Admin {
-        #[command(subcommand)]
-        cmd: AdminCommands,
-    },
 }
 
 #[tokio::main]
@@ -286,11 +274,11 @@ async fn main() -> color_eyre::Result<()> {
         Commands::Ops {
             cmd: OpsCommands::Blob(cmd),
         } => cmd.execute(format).await?,
-        // `sinexctl admin` commands are local operations — no gateway needed.
-        Commands::Admin { cmd } => cmd.execute(format)?,
-        // `sinexctl state` snapshot/restore commands are local filesystem,
+        // `sinexctl ops state` snapshot/restore commands are local filesystem,
         // database, and service operations that do not use gateway RPC.
-        Commands::State { cmd } => cmd.execute(format)?,
+        Commands::Ops {
+            cmd: OpsCommands::State(cmd),
+        } => cmd.execute(format)?,
         Commands::Complete(cmd) => {
             let client_config = ClientConfig::from(&config);
             let client = (config.token.is_some() || config.token_file.is_some())
@@ -318,7 +306,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),
                 Commands::Demo(_) => unreachable!("Demo command handled above"),
-                Commands::State { .. } => unreachable!("State command handled above"),
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
                 Commands::Declare(cmd) => cmd.execute(&client, format).await?,
                 Commands::Instructions(cmd) => cmd.execute(&client, format).await?,
@@ -336,7 +323,6 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Verify(cmd) => cmd.execute(&client, format).await?,
                 Commands::Now(cmd) => cmd.execute(&client, format).await?,
                 Commands::Complete(_) => unreachable!("Complete command handled above"),
-                Commands::Admin { .. } => unreachable!("Admin command handled above"),
             }
         }
     }
@@ -623,6 +609,11 @@ fn command_path(cmd: &Commands) -> String {
                 BlobCommands::Migrate(_) => "ops blob migrate".to_string(),
                 BlobCommands::VerifyIntegrity(_) => "ops blob verify-integrity".to_string(),
             },
+            OpsCommands::State(cmd) => match cmd {
+                StateCommands::Snapshot(_) => "ops state snapshot".to_string(),
+                StateCommands::Inspect(_) => "ops state inspect".to_string(),
+                StateCommands::Restore(_) => "ops state restore".to_string(),
+            },
         },
         Commands::Privacy(cmd) => cmd.command_path().to_string(),
         Commands::Tui(_) => "tui".to_string(),
@@ -658,11 +649,6 @@ fn command_path(cmd: &Commands) -> String {
                 SourcesSubcommand::Status(_) => "sources status".to_string(),
             }
         }
-        Commands::State { cmd } => match cmd {
-            StateCommands::Snapshot(_) => "state snapshot".to_string(),
-            StateCommands::Inspect(_) => "state inspect".to_string(),
-            StateCommands::Restore(_) => "state restore".to_string(),
-        },
         Commands::Declare(cmd) => {
             use sinexctl::commands::declare::DeclareSubcommand;
             match cmd.subcommand() {
@@ -749,14 +735,6 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Verify(cmd) => cmd.command_path().to_string(),
         Commands::Now(_) => "now".to_string(),
         Commands::Complete(_) => "_complete".to_string(),
-        Commands::Admin { cmd } => {
-            use sinexctl::admin::AdminCommands;
-            match cmd {
-                AdminCommands::Snapshot(_) => "admin snapshot".to_string(),
-                AdminCommands::SnapshotInspect(_) => "admin snapshot-inspect".to_string(),
-                AdminCommands::SnapshotRestore(_) => "admin snapshot-restore".to_string(),
-            }
-        }
     }
 }
 
@@ -1375,26 +1353,29 @@ mod tests {
             (
                 vec![
                     "sinexctl",
+                    "ops",
                     "state",
                     "snapshot",
                     "--output",
                     "/tmp/sinex-state.tar.zst",
                 ],
-                "state snapshot",
+                "ops state snapshot",
             ),
             (
                 vec![
                     "sinexctl",
+                    "ops",
                     "state",
                     "inspect",
                     "--archive",
                     "/tmp/sinex-state.tar.zst",
                 ],
-                "state inspect",
+                "ops state inspect",
             ),
             (
                 vec![
                     "sinexctl",
+                    "ops",
                     "state",
                     "restore",
                     "--archive",
@@ -1403,7 +1384,7 @@ mod tests {
                     "/tmp/sinex-restore",
                     "--dry-run",
                 ],
-                "state restore",
+                "ops state restore",
             ),
             (
                 vec!["sinexctl", "curation", "proposals"],
