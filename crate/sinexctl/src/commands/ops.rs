@@ -3,6 +3,8 @@ use serde_json::Value;
 use sinex_primitives::rpc::ops::{Operation as OpsOperation, OpsStartResponse};
 use sinex_primitives::views::{OperationJobListView, OperationView, ViewEnvelope};
 
+use crate::Result;
+use crate::client::GatewayClient;
 use crate::commands::audit::AuditCommand;
 use crate::commands::blob::BlobCommands;
 use crate::commands::demo::DemoCommand;
@@ -12,8 +14,6 @@ use crate::commands::lifecycle::LifecycleCommands;
 use crate::commands::replay::ReplayCommands;
 use crate::commands::state::StateCommands;
 use crate::commands::verify::VerifyCommand;
-use crate::Result;
-use crate::client::GatewayClient;
 use crate::fmt::{CommandOutput, print_finite_envelope, render_envelope, with_spinner_result};
 use crate::model::OutputFormat;
 
@@ -307,7 +307,7 @@ impl JobsCommands {
 }
 
 /// Convert the RPC `Operation` type to an [`OperationView`] for CLI rendering.
-fn operation_to_view(op: &OpsOperation) -> OperationView {
+pub(crate) fn operation_to_view(op: &OpsOperation) -> OperationView {
     OperationView::from_rpc(
         op.id.clone(),
         &op.operation_type,
@@ -320,7 +320,7 @@ fn operation_to_view(op: &OpsOperation) -> OperationView {
     )
 }
 
-fn operations_to_views(operations: &[OpsOperation]) -> Vec<OperationView> {
+pub(crate) fn operations_to_views(operations: &[OpsOperation]) -> Vec<OperationView> {
     operations.iter().map(operation_to_view).collect()
 }
 

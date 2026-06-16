@@ -5,6 +5,7 @@
 //! depend on an MCP SDK yet; the supported surface is pinned and tested here.
 
 use crate::GatewayClient;
+use crate::commands::ops::{operation_to_view, operations_to_views};
 use color_eyre::Result;
 use color_eyre::eyre::{WrapErr, eyre};
 use serde::{Deserialize, Serialize};
@@ -51,7 +52,9 @@ use sinex_primitives::sources::continuity::{
 };
 use sinex_primitives::task_domain::TaskStatus;
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::views::{CaveatView, PrivacyStateKind, PrivacyStateView, ViewEnvelope};
+use sinex_primitives::views::{
+    CaveatView, OperationJobListView, PrivacyStateKind, PrivacyStateView, ViewEnvelope,
+};
 use std::io::{BufRead, Write};
 
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
@@ -1810,7 +1813,11 @@ async fn source_readiness(client: &GatewayClient, arguments: Value) -> Result<Va
         payload["caveats"] = json!("suppressed_by_request");
     }
 
-    Ok(mcp_view_envelope("sinex.source_readiness", &json!(args), &payload)?)
+    Ok(mcp_view_envelope(
+        "sinex.source_readiness",
+        &json!(args),
+        &payload,
+    )?)
 }
 
 async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -2414,21 +2421,19 @@ async fn ops_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let response = client
         .ops_list(args.operation_type.clone(), args.status.clone(), args.limit)
         .await?;
+    let views = operations_to_views(&response);
     Ok(envelope(
         "sinex.ops_list",
         &json!(args),
-        &json!({ "result": { "operations": response } }),
+        &json!(OperationJobListView::new(views)),
     ))
 }
 
 async fn ops_get(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: OpsGetArgs = serde_json::from_value(arguments)?;
     let response = client.ops_get(&args.operation_id).await?;
-    Ok(envelope(
-        "sinex.ops_get",
-        &json!(args),
-        &json!({ "result": { "operation": response } }),
-    ))
+    let view = operation_to_view(&response);
+    Ok(envelope("sinex.ops_get", &json!(args), &json!(view)))
 }
 
 async fn lifecycle_status(client: &GatewayClient, arguments: Value) -> Result<Value> {

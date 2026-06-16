@@ -1542,10 +1542,10 @@ async fn mcp_ops_list_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["source_surface"], "sinex.ops_list");
     assert_eq!(response["query_echo"]["operation_type"], "replay");
-    assert_eq!(
-        response["payload"]["result"]["operations"][0]["operation_type"],
-        "replay"
-    );
+    assert_eq!(response["payload"]["count"], 1);
+    assert_eq!(response["payload"]["jobs"][0]["kind"], "replay");
+    assert!(response["payload"]["jobs"][0]["actions"].is_array());
+    assert!(response["payload"]["result"].is_null());
     assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
@@ -1564,10 +1564,10 @@ async fn mcp_ops_get_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["source_surface"], "sinex.ops_get");
     assert_eq!(response["query_echo"]["operation_id"], fixture_operation_id());
-    assert_eq!(
-        response["payload"]["result"]["operation"]["id"],
-        fixture_operation_id()
-    );
+    assert_eq!(response["payload"]["id"], fixture_operation_id());
+    assert_eq!(response["payload"]["kind"], "replay");
+    assert!(response["payload"]["actions"].is_array());
+    assert!(response["payload"]["result"].is_null());
     assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
