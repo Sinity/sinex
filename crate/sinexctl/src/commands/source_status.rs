@@ -8,7 +8,7 @@ use tabled::{builder::Builder, settings::Style};
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{CommandOutput, print_finite_envelope, render_finite_envelope};
+use crate::fmt::{CommandOutput, print_finite_envelope};
 use crate::model::OutputFormat;
 
 /// Show source coverage/readiness status.
@@ -108,6 +108,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+    use crate::fmt::render_finite_envelope;
     use sinex_primitives::views::{
         SourceCoverageListView, SourcePrivacyPosture, VIEW_ENVELOPE_SCHEMA_VERSION,
     };
