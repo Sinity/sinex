@@ -3,8 +3,8 @@ use clap::Subcommand;
 use crate::Result;
 use crate::client::GatewayClient;
 use crate::commands::{
-    AnnotateCommand, ErrorsCommand, ExplainCommand, QueryCommand, RecentCommand, RelationsCommand,
-    TimelineCommand, TraceCommand, WatchCommand,
+    AnnotateCommand, ContextCommand, ErrorsCommand, ExplainCommand, QueryCommand, RecentCommand,
+    RelationsCommand, TimelineCommand, TraceCommand, WatchCommand,
 };
 use crate::model::OutputFormat;
 
@@ -38,6 +38,9 @@ pub enum EventsCommand {
     /// List recent events as a timeline.
     Timeline(TimelineCommand),
 
+    /// Build a session-resumption context pack from recent activity.
+    Context(ContextCommand),
+
     /// Annotate an event with a typed note.
     Annotate(AnnotateCommand),
 }
@@ -53,6 +56,7 @@ impl EventsCommand {
             Self::Trace(cmd) => cmd.execute(client, format).await,
             Self::Inspect(cmd) | Self::Explain(cmd) => cmd.execute(client, format).await,
             Self::Timeline(cmd) => cmd.execute(client, format).await,
+            Self::Context(cmd) => cmd.execute(client, format).await,
             Self::Annotate(cmd) => cmd.execute(client, format).await,
         }
     }
@@ -69,6 +73,7 @@ impl EventsCommand {
             Self::Inspect(_) => "events inspect",
             Self::Explain(_) => "events explain",
             Self::Timeline(_) => "events timeline",
+            Self::Context(_) => "events context",
             Self::Annotate(_) => "events annotate",
         }
     }

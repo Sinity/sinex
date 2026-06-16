@@ -5,11 +5,13 @@ use sinex_primitives::views::{OperationJobListView, OperationView, ViewEnvelope}
 
 use crate::commands::audit::AuditCommand;
 use crate::commands::blob::BlobCommands;
+use crate::commands::demo::DemoCommand;
 use crate::commands::dlq::DlqCommands;
 use crate::commands::instructions::InstructionsCommand;
 use crate::commands::lifecycle::LifecycleCommands;
 use crate::commands::replay::ReplayCommands;
 use crate::commands::state::StateCommands;
+use crate::commands::verify::VerifyCommand;
 use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::{CommandOutput, print_finite_envelope, render_envelope, with_spinner_result};
@@ -110,6 +112,12 @@ pub enum OpsCommands {
 
     /// Local desired-state instructions and actuator dispatch
     Instructions(InstructionsCommand),
+
+    /// Check bounded runtime evidence and optional smoke probes
+    Verify(VerifyCommand),
+
+    /// Seed deterministic demo events directly into the database
+    Demo(DemoCommand),
 }
 
 /// Read-only operation job surface (rendered through ViewEnvelope)
@@ -239,6 +247,8 @@ impl OpsCommands {
             Self::Blob(cmd) => cmd.execute(format).await?,
             Self::State(cmd) => cmd.execute(format)?,
             Self::Instructions(cmd) => cmd.execute(client, format).await?,
+            Self::Verify(cmd) => cmd.execute(client, format).await?,
+            Self::Demo(cmd) => cmd.execute().await?,
         }
         Ok(())
     }

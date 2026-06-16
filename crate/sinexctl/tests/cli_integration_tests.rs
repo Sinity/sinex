@@ -77,6 +77,9 @@ mod help_tests {
             .stdout(predicate::str::contains("  curation").not())
             .stdout(predicate::str::contains("  llm").not())
             .stdout(predicate::str::contains("  instructions").not())
+            .stdout(predicate::str::contains("  context").not())
+            .stdout(predicate::str::contains("  verify").not())
+            .stdout(predicate::str::contains("  demo").not())
             .stdout(predicate::str::contains("relations").not())
             .stdout(predicate::str::contains("documents").not())
             .stdout(predicate::str::contains("semantics").not())
@@ -100,7 +103,9 @@ mod help_tests {
             .stdout(predicate::str::contains("audit"))
             .stdout(predicate::str::contains("blob"))
             .stdout(predicate::str::contains("state"))
-            .stdout(predicate::str::contains("instructions"));
+            .stdout(predicate::str::contains("instructions"))
+            .stdout(predicate::str::contains("verify"))
+            .stdout(predicate::str::contains("demo"));
         Ok(())
     }
 
@@ -385,7 +390,7 @@ mod help_tests {
     #[sinex_test]
     async fn test_verify_help_exposes_evidence_flags() -> TestResult<()> {
         sinexctl()
-            .args(["verify", "--help"])
+            .args(["ops", "verify", "--help"])
             .assert()
             .success()
             .stdout(predicate::str::contains(
@@ -612,6 +617,9 @@ mod shortcut_command_tests {
             "throughput",
             "telemetry",
             "report",
+            "context",
+            "verify",
+            "demo",
         ] {
             sinexctl()
                 .args([root, "--help"])
