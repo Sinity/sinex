@@ -4,6 +4,7 @@ use sinex_primitives::rpc::ops::{Operation as OpsOperation, OpsStartResponse};
 use sinex_primitives::views::{OperationJobListView, OperationView, ViewEnvelope};
 
 use crate::commands::audit::AuditCommand;
+use crate::commands::blob::BlobCommands;
 use crate::commands::dlq::DlqCommands;
 use crate::commands::lifecycle::LifecycleCommands;
 use crate::commands::replay::ReplayCommands;
@@ -96,6 +97,10 @@ pub enum OpsCommands {
 
     /// Audit trail for an operation
     Audit(AuditCommand),
+
+    /// Blob and content-store maintenance
+    #[command(subcommand)]
+    Blob(BlobCommands),
 }
 
 /// Read-only operation job surface (rendered through ViewEnvelope)
@@ -222,6 +227,7 @@ impl OpsCommands {
             Self::Replay(cmd) => cmd.execute(client, format).await?,
             Self::Lifecycle(cmd) => cmd.execute(client, format).await?,
             Self::Audit(cmd) => cmd.execute(client, format).await?,
+            Self::Blob(cmd) => cmd.execute(format).await?,
         }
         Ok(())
     }

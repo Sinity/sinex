@@ -547,16 +547,19 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Blob ─────────────────────────────────────────────────────────────────
     m.insert(
-        "blob verify-integrity",
+        "ops blob verify-integrity",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
-        "blob sweep-orphans",
+        "ops blob sweep-orphans",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
-    m.insert("blob fsck", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
-        "blob migrate",
+        "ops blob fsck",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "ops blob migrate",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
@@ -668,12 +671,6 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert(
         "metrics report calendar",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
-
-    // ── Blob ─────────────────────────────────────────────────────────────────
-    m.insert(
-        "blob sweep-orphans",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
@@ -838,7 +835,7 @@ fn family_for_path(path: &str) -> CommandFamily {
     match root {
         "gateway" | "core" => CommandFamily::Gateway,
         "events" | "context" | "verify" | "now" | "status" => CommandFamily::Query,
-        "runtime" | "replay" | "dlq" | "ops" | "lifecycle" | "privacy" | "blob" => {
+        "runtime" | "replay" | "dlq" | "ops" | "lifecycle" | "privacy" => {
             CommandFamily::Operate
         }
         "sources" => CommandFamily::Sources,
@@ -864,10 +861,10 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
     let mutating = [
         "admin snapshot",
         "events annotate",
-        "blob fsck",
-        "blob migrate",
-        "blob store",
-        "blob sweep-orphans",
+        "ops blob fsck",
+        "ops blob migrate",
+        "ops blob store",
+        "ops blob sweep-orphans",
         "curation duplicate-judge",
         "curation finalize",
         "curation judge",
@@ -943,7 +940,9 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
     match path {
         "admin snapshot" | "state snapshot" => &[LocalMaintenance],
         "state restore" => &[DryRun, Confirmation, LocalMaintenance],
-        "blob fsck" | "blob migrate" | "blob sweep-orphans" => &[DryRun, LocalMaintenance],
+        "ops blob fsck" | "ops blob migrate" | "ops blob sweep-orphans" => {
+            &[DryRun, LocalMaintenance]
+        }
         "ops dlq purge" => &[RpcAuth, Confirmation],
         "ops lifecycle archive" | "ops lifecycle restore" | "ops replay plan" | "ops replay preview"
         | "ops replay run" => &[RpcAuth, DryRun],
