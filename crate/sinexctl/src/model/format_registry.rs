@@ -161,9 +161,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert(
         "sources status",
-        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
-            "ndjson emits one SourceCoverageView object per line (envelope metadata omitted)",
-        ),
+        FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
         "runtime drain",
@@ -248,9 +246,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert(
         "events recent",
-        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
-            "ndjson emits one EventCardView object per line (envelope metadata omitted)",
-        ),
+        FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
         "events errors",
