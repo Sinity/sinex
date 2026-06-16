@@ -62,7 +62,6 @@ mod help_tests {
             .stdout(predicate::str::contains("Usage: sinexctl"))
             .stdout(predicate::str::contains("Commands:"))
             .stdout(predicate::str::contains("events"))
-            .stdout(predicate::str::contains("query"))
             .stdout(predicate::str::contains("dlq"))
             .stdout(predicate::str::contains("replay"))
             .stdout(predicate::str::contains("ops"))
@@ -75,9 +74,9 @@ mod help_tests {
     }
 
     #[sinex_test]
-    async fn test_query_help() -> TestResult<()> {
+    async fn test_events_query_replaces_top_level_query_help() -> TestResult<()> {
         sinexctl()
-            .args(["query", "--help"])
+            .args(["events", "query", "--help"])
             .assert()
             .success()
             .stdout(predicate::str::contains("Query/search events"))
@@ -471,7 +470,7 @@ mod error_handling_tests {
     #[sinex_test]
     async fn test_invalid_output_format() -> TestResult<()> {
         sinexctl()
-            .args(["query", "-f", "invalid-format"])
+            .args(["events", "query", "-f", "invalid-format"])
             .assert()
             .failure()
             .stderr(predicate::str::contains("invalid"));
@@ -496,7 +495,7 @@ mod output_format_tests {
         // Test that format flag is recognized
         for format in ["table", "json", "yaml"] {
             sinexctl()
-                .args(["query", "--help"])
+                .args(["events", "query", "--help"])
                 .assert()
                 .success()
                 .stdout(predicate::str::contains(format));
@@ -508,7 +507,7 @@ mod output_format_tests {
     async fn test_query_format_flag_short() -> TestResult<()> {
         // -f should be recognized
         sinexctl()
-            .args(["query", "--help"])
+            .args(["events", "query", "--help"])
             .assert()
             .success()
             .stdout(predicate::str::contains("-f"));
@@ -553,32 +552,16 @@ mod shortcut_command_tests {
     }
 
     #[sinex_test]
-    async fn test_recent_command_exists() -> TestResult<()> {
-        sinexctl()
-            .args(["recent", "--help"])
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("recent"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_errors_command_exists() -> TestResult<()> {
-        sinexctl()
-            .args(["errors", "--help"])
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("error"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_watch_command_exists() -> TestResult<()> {
-        sinexctl()
-            .args(["watch", "--help"])
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("watch").or(predicate::str::contains("Watch")));
+    async fn event_shortcut_roots_are_pruned() -> TestResult<()> {
+        for root in [
+            "query", "recent", "errors", "watch", "trace", "annotate", "timeline", "explain",
+        ] {
+            sinexctl()
+                .args([root, "--help"])
+                .assert()
+                .failure()
+                .stderr(predicate::str::contains("unrecognized subcommand"));
+        }
         Ok(())
     }
 }

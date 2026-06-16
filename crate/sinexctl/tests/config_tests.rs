@@ -381,7 +381,7 @@ async fn test_config_aliases_from_toml() -> TestResult<()> {
         [aliases]
         h = ["health"]
         modules = ["runtime", "list"]
-        q = ["query", "events"]
+        q = ["events", "query"]
     "#;
 
     let config: Config = toml::from_str(toml).unwrap();

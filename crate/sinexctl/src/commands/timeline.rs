@@ -79,7 +79,7 @@ fn render_timeline_machine_output(
     format: OutputFormat,
 ) -> Result<Option<String>> {
     let timeline = EventCardListView::from_query_events(events);
-    let envelope = ViewEnvelope::new("sinexctl.timeline", timeline).with_query_echo(json!({
+    let envelope = ViewEnvelope::new("sinexctl.events.timeline", timeline).with_query_echo(json!({
         "limit": limit,
         "source": source,
         "event_type": event_type,
@@ -88,29 +88,29 @@ fn render_timeline_machine_output(
 }
 
 fn render_table(events: &[QueryResultEvent]) -> Result<()> {
-        let term = Term::stdout();
+    let term = Term::stdout();
+    term.write_line(&format!(
+        "{}  {} events",
+        style("Timeline").bold().underlined(),
+        style(events.len().to_string()).cyan(),
+    ))?;
+
+    for event in events {
+        let card = EventCardView::from_query_event(event);
+        let ts = card
+            .timestamp
+            .original
+            .map_or_else(|| "?".into(), |t| t.to_string());
         term.write_line(&format!(
-            "{}  {} events",
-            style("Timeline").bold().underlined(),
-            style(events.len().to_string()).cyan(),
+            "{}  {:<20} {:<30} {}",
+            style(ts.chars().take(19).collect::<String>()).dim(),
+            style(card.source.raw).yellow(),
+            style(card.event_type).green(),
+            card.summary,
         ))?;
+    }
 
-        for event in events {
-            let card = EventCardView::from_query_event(event);
-            let ts = card
-                .timestamp
-                .original
-                .map_or_else(|| "?".into(), |t| t.to_string());
-            term.write_line(&format!(
-                "{}  {:<20} {:<30} {}",
-                style(ts.chars().take(19).collect::<String>()).dim(),
-                style(card.source.raw).yellow(),
-                style(card.event_type).green(),
-                card.summary,
-            ))?;
-        }
-
-        Ok(())
+    Ok(())
 }
 
 #[cfg(test)]
@@ -120,11 +120,12 @@ mod tests {
 
     #[sinex_test]
     async fn timeline_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
-        let output = render_timeline_machine_output(&[], 25, Some("shell.atuin"), None, OutputFormat::Json)?
-            .expect("json should render");
+        let output =
+            render_timeline_machine_output(&[], 25, Some("shell.atuin"), None, OutputFormat::Json)?
+                .expect("json should render");
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
-        assert_eq!(value["source_surface"], "sinexctl.timeline");
+        assert_eq!(value["source_surface"], "sinexctl.events.timeline");
         assert_eq!(value["payload"]["count"], 0);
         assert_eq!(value["query_echo"]["limit"], 25);
         assert_eq!(value["query_echo"]["source"], "shell.atuin");

@@ -106,7 +106,7 @@ mod tests {
 
     fn fixture_envelope(count: usize) -> ViewEnvelope<EventCardListView> {
         ViewEnvelope::new(
-            "sinexctl.recent",
+            "sinexctl.events.recent",
             EventCardListView {
                 schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
                 count,
@@ -141,7 +141,7 @@ mod tests {
                 "json must include envelope schema_version (count={count})"
             );
             assert_eq!(
-                parsed["source_surface"], "sinexctl.recent",
+                parsed["source_surface"], "sinexctl.events.recent",
                 "json must include source_surface (count={count})"
             );
             assert_eq!(
@@ -246,7 +246,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&output)?;
 
         assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
-        assert_eq!(parsed["source_surface"], "sinexctl.recent");
+        assert_eq!(parsed["source_surface"], "sinexctl.events.recent");
         assert_eq!(parsed["payload"]["count"], 2);
         Ok(())
     }

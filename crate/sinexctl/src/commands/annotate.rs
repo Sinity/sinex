@@ -1,4 +1,4 @@
-//! `sinexctl annotate` — top-level event-annotation verb (#1172 AC-9).
+//! `sinexctl events annotate` — top-level event-annotation verb (#1172 AC-9).
 //!
 //! This is the *event* annotation surface (`core.event_annotations`). It is
 //! intentionally distinct from `sinexctl sources annotate <uuid>`, which
@@ -17,8 +17,8 @@ use crate::model::OutputFormat;
 #[derive(Debug, Args)]
 #[command(after_help = "\
 EXAMPLES:
-    sinexctl annotate 0193... --note 'investigated, ok'
-    sinexctl annotate 0193... --kind correction --note 'ts_orig was wrong'
+    sinexctl events annotate 0193... --note 'investigated, ok'
+    sinexctl events annotate 0193... --kind correction --note 'ts_orig was wrong'
 ")]
 pub struct AnnotateCommand {
     /// Event UUID to annotate.
