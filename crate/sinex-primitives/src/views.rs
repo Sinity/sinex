@@ -3,7 +3,7 @@
 use crate::domain::{OperationKind, OperationStatus};
 use crate::events::Event;
 use crate::ids::Id;
-use crate::query::QueryResultEvent;
+use crate::query::{Cursor, QueryResultEvent};
 use crate::temporal::Timestamp;
 use crate::{JsonValue, Provenance};
 use schemars::JsonSchema;
@@ -12,6 +12,7 @@ use serde_json::json;
 
 pub const VIEW_ENVELOPE_SCHEMA_VERSION: &str = "sinex.view-envelope/v3";
 pub const EVENT_CARD_LIST_SCHEMA_VERSION: &str = "sinex.event-card-list/v3";
+pub const EVENT_QUERY_LIST_SCHEMA_VERSION: &str = "sinex.event-query-list/v1";
 pub const OPERATION_JOB_LIST_SCHEMA_VERSION: &str = "sinex.operation-job-list/v1";
 pub const OPERATION_VIEW_SCHEMA_VERSION: &str = "sinex.operation-view/v1";
 pub const SOURCE_COVERAGE_LIST_SCHEMA_VERSION: &str = "sinex.source-coverage-list/v1";
@@ -463,6 +464,34 @@ impl EventCardListView {
             schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
             count: events.len(),
             cards: events.iter().map(EventCardView::from_query_event).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EventQueryListView {
+    pub schema_version: String,
+    pub count: usize,
+    pub cards: Vec<EventCardView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_estimate: Option<i64>,
+}
+
+impl EventQueryListView {
+    #[must_use]
+    pub fn from_query_events(
+        events: &[QueryResultEvent],
+        next_cursor: Option<Cursor>,
+        total_estimate: Option<i64>,
+    ) -> Self {
+        Self {
+            schema_version: EVENT_QUERY_LIST_SCHEMA_VERSION.to_string(),
+            count: events.len(),
+            cards: events.iter().map(EventCardView::from_query_event).collect(),
+            next_cursor,
+            total_estimate,
         }
     }
 }
@@ -981,6 +1010,8 @@ mod tests {
         let card_schema = serde_json::to_value(schemars::schema_for!(EventCardView))?;
         let envelope_schema =
             serde_json::to_value(schemars::schema_for!(ViewEnvelope<EventCardListView>))?;
+        let query_envelope_schema =
+            serde_json::to_value(schemars::schema_for!(ViewEnvelope<EventQueryListView>))?;
 
         assert_eq!(card_schema["title"], "EventCardView");
         assert!(
@@ -993,6 +1024,10 @@ mod tests {
                 .get("source_surface")
                 .is_some(),
             "envelope schema should include source surface metadata"
+        );
+        assert!(
+            query_envelope_schema["properties"].get("payload").is_some(),
+            "query envelope schema should include the typed query-list payload"
         );
         Ok(())
     }
