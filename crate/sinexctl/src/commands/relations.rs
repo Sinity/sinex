@@ -93,6 +93,33 @@ impl RelationsCommand {
         let envelope = client.relation_evidence(request).await?;
         print_relation_envelope(&envelope, format)
     }
+
+    #[must_use]
+    pub fn command_path(&self) -> &'static str {
+        self.command_path_with_root("relations")
+    }
+
+    #[must_use]
+    pub fn command_path_with_root(&self, root: &'static str) -> &'static str {
+        match (&self.subcommand, root) {
+            (RelationsSubcommand::Within { .. }, "events relations") => "events relations within",
+            (RelationsSubcommand::Overlaps { .. }, "events relations") => {
+                "events relations overlaps"
+            }
+            (RelationsSubcommand::Before { .. }, "events relations") => "events relations before",
+            (RelationsSubcommand::After { .. }, "events relations") => "events relations after",
+            (RelationsSubcommand::Same { .. }, "events relations") => "events relations same",
+            (RelationsSubcommand::Sequence { .. }, "events relations") => {
+                "events relations sequence"
+            }
+            (RelationsSubcommand::Within { .. }, _) => "relations within",
+            (RelationsSubcommand::Overlaps { .. }, _) => "relations overlaps",
+            (RelationsSubcommand::Before { .. }, _) => "relations before",
+            (RelationsSubcommand::After { .. }, _) => "relations after",
+            (RelationsSubcommand::Same { .. }, _) => "relations same",
+            (RelationsSubcommand::Sequence { .. }, _) => "relations sequence",
+        }
+    }
 }
 
 impl RelationsSubcommand {
