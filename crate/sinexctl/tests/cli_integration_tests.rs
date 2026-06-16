@@ -62,16 +62,29 @@ mod help_tests {
             .stdout(predicate::str::contains("Usage: sinexctl"))
             .stdout(predicate::str::contains("Commands:"))
             .stdout(predicate::str::contains("events"))
-            .stdout(predicate::str::contains("dlq"))
-            .stdout(predicate::str::contains("replay"))
             .stdout(predicate::str::contains("ops"))
             .stdout(predicate::str::contains("audit"))
             .stdout(predicate::str::contains("blob"))
             .stdout(predicate::str::contains("metrics"))
             .stdout(predicate::str::contains("config"))
             .stdout(predicate::str::contains("sources"))
+            .stdout(predicate::str::contains("  dlq").not())
+            .stdout(predicate::str::contains("  replay").not())
+            .stdout(predicate::str::contains("  lifecycle").not())
             .stdout(predicate::str::contains("_complete").not())
             .stdout(predicate::str::contains("completions"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ops_help_contains_maintenance_subsurfaces() -> TestResult<()> {
+        sinexctl()
+            .args(["ops", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("dlq"))
+            .stdout(predicate::str::contains("replay"))
+            .stdout(predicate::str::contains("lifecycle"));
         Ok(())
     }
 
