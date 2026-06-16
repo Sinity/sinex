@@ -653,6 +653,7 @@ mod tests {
             "report",
             "relations",
             "audit",
+            "blob",
             "documents",
             "semantics",
             "completions",

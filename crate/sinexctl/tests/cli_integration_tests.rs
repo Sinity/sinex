@@ -63,13 +63,13 @@ mod help_tests {
             .stdout(predicate::str::contains("Commands:"))
             .stdout(predicate::str::contains("events"))
             .stdout(predicate::str::contains("ops"))
-            .stdout(predicate::str::contains("blob"))
             .stdout(predicate::str::contains("docs"))
             .stdout(predicate::str::contains("semantic"))
             .stdout(predicate::str::contains("metrics"))
             .stdout(predicate::str::contains("config"))
             .stdout(predicate::str::contains("sources"))
             .stdout(predicate::str::contains("  audit").not())
+            .stdout(predicate::str::contains("  blob").not())
             .stdout(predicate::str::contains("relations").not())
             .stdout(predicate::str::contains("documents").not())
             .stdout(predicate::str::contains("semantics").not())
@@ -90,7 +90,8 @@ mod help_tests {
             .stdout(predicate::str::contains("dlq"))
             .stdout(predicate::str::contains("replay"))
             .stdout(predicate::str::contains("lifecycle"))
-            .stdout(predicate::str::contains("audit"));
+            .stdout(predicate::str::contains("audit"))
+            .stdout(predicate::str::contains("blob"));
         Ok(())
     }
 
@@ -324,10 +325,10 @@ mod help_tests {
     #[sinex_test]
     async fn test_blob_help() -> TestResult<()> {
         sinexctl()
-            .args(["blob", "--help"])
+            .args(["ops", "blob", "--help"])
             .assert()
             .success()
-            .stdout(predicate::str::contains("Blob maintenance commands"))
+            .stdout(predicate::str::contains("Blob and content-store maintenance"))
             .stdout(predicate::str::contains("sweep-orphans"));
         Ok(())
     }
@@ -335,7 +336,7 @@ mod help_tests {
     #[sinex_test]
     async fn test_blob_sweep_orphans_help() -> TestResult<()> {
         sinexctl()
-            .args(["blob", "sweep-orphans", "--help"])
+            .args(["ops", "blob", "sweep-orphans", "--help"])
             .assert()
             .success()
             .stdout(predicate::str::contains(
@@ -349,7 +350,7 @@ mod help_tests {
     #[sinex_test]
     async fn test_blob_verify_integrity_help() -> TestResult<()> {
         sinexctl()
-            .args(["blob", "verify-integrity", "--help"])
+            .args(["ops", "blob", "verify-integrity", "--help"])
             .assert()
             .success()
             .stdout(predicate::str::contains("anchor_payload_hash"))
