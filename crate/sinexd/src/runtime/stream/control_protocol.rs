@@ -40,9 +40,10 @@ pub(super) fn control_command_kind(subject: &str) -> Option<ControlCommandKind> 
 #[cfg(all(test, feature = "messaging"))]
 mod tests {
     use super::{ControlCommandKind, control_command_kind};
+    use xtask::sandbox::sinex_test;
 
-    #[test]
-    fn classifies_known_control_subjects() {
+    #[sinex_test]
+    async fn classifies_known_control_subjects() -> TestResult<()> {
         assert_eq!(
             control_command_kind("sinex.control.sources.weechat.scan"),
             Some(ControlCommandKind::Scan)
@@ -66,6 +67,8 @@ mod tests {
             control_command_kind("sinex.control.sources.weechat.unknown"),
             None
         );
+
+        Ok(())
     }
 }
 

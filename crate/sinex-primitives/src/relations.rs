@@ -715,18 +715,17 @@ fn describe_range(range: &ObservedRange) -> String {
 #[cfg(any(test, feature = "testing"))]
 pub mod fixtures {
     //! Deterministic relation fixtures for native Sinex replacements of
-    //! Lynchpin analysis products.
+    //! external analysis products.
 
     use super::*;
-    use crate::OffsetKind;
     use crate::domain::{EventSource, EventType, HostName};
     use crate::events::SourceMaterial;
     use crate::events::builder::Provenance;
     use crate::ids::Id;
     use serde_json::json;
 
-    /// Native Sinex fixture for the Lynchpin machine-session causal-footprint
-    /// behavior: an agent work interval, the work/build evidence near it, and a
+    /// Native Sinex fixture for machine-session causal-footprint behavior: an
+    /// agent work interval, the work/build evidence near it, and a
     /// privacy-limited material ref that explains missing evidence.
     #[derive(Debug, Clone)]
     pub struct CausalFootprintFixture {
@@ -763,12 +762,11 @@ pub mod fixtures {
         }
     }
 
-    /// Causal-footprint fixture derived from Lynchpin's
-    /// `machine_session_profiles`: an agent session seed, nearby xtask/build
+    /// Causal-footprint fixture for an agent session seed, nearby xtask/build
     /// work as supporting evidence, unrelated work outside the window, and a
     /// suppressed source-material ref represented as a caveat.
     #[must_use]
-    pub fn lynchpin_machine_session_causal_footprint() -> CausalFootprintFixture {
+    pub fn machine_session_causal_footprint() -> CausalFootprintFixture {
         let seed = material_event(
             "polylogue.agent-session",
             "agent.session.active",
@@ -820,7 +818,7 @@ pub mod fixtures {
         );
 
         CausalFootprintFixture {
-            source_behavior: "Lynchpin machine_session_profiles causal footprint",
+            source_behavior: "machine session causal footprint",
             native_owner_surface: "sinex.relations.evidence_window",
             query: EventRelationExpr::Within { within_secs: 300 },
             seed_events: vec![seed],
@@ -851,13 +849,7 @@ pub mod fixtures {
             host: HostName::new("fixture-host").expect("fixture host must be valid"),
             module_run_id: None,
             payload_schema_id: None,
-            provenance: Provenance::Material {
-                id: Id::<SourceMaterial>::new(),
-                anchor_byte: 0,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: OffsetKind::Byte,
-            },
+            provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
             anchor_payload_hash: None,
             associated_blob_ids: None,
             temporal_policy: None,
@@ -885,6 +877,7 @@ mod tests {
     use crate::ids::Id;
     use crate::{EventSource, EventType, HostName};
     use serde_json::json;
+    use xtask::sandbox::sinex_test;
 
     fn material_event(
         source: &str,
@@ -903,13 +896,7 @@ mod tests {
             host: HostName::new("test-host").unwrap(),
             module_run_id: None,
             payload_schema_id: None,
-            provenance: Provenance::Material {
-                id: Id::<SourceMaterial>::new(),
-                anchor_byte: 0,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: crate::OffsetKind::Byte,
-            },
+            provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
             anchor_payload_hash: None,
             associated_blob_ids: None,
             temporal_policy: None,
@@ -925,8 +912,8 @@ mod tests {
         Timestamp::from_unix_timestamp(1_700_000_000 + secs).unwrap()
     }
 
-    #[test]
-    fn observed_range_from_event_maps_quality_ladder() {
+    #[sinex_test]
+    async fn observed_range_from_event_maps_quality_ladder() -> TestResult<()> {
         let exact = material_event(
             "shell.atuin",
             "command.executed",
@@ -954,10 +941,12 @@ mod tests {
         assert_eq!(range.basis, TimeBasis::MaterialAnchor);
         assert_eq!(range.quality, TimeQuality::Unknown);
         assert!(!range.is_timed());
+
+        Ok(())
     }
 
-    #[test]
-    fn overlaps_and_gap_semantics() {
+    #[sinex_test]
+    async fn overlaps_and_gap_semantics() -> TestResult<()> {
         let a = ObservedRange::point(at(0), TimeBasis::SourceIntrinsic, TimeQuality::Exact);
         let b = ObservedRange::point(at(0), TimeBasis::SourceIntrinsic, TimeQuality::Exact);
         assert!(a.overlaps(&b));
@@ -970,12 +959,15 @@ mod tests {
         let untimed = ObservedRange::unknown(TimeBasis::MaterialAnchor);
         assert!(!a.overlaps(&untimed));
         assert_eq!(a.gap_to(&untimed), None);
+
+        Ok(())
     }
 
     /// Deterministic fixture from the design doc: commands run while discussing a
     /// topic, with one contradiction and one caveat.
-    #[test]
-    fn within_relation_assembles_evidence_window_with_contradiction_and_caveat() {
+    #[sinex_test]
+    async fn within_relation_assembles_evidence_window_with_contradiction_and_caveat()
+    -> TestResult<()> {
         // Seed: a "discussing topic X" event.
         let seed = material_event(
             "chat.session",
@@ -1054,10 +1046,12 @@ mod tests {
                 .iter()
                 .any(|s| s.kind == ExpansionStepKind::CoverageGapCaveat)
         );
+
+        Ok(())
     }
 
-    #[test]
-    fn same_field_relation_matches_on_payload_and_source() {
+    #[sinex_test]
+    async fn same_field_relation_matches_on_payload_and_source() -> TestResult<()> {
         let seed = material_event(
             "git.commit",
             "commit.created",
@@ -1087,10 +1081,12 @@ mod tests {
         // Same-field relation is timing-independent: only the matching repo supports,
         // and the far-future timestamp does not exclude it.
         assert_eq!(window.support_refs.len(), 1);
+
+        Ok(())
     }
 
-    #[test]
-    fn sequence_relation_flags_out_of_order_and_span() {
+    #[sinex_test]
+    async fn sequence_relation_flags_out_of_order_and_span() -> TestResult<()> {
         let a = material_event(
             "a",
             "a.evt",
@@ -1136,10 +1132,12 @@ mod tests {
                 .iter()
                 .any(|c| c.id == "sequence.out_of_order")
         );
+
+        Ok(())
     }
 
-    #[test]
-    fn evidence_window_renders_as_view_envelope_with_caveats() {
+    #[sinex_test]
+    async fn evidence_window_renders_as_view_envelope_with_caveats() -> TestResult<()> {
         let seed = material_event(
             "s",
             "s.evt",
@@ -1162,17 +1160,17 @@ mod tests {
                 .iter()
                 .any(|c| c["id"] == "test.caveat")
         );
+
+        Ok(())
     }
 
-    #[test]
-    fn causal_footprint_fixture_models_lynchpin_behavior_as_evidence_window() {
-        let fixture = fixtures::lynchpin_machine_session_causal_footprint();
+    #[sinex_test]
+    async fn causal_footprint_fixture_models_machine_session_as_evidence_window() -> TestResult<()>
+    {
+        let fixture = fixtures::machine_session_causal_footprint();
         let window = fixture.evidence_window();
 
-        assert_eq!(
-            fixture.source_behavior,
-            "Lynchpin machine_session_profiles causal footprint"
-        );
+        assert_eq!(fixture.source_behavior, "machine session causal footprint");
         assert_eq!(
             fixture.native_owner_surface,
             "sinex.relations.evidence_window"
@@ -1221,11 +1219,13 @@ mod tests {
                 .iter()
                 .any(|step| step.kind == ExpansionStepKind::CoverageGapCaveat)
         );
+
+        Ok(())
     }
 
-    #[test]
-    fn causal_footprint_fixture_renders_as_view_not_canonical_event() {
-        let fixture = fixtures::lynchpin_machine_session_causal_footprint();
+    #[sinex_test]
+    async fn causal_footprint_fixture_renders_as_view_not_canonical_event() -> TestResult<()> {
+        let fixture = fixtures::machine_session_causal_footprint();
         let envelope = fixture.view();
         let value = serde_json::to_value(&envelope).unwrap();
 
@@ -1247,15 +1247,19 @@ mod tests {
                 .iter()
                 .any(|caveat| caveat["id"] == "privacy.evidence_suppressed")
         );
+
+        Ok(())
     }
 
-    #[test]
-    fn relation_expr_roundtrips_through_json_with_tag() {
+    #[sinex_test]
+    async fn relation_expr_roundtrips_through_json_with_tag() -> TestResult<()> {
         let expr = EventRelationExpr::Before { max_gap_secs: 90 };
         let value = serde_json::to_value(&expr).unwrap();
         assert_eq!(value["relation"], "before");
         assert_eq!(value["max_gap_secs"], 90);
         let back: EventRelationExpr = serde_json::from_value(value).unwrap();
         assert_eq!(back, expr);
+
+        Ok(())
     }
 }

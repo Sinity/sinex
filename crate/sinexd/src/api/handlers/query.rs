@@ -209,7 +209,7 @@ mod tests {
 
     use super::*;
     use sinex_primitives::domain::{EventSource, EventType, HostName, TemporalSourceType};
-    use sinex_primitives::{OffsetKind, Provenance, SourceMaterial, Timestamp};
+    use sinex_primitives::{Provenance, SourceMaterial, Timestamp};
     use xtask::sandbox::sinex_test;
 
     fn event(id: u128, source: &str, event_type: &str, ts: Timestamp) -> Event<JsonValue> {
@@ -223,13 +223,12 @@ mod tests {
             host: HostName::new("test-host").expect("fixture host must be valid"),
             module_run_id: None,
             payload_schema_id: None,
-            provenance: Provenance::Material {
-                id: Id::<SourceMaterial>::from_uuid(sinex_primitives::Uuid::from_u128(id + 1000)),
-                anchor_byte: 0,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: OffsetKind::Byte,
-            },
+            provenance: Provenance::from_material(
+                Id::<SourceMaterial>::from_uuid(sinex_primitives::Uuid::from_u128(id + 1000)),
+                0,
+                None,
+                None,
+            ),
             anchor_payload_hash: None,
             associated_blob_ids: None,
             temporal_policy: None,
@@ -321,13 +320,15 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn relation_evidence_query_result_requires_events() {
+    #[sinex_test]
+    async fn relation_evidence_query_result_requires_events() -> TestResult<()> {
         let err = events_from_query_result(EventQueryResult::Count { count: 7 })
             .expect_err("non-event query result must be rejected");
         assert!(
             err.to_string().contains("event-list"),
             "error must describe the required query result kind: {err}"
         );
+
+        Ok(())
     }
 }
