@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "entries": [
     {
       "contract": {
@@ -55,6 +55,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -111,6 +132,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -167,6 +209,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -234,6 +298,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -294,6 +380,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "admission_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 33554432,
+        "max_input_events_per_sec": 10000,
+        "max_pending_material_bytes": 134217728,
+        "max_pending_candidates": 25000,
+        "max_unacked_transport_messages": 1000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 2000,
+        "expected_disk_write_bytes_per_min": 1073741824,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -350,6 +458,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -417,6 +547,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "admission_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 33554432,
+        "max_input_events_per_sec": 10000,
+        "max_pending_material_bytes": 134217728,
+        "max_pending_candidates": 25000,
+        "max_unacked_transport_messages": 1000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 2000,
+        "expected_disk_write_bytes_per_min": 1073741824,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -477,6 +629,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -533,6 +707,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -589,6 +785,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -645,6 +863,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -733,6 +973,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -789,6 +1051,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -849,6 +1132,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -905,6 +1210,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -966,6 +1292,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -1022,6 +1369,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -1078,6 +1447,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -1134,6 +1525,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -1190,6 +1603,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -1258,6 +1692,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -1314,6 +1770,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -1370,6 +1847,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -1426,6 +1925,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -1482,6 +2002,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -1538,6 +2080,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -1595,6 +2159,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -1651,6 +2237,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -1707,6 +2314,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -1763,6 +2392,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -1814,6 +2465,105 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
+      }
+    },
+    {
+      "contract": {
+        "id": "privacy.fixture.sensitive-record",
+        "namespace": "privacy",
+        "event_types": [
+          [
+            "privacy.fixture",
+            "privacy.fixture.record"
+          ]
+        ],
+        "privacy_tier": "sensitive",
+        "horizons": [
+          "historical"
+        ],
+        "retention": {
+          "kind": "days",
+          "days": 1
+        },
+        "occurrence_identity": {
+          "kind": "anchor"
+        },
+        "access_scope": {
+          "scope": "staged_export"
+        }
+      },
+      "binding": {
+        "subject": "source:privacy.fixture.sensitive-record",
+        "id": "privacy.fixture.sensitive-record",
+        "domain": "privacy",
+        "implementation": "fixture-metadata",
+        "adapter": "AppendOnlyFileAdapter",
+        "output_event_type": "privacy.fixture.record",
+        "privacy_context": "metadata",
+        "resource_profile": "bounded_file",
+        "capabilities": [],
+        "source_id": "privacy.fixture.sensitive-record",
+        "proposed": true,
+        "runner_pack": "staged",
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "runtime_shape": "on_demand",
+        "build_impact": {
+          "crate_impact": "0",
+          "binary_impact": "0",
+          "nix_output_impact": "0",
+          "derivation_impact": "0",
+          "sqlx_validation_impact": "0",
+          "dedicated_build_rationale": null
+        }
+      },
+      "resource_limits": {
+        "memory_max_mib": 256,
+        "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -1870,6 +2620,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -1926,6 +2697,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -1982,6 +2774,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -2038,6 +2851,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -2094,6 +2929,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -2149,6 +3006,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -2216,6 +3095,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -2271,6 +3172,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -2342,6 +3265,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -2413,6 +3358,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -2480,6 +3447,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -2536,6 +3525,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -2592,6 +3602,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -2679,6 +3710,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -2740,6 +3793,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -2795,6 +3870,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -2866,6 +3962,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -2937,6 +4055,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -2993,6 +4133,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -3049,6 +4211,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -3112,6 +4296,27 @@
       "resource_limits": {
         "memory_max_mib": 1024,
         "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 512,
+        "burst_memory_mib": 1024,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 67108864,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 268435456,
+        "max_pending_candidates": 50000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 5000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 10000,
+        "expected_disk_write_bytes_per_min": 2147483648,
+        "expected_wal_write_bytes_per_min": 1073741824,
+        "pressure_actions": [
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -3171,6 +4376,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "admission_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 33554432,
+        "max_input_events_per_sec": 10000,
+        "max_pending_material_bytes": 134217728,
+        "max_pending_candidates": 25000,
+        "max_unacked_transport_messages": 1000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 2000,
+        "expected_disk_write_bytes_per_min": 1073741824,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -3228,6 +4455,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "admission_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 33554432,
+        "max_input_events_per_sec": 10000,
+        "max_pending_material_bytes": 134217728,
+        "max_pending_candidates": 25000,
+        "max_unacked_transport_messages": 1000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 2000,
+        "expected_disk_write_bytes_per_min": 1073741824,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -3287,6 +4536,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "admission_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 33554432,
+        "max_input_events_per_sec": 10000,
+        "max_pending_material_bytes": 134217728,
+        "max_pending_candidates": 25000,
+        "max_unacked_transport_messages": 1000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 2000,
+        "expected_disk_write_bytes_per_min": 1073741824,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -3342,6 +4613,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -3399,6 +4691,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "admission_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 33554432,
+        "max_input_events_per_sec": 10000,
+        "max_pending_material_bytes": 134217728,
+        "max_pending_candidates": 25000,
+        "max_unacked_transport_messages": 1000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 2000,
+        "expected_disk_write_bytes_per_min": 1073741824,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -3456,6 +4770,28 @@
       "resource_limits": {
         "memory_max_mib": 512,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "admission_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 33554432,
+        "max_input_events_per_sec": 10000,
+        "max_pending_material_bytes": 134217728,
+        "max_pending_candidates": 25000,
+        "max_unacked_transport_messages": 1000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 2000,
+        "expected_disk_write_bytes_per_min": 1073741824,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
       }
     },
     {
@@ -3463,6 +4799,10 @@
         "id": "weechat",
         "namespace": "irc",
         "event_types": [
+          [
+            "irc",
+            "irc.message"
+          ],
           [
             "irc",
             "irc.join"
@@ -3474,10 +4814,6 @@
           [
             "irc",
             "irc.server_notice"
-          ],
-          [
-            "irc",
-            "irc.message"
           ]
         ],
         "privacy_tier": "sensitive",
@@ -3523,6 +4859,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -3578,6 +4936,28 @@
       "resource_limits": {
         "memory_max_mib": 128,
         "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
       }
     },
     {
@@ -3634,6 +5014,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     },
     {
@@ -3690,6 +5091,27 @@
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
       }
     }
   ]

@@ -16,7 +16,7 @@ use std::path::Path;
 
 use serde::Serialize;
 use sinex_primitives::source_contracts::{
-    ResourceLimits, SourceContract, SourceRuntimeBinding, all_source_contracts,
+    ResourceBudgetSpec, ResourceLimits, SourceContract, SourceRuntimeBinding, all_source_contracts,
     source_runtime_bindings,
 };
 
@@ -24,10 +24,11 @@ use sinex_primitives::source_contracts::{
 pub const CATALOG_ARTIFACT_PATH: &str = "nixos/modules/source-catalog.generated.json";
 
 /// Bumped when the catalog *shape* changes (not its contents).
-const CATALOG_SCHEMA_VERSION: u32 = 1;
+const CATALOG_SCHEMA_VERSION: u32 = 2;
 
-/// One source's full typed declaration: semantic contract + deployment binding +
-/// the concrete resource ceiling derived from the binding's `ResourceProfile`.
+/// One source's full typed declaration: semantic contract + deployment binding,
+/// the concrete resource ceiling, and the richer package budget derived from
+/// the binding's `ResourceProfile`.
 #[derive(Debug, Serialize)]
 struct CatalogEntry<'a> {
     contract: &'a SourceContract,
@@ -35,6 +36,10 @@ struct CatalogEntry<'a> {
     /// `binding.resource_profile.limits()` lifted into the artifact so Nix does
     /// not need to re-encode the profile→limits mapping.
     resource_limits: Option<ResourceLimits>,
+    /// `binding.resource_budget()` lifted into the artifact so package
+    /// completeness and runtime-pressure tooling can consume the same typed
+    /// budget contract as the Rust runtime.
+    resource_budget: Option<ResourceBudgetSpec>,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,6 +67,7 @@ fn build_catalog() -> SourceCatalog<'static> {
                 contract,
                 binding,
                 resource_limits: binding.map(|b| b.resource_profile.limits()),
+                resource_budget: binding.map(|b| b.resource_budget()),
             }
         })
         .collect();
