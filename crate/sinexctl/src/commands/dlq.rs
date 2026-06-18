@@ -168,6 +168,16 @@ fn format_dlq_stats_table(stats: &DlqListResponse) -> String {
     ));
     output.push_str(&format!("  First sequence: {}\n", stats.first_seq));
     output.push_str(&format!("  Last sequence: {}\n", stats.last_seq));
+    output.push_str(&format!("  Pressure: {}\n", stats.pressure_level));
+    output.push_str(&format!(
+        "  Pending sequence span: {}\n",
+        stats.pending_sequence_span
+    ));
+    output.push_str(&format!(
+        "  Recommended action: {}\n",
+        stats.recommended_action
+    ));
+    output.push_str(&format!("  Action reason: {}\n", stats.action_reason));
     output
 }
 

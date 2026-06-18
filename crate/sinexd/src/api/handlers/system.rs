@@ -36,6 +36,7 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
         db_latency_ms,
         db_detail,
         nats,
+        raw_ingest_dlq,
         replay,
         sse_confirmation,
         healthy,
@@ -64,6 +65,12 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
                 nats.latency_ms.map(|value| value as f64),
                 (!nats.detail.trim().is_empty()).then_some(nats.detail),
             ),
+            raw_ingest_dlq: ComponentHealthReport {
+                status: raw_ingest_dlq.status,
+                connected: raw_ingest_dlq.connected,
+                latency_ms: None,
+                detail: Some(raw_ingest_dlq.detail),
+            },
             replay_control: ReplayControlHealth {
                 status: if replay.connected {
                     HealthStatus::Healthy
@@ -149,6 +156,14 @@ mod tests {
                 latency_ms: Some(42),
                 detail: "timed out".to_string(),
             },
+            raw_ingest_dlq: crate::api::service_container::RawIngestDlqHealth {
+                status: HealthStatus::Degraded,
+                connected: true,
+                pending_messages: Some(3),
+                pending_sequence_span: Some(5),
+                detail: "raw-ingest DLQ pressure: 3 pending message(s), sequence span 5"
+                    .to_string(),
+            },
             replay: ReplayControlStatus {
                 enabled: true,
                 connected: false,
@@ -173,6 +188,14 @@ mod tests {
         assert_eq!(
             response.components.nats.detail.as_deref(),
             Some("timed out")
+        );
+        assert_eq!(
+            response.components.raw_ingest_dlq.status,
+            HealthStatus::Degraded
+        );
+        assert_eq!(
+            response.components.raw_ingest_dlq.detail.as_deref(),
+            Some("raw-ingest DLQ pressure: 3 pending message(s), sequence span 5")
         );
         assert!(response.components.replay_control.enabled);
         assert_eq!(

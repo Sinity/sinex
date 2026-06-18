@@ -563,6 +563,10 @@ fn format_stream_stats_table(buckets: &[StreamStatsBucket]) -> String {
         "STREAM",
         "AVG FILL %",
         "MAX FILL %",
+        "MAX MSG %",
+        "MAX BYTE %",
+        "PRESSURE",
+        "LIMIT",
         "AVG MSGS",
         "MAX MSGS",
         "SAMPLES",
@@ -573,6 +577,18 @@ fn format_stream_stats_table(buckets: &[StreamStatsBucket]) -> String {
             bucket.stream_name.as_deref().unwrap_or("—").to_string(),
             format_opt_f64(bucket.avg_fill_pct),
             format_opt_f64(bucket.max_fill_pct),
+            format_opt_f64(bucket.max_message_fill_pct),
+            format_opt_f64(bucket.max_byte_fill_pct),
+            bucket
+                .max_pressure_level
+                .as_deref()
+                .unwrap_or("—")
+                .to_string(),
+            bucket
+                .limiting_dimension
+                .as_deref()
+                .unwrap_or("—")
+                .to_string(),
             format_opt_f64(bucket.avg_messages),
             format_opt_i64(bucket.max_messages),
             bucket.sample_count.to_string(),

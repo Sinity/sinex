@@ -2113,6 +2113,22 @@ SELECT
     payload->>'stream' AS stream_name,
     AVG((payload->>'fill_pct')::float) AS avg_fill_pct,
     MAX((payload->>'fill_pct')::float) AS max_fill_pct,
+    MAX((payload->>'message_fill_pct')::float) AS max_message_fill_pct,
+    MAX((payload->>'byte_fill_pct')::float) AS max_byte_fill_pct,
+    MAX(CASE payload->>'pressure_level'
+        WHEN 'critical' THEN 2
+        WHEN 'warning' THEN 1
+        WHEN 'nominal' THEN 0
+        ELSE NULL
+    END) AS max_pressure_rank,
+    CASE
+        WHEN MAX(COALESCE((payload->>'byte_fill_pct')::float, 0.0))
+           > MAX(COALESCE((payload->>'message_fill_pct')::float, 0.0))
+            THEN 'bytes'
+        WHEN MAX(COALESCE((payload->>'message_fill_pct')::float, 0.0)) > 0.0
+            THEN 'messages'
+        ELSE NULL
+    END AS limiting_dimension,
     AVG((payload->>'messages')::bigint) AS avg_messages,
     MAX((payload->>'max_messages')::bigint) AS max_messages,
     COUNT(*) AS sample_count

@@ -447,6 +447,10 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
             "max_bytes": 0,
             "consumer_count": 1,
             "fill_pct": 32.5,
+            "message_fill_pct": 32.0,
+            "byte_fill_pct": 88.0,
+            "pressure_level": "warning",
+            "limiting_dimension": "bytes",
             "first_seq": 1,
             "last_seq": 640
         }),
@@ -576,6 +580,16 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
         Some("events.raw")
     );
     assert_eq!(stream_stats.buckets[0].avg_fill_pct, Some(32.5));
+    assert_eq!(stream_stats.buckets[0].max_message_fill_pct, Some(32.0));
+    assert_eq!(stream_stats.buckets[0].max_byte_fill_pct, Some(88.0));
+    assert_eq!(
+        stream_stats.buckets[0].max_pressure_level.as_deref(),
+        Some("warning")
+    );
+    assert_eq!(
+        stream_stats.buckets[0].limiting_dimension.as_deref(),
+        Some("bytes")
+    );
     assert_eq!(stream_stats.buckets[0].max_messages, Some(2000));
 
     assert_eq!(assembly_stats.buckets.len(), 1);
