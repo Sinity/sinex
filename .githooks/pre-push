@@ -48,7 +48,7 @@ if [[ -z "$(git diff --name-only "$BASE_REF" HEAD -- '*.rs' 2>/dev/null)" ]]; th
   exit 0
 fi
 
-echo "[pre-push] Running xtask check --changed-strict --allow-contended-host --base $BASE_REF ..." >&2
+echo "[pre-push] Running xtask check --changed-strict $BASE_REF --allow-contended-host ..." >&2
 if ! xtask check --changed-strict "$BASE_REF" --allow-contended-host >&2; then
   echo "" >&2
   echo "[pre-push] DRIFT GUARD FAILED." >&2
