@@ -8,6 +8,7 @@ use crate::domain_reducer::{
     DomainProjectionSpec, ProjectionConflictPolicy, ProjectionOrderingPolicy,
     ProjectionOutputShape, ProjectionSettlementPolicy,
 };
+use crate::output_kind::OutputKind;
 use crate::{Result, SinexError, Timestamp, Uuid};
 
 pub const TASK_REDUCER_DOMAIN_ID: &str = "tasks.current";
@@ -31,6 +32,7 @@ pub const TASK_REDUCER_SPEC: DomainProjectionSpec = DomainProjectionSpec {
     ordering_policy: ProjectionOrderingPolicy::TsOrigThenEventId,
     settlement_policy: ProjectionSettlementPolicy::RebuildOnInputChange,
     conflict_policy: ProjectionConflictPolicy::RejectInvalidTransition,
+    output_kind: OutputKind::ProjectionRow,
     output_shape: ProjectionOutputShape::TypedState,
 };
 

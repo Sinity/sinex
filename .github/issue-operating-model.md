@@ -141,6 +141,9 @@ The issue templates under `.github/ISSUE_TEMPLATE/` should request:
 - **Readiness** (always)
 - **Authority** (always)
 - **Parent spine** (always — or `none`)
+- **Output kind** (when the issue creates or changes a durable output, view,
+  artifact, proposal, judgment, operation record, projection row, or event
+  payload)
 - **Acceptance criteria** (execution + composite)
 - **Closure matrix** (composite)
 - **Verification command/evidence** (execution + composite)
@@ -155,14 +158,17 @@ should include these sections.
 1. **Truth migrates out of prose.** Where code, schema definitions, or a
    checked generated projection can hold the truth, the issue should point
    there and not restate it.
-2. **Don't relitigate closed decisions.** Decision issues capture a decision;
+2. **Outputs are classified before they are added.** New output-producing
+   boundaries should point at `sinex_primitives::output_kind` and explain why a
+   canonical event is warranted when one is added.
+3. **Don't relitigate closed decisions.** Decision issues capture a decision;
    subsequent execution issues cite the decision.
-3. **Composites need matrices.** No exceptions. The cost of writing a matrix
+4. **Composites need matrices.** No exceptions. The cost of writing a matrix
    is two minutes; the cost of skipping one has been hours of forensic work
    across audit cycles.
-4. **Spines stay thin.** A tracking spine is a map. If it accumulates
+5. **Spines stay thin.** A tracking spine is a map. If it accumulates
    implementation detail, promote that detail into an execution child.
-5. **Readiness is a real signal.** `needs-decision` and `tracking-only` are
+6. **Readiness is a real signal.** `needs-decision` and `tracking-only` are
    first-class safe states. Tagging an issue this way is a feature, not a
    failure.
 
