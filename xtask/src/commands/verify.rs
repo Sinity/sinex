@@ -1384,7 +1384,9 @@ fn is_closure_evidence_heading(line: &str) -> bool {
         || lower == "verification commands"
         || lower == "closure verification"
         || lower == "closure verification commands"
+        || lower == "acceptance matrix"
         || lower == "acceptance criteria drift"
+        || lower.starts_with("closeout")
 }
 
 fn extract_inline_backtick_command(line: &str) -> Option<String> {
@@ -1459,6 +1461,10 @@ fn parse_closure_matrix_line(line: &str) -> Option<(String, String)> {
         .unwrap_or(line)
         .trim();
 
+    if let Some(item) = parse_markdown_closure_matrix_row(body) {
+        return Some(item);
+    }
+
     if let Some(rest) = body
         .strip_prefix("[x] ")
         .or_else(|| body.strip_prefix("[X] "))
@@ -1488,6 +1494,75 @@ fn parse_closure_matrix_line(line: &str) -> Option<(String, String)> {
     }
 
     None
+}
+
+fn parse_markdown_closure_matrix_row(line: &str) -> Option<(String, String)> {
+    if !line.starts_with('|') || !line.ends_with('|') {
+        return None;
+    }
+
+    let cells: Vec<String> = line
+        .trim_matches('|')
+        .split('|')
+        .map(|cell| cell.trim().to_string())
+        .collect();
+    if cells.len() < 2 {
+        return None;
+    }
+
+    let lower_cells = cells
+        .iter()
+        .map(|cell| cell.to_lowercase())
+        .collect::<Vec<_>>();
+    if lower_cells.iter().all(|cell| {
+        cell.chars()
+            .all(|ch| ch == '-' || ch == ':' || ch.is_whitespace())
+    }) {
+        return None;
+    }
+    if lower_cells.iter().any(|cell| cell == "status")
+        && lower_cells
+            .iter()
+            .any(|cell| cell.contains("acceptance") || cell == "ac")
+    {
+        return None;
+    }
+
+    let status_cell = cells.last()?.trim();
+    let status_lower = status_cell.to_lowercase();
+    let status = if status_lower.contains("satisfied")
+        || status_lower.contains("done")
+        || status_lower.contains("fixed")
+        || status_lower.contains('✅')
+    {
+        "satisfied"
+    } else if status_lower.contains("defer")
+        || status_lower.contains("tracked")
+        || status_lower.contains("owner")
+        || status_lower.contains("out-of-scope")
+    {
+        "deferred"
+    } else if status_lower.contains("misframed") {
+        "misframed"
+    } else if status_lower.contains("fail") || status_lower.contains('❌') {
+        "failed"
+    } else {
+        "noted"
+    };
+
+    let text = cells
+        .iter()
+        .take(cells.len().saturating_sub(1))
+        .filter(|cell| !cell.is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    if text.is_empty() {
+        return None;
+    }
+
+    Some((status.to_string(), text))
 }
 
 /// Run a single shell command and capture its outcome.
@@ -1863,6 +1938,54 @@ Verification:
         assert_eq!(items[0].status, "checked");
         assert_eq!(items[1].status, "deferred");
         assert_eq!(items[2].status, "unchecked");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn extract_closure_matrix_items_reports_markdown_table_status()
+    -> ::xtask::sandbox::TestResult<()> {
+        let body = "\
+## Acceptance Matrix
+
+| Acceptance criterion | Evidence | Status |
+| --- | --- | --- |
+| EvidenceWindow v0 is declared complete | `relations.rs` defines the DTOs. | Satisfied |
+| Privacy enforcement is owned elsewhere | #1693 owns runtime policy enforcement. | Satisfied with owner |
+";
+        let items = extract_closure_matrix_items(body, "body");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].status, "satisfied");
+        assert_eq!(
+            items[0].text,
+            "EvidenceWindow v0 is declared complete | `relations.rs` defines the DTOs."
+        );
+        assert_eq!(items[1].status, "satisfied");
+        assert_eq!(
+            items[1].text,
+            "Privacy enforcement is owned elsewhere | #1693 owns runtime policy enforcement."
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn extract_closure_matrix_items_reads_plain_acceptance_matrix_label()
+    -> ::xtask::sandbox::TestResult<()> {
+        let body = "\
+## Closeout — audit ledger exhausted
+
+Acceptance matrix:
+
+| AC | Evidence | Status |
+| --- | --- | --- |
+| Every finding has a ledger state | #1800 owns the resurrection work. | Satisfied |
+";
+        let items = extract_closure_matrix_items(body, "comment[0]");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].status, "satisfied");
+        assert_eq!(
+            items[0].text,
+            "Every finding has a ledger state | #1800 owns the resurrection work."
+        );
         Ok(())
     }
 
