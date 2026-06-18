@@ -316,6 +316,10 @@ impl MockGatewayClient {
                 total_bytes: 0,
                 first_seq: 0,
                 last_seq: 0,
+                pressure_level: "nominal".to_string(),
+                pending_sequence_span: 0,
+                recommended_action: "none".to_string(),
+                action_reason: "raw-ingest DLQ is empty".to_string(),
             }))
     }
 
