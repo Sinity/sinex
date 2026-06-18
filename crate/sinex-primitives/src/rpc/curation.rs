@@ -6,6 +6,7 @@ use crate::events::{
     payloads::{CurationFinalizedPayload, CurationJudgmentPayload},
 };
 use crate::query::EventQueryResult;
+use crate::rpc::ops::Operation;
 use crate::{Id, Timestamp, Uuid};
 
 use serde::{Deserialize, Serialize};
@@ -192,6 +193,7 @@ pub struct CurationFinalizeRequest {
 pub struct CurationFinalizeResponse {
     pub finalized: CurationFinalizedPayload,
     pub event: Event<JsonValue>,
+    pub operation: Operation,
 }
 
 fn default_proposal_status() -> String {

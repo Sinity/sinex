@@ -2,7 +2,9 @@
 
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
-use sinex_primitives::domain::{EventSource, EventType};
+use sinex_db::repositories::state::Operation as DbOperation;
+use sinex_primitives::authority::{Judgment, JudgmentVerdict, Proposal, ProposalKind};
+use sinex_primitives::domain::{EventSource, EventType, OperationStatus};
 use sinex_primitives::events::payloads::{
     CurationFinalizedPayload, CurationJudgmentDecision, CurationJudgmentPayload,
     CurationProposalPayload, CurationProposalStatus,
@@ -16,6 +18,8 @@ use sinex_primitives::rpc::curation::{
     CurationRecordDuplicateJudgmentRequest, CurationRecordDuplicateJudgmentResponse,
     CurationRecordJudgmentRequest, CurationRecordJudgmentResponse,
 };
+use sinex_primitives::rpc::ops::Operation;
+use sinex_primitives::views::{SinexObjectKind, SinexObjectRef};
 use sinex_primitives::{Id, JsonValue, Result, SinexError, Timestamp, Uuid};
 use sqlx::{PgPool, Row};
 use std::collections::HashSet;
@@ -86,6 +90,7 @@ pub async fn handle_curation_record_judgment(
         actor_kind: req.actor_kind,
         actor_id,
         decision: req.decision,
+        authority_judgment: None,
         corrected_payload: req.corrected_payload,
         comment: req.comment,
         judged_at: Timestamp::now(),
@@ -298,6 +303,18 @@ pub async fn handle_curation_record_duplicate_judgment(
         "candidate_material_ids": evidence_material_ids.clone(),
     });
     let cluster_id = duplicate_cluster_id(&req.source, &req.event_type, &req.equivalence_key);
+    let authority_proposal = Proposal::new(
+        ProposalKind::DuplicateCandidate,
+        SinexObjectRef::new(SinexObjectKind::Event, cluster_id.clone())
+            .with_label("duplicate candidate cluster"),
+        1.0,
+        candidate_payload.clone(),
+        "rule:sinexd.duplicate-workbench",
+    )
+    .with_caveat(
+        "authority.operator_required",
+        "duplicate finalization requires an explicit operator judgment",
+    );
     let proposal = CurationProposalPayload {
         proposal_id: Uuid::now_v7(),
         proposal_key: format!("duplicate-resolution:{cluster_id}"),
@@ -306,6 +323,7 @@ pub async fn handle_curation_record_duplicate_judgment(
         candidate_source: "curation".to_string(),
         candidate_event_type: "curation.duplicate_resolution".to_string(),
         candidate_payload,
+        authority_proposal: Some(authority_proposal.clone()),
         evidence_event_ids: req.event_ids.clone(),
         evidence_material_ids: evidence_material_ids.clone(),
         producer: "sinexd.duplicate-workbench@1".to_string(),
@@ -336,6 +354,16 @@ pub async fn handle_curation_record_duplicate_judgment(
         actor_kind: req.actor_kind,
         actor_id,
         decision: duplicate_action_decision(req.action),
+        authority_judgment: Some(
+            Judgment::new(
+                authority_proposal.id.clone(),
+                duplicate_action_verdict(req.action),
+                auth.actor_id(),
+            )
+            .with_note(req.comment.clone().unwrap_or_else(|| {
+                "duplicate candidate reviewed through curation duplicate workbench".to_string()
+            })),
+        ),
         corrected_payload: None,
         comment: req.comment,
         judged_at: Timestamp::now(),
@@ -443,10 +471,34 @@ pub async fn handle_curation_finalize(
         .at_time(finalized_at)
         .build()?;
     let inserted = pool.events().insert(event).await?;
+    let operation_record = pool
+        .state()
+        .log_operation(DbOperation {
+            id: None,
+            operation_type: "curation.finalize".to_string(),
+            operator: "curation.finalize".to_string(),
+            scope: Some(json!({
+                "proposal_event_id": proposal_event_id,
+                "judgment_event_id": judgment_parent,
+                "finalization_event_id": inserted.id,
+                "proposal_id": proposal.proposal_id,
+                "judgment_id": judgment.judgment_id,
+            })),
+            result_status: OperationStatus::Success,
+            result_message: Some("curation judgment finalized".to_string()),
+            preview_summary: Some(json!({
+                "output_source": finalized.output_source,
+                "output_event_type": finalized.output_event_type,
+                "proposal_kind": proposal.proposal_kind,
+            })),
+            duration_ms: None,
+        })
+        .await?;
 
     Ok(CurationFinalizeResponse {
         finalized,
         event: inserted,
+        operation: operation_record_to_rpc(operation_record),
     })
 }
 
@@ -526,5 +578,25 @@ fn duplicate_action_decision(action: CurationDuplicateAction) -> CurationJudgmen
             CurationJudgmentDecision::Accept
         }
         CurationDuplicateAction::Ignore => CurationJudgmentDecision::Reject,
+    }
+}
+
+fn duplicate_action_verdict(action: CurationDuplicateAction) -> JudgmentVerdict {
+    match action {
+        CurationDuplicateAction::Merge | CurationDuplicateAction::Prefer => JudgmentVerdict::Accept,
+        CurationDuplicateAction::Ignore => JudgmentVerdict::Reject,
+    }
+}
+
+fn operation_record_to_rpc(record: sinex_db::repositories::OperationRecord) -> Operation {
+    Operation {
+        id: record.id.to_string(),
+        operation_type: record.operation_type,
+        operator: record.operator,
+        scope: record.scope,
+        result_status: record.result_status,
+        result_message: record.result_message,
+        preview_summary: record.preview_summary,
+        duration_ms: record.duration_ms,
     }
 }

@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sinex_macros::EventPayload;
 
+use crate::authority::{Judgment, Proposal};
 use crate::{Result, SinexError, Timestamp, Uuid};
 
 /// Lifecycle state for a proposal record.
@@ -77,6 +78,14 @@ pub struct CurationProposalPayload {
     pub candidate_event_type: String,
     /// Candidate canonical payload.
     pub candidate_payload: JsonValue,
+    /// Shared authority proposal, when this curation proposal is governed by
+    /// the `Proposal -> Judgment -> Operation` authority seam.
+    ///
+    /// Legacy curation proposals can still use the curation-local fields above
+    /// for replay/listing compatibility. Finalizers must prefer this shared
+    /// DTO when it is present so confidence cannot become authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_proposal: Option<Proposal<JsonValue>>,
     /// Parent event evidence used by the producer.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence_event_ids: Vec<Uuid>,
@@ -105,6 +114,10 @@ pub struct CurationJudgmentPayload {
     pub actor_kind: CurationJudgmentActorKind,
     pub actor_id: String,
     pub decision: CurationJudgmentDecision,
+    /// Shared authority judgment for proposals carrying
+    /// [`CurationProposalPayload::authority_proposal`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_judgment: Option<Judgment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corrected_payload: Option<JsonValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -123,6 +136,17 @@ impl CurationJudgmentPayload {
                     .with_context("judgment_proposal_id", self.proposal_id.to_string())
                     .with_context("proposal_id", proposal.proposal_id.to_string()),
             );
+        }
+
+        if let Some(authority_proposal) = proposal.authority_proposal.clone() {
+            let authority_judgment = self.authority_judgment.as_ref().ok_or_else(|| {
+                SinexError::validation(
+                    "authority-backed proposal requires a shared authority judgment",
+                )
+                .with_context("proposal_id", proposal.proposal_id.to_string())
+                .with_context("judgment_id", self.judgment_id.to_string())
+            })?;
+            return authority_proposal.apply(authority_judgment);
         }
 
         match self.decision {
@@ -201,6 +225,7 @@ impl CurationProposalPayload {
                 "tag_name": "review",
                 "tag_source": "curation.fixture"
             }),
+            authority_proposal: None,
             evidence_event_ids: vec![Uuid::from_u128(3)],
             evidence_material_ids: vec![Uuid::from_u128(4)],
             producer: "fixture-tagger@1".to_string(),
@@ -221,6 +246,7 @@ impl CurationJudgmentPayload {
             actor_kind: CurationJudgmentActorKind::TestFixture,
             actor_id: "fixture-judge".to_string(),
             decision: CurationJudgmentDecision::Accept,
+            authority_judgment: None,
             corrected_payload: None,
             comment: Some("fixture accepts proposal".to_string()),
             judged_at: Timestamp::UNIX_EPOCH,
