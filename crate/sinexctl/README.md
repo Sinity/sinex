@@ -5,8 +5,12 @@
 ## Quick Start
 
 ```bash
-# Check API reachability
-sinexctl gateway ping --token "$SINEX_API_TOKEN"
+# Open the offline-friendly command center
+sinexctl
+
+# Check API reachability and runtime health
+sinexctl runtime gateway ping --token "$SINEX_API_TOKEN"
+sinexctl runtime health --token "$SINEX_API_TOKEN"
 
 # Query recent events
 sinexctl events query -s 1h --token "$SINEX_API_TOKEN"
@@ -20,7 +24,7 @@ sinexctl runtime automata --token "$SINEX_API_TOKEN"
 
 # Run runtime evidence checks, including passive derived-signal checks, managed
 # document-scan smoke, collector-surface evidence, and historical-backfill evidence
-sinexctl verify --document-smoke --source-evidence --historical-evidence --token "$SINEX_API_TOKEN"
+sinexctl ops verify --document-smoke --source-evidence --historical-evidence --token "$SINEX_API_TOKEN"
 
 # Inspect DLQ state
 sinexctl ops dlq list --token "$SINEX_API_TOKEN"
@@ -28,18 +32,22 @@ sinexctl ops dlq list --token "$SINEX_API_TOKEN"
 
 ## Command Groups
 
-- `gateway`: API connectivity/version checks
-- `core`: system health
-- `events`: event search, filtering, relations, tracing, and streaming
-- `verify`: bounded runtime evidence checks for pipeline activity, gateway reachability, passive derived outputs, managed document-scan smoke, enabled long-running collector surfaces, locally declared deployment surfaces, and historical backfill
-- `runtime`: list/status/drain/resume/horizon
-- `automata`: automaton runtime health, checkpoints, replay/output recency, and SDK telemetry
-- `ops`: operations, DLQ, replay, lifecycle, and audit surfaces
+The public root command tree is deliberately small. Older shortcut roots such as
+`gateway`, `core`, `verify`, `demo`, `dlq`, `replay`, `lifecycle`, `blob`, and
+`state` are nested under the canonical groups below.
+
+- `events`: event search, filtering, relations, tracing, streaming, and annotation
+- `sources`: source material inventory, staging, readiness, continuity, drift, and coverage
+- `runtime`: gateway reachability, runtime health, module list/status/drain/resume/horizon, and automata health
+- `ops`: operations, operation jobs, DLQ, replay, lifecycle, audit, blob, state, instructions, bounded verification, and demo seeding
+- `privacy`: private-mode and policy posture
+- `tasks`: task projection and lifecycle
+- `record`: manual canonical records
 - `docs`: document search, retrieval, and chunk browsing
-- `semantic`: semantic epochs and shadow-lane inspection
-- `status`, `tui`: operator shortcuts
-- `demo`: deterministic dev data seeding
-- `config`: local CLI management
+- `semantic`: semantic epochs, shadow lanes, curation, and LLM policy inspection
+- `metrics`: telemetry, throughput, and activity reports
+- `tui`: interactive operator workbench
+- `config`: local CLI preferences and runtime target inspection
 
 ## Connection and Auth
 
@@ -62,8 +70,9 @@ Environment variables (directly supported by CLI flags/token loader):
 
 When `--runtime-target` or `SINEX_RUNTIME_TARGET_CONFIG` is set, descriptor
 values populate the API URL, token file, and TLS material before explicit
-CLI flags are applied. `sinexctl status` prints the loaded target so live
-runtime health is tied to the descriptor that supplied the connection settings.
+CLI flags are applied. The bare `sinexctl` command center and
+`sinexctl runtime health` show the loaded target so live runtime health is tied
+to the descriptor that supplied the connection settings.
 
 ## Structured Completion
 
@@ -88,7 +97,8 @@ The file stores local preferences only:
 
 - `default_format`
 - `editor`
-- `aliases`
-- `theme`
+- command aliases
+- table theme
 
-API URL, auth token, TLS paths, and timeouts come from CLI flags or env vars.
+Runtime connection/auth/TLS settings are intentionally not persisted there;
+use environment variables, CLI flags, or a runtime target descriptor.

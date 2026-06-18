@@ -26,7 +26,9 @@ mod help_tests {
             .stdout(predicate::str::contains("Primary actions"))
             .stdout(predicate::str::contains("sinexctl runtime health"))
             .stdout(predicate::str::contains("Root groups"))
-            .stdout(predicate::str::contains("sources"));
+            .stdout(predicate::str::contains("sources"))
+            .stdout(predicate::str::contains("record"))
+            .stdout(predicate::str::contains("tui"));
         Ok(())
     }
 
@@ -49,7 +51,26 @@ mod help_tests {
             value["payload"]["primary_actions"][0]["command"],
             "sinexctl"
         );
-        assert_eq!(value["payload"]["root_groups"][0]["root"], "events");
+        let roots: Vec<&str> = value["payload"]["root_groups"]
+            .as_array()
+            .expect("root_groups must be an array")
+            .iter()
+            .map(|entry| entry["root"].as_str().expect("root must be a string"))
+            .collect();
+        assert_eq!(
+            roots,
+            vec![
+                "events", "sources", "runtime", "metrics", "ops", "privacy", "tasks", "record",
+                "docs", "semantic", "tui", "config"
+            ]
+        );
+        assert!(
+            value["payload"]["shortcuts_pending_prune"]
+                .as_array()
+                .expect("shortcuts_pending_prune must be an array")
+                .is_empty(),
+            "bare command center should not advertise compatibility shortcut roots"
+        );
         Ok(())
     }
 
@@ -67,6 +88,7 @@ mod help_tests {
             .stdout(predicate::str::contains("semantic"))
             .stdout(predicate::str::contains("metrics"))
             .stdout(predicate::str::contains("record"))
+            .stdout(predicate::str::contains("tui"))
             .stdout(predicate::str::contains("config"))
             .stdout(predicate::str::contains("sources"))
             .stdout(predicate::str::contains("  audit").not())
@@ -462,17 +484,7 @@ mod completion_endpoint_tests {
     use super::*;
 
     #[sinex_test]
-    async fn public_completions_root_is_removed() -> TestResult<()> {
-        sinexctl()
-            .args(["completions", "bash"])
-            .assert()
-            .failure()
-            .stderr(predicate::str::contains("unrecognized subcommand"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn structured_completion_replaces_shell_script_generator() -> TestResult<()> {
+    async fn structured_completion_endpoint_returns_candidates() -> TestResult<()> {
         sinexctl()
             .args([
                 "_complete",
@@ -569,7 +581,10 @@ mod error_handling_tests {
         // dlq requeue without --event-id or --all should fail
         // Note: This will try to connect to gateway, so we check for the validation error
         // or connection error
-        sinexctl().args(["dlq", "requeue"]).assert().failure();
+        sinexctl()
+            .args(["ops", "dlq", "requeue"])
+            .assert()
+            .failure();
         Ok(())
     }
 }
@@ -621,49 +636,6 @@ mod environment_tests {
             .assert()
             .success()
             .stdout(predicate::str::contains("token").or(predicate::str::contains("SINEX")));
-        Ok(())
-    }
-}
-
-mod shortcut_command_tests {
-    use super::*;
-
-    #[sinex_test]
-    async fn status_and_now_roots_are_pruned() -> TestResult<()> {
-        for root in ["status", "now"] {
-            sinexctl().args([root, "--help"]).assert().failure();
-        }
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn event_shortcut_roots_are_pruned() -> TestResult<()> {
-        for root in [
-            "query",
-            "recent",
-            "errors",
-            "watch",
-            "trace",
-            "annotate",
-            "timeline",
-            "explain",
-            "modules",
-            "automata",
-            "throughput",
-            "telemetry",
-            "report",
-            "context",
-            "verify",
-            "demo",
-            "gateway",
-            "core",
-        ] {
-            sinexctl()
-                .args([root, "--help"])
-                .assert()
-                .failure()
-                .stderr(predicate::str::contains("unrecognized subcommand"));
-        }
         Ok(())
     }
 }

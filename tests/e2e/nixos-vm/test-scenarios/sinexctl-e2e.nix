@@ -87,13 +87,15 @@ pkgs.testers.nixosTest {
                 items.extend(value)
                 continue
             if isinstance(value, dict):
+                payload_value = value.get("payload")
+                payload = payload_value if isinstance(payload_value, dict) else value
                 for key in collection_keys:
-                    nested = value.get(key)
+                    nested = payload.get(key)
                     if isinstance(nested, list):
                         items.extend(nested)
                         break
                 else:
-                    items.append(value)
+                    items.append(payload)
         return items
 
     def generate_test_events(count):
@@ -114,7 +116,8 @@ pkgs.testers.nixosTest {
 
         help_output = sinexctl("--help")
         assert "Commands:" in help_output, "Help should list commands"
-        assert "query" in help_output, "Help should include query command"
+        assert "events" in help_output, "Help should include events command"
+        assert "ops" in help_output, "Help should include ops command"
         assert "runtime" in help_output, "Help should include runtime command"
         print("Help output verified")
 
@@ -160,28 +163,26 @@ pkgs.testers.nixosTest {
         # Poll until at least one event is visible (up to 30 s) instead of a
         # fixed sleep that races against pipeline latency.
         machine.wait_until_succeeds(
-            "sinexctl --insecure recent -n 1 -f json 2>/dev/null | grep -q '{'",
+            "sinexctl --insecure events recent -n 1 -f json 2>/dev/null | grep -q '{'",
             timeout=30
         )
 
         # Query events
-        query_result = sinexctl("query -s 1h -n 10 -f json", check=False)
+        query_result = sinexctl("events query -s 1h -n 10 -f json", check=False)
         exit_code = query_result[0]
         output = query_result[1]
 
         if exit_code == 0 and output.strip():
-            events = []
-            for line in output.strip().split('\n'):
-                if line.strip() and line.startswith('{'):
-                    events.append(json.loads(line))
+            values = parse_json_output(output)
+            events = flatten_json_items(values, ("cards", "events"))
             print(f"Query returned {len(events)} events")
         else:
             print("No events found yet (may be expected)")
 
     # Test 5: DLQ commands
-    with subtest("sinexctl dlq commands"):
+    with subtest("sinexctl ops dlq commands"):
         # List DLQ queues
-        dlq_result = sinexctl("dlq list -f json", check=False)
+        dlq_result = sinexctl("ops dlq list -f json", check=False)
         exit_code = dlq_result[0]
         output = dlq_result[1]
 
@@ -206,21 +207,14 @@ pkgs.testers.nixosTest {
         else:
             print("No operations found (expected for fresh system)")
 
-    # Test 7: Completions generation
-    with subtest("Shell completions generation"):
-        # Bash completions
-        bash_comp = sinexctl("completions bash")
-        assert "_sinexctl" in bash_comp, "Bash completions should define _sinexctl"
+    # Test 7: Structured completion endpoint
+    with subtest("Structured completion endpoint"):
+        completion = sinexctl_json('_complete --line "sinexctl ev" --cursor 11')
+        candidates = completion.get("candidates", [])
+        values = {candidate.get("value") for candidate in candidates if isinstance(candidate, dict)}
+        assert "events" in values, f"Structured completion should suggest events root: {completion}"
 
-        # Zsh completions
-        zsh_comp = sinexctl("completions zsh")
-        assert "#compdef" in zsh_comp, "Zsh completions should have compdef"
-
-        # Fish completions
-        fish_comp = sinexctl("completions fish")
-        assert "complete -c sinexctl" in fish_comp, "Fish completions should use complete"
-
-        print("All shell completions generated successfully")
+        print("Structured completion endpoint returned root candidates")
 
     # Test 8: Error handling
     with subtest("Error handling"):
@@ -262,11 +256,11 @@ pkgs.testers.nixosTest {
         machine.sleep(2)
 
         # Query with time filter
-        result = sinexctl("query -s 1h -f json", check=False)
+        result = sinexctl("events query -s 1h -f json", check=False)
         print(f"Time-filtered query: exit={result[0]}")
 
         # Query with limit
-        result = sinexctl("query -s 1h -n 5 -f json", check=False)
+        result = sinexctl("events query -s 1h -n 5 -f json", check=False)
         print(f"Limited query: exit={result[0]}")
 
     print("sinexctl E2E tests completed successfully")

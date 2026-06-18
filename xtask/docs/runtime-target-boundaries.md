@@ -55,7 +55,7 @@ down.
 `sinexctl` defaults to explicit API configuration.
 
 It can consume a runtime-target descriptor to populate API URL, token file,
-TLS material, and target labeling. Once a descriptor is loaded, `sinexctl status`
+TLS material, and target labeling. Once a descriptor is loaded, `sinexctl`
 reports the target before reporting live API health.
 
 ## Status Snapshot Rules

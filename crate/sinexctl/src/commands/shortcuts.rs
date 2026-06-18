@@ -30,10 +30,10 @@ use crate::client::{GatewayClient, gateway::SseClientMessage};
 #[command(after_help = "\
 EXAMPLES:
     # Check system status
-    sinexctl status
+    sinexctl runtime health
 
-    # Pipe to jq for scripting
-    sinexctl status -f json | jq '.modules.active'
+    # Pipe the command center to jq for scripting
+    sinexctl -f json | jq '.payload.runtime_target.name'
 ")]
 pub struct StatusCommand;
 

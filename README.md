@@ -114,7 +114,7 @@ direnv allow  # loads the flake devShell and puts xtask on PATH
 xtask infra start
 xtask run core --logs
 xtask run list
-sinexctl recent -n 10
+sinexctl events recent -n 10
 ```
 
 ## Development
