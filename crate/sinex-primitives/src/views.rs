@@ -487,6 +487,31 @@ pub struct EventSourceView {
     pub source_ref: Option<SinexObjectRef>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EventOriginKind {
+    Material,
+    Derived,
+    Declared,
+    System,
+    ExternalMirror,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EventTraceRelation {
+    SourceMaterial,
+    MaterialAnchor,
+    SourceEvent,
+    Operation,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EventTraceLink {
+    pub relation: EventTraceRelation,
+    pub target: SinexObjectRef,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EventCardView {
     #[serde(rename = "ref")]
@@ -494,6 +519,7 @@ pub struct EventCardView {
     pub timestamp: EventTimestampView,
     pub source: EventSourceView,
     pub event_type: String,
+    pub origin_kind: EventOriginKind,
     pub summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload_preview: Option<JsonValue>,
@@ -504,6 +530,8 @@ pub struct EventCardView {
     pub caveats: Vec<CaveatView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trace_refs: Vec<SinexObjectRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trace_links: Vec<EventTraceLink>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub projection_badges: Vec<String>,
     pub actions: Vec<ActionAvailability>,
@@ -522,7 +550,7 @@ impl EventCardView {
             "ingest_timestamp_fallback".to_string()
         };
 
-        let (material_refs, trace_refs) = provenance_refs(&event.provenance);
+        let provenance = provenance_view(&event.provenance);
         let mut caveats = Vec::new();
         if event.id.is_none() {
             caveats.push(CaveatView {
@@ -555,12 +583,14 @@ impl EventCardView {
                 ),
             },
             event_type: event.event_type.to_string(),
+            origin_kind: provenance.origin_kind,
             summary: event_summary(event, result.snippet.as_deref()),
             payload_preview: payload_preview(&event.payload),
-            material_refs,
+            material_refs: provenance.material_refs,
             privacy_state: PrivacyStateView::raw_visible(),
             caveats,
-            trace_refs,
+            trace_refs: provenance.trace_refs,
+            trace_links: provenance.trace_links,
             projection_badges: projection_badges(event),
             actions: event_actions(event_id.as_deref()),
         }
@@ -679,7 +709,14 @@ fn event_ref(event_id: Option<&str>) -> SinexObjectRef {
     ref_
 }
 
-fn provenance_refs(provenance: &Provenance) -> (Vec<SinexObjectRef>, Vec<SinexObjectRef>) {
+struct EventProvenanceView {
+    origin_kind: EventOriginKind,
+    material_refs: Vec<SinexObjectRef>,
+    trace_refs: Vec<SinexObjectRef>,
+    trace_links: Vec<EventTraceLink>,
+}
+
+fn provenance_view(provenance: &Provenance) -> EventProvenanceView {
     match provenance {
         Provenance::Material {
             id,
@@ -699,12 +736,27 @@ fn provenance_refs(provenance: &Provenance) -> (Vec<SinexObjectRef>, Vec<SinexOb
                 format!("{id}:{anchor_byte}"),
             )
             .with_label(anchor_label);
-            (vec![material, anchor], Vec::new())
+            EventProvenanceView {
+                origin_kind: EventOriginKind::Material,
+                material_refs: vec![material.clone(), anchor.clone()],
+                trace_refs: Vec::new(),
+                trace_links: vec![
+                    EventTraceLink {
+                        relation: EventTraceRelation::SourceMaterial,
+                        target: material,
+                    },
+                    EventTraceLink {
+                        relation: EventTraceRelation::MaterialAnchor,
+                        target: anchor,
+                    },
+                ],
+            }
         }
         Provenance::Derived {
-            source_event_ids, ..
+            source_event_ids,
+            operation_id,
         } => {
-            let trace_refs = source_event_ids
+            let event_refs = source_event_ids
                 .iter()
                 .map(|id| {
                     SinexObjectRef::new(SinexObjectKind::Event, id.to_string())
@@ -712,8 +764,33 @@ fn provenance_refs(provenance: &Provenance) -> (Vec<SinexObjectRef>, Vec<SinexOb
                         .with_command_hint(format!("sinexctl events trace {id}"))
                         .with_rpc_method("events.lineage")
                 })
-                .collect();
-            (Vec::new(), trace_refs)
+                .collect::<Vec<_>>();
+            let mut trace_links = event_refs
+                .iter()
+                .cloned()
+                .map(|target| EventTraceLink {
+                    relation: EventTraceRelation::SourceEvent,
+                    target,
+                })
+                .collect::<Vec<_>>();
+            if let Some(operation_id) = operation_id {
+                trace_links.push(EventTraceLink {
+                    relation: EventTraceRelation::Operation,
+                    target: SinexObjectRef::new(
+                        SinexObjectKind::Operation,
+                        operation_id.to_string(),
+                    )
+                    .with_label(short_id(&operation_id.to_string()))
+                    .with_command_hint(format!("sinexctl ops log --operation-id {operation_id}"))
+                    .with_rpc_method("ops.get"),
+                });
+            }
+            EventProvenanceView {
+                origin_kind: EventOriginKind::Derived,
+                material_refs: Vec::new(),
+                trace_refs: event_refs,
+                trace_links,
+            }
         }
     }
 }
@@ -1003,7 +1080,7 @@ mod tests {
 
     use super::*;
     use crate::events::SourceMaterial;
-    use crate::events::builder::Provenance;
+    use crate::events::builder::{OperationMarker, Provenance};
     use crate::non_empty::NonEmptyVec;
     use crate::{EventSource, EventType, HostName};
     use xtask::sandbox::sinex_test;
@@ -1052,9 +1129,19 @@ mod tests {
         assert_eq!(card.ref_.kind, SinexObjectKind::Event);
         assert_eq!(card.ref_.id, event_id.to_string());
         assert_eq!(card.source.family, "shell");
+        assert_eq!(card.origin_kind, EventOriginKind::Material);
         assert_eq!(card.summary, "ran a focused test");
         assert_eq!(card.material_refs.len(), 2);
         assert!(card.trace_refs.is_empty());
+        assert_eq!(card.trace_links.len(), 2);
+        assert_eq!(
+            card.trace_links[0].relation,
+            EventTraceRelation::SourceMaterial
+        );
+        assert_eq!(
+            card.trace_links[1].relation,
+            EventTraceRelation::MaterialAnchor
+        );
         assert!(
             card.actions.iter().any(|action| action.id == "event.trace"
                 && action.state == ActionAvailabilityState::Enabled)
@@ -1067,6 +1154,62 @@ mod tests {
                     && action.reason.is_some())
         );
         assert!(card.payload_preview.is_some());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn event_card_splits_origin_kind_from_trace_links() -> xtask::TestResult<()> {
+        let source_event_id = Id::<Event<JsonValue>>::new();
+        let operation_id = Id::<OperationMarker>::new();
+        let result = QueryResultEvent {
+            event: Event {
+                id: Some(Id::<Event<JsonValue>>::new()),
+                source: EventSource::new("projection.context")?,
+                event_type: EventType::new("context.updated")?,
+                payload: json!({ "summary": "projection updated" }),
+                ts_orig: None,
+                ts_quality: None,
+                host: HostName::new("sinnix-prime")?,
+                module_run_id: None,
+                payload_schema_id: None,
+                provenance: Provenance::Derived {
+                    source_event_ids: NonEmptyVec::single(source_event_id),
+                    operation_id: Some(operation_id),
+                },
+                associated_blob_ids: None,
+                temporal_policy: None,
+                semantics_version: None,
+                scope_key: None,
+                equivalence_key: None,
+                created_by_operation_id: None,
+                automaton_model: None,
+                anchor_payload_hash: None,
+            },
+            relevance_score: None,
+            snippet: None,
+        };
+
+        let card = EventCardView::from_query_event(&result);
+
+        assert_eq!(card.origin_kind, EventOriginKind::Derived);
+        assert_eq!(card.trace_refs.len(), 1);
+        assert_eq!(card.trace_refs[0].id, source_event_id.to_string());
+        assert_eq!(card.trace_links.len(), 2);
+        assert_eq!(
+            card.trace_links[0].relation,
+            EventTraceRelation::SourceEvent
+        );
+        assert_eq!(card.trace_links[0].target.id, source_event_id.to_string());
+        assert_eq!(card.trace_links[1].relation, EventTraceRelation::Operation);
+        assert_eq!(card.trace_links[1].target.id, operation_id.to_string());
+
+        let roundtrip: EventCardView = serde_json::from_value(serde_json::to_value(&card)?)?;
+        assert_eq!(roundtrip.origin_kind, EventOriginKind::Derived);
+        assert_eq!(roundtrip.trace_links, card.trace_links);
+
+        let unknown = serde_json::from_value::<EventOriginKind>(json!("mystery_origin"));
+        assert!(unknown.is_err(), "unknown origin kind must fail loudly");
+
         Ok(())
     }
 
@@ -1195,7 +1338,9 @@ mod tests {
             "card schema should expose the contract `ref` field"
         );
         assert!(
-            context_envelope_schema["properties"].get("payload").is_some(),
+            context_envelope_schema["properties"]
+                .get("payload")
+                .is_some(),
             "context envelope schema should include the typed summary payload"
         );
         assert!(envelope_schema["properties"].get("payload").is_some());
