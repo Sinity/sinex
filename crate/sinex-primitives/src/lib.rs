@@ -5,6 +5,7 @@
 extern crate self as sinex_primitives;
 
 pub mod activity;
+pub mod admission_policy;
 pub mod authority;
 pub mod constants;
 #[cfg(feature = "nats")]
@@ -16,6 +17,7 @@ pub mod domain_reducer;
 pub mod env;
 pub mod environment;
 pub mod error;
+pub mod event_contracts;
 pub mod events;
 pub mod fs;
 pub mod ids;
@@ -91,6 +93,13 @@ pub const EXPECTED_BINARY_SCHEMA_VERSION: &str = "1";
 
 // Re-export commonly used types at crate root
 pub use activity::{ActivitySourceKind, classify_trusted_activity_signal, primary_activity_source};
+pub use admission_policy::{
+    AdmissionOutcome, AdmissionOutcomeReason, AdmissionOutcomeRef, AdmissionPolicy,
+    AdmissionPolicyId, AdmissionPolicyScope, MalformedMaterialBehavior,
+    OccurrenceAdmissionBehavior, ProposalRoutingBehavior, ResourcePressureBehavior,
+    STANDARD_EVENT_ADMISSION_POLICY_ID, SchemaValidationBehavior, admission_policies,
+    find_admission_policy,
+};
 pub use authority::{
     DuplicateCandidatePayload, FinalizerRegistration, Judgment, JudgmentVerdict, ProposalKind,
 };
@@ -120,6 +129,11 @@ pub use domain_reducer::{
 pub use env::strict_env_filter_source;
 pub use environment::{SinexEnvironment, environment};
 pub use error::{Result, SinexError};
+pub use event_contracts::{
+    EventContract, EventContractId, EventOccurrenceContract, EventProvenanceRequirement,
+    EventTemporalContract, PayloadSchemaContract, event_contracts, find_event_contract,
+    find_event_contract_for_pair,
+};
 pub use events::builder::{OffsetKind, Provenance};
 pub use events::occurrence::MaterialOccurrenceKey;
 pub use events::payload::DynamicPayload;

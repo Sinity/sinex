@@ -9,8 +9,8 @@ use crate::runtime::confirmation_handler::{
 };
 use crate::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use crate::runtime::{RuntimeResult, SinexError};
-use sinex_primitives::error::SinexErrorKind;
 use async_nats::jetstream;
+use sinex_primitives::error::SinexErrorKind;
 use sinex_primitives::{
     domain::{EventSource, EventType},
     environment::SinexEnvironment,
@@ -627,7 +627,9 @@ impl JetStreamEventConsumer {
             let handler_success = match confirmed_handler.handle_confirmed(&synthetic).await {
                 Ok(()) => true,
                 Err(e) if e.kind() == SinexErrorKind::Lifecycle => {
-                    debug!("Confirmed handler channel closed on unbuffered kind watermark (shutdown)");
+                    debug!(
+                        "Confirmed handler channel closed on unbuffered kind watermark (shutdown)"
+                    );
                     msg.ack().await.ok();
                     return Ok(());
                 }
@@ -785,7 +787,9 @@ impl JetStreamEventConsumer {
                 let handler_success = match confirmed_handler.handle_confirmed(&event).await {
                     Ok(()) => true,
                     Err(e) if e.kind() == SinexErrorKind::Lifecycle => {
-                        debug!("Confirmed handler channel closed on unbuffered confirmation (shutdown)");
+                        debug!(
+                            "Confirmed handler channel closed on unbuffered confirmation (shutdown)"
+                        );
                         msg.ack().await.ok();
                         return Ok(());
                     }
@@ -933,7 +937,11 @@ impl JetStreamEventConsumer {
         let payload: serde_json::Value = serde_json::from_slice(bytes)?;
 
         // A top-level string `id` unambiguously marks a flat single event.
-        if payload.get("id").and_then(serde_json::Value::as_str).is_some() {
+        if payload
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .is_some()
+        {
             return Ok(vec![Self::parse_single_provisional_event(payload)?]);
         }
 
@@ -1166,8 +1174,7 @@ mod tests {
     async fn parse_rejects_non_event_payload() -> xtask::sandbox::TestResult<()> {
         // A payload that is neither a flat event nor an envelope is the only
         // shape that should count as a genuine parse failure.
-        let bytes = serde_json::to_vec(&serde_json::json!({"foo": "bar"}))
-            .expect("serialize junk");
+        let bytes = serde_json::to_vec(&serde_json::json!({"foo": "bar"})).expect("serialize junk");
 
         let err = JetStreamEventConsumer::parse_provisional_events_from_bytes(&bytes)
             .expect_err("payload without id or events must be a parse failure");

@@ -261,13 +261,13 @@ pub type TerminalCommandCanonicalizerRuntime = TransducerAdapter<TerminalCommand
 
 // --- Source descriptor (issue #690 / #734) ---
 
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
     OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
     ResourceProfile, RetentionPolicy as ContractRetentionPolicy, RunnerPack,
     RuntimeShape as ContractRuntimeShape, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 
 // The terminal canonicalizer transduces shell-history events into normalized

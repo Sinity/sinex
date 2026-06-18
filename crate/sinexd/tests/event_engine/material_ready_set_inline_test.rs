@@ -1,8 +1,8 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::source_materials::material_types;
-use sinexd::event_engine::MaterialReadySet;
 use sinex_primitives::Timestamp;
+use sinexd::event_engine::MaterialReadySet;
 use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 

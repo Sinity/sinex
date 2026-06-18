@@ -255,8 +255,11 @@ mod tests {
 
     #[sinex_test]
     async fn now_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
-        let output = render_now_machine_output(&json!({ "health": { "healthy": true } }), OutputFormat::Json)?
-            .expect("json should render");
+        let output = render_now_machine_output(
+            &json!({ "health": { "healthy": true } }),
+            OutputFormat::Json,
+        )?
+        .expect("json should render");
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
         assert_eq!(value["source_surface"], "sinexctl.now");

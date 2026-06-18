@@ -1,5 +1,5 @@
-use sinexd::event_engine::EventEngineConfig;
 use sinex_primitives::validation::config_validation::ConfigValidation;
+use sinexd::event_engine::EventEngineConfig;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]

@@ -12,14 +12,17 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceId,
     TimingEvidence,
 };
 use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
-use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::source_contracts::{
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape,
+};
 use sinex_primitives::temporal::Timestamp;
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
@@ -192,7 +195,12 @@ impl MaterialParser for HyprlandParser {
                 "window_class": window_class,
                 "window_title": window_title,
             });
-            return Ok(vec![self.build_intent("window.focused", payload, &record, ctx)?]);
+            return Ok(vec![self.build_intent(
+                "window.focused",
+                payload,
+                &record,
+                ctx,
+            )?]);
         }
 
         // Any other event type — flush stale pending activewindow first.

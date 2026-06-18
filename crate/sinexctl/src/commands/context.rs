@@ -7,9 +7,7 @@ use sinex_primitives::query::{
     EventQuery, EventQueryResult, QueryResultEvent, SortDirection, TimeRange,
 };
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::views::{
-    ContextSourceView, ContextSummaryView, EventCardView, ViewEnvelope,
-};
+use sinex_primitives::views::{ContextSourceView, ContextSummaryView, EventCardView, ViewEnvelope};
 use std::collections::HashMap;
 
 use crate::client::GatewayClient;
@@ -312,7 +310,10 @@ mod tests {
         assert_eq!(value["payload"]["since"], "2h");
         assert_eq!(value["payload"]["total_events"], 2);
         assert_eq!(value["payload"]["source_count"], 2);
-        assert_eq!(value["payload"]["sources"][0]["latest_event"]["summary"], "context fixture");
+        assert_eq!(
+            value["payload"]["sources"][0]["latest_event"]["summary"],
+            "context fixture"
+        );
         Ok(())
     }
 

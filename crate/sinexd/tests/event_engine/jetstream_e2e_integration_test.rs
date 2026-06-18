@@ -2,12 +2,12 @@
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinexd::runtime::{
-    ConfirmedEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, RuntimeResult,
-    ProcessingModel, ProvisionalEvent, prelude::async_trait,
-};
 use sinex_primitives::events::builder::EventId;
 use sinex_primitives::{error::SinexError, temporal};
+use sinexd::runtime::{
+    ConfirmedEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, ProcessingModel,
+    ProvisionalEvent, RuntimeResult, prelude::async_trait,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;

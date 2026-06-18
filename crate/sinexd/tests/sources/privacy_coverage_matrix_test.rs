@@ -243,7 +243,9 @@ async fn privacy_coverage_surface_rows_carry_evidence_and_caveats() -> TestResul
     for row in surfaces {
         let surface = row["surface"].as_str().unwrap_or("<missing>");
         assert!(
-            row["evidence"].as_array().is_some_and(|items| !items.is_empty()),
+            row["evidence"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty()),
             "surface audit row {surface} must cite evidence"
         );
         assert!(

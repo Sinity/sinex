@@ -19,8 +19,8 @@ use crate::runtime::automaton::invalidation::DerivedScopeInvalidation;
 use crate::runtime::automaton::traits::Automaton;
 use crate::runtime::{RuntimeResult, SinexError};
 
-use sinex_primitives::events::{EquivalenceKey, Event, ScopeKey};
 use sinex_primitives::events::builder::OperationMarker;
+use sinex_primitives::events::{EquivalenceKey, Event, ScopeKey};
 use sinex_primitives::{JsonValue, Uuid};
 
 use std::time::Instant;

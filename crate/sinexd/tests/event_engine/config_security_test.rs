@@ -7,7 +7,8 @@ use xtask::sandbox::TestResult;
 use xtask::sandbox::sinex_test;
 
 fn base_config_json() -> TestResult<Value> {
-    serde_json::to_value(EventEngineConfig::default()).wrap_err("serialize default event_engine config")
+    serde_json::to_value(EventEngineConfig::default())
+        .wrap_err("serialize default event_engine config")
 }
 
 #[sinex_test]

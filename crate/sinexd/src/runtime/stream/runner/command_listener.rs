@@ -5,10 +5,9 @@
 //! with the `messaging` feature.
 
 use super::{
-    Arc, AtomicBool, ControlCommandKind, LISTENER_RETRY_DELAY, ModuleKind,
-    Ordering, RuntimeModule, RuntimeRunner, SourceScanAck, SourceScanCommand, SourceScanProgress,
-    StreamExt, Uuid, control_command_kind, debug, error, info, run_resubscribing_listener, warn,
-    watch,
+    Arc, AtomicBool, ControlCommandKind, LISTENER_RETRY_DELAY, ModuleKind, Ordering, RuntimeModule,
+    RuntimeRunner, SourceScanAck, SourceScanCommand, SourceScanProgress, StreamExt, Uuid,
+    control_command_kind, debug, error, info, run_resubscribing_listener, warn, watch,
 };
 
 impl<T: RuntimeModule + 'static> RuntimeRunner<T> {

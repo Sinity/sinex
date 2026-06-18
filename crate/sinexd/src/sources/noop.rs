@@ -11,12 +11,12 @@ use crate::runtime::{
     stream::{Checkpoint, ContinuousStart, RuntimeCapabilities, ScanArgs, ScanReport, TimeHorizon},
 };
 use serde::{Deserialize, Serialize};
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
     RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
     SourceRuntimeBinding, SubjectRef,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 use std::collections::HashMap;
 use std::time::Instant;
