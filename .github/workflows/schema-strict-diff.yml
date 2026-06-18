@@ -42,7 +42,15 @@ jobs:
         # `sqlx::query!` macros compile against the live database — the same
         # pattern the main workspace gate uses. No offline query cache.
         run: |
-          nix develop --accept-flake-config --no-pure-eval --command bash -lc '
+          set -euo pipefail
+          echo "::group::nix develop bootstrap"
+          nix --version
+          echo "Entering the Sinex devshell with Nix build logs enabled."
+          echo "::endgroup::"
+          timeout --foreground 25m nix -L develop --accept-flake-config --no-pure-eval --command bash -lc '
             set -euo pipefail
+            echo "::group::schema-only drift gate"
+            echo "Running: xtask ci postgres -- xtask ci schema-only"
             xtask ci postgres -- xtask ci schema-only
+            echo "::endgroup::"
           '
