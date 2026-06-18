@@ -83,10 +83,7 @@ impl JudgmentVerdict {
 ///
 /// [`apply`]: Proposal::apply
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(bound(
-    serialize = "T: Serialize",
-    deserialize = "T: for<'d> Deserialize<'d>"
-))]
+#[serde(bound(serialize = "T: Serialize", deserialize = "T: for<'d> Deserialize<'d>"))]
 pub struct Proposal<T>
 where
     T: Serialize + Clone + JsonSchema,
@@ -160,11 +157,11 @@ where
     /// an error. This is the gate — confidence alone cannot bypass it.
     pub fn apply(self, judgment: &Judgment) -> Result<T> {
         if judgment.proposal_id != self.id {
-            return Err(SinexError::validation(
-                "judgment does not reference this proposal",
-            )
-            .with_context("proposal_id", self.id.clone())
-            .with_context("judgment_proposal_id", judgment.proposal_id.clone()));
+            return Err(
+                SinexError::validation("judgment does not reference this proposal")
+                    .with_context("proposal_id", self.id.clone())
+                    .with_context("judgment_proposal_id", judgment.proposal_id.clone()),
+            );
         }
         if !judgment.verdict.is_accept() {
             return Err(SinexError::validation(
@@ -261,10 +258,7 @@ pub struct FinalizerRegistration {
 impl FinalizerRegistration {
     /// Create a registration that always requires human judgment.
     #[must_use]
-    pub fn human_required(
-        proposal_kind: ProposalKind,
-        description: impl Into<String>,
-    ) -> Self {
+    pub fn human_required(proposal_kind: ProposalKind, description: impl Into<String>) -> Self {
         Self {
             id: Id::<FinalizerMarker>::new().to_string(),
             proposal_kind,
@@ -296,9 +290,8 @@ pub struct DuplicateCandidatePayload {
 /// Fixture: a duplicate-candidate proposal for two events believed to be
 /// the same shell command executed twice in close succession.
 pub fn fixture_duplicate_proposal() -> Proposal<DuplicateCandidatePayload> {
-    let subject =
-        SinexObjectRef::new(crate::views::SinexObjectKind::Event, "evt-aaaabbbb")
-            .with_label("command.executed: git status");
+    let subject = SinexObjectRef::new(crate::views::SinexObjectKind::Event, "evt-aaaabbbb")
+        .with_label("command.executed: git status");
 
     Proposal::new(
         ProposalKind::DuplicateCandidate,
@@ -318,9 +311,7 @@ pub fn fixture_duplicate_proposal() -> Proposal<DuplicateCandidatePayload> {
 }
 
 /// Fixture: operator accepting the duplicate-candidate proposal.
-pub fn fixture_accept_judgment(
-    proposal: &Proposal<DuplicateCandidatePayload>,
-) -> Judgment {
+pub fn fixture_accept_judgment(proposal: &Proposal<DuplicateCandidatePayload>) -> Judgment {
     Judgment::new(
         proposal.id.clone(),
         JudgmentVerdict::Accept,
@@ -330,9 +321,7 @@ pub fn fixture_accept_judgment(
 }
 
 /// Fixture: operator rejecting the duplicate-candidate proposal.
-pub fn fixture_reject_judgment(
-    proposal: &Proposal<DuplicateCandidatePayload>,
-) -> Judgment {
+pub fn fixture_reject_judgment(proposal: &Proposal<DuplicateCandidatePayload>) -> Judgment {
     Judgment::new(
         proposal.id.clone(),
         JudgmentVerdict::Reject,
@@ -358,17 +347,23 @@ mod tests {
 
     use super::*;
     use crate::views::SinexObjectKind;
+    use xtask::sandbox::sinex_test;
 
-    #[test]
-    fn accept_judgment_allows_apply() {
+    #[sinex_test]
+    async fn accept_judgment_allows_apply() -> TestResult<()> {
         let proposal = fixture_duplicate_proposal();
         let judgment = fixture_accept_judgment(&proposal);
         let value = proposal.apply(&judgment).unwrap();
-        assert_eq!(value.match_reason, "identical command text, same cwd, within 2s");
+        assert_eq!(
+            value.match_reason,
+            "identical command text, same cwd, within 2s"
+        );
+
+        Ok(())
     }
 
-    #[test]
-    fn reject_judgment_blocks_apply() {
+    #[sinex_test]
+    async fn reject_judgment_blocks_apply() -> TestResult<()> {
         let proposal = fixture_duplicate_proposal();
         let judgment = fixture_reject_judgment(&proposal);
         let err = proposal.apply(&judgment).unwrap_err();
@@ -376,6 +371,8 @@ mod tests {
             err.to_string().contains("Accept judgment"),
             "expected error mentioning Accept requirement, got: {err}"
         );
+
+        Ok(())
     }
 
     /// Core invariant test: confidence score alone cannot promote a Proposal.
@@ -384,8 +381,8 @@ mod tests {
     /// is apply() which requires a Judgment. This test proves that:
     /// 1. A judgment referencing a different proposal is rejected.
     /// 2. A Defer verdict is rejected (not just Reject).
-    #[test]
-    fn confidence_alone_cannot_promote_proposal() {
+    #[sinex_test]
+    async fn confidence_alone_cannot_promote_proposal() -> TestResult<()> {
         let proposal = Proposal::new(
             ProposalKind::DuplicateCandidate,
             SinexObjectRef::new(SinexObjectKind::Event, "evt-x"),
@@ -409,10 +406,12 @@ mod tests {
             err.to_string().contains("does not reference this proposal"),
             "expected mismatch error, got: {err}"
         );
+
+        Ok(())
     }
 
-    #[test]
-    fn defer_verdict_does_not_grant_access() {
+    #[sinex_test]
+    async fn defer_verdict_does_not_grant_access() -> TestResult<()> {
         let proposal = fixture_duplicate_proposal();
         let defer_judgment = Judgment::new(
             proposal.id.clone(),
@@ -424,10 +423,13 @@ mod tests {
             err.to_string().contains("Accept judgment"),
             "expected Accept-required error for Defer verdict, got: {err}"
         );
+
+        Ok(())
     }
 
-    #[test]
-    fn proposal_json_exposes_value_for_display_but_apply_still_requires_judgment() {
+    #[sinex_test]
+    async fn proposal_json_exposes_value_for_display_but_apply_still_requires_judgment()
+    -> TestResult<()> {
         // The proposed_value IS serialized (operator UIs need it for display),
         // but code-level access through Rust still requires apply() + Judgment.
         let proposal = fixture_duplicate_proposal();
@@ -441,41 +443,48 @@ mod tests {
         assert_eq!(json["kind"], "duplicate_candidate");
         // Caveat is present.
         assert_eq!(json["caveats"].as_array().unwrap().len(), 1);
+
+        Ok(())
     }
 
-    #[test]
-    fn view_envelope_wraps_proposal() {
+    #[sinex_test]
+    async fn view_envelope_wraps_proposal() -> TestResult<()> {
         let proposal = fixture_duplicate_proposal();
         let envelope = proposal.into_envelope("sinexctl.authority");
         let json = serde_json::to_value(&envelope).unwrap();
         assert_eq!(json["source_surface"], "sinexctl.authority");
         assert_eq!(json["payload"]["kind"], "duplicate_candidate");
         assert!(json["generated_at"].is_string());
+
+        Ok(())
     }
 
-    #[test]
-    fn judgment_serializes_verdict_in_snake_case() {
+    #[sinex_test]
+    async fn judgment_serializes_verdict_in_snake_case() -> TestResult<()> {
         let proposal = fixture_duplicate_proposal();
         let judgment = fixture_accept_judgment(&proposal);
         let json = serde_json::to_value(&judgment).unwrap();
         assert_eq!(json["verdict"], "accept");
         assert!(json["note"].is_string());
+
+        Ok(())
     }
 
-    #[test]
-    fn finalizer_registration_declares_human_requirement() {
+    #[sinex_test]
+    async fn finalizer_registration_declares_human_requirement() -> TestResult<()> {
         let reg = fixture_finalizer_registration();
         assert!(reg.requires_human_judgment);
         assert!(reg.auto_accept_above_confidence.is_none());
         assert_eq!(reg.proposal_kind, ProposalKind::DuplicateCandidate);
+
+        Ok(())
     }
 
-    #[test]
-    fn schema_generation_covers_all_authority_types() {
-        let proposal_schema = serde_json::to_value(
-            schemars::schema_for!(Proposal<DuplicateCandidatePayload>),
-        )
-        .unwrap();
+    #[sinex_test]
+    async fn schema_generation_covers_all_authority_types() -> TestResult<()> {
+        let proposal_schema =
+            serde_json::to_value(schemars::schema_for!(Proposal<DuplicateCandidatePayload>))
+                .unwrap();
         let judgment_schema = serde_json::to_value(schemars::schema_for!(Judgment)).unwrap();
         let finalizer_schema =
             serde_json::to_value(schemars::schema_for!(FinalizerRegistration)).unwrap();
@@ -483,5 +492,7 @@ mod tests {
         assert!(proposal_schema["properties"]["confidence"].is_object());
         assert!(judgment_schema["properties"]["verdict"].is_object());
         assert!(finalizer_schema["properties"]["requires_human_judgment"].is_object());
+
+        Ok(())
     }
 }

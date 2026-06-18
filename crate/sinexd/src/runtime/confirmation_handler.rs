@@ -533,6 +533,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use tracing_subscriber::fmt::MakeWriter;
+    use xtask::sandbox::sinex_test;
 
     #[derive(Clone, Default)]
     struct CapturedLogs {
@@ -609,8 +610,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn snapshot_reports_pending_timeout_rejections_and_payload_bytes() {
+    #[sinex_test]
+    async fn snapshot_reports_pending_timeout_rejections_and_payload_bytes() -> TestResult<()> {
         let buffer = ConfirmationBuffer::with_capacity_and_grace(
             Duration::from_millis(0),
             2,
@@ -658,10 +659,13 @@ mod tests {
                 .approximate_payload_bytes_by_kind
                 .contains_key("sinexd.event_engine:batch.stats")
         );
+
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn watermark_late_confirmations_are_counted_without_retaining_backlog() {
+    #[sinex_test]
+    async fn watermark_late_confirmations_are_counted_without_retaining_backlog() -> TestResult<()>
+    {
         let buffer = ConfirmationBuffer::with_capacity_and_grace(
             Duration::from_millis(0),
             16,
@@ -699,10 +703,13 @@ mod tests {
         assert_eq!(snapshot.pending_count, 0);
         assert_eq!(snapshot.timed_out_retained_count, 0);
         assert_eq!(snapshot.late_confirmation_count, 2);
+
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn timed_out_journald_payload_retention_is_bounded_by_capacity_and_grace() {
+    #[sinex_test]
+    async fn timed_out_journald_payload_retention_is_bounded_by_capacity_and_grace()
+    -> TestResult<()> {
         const CAPACITY: usize = 16;
         const OVERFLOW_ATTEMPTS: usize = 32;
 
@@ -768,10 +775,13 @@ mod tests {
         assert_eq!(drained.approximate_payload_bytes, 0);
         assert!(drained.approximate_payload_bytes_by_kind.is_empty());
         assert_eq!(drained.rejected_count, OVERFLOW_ATTEMPTS as u64);
+
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn delayed_confirmation_feedback_logs_are_sparse_and_journald_suppressed() {
+    #[sinex_test]
+    async fn delayed_confirmation_feedback_logs_are_sparse_and_journald_suppressed()
+    -> TestResult<()> {
         const LATE_EVENTS: usize = 20;
         let buffer = ConfirmationBuffer::with_capacity_and_grace(
             Duration::from_millis(0),
@@ -900,10 +910,12 @@ mod tests {
             ordinary_intents[0].payload["message"],
             Value::from("source catalog exported")
         );
+
+        Ok(())
     }
 
-    #[test]
-    fn late_confirmation_aggregate_log_schedule_is_sparse() {
+    #[sinex_test]
+    async fn late_confirmation_aggregate_log_schedule_is_sparse() -> TestResult<()> {
         assert!(should_log_late_confirmation_aggregate(1));
         assert!(should_log_late_confirmation_aggregate(2));
         assert!(should_log_late_confirmation_aggregate(1024));
@@ -911,5 +923,7 @@ mod tests {
         assert!(!should_log_late_confirmation_aggregate(3));
         assert!(!should_log_late_confirmation_aggregate(9_999));
         assert!(!should_log_late_confirmation_aggregate(10_001));
+
+        Ok(())
     }
 }

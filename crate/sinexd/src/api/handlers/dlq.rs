@@ -390,7 +390,7 @@ mod tests {
     use crate::event_engine::policy::PolicyEngine;
     use sinex_db::DbPoolExt;
     use sinex_primitives::error::ErrorClass;
-    use xtask::sandbox::prelude::*;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn parse_retry_count_header_defaults_when_missing() -> TestResult<()> {
@@ -426,15 +426,17 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn dlq_list_pressure_classifies_empty_warning_and_critical_depth() {
+    #[sinex_test]
+    async fn dlq_list_pressure_classifies_empty_warning_and_critical_depth() -> TestResult<()> {
         assert_eq!(dlq_pressure_level(0, 10), "nominal");
         assert_eq!(dlq_pressure_level(10, 10), "warning");
         assert_eq!(dlq_pressure_level(11, 10), "critical");
+
+        Ok(())
     }
 
-    #[test]
-    fn dlq_list_pressure_reports_sequence_span_and_action() {
+    #[sinex_test]
+    async fn dlq_list_pressure_reports_sequence_span_and_action() -> TestResult<()> {
         assert_eq!(dlq_pending_sequence_span(0, 4, 9), 0);
         assert_eq!(dlq_pending_sequence_span(2, 4, 9), 6);
         assert_eq!(dlq_pending_sequence_span(2, 9, 4), 0);
@@ -447,6 +449,8 @@ mod tests {
                 "inspect failures before running paced requeue or purge"
             )
         );
+
+        Ok(())
     }
 
     #[sinex_test]

@@ -302,12 +302,14 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn relations_help_includes_seed_query_json_flag() {
+    #[sinex_test]
+    async fn relations_help_includes_seed_query_json_flag() -> TestResult<()> {
         let help = RelationsCommand::command().render_long_help().to_string();
         assert!(
             help.contains("--seed-query-json"),
             "events relations command must expose the seed query input"
         );
+
+        Ok(())
     }
 }
