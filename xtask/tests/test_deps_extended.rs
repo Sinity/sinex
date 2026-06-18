@@ -3,6 +3,7 @@
 mod support;
 
 use clap::Parser;
+use std::path::Path;
 use support::xtask_command;
 use xtask::Cli;
 use xtask::sandbox::sinex_test;
@@ -467,5 +468,53 @@ async fn test_deps_duplicates_invalid_threshold() -> ::xtask::sandbox::TestResul
     };
     let rendered = error.to_string();
     assert!(rendered.contains("invalid") || rendered.contains("integer"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_dependency_hygiene_doc_matches_duplicate_classifier()
+-> ::xtask::sandbox::TestResult<()> {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| color_eyre::eyre::eyre!("failed to resolve workspace root"))?;
+    let doc_path = workspace_root.join("xtask/docs/dependency-hygiene.md");
+    let doc = std::fs::read_to_string(&doc_path)?;
+
+    assert!(
+        doc.contains("direct_workspace"),
+        "{} must document the live direct_workspace duplicate classification",
+        doc_path.display()
+    );
+    assert!(
+        doc.contains("transitive_upstream"),
+        "{} must document the live transitive_upstream duplicate classification",
+        doc_path.display()
+    );
+    assert!(
+        !doc.contains("direct_workspace_debt") && !doc.contains("transitive_dependency_debt"),
+        "{} must not resurrect removed duplicate-dependency vocabulary",
+        doc_path.display()
+    );
+
+    let output = xtask_command()?
+        .arg("deps")
+        .arg("duplicates")
+        .arg("--json")
+        .output()?;
+    assert!(
+        output.status.success(),
+        "deps duplicates --json failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let direct_count = parsed["data"]["direct_count"]
+        .as_u64()
+        .ok_or_else(|| color_eyre::eyre::eyre!("data.direct_count should be numeric"))?;
+
+    assert!(
+        direct_count == 0 || !doc.contains("Direct workspace duplicate debt is currently zero"),
+        "{} claims zero direct workspace duplicate debt, but xtask deps duplicates reports {direct_count}",
+        doc_path.display()
+    );
     Ok(())
 }

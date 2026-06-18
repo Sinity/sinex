@@ -12,12 +12,7 @@ This slice intentionally excludes source-contract descriptors and
 lanes. Do not add new allowlist entries for ordinary runtime code; move concrete
 paths and product-specific examples to scoped docs/config instead.
 
-The same lint also keeps dependency-hygiene docs tied to the live duplicate
-dependency vocabulary:
-
-- use `direct_workspace` and `transitive_upstream` from
-  `xtask deps duplicates --json`;
-- do not keep claiming direct workspace duplicate debt is zero after the live
-  duplicate report shows direct-workspace duplicates;
-- do not reintroduce the removed direct-workspace/transitive duplicate boolean
-  vocabulary that preceded the current classification field.
+Dependency-hygiene docs are checked beside the `xtask deps` behavior they rely
+on, not through this forbidden-pattern scan. Use
+`xtask test -p xtask -E 'test(test_dependency_hygiene_doc_matches_duplicate_classifier)'`
+when changing duplicate-classification docs or output.
