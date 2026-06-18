@@ -711,6 +711,26 @@
                   esac
                 }
 
+                _sinex_xtask_requires_sqlx_database() {
+                  local command_name
+                  command_name="$(_sinex_xtask_command_name "$@")"
+                  case "$command_name" in
+                    check|test|build|deps|doctor)
+                      return 0
+                      ;;
+                    *)
+                      return 1
+                      ;;
+                  esac
+                }
+
+                _sinex_xtask_exec_checkout_binary() {
+                  if _sinex_xtask_requires_sqlx_database "$@"; then
+                    _sinex_xtask_ensure_sqlx_database || exit $?
+                  fi
+                  exec "$bin_path" "$@"
+                }
+
                 _sinex_xtask_wait_for_existing_build() {
                   while [ -d "$build_lock_dir" ]; do
                     if [ -r "$build_lock_dir/pid" ]; then
@@ -890,14 +910,14 @@ SQL
                           if [ -r "$build_failure_log" ]; then
                             echo "  log: $build_failure_log" >&2
                           fi
-                          exec "$bin_path" "$@"
+                          _sinex_xtask_exec_checkout_binary "$@"
                         fi
                         exit 1
                       fi
-                      exec "$bin_path" "$@"
+                      _sinex_xtask_exec_checkout_binary "$@"
                     fi
                   fi
-                  exec "$bin_path" "$@"
+                  _sinex_xtask_exec_checkout_binary "$@"
                 fi
 
                 if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
@@ -908,7 +928,7 @@ SQL
                         if [ -r "$build_failure_log" ]; then
                           echo "  log: $build_failure_log" >&2
                         fi
-                        exec "$bin_path" "$@"
+                        _sinex_xtask_exec_checkout_binary "$@"
                       fi
                       _sinex_xtask_report_current_failure
                       exit 101
@@ -916,7 +936,7 @@ SQL
                     exit 1
                   fi
                 fi
-                exec "$bin_path" "$@"
+                _sinex_xtask_exec_checkout_binary "$@"
               '';
             in
             pkgs.mkShell {
