@@ -347,6 +347,174 @@
             let
               stateDir = ".sinex";
               pgPort = 5432;
+              cargoCommand = pkgs.writeShellScriptBin "cargo" ''
+                set -euo pipefail
+
+                root_dir="''${SINEX_DEV_ROOT:-}"
+                if [ -z "$root_dir" ]; then
+                  exec ${fenixPkgs.toolchain}/bin/cargo "$@"
+                fi
+
+                real_cargo="${fenixPkgs.toolchain}/bin/cargo"
+                pgdata="$SINEX_DEV_STATE_DIR/data/postgres"
+                pgrun="$SINEX_DEV_STATE_DIR/run"
+                pglog="$SINEX_DEV_STATE_DIR/run/logs"
+                pgport="''${PGPORT:-5432}"
+                runtime_conf="$pgdata/sinex-dev.conf"
+                include_line="include_if_exists = '$runtime_conf'"
+                dev_user="''${USER:-$(id -un)}"
+                bootstrap_lock_dir="$SINEX_DEV_STATE_DIR/cargo-sqlx-bootstrap.lock"
+                bootstrap_log="$pglog/cargo-sqlx-bootstrap.log"
+
+                _sinex_cargo_command_name() {
+                  while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                      +*)
+                        shift
+                        ;;
+                      -Z|--config|--manifest-path|--color)
+                        if [ "$#" -ge 2 ]; then
+                          shift 2
+                        else
+                          shift
+                        fi
+                        ;;
+                      -Z*|--config=*|--manifest-path=*|--color=*)
+                        shift
+                        ;;
+                      -h|--help|-V|--version)
+                        printf '%s\n' "$1"
+                        return 0
+                        ;;
+                      -*)
+                        shift
+                        ;;
+                      *)
+                        printf '%s\n' "$1"
+                        return 0
+                        ;;
+                    esac
+                  done
+                }
+
+                _sinex_cargo_requires_sqlx_database() {
+                  local command_name
+                  command_name="$(_sinex_cargo_command_name "$@" || true)"
+                  case "$command_name" in
+                    build|check|test|clippy|run|doc|bench|nextest)
+                      return 0
+                      ;;
+                    *)
+                      return 1
+                      ;;
+                  esac
+                }
+
+                _sinex_cargo_write_runtime_config() {
+                  {
+                    printf "unix_socket_directories = '%s'\n" "$pgrun"
+                    printf "%s = '%s'\n" "listen_addresses" ""
+                    printf "port = %s\n" "$pgport"
+                    printf "max_connections = 800\n"
+                    printf "max_worker_processes = 24\n"
+                    printf "shared_preload_libraries = 'timescaledb'\n"
+                    printf "timescaledb.max_background_workers = 16\n"
+                    printf "log_destination = 'stderr'\n"
+                    printf "logging_collector = on\n"
+                    printf "log_directory = '%s'\n" "$pglog"
+                    printf "log_filename = 'postgres.log'\n"
+                  } >"$runtime_conf"
+
+                  if ! grep -Fqx "$include_line" "$pgdata/postgresql.conf"; then
+                    printf '\n%s\n' "$include_line" >>"$pgdata/postgresql.conf"
+                  fi
+                }
+
+                _sinex_cargo_bootstrap_sqlx_database_unlocked() {
+                  mkdir -p "$pgdata" "$pgrun" "$pglog"
+
+                  if [ ! -f "$pgdata/PG_VERSION" ]; then
+                    echo "ℹ  Initializing checkout-local Postgres for SQLx validation..." >&2
+                    ${postgresForSqlx}/bin/initdb \
+                      --auth=trust \
+                      --no-locale \
+                      --encoding=UTF8 \
+                      -U postgres \
+                      -D "$pgdata" >>"$bootstrap_log" 2>&1
+                  fi
+
+                  _sinex_cargo_write_runtime_config
+
+                  if ! ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1; then
+                    echo "ℹ  Starting checkout-local Postgres for SQLx validation..." >&2
+                    ${postgresForSqlx}/bin/pg_ctl \
+                      -D "$pgdata" \
+                      start \
+                      -w \
+                      -l "$pglog/postgres-start.log" \
+                      -o "-k $pgrun -p $pgport" >>"$bootstrap_log" 2>&1
+                  fi
+
+                  ${postgresForSqlx}/bin/psql \
+                    -h "$pgrun" \
+                    -p "$pgport" \
+                    -U postgres \
+                    -d postgres \
+                    -v ON_ERROR_STOP=1 \
+                    -v dev_user="$dev_user" >>"$bootstrap_log" 2>&1 <<'SQL'
+SELECT format('CREATE ROLE %I LOGIN SUPERUSER CREATEDB', :'dev_user')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'dev_user')\gexec
+SELECT format('ALTER ROLE %I WITH SUPERUSER CREATEDB LOGIN', :'dev_user')
+WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'dev_user')\gexec
+SELECT format('CREATE DATABASE sinex_dev OWNER %I', :'dev_user')
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sinex_dev')\gexec
+SQL
+
+                  echo "ℹ  Applying checkout-local schema for SQLx validation..." >&2
+                  DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres" \
+                    ${schemaApplyBootstrap}/bin/schema-apply-bootstrap >>"$bootstrap_log" 2>&1
+                }
+
+                _sinex_cargo_bootstrap_sqlx_database() {
+                  mkdir -p "$SINEX_DEV_STATE_DIR" "$pglog"
+                  while ! mkdir "$bootstrap_lock_dir" 2>/dev/null; do
+                    if [ -r "$bootstrap_lock_dir/pid" ]; then
+                      _lock_pid="$(cat "$bootstrap_lock_dir/pid" 2>/dev/null || true)"
+                      if [ -n "$_lock_pid" ] && ! kill -0 "$_lock_pid" 2>/dev/null; then
+                        rm -rf "$bootstrap_lock_dir"
+                        continue
+                      fi
+                    fi
+                    sleep 0.1
+                  done
+                  printf '%s\n' "$$" > "$bootstrap_lock_dir/pid"
+                  trap 'rm -rf "$bootstrap_lock_dir"' EXIT INT TERM
+
+                  : >"$bootstrap_log"
+                  if ! _sinex_cargo_bootstrap_sqlx_database_unlocked; then
+                    echo "✗ cargo SQLx bootstrap failed; log: $bootstrap_log" >&2
+                    cat "$bootstrap_log" >&2 || true
+                    rm -rf "$bootstrap_lock_dir"
+                    trap - EXIT INT TERM
+                    return 1
+                  fi
+
+                  rm -rf "$bootstrap_lock_dir"
+                  trap - EXIT INT TERM
+                }
+
+                if _sinex_cargo_requires_sqlx_database "$@"; then
+                  if [ "''${SINEX_CARGO_SQLX_BOOTSTRAP:-1}" = 1 ]; then
+                    echo "ℹ  cargo $(_sinex_cargo_command_name "$@" || printf command) uses SQLx compile-time validation; bootstrapping checkout-local Postgres/schema..." >&2
+                    _sinex_cargo_bootstrap_sqlx_database
+                  fi
+                  export PGHOST="$pgrun"
+                  export PGPORT="$pgport"
+                  export DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres"
+                fi
+
+                exec "$real_cargo" "$@"
+              '';
               xtaskCommand = pkgs.writeShellScriptBin "xtask" ''
                 set -euo pipefail
 
@@ -988,6 +1156,7 @@ SQL
                 direnv
                 zstd
                 git
+                cargoCommand
                 xtaskCommand
               ];
 
@@ -1033,6 +1202,7 @@ SQL
                 # builds (Cargo.toml [profile.dev] incremental = true) instead.
                 unset RUSTC_WRAPPER
                 unset SCCACHE_DIR
+                _sinex_path_prepend_unique "${cargoCommand}/bin"
                 _sinex_path_prepend_unique "$CARGO_TARGET_DIR/debug"
                 _sinex_path_prepend_unique "${xtaskCommand}/bin"
                 export PATH
