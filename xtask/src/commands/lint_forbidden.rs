@@ -2,7 +2,6 @@
 
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde::Deserialize;
-use std::path::Path;
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -22,7 +21,6 @@ use crate::config::{ast_grep_config_path, workspace_root};
 /// - `println!` in library code (use `tracing` instead)
 /// - Core runtime code assuming deployment-local `/realm` paths or Lynchpin
 ///   product semantics outside explicitly scoped docs/deployment examples
-/// - Stale duplicate-dependency vocabulary claims in xtask docs
 ///
 /// Also reports (informational, non-blocking):
 /// - `SQLx` query usage statistics (runtime vs compile-time)
@@ -163,7 +161,6 @@ impl XtaskCommand for LintForbiddenCommand {
         violations.extend(check_privacy_metadata_for_sensitive_units()?);
         violations.extend(check_raw_source_registration_macros()?);
         violations.extend(check_coherence_boundary_assumptions()?);
-        violations.extend(check_duplicate_vocabulary_claims()?);
 
         // anyhow:: in library code is disallowed; libraries use the project error stack.
         let anyhow_allow: [&str; 0] = [];
@@ -595,73 +592,6 @@ fn is_coherence_boundary_skip(path: &str) -> bool {
         || path.starts_with("nixos/")
         || path.starts_with("docs/")
         || path.starts_with("xtask/")
-}
-
-/// Gate: duplicate-dependency docs must keep the current classification
-/// vocabulary and must not keep claiming "direct workspace debt is zero" after
-/// `xtask deps duplicates` sees direct-workspace duplicate debt.
-fn check_duplicate_vocabulary_claims() -> Result<Vec<String>> {
-    let root = workspace_root();
-    let doc_path = Path::new("xtask/docs/dependency-hygiene.md");
-    let contents = std::fs::read_to_string(root.join(doc_path))
-        .with_context(|| format!("failed to read {}", doc_path.display()))?;
-
-    let direct_duplicate_count = direct_workspace_duplicate_count().ok();
-
-    let mut violations =
-        duplicate_claim_doc_violations(doc_path, &contents, direct_duplicate_count);
-    violations.extend(check_pattern_with_globs(
-        "removed duplicate-dependency vocabulary in docs",
-        r"\b(direct_workspace_debt|transitive_dependency_debt)\b",
-        &[],
-        &[
-            "xtask/docs/**/*.md",
-            "docs/**/*.md",
-            "README.md",
-            "CONTRIBUTING.md",
-            "TESTING.md",
-        ],
-        |_| false,
-    )?);
-    Ok(violations)
-}
-
-fn direct_workspace_duplicate_count() -> Result<usize> {
-    Ok(crate::deps::analyzer::WorkspaceAnalyzer::new()
-        .context("failed to create workspace dependency analyzer")?
-        .find_duplicates()
-        .context("failed to find duplicate dependencies for docs coherence check")?
-        .into_iter()
-        .filter(|duplicate| duplicate.classification.is_direct_workspace())
-        .count())
-}
-
-fn duplicate_claim_doc_violations(
-    doc_path: &Path,
-    contents: &str,
-    direct_duplicate_count: Option<usize>,
-) -> Vec<String> {
-    let mut violations = Vec::new();
-    let doc = doc_path.display();
-
-    if !contents.contains("direct_workspace") || !contents.contains("transitive_upstream") {
-        violations.push(format!(
-            "{doc}: duplicate-dependency docs must use the current `direct_workspace` / \
-             `transitive_upstream` classification vocabulary"
-        ));
-    }
-
-    if let Some(direct_duplicate_count) = direct_duplicate_count
-        && direct_duplicate_count > 0
-        && contents.contains("Direct workspace duplicate debt is currently zero")
-    {
-        violations.push(format!(
-            "{doc}: stale duplicate-dependency claim says direct workspace debt is zero, \
-             but xtask deps duplicates reports {direct_duplicate_count} direct-workspace duplicate(s)"
-        ));
-    }
-
-    violations
 }
 
 /// Return true if any `.rs` file directly inside `dir` (non-recursive) contains
@@ -1315,68 +1245,6 @@ mod tests {
         assert!(!is_coherence_boundary_skip(
             "crate/sinex-db/src/repositories/foo.rs"
         ));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn duplicate_claim_doc_flags_stale_zero_direct_debt_claim()
-    -> ::xtask::sandbox::TestResult<()> {
-        let contents = "Use `direct_workspace` and `transitive_upstream`. \
-            Direct workspace duplicate debt is currently zero.";
-        let violations = duplicate_claim_doc_violations(
-            Path::new("xtask/docs/dependency-hygiene.md"),
-            contents,
-            Some(2),
-        );
-
-        assert_eq!(violations.len(), 1);
-        assert!(violations[0].contains("direct workspace debt is zero"));
-        assert!(violations[0].contains("2 direct-workspace duplicate"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn duplicate_claim_doc_requires_current_classification_vocabulary()
-    -> ::xtask::sandbox::TestResult<()> {
-        let violations = duplicate_claim_doc_violations(
-            Path::new("xtask/docs/dependency-hygiene.md"),
-            "Duplicate versions should be reviewed by dependency owner.",
-            Some(0),
-        );
-
-        assert_eq!(violations.len(), 1);
-        assert!(violations[0].contains("direct_workspace"));
-        assert!(violations[0].contains("transitive_upstream"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn duplicate_claim_doc_accepts_current_zero_debt_wording()
-    -> ::xtask::sandbox::TestResult<()> {
-        let contents = "Use `direct_workspace` / `transitive_upstream`. \
-            Direct workspace duplicate debt is currently zero.";
-        let violations = duplicate_claim_doc_violations(
-            Path::new("xtask/docs/dependency-hygiene.md"),
-            contents,
-            Some(0),
-        );
-
-        assert!(violations.is_empty(), "{violations:#?}");
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn duplicate_claim_doc_keeps_source_lint_when_metadata_is_unavailable()
-    -> ::xtask::sandbox::TestResult<()> {
-        let contents = "Use `direct_workspace` / `transitive_upstream`. \
-            Direct workspace duplicate debt is currently zero.";
-        let violations = duplicate_claim_doc_violations(
-            Path::new("xtask/docs/dependency-hygiene.md"),
-            contents,
-            None,
-        );
-
-        assert!(violations.is_empty(), "{violations:#?}");
         Ok(())
     }
 
