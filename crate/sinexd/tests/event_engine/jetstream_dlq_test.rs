@@ -7,13 +7,13 @@ use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::schema_management::NewEventSchema;
-use sinexd::event_engine::validator::IngestEventValidator;
-use sinexd::event_engine::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{
     Uuid,
-    domain::{EventSource, EventType, ModuleName, ModuleKind},
+    domain::{EventSource, EventType, ModuleKind, ModuleName},
     error::SinexError,
 };
+use sinexd::event_engine::validator::IngestEventValidator;
+use sinexd::event_engine::{JetStreamConsumer, JetStreamTopology};
 use std::sync::Arc;
 use std::time::Duration;
 use support::{
@@ -1156,7 +1156,9 @@ async fn test_dlq_unparseable_payload_suppressed_by_privacy_chokepoint() -> Test
     // never persist unredacted raw content in the DLQ.
     let original = &entry["original_payload"];
     assert_eq!(
-        original.get("_raw_bytes_suppressed").and_then(|v| v.as_bool()),
+        original
+            .get("_raw_bytes_suppressed")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "Unparseable payload raw bytes should be suppressed (#1042), got: {original}"
     );

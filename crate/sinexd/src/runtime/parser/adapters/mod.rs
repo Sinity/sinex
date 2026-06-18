@@ -38,8 +38,8 @@ mod unix_socket_stream;
 
 // ApiCursor adapter (#1746).
 pub use api_cursor::{
-    ApiClient, ApiFetchError, ApiFetchPage, ApiCursorAdapter, ApiCursorConfig,
-    ApiCursorPosition, RetryPolicy,
+    ApiClient, ApiCursorAdapter, ApiCursorConfig, ApiCursorPosition, ApiFetchError, ApiFetchPage,
+    RetryPolicy,
 };
 
 // IncrementalDump adapter (#1774).
@@ -59,12 +59,12 @@ pub use directory_walk::{
     DirectoryWalkAdapter, DirectoryWalkConfig, DirectoryWalkCursor, FileFingerprint,
 };
 pub use sqlite_row::{SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor};
+#[cfg(all(feature = "messaging", test))]
+pub use sqlite_snapshot::SqliteSnapshotEvidence;
 #[cfg(feature = "messaging")]
 pub use sqlite_snapshot::{
     LatestSqliteSnapshotEvidence, SnapshotLaneSpec, SqliteSnapshotConfig, SqliteSnapshotLane,
 };
-#[cfg(all(feature = "messaging", test))]
-pub use sqlite_snapshot::SqliteSnapshotEvidence;
 pub use static_file::{StaticFileAdapter, StaticFileConfig, StaticFileCursor};
 
 // New adapters.

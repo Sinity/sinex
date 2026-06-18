@@ -1561,7 +1561,10 @@ mod tests {
             value["payload"]["schema_version"],
             SOURCE_CONTINUITY_GAP_SCHEMA_VERSION
         );
-        assert_eq!(value["payload"]["explanation"]["explanation"], "coverage present");
+        assert_eq!(
+            value["payload"]["explanation"]["explanation"],
+            "coverage present"
+        );
         Ok(())
     }
 

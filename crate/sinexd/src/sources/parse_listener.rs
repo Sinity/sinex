@@ -326,7 +326,9 @@ mod tests {
         let material = ctx
             .pool()
             .source_materials()
-            .register_material(SourceMaterialRegistration::blob_text(filename).with_blob_id(blob.id))
+            .register_material(
+                SourceMaterialRegistration::blob_text(filename).with_blob_id(blob.id),
+            )
             .await?;
         Ok(material.id)
     }

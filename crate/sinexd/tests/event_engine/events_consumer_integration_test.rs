@@ -7,8 +7,8 @@ use async_nats::{Client, jetstream};
 use color_eyre::eyre::eyre;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinexd::event_engine::{JetStreamConsumer, JetStreamTopology, validator::IngestEventValidator};
 use sinex_primitives::{Uuid, environment, temporal};
+use sinexd::event_engine::{JetStreamConsumer, JetStreamTopology, validator::IngestEventValidator};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -450,16 +450,22 @@ async fn jetstream_consumer_isolates_poison_row_without_rolling_back_committed_s
         .nats_client
         .publish(
             good_subject,
-            serde_json::to_vec(&admission_envelope(&format!("split.good.{suffix}"), good_event))?
-                .into(),
+            serde_json::to_vec(&admission_envelope(
+                &format!("split.good.{suffix}"),
+                good_event,
+            ))?
+            .into(),
         )
         .await?;
     setup
         .nats_client
         .publish(
             bad_subject,
-            serde_json::to_vec(&admission_envelope(&format!("split.bad.{suffix}"), bad_event))?
-                .into(),
+            serde_json::to_vec(&admission_envelope(
+                &format!("split.bad.{suffix}"),
+                bad_event,
+            ))?
+            .into(),
         )
         .await?;
     setup.nats_client.flush().await?;

@@ -164,7 +164,7 @@ pub use preflight::{VerificationStatus, verify_service_dependencies};
 
 // ApiCursor adapter — paginated REST import support (#1746).
 pub use parser::{
-    ApiClient, ApiFetchError, ApiFetchPage, ApiCursorAdapter, ApiCursorConfig, ApiCursorPosition,
+    ApiClient, ApiCursorAdapter, ApiCursorConfig, ApiCursorPosition, ApiFetchError, ApiFetchPage,
     RetryPolicy,
 };
 

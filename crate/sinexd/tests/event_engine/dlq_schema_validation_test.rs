@@ -1,13 +1,13 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::repositories::schema_management::{NewEventSchema, SchemaManagementRepository};
-use sinexd::event_engine::validator::IngestEventValidator;
-use sinexd::event_engine::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{
     Uuid,
     domain::{EventSource, EventType},
     error::SinexError,
 };
+use sinexd::event_engine::validator::IngestEventValidator;
+use sinexd::event_engine::{JetStreamConsumer, JetStreamTopology};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;

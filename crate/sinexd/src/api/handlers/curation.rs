@@ -147,16 +147,14 @@ pub async fn handle_curation_list_duplicate_candidates(
     .fetch_all(pool)
     .await
     .map_err(|error| {
-        SinexError::database("failed to list duplicate candidate clusters")
-            .with_std_error(&error)
+        SinexError::database("failed to list duplicate candidate clusters").with_std_error(&error)
     })?;
 
     let mut clusters = Vec::with_capacity(cluster_rows.len());
     for row in cluster_rows {
         let source: String = row.try_get("source").map_err(cluster_row_error)?;
         let event_type: String = row.try_get("event_type").map_err(cluster_row_error)?;
-        let equivalence_key: String =
-            row.try_get("equivalence_key").map_err(cluster_row_error)?;
+        let equivalence_key: String = row.try_get("equivalence_key").map_err(cluster_row_error)?;
         let event_count: i64 = row.try_get("event_count").map_err(cluster_row_error)?;
         let material_count: i64 = row.try_get("material_count").map_err(cluster_row_error)?;
 

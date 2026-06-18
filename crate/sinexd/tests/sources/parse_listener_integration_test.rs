@@ -132,7 +132,8 @@ async fn spawn_recording_listener(
 async fn parse_listener_loads_and_dispatches_real_bytes(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let source_id = "weechat";
-    let (handle, calls, subject, content_store, _tmp) = spawn_recording_listener(&ctx, source_id).await?;
+    let (handle, calls, subject, content_store, _tmp) =
+        spawn_recording_listener(&ctx, source_id).await?;
     let client = ctx.nats_client();
 
     let payload = b"weechat: <nick> real history line\n";

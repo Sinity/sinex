@@ -45,8 +45,8 @@
 use std::{error::Error, fmt, future::Future, sync::Arc};
 
 use async_trait::async_trait;
-use futures::stream::{self, BoxStream};
 use futures::StreamExt;
+use futures::stream::{self, BoxStream};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as JsonValue};
@@ -237,11 +237,9 @@ where
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
         let high_water: Option<IncrementalDumpPosition> = cursor.and_then(|c| c.high_water);
 
-        let raw = self
-            .loader
-            .load()
-            .await
-            .map_err(|e| ParserError::Adapter(IncrementalDumpError::Load(e.to_string()).to_string()))?;
+        let raw = self.loader.load().await.map_err(|e| {
+            ParserError::Adapter(IncrementalDumpError::Load(e.to_string()).to_string())
+        })?;
 
         // Pair each record with its composite position + serialized bytes,
         // failing closed if any record is missing the order-key field (a silent
@@ -285,8 +283,11 @@ where
                 }
             }
 
-            let metadata =
-                build_record_metadata(&position.order_key, &position.content_hash, dump_index as u64);
+            let metadata = build_record_metadata(
+                &position.order_key,
+                &position.content_hash,
+                dump_index as u64,
+            );
 
             records.push(Ok(SourceRecord {
                 material_id,
@@ -478,7 +479,11 @@ mod tests {
         let out = open_records(&adapter, None).await;
         let mut vs: Vec<i64> = out.iter().map(v_of).collect();
         vs.sort();
-        assert_eq!(vs, vec![1, 2, 3], "no record sharing a timestamp is dropped");
+        assert_eq!(
+            vs,
+            vec![1, 2, 3],
+            "no record sharing a timestamp is dropped"
+        );
         Ok(())
     }
 
@@ -500,7 +505,10 @@ mod tests {
 
         let mut vs: Vec<i64> = out.iter().map(v_of).collect();
         vs.sort();
-        let mut expected: Vec<i64> = vec![1, 2, 3].into_iter().filter(|v| *v != consumed).collect();
+        let mut expected: Vec<i64> = vec![1, 2, 3]
+            .into_iter()
+            .filter(|v| *v != consumed)
+            .collect();
         expected.sort();
         // Everything except the already-consumed record survives — crucially the
         // other record sharing ts=2026-01-01 is still present.
@@ -510,8 +518,9 @@ mod tests {
 
     #[sinex_test]
     async fn cursor_after_reports_composite_position() -> xtask::sandbox::TestResult<()> {
-        let adapter =
-            IncrementalDumpAdapter::new(MockLoader::new(vec![serde_json::json!({"ts": "2026-05-05", "v": 9})]));
+        let adapter = IncrementalDumpAdapter::new(MockLoader::new(vec![
+            serde_json::json!({"ts": "2026-05-05", "v": 9}),
+        ]));
         let records = open_records(&adapter, None).await;
         let position = adapter
             .cursor_after(&records[0])
@@ -519,7 +528,11 @@ mod tests {
             .high_water
             .expect("a consumed record yields a position");
         assert_eq!(position.order_key, "2026-05-05");
-        assert_eq!(position.content_hash.len(), 64, "BLAKE3 hex digest is 64 chars");
+        assert_eq!(
+            position.content_hash.len(),
+            64,
+            "BLAKE3 hex digest is 64 chars"
+        );
         Ok(())
     }
 
@@ -547,7 +560,10 @@ mod tests {
     async fn load_failure_surfaces_typed_error() -> xtask::sandbox::TestResult<()> {
         let adapter = IncrementalDumpAdapter::new(MockLoader::failing());
         let result = adapter.open(dummy_material_id(), &config(), None).await;
-        assert!(result.is_err(), "loader failure must surface, not yield empty");
+        assert!(
+            result.is_err(),
+            "loader failure must surface, not yield empty"
+        );
         Ok(())
     }
 

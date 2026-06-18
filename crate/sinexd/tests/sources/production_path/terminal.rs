@@ -178,10 +178,10 @@ mod tests {
 
     #[sinex_test]
     async fn terminal_asciinema_session_json_ingestion() -> TestResult<()> {
+        use sinex_primitives::Uuid;
         use sinex_primitives::ids::Id;
         use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceId, SourceRecord};
         use sinex_primitives::temporal::Timestamp;
-        use sinex_primitives::Uuid;
         use sinexd::runtime::parser::MaterialParser;
         use sinexd::sources::source_contracts::terminal::asciinema::AsciinemaParser;
 

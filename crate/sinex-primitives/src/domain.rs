@@ -2081,7 +2081,9 @@ impl std::str::FromStr for ModuleState {
 /// The five managed kinds are enforced by the DB `core.start_operation()` function
 /// (see `sinex-schema/src/apply.rs`). `Other` captures future or non-managed
 /// kinds without breaking deserialization.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationKind {
     /// Full re-ingestion of source material through the pipeline
