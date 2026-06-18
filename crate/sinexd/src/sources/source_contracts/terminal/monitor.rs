@@ -12,7 +12,10 @@ use crate::runtime::{RuntimeResult, stream::RuntimeContext};
 use futures::future::BoxFuture;
 use sinex_macros::SourceMeta;
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::source_contracts::{
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape,
+};
 use sinex_primitives::{
     JsonValue, SinexError,
     events::payloads::shell::TerminalMonitoringStartedPayload,

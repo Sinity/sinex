@@ -1,5 +1,5 @@
-use sinexd::event_engine::service::try_acquire_migration_lock;
 use sinex_primitives::error::SinexError;
+use sinexd::event_engine::service::try_acquire_migration_lock;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
 

@@ -18,7 +18,10 @@
 
 use sinex_macros::SourceDefinition;
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::source_contracts::{
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape,
+};
 
 /// Declarative fish shell history source definition.
 ///

@@ -1501,14 +1501,14 @@ async fn commit_pending_slice_write(
             return Ok(());
         }
         other => {
-            return Err(SinexError::invalid_state(
-                "pending_write changed before slice commit",
-            )
-            .with_context("material_id", material_id.to_string())
-            .with_context("pending_offset", pending_write.offset.to_string())
-            .with_context("pending_len", pending_write.len.to_string())
-            .with_context("state_pending_write", format!("{other:?}"))
-            .with_context("state_expected_offset", state.expected_offset.to_string()));
+            return Err(
+                SinexError::invalid_state("pending_write changed before slice commit")
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("pending_offset", pending_write.offset.to_string())
+                    .with_context("pending_len", pending_write.len.to_string())
+                    .with_context("state_pending_write", format!("{other:?}"))
+                    .with_context("state_expected_offset", state.expected_offset.to_string()),
+            );
         }
     }
 
@@ -1638,7 +1638,10 @@ async fn notify_slice_staging_io_for_tests() {
         .ok()
         .and_then(|guard| guard.clone());
     if let Some(hook) = hook {
-        if hook.pause_next.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        if hook
+            .pause_next
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
             hook.entered.notify_waiters();
             hook.release.notified().await;
         }
@@ -1813,7 +1816,10 @@ mod tests {
             let guard = state_handle
                 .try_lock()
                 .expect("state mutex should be free while staged file I/O is pending");
-            assert_eq!(guard.pending_write.as_ref().map(|write| write.offset), Some(0));
+            assert_eq!(
+                guard.pending_write.as_ref().map(|write| write.offset),
+                Some(0)
+            );
             assert_eq!(guard.expected_offset, 0);
         }
 

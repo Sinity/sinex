@@ -27,9 +27,9 @@ use crate::runtime::automaton::{
     AutomatonContext, DerivedOutput, InputProvenanceFilter, MultiOutputTransducer,
 };
 use crate::runtime::processing::AutomatonLogicError;
+use sinex_primitives::JsonValue;
 use sinex_primitives::events::payloads::DocumentKind;
 use sinex_primitives::ids::derive_document_id;
-use sinex_primitives::JsonValue;
 use std::collections::HashMap;
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -584,8 +584,8 @@ use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
     OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
-    ResourceProfile, RetentionPolicy as ContractRetentionPolicy, RunnerPack, RuntimeShape as ContractRuntimeShape,
-    SourceContract, SourceRuntimeBinding, SubjectRef,
+    ResourceProfile, RetentionPolicy as ContractRetentionPolicy, RunnerPack,
+    RuntimeShape as ContractRuntimeShape, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{register_source_contract, register_source_runtime_binding};
 

@@ -923,9 +923,7 @@ fn parse_transform_attr(attr: &syn::Attribute) -> syn::Result<TransformDecl> {
             });
             Ok(())
         } else {
-            Err(meta.error(
-                "unknown transform; expected #[transform(split_first = \"<sep>\")]",
-            ))
+            Err(meta.error("unknown transform; expected #[transform(split_first = \"<sep>\")]"))
         }
     })?;
     transform.ok_or_else(|| {

@@ -6,7 +6,6 @@
 
 use crate::runtime::parser::{MaterialParser, ParserError};
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{
     BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,
@@ -22,6 +21,10 @@ use sinex_primitives::parser::{
     SourceRecord, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
+use sinex_primitives::source_contracts::{
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape,
+};
 use sinex_primitives::temporal::Timestamp;
 
 use std::collections::HashMap;

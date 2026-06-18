@@ -789,9 +789,7 @@ impl RateLimiter {
     async fn check(&self, token: &str, role: crate::api::auth::Role) -> bool {
         match self {
             RateLimiter::InMemory(limiter) => limiter.check(token, role).is_ok(),
-            RateLimiter::Distributed(limiter) => {
-                limiter.check_and_increment(token, role).await
-            }
+            RateLimiter::Distributed(limiter) => limiter.check_and_increment(token, role).await,
         }
     }
 }

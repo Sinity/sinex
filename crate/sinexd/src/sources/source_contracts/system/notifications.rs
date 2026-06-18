@@ -5,13 +5,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
     SourceId, SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
+use sinex_primitives::source_contracts::{
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape,
+};
 use sinex_primitives::temporal::Timestamp;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

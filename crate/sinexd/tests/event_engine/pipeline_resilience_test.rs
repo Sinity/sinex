@@ -2,9 +2,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::json;
+use sinex_primitives::{Uuid, temporal};
 use sinexd::event_engine::validator::IngestEventValidator;
 use sinexd::event_engine::{JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::{Uuid, temporal};
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 use xtask::sandbox::prelude::*;

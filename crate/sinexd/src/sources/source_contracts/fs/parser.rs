@@ -7,7 +7,10 @@ use crate::runtime::parser::{
 };
 use async_trait::async_trait;
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{AccessScope, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon, ResourceProfile, RunnerPack};
+use sinex_primitives::source_contracts::{
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape,
+};
 use sinex_primitives::{
     domain::{EventSource, EventType, RecordedPath},
     events::{
