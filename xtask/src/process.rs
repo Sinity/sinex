@@ -1992,6 +1992,7 @@ pub fn cargo_tokio_command() -> tokio::process::Command {
 }
 
 fn apply_cargo_env_policy_std(command: &mut Command) {
+    command.env("SINEX_XTASK_MANAGED_CARGO", "1");
     if should_force_nonincremental_for_sccache(
         effective_command_env_std(command, "RUSTC_WRAPPER"),
         command_env_is_set_std(command, "CARGO_INCREMENTAL"),
@@ -2003,21 +2004,16 @@ fn apply_cargo_env_policy_std(command: &mut Command) {
     // the main checkout's warm artifacts; without this explicit override, cargo reads
     // the raw inherited env var and false-passes against the wrong tree (see #1752).
     // `workspace_target_dir()` detects and corrects any foreign value before returning.
-    command.env(
-        "CARGO_TARGET_DIR",
-        crate::config::workspace_target_dir(),
-    );
+    command.env("CARGO_TARGET_DIR", crate::config::workspace_target_dir());
 }
 
 fn apply_cargo_env_policy_tokio(command: &mut tokio::process::Command) {
+    command.env("SINEX_XTASK_MANAGED_CARGO", "1");
     if should_force_nonincremental_for_sccache(std::env::var_os("RUSTC_WRAPPER"), false) {
         command.env("CARGO_INCREMENTAL", "0");
     }
     // Same rationale as apply_cargo_env_policy_std — see #1752.
-    command.env(
-        "CARGO_TARGET_DIR",
-        crate::config::workspace_target_dir(),
-    );
+    command.env("CARGO_TARGET_DIR", crate::config::workspace_target_dir());
 }
 
 fn should_force_nonincremental_for_sccache(
@@ -2534,6 +2530,10 @@ impl ProcessBuilder {
             cmd.env(key, val);
         }
 
+        if program_basename(&self.program) == "cargo" {
+            apply_cargo_env_policy_std(&mut cmd);
+        }
+
         // Configure stdio based on capture setting
         if self.capture_output {
             cmd.stdout(Stdio::piped());
@@ -2564,6 +2564,10 @@ impl ProcessBuilder {
 
         for (key, val) in &self.env_vars {
             cmd.env(key, val);
+        }
+
+        if program_basename(&self.program) == "cargo" {
+            apply_cargo_env_policy_tokio(&mut cmd);
         }
 
         if self.capture_output {
@@ -2605,6 +2609,10 @@ impl ProcessBuilder {
 
         for (key, val) in &self.env_vars {
             cmd.env(key, val);
+        }
+
+        if program_basename(&self.program) == "cargo" {
+            apply_cargo_env_policy_tokio(&mut cmd);
         }
 
         cmd.stdout(Stdio::piped());
@@ -2702,6 +2710,10 @@ impl ProcessBuilder {
             cmd.env(key, val);
         }
 
+        if program_basename(&self.program) == "cargo" {
+            apply_cargo_env_policy_std(&mut cmd);
+        }
+
         // We strictly pipe stdout for streaming
         cmd.stdout(Stdio::piped());
         // Stderr is piped too to avoid pollution, caller can read it from child if needed
@@ -2795,6 +2807,17 @@ mod tests {
 
         assert!(output.success());
         assert!(output.stdout.contains("cargo"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_cargo_builder_marks_xtask_managed_subprocesses() -> TestResult<()> {
+        let command = ProcessBuilder::cargo().build_std_command();
+
+        assert_eq!(
+            command_env_value(&command, "SINEX_XTASK_MANAGED_CARGO").as_deref(),
+            Some("1")
+        );
         Ok(())
     }
 
