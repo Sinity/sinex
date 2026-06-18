@@ -29,6 +29,7 @@ pub struct DomainProjectionSpec {
     pub ordering_policy: ProjectionOrderingPolicy,
     pub settlement_policy: ProjectionSettlementPolicy,
     pub conflict_policy: ProjectionConflictPolicy,
+    pub output_kind: OutputKind,
     pub output_shape: ProjectionOutputShape,
 }
 ```
@@ -38,6 +39,10 @@ The Rust vocabulary for this contract lives in
 `DomainProjectionSpec` next to their reducer implementation; for example the
 task domain exports `TASK_REDUCER_SPEC` for `tasks.current` v1 from
 `sinex_primitives::task_domain`.
+
+`output_kind` must be `OutputKind::ProjectionRow` for reducer current-state
+outputs. Reducers consume canonical events but never make their current state
+canonical over the event spine.
 
 The corresponding reducer implementation must provide:
 

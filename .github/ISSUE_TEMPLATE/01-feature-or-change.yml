@@ -35,6 +35,12 @@ body:
       description: Capture requirements that must not be violated.
       placeholder: Provenance, replay safety, local-first posture, operational assumptions, performance limits.
   - type: textarea
+    id: output_kind
+    attributes:
+      label: Output kind
+      description: If this creates or changes a durable output, view, artifact, proposal, judgment, operation record, projection row, or event payload, name the intended OutputKind.
+      placeholder: CanonicalEvent, ProjectionRow, Artifact, Proposal, Judgment, OperationRecord, or EphemeralView; explain canonical-event choices.
+  - type: textarea
     id: acceptance
     attributes:
       label: Acceptance criteria

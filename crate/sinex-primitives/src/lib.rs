@@ -22,6 +22,7 @@ pub mod llm;
 #[cfg(feature = "nats")]
 pub mod nats;
 pub mod non_empty;
+pub mod output_kind;
 pub mod parser;
 pub mod primitives;
 pub mod privacy;
@@ -115,6 +116,9 @@ pub use events::payload::DynamicPayload;
 pub use events::{Event, SourceMaterial, Timestamp};
 pub use ids::Id;
 pub use llm::*;
+pub use output_kind::{
+    OUTPUT_KIND_DECLARATIONS, OutputKind, OutputKindDeclaration, declared_output_kind,
+};
 pub use primitives::Uuid;
 pub use query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
