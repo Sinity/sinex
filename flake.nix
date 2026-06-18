@@ -882,6 +882,10 @@ SQL
                   echo "ℹ  Applying checkout-local schema for SQLx validation..." >&2
                   DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres" \
                     ${schemaApplyBootstrap}/bin/schema-apply-bootstrap
+
+                  export PGHOST="$pgrun"
+                  export PGPORT="$pgport"
+                  export DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres"
                 }
 
                 cd "$root_dir"
