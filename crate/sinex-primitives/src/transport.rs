@@ -8,13 +8,13 @@
 //!
 //! | Class | Subject pattern | On local failure | Drain on SIGTERM |
 //! |---|---|---|---|
-//! | [`Class::Critical`] | `{env}.sinex.events.raw.>` | retry → raw-ingest DLQ | wait for in-flight ACKs |
-//! | [`Class::Derived`] | `{env}.sinex.events.raw.>` (same lane) | retry → processing-failure stream | wait for in-flight ACKs |
+//! | [`Class::Critical`] | `{env}.events.raw.>` | retry → raw-ingest DLQ | wait for in-flight ACKs |
+//! | [`Class::Derived`] | `{env}.events.raw.>` (same lane) | retry → processing-failure stream | wait for in-flight ACKs |
 //! | [`Class::SourceMaterial`] | `{env}.source_material.frames.>` | retry caller operation | wait for ACKs before event anchors publish |
 //! | [`Class::Confirmation`] | `{env}.events.confirmations.>` | retry with backoff → durability-gap warn | best-effort flush |
 //! | [`Class::Invalidation`] | `{env}.sinex.derived.invalidation` | JetStream-backed; best-effort warn | best-effort flush |
 //! | [`Class::Control`] | `{env}.sinex.control.>` / request-reply | timeout error | drop pending |
-//! | [`Class::Telemetry`] | `{env}.sinex.events.raw.>` (telemetry lane) | drop with warn | best-effort flush |
+//! | [`Class::Telemetry`] | `{env}.events.raw.sinex.>` (telemetry lane) | drop with warn | best-effort flush |
 
 use crate::nats::{NATS_TRAFFIC_CLASS_HEADER, NatsTrafficClass, insert_traffic_class_header};
 
@@ -38,7 +38,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// Raw event batches from sources. These are the ground-truth records.
 /// Loss means lost provenance history.
 ///
-/// - **Subject pattern**: `{env}.sinex.events.raw.{source}.{event_type}`
+/// - **Subject pattern**: `{env}.events.raw.{source}.{event_type}`
 /// - **`QoS`**: `JetStream` with `Nats-Msg-Id` idempotency header; `AckAll` after
 ///   ack from server.
 /// - **Retry budget**: semaphore-bounded (100 permits); on NATS error, caller
@@ -55,7 +55,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// but semantically distinct: a derived event can be replayed from its parents
 /// if lost; a critical event cannot be replayed without its source material.
 ///
-/// - **Subject pattern**: `{env}.sinex.events.raw.{source}.{event_type}`
+/// - **Subject pattern**: `{env}.events.raw.{source}.{event_type}`
 /// - **`QoS`**: `JetStream` with `Nats-Msg-Id` idempotency header.
 /// - **Retry budget**: semaphore-bounded (100 permits); exhausted retries →
 ///   processing-failure stream.
@@ -129,7 +129,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// Internal metrics, health, and operational data emitted by components.
 /// Loss is acceptable; gaps in telemetry do not affect correctness.
 ///
-/// - **Subject pattern**: `{env}.sinex.events.raw.sinex.{metric_type}` (same
+/// - **Subject pattern**: `{env}.events.raw.sinex.{metric_type}` (same
 ///   raw-event plane, separate semaphore lane).
 /// - **`QoS`**: `JetStream` with idempotency header; smaller semaphore budget
 ///   (16 permits) so telemetry cannot crowd out critical traffic.
@@ -262,6 +262,233 @@ impl Class {
     }
 }
 
+/// Runtime transport mechanism selected for a concrete path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteTransport {
+    /// Same-process call into admission. No NATS server, stream, ack, or replay.
+    Direct,
+    /// Core NATS request/reply or fan-out. No durable stream replay.
+    CoreNats,
+    /// JetStream stream with durable publish/consume semantics.
+    JetStream,
+    /// JetStream KV bucket for shared state, CAS, and TTL coordination.
+    JetStreamKv,
+}
+
+impl RouteTransport {
+    /// Human-readable transport label for reports and operator diagnostics.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::CoreNats => "core_nats",
+            Self::JetStream => "jetstream",
+            Self::JetStreamKv => "jetstream_kv",
+        }
+    }
+}
+
+/// A checked transport decision for one runtime path.
+///
+/// This is the path-by-path route map for #1732. It intentionally lives beside
+/// [`Class`] so docs, tests, and operator reports can consume the same catalog
+/// instead of maintaining separate prose-only matrices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RouteDecision {
+    /// Stable path identifier.
+    pub path: &'static str,
+    /// Selected transport mechanism.
+    pub transport: RouteTransport,
+    /// Semantic publish class, when this path publishes on NATS.
+    pub class: Option<Class>,
+    /// Subject, stream, bucket, or in-process destination.
+    pub route: &'static str,
+    /// Why this transport fits the path's admission semantics.
+    pub reason: &'static str,
+    /// Fallback or degraded behavior when the route is unavailable.
+    pub degraded_behavior: &'static str,
+    /// Existing verification surface for this decision.
+    pub verification: &'static str,
+}
+
+/// Current runtime transport matrix.
+///
+/// Keep this catalog synchronized with the publisher inventory in
+/// `docs/transport.md` and the NATS decision record. New publish paths should
+/// add a row here in the same change that introduces the route.
+pub const CURRENT_ROUTE_DECISIONS: &[RouteDecision] = &[
+    RouteDecision {
+        path: "local.staged_parser.admission",
+        transport: RouteTransport::Direct,
+        class: None,
+        route: "AdmissionService in-process callback",
+        reason: "producer and admission run in the same process; the caller receives the admission result directly",
+        degraded_behavior: "admission error returns to the caller; no transport retry or DLQ is involved",
+        verification: "EventTransport::Direct adapter/parser tests",
+    },
+    RouteDecision {
+        path: "external.raw_event_intent",
+        transport: RouteTransport::JetStream,
+        class: Some(Class::Critical),
+        route: "{env}.events.raw.{source}.{event_type}",
+        reason: "cross-process provenance-bearing intent needs server ack, redelivery, and idempotency",
+        degraded_behavior: "publisher retry, then local recovery spool; event-engine retry budget can route to raw-ingest DLQ",
+        verification: "event_engine JetStream consumer, idempotency, and DLQ tests",
+    },
+    RouteDecision {
+        path: "automaton.derived_event",
+        transport: RouteTransport::JetStream,
+        class: Some(Class::Derived),
+        route: "{env}.events.raw.{source}.{event_type}",
+        reason: "derived outputs cross the durable event boundary and must be replayable for downstream consumers",
+        degraded_behavior: "processing-failure stream records exhausted derived processing failures",
+        verification: "automaton adapter processing-failure and JetStream pipeline tests",
+    },
+    RouteDecision {
+        path: "source_material.frames",
+        transport: RouteTransport::JetStream,
+        class: Some(Class::SourceMaterial),
+        route: "{env}.source_material.frames.>",
+        reason: "material begin/slice/end frames require ordered durable delivery before event anchors can be trusted",
+        degraded_behavior: "material acquisition fails before dependent events are published",
+        verification: "material assembler and acquisition manager tests",
+    },
+    RouteDecision {
+        path: "event_engine.confirmation",
+        transport: RouteTransport::JetStream,
+        class: Some(Class::Confirmation),
+        route: "{env}.events.confirmations.{event_id}",
+        reason: "confirmation is a resyncable signal carried on compacted JetStream to reduce duplicate processing",
+        degraded_behavior: "retry queue, then durability-gap warning; persisted event remains authoritative",
+        verification: "confirmation handler and SSE confirmation tests",
+    },
+    RouteDecision {
+        path: "event_engine.confirmation_retry",
+        transport: RouteTransport::JetStream,
+        class: Some(Class::Confirmation),
+        route: "{env}.events.confirmation_retries.>",
+        reason: "failed confirmation publishes need durable retry separate from the primary confirmation signal",
+        degraded_behavior: "durability-gap warning when retry publication also fails",
+        verification: "confirmation retry handler tests",
+    },
+    RouteDecision {
+        path: "raw_ingest.dlq",
+        transport: RouteTransport::JetStream,
+        class: Some(Class::Critical),
+        route: "{env}.events.dlq.>",
+        reason: "operator-reviewed failed raw ingest must remain durable and retryable",
+        degraded_behavior: "DLQ publish failure is surfaced as an event-engine failure",
+        verification: "JetStream DLQ and sinexctl DLQ retry tests",
+    },
+    RouteDecision {
+        path: "processing.failure",
+        transport: RouteTransport::JetStream,
+        class: Some(Class::Derived),
+        route: "{env}.events.processing_failures.{module}.{event_id}",
+        reason: "derived/runtime failures need an operator-visible durable failure stream, not raw-ingest DLQ",
+        degraded_behavior: "failure publication error is logged and attached to the processing failure context",
+        verification: "automaton adapter processing-failure tests",
+    },
+    RouteDecision {
+        path: "derived.invalidation",
+        transport: RouteTransport::JetStream,
+        class: Some(Class::Invalidation),
+        route: "{env}.sinex.derived.invalidation",
+        reason: "offline durable consumers must receive scope invalidations after reconnect",
+        degraded_behavior: "publish error propagates to the replay/archive operation",
+        verification: "relation/replay invalidation tests",
+    },
+    RouteDecision {
+        path: "source.command_control",
+        transport: RouteTransport::CoreNats,
+        class: Some(Class::Control),
+        route: "{env}.sinex.control.sources.{id}.{scan,parse,drain,resume,set-horizon}",
+        reason: "operator commands are request/reply control messages whose durable truth lives in DB/operations",
+        degraded_behavior: "timeout or network error returns to the caller; operator can reissue the command",
+        verification: "source command listener and parse listener integration tests",
+    },
+    RouteDecision {
+        path: "replay.command_control",
+        transport: RouteTransport::CoreNats,
+        class: Some(Class::Control),
+        route: "{env}.sinex.control.replay and {env}.sinex.control.replay.progress.{operation_id}",
+        reason: "replay control/progress is transient coordination around operation state stored elsewhere",
+        degraded_behavior: "timeout or missed progress signal is recovered by rereading OperationView",
+        verification: "replay control API/server tests",
+    },
+    RouteDecision {
+        path: "privacy.private_mode_control",
+        transport: RouteTransport::CoreNats,
+        class: Some(Class::Control),
+        route: "{env}.sinex.control.privacy.private_mode",
+        reason: "private-mode broadcasts are live runtime control; receivers persist the resulting state",
+        degraded_behavior: "missed broadcast is corrected by the next command or local persisted state",
+        verification: "adapter private-mode control listener tests",
+    },
+    RouteDecision {
+        path: "coordination.handoff_and_heartbeat",
+        transport: RouteTransport::CoreNats,
+        class: Some(Class::Control),
+        route: "{env}.sinex.control.coordination.*",
+        reason: "leadership handoff and heartbeat signals are at-most-once coordination messages backed by KV state",
+        degraded_behavior: "next heartbeat or KV lease expiry restores the observable state",
+        verification: "runtime coordination tests",
+    },
+    RouteDecision {
+        path: "runtime.checkpoints",
+        transport: RouteTransport::JetStreamKv,
+        class: None,
+        route: "KV_{env}_sinex_checkpoints",
+        reason: "checkpoint families need shared restart state, not message replay",
+        degraded_behavior: "local checkpoint backup and explicit checkpoint error surface",
+        verification: "checkpoint KV regression tests",
+    },
+    RouteDecision {
+        path: "schema.registry",
+        transport: RouteTransport::JetStreamKv,
+        class: None,
+        route: "{env}_sinex_schemas",
+        reason: "runtime schema lookup is shared state hydrated from the database",
+        degraded_behavior: "schema sync/reload error blocks validation rather than admitting unvalidated events",
+        verification: "schema sync and event-engine validation tests",
+    },
+    RouteDecision {
+        path: "runtime.instance_registry",
+        transport: RouteTransport::JetStreamKv,
+        class: None,
+        route: "KV_{env}_sinex_instances",
+        reason: "instance health is TTL state, not an ordered work queue",
+        degraded_behavior: "expired TTL removes stale instance visibility",
+        verification: "coordination KV client tests",
+    },
+    RouteDecision {
+        path: "runtime.leadership",
+        transport: RouteTransport::JetStreamKv,
+        class: None,
+        route: "KV_{env}_sinex_leadership",
+        reason: "leader election requires CAS and TTL semantics",
+        degraded_behavior: "lease expiry allows re-election; CAS conflict is returned to the contender",
+        verification: "coordination leadership tests",
+    },
+    RouteDecision {
+        path: "self_observation.telemetry_events",
+        transport: RouteTransport::JetStream,
+        class: Some(Class::Telemetry),
+        route: "{env}.events.raw.sinex.{metric_type}",
+        reason: "current telemetry feeds durable self-observation events and continuous aggregates",
+        degraded_behavior: "publish failure logs a warning and drops the telemetry sample",
+        verification: "telemetry persistence and telemetry read-model tests",
+    },
+];
+
+/// Look up a current route decision by stable path identifier.
+#[must_use]
+pub fn route_decision(path: &str) -> Option<&'static RouteDecision> {
+    CURRENT_ROUTE_DECISIONS
+        .iter()
+        .find(|decision| decision.path == path)
+}
+
 /// Insert only the semantic transport class header.
 ///
 /// Use this when a publish family has a wire-level traffic class that is more
@@ -308,6 +535,84 @@ mod tests {
                 .as_deref(),
             Some("source_material")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn route_decisions_cover_admission_and_durable_boundaries() -> TestResult<()> {
+        let direct = route_decision("local.staged_parser.admission")
+            .expect("local staged parser admission must be classified");
+        assert_eq!(direct.transport, RouteTransport::Direct);
+        assert_eq!(direct.class, None);
+        assert!(direct.route.contains("AdmissionService"));
+
+        let raw = route_decision("external.raw_event_intent")
+            .expect("external raw event intent must be classified");
+        assert_eq!(raw.transport, RouteTransport::JetStream);
+        assert_eq!(raw.class, Some(Class::Critical));
+        assert_eq!(raw.route, "{env}.events.raw.{source}.{event_type}");
+
+        let control = route_decision("source.command_control")
+            .expect("source command control must be classified");
+        assert_eq!(control.transport, RouteTransport::CoreNats);
+        assert_eq!(control.class, Some(Class::Control));
+
+        let checkpoint =
+            route_decision("runtime.checkpoints").expect("runtime checkpoints must be classified");
+        assert_eq!(checkpoint.transport, RouteTransport::JetStreamKv);
+        assert_eq!(checkpoint.class, None);
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn route_decisions_are_operator_explainable() -> TestResult<()> {
+        for decision in CURRENT_ROUTE_DECISIONS {
+            assert!(!decision.path.is_empty(), "route decision path is empty");
+            assert!(
+                !decision.transport.label().is_empty(),
+                "route decision {} has empty transport label",
+                decision.path
+            );
+            assert!(
+                !decision.route.is_empty(),
+                "route decision {} has empty route",
+                decision.path
+            );
+            assert!(
+                !decision.reason.is_empty(),
+                "route decision {} has empty reason",
+                decision.path
+            );
+            assert!(
+                !decision.degraded_behavior.is_empty(),
+                "route decision {} has empty degraded behavior",
+                decision.path
+            );
+            assert!(
+                !decision.verification.is_empty(),
+                "route decision {} has empty verification",
+                decision.path
+            );
+        }
+
+        assert!(
+            CURRENT_ROUTE_DECISIONS
+                .iter()
+                .any(|decision| decision.transport == RouteTransport::Direct),
+            "transport matrix must include at least one direct in-process path"
+        );
+        assert!(
+            CURRENT_ROUTE_DECISIONS.iter().any(|decision| {
+                decision.transport == RouteTransport::JetStream
+                    && matches!(
+                        decision.class,
+                        Some(Class::Critical | Class::Derived | Class::SourceMaterial)
+                    )
+            }),
+            "transport matrix must include at least one durable JetStream path"
+        );
+
         Ok(())
     }
 }

@@ -1,6 +1,7 @@
 # Transport Semantics Catalog
 
 This page documents the publish-class taxonomy (`sinex_primitives::transport::Class`),
+the route matrix (`sinex_primitives::transport::CURRENT_ROUTE_DECISIONS`),
 the DLQ / processing-failure / local-recovery-spool boundary decisions, and the
 drain protocol for each class.
 
@@ -12,13 +13,21 @@ Closes: #326, #327, #338, #693.
 
 | Class | Use | Subject pattern | QoS | On local failure | Drain on SIGTERM |
 |---|---|---|---|---|---|
-| `Critical` | Provenance-bearing raw event payloads from source contracts | `{env}.sinex.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | local recovery spool | wait for in-flight ACKs |
-| `Derived` | Derived events from automata | `{env}.sinex.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | processing-failure stream | wait for ACKs + save checkpoint |
+| `Critical` | Provenance-bearing raw event payloads from source contracts | `{env}.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | local recovery spool | wait for in-flight ACKs |
+| `Derived` | Derived events from automata | `{env}.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | processing-failure stream | wait for ACKs + save checkpoint |
 | `SourceMaterial` | Ordered material begin/slice/end frames | `{env}.source_material.frames.*` | JetStream, ordered stream, ACK required | material acquisition fails before event publish | wait for ACKs before anchor use |
 | `Confirmation` | Persistence ACK signals from the event engine | `{env}.events.confirmations.{event_id}` | JetStream, best-effort | retry queue -> durability-gap warn | best-effort flush |
 | `Invalidation` | Scope fan-out to automatons | `{env}.sinex.derived.invalidation` | JetStream, durable consumers | error propagated to caller | no special drain (JetStream holds) |
 | `Control` | Lifecycle and coordination traffic | `{env}.sinex.control.>` / request-reply | Core NATS, request-reply + timeout | error returned (`SinexError::network`) | drop pending |
-| `Telemetry` | Self-observation metrics and health | `{env}.sinex.events.raw.sinex.*` | JetStream, semaphore 16 | drop with warn log | best-effort flush |
+| `Telemetry` | Self-observation metrics and health | `{env}.events.raw.sinex.*` | JetStream, semaphore 16 | drop with warn log | best-effort flush |
+
+## Route matrix
+
+`CURRENT_ROUTE_DECISIONS` in `sinex_primitives::transport` is the executable
+route catalog for #1732. It names the current Direct, Core NATS, JetStream, and
+JetStream KV runtime paths with their selected transport, route, semantic class,
+reason, degraded behavior, and verification surface. New publish or coordination
+paths should add a row there in the same change that introduces the route.
 
 ---
 

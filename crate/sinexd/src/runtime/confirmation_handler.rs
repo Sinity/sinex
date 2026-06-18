@@ -520,11 +520,59 @@ fn should_log_late_confirmation_aggregate(late_total: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::parser::{MaterialParser, records_from_journal_lines};
+    use crate::sources::source_contracts::system::journald::JournaldParser;
+    use serde_json::Value;
     use serde_json::json;
+    use sinex_primitives::events::SourceMaterial;
     use sinex_primitives::ids::Id;
+    use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceId};
+    use sinex_primitives::primitives::Uuid;
     use sinex_primitives::temporal::Timestamp;
     use sinex_primitives::{Event, JsonValue};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone, Default)]
+    struct CapturedLogs {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    struct CapturedLogWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl CapturedLogs {
+        fn output(&self) -> String {
+            let bytes = self.bytes.lock().expect("captured log mutex poisoned");
+            String::from_utf8(bytes.clone()).expect("tracing output should be UTF-8")
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for CapturedLogs {
+        type Writer = CapturedLogWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedLogWriter {
+                bytes: Arc::clone(&self.bytes),
+            }
+        }
+    }
+
+    impl std::io::Write for CapturedLogWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.bytes
+                .lock()
+                .expect("captured log mutex poisoned")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn event_id() -> EventId {
         Id::<Event<JsonValue>>::new()
@@ -543,6 +591,21 @@ mod tests {
             payload,
             ts_orig: received_at,
             received_at,
+        }
+    }
+
+    fn journal_parser_ctx(mid: Id<SourceMaterial>) -> ParserContext {
+        ParserContext {
+            source_id: SourceId::from_static("system.journald"),
+            source_material_id: mid,
+            record_anchor: MaterialAnchor::Line {
+                byte_start: 0,
+                line: 1,
+            },
+            operation_id: Uuid::new_v4(),
+            job_id: Uuid::new_v4(),
+            host: "test-host".into(),
+            acquisition_time: Timestamp::now(),
         }
     }
 
@@ -705,6 +768,138 @@ mod tests {
         assert_eq!(drained.approximate_payload_bytes, 0);
         assert!(drained.approximate_payload_bytes_by_kind.is_empty());
         assert_eq!(drained.rejected_count, OVERFLOW_ATTEMPTS as u64);
+    }
+
+    #[tokio::test]
+    async fn delayed_confirmation_feedback_logs_are_sparse_and_journald_suppressed() {
+        const LATE_EVENTS: usize = 20;
+        let buffer = ConfirmationBuffer::with_capacity_and_grace(
+            Duration::from_millis(0),
+            64,
+            Duration::from_secs(60),
+        );
+        let old = Timestamp::from_unix_timestamp(1).expect("timestamp in range");
+        let mut watermark = None;
+
+        for index in 0..LATE_EVENTS {
+            let event = provisional(
+                "system.journald",
+                "journald.entry.written",
+                old,
+                json!({
+                    "MESSAGE": format!("feedback candidate {index}"),
+                    "_SYSTEMD_UNIT": "sinexd.service"
+                }),
+            );
+            watermark = Some(watermark.map_or(event.event_id, |previous: EventId| {
+                if event.event_id.as_uuid() > previous.as_uuid() {
+                    event.event_id
+                } else {
+                    previous
+                }
+            }));
+            assert!(buffer.add_provisional(event).await);
+        }
+
+        assert_eq!(buffer.check_timeouts().await.len(), LATE_EVENTS);
+        let before = buffer.snapshot().await;
+        assert_eq!(before.pending_count, LATE_EVENTS);
+        assert_eq!(before.timed_out_retained_count, LATE_EVENTS);
+
+        let captured = CapturedLogs::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .without_time()
+            .with_writer(captured.clone())
+            .finish();
+
+        {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            buffer
+                .confirm_kind_up_to(
+                    "system.journald",
+                    "journald.entry.written",
+                    watermark.expect("watermark set"),
+                )
+                .await;
+        }
+
+        let after = buffer.snapshot().await;
+        assert_eq!(after.pending_count, 0);
+        assert_eq!(after.timed_out_retained_count, 0);
+        assert_eq!(after.late_confirmation_count, LATE_EVENTS as u64);
+
+        let log_output = captured.output();
+        let feedback_lines = log_output
+            .lines()
+            .filter(|line| line.contains("Late confirmations accepted after timeout"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            feedback_lines.len(),
+            5,
+            "20 late confirmations should log only totals 1,2,4,8,16: {log_output}"
+        );
+        assert!(
+            log_output.contains("runtime.confirmation_late_total"),
+            "aggregate feedback log should carry the metric field: {log_output}"
+        );
+
+        let mid = Id::<SourceMaterial>::new();
+        let journal_lines = feedback_lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| {
+                json!({
+                    "__CURSOR": format!("s=feedback;i={index}"),
+                    "__REALTIME_TIMESTAMP": format!("{}", 1_700_000_000_000_000_i64 + index as i64),
+                    "_SYSTEMD_UNIT": "sinexd.service",
+                    "SYSLOG_IDENTIFIER": "sinexd",
+                    "MESSAGE": line,
+                })
+                .to_string()
+            })
+            .collect::<Vec<_>>();
+        let line_refs = journal_lines.iter().map(String::as_str).collect::<Vec<_>>();
+        let records = records_from_journal_lines(mid, &line_refs);
+        let mut parser = JournaldParser;
+        let ctx = journal_parser_ctx(mid);
+
+        for record in records {
+            let intents = parser
+                .parse_record(record.expect("journal record should parse"), &ctx)
+                .await
+                .expect("journald parser should parse feedback-shaped JSON");
+            assert!(
+                intents.is_empty(),
+                "confirmation feedback journal entry should be suppressed"
+            );
+        }
+
+        let ordinary = json!({
+            "__CURSOR": "s=ordinary;i=1",
+            "__REALTIME_TIMESTAMP": "1700000000001000",
+            "_SYSTEMD_UNIT": "sinexd.service",
+            "SYSLOG_IDENTIFIER": "sinexd",
+            "MESSAGE": "source catalog exported",
+        })
+        .to_string();
+        let ordinary_records = records_from_journal_lines(mid, &[ordinary.as_str()]);
+        let ordinary_intents = parser
+            .parse_record(
+                ordinary_records[0]
+                    .as_ref()
+                    .expect("ordinary journal record should parse")
+                    .clone(),
+                &ctx,
+            )
+            .await
+            .expect("ordinary sinexd journal entry should parse");
+        assert_eq!(ordinary_intents.len(), 1);
+        assert_eq!(
+            ordinary_intents[0].payload["message"],
+            Value::from("source catalog exported")
+        );
     }
 
     #[test]
