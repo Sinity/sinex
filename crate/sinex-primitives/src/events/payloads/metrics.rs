@@ -897,6 +897,40 @@ mod tests {
     }
 
     #[test]
+    fn stream_pressure_raw_and_dlq_byte_warnings_remain_bounded_independently() {
+        let mut state = HashMap::new();
+        let pressure = StreamPressureSnapshot {
+            message_fill_pct: 45.0,
+            byte_fill_pct: 100.0,
+            fill_pct: 100.0,
+            pressure_level: StreamPressureLevel::Critical,
+            limiting_dimension: Some(StreamPressureDimension::Bytes),
+        };
+
+        let raw_emitted = (1..=64)
+            .filter_map(|_| {
+                record_stream_pressure_warning_sample(&mut state, "PROD_SINEX_RAW_EVENTS", pressure)
+            })
+            .collect::<Vec<_>>();
+        let dlq_emitted = (1..=64)
+            .filter_map(|_| {
+                record_stream_pressure_warning_sample(
+                    &mut state,
+                    "PROD_SINEX_RAW_EVENTS_DLQ",
+                    pressure,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(raw_emitted, vec![1, 2, 4, 8, 16, 32, 64]);
+        assert_eq!(dlq_emitted, vec![1, 2, 4, 8, 16, 32, 64]);
+        assert!(
+            raw_emitted.len() + dlq_emitted.len() < 16,
+            "128 saturated RAW/DLQ samples should not produce per-sample warnings"
+        );
+    }
+
+    #[test]
     fn stream_pressure_warning_schedule_resets_when_classification_changes() {
         let mut state = HashMap::new();
         let warning = StreamPressureSnapshot {
