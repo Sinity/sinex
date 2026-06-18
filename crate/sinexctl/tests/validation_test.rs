@@ -355,7 +355,10 @@ async fn mcp_relation_evidence_call_uses_gateway_fixture() -> TestResult<()> {
     .await?;
 
     assert_eq!(response["source_surface"], "sinex.relation_evidence");
-    assert_eq!(response["query_echo"]["seed_query"]["sources"][0], "fixture");
+    assert_eq!(
+        response["query_echo"]["seed_query"]["sources"][0],
+        "fixture"
+    );
     assert_eq!(response["query_echo"]["relation"]["relation"], "within");
     assert_eq!(
         response["payload"]["result"]["payload"]["support_refs"][0]["object"]["id"],
@@ -527,7 +530,10 @@ async fn mcp_source_identifier_continuity_call_uses_gateway_fixture() -> TestRes
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.source_identifier_continuity");
+    assert_eq!(
+        response["source_surface"],
+        "sinex.source_identifier_continuity"
+    );
     assert_eq!(
         response["query_echo"]["source_identifier"],
         "/realm/data/captures/fixture.jsonl"
@@ -845,7 +851,10 @@ async fn mcp_semantic_lane_outputs_call_uses_gateway_fixture() -> TestResult<()>
     .await?;
 
     assert_eq!(response["source_surface"], "sinex.semantic_lane_outputs");
-    assert_eq!(response["query_echo"]["lane_id"], fixture_semantic_lane_id());
+    assert_eq!(
+        response["query_echo"]["lane_id"],
+        fixture_semantic_lane_id()
+    );
     assert_eq!(
         response["payload"]["result"]["outputs"][0]["output_key"],
         "entity:fixture"
@@ -866,7 +875,10 @@ async fn mcp_semantic_lane_diffs_call_uses_gateway_fixture() -> TestResult<()> {
     .await?;
 
     assert_eq!(response["source_surface"], "sinex.semantic_lane_diffs");
-    assert_eq!(response["query_echo"]["lane_id"], fixture_semantic_lane_id());
+    assert_eq!(
+        response["query_echo"]["lane_id"],
+        fixture_semantic_lane_id()
+    );
     assert_eq!(
         response["payload"]["result"]["diffs"][0]["id"],
         fixture_semantic_diff_id()
@@ -1074,7 +1086,10 @@ async fn mcp_recent_activity_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["source_surface"], "sinex.recent_activity");
     assert_eq!(response["query_echo"]["limit"], 7);
-    assert_eq!(response["payload"]["entries"][0]["activity_type"], "command");
+    assert_eq!(
+        response["payload"]["entries"][0]["activity_type"],
+        "command"
+    );
     assert_eq!(response["payload"]["entries"][0]["context"], "terminal");
     assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
@@ -1150,7 +1165,10 @@ async fn mcp_system_state_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["source_surface"], "sinex.system_state");
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(response["payload"]["buckets"][0]["sample_count"], 5);
-    assert_eq!(response["payload"]["buckets"][0]["avg_memory_percent"], 42.5);
+    assert_eq!(
+        response["payload"]["buckets"][0]["avg_memory_percent"],
+        42.5
+    );
     assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
@@ -1283,7 +1301,10 @@ async fn mcp_metric_counters_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["source_surface"], "sinex.metric_counters");
     assert_eq!(response["query_echo"]["limit"], 3);
-    assert_eq!(response["payload"]["buckets"][0]["component"], "event_engine");
+    assert_eq!(
+        response["payload"]["buckets"][0]["component"],
+        "event_engine"
+    );
     assert_eq!(response["payload"]["buckets"][0]["metric_name"], "events");
     assert_eq!(response["payload"]["buckets"][0]["total_value"], 99);
     assert_eq!(response["privacy_state"]["state"], "redacted");
@@ -1456,7 +1477,10 @@ async fn mcp_source_coverage_call_uses_gateway_fixture() -> TestResult<()> {
     let response = call_tool(&client, "sinex.source_coverage", json!({})).await?;
 
     assert_eq!(response["source_surface"], "sinex.source_coverage");
-    assert_eq!(response["payload"]["result"]["sources"][0]["event_count"], 42);
+    assert_eq!(
+        response["payload"]["result"]["sources"][0]["event_count"],
+        42
+    );
     assert_eq!(
         response["payload"]["result"]["sources"][0]["material_count"],
         3
@@ -1576,7 +1600,10 @@ async fn mcp_ops_get_call_uses_gateway_fixture() -> TestResult<()> {
     .await?;
 
     assert_eq!(response["source_surface"], "sinex.ops_get");
-    assert_eq!(response["query_echo"]["operation_id"], fixture_operation_id());
+    assert_eq!(
+        response["query_echo"]["operation_id"],
+        fixture_operation_id()
+    );
     assert_eq!(response["payload"]["id"], fixture_operation_id());
     assert_eq!(response["payload"]["kind"], "replay");
     assert_eq!(response["payload"]["actions"][0]["id"], "ops.show");
@@ -1614,7 +1641,10 @@ async fn mcp_audit_trail_call_uses_gateway_fixture() -> TestResult<()> {
     .await?;
 
     assert_eq!(response["source_surface"], "sinex.audit_trail");
-    assert_eq!(response["query_echo"]["operation_id"], fixture_operation_id());
+    assert_eq!(
+        response["query_echo"]["operation_id"],
+        fixture_operation_id()
+    );
     assert_eq!(
         response["payload"]["result"]["audit_trail"]["operation"]["id"],
         fixture_operation_id()
@@ -1679,7 +1709,10 @@ async fn mcp_coordination_instance_health_call_uses_gateway_fixture() -> TestRes
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.coordination_instance_health");
+    assert_eq!(
+        response["source_surface"],
+        "sinex.coordination_instance_health"
+    );
     assert_eq!(response["query_echo"]["instance_id"], fixture_instance_id());
     assert_eq!(response["payload"]["result"]["healthy"], true);
     assert_eq!(response["privacy_state"]["state"], "redacted");
@@ -2372,6 +2405,10 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "stream_name": "EVENTS",
                             "avg_fill_pct": 12.0,
                             "max_fill_pct": 20.0,
+                            "max_message_fill_pct": 15.0,
+                            "max_byte_fill_pct": 90.0,
+                            "max_pressure_level": "warning",
+                            "limiting_dimension": "bytes",
                             "avg_messages": 128.0,
                             "max_messages": 256,
                             "sample_count": 2

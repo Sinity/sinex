@@ -608,6 +608,10 @@ async fn telemetry_relations_expose_expected_contract_columns(ctx: TestContext) 
                 "stream_name",
                 "avg_fill_pct",
                 "max_fill_pct",
+                "max_message_fill_pct",
+                "max_byte_fill_pct",
+                "max_pressure_rank",
+                "limiting_dimension",
                 "avg_messages",
                 "max_messages",
                 "sample_count",
@@ -784,7 +788,9 @@ async fn operator_telemetry_does_not_register_continuous_aggregates(
 async fn operator_telemetry_views_include_live_rows(ctx: TestContext) -> TestResult<()> {
     sinex_db::schema::apply::apply(&ctx.pool).await?;
 
-    let material_id = ctx.create_source_material(Some("sinexd.event_engine")).await?;
+    let material_id = ctx
+        .create_source_material(Some("sinexd.event_engine"))
+        .await?;
     sqlx::query!(
         r#"
         INSERT INTO core.events (
