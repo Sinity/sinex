@@ -9,9 +9,14 @@ use crate::event_engine::validator::{IngestEventValidator, ValidationResult};
 use crate::event_engine::{EventEngineResult, SinexError};
 use sinex_db::DbPool;
 use sinex_db::repositories::{DbPoolExt, StreamBatchRow};
+use sinex_primitives::admission_policy::{
+    AdmissionOutcome, AdmissionOutcomeReason, AdmissionOutcomeRef,
+    STANDARD_EVENT_ADMISSION_POLICY_ID,
+};
 use sinex_primitives::constants::limits::MAX_EVENT_PAYLOAD_BYTES;
+use sinex_primitives::event_contracts::find_event_contract_for_pair;
 use sinex_primitives::events::admission::{ACCEPTED_ENVELOPE_VERSIONS, EventIntent};
-use sinex_primitives::events::builder::Provenance;
+use sinex_primitives::events::builder::{EventId, Provenance};
 use sinex_primitives::events::{EquivalenceKey, Event, ScopeKey};
 use sinex_primitives::{Id, JsonValue, Timestamp, Uuid};
 use std::collections::{HashSet, VecDeque};
@@ -51,6 +56,24 @@ pub struct AdmittedEvent {
     pub event: Event<JsonValue>,
     pub event_id: Uuid,
     pub metadata: Option<CandidateEventMetadata>,
+}
+
+impl AdmittedEvent {
+    #[must_use]
+    pub fn admitted_outcome(&self) -> AdmissionOutcome {
+        let contract = find_event_contract_for_pair(&self.event.source, &self.event.event_type);
+        let policy_id = contract
+            .and_then(|contract| contract.admission_policy_ref)
+            .unwrap_or(STANDARD_EVENT_ADMISSION_POLICY_ID)
+            .to_string();
+        let event_contract_id = contract.map(|contract| contract.id.to_string());
+
+        AdmissionOutcome::Admitted {
+            policy_id,
+            event_contract_id,
+            event_ids: vec![EventId::from_uuid(self.event_id)],
+        }
+    }
 }
 
 /// Parser-side metadata attached before an event crosses the admission boundary.
@@ -96,6 +119,46 @@ pub enum AdmissionDecision {
     Rejected(AdmissionRejection),
 }
 
+impl AdmissionDecision {
+    /// Convert the runtime-local decision into the shared admission outcome
+    /// contract vocabulary.
+    ///
+    /// This is intentionally a thin bridge: the event engine still owns the
+    /// admission checks, while package/debt/view consumers can start consuming
+    /// stable `AdmissionOutcome` refs without reinterpreting local enum names.
+    #[must_use]
+    pub fn to_admission_outcome(&self) -> AdmissionOutcome {
+        match self {
+            Self::Admitted(admitted) | Self::Transformed(admitted) => admitted.admitted_outcome(),
+            Self::Suppressed(rejection)
+                if rejection.kind == AdmissionRejectionKind::OccurrenceDuplicate =>
+            {
+                AdmissionOutcome::Deduplicated {
+                    policy_id: STANDARD_EVENT_ADMISSION_POLICY_ID.to_string(),
+                    reason: rejection.to_outcome_reason(),
+                    existing_event_id: None,
+                    refs: standard_policy_refs(),
+                }
+            }
+            Self::Suppressed(rejection) => AdmissionOutcome::Suppressed {
+                policy_id: STANDARD_EVENT_ADMISSION_POLICY_ID.to_string(),
+                reason: rejection.to_outcome_reason(),
+                refs: standard_policy_refs(),
+            },
+            Self::QuarantineNeeded(rejection) => AdmissionOutcome::Quarantined {
+                policy_id: STANDARD_EVENT_ADMISSION_POLICY_ID.to_string(),
+                reason: rejection.to_outcome_reason(),
+                refs: standard_policy_refs(),
+            },
+            Self::Rejected(rejection) => AdmissionOutcome::Rejected {
+                policy_id: STANDARD_EVENT_ADMISSION_POLICY_ID.to_string(),
+                reason: rejection.to_outcome_reason(),
+                refs: standard_policy_refs(),
+            },
+        }
+    }
+}
+
 /// Coarse reason for an event being rejected before persistence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdmissionRejectionKind {
@@ -123,6 +186,31 @@ pub enum AdmissionRejectionKind {
     OccurrenceDuplicate,
 }
 
+impl AdmissionRejectionKind {
+    #[must_use]
+    pub const fn outcome_code(self) -> &'static str {
+        match self {
+            Self::PayloadTooLarge => "payload_too_large",
+            Self::InvalidUtf8 => "invalid_utf8",
+            Self::StructuralJson => "structural_json",
+            Self::EventDeserialization => "event_deserialization",
+            Self::EnvelopeDeserialization => "envelope_deserialization",
+            Self::EnvelopeValidation => "envelope_validation",
+            Self::MissingTimestamp => "missing_timestamp",
+            Self::PastTimestamp => "past_timestamp",
+            Self::FutureTimestamp => "future_timestamp",
+            Self::NegativeAnchor => "negative_anchor",
+            Self::SchemaValidation => "schema_validation",
+            Self::CandidateMetadata => "candidate_metadata",
+            Self::PrivacyPolicy => "privacy_policy",
+            Self::QuarantinePolicy => "quarantine_policy",
+            Self::MissingEventId => "missing_event_id",
+            Self::InvalidEventId => "invalid_event_id",
+            Self::OccurrenceDuplicate => "occurrence_duplicate",
+        }
+    }
+}
+
 /// A rejected candidate event with a stable kind and operator-facing reason.
 #[derive(Debug)]
 pub struct AdmissionRejection {
@@ -136,6 +224,11 @@ impl AdmissionRejection {
             kind,
             reason: reason.into(),
         }
+    }
+
+    #[must_use]
+    pub fn to_outcome_reason(&self) -> AdmissionOutcomeReason {
+        AdmissionOutcomeReason::new(self.kind.outcome_code(), self.reason.clone())
     }
 }
 
@@ -1005,6 +1098,12 @@ impl AdmissionService {
             tombstoned_event_ids,
         })
     }
+}
+
+fn standard_policy_refs() -> Vec<AdmissionOutcomeRef> {
+    vec![AdmissionOutcomeRef::Policy(
+        STANDARD_EVENT_ADMISSION_POLICY_ID.to_string(),
+    )]
 }
 
 fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<StreamBatchRow>> {
