@@ -2678,7 +2678,16 @@ fn document_side_data_redaction() -> Value {
 }
 
 fn envelope(tool: &str, query: &Value, result: &Value) -> Value {
-    mcp_view_envelope(tool, query, result).expect("MCP ViewEnvelope serialization should not fail")
+    mcp_view_envelope(tool, query, result).unwrap_or_else(|error| {
+        json!({
+            "source_surface": tool,
+            "query_echo": query,
+            "payload": {
+                "error": "mcp_view_envelope_serialization_failed",
+                "detail": error.to_string(),
+            }
+        })
+    })
 }
 
 fn mcp_view_envelope(tool: &str, query: &Value, payload: &Value) -> Result<Value> {

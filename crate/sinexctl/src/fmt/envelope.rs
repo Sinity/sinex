@@ -99,8 +99,9 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sinex_primitives::views::{
-        EVENT_CARD_LIST_SCHEMA_VERSION, EventCardListView, VIEW_ENVELOPE_SCHEMA_VERSION,
-        ViewEnvelope,
+        DEBT_LIST_SCHEMA_VERSION, DebtKind, DebtListView, DebtRowView, DebtStage,
+        EVENT_CARD_LIST_SCHEMA_VERSION, EventCardListView, SinexObjectKind, SinexObjectRef,
+        VIEW_ENVELOPE_SCHEMA_VERSION, ViewEnvelope,
     };
     use xtask::sandbox::sinex_test;
 
@@ -276,6 +277,46 @@ mod tests {
                 "format {format:?} must not contain ANSI escape sequences"
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finite_json_preserves_debt_view_envelope() -> xtask::TestResult<()> {
+        let envelope = ViewEnvelope::new(
+            "sinexctl.ops.debt",
+            DebtListView::new(vec![DebtRowView {
+                id: "debt:admission:fixture".to_string(),
+                kind: DebtKind::Admission,
+                stage: DebtStage::CandidateRejected,
+                summary: "candidate rejected by admission policy".to_string(),
+                refs: vec![SinexObjectRef::new(
+                    SinexObjectKind::AdmissionOutcome,
+                    "outcome:fixture",
+                )],
+                owner: None,
+                age_secs: Some(12),
+                freshness: None,
+                caveats: Vec::new(),
+                actions: Vec::new(),
+            }]),
+        );
+
+        let output = render_finite_envelope(&envelope, OutputFormat::Json)?
+            .expect("json renders finite envelopes");
+        let parsed: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(parsed["source_surface"], "sinexctl.ops.debt");
+        assert_eq!(
+            parsed["payload"]["schema_version"],
+            DEBT_LIST_SCHEMA_VERSION
+        );
+        assert_eq!(parsed["payload"]["rows"][0]["kind"], "admission");
+        assert_eq!(parsed["payload"]["rows"][0]["stage"], "candidate_rejected");
+        assert_eq!(
+            parsed["payload"]["rows"][0]["refs"][0]["kind"],
+            "admission_outcome"
+        );
         Ok(())
     }
 }
