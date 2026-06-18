@@ -39,9 +39,11 @@ Rust runtime.
 
 A `SourceMaterialOnly` adapter that introduces a new source also follows the
 required-field contract in
-[`source_family_pilot_template.md`](source_family_pilot_template.md): the
-authority category answers *who owns the fact*, the pilot template answers *what
-the source definition, adapter, parser, per-field privacy, and fixtures must be*.
+[`source_capture_package_template.md`](source_capture_package_template.md): the
+authority category answers *who owns the fact*, while the package template
+answers what the source definition, adapter, parser, event/admission contracts,
+operator-owned disclosure policy, resource behavior, coverage, operations, and
+fixtures must be.
 
 ## Examples
 
