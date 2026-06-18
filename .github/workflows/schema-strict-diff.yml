@@ -27,7 +27,7 @@ jobs:
   strict-diff:
     name: xtask schema strict-diff
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75
 
     steps:
       - uses: actions/checkout@v5
@@ -39,15 +39,20 @@ jobs:
         shell: bash
         # `xtask ci postgres` starts the ephemeral Postgres and exports
         # DATABASE_URL *before* running the inner command, so sinex-db's
-        # `sqlx::query!` macros compile against the live database — the same
+        # `sqlx::query!` macros compile against the live database -- the same
         # pattern the main workspace gate uses. No offline query cache.
+        #
+        # Cold GitHub runners may build the devshell/xtask dependency closure
+        # before `xtask` starts. Keep Nix logs enabled and bound that bootstrap
+        # below the job timeout so failures show whether Nix bootstrap or the
+        # schema drift gate consumed the budget.
         run: |
           set -euo pipefail
           echo "::group::nix develop bootstrap"
           nix --version
           echo "Entering the Sinex devshell with Nix build logs enabled."
           echo "::endgroup::"
-          timeout --foreground 25m nix -L develop --accept-flake-config --no-pure-eval --command bash -lc '
+          timeout --foreground 60m nix -L develop --accept-flake-config --no-pure-eval --command bash -lc '
             set -euo pipefail
             echo "::group::schema-only drift gate"
             echo "Running: xtask ci postgres -- xtask ci schema-only"
