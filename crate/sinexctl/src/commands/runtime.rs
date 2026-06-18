@@ -238,6 +238,14 @@ fn format_health_table(health: &SystemHealthResponse) -> String {
         output.push_str(&format!("    Detail: {detail}\n"));
     }
     output.push_str(&format!(
+        "  Confirmation Buffer: {} (connected: {})\n",
+        health.components.confirmation_buffer.status,
+        health.components.confirmation_buffer.connected
+    ));
+    if let Some(ref detail) = health.components.confirmation_buffer.detail {
+        output.push_str(&format!("    Detail: {detail}\n"));
+    }
+    output.push_str(&format!(
         "  Replay Control: {} (enabled: {}, connected: {})\n",
         health.components.replay_control.status,
         health.components.replay_control.enabled,

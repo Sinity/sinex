@@ -78,6 +78,7 @@ pub struct ComponentsHealth {
     pub database: ComponentHealthReport,
     pub nats: ComponentHealthReport,
     pub raw_ingest_dlq: ComponentHealthReport,
+    pub confirmation_buffer: ComponentHealthReport,
     pub replay_control: ReplayControlHealth,
     pub sse_confirmation: ComponentHealthReport,
 }

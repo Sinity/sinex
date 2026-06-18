@@ -168,6 +168,12 @@ impl MockGatewayClient {
                         latency_ms: None,
                         detail: Some("raw-ingest DLQ empty".to_string()),
                     },
+                    confirmation_buffer: ComponentHealthReport {
+                        status: HealthStatus::Unknown,
+                        connected: false,
+                        latency_ms: None,
+                        detail: Some("confirmation buffers not registered".to_string()),
+                    },
                     replay_control: ReplayControlHealth {
                         status: HealthStatus::Healthy,
                         enabled: true,

@@ -608,6 +608,9 @@ impl RuntimeHandles {
         confirmation_buffer: Option<Arc<ConfirmationBuffer>>,
         schema_cache: Option<Arc<crate::runtime::stream::SchemaBroadcastCache>>,
     ) -> Self {
+        if let Some(buffer) = &confirmation_buffer {
+            crate::runtime::register_confirmation_buffer(buffer);
+        }
         Self {
             db_pool: Some(db_pool),
             checkpoint_manager,
@@ -629,6 +632,9 @@ impl RuntimeHandles {
         confirmation_buffer: Option<Arc<ConfirmationBuffer>>,
         schema_cache: Option<Arc<crate::runtime::stream::SchemaBroadcastCache>>,
     ) -> Self {
+        if let Some(buffer) = &confirmation_buffer {
+            crate::runtime::register_confirmation_buffer(buffer);
+        }
         Self {
             #[cfg(feature = "db")]
             db_pool: None,
