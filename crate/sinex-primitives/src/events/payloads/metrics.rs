@@ -28,6 +28,85 @@ use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
 use std::collections::HashMap;
 
+/// Stream capacity dimension carrying the highest pressure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamPressureDimension {
+    Messages,
+    Bytes,
+}
+
+/// Operator-facing pressure classification for a `JetStream` stream sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamPressureLevel {
+    Nominal,
+    Warning,
+    Critical,
+}
+
+impl Default for StreamPressureLevel {
+    fn default() -> Self {
+        Self::Nominal
+    }
+}
+
+/// Derived pressure facts for a stream-stat sample.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct StreamPressureSnapshot {
+    #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
+    pub message_fill_pct: f64,
+    #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
+    pub byte_fill_pct: f64,
+    #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
+    pub fill_pct: f64,
+    pub pressure_level: StreamPressureLevel,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limiting_dimension: Option<StreamPressureDimension>,
+}
+
+impl StreamPressureSnapshot {
+    #[must_use]
+    pub fn from_limits(messages: u64, max_messages: u64, bytes: u64, max_bytes: u64) -> Self {
+        let message_fill_pct = fill_percentage(messages, max_messages);
+        let byte_fill_pct = fill_percentage(bytes, max_bytes);
+        let (fill_pct, limiting_dimension) = if message_fill_pct >= byte_fill_pct {
+            (
+                message_fill_pct,
+                (max_messages > 0).then_some(StreamPressureDimension::Messages),
+            )
+        } else {
+            (
+                byte_fill_pct,
+                (max_bytes > 0).then_some(StreamPressureDimension::Bytes),
+            )
+        };
+        let pressure_level = if fill_pct >= 95.0 {
+            StreamPressureLevel::Critical
+        } else if fill_pct >= 80.0 {
+            StreamPressureLevel::Warning
+        } else {
+            StreamPressureLevel::Nominal
+        };
+
+        Self {
+            message_fill_pct,
+            byte_fill_pct,
+            fill_pct,
+            pressure_level,
+            limiting_dimension,
+        }
+    }
+}
+
+fn fill_percentage(current: u64, max: u64) -> f64 {
+    if max == 0 {
+        0.0
+    } else {
+        (current as f64 / max as f64) * 100.0
+    }
+}
+
 /// Counter metric - monotonically increasing value
 ///
 /// Use for: requests served, events processed, errors encountered
@@ -138,6 +217,18 @@ pub struct StreamStatsPayload {
     /// Fill percentage (0.0 - 100.0)
     #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
     pub fill_pct: f64,
+    /// Message-count fill percentage (0.0 - 100.0).
+    #[serde(default, deserialize_with = "crate::validation::reject_non_finite_f64")]
+    pub message_fill_pct: f64,
+    /// Byte-capacity fill percentage (0.0 - 100.0).
+    #[serde(default, deserialize_with = "crate::validation::reject_non_finite_f64")]
+    pub byte_fill_pct: f64,
+    /// Classified capacity pressure for this sample.
+    #[serde(default)]
+    pub pressure_level: StreamPressureLevel,
+    /// Capacity dimension carrying the highest pressure, when a limit exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limiting_dimension: Option<StreamPressureDimension>,
     /// First sequence number
     pub first_seq: u64,
     /// Last sequence number
@@ -506,6 +597,10 @@ impl StreamStatsPayload {
             max_bytes: 0,
             consumer_count: 0,
             fill_pct: 0.0,
+            message_fill_pct: 0.0,
+            byte_fill_pct: 0.0,
+            pressure_level: StreamPressureLevel::Nominal,
+            limiting_dimension: None,
             first_seq: 0,
             last_seq: 0,
         }
@@ -687,4 +782,44 @@ register_source_runtime_binding! {
     .runtime_shape(SuRuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
     .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_pressure_uses_byte_limit_when_bytes_are_tighter() {
+        let pressure = StreamPressureSnapshot::from_limits(10, 1_000, 950, 1_000);
+
+        assert_eq!(pressure.message_fill_pct, 1.0);
+        assert_eq!(pressure.byte_fill_pct, 95.0);
+        assert_eq!(pressure.fill_pct, 95.0);
+        assert_eq!(pressure.pressure_level, StreamPressureLevel::Critical);
+        assert_eq!(
+            pressure.limiting_dimension,
+            Some(StreamPressureDimension::Bytes)
+        );
+    }
+
+    #[test]
+    fn stream_pressure_classifies_warning_before_critical() {
+        let pressure = StreamPressureSnapshot::from_limits(80, 100, 40, 100);
+
+        assert_eq!(pressure.fill_pct, 80.0);
+        assert_eq!(pressure.pressure_level, StreamPressureLevel::Warning);
+        assert_eq!(
+            pressure.limiting_dimension,
+            Some(StreamPressureDimension::Messages)
+        );
+    }
+
+    #[test]
+    fn stream_pressure_is_nominal_without_limits() {
+        let pressure = StreamPressureSnapshot::from_limits(10, 0, 950, 0);
+
+        assert_eq!(pressure.fill_pct, 0.0);
+        assert_eq!(pressure.pressure_level, StreamPressureLevel::Nominal);
+        assert_eq!(pressure.limiting_dimension, None);
+    }
 }
