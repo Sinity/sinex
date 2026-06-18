@@ -421,7 +421,9 @@ mod tests {
         );
         assert!(report.required_checks.iter().any(|check| {
             check.id == "source-catalog-drift"
-                && check.command.contains("source_catalog_artifact_matches_inventory")
+                && check
+                    .command
+                    .contains("source_catalog_artifact_matches_inventory")
         }));
         assert_eq!(
             report.summary.not_run_check_count,
