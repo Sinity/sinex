@@ -15,5 +15,7 @@ This directory owns source and staged-source runtime docs for
 - `evidence_lanes.md` - source-material occurrence/snapshot role model.
 - `sqlite_evidence_lane.md` - SQLite row-stream plus snapshot evidence decision.
 - `integration_authority.md` - external adapter authority categories.
-- `source_family_pilot_template.md` - the required-field template and per-pilot
-  contract every new source issue/pilot follows.
+- `source_capture_package_template.md` - required fields and per-mode contract
+  every new source/capture package issue follows.
+- `package_completeness_gate.md` - #1792 report shape, status rules, strict
+  gate, and source/capture issue consumption guidance.
