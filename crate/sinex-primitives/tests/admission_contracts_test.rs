@@ -67,6 +67,44 @@ async fn admission_policy_registry_references_event_contracts() -> TestResult<()
 }
 
 #[sinex_test]
+async fn event_contract_id_decouples_package_ids_from_event_namespace() -> TestResult<()> {
+    let contract = find_event_contract(SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID)
+        .expect("shell history command contract should be registered");
+    let policy = find_admission_policy(STANDARD_EVENT_ADMISSION_POLICY_ID)
+        .expect("standard admission policy should be registered");
+
+    assert_eq!(contract.event_source, "shell.history");
+    assert!(
+        contract.package_refs.contains(&"terminal.bash-history"),
+        "bash history package should be allowed to emit the shell-history event contract"
+    );
+    assert!(
+        contract.package_refs.contains(&"terminal.zsh-history"),
+        "zsh history package should be allowed to emit the same shell-history event contract"
+    );
+    assert!(
+        !contract.package_refs.contains(&contract.event_source),
+        "the event namespace must not be smuggled into package/source identity"
+    );
+
+    assert!(policy.accepted_event_contracts.contains(&contract.id));
+    assert!(
+        !policy
+            .accepted_event_contracts
+            .contains(&contract.event_source),
+        "admission policy must reference the event contract id, not the event source namespace"
+    );
+    for package_id in contract.package_refs.iter().copied() {
+        assert!(
+            !policy.accepted_event_contracts.contains(&package_id),
+            "admission policy must not treat package/source ids as event-contract ids"
+        );
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn admission_outcome_vocabulary_covers_success_failure_and_proposal() -> TestResult<()> {
     let admitted = AdmissionOutcome::Admitted {
         policy_id: STANDARD_EVENT_ADMISSION_POLICY_ID.to_string(),

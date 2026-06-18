@@ -10,6 +10,7 @@ pub mod dispatch;
 pub mod drain;
 pub mod monitor_driver;
 pub mod noop;
+pub mod package_completeness;
 pub mod parse_listener;
 pub mod parsers;
 pub mod privacy_coverage;
