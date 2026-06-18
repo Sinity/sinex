@@ -1833,8 +1833,8 @@ impl HistoryDb {
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
-    use super::*;
     use super::super::db::StagePressure;
+    use super::*;
     use std::collections::HashMap;
     use xtask::sandbox::sinex_test;
 
