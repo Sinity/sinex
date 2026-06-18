@@ -38,7 +38,7 @@ Not owned by this record:
 
 | Surface | Authority class | Plane | Notes |
 | --- | --- | --- | --- |
-| `sinexctl` (CLI) | Live runtime operation through the gateway | Deployed host runtime | Authoritative operator surface for events, query, replay, lifecycle, DLQ, node, status, privacy, source materials. |
+| `sinexctl` (CLI) | Live runtime operation through the gateway | Deployed host runtime | Authoritative operator surface for events, runtime, operations, replay, lifecycle, DLQ, privacy, and source materials. |
 | TUI workbench (`sinexctl tui`) | View layer over `sinexctl` and the MCP read role; write actions tunnel through gateway authority | Deployed host runtime | UX-MK3 program owns the design surface (#1438–#1443). |
 | Shell integration (prompt, aliases, completions) | Read-only adornment of the operator's shell session | Operator workstation, outside Sinex runtime | Pulls cached status; must not become a write path. |
 | Hyprland keybinds | Launchers for the surfaces above | Operator workstation, outside Sinex runtime | Bind to existing `sinexctl`/TUI commands; do not encode bespoke logic. |
@@ -99,8 +99,8 @@ crate-level docs, not in this record.
 These surfaces are best understood as ergonomic shortcuts that launch the
 authoritative surfaces — not as separate substrates.
 
-- Prompt segments should read cached status emitted by `sinexctl status` or
-  the MCP read role. They must degrade silently when no runtime is reachable;
+- Prompt segments should read cached status emitted by the bare `sinexctl`
+  command center, `sinexctl runtime health`, or the MCP read role. They must degrade silently when no runtime is reachable;
   they must not synthesize state.
 - Tab completions should derive their option lists from the runtime
   (registered sources, schema-known event types, known material ids,

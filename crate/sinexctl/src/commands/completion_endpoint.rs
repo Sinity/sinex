@@ -648,50 +648,20 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn grammar_completion_omits_removed_shortcut_roots() -> TestResult<()> {
+    async fn grammar_completion_suggests_canonical_root_groups() -> TestResult<()> {
         let response = response("sinexctl ").await;
         let values: BTreeSet<&str> = response
             .candidates
             .iter()
             .map(|candidate| candidate.value.as_str())
             .collect();
-        for removed in [
-            "query",
-            "recent",
-            "errors",
-            "watch",
-            "timeline",
-            "explain",
-            "trace",
-            "annotate",
-            "modules",
-            "automata",
-            "throughput",
-            "telemetry",
-            "report",
-            "relations",
-            "audit",
-            "blob",
-            "state",
-            "admin",
-            "declare",
-            "curation",
-            "llm",
-            "instructions",
-            "context",
-            "verify",
-            "demo",
-            "gateway",
-            "core",
-            "documents",
-            "semantics",
-            "completions",
-            "status",
-            "now",
+        for root in [
+            "events", "sources", "runtime", "metrics", "ops", "privacy", "tasks", "record", "docs",
+            "semantic", "tui", "config",
         ] {
             assert!(
-                !values.contains(removed),
-                "removed root `{removed}` must not be suggested"
+                values.contains(root),
+                "canonical root `{root}` must be suggested: {response:#?}"
             );
         }
         Ok(())

@@ -414,12 +414,20 @@ fn command_center_view(config: &Config, format: OutputFormat) -> CommandCenterVi
                 purpose: "task projection and lifecycle",
             },
             CommandCenterRootGroup {
+                root: "record",
+                purpose: "manual canonical records",
+            },
+            CommandCenterRootGroup {
                 root: "docs",
                 purpose: "document search, retrieval, and chunk browsing",
             },
             CommandCenterRootGroup {
                 root: "semantic",
                 purpose: "semantic epochs and shadow-lane inspection",
+            },
+            CommandCenterRootGroup {
+                root: "tui",
+                purpose: "interactive operator workbench",
             },
             CommandCenterRootGroup {
                 root: "config",

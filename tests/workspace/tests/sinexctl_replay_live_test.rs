@@ -1,4 +1,4 @@
-//! CLI live tests for `sinexctl replay *` commands against a real gateway.
+//! CLI live tests for `sinexctl ops replay *` commands against a real gateway.
 //!
 //! Follows the same pattern as `sinexctl_integration_test.rs`: starts an
 //! in-process gateway with self-signed TLS, then invokes the sinexctl binary
@@ -124,6 +124,7 @@ async fn sinexctl_replay(url: &str, args: &[&str]) -> std::process::Output {
         .arg("10")
         .arg("--rpc-url")
         .arg(url)
+        .arg("ops")
         .arg("replay");
     for arg in args {
         cmd.arg(arg);
@@ -135,7 +136,7 @@ async fn sinexctl_replay(url: &str, args: &[&str]) -> std::process::Output {
 
 /// Extract `operation_id` from sinexctl JSON output.
 fn extract_op_id(output: &std::process::Output) -> String {
-    let json = parse_json_stdout(output, "replay operation");
+    let json = parse_json_stdout(output, "ops replay operation");
     // sinexctl outputs the operation_id at the top level or under "operation"
     json["operation_id"]
         .as_str()
@@ -198,10 +199,10 @@ async fn sinexctl_replay_plan_creates_operation(ctx: TestContext) -> color_eyre:
 
     assert!(
         output.status.success(),
-        "sinexctl replay plan should succeed.\nstderr: {stderr}\nstdout: {stdout_str}",
+        "sinexctl ops replay plan should succeed.\nstderr: {stderr}\nstdout: {stdout_str}",
     );
 
-    let operation = parse_json_stdout(&output, "replay plan");
+    let operation = parse_json_stdout(&output, "ops replay plan");
     assert_eq!(operation["state"].as_str(), Some("Planning"));
     assert_eq!(
         operation["scope"]["source_name"].as_str(),
@@ -243,11 +244,11 @@ async fn sinexctl_replay_preview_after_plan(ctx: TestContext) -> color_eyre::Res
     let preview_output = sinexctl_replay(&url, &["preview", &op_id, "-f", "json"]).await;
     assert!(
         preview_output.status.success(),
-        "sinexctl replay preview should succeed.\nstderr: {}",
+        "sinexctl ops replay preview should succeed.\nstderr: {}",
         String::from_utf8_lossy(&preview_output.stderr)
     );
 
-    let preview = parse_json_stdout(&preview_output, "replay preview");
+    let preview = parse_json_stdout(&preview_output, "ops replay preview");
     assert_eq!(
         preview["operation"]["operation_id"].as_str(),
         Some(op_id.as_str())
@@ -289,10 +290,10 @@ async fn sinexctl_replay_approve_after_preview(ctx: TestContext) -> color_eyre::
     let approve_output = sinexctl_replay(&url, &["approve", &op_id, "-f", "json"]).await;
     assert!(
         approve_output.status.success(),
-        "sinexctl replay approve should succeed.\nstderr: {}",
+        "sinexctl ops replay approve should succeed.\nstderr: {}",
         String::from_utf8_lossy(&approve_output.stderr)
     );
-    let approved = parse_json_stdout(&approve_output, "replay approve");
+    let approved = parse_json_stdout(&approve_output, "ops replay approve");
     assert_eq!(approved["operation_id"].as_str(), Some(op_id.as_str()));
     assert_eq!(approved["state"].as_str(), Some("Approved"));
 
@@ -338,11 +339,11 @@ async fn sinexctl_replay_cancel_with_reason(ctx: TestContext) -> color_eyre::Res
     .await;
     assert!(
         cancel_output.status.success(),
-        "sinexctl replay cancel should succeed.\nstderr: {}",
+        "sinexctl ops replay cancel should succeed.\nstderr: {}",
         String::from_utf8_lossy(&cancel_output.stderr)
     );
 
-    let cancelled = parse_json_stdout(&cancel_output, "replay cancel");
+    let cancelled = parse_json_stdout(&cancel_output, "ops replay cancel");
     assert_eq!(cancelled["operation_id"].as_str(), Some(op_id.as_str()));
     assert_eq!(cancelled["state"].as_str(), Some("Cancelled"));
     assert_eq!(cancelled["cancelled"].as_bool(), Some(true));
@@ -376,11 +377,11 @@ async fn sinexctl_replay_status_shows_state(ctx: TestContext) -> color_eyre::Res
     let status_output = sinexctl_replay(&url, &["status", &op_id, "-f", "json"]).await;
     assert!(
         status_output.status.success(),
-        "sinexctl replay status should succeed.\nstderr: {}",
+        "sinexctl ops replay status should succeed.\nstderr: {}",
         String::from_utf8_lossy(&status_output.stderr)
     );
 
-    let status = parse_json_stdout(&status_output, "replay status");
+    let status = parse_json_stdout(&status_output, "ops replay status");
     assert_eq!(status["operation_id"].as_str(), Some(op_id.as_str()));
     assert_eq!(status["state"].as_str(), Some("Planning"));
 
@@ -415,11 +416,11 @@ async fn sinexctl_replay_list_returns_operations(ctx: TestContext) -> color_eyre
     let list_output = sinexctl_replay(&url, &["list", "-f", "json"]).await;
     assert!(
         list_output.status.success(),
-        "sinexctl replay list should succeed.\nstderr: {}",
+        "sinexctl ops replay list should succeed.\nstderr: {}",
         String::from_utf8_lossy(&list_output.stderr)
     );
 
-    let operations = parse_json_lines_stdout(&list_output, "replay list");
+    let operations = parse_json_lines_stdout(&list_output, "ops replay list");
     let source_ids: Vec<_> = operations
         .iter()
         .filter_map(|operation| operation["scope"]["source_name"].as_str())

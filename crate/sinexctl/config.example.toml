@@ -20,10 +20,10 @@ editor = "vim"
 
 # Command aliases - shortcuts for common commands
 [aliases]
-# Example: sinexctl recent -> sinexctl query --since 1h --limit 50
-recent = ["query", "--since", "1h", "--limit", "50"]
-# Example: sinexctl watch-replay -> sinexctl replay watch --interval 1
-watch-replay = ["replay", "watch", "--interval", "1"]
+# Example: sinexctl last-hour-events -> sinexctl events query --since 1h --limit 50
+last-hour-events = ["events", "query", "--since", "1h", "--limit", "50"]
+# Example: sinexctl wait-replay -> sinexctl ops replay watch --interval 1
+wait-replay = ["ops", "replay", "watch", "--interval", "1"]
 
 # UI Theme configuration
 [theme]
