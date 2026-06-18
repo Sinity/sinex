@@ -273,15 +273,27 @@ impl FinalizerRegistration {
 
 /// Payload type for [`ProposalKind::DuplicateCandidate`] proposals.
 ///
-/// Identifies a candidate duplicate pair and the reason the system
-/// believes them to be duplicates.
+/// Identifies one cross-material duplicate candidate cluster. The proposed
+/// value is intentionally just data: the shared [`Proposal`] and [`Judgment`]
+/// gate decides whether this value can be applied.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct DuplicateCandidatePayload {
-    /// The event to keep (primary / canonical occurrence).
-    pub primary_event_id: String,
-    /// The event believed to be a duplicate (to be archived on acceptance).
-    pub duplicate_event_id: String,
-    /// Human-readable rationale for the duplicate assessment.
+    /// Replay-stable cluster id used by the duplicate review surface.
+    pub cluster_id: String,
+    /// Event source shared by the candidate events.
+    pub source: String,
+    /// Event type shared by the candidate events.
+    pub event_type: String,
+    /// Logical candidate key that made the events comparable.
+    pub equivalence_key: String,
+    /// Candidate event ids participating in the duplicate cluster.
+    pub candidate_event_ids: Vec<String>,
+    /// Source material ids backing the candidate cluster.
+    pub candidate_material_ids: Vec<String>,
+    /// Optional preferred event to keep when the operator accepts a preference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_event_id: Option<String>,
+    /// Human-readable rationale for displaying the candidate to an operator.
     pub match_reason: String,
 }
 
@@ -298,8 +310,13 @@ pub fn fixture_duplicate_proposal() -> Proposal<DuplicateCandidatePayload> {
         subject,
         0.87,
         DuplicateCandidatePayload {
-            primary_event_id: "evt-aaaabbbb".to_string(),
-            duplicate_event_id: "evt-ccccdddd".to_string(),
+            cluster_id: "shell.history/command.imported/demo-command".to_string(),
+            source: "shell.history".to_string(),
+            event_type: "command.imported".to_string(),
+            equivalence_key: "demo-command".to_string(),
+            candidate_event_ids: vec!["evt-aaaabbbb".to_string(), "evt-ccccdddd".to_string()],
+            candidate_material_ids: vec!["mat-1111".to_string(), "mat-2222".to_string()],
+            preferred_event_id: Some("evt-aaaabbbb".to_string()),
             match_reason: "identical command text, same cwd, within 2s".to_string(),
         },
         "rule:dedup-heuristic",
@@ -335,7 +352,7 @@ pub fn fixture_finalizer_registration() -> FinalizerRegistration {
     FinalizerRegistration::human_required(
         ProposalKind::DuplicateCandidate,
         "Duplicate event merges are irreversible. An operator must verify \
-         the candidate pair before any merge action is applied.",
+         the candidate cluster before any finalizer action is applied.",
     )
 }
 
@@ -388,8 +405,13 @@ mod tests {
             SinexObjectRef::new(SinexObjectKind::Event, "evt-x"),
             0.99, // very high confidence — still not enough
             DuplicateCandidatePayload {
-                primary_event_id: "evt-x".to_string(),
-                duplicate_event_id: "evt-y".to_string(),
+                cluster_id: "fixture/source/key".to_string(),
+                source: "fixture".to_string(),
+                event_type: "source".to_string(),
+                equivalence_key: "key".to_string(),
+                candidate_event_ids: vec!["evt-x".to_string(), "evt-y".to_string()],
+                candidate_material_ids: vec!["mat-x".to_string(), "mat-y".to_string()],
+                preferred_event_id: Some("evt-x".to_string()),
                 match_reason: "nearly identical".to_string(),
             },
             "model:high-confidence",

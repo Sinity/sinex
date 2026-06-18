@@ -276,6 +276,7 @@ fn render_finalization(response: &CurationFinalizeResponse, format: OutputFormat
                 .map_or_else(|| "<missing-id>".to_string(), ToString::to_string);
             println!("Curation finalization recorded");
             println!("  Event:      {event_id}");
+            println!("  Operation:  {}", response.operation.id);
             println!("  Proposal:   {}", response.finalized.proposal_id);
             println!("  Judgment:   {}", response.finalized.judgment_id);
             println!(
