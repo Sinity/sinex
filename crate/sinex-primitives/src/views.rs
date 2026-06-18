@@ -41,6 +41,11 @@ pub enum SinexObjectKind {
     SemanticEntity,
     SemanticRelation,
     Operation,
+    QueryRun,
+    Proposal,
+    Judgment,
+    ExternalRef,
+    Policy,
     ReplayRun,
     Snapshot,
     DlqMessage,
@@ -503,7 +508,12 @@ pub enum EventTraceRelation {
     SourceMaterial,
     MaterialAnchor,
     SourceEvent,
+    QueryRun,
+    Proposal,
+    Judgment,
     Operation,
+    ExternalRef,
+    Policy,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -1209,6 +1219,40 @@ mod tests {
 
         let unknown = serde_json::from_value::<EventOriginKind>(json!("mystery_origin"));
         assert!(unknown.is_err(), "unknown origin kind must fail loudly");
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn event_trace_relation_vocabulary_covers_issue_contract() -> xtask::TestResult<()> {
+        let relations = [
+            (EventTraceRelation::SourceMaterial, "source_material"),
+            (EventTraceRelation::MaterialAnchor, "material_anchor"),
+            (EventTraceRelation::SourceEvent, "source_event"),
+            (EventTraceRelation::QueryRun, "query_run"),
+            (EventTraceRelation::Proposal, "proposal"),
+            (EventTraceRelation::Judgment, "judgment"),
+            (EventTraceRelation::Operation, "operation"),
+            (EventTraceRelation::ExternalRef, "external_ref"),
+            (EventTraceRelation::Policy, "policy"),
+        ];
+
+        for (relation, wire) in relations {
+            assert_eq!(serde_json::to_value(relation)?, json!(wire));
+        }
+
+        let object_kinds = [
+            (SinexObjectKind::QueryRun, "query_run"),
+            (SinexObjectKind::Proposal, "proposal"),
+            (SinexObjectKind::Judgment, "judgment"),
+            (SinexObjectKind::Operation, "operation"),
+            (SinexObjectKind::ExternalRef, "external_ref"),
+            (SinexObjectKind::Policy, "policy"),
+        ];
+
+        for (kind, wire) in object_kinds {
+            assert_eq!(serde_json::to_value(kind)?, json!(wire));
+        }
 
         Ok(())
     }
