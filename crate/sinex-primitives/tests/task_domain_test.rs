@@ -1,7 +1,7 @@
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
-    TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload, TaskStatusChangedPayload,
-    TaskUpdatedPayload,
+    TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload, TaskLinkedPayload,
+    TaskMergedPayload, TaskSplitPayload, TaskStatusChangedPayload, TaskUpdatedPayload,
 };
 use sinex_primitives::task_domain::{
     TASK_REDUCER_DOMAIN_ID, TASK_REDUCER_INPUT_EVENT_TYPES, TASK_REDUCER_SEMANTICS_VERSION,
@@ -36,6 +36,9 @@ async fn task_payloads_publish_stable_event_names() -> TestResult<()> {
     );
     assert_eq!(TaskCompletedPayload::EVENT_TYPE.as_str(), "task.completed");
     assert_eq!(TaskCancelledPayload::EVENT_TYPE.as_str(), "task.cancelled");
+    assert_eq!(TaskSplitPayload::EVENT_TYPE.as_str(), "task.split");
+    assert_eq!(TaskMergedPayload::EVENT_TYPE.as_str(), "task.merged");
+    assert_eq!(TaskLinkedPayload::EVENT_TYPE.as_str(), "task.linked");
     Ok(())
 }
 
@@ -76,6 +79,9 @@ async fn task_reducer_exports_projection_spec() -> TestResult<()> {
             .input_event_types
             .contains(&"task.cancelled")
     );
+    assert!(TASK_REDUCER_SPEC.input_event_types.contains(&"task.split"));
+    assert!(TASK_REDUCER_SPEC.input_event_types.contains(&"task.merged"));
+    assert!(TASK_REDUCER_SPEC.input_event_types.contains(&"task.linked"));
     assert_eq!(TASK_REDUCER_SPEC.output_kind, OutputKind::ProjectionRow);
     Ok(())
 }

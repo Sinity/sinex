@@ -839,14 +839,26 @@ pub mod fixtures {
         ts: Option<Timestamp>,
         payload: JsonValue,
     ) -> Event<JsonValue> {
+        let source = match EventSource::new(source) {
+            Ok(source) => source,
+            Err(error) => panic!("fixture source must be valid: {error}"),
+        };
+        let event_type = match EventType::new(event_type) {
+            Ok(event_type) => event_type,
+            Err(error) => panic!("fixture event type must be valid: {error}"),
+        };
+        let host = match HostName::new("fixture-host") {
+            Ok(host) => host,
+            Err(error) => panic!("fixture host must be valid: {error}"),
+        };
         Event {
             id: Some(Id::<Event<JsonValue>>::new()),
-            source: EventSource::new(source).expect("fixture source must be valid"),
-            event_type: EventType::new(event_type).expect("fixture event type must be valid"),
+            source,
+            event_type,
             payload,
             ts_orig: ts,
             ts_quality: ts.map(|_| TemporalSourceType::RealtimeCapture),
-            host: HostName::new("fixture-host").expect("fixture host must be valid"),
+            host,
             module_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
@@ -862,8 +874,10 @@ pub mod fixtures {
     }
 
     fn at(secs: i64) -> Timestamp {
-        Timestamp::from_unix_timestamp(1_700_000_000 + secs)
-            .expect("fixture timestamp must be in range")
+        match Timestamp::from_unix_timestamp(1_700_000_000 + secs) {
+            Some(timestamp) => timestamp,
+            None => panic!("fixture timestamp must be in range"),
+        }
     }
 }
 

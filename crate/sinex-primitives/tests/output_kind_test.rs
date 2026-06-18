@@ -2,17 +2,16 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use sinex_primitives::{
-    OUTPUT_KIND_DECLARATIONS, OutputKind, declared_output_kind,
-    task_domain::TASK_REDUCER_SPEC,
+    OUTPUT_KIND_DECLARATIONS, OutputKind, declared_output_kind, task_domain::TASK_REDUCER_SPEC,
 };
 use xtask::sandbox::prelude::*;
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .expect("crate/sinex-primitives has a repository root")
-        .to_path_buf()
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    match manifest_dir.ancestors().nth(2) {
+        Some(root) => root.to_path_buf(),
+        None => panic!("crate/sinex-primitives has a repository root"),
+    }
 }
 
 #[sinex_test]
