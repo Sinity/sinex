@@ -1,6 +1,8 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_primitives::JsonValue;
+use sinex_primitives::authority::JudgmentVerdict;
+use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::events::payloads::{
     CurationJudgmentActorKind, CurationJudgmentDecision, CurationProposalPayload,
@@ -164,6 +166,18 @@ async fn curation_duplicate_judgment_records_proposal_over_candidate_set(
     assert_eq!(response.proposal.evidence_material_ids.len(), 2);
     assert_eq!(response.judgment.actor_id, auth.actor_id());
     assert_eq!(response.judgment.decision, CurationJudgmentDecision::Accept);
+    let authority_proposal = response
+        .proposal
+        .authority_proposal
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("duplicate proposal missing shared authority"))?;
+    let authority_judgment = response
+        .judgment
+        .authority_judgment
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("duplicate judgment missing shared authority"))?;
+    assert_eq!(authority_judgment.proposal_id, authority_proposal.id);
+    assert_eq!(authority_judgment.verdict, JudgmentVerdict::Accept);
     assert_eq!(
         response
             .judgment
@@ -205,6 +219,117 @@ async fn curation_duplicate_judgment_records_proposal_over_candidate_set(
         judgment_event.get_source_event_ids(),
         Some([proposal_event_id].as_slice())
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn curation_duplicate_accept_finalizes_through_operation_record(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let candidate_a = insert_duplicate_candidate(&ctx, "visit-1", "material-a").await?;
+    let candidate_b = insert_duplicate_candidate(&ctx, "visit-1", "material-b").await?;
+    let auth = RpcAuthContext::system();
+
+    let judgment = handle_curation_record_duplicate_judgment(
+        ctx.pool(),
+        CurationRecordDuplicateJudgmentRequest {
+            source: "webhistory".to_string(),
+            event_type: "page.visited".to_string(),
+            equivalence_key: "visit-1".to_string(),
+            event_ids: vec![candidate_a, candidate_b],
+            action: CurationDuplicateAction::Merge,
+            preferred_event_id: None,
+            actor_kind: CurationJudgmentActorKind::TestFixture,
+            actor_id: None,
+            comment: Some("merge duplicate fixtures".to_string()),
+        },
+        &auth,
+    )
+    .await?;
+    let judgment_event_id = judgment
+        .judgment_event
+        .id
+        .ok_or_else(|| color_eyre::eyre::eyre!("judgment response event missing id"))?;
+
+    let finalization = handle_curation_finalize(
+        ctx.pool(),
+        CurationFinalizeRequest {
+            judgment_event_id: judgment_event_id.to_uuid().to_string(),
+        },
+    )
+    .await?;
+    let expected_judgment_event_id = judgment_event_id.to_string();
+
+    assert_eq!(finalization.operation.operation_type, "curation.finalize");
+    assert_eq!(
+        finalization.operation.result_status,
+        OperationStatus::Success
+    );
+    assert_eq!(
+        finalization
+            .operation
+            .scope
+            .as_ref()
+            .and_then(|value| value.get("judgment_event_id"))
+            .and_then(JsonValue::as_str),
+        Some(expected_judgment_event_id.as_str())
+    );
+    assert_eq!(
+        finalization.finalized.output_payload["action"].as_str(),
+        Some("merge")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn curation_duplicate_reject_does_not_create_finalization_operation(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let candidate_a = insert_duplicate_candidate(&ctx, "visit-1", "material-a").await?;
+    let candidate_b = insert_duplicate_candidate(&ctx, "visit-1", "material-b").await?;
+    let auth = RpcAuthContext::system();
+
+    let judgment = handle_curation_record_duplicate_judgment(
+        ctx.pool(),
+        CurationRecordDuplicateJudgmentRequest {
+            source: "webhistory".to_string(),
+            event_type: "page.visited".to_string(),
+            equivalence_key: "visit-1".to_string(),
+            event_ids: vec![candidate_a, candidate_b],
+            action: CurationDuplicateAction::Ignore,
+            preferred_event_id: None,
+            actor_kind: CurationJudgmentActorKind::TestFixture,
+            actor_id: None,
+            comment: Some("not duplicates".to_string()),
+        },
+        &auth,
+    )
+    .await?;
+    let judgment_event_id = judgment
+        .judgment_event
+        .id
+        .ok_or_else(|| color_eyre::eyre::eyre!("judgment response event missing id"))?;
+
+    let error = handle_curation_finalize(
+        ctx.pool(),
+        CurationFinalizeRequest {
+            judgment_event_id: judgment_event_id.to_uuid().to_string(),
+        },
+    )
+    .await
+    .expect_err("reject duplicate judgment must not finalize");
+    assert!(
+        error
+            .to_string()
+            .contains("only an Accept judgment may promote a proposal")
+    );
+
+    let operations = ctx
+        .pool()
+        .state()
+        .list_operations(Some("curation.finalize"), None, 10)
+        .await?;
+    assert!(operations.is_empty());
     Ok(())
 }
 
@@ -274,6 +399,11 @@ async fn curation_finalize_persists_lineage_to_original_proposal_and_judgment(
         .ok_or_else(|| color_eyre::eyre::eyre!("finalization event missing derived parents"))?;
     assert_eq!(parents, &[original_proposal_event_id, judgment_event_id]);
     assert!(!parents.contains(&replayed_proposal_event_id));
+    assert_eq!(finalization.operation.operation_type, "curation.finalize");
+    assert_eq!(
+        finalization.operation.result_status,
+        OperationStatus::Success
+    );
     Ok(())
 }
 
