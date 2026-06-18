@@ -21,12 +21,12 @@ let
 
   requiredTopLevel =
     (isAttrs raw)
-    && (raw.schema_version or null) == 1
+    && (raw.schema_version or null) == 2
     && isList (raw.entries or null);
 
   entries =
     if requiredTopLevel then raw.entries
-    else throw "source-catalog.generated.json must be an object with schema_version = 1 and entries = [ ... ]";
+    else throw "source-catalog.generated.json must be an object with schema_version = 2 and entries = [ ... ]";
 
   hasRequiredContract = entry:
     let contract = entry.contract or null;
@@ -63,9 +63,41 @@ let
       && limits.cpu_weight <= 10000
     );
 
+  isOptionalInt = value: value == null || isInt value;
+
+  hasRequiredBudget = entry:
+    let
+      binding = entry.binding or null;
+      budget = entry.resource_budget or null;
+    in
+    binding == null || (
+      isAttrs budget
+      && isString (budget.work_class or null)
+      && isInt (budget.steady_memory_mib or null)
+      && budget.steady_memory_mib > 0
+      && isInt (budget.burst_memory_mib or null)
+      && budget.burst_memory_mib >= budget.steady_memory_mib
+      && isInt (budget.cpu_weight or null)
+      && budget.cpu_weight >= 1
+      && budget.cpu_weight <= 10000
+      && isOptionalInt (budget.max_input_bytes_per_sec or null)
+      && isOptionalInt (budget.max_input_events_per_sec or null)
+      && isInt (budget.max_pending_material_bytes or null)
+      && budget.max_pending_material_bytes >= 0
+      && isInt (budget.max_pending_candidates or null)
+      && budget.max_pending_candidates >= 0
+      && isOptionalInt (budget.max_unacked_transport_messages or null)
+      && isOptionalInt (budget.batch_size or null)
+      && isOptionalInt (budget.flush_interval_ms or null)
+      && isOptionalInt (budget.checkpoint_interval_ms or null)
+      && isOptionalInt (budget.expected_disk_write_bytes_per_min or null)
+      && isOptionalInt (budget.expected_wal_write_bytes_per_min or null)
+      && isList (budget.pressure_actions or null)
+    );
+
   invalidEntries =
     filter
-      (entry: !(hasRequiredContract entry && hasRequiredBinding entry && hasRequiredLimits entry))
+      (entry: !(hasRequiredContract entry && hasRequiredBinding entry && hasRequiredLimits entry && hasRequiredBudget entry))
       entries;
 
   duplicateIds =
@@ -102,6 +134,8 @@ let
   runtimeShapeFor = sourceId: (boundEntryFor sourceId).binding.runtime_shape;
 
   resourceLimitsFor = sourceId: (boundEntryFor sourceId).resource_limits;
+
+  resourceBudgetFor = sourceId: (boundEntryFor sourceId).resource_budget;
 
   shutdownTimeoutFor = sourceId:
     let shape = runtimeShapeFor sourceId;
@@ -149,6 +183,7 @@ let
       access_scope = entry.contract.access_scope;
       privacy_tier = entry.contract.privacy_tier;
       resource_limits = limits;
+      resource_budget = entry.resource_budget;
     };
 
   memoryFor = sourceId: (resourceLimitsFor sourceId).memory_max_mib;
@@ -176,6 +211,7 @@ validation // {
     instanceDefaultFor
     manifestMetadataFor
     resourceDefaultsFor
+    resourceBudgetFor
     resourceLimitsFor
     unitMemoryLimitFor
     ;
