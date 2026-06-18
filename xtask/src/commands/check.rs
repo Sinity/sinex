@@ -564,7 +564,9 @@ impl XtaskCommand for CheckCommand {
                 println!("Checking formatting...");
             }
             let stage = ctx.start_stage("fmt");
-            let fmt_result = ctx.cargo_runner().run_fmt_check();
+            let fmt_args = fmt_args_for_scope(&workload_scope);
+            let fmt_arg_refs: Vec<&str> = fmt_args.iter().map(String::as_str).collect();
+            let fmt_result = ctx.cargo_runner().run_fmt_check(&fmt_arg_refs);
 
             ctx.finish_stage(stage, fmt_result.is_ok());
             fmt_result?;
@@ -802,6 +804,16 @@ fn extract_packages_from_actions(actions: &[crate::planner::PlannedAction]) -> V
         }
     }
     packages.into_iter().collect()
+}
+
+fn fmt_args_for_scope(scope: &WorkloadScope) -> Vec<String> {
+    match scope {
+        WorkloadScope::Workspace => vec!["--all".to_string()],
+        WorkloadScope::Packages(packages) | WorkloadScope::Affected(packages) => packages
+            .iter()
+            .flat_map(|package| ["-p".to_string(), package.clone()])
+            .collect(),
+    }
 }
 
 /// Execute the `--changed-strict` drift-guard path.
@@ -1210,6 +1222,46 @@ mod tests {
         let calls = runner.calls();
         assert_eq!(calls.fmt, 1, "fmt must have been called");
         assert_eq!(calls.check, 0, "cargo check must NOT run after fmt failure");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_fmt_uses_package_scope() -> ::xtask::sandbox::TestResult<()> {
+        let runner = Arc::new(MockCargoRunner::clean());
+        let ctx = mock_ctx(runner.clone());
+        let cmd = CheckCommand {
+            fmt: true,
+            packages: vec!["sinex-primitives".to_string()],
+            ..make_cmd(CheckFlags::default())
+        };
+        let result = cmd.execute(&ctx).await?;
+        assert!(
+            result.is_success(),
+            "package-scoped fmt check should succeed: {result:?}"
+        );
+        let calls = runner.calls();
+        assert_eq!(calls.fmt, 1, "fmt must have been called once");
+        assert_eq!(calls.fmt_args, vec!["-p", "sinex-primitives"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_fmt_uses_workspace_scope_for_all() -> ::xtask::sandbox::TestResult<()> {
+        let runner = Arc::new(MockCargoRunner::clean());
+        let ctx = mock_ctx(runner.clone());
+        let cmd = CheckCommand {
+            fmt: true,
+            all: true,
+            ..make_cmd(CheckFlags::default())
+        };
+        let result = cmd.execute(&ctx).await?;
+        assert!(
+            result.is_success(),
+            "workspace fmt check should succeed: {result:?}"
+        );
+        let calls = runner.calls();
+        assert_eq!(calls.fmt, 1, "fmt must have been called once");
+        assert_eq!(calls.fmt_args, vec!["--all"]);
         Ok(())
     }
 

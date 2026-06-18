@@ -1401,10 +1401,7 @@ async fn test_workspace_state_dir_honors_explicit_temp_override() {}\n\
         dependency_specs.insert("sinexd".to_string(), Vec::new());
 
         let mut xtask_features = HashMap::new();
-        xtask_features.insert(
-            "extra-feature".to_string(),
-            vec!["dep:sinexd".to_string()],
-        );
+        xtask_features.insert("extra-feature".to_string(), vec!["dep:sinexd".to_string()]);
         let mut features = HashMap::new();
         features.insert("xtask".to_string(), xtask_features);
 
