@@ -154,6 +154,22 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+
+    /// Emit the SourcePackage / mode completeness report (#1792).
+    ///
+    /// The report is generated from compiled source contracts, runtime
+    /// bindings, parser/source factories, payload schemas, and the current
+    /// catalog/privacy projections. It is review output, not a hand-maintained
+    /// proof ledger.
+    ExportPackageCompleteness {
+        /// Output path. If omitted, writes JSON to stdout.
+        #[arg(long)]
+        output: Option<String>,
+
+        /// Fail when any accepted mode has blocking missing requirements.
+        #[arg(long)]
+        strict: bool,
+    },
 }
 
 fn parse_kv(s: &str) -> Result<(String, String), String> {
@@ -207,6 +223,9 @@ async fn main() -> color_eyre::Result<()> {
         Command::ExportPrivacyCoverageMatrix { output, check } => {
             export_privacy_coverage_matrix(output, check)
         }
+        Command::ExportPackageCompleteness { output, strict } => {
+            export_package_completeness(output, strict)
+        }
     }
 }
 
@@ -251,6 +270,36 @@ fn export_privacy_coverage_matrix(output: Option<String>, check: bool) -> color_
     } else {
         println!("privacy coverage matrix already up to date: {path}");
     }
+    Ok(())
+}
+
+fn export_package_completeness(output: Option<String>, strict: bool) -> color_eyre::Result<()> {
+    use sinexd::sources::package_completeness::render_package_completeness_report;
+
+    let rendered = render_package_completeness_report()?;
+    let report: serde_json::Value = serde_json::from_str(&rendered)?;
+    let blocking_missing = report["summary"]["blocking_missing_count"]
+        .as_u64()
+        .unwrap_or(0);
+
+    if let Some(path) = output {
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        std::fs::write(&path, rendered)?;
+        println!("package completeness report written: {path}");
+    } else {
+        print!("{rendered}");
+    }
+
+    if strict && blocking_missing > 0 {
+        color_eyre::eyre::bail!(
+            "package completeness strict gate found {blocking_missing} blocking missing requirement(s)"
+        );
+    }
+
     Ok(())
 }
 

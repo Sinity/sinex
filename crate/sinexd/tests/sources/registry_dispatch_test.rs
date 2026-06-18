@@ -463,3 +463,160 @@ async fn source_meta_document_staging_registers_parser_and_driver() -> TestResul
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// 8. #1792 SourcePackage completeness report derives from live inventories
+// ---------------------------------------------------------------------------
+
+#[sinex_test]
+async fn package_completeness_report_is_keyed_by_package_and_mode() -> TestResult<()> {
+    use sinexd::sources::package_completeness::{
+        PackageCompleteness, PackageModeState, build_package_completeness_report,
+    };
+
+    let report = build_package_completeness_report();
+    assert_eq!(report.schema_version, 1);
+    assert!(
+        report.summary.package_count >= 1,
+        "report must enumerate compiled SourceContract inventory"
+    );
+
+    let terminal = report
+        .packages
+        .get("terminal.atuin-history")
+        .expect("terminal.atuin-history package row");
+    let mode = terminal
+        .modes
+        .get("terminal.atuin-history")
+        .expect("terminal.atuin-history mode row keyed by mode id");
+    assert_eq!(mode.sources.source_contract.id, "terminal.atuin-history");
+    assert!(mode.sources.runtime_binding.is_some());
+    assert!(mode.sources.parser_manifest.is_some());
+    assert!(mode.sources.source_factory_registered);
+    assert!(mode.sources.parser_factory_registered);
+    assert!(mode.sources.catalog_projection_registered);
+    assert!(mode.sources.privacy_coverage_registered);
+    assert_eq!(mode.completeness, PackageCompleteness::Incomplete);
+    assert_eq!(mode.mode_state, PackageModeState::Incomplete);
+    assert!(
+        mode.missing
+            .iter()
+            .any(|field| field == "event_contract_refs"),
+        "accepted modes must report the missing #1902 EventContract refs"
+    );
+    assert!(
+        mode.missing
+            .iter()
+            .any(|field| field == "admission_policy_ref"),
+        "accepted modes must report the missing #1900 AdmissionPolicy ref"
+    );
+    assert!(
+        !mode
+            .missing
+            .iter()
+            .any(|field| field == "resource_budget_spec"),
+        "runtime bindings derive ResourceBudgetSpec from the current ResourceProfile model"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn package_completeness_report_consumes_event_admission_and_budget_refs() -> TestResult<()> {
+    use sinex_primitives::STANDARD_EVENT_ADMISSION_POLICY_ID;
+    use sinex_primitives::event_contracts::SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID;
+    use sinexd::sources::package_completeness::build_package_completeness_report;
+
+    let report = build_package_completeness_report();
+    let mode = report
+        .packages
+        .get("terminal.bash-history")
+        .and_then(|package| package.modes.get("terminal.bash-history"))
+        .expect("terminal.bash-history package/mode row");
+
+    assert!(
+        mode.event_contract_refs
+            .contains(&SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID.to_string()),
+        "shell-history mode must consume the current EventContract registry"
+    );
+    assert!(
+        mode.admission_policy_refs
+            .contains(&STANDARD_EVENT_ADMISSION_POLICY_ID.to_string()),
+        "shell-history mode must consume the current AdmissionPolicy registry"
+    );
+    assert!(
+        mode.event_pairs.iter().any(|pair| {
+            pair.source == "shell.history"
+                && pair.event_type == "command.imported"
+                && pair.event_contract_ref.as_deref()
+                    == Some(SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID)
+        }),
+        "event pair rows should carry the matching EventContract ref"
+    );
+    assert!(
+        mode.sources
+            .runtime_binding
+            .as_ref()
+            .is_some_and(|binding| !binding.resource_budget.is_null()),
+        "runtime binding rows should expose the derived ResourceBudgetSpec"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn package_completeness_report_distinguishes_proposed_and_manual_modes() -> TestResult<()> {
+    use sinexd::sources::package_completeness::{
+        PackageModeState, build_package_completeness_report,
+    };
+
+    let report = build_package_completeness_report();
+
+    let email = report
+        .packages
+        .get("email.mailbox")
+        .expect("email.mailbox package row");
+    assert!(
+        email.modes.contains_key("email.mailbox"),
+        "received-mail proposed mode must be listed"
+    );
+    assert!(
+        email.modes.contains_key("email.mailbox.sent"),
+        "sent-mail proposed multi-binding mode must be listed separately"
+    );
+    let sent = email
+        .modes
+        .get("email.mailbox.sent")
+        .expect("sent proposed mode");
+    assert_eq!(sent.mode_state, PackageModeState::Proposed);
+    assert!(
+        !sent.sources.catalog_projection_registered,
+        "first #1792 slice should expose the current catalog's one-binding collapse for multi-binding packages"
+    );
+
+    let external = report
+        .packages
+        .get("integration.polylogue")
+        .and_then(|package| package.modes.get("integration.polylogue"))
+        .expect("integration.polylogue mode row");
+    assert_eq!(external.mode_state, PackageModeState::Manual);
+    assert_eq!(
+        external.manual_reason,
+        Some("external_producer_no_local_runtime")
+    );
+    assert!(!external.sources.parser_factory_registered);
+    assert!(!external.sources.source_factory_registered);
+
+    let parser_only = report
+        .packages
+        .get("weechat.message")
+        .and_then(|package| package.modes.get("weechat.message"))
+        .expect("weechat.message mode row");
+    assert_eq!(parser_only.mode_state, PackageModeState::Manual);
+    assert_eq!(
+        parser_only.manual_reason,
+        Some("parser_only_dispatch_no_source_factory")
+    );
+    assert!(parser_only.sources.parser_factory_registered);
+    assert!(!parser_only.sources.source_factory_registered);
+    Ok(())
+}
