@@ -15,17 +15,15 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
-use sinex_primitives::query::{
-    EventQuery, EventQueryResult, QueryResultEvent, SortDirection, TimeRange,
-};
+use sinex_primitives::query::{EventQuery, QueryResultEvent, SortDirection, TimeRange};
 use sinex_primitives::rpc::dlq::{DlqMessagePeek, DlqPeekResponse};
 use sinex_primitives::rpc::lifecycle::LifecycleStatusResponse;
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::rpc::replay::{ReplayOperation, ReplayState};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
-    ActionAvailability, ActionAvailabilityState, ActionSideEffect, EventCardListView,
-    EventCardView, OperationJobListView, OperationView, PrivacyStateKind, SinexObjectKind,
+    ActionAvailability, ActionAvailabilityState, ActionSideEffect, EventCardView,
+    OperationJobListView, OperationView, PrivacyStateKind, SinexObjectKind,
     SourceCoverageContinuity, SourceCoverageReadiness, SourceCoverageView,
 };
 use std::io;
@@ -384,17 +382,17 @@ impl App {
             direction: SortDirection::Desc,
             ..Default::default()
         };
-        match self.client.query_events(query).await {
-            Ok(EventQueryResult::Events { events, .. }) => {
-                self.recent_events = EventCardListView::from_query_events(&events).cards;
-                self.recent_event_rows = events;
+        match self.client.event_cards(query).await {
+            Ok(cards) => {
+                self.recent_events = cards.cards;
+                self.recent_event_rows.clear();
                 self.clamp_selection();
             }
-            Ok(_) => {} // aggregation result, shouldn't happen
             Err(e) => {
                 if self.error.is_none() {
                     self.error = Some(format!("Failed to fetch events: {e}"));
                 }
+                self.recent_events.clear();
                 self.recent_event_rows.clear();
             }
         }

@@ -6,8 +6,7 @@ use crate::model::OutputFormat;
 use clap::Args;
 use console::{Term, style};
 use serde_json::json;
-use sinex_primitives::query::QueryResultEvent;
-use sinex_primitives::views::{EventCardListView, EventCardView, ViewEnvelope};
+use sinex_primitives::views::{EventCardListView, ViewEnvelope};
 
 /// List recent events as a timeline with source and type columns.
 #[derive(Debug, Args)]
@@ -46,14 +45,10 @@ impl TimelineCommand {
         }
         query.validate()?;
 
-        let result = client.query_events(query).await?;
-        let sinex_primitives::query::EventQueryResult::Events { events, .. } = result else {
-            println!("Query returned non-list result");
-            return Ok(());
-        };
+        let timeline = client.event_cards(query).await?;
 
         if let Some(output) = render_timeline_machine_output(
-            &events,
+            &timeline,
             self.limit,
             self.source.as_deref(),
             self.event_type.as_deref(),
@@ -66,37 +61,36 @@ impl TimelineCommand {
             return Ok(());
         }
 
-        render_table(&events)?;
+        render_table(&timeline)?;
         Ok(())
     }
 }
 
 fn render_timeline_machine_output(
-    events: &[QueryResultEvent],
+    timeline: &EventCardListView,
     limit: i64,
     source: Option<&str>,
     event_type: Option<&str>,
     format: OutputFormat,
 ) -> Result<Option<String>> {
-    let timeline = EventCardListView::from_query_events(events);
-    let envelope = ViewEnvelope::new("sinexctl.events.timeline", timeline).with_query_echo(json!({
-        "limit": limit,
-        "source": source,
-        "event_type": event_type,
-    }));
+    let envelope =
+        ViewEnvelope::new("sinexctl.events.timeline", timeline.clone()).with_query_echo(json!({
+            "limit": limit,
+            "source": source,
+            "event_type": event_type,
+        }));
     render_finite_envelope(&envelope, format)
 }
 
-fn render_table(events: &[QueryResultEvent]) -> Result<()> {
+fn render_table(timeline: &EventCardListView) -> Result<()> {
     let term = Term::stdout();
     term.write_line(&format!(
         "{}  {} events",
         style("Timeline").bold().underlined(),
-        style(events.len().to_string()).cyan(),
+        style(timeline.count.to_string()).cyan(),
     ))?;
 
-    for event in events {
-        let card = EventCardView::from_query_event(event);
+    for card in &timeline.cards {
         let ts = card
             .timestamp
             .original
@@ -104,8 +98,8 @@ fn render_table(events: &[QueryResultEvent]) -> Result<()> {
         term.write_line(&format!(
             "{}  {:<20} {:<30} {}",
             style(ts.chars().take(19).collect::<String>()).dim(),
-            style(card.source.raw).yellow(),
-            style(card.event_type).green(),
+            style(card.source.raw.as_str()).yellow(),
+            style(card.event_type.as_str()).green(),
             card.summary,
         ))?;
     }
@@ -120,9 +114,15 @@ mod tests {
 
     #[sinex_test]
     async fn timeline_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
-        let output =
-            render_timeline_machine_output(&[], 25, Some("shell.atuin"), None, OutputFormat::Json)?
-                .expect("json should render");
+        let timeline = EventCardListView::from_query_events(&[]);
+        let output = render_timeline_machine_output(
+            &timeline,
+            25,
+            Some("shell.atuin"),
+            None,
+            OutputFormat::Json,
+        )?
+        .expect("json should render");
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
         assert_eq!(value["source_surface"], "sinexctl.events.timeline");
@@ -134,7 +134,9 @@ mod tests {
 
     #[sinex_test]
     async fn timeline_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<()> {
-        let result = render_timeline_machine_output(&[], 100, None, None, OutputFormat::Ndjson);
+        let timeline = EventCardListView::from_query_events(&[]);
+        let result =
+            render_timeline_machine_output(&timeline, 100, None, None, OutputFormat::Ndjson);
         assert!(result.is_err(), "timeline is a finite view");
         Ok(())
     }
