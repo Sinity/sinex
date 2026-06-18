@@ -11,7 +11,8 @@
 //! silent return.
 
 use serde_json::json;
-use sinex_db::repositories::{CascadeSource, EventRepositoryTx};
+use sinex_db::CascadeSource;
+use sinex_db::repositories::EventRepositoryTx;
 use sinex_primitives::temporal;
 use sqlx::PgPool;
 use std::collections::BTreeSet;
