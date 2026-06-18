@@ -809,10 +809,20 @@ fn extract_packages_from_actions(actions: &[crate::planner::PlannedAction]) -> V
 fn fmt_args_for_scope(scope: &WorkloadScope) -> Vec<String> {
     match scope {
         WorkloadScope::Workspace => vec!["--all".to_string()],
-        WorkloadScope::Packages(packages) | WorkloadScope::Affected(packages) => packages
-            .iter()
-            .flat_map(|package| ["-p".to_string(), package.clone()])
-            .collect(),
+        WorkloadScope::Packages(packages) | WorkloadScope::Affected(packages) => {
+            let mut packages = packages.clone();
+            if packages.iter().any(|package| package == "xtask")
+                && !packages.iter().any(|package| package == "xtask-macros")
+            {
+                packages.push("xtask-macros".to_string());
+            }
+            packages.sort();
+            packages.dedup();
+            packages
+                .iter()
+                .flat_map(|package| ["-p".to_string(), package.clone()])
+                .collect()
+        }
     }
 }
 
@@ -1242,6 +1252,27 @@ mod tests {
         let calls = runner.calls();
         assert_eq!(calls.fmt, 1, "fmt must have been called once");
         assert_eq!(calls.fmt_args, vec!["-p", "sinex-primitives"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_fmt_includes_xtask_macro_path_dependency()
+    -> ::xtask::sandbox::TestResult<()> {
+        let runner = Arc::new(MockCargoRunner::clean());
+        let ctx = mock_ctx(runner.clone());
+        let cmd = CheckCommand {
+            fmt: true,
+            packages: vec!["xtask".to_string()],
+            ..make_cmd(CheckFlags::default())
+        };
+        let result = cmd.execute(&ctx).await?;
+        assert!(
+            result.is_success(),
+            "xtask fmt check should include local macro package: {result:?}"
+        );
+        let calls = runner.calls();
+        assert_eq!(calls.fmt, 1, "fmt must have been called once");
+        assert_eq!(calls.fmt_args, vec!["-p", "xtask", "-p", "xtask-macros"]);
         Ok(())
     }
 
