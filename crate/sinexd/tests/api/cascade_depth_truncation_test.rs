@@ -165,10 +165,12 @@ async fn expansion_error(
     max_depth: i32,
     engine: CascadeEngine,
 ) -> color_eyre::Result<String> {
-    let err = expand_fixture(pool, roots, max_depth, engine)
-        .await
-        .expect_err("cascade expansion should fail at the configured depth limit");
-    Ok(err.to_string())
+    match expand_fixture(pool, roots, max_depth, engine).await {
+        Ok(_) => Err(color_eyre::eyre::eyre!(
+            "cascade expansion should fail at the configured depth limit"
+        )),
+        Err(err) => Ok(err.to_string()),
+    }
 }
 
 #[sinex_test]
@@ -196,7 +198,14 @@ async fn expand_cascade_raises_when_chain_exceeds_max_depth(
     // would truncate at depth 4 with descendants still pending; this MUST
     // raise rather than silently return.
     let outcome = repo.expand_cascade(&table_name, 4).await;
-    let err = outcome.expect_err("expand_cascade must refuse to truncate");
+    let err = match outcome {
+        Ok(depth) => {
+            return Err(color_eyre::eyre::eyre!(
+                "expand_cascade must refuse to truncate; returned depth {depth}"
+            ));
+        }
+        Err(err) => err,
+    };
     let msg = format!("{err}");
     assert!(
         msg.contains("max depth") || msg.contains("cascade"),
@@ -228,10 +237,7 @@ async fn expand_cascade_succeeds_when_chain_fits_within_limit(
 
     // Chain is length 6 (depths 0..5). max_depth=10 leaves headroom; the
     // cascade should expand fully and return without error.
-    let depth = repo
-        .expand_cascade(&table_name, 10)
-        .await
-        .expect("expand_cascade should succeed when chain fits the limit");
+    let depth = repo.expand_cascade(&table_name, 10).await?;
 
     assert!(
         depth >= 5,

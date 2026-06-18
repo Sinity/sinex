@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use sinex_primitives::parser::{ParserFieldPrivacyMetadata, ParserManifest};
 use sinex_primitives::source_contracts::{
     PrivacyTier, SourceContract, SourceRuntimeBinding, all_source_contracts,
@@ -307,5 +307,9 @@ pub fn export_privacy_coverage_matrix(output: &Path, check_only: bool) -> std::i
 }
 
 fn to_json_value<T: Serialize>(value: T) -> Value {
-    serde_json::to_value(value).expect("source inventory metadata serializes")
+    serde_json::to_value(value).unwrap_or_else(|error| {
+        json!({
+            "serialization_error": error.to_string(),
+        })
+    })
 }

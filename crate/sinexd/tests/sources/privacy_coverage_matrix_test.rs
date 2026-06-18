@@ -19,9 +19,12 @@ struct CapturedLogWriter {
 }
 
 impl CapturedLogs {
-    fn output(&self) -> String {
-        let bytes = self.bytes.lock().expect("captured log mutex poisoned");
-        String::from_utf8(bytes.clone()).expect("tracing output should be UTF-8")
+    fn output(&self) -> TestResult<String> {
+        let bytes = self
+            .bytes
+            .lock()
+            .map_err(|_| color_eyre::eyre::eyre!("captured log mutex poisoned"))?;
+        Ok(String::from_utf8(bytes.clone())?)
     }
 }
 
@@ -39,7 +42,7 @@ impl std::io::Write for CapturedLogWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.bytes
             .lock()
-            .expect("captured log mutex poisoned")
+            .map_err(|_| std::io::Error::other("captured log mutex poisoned"))?
             .extend_from_slice(buf);
         Ok(buf.len())
     }
@@ -53,19 +56,19 @@ fn rendered_matrix() -> TestResult<Value> {
     Ok(serde_json::from_str(&render_privacy_coverage_matrix()?)?)
 }
 
-fn entry<'a>(matrix: &'a Value, source_id: &str) -> &'a Value {
-    matrix["entries"]
+fn entry<'a>(matrix: &'a Value, source_id: &str) -> TestResult<&'a Value> {
+    Ok(matrix["entries"]
         .as_array()
-        .expect("entries array")
+        .ok_or_else(|| color_eyre::eyre::eyre!("entries must be an array"))?
         .iter()
         .find(|entry| entry["source_id"] == source_id)
-        .unwrap_or_else(|| panic!("missing privacy coverage entry for {source_id}"))
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing privacy coverage entry for {source_id}"))?)
 }
 
 #[sinex_test]
 async fn privacy_coverage_matrix_includes_source_contract_privacy_tiers() -> TestResult<()> {
     let matrix = rendered_matrix()?;
-    let weechat = entry(&matrix, "weechat.message");
+    let weechat = entry(&matrix, "weechat.message")?;
 
     assert_eq!(weechat["source_contract"]["privacy_tier"], "sensitive");
     assert_eq!(weechat["runtime_binding"]["privacy_context"], "command");
@@ -93,12 +96,12 @@ async fn privacy_coverage_matrix_includes_source_contract_privacy_tiers() -> Tes
 #[sinex_test]
 async fn privacy_coverage_matrix_includes_declarative_field_metadata() -> TestResult<()> {
     let matrix = rendered_matrix()?;
-    let weechat = entry(&matrix, "weechat.message");
+    let weechat = entry(&matrix, "weechat.message")?;
 
     assert_eq!(weechat["field_metadata_status"], "available");
     let fields = weechat["field_privacy_metadata"]
         .as_array()
-        .expect("declarative field rows");
+        .ok_or_else(|| color_eyre::eyre::eyre!("declarative field rows missing"))?;
     assert!(
         fields.iter().any(|field| {
             field["field_name"] == "message"
@@ -114,7 +117,7 @@ async fn privacy_coverage_matrix_includes_declarative_field_metadata() -> TestRe
 #[sinex_test]
 async fn privacy_coverage_matrix_includes_sensitive_fixture_source() -> TestResult<()> {
     let matrix = rendered_matrix()?;
-    let fixture = entry(&matrix, "privacy.fixture.sensitive-record");
+    let fixture = entry(&matrix, "privacy.fixture.sensitive-record")?;
 
     assert_eq!(fixture["source_contract"]["privacy_tier"], "sensitive");
     assert_eq!(fixture["runtime_binding"]["proposed"], true);
@@ -150,24 +153,24 @@ async fn privacy_coverage_matrix_includes_sensitive_fixture_source() -> TestResu
 
     let fields = fixture["field_privacy_metadata"]
         .as_array()
-        .expect("fixture field rows");
-    let field = |name: &str| {
-        fields
+        .ok_or_else(|| color_eyre::eyre::eyre!("fixture field rows missing"))?;
+    let field = |name: &str| -> TestResult<&Value> {
+        Ok(fields
             .iter()
             .find(|field| field["field_name"] == name)
-            .unwrap_or_else(|| panic!("missing fixture field {name}"))
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing fixture field {name}"))?)
     };
 
     assert_eq!(
-        field("source_path")["sensitivity_hints"],
+        field("source_path")?["sensitivity_hints"],
         serde_json::json!(["source_path"])
     );
     assert_eq!(
-        field("free_text")["sensitivity_hints"],
+        field("free_text")?["sensitivity_hints"],
         serde_json::json!(["free_text", "potentially_sensitive"])
     );
     assert_eq!(
-        field("credential_material")["sensitivity_hints"],
+        field("credential_material")?["sensitivity_hints"],
         serde_json::json!(["credential_bearing"])
     );
     Ok(())
@@ -176,7 +179,7 @@ async fn privacy_coverage_matrix_includes_sensitive_fixture_source() -> TestResu
 #[sinex_test]
 async fn privacy_coverage_matrix_marks_imperative_field_metadata_unavailable() -> TestResult<()> {
     let matrix = rendered_matrix()?;
-    let bash = entry(&matrix, "terminal.bash-history");
+    let bash = entry(&matrix, "terminal.bash-history")?;
 
     assert_eq!(bash["field_metadata_status"], "unavailable");
     assert_eq!(bash["field_metadata_behavior"], "unclassified");
@@ -272,7 +275,7 @@ async fn privacy_coverage_log_diagnostic_omits_fixture_secret() -> TestResult<()
         log_redacted_database_url_for_diagnostics(&diagnostic_url);
     });
 
-    let output = captured.output();
+    let output = captured.output()?;
     assert!(
         output.contains("Preflight database URL diagnostic"),
         "test must capture the diagnostic log line: {output}"
@@ -295,7 +298,7 @@ async fn privacy_coverage_matrix_artifact_matches_inventory() -> TestResult<()> 
         .join("..");
     let artifact = workspace_root.join(PRIVACY_COVERAGE_ARTIFACT_PATH);
 
-    let rendered = render_privacy_coverage_matrix().expect("render privacy coverage matrix");
+    let rendered = render_privacy_coverage_matrix()?;
     let committed = std::fs::read_to_string(&artifact).unwrap_or_else(|e| {
         panic!(
             "failed to read committed privacy coverage matrix at {}: {e}\n\

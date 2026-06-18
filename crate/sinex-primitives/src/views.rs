@@ -17,6 +17,7 @@ pub const CONTEXT_SUMMARY_SCHEMA_VERSION: &str = "sinex.context-summary/v1";
 pub const EVENT_CARD_LIST_SCHEMA_VERSION: &str = "sinex.event-card-list/v3";
 pub const EVENT_ERROR_LIST_SCHEMA_VERSION: &str = "sinex.event-error-list/v1";
 pub const EVENT_QUERY_LIST_SCHEMA_VERSION: &str = "sinex.event-query-list/v1";
+pub const DEBT_LIST_SCHEMA_VERSION: &str = "sinex.debt-list/v1";
 pub const OPERATION_JOB_LIST_SCHEMA_VERSION: &str = "sinex.operation-job-list/v1";
 pub const OPERATION_VIEW_SCHEMA_VERSION: &str = "sinex.operation-view/v1";
 pub const SOURCE_CONTINUITY_DETAIL_SCHEMA_VERSION: &str = "sinex.source-continuity-detail/v1";
@@ -41,7 +42,10 @@ pub enum SinexObjectKind {
     SemanticEntity,
     SemanticRelation,
     Operation,
+    Projection,
+    Artifact,
     QueryRun,
+    AdmissionOutcome,
     Proposal,
     Judgment,
     ExternalRef,
@@ -150,6 +154,101 @@ impl SourceReadinessListView {
             schema_version: SOURCE_READINESS_LIST_SCHEMA_VERSION.to_string(),
             count,
             sources,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DebtKind {
+    Capture,
+    Admission,
+    Projection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DebtStage {
+    Capturing,
+    MaterialReady,
+    CandidateRejected,
+    CandidateQuarantined,
+    CandidateDeferred,
+    ProjectionStale,
+    ArtifactInvalidated,
+    OperationPending,
+    OperationFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DebtOwnerView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_ref: Option<SinexObjectRef>,
+}
+
+impl DebtOwnerView {
+    #[must_use]
+    pub fn admission_policy(policy_ref: impl Into<String>) -> Self {
+        Self {
+            package_ref: None,
+            mode_ref: None,
+            policy_ref: Some(policy_ref.into()),
+            operation_ref: None,
+        }
+    }
+
+    #[must_use]
+    pub fn operation(operation_ref: SinexObjectRef) -> Self {
+        Self {
+            package_ref: None,
+            mode_ref: None,
+            policy_ref: None,
+            operation_ref: Some(operation_ref),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DebtRowView {
+    pub id: String,
+    pub kind: DebtKind,
+    pub stage: DebtStage,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refs: Vec<SinexObjectRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner: Option<DebtOwnerView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub age_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub freshness: Option<FreshnessView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<CaveatView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<ActionAvailability>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DebtListView {
+    pub schema_version: String,
+    pub count: usize,
+    pub rows: Vec<DebtRowView>,
+}
+
+impl DebtListView {
+    #[must_use]
+    pub fn new(rows: Vec<DebtRowView>) -> Self {
+        let count = rows.len();
+        Self {
+            schema_version: DEBT_LIST_SCHEMA_VERSION.to_string(),
+            count,
+            rows,
         }
     }
 }
@@ -1326,6 +1425,110 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn debt_list_view_represents_admission_and_projection_debt() -> xtask::TestResult<()> {
+        let admission_row = DebtRowView {
+            id: "debt:admission:fixture".to_string(),
+            kind: DebtKind::Admission,
+            stage: DebtStage::CandidateQuarantined,
+            summary: "candidate quarantined by admission policy".to_string(),
+            refs: vec![
+                SinexObjectRef::new(SinexObjectKind::SourceMaterial, "material:fixture"),
+                SinexObjectRef::new(SinexObjectKind::AdmissionOutcome, "outcome:fixture"),
+            ],
+            owner: Some(DebtOwnerView::admission_policy("admission-policy:fixture")),
+            age_secs: Some(42),
+            freshness: None,
+            caveats: vec![CaveatView {
+                id: "admission.quarantined".to_string(),
+                message: "operator action is required before admission can continue".to_string(),
+                ref_: Some(SinexObjectRef::new(
+                    SinexObjectKind::Policy,
+                    "admission-policy:fixture",
+                )),
+            }],
+            actions: vec![
+                ActionAvailability::read(
+                    "debt.inspect",
+                    "Inspect",
+                    ActionAvailabilityState::Enabled,
+                )
+                .with_command_hint("sinexctl ops debt inspect debt:admission:fixture"),
+            ],
+        };
+        let projection_row = DebtRowView {
+            id: "debt:projection:fixture".to_string(),
+            kind: DebtKind::Projection,
+            stage: DebtStage::ProjectionStale,
+            summary: "projection is stale after replay".to_string(),
+            refs: vec![SinexObjectRef::new(
+                SinexObjectKind::Projection,
+                "projection:fixture",
+            )],
+            owner: Some(DebtOwnerView::operation(SinexObjectRef::new(
+                SinexObjectKind::Operation,
+                "operation:rebuild-fixture",
+            ))),
+            age_secs: Some(300),
+            freshness: Some(FreshnessView {
+                generated_at: Timestamp::now(),
+                stale_after_secs: Some(60),
+            }),
+            caveats: vec![CaveatView {
+                id: "projection.stale".to_string(),
+                message: "derived output needs rebuild".to_string(),
+                ref_: Some(SinexObjectRef::new(
+                    SinexObjectKind::Artifact,
+                    "artifact:fixture",
+                )),
+            }],
+            actions: vec![ActionAvailability {
+                id: "projection.rebuild".to_string(),
+                label: "Rebuild".to_string(),
+                state: ActionAvailabilityState::Enabled,
+                reason: None,
+                command_hint: Some(
+                    "sinexctl ops replay submit --ref projection:fixture".to_string(),
+                ),
+                rpc_method: None,
+                side_effect: ActionSideEffect::Write,
+                requires_confirmation: true,
+                dry_run_available: true,
+                audit_output_ref: None,
+            }],
+        };
+
+        let envelope = ViewEnvelope::new(
+            "sinexctl.ops.debt",
+            DebtListView::new(vec![admission_row, projection_row]),
+        );
+        let value = serde_json::to_value(&envelope)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(value["payload"]["schema_version"], DEBT_LIST_SCHEMA_VERSION);
+        assert_eq!(value["payload"]["count"], 2);
+        assert_eq!(value["payload"]["rows"][0]["kind"], "admission");
+        assert_eq!(
+            value["payload"]["rows"][0]["stage"],
+            "candidate_quarantined"
+        );
+        assert_eq!(
+            value["payload"]["rows"][0]["refs"][1]["kind"],
+            "admission_outcome"
+        );
+        assert_eq!(value["payload"]["rows"][1]["kind"], "projection");
+        assert_eq!(value["payload"]["rows"][1]["stage"], "projection_stale");
+        assert_eq!(
+            value["payload"]["rows"][1]["owner"]["operation_ref"]["kind"],
+            "operation"
+        );
+        assert_eq!(
+            value["payload"]["rows"][1]["actions"][0]["side_effect"],
+            "write"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn event_card_json_uses_contract_field_names() -> xtask::TestResult<()> {
         let result = QueryResultEvent {
             event: Event {
@@ -1371,6 +1574,8 @@ mod tests {
             serde_json::to_value(schemars::schema_for!(ViewEnvelope<ContextSummaryView>))?;
         let envelope_schema =
             serde_json::to_value(schemars::schema_for!(ViewEnvelope<EventCardListView>))?;
+        let debt_envelope_schema =
+            serde_json::to_value(schemars::schema_for!(ViewEnvelope<DebtListView>))?;
         let error_envelope_schema =
             serde_json::to_value(schemars::schema_for!(ViewEnvelope<EventErrorListView>))?;
         let query_envelope_schema =
@@ -1388,6 +1593,7 @@ mod tests {
             "context envelope schema should include the typed summary payload"
         );
         assert!(envelope_schema["properties"].get("payload").is_some());
+        assert!(debt_envelope_schema["properties"].get("payload").is_some());
         assert!(
             envelope_schema["properties"]
                 .get("source_surface")
