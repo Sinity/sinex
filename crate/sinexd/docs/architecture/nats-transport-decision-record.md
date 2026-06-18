@@ -3,15 +3,15 @@
 > Status: **decision record (documentation slice of #1731).** This page defines
 > when Sinex uses a direct in-process call, Core NATS, or JetStream, and
 > enumerates every current NATS subject, JetStream stream, and NATS-KV bucket
-> with its traffic class. The code acceptance criteria of #1731 — a working
-> direct adapter→parser→admission path with no NATS for local staged material,
-> and JetStream ack/redelivery/idempotency tests for durable external intent —
-> are **deferred to #1732 (SNX-46)** and are not implemented here.
+> with its traffic class. The Direct transport path now exists as
+> `EventTransport::Direct`; the code-backed route matrix lives in
+> `sinex_primitives::transport::CURRENT_ROUTE_DECISIONS` and is the current
+> executable catalog for #1732.
 
 Companion documents:
 
 - `crate/sinex-primitives/docs/transport.md` — the publish-**class** catalog
-  (`Class::Critical` … `Class::Telemetry`), the DLQ /
+  (`Class::Critical` … `Class::Telemetry`), the route matrix, the DLQ /
   processing-failure / local-recovery-spool boundary, and the per-class drain
   protocol. This decision record is the **per-subject / per-stream** view and
   references that catalog rather than repeating it.
@@ -41,13 +41,9 @@ Use when there is no process or network boundary between producer and admission:
 - adapter → parser → `AdmissionService` paths.
 
 A direct call is synchronous, lossless, and needs no ack/redelivery machinery
-because the caller holds the result. **Today this path does not exist:** even
-when a source contract and the event engine run in the same `sinexd` process,
-staged material is published to JetStream (`SOURCE_MATERIAL` frames + raw-event
-intents) and re-consumed by `JetStreamConsumer` before reaching admission
-(`crate/sinexd/src/event_engine/jetstream_consumer.rs:53`,
-`crate/sinexd/src/runtime/nats_publisher.rs:306`). Adding the direct path is the
-#1732 deliverable.
+because the caller holds the result. This path exists as
+`EventTransport::Direct`, while JetStream remains the correct route for
+cross-process/external intent and material-frame streams.
 
 ### Core NATS
 
@@ -124,11 +120,11 @@ relative to admission; **Test transport**.
 
 | Path | Class (now → rec) | Dur | Delivery | Ack/redeliv | Idemp key | DLQ | Replay | Admission dest | Test transport |
 |---|---|---|---|---|---|---|---|---|---|
-| adapter → parser → `AdmissionService` (local staged material) | **none today → Direct** | n/a (synchronous) | exactly-once (call returns result) | none needed | none (caller holds result) | caller-handled `AdmissionRejection` | re-run parser on same staged material | `AdmissionService` directly (`admission.rs:270`) | direct call in-process |
+| adapter → parser → `AdmissionService` (local staged material) | Direct → **Direct** | n/a (synchronous) | exactly-once (call returns result) | none needed | none (caller holds result) | caller-handled `AdmissionRejection` | re-run parser on same staged material | `AdmissionService` directly (`admission.rs:270`) | direct call in-process |
 
-*Evidence / gap:* the direct call does not exist; co-located material is
-published to JetStream and re-consumed (`nats_publisher.rs:306`,
-`jetstream_consumer.rs:53`). #1732 adds the direct path.
+*Evidence:* the executable route catalog row is
+`local.staged_parser.admission` in
+`sinex_primitives::transport::CURRENT_ROUTE_DECISIONS`.
 
 ### 3.2 JetStream streams (durable)
 
@@ -225,37 +221,35 @@ already satisfied in spirit by the confirmation contract.
 
 ### 4.4 Subject namespace drift (doc correctness, not reclassification)
 
-The prose docs claim `{env}.sinex.events.raw.>`; the code emits
-`{env}.events.raw.>` (§2). The invalidation/control planes do carry `sinex.`.
-This is inconsistent and should be reconciled — either add the `sinex.` infix to
-the event plane or drop it from invalidation/control — but it is a naming
-decision, not a traffic-class change. Until reconciled, **code is
-authoritative** and the prose docs (`transport.md`, `data-flow.md`) should be
-corrected to match the subjects in this table.
+Older prose claimed `{env}.sinex.events.raw.>`; the code emits
+`{env}.events.raw.>` (§2). The invalidation/control planes do carry `sinex.`
+because their base strings include it. The executable route catalog and
+`transport.md` now follow the code-authoritative event-plane subject prefix.
 
 ---
 
 ## 5. Inventory summary
 
-- **1** direct in-process admission path (target; not yet implemented).
+- **1** direct in-process admission path.
 - **7** JetStream streams carrying **9** distinct traffic-class roles
   (raw-events stream multiplexes Critical + Derived + Telemetry).
-- **6** Core NATS control/coordination subject families (no stream).
+- **4** Core NATS control/coordination route families in the executable catalog
+  (source commands, replay control/progress, private-mode control, coordination).
 - **4** NATS-KV buckets.
 
-**20** classified paths total. Recommended class differs from current on **3**:
-telemetry stream placement (§4.1), the missing direct in-process path (§4.2),
-and the conceptual reclassification of confirmations (§4.3). One additional
-doc-correctness drift is recorded (§4.4).
+`CURRENT_ROUTE_DECISIONS` currently classifies **18** runtime route decisions.
+The remaining contested placement is telemetry stream placement (§4.1), plus
+the conceptual note that confirmations are a Core-NATS-class signal carried on
+JetStream as an optimization (§4.3).
 
 ---
 
 ## 6. Migration notes
 
-- **#1732 (SNX-46)** owns the code acceptance criteria: the working direct
-  adapter→parser→admission path with no NATS for local staged material, and the
-  JetStream tests proving ack / redelivery / idempotency for durable external
-  intent. This record is the spec those tests assert against.
+- **#1732 (SNX-46)** owns the route matrix and targeted migrations that keep
+  Direct, Core NATS, JetStream, and JetStream KV choices explicit. The
+  executable route catalog in `sinex_primitives::transport` is the spec tests
+  assert against.
 - **#1739 (SNX-53)** owns the performance / QoS follow-through (semaphore
   budgets, backpressure, the telemetry-stream split in §4.1, retention tuning).
 - **sinnix#188** owns host NATS deployment policy (TLS, authorization, loopback
