@@ -240,6 +240,13 @@ fn release_checks(base_ref: &str) -> Vec<ReleaseCheck> {
             proves: "checked-in payload schema bundle matches the Rust registry",
         },
         ReleaseCheck {
+            id: "source-catalog-drift",
+            family: "generated-artifacts",
+            command: "xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)' --allow-contended-host"
+                .to_string(),
+            proves: "checked-in NixOS source catalog artifact matches the linked Rust source inventory",
+        },
+        ReleaseCheck {
             id: "privacy-catalog",
             family: "privacy",
             command: "xtask privacy catalog --format json".to_string(),
@@ -333,7 +340,7 @@ fn generated_artifacts() -> Vec<GeneratedArtifact> {
         },
         GeneratedArtifact {
             path: "nixos/modules/source-catalog.generated.json",
-            validation_command: "source catalog drift checks in the source package gate",
+            validation_command: "xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)' --allow-contended-host",
         },
     ]
 }
@@ -412,11 +419,28 @@ mod tests {
                 .iter()
                 .any(|check| check.id == "changed-strict")
         );
+        assert!(report.required_checks.iter().any(|check| {
+            check.id == "source-catalog-drift"
+                && check.command.contains("source_catalog_artifact_matches_inventory")
+        }));
         assert_eq!(
             report.summary.not_run_check_count,
             report.required_checks.len()
         );
         assert!(!report.summary.ready_for_release);
+    }
+
+    #[test]
+    fn generated_source_catalog_artifact_points_at_behavior_owner_test() {
+        let source_catalog = generated_artifacts()
+            .into_iter()
+            .find(|artifact| artifact.path == "nixos/modules/source-catalog.generated.json")
+            .expect("source catalog generated artifact must be listed");
+
+        assert_eq!(
+            source_catalog.validation_command,
+            "xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)' --allow-contended-host"
+        );
     }
 
     #[test]
