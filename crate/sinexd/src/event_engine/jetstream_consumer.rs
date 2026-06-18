@@ -31,7 +31,9 @@ use sinex_db::repositories::COPY_BATCH_THRESHOLD;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_primitives::Timestamp;
 use sinex_primitives::constants::env_vars;
-use sinex_primitives::events::payloads::{StreamPressureLevel, StreamPressureSnapshot};
+use sinex_primitives::events::payloads::{
+    StreamPressureSnapshot, StreamPressureWarningState, record_stream_pressure_warning_sample,
+};
 use sinex_primitives::{
     JsonValue, Uuid,
     nats::{JetStreamTopology, NatsTrafficClass, insert_traffic_class_header},
@@ -170,6 +172,10 @@ pub struct JetStreamConsumer {
     /// Used by the per-kind compaction strategy in `publish_confirmations_for_batch`
     /// to skip publishes that would not advance the watermark. Per #1306.
     confirmation_watermark: Arc<tokio::sync::Mutex<HashMap<(String, String), Uuid>>>,
+    /// Per-stream pressure warning counters used to keep saturated RAW/DLQ
+    /// capacity samples from becoming their own journald feedback stream.
+    stream_pressure_warning_state:
+        Arc<tokio::sync::Mutex<HashMap<String, StreamPressureWarningState>>>,
 }
 
 /// SQLSTATE for foreign-key violation.
@@ -555,6 +561,7 @@ impl JetStreamConsumer {
             startup_catch_up_max_concurrent: 4,
             reject_initial_replay: true,
             confirmation_watermark: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            stream_pressure_warning_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -2827,11 +2834,15 @@ impl JetStreamConsumer {
                             state.bytes,
                             config.max_bytes as u64,
                         );
-                        if pressure.pressure_level != StreamPressureLevel::Nominal {
+                        if let Some(pressure_sample_total) = self
+                            .record_stream_pressure_sample(stream_name, pressure)
+                            .await
+                        {
                             warn!(
                                 stream = %stream_name,
                                 pressure_level = ?pressure.pressure_level,
                                 limiting_dimension = ?pressure.limiting_dimension,
+                                pressure_sample_total,
                                 messages = state.messages,
                                 max_messages = config.max_messages,
                                 bytes = state.bytes,
@@ -2856,6 +2867,15 @@ impl JetStreamConsumer {
                 debug!("Failed to check stream capacity for {}: {}", stream_name, e);
             }
         }
+    }
+
+    async fn record_stream_pressure_sample(
+        &self,
+        stream_name: &str,
+        pressure: StreamPressureSnapshot,
+    ) -> Option<u64> {
+        let mut state = self.stream_pressure_warning_state.lock().await;
+        record_stream_pressure_warning_sample(&mut state, stream_name, pressure)
     }
 }
 

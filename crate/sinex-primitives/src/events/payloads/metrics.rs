@@ -99,6 +99,59 @@ impl StreamPressureSnapshot {
     }
 }
 
+/// Per-stream pressure-warning state for sparse operator emission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamPressureWarningState {
+    pub pressure_level: StreamPressureLevel,
+    pub limiting_dimension: Option<StreamPressureDimension>,
+    pub sample_total: u64,
+}
+
+/// Record one stream-pressure sample and return the sparse sample count that
+/// should be emitted to logs/operator output.
+///
+/// Repeated non-nominal samples for the same stream and classification emit at
+/// totals 1, powers of two, and every 10,000th sample. Nominal samples clear the
+/// stream's warning state. Classification changes reset the stream's count so
+/// new pressure dimensions become visible immediately.
+pub fn record_stream_pressure_warning_sample(
+    state: &mut HashMap<String, StreamPressureWarningState>,
+    stream_name: &str,
+    pressure: StreamPressureSnapshot,
+) -> Option<u64> {
+    if pressure.pressure_level == StreamPressureLevel::Nominal {
+        state.remove(stream_name);
+        return None;
+    }
+
+    let entry =
+        state
+            .entry(stream_name.to_string())
+            .or_insert_with(|| StreamPressureWarningState {
+                pressure_level: pressure.pressure_level,
+                limiting_dimension: pressure.limiting_dimension,
+                sample_total: 0,
+            });
+
+    if entry.pressure_level != pressure.pressure_level
+        || entry.limiting_dimension != pressure.limiting_dimension
+    {
+        *entry = StreamPressureWarningState {
+            pressure_level: pressure.pressure_level,
+            limiting_dimension: pressure.limiting_dimension,
+            sample_total: 0,
+        };
+    }
+
+    entry.sample_total += 1;
+    should_emit_stream_pressure_warning_sample(entry.sample_total).then_some(entry.sample_total)
+}
+
+#[must_use]
+pub fn should_emit_stream_pressure_warning_sample(sample_total: u64) -> bool {
+    sample_total == 1 || sample_total.is_power_of_two() || sample_total.is_multiple_of(10_000)
+}
+
 fn fill_percentage(current: u64, max: u64) -> f64 {
     if max == 0 {
         0.0
@@ -821,5 +874,85 @@ mod tests {
         assert_eq!(pressure.fill_pct, 0.0);
         assert_eq!(pressure.pressure_level, StreamPressureLevel::Nominal);
         assert_eq!(pressure.limiting_dimension, None);
+    }
+
+    #[test]
+    fn stream_pressure_warning_samples_are_sparse_per_stream() {
+        let mut state = HashMap::new();
+        let pressure = StreamPressureSnapshot {
+            message_fill_pct: 99.0,
+            byte_fill_pct: 20.0,
+            fill_pct: 99.0,
+            pressure_level: StreamPressureLevel::Critical,
+            limiting_dimension: Some(StreamPressureDimension::Messages),
+        };
+
+        let emitted = (1..=20)
+            .filter_map(|_| {
+                record_stream_pressure_warning_sample(&mut state, "PROD_SINEX_RAW_EVENTS", pressure)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(emitted, vec![1, 2, 4, 8, 16]);
+    }
+
+    #[test]
+    fn stream_pressure_warning_schedule_resets_when_classification_changes() {
+        let mut state = HashMap::new();
+        let warning = StreamPressureSnapshot {
+            message_fill_pct: 81.0,
+            byte_fill_pct: 20.0,
+            fill_pct: 81.0,
+            pressure_level: StreamPressureLevel::Warning,
+            limiting_dimension: Some(StreamPressureDimension::Messages),
+        };
+        let critical = StreamPressureSnapshot {
+            message_fill_pct: 20.0,
+            byte_fill_pct: 97.0,
+            fill_pct: 97.0,
+            pressure_level: StreamPressureLevel::Critical,
+            limiting_dimension: Some(StreamPressureDimension::Bytes),
+        };
+
+        assert_eq!(
+            record_stream_pressure_warning_sample(&mut state, "PROD_SINEX_RAW_EVENTS_DLQ", warning),
+            Some(1)
+        );
+        assert_eq!(
+            record_stream_pressure_warning_sample(&mut state, "PROD_SINEX_RAW_EVENTS_DLQ", warning),
+            Some(2)
+        );
+        assert_eq!(
+            record_stream_pressure_warning_sample(&mut state, "PROD_SINEX_RAW_EVENTS_DLQ", warning),
+            None
+        );
+        assert_eq!(
+            record_stream_pressure_warning_sample(
+                &mut state,
+                "PROD_SINEX_RAW_EVENTS_DLQ",
+                critical
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            record_stream_pressure_warning_sample(
+                &mut state,
+                "PROD_SINEX_RAW_EVENTS_DLQ",
+                StreamPressureSnapshot {
+                    pressure_level: StreamPressureLevel::Nominal,
+                    limiting_dimension: None,
+                    ..critical
+                },
+            ),
+            None
+        );
+        assert_eq!(
+            record_stream_pressure_warning_sample(
+                &mut state,
+                "PROD_SINEX_RAW_EVENTS_DLQ",
+                critical
+            ),
+            Some(1)
+        );
     }
 }
