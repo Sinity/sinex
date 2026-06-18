@@ -1,0 +1,7 @@
+error[E0599]: no method named `build` found for struct `EventBuilder<JsonValue, NoProvenance>` in the current scope
+ --> tests/event_builder_typestate/no_provenance_build.rs:9:41
+  |
+9 |     let _event = payload.into_builder().build();
+  |                                         ^^^^^ method not found in `EventBuilder<JsonValue, NoProvenance>`
+  |
+  = note: the method was found for `EventBuilder<T, HasProvenance>`
