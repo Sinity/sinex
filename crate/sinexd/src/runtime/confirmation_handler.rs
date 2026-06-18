@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::constants::buffers::DEFAULT_CONFIRMATION_BUFFER_CAPACITY;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::builder::EventId;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 /// Processing model for automata
@@ -39,6 +40,18 @@ pub struct ProvisionalEvent {
 struct PendingEntry {
     event: ProvisionalEvent,
     timed_out_at: Option<sinex_primitives::temporal::Timestamp>,
+    payload_bytes: usize,
+}
+
+/// Point-in-time diagnostics for the confirmation buffer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfirmationBufferSnapshot {
+    pub pending_count: usize,
+    pub timed_out_retained_count: usize,
+    pub rejected_count: u64,
+    pub late_confirmation_count: u64,
+    pub approximate_payload_bytes: usize,
+    pub approximate_payload_bytes_by_kind: BTreeMap<String, usize>,
 }
 
 /// Per-kind confirmation watermark from event_engine. Per #1306: a single message
@@ -110,7 +123,9 @@ pub struct ConfirmationBuffer {
     /// Maximum number of pending events (prevents unbounded memory growth)
     max_capacity: usize,
     /// Counter for rejected events due to capacity limits
-    rejected_count: std::sync::atomic::AtomicU64,
+    rejected_count: AtomicU64,
+    /// Counter for confirmations accepted after timeout while still inside grace.
+    late_confirmation_count: AtomicU64,
 }
 
 impl ConfirmationBuffer {
@@ -138,7 +153,8 @@ impl ConfirmationBuffer {
             timeout,
             grace_period,
             max_capacity,
-            rejected_count: std::sync::atomic::AtomicU64::new(0),
+            rejected_count: AtomicU64::new(0),
+            late_confirmation_count: AtomicU64::new(0),
         }
     }
 
@@ -153,6 +169,7 @@ impl ConfirmationBuffer {
     /// dispatch the confirmed handler synchronously when it returns true.
     #[tracing::instrument(skip(self, event), fields(event_id = %event.event_id, buffer_size))]
     pub async fn add_provisional(&self, event: ProvisionalEvent) -> bool {
+        let payload_bytes = serde_json::to_vec(&event.payload).map_or(0, |bytes| bytes.len());
         let acquire_start = std::time::Instant::now();
         let mut pending = self.pending.write().await;
         let acquire_ms = acquire_start.elapsed().as_millis() as u64;
@@ -161,9 +178,7 @@ impl ConfirmationBuffer {
         }
 
         if pending.len() >= self.max_capacity {
-            let rejected = self
-                .rejected_count
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let rejected = self.rejected_count.fetch_add(1, Ordering::Relaxed);
 
             // Log periodically to avoid log spam
             if rejected.is_multiple_of(100) {
@@ -194,6 +209,7 @@ impl ConfirmationBuffer {
             PendingEntry {
                 event,
                 timed_out_at: None,
+                payload_bytes,
             },
         );
         tracing::Span::current().record("buffer_size", pending.len());
@@ -210,13 +226,11 @@ impl ConfirmationBuffer {
             tracing::warn!(acquire_ms, "Slow lock acquisition in confirm");
         }
         let result = pending.remove(&event_id);
-        if let Some(entry) = result.as_ref()
-            && entry.timed_out_at.is_some()
+        if result
+            .as_ref()
+            .is_some_and(|entry| entry.timed_out_at.is_some())
         {
-            tracing::warn!(
-                event_id = %event_id,
-                "Late confirmation arrived after provisional timeout; accepting during grace period"
-            );
+            self.record_late_confirmation(pending.len(), None);
         }
         tracing::Span::current().record("buffer_size", pending.len());
         result.map(|entry| entry.event)
@@ -283,15 +297,23 @@ impl ConfirmationBuffer {
                 }
             })
             .collect();
-        let confirmed: Vec<ProvisionalEvent> = matching_ids
+        let removed: Vec<PendingEntry> = matching_ids
             .into_iter()
             .filter_map(|id| pending.remove(&id))
+            .collect();
+        let pending_after_remove = pending.len();
+        let confirmed: Vec<ProvisionalEvent> = removed
+            .into_iter()
             .map(|entry| {
-                if entry.timed_out_at.is_some() {
-                    tracing::warn!(
-                        event_id = %entry.event.event_id,
-                        "Late confirmation arrived after provisional timeout; accepting during grace period"
-                    );
+                let was_timed_out = entry.timed_out_at.is_some();
+                let kind = was_timed_out.then(|| {
+                    (
+                        entry.event.source.as_str().to_string(),
+                        entry.event.event_type.as_str().to_string(),
+                    )
+                });
+                if let Some(kind) = kind {
+                    self.record_late_confirmation(pending_after_remove, Some(kind));
                 }
                 entry.event
             })
@@ -409,12 +431,221 @@ impl ConfirmationBuffer {
 
     /// Get the number of events rejected due to capacity limits
     pub fn rejected_count(&self) -> u64 {
-        self.rejected_count
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.rejected_count.load(Ordering::Relaxed)
+    }
+
+    /// Get the number of late confirmations accepted during the grace period.
+    pub fn late_confirmation_count(&self) -> u64 {
+        self.late_confirmation_count.load(Ordering::Relaxed)
     }
 
     /// Get the maximum capacity
     pub fn max_capacity(&self) -> usize {
         self.max_capacity
+    }
+
+    /// Snapshot confirmation-buffer diagnostics without exposing retained events.
+    pub async fn snapshot(&self) -> ConfirmationBufferSnapshot {
+        let (pending_count, rows) = {
+            let pending = self.pending.read().await;
+            let rows = pending
+                .values()
+                .map(|entry| {
+                    (
+                        entry.event.source.as_str().to_string(),
+                        entry.event.event_type.as_str().to_string(),
+                        entry.payload_bytes,
+                        entry.timed_out_at.is_some(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (pending.len(), rows)
+        };
+
+        let mut approximate_payload_bytes_by_kind = BTreeMap::new();
+        let mut approximate_payload_bytes = 0;
+        let mut timed_out_retained_count = 0;
+        for (source, event_type, payload_bytes, timed_out) in rows {
+            if timed_out {
+                timed_out_retained_count += 1;
+            }
+            approximate_payload_bytes += payload_bytes;
+            let key = format!("{source}:{event_type}");
+            *approximate_payload_bytes_by_kind.entry(key).or_insert(0) += payload_bytes;
+        }
+
+        ConfirmationBufferSnapshot {
+            pending_count,
+            timed_out_retained_count,
+            rejected_count: self.rejected_count(),
+            late_confirmation_count: self.late_confirmation_count(),
+            approximate_payload_bytes,
+            approximate_payload_bytes_by_kind,
+        }
+    }
+
+    fn record_late_confirmation(
+        &self,
+        pending_after_remove: usize,
+        kind: Option<(String, String)>,
+    ) {
+        let late_total = self.late_confirmation_count.fetch_add(1, Ordering::Relaxed) + 1;
+        if should_log_late_confirmation_aggregate(late_total) {
+            match kind {
+                Some((source, event_type)) => tracing::warn!(
+                    target: "sinex_metrics",
+                    metric = "runtime.confirmation_late_total",
+                    late_total,
+                    pending_after_remove,
+                    source,
+                    event_type,
+                    "Late confirmations accepted after timeout; aggregated during grace period"
+                ),
+                None => tracing::warn!(
+                    target: "sinex_metrics",
+                    metric = "runtime.confirmation_late_total",
+                    late_total,
+                    pending_after_remove,
+                    "Late confirmations accepted after timeout; aggregated during grace period"
+                ),
+            }
+        }
+    }
+}
+
+fn should_log_late_confirmation_aggregate(late_total: u64) -> bool {
+    late_total == 1 || late_total.is_power_of_two() || late_total.is_multiple_of(10_000)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use sinex_primitives::ids::Id;
+    use sinex_primitives::temporal::Timestamp;
+    use sinex_primitives::{Event, JsonValue};
+    use std::time::Duration;
+
+    fn event_id() -> EventId {
+        Id::<Event<JsonValue>>::new()
+    }
+
+    fn provisional(
+        source: &str,
+        event_type: &str,
+        received_at: Timestamp,
+        payload: serde_json::Value,
+    ) -> ProvisionalEvent {
+        ProvisionalEvent {
+            event_id: event_id(),
+            source: EventSource::new(source).expect("test source must be valid"),
+            event_type: EventType::new(event_type).expect("test event type must be valid"),
+            payload,
+            ts_orig: received_at,
+            received_at,
+        }
+    }
+
+    #[tokio::test]
+    async fn snapshot_reports_pending_timeout_rejections_and_payload_bytes() {
+        let buffer = ConfirmationBuffer::with_capacity_and_grace(
+            Duration::from_millis(0),
+            2,
+            Duration::from_secs(60),
+        );
+        let old = Timestamp::from_unix_timestamp(1).expect("timestamp in range");
+        let first = provisional(
+            "system.journald",
+            "journald.entry.written",
+            old,
+            json!({ "MESSAGE": "Late confirmation arrived after provisional timeout" }),
+        );
+        let second = provisional(
+            "sinexd.event_engine",
+            "batch.stats",
+            old,
+            json!({ "events_processed": 42 }),
+        );
+        let rejected = provisional(
+            "system.journald",
+            "journald.entry.written",
+            old,
+            json!({ "MESSAGE": "should be rejected at capacity" }),
+        );
+
+        assert!(buffer.add_provisional(first).await);
+        assert!(buffer.add_provisional(second).await);
+        assert!(!buffer.add_provisional(rejected).await);
+        let timed_out = buffer.check_timeouts().await;
+        assert_eq!(timed_out.len(), 2);
+
+        let snapshot = buffer.snapshot().await;
+        assert_eq!(snapshot.pending_count, 2);
+        assert_eq!(snapshot.timed_out_retained_count, 2);
+        assert_eq!(snapshot.rejected_count, 1);
+        assert_eq!(snapshot.late_confirmation_count, 0);
+        assert!(snapshot.approximate_payload_bytes > 0);
+        assert!(
+            snapshot
+                .approximate_payload_bytes_by_kind
+                .contains_key("system.journald:journald.entry.written")
+        );
+        assert!(
+            snapshot
+                .approximate_payload_bytes_by_kind
+                .contains_key("sinexd.event_engine:batch.stats")
+        );
+    }
+
+    #[tokio::test]
+    async fn watermark_late_confirmations_are_counted_without_retaining_backlog() {
+        let buffer = ConfirmationBuffer::with_capacity_and_grace(
+            Duration::from_millis(0),
+            16,
+            Duration::from_secs(60),
+        );
+        let old = Timestamp::from_unix_timestamp(1).expect("timestamp in range");
+        let first = provisional(
+            "system.journald",
+            "journald.entry.written",
+            old,
+            json!({ "MESSAGE": "late confirmation 1" }),
+        );
+        let second = provisional(
+            "system.journald",
+            "journald.entry.written",
+            old,
+            json!({ "MESSAGE": "late confirmation 2" }),
+        );
+        let watermark = if first.event_id.as_uuid() > second.event_id.as_uuid() {
+            first.event_id
+        } else {
+            second.event_id
+        };
+
+        assert!(buffer.add_provisional(first).await);
+        assert!(buffer.add_provisional(second).await);
+        assert_eq!(buffer.check_timeouts().await.len(), 2);
+
+        let confirmed = buffer
+            .confirm_kind_up_to("system.journald", "journald.entry.written", watermark)
+            .await;
+
+        assert_eq!(confirmed.len(), 2);
+        let snapshot = buffer.snapshot().await;
+        assert_eq!(snapshot.pending_count, 0);
+        assert_eq!(snapshot.timed_out_retained_count, 0);
+        assert_eq!(snapshot.late_confirmation_count, 2);
+    }
+
+    #[test]
+    fn late_confirmation_aggregate_log_schedule_is_sparse() {
+        assert!(should_log_late_confirmation_aggregate(1));
+        assert!(should_log_late_confirmation_aggregate(2));
+        assert!(should_log_late_confirmation_aggregate(1024));
+        assert!(should_log_late_confirmation_aggregate(10_000));
+        assert!(!should_log_late_confirmation_aggregate(3));
+        assert!(!should_log_late_confirmation_aggregate(9_999));
+        assert!(!should_log_late_confirmation_aggregate(10_001));
     }
 }
