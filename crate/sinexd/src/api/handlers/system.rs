@@ -37,6 +37,7 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
         db_detail,
         nats,
         raw_ingest_dlq,
+        confirmation_buffer,
         replay,
         sse_confirmation,
         healthy,
@@ -70,6 +71,12 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
                 connected: raw_ingest_dlq.connected,
                 latency_ms: None,
                 detail: Some(raw_ingest_dlq.detail),
+            },
+            confirmation_buffer: ComponentHealthReport {
+                status: confirmation_buffer.status,
+                connected: confirmation_buffer.connected,
+                latency_ms: None,
+                detail: Some(confirmation_buffer.detail),
             },
             replay_control: ReplayControlHealth {
                 status: if replay.connected {
@@ -164,6 +171,22 @@ mod tests {
                 detail: "raw-ingest DLQ pressure: 3 pending message(s), sequence span 5"
                     .to_string(),
             },
+            confirmation_buffer: crate::api::service_container::ConfirmationBufferHealth {
+                status: HealthStatus::Degraded,
+                connected: true,
+                observed_buffers: 1,
+                pending_count: 3,
+                timed_out_retained_count: 1,
+                rejected_count: 2,
+                late_confirmation_count: 5,
+                approximate_payload_bytes: 4096,
+                approximate_payload_bytes_by_kind: std::collections::BTreeMap::from([(
+                    "system.journald:journald.entry.written".to_string(),
+                    4096,
+                )]),
+                detail: "confirmation buffers: observed=1, pending=3, timed_out_retained=1"
+                    .to_string(),
+            },
             replay: ReplayControlStatus {
                 enabled: true,
                 connected: false,
@@ -196,6 +219,14 @@ mod tests {
         assert_eq!(
             response.components.raw_ingest_dlq.detail.as_deref(),
             Some("raw-ingest DLQ pressure: 3 pending message(s), sequence span 5")
+        );
+        assert_eq!(
+            response.components.confirmation_buffer.status,
+            HealthStatus::Degraded
+        );
+        assert_eq!(
+            response.components.confirmation_buffer.detail.as_deref(),
+            Some("confirmation buffers: observed=1, pending=3, timed_out_retained=1")
         );
         assert!(response.components.replay_control.enabled);
         assert_eq!(

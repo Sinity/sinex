@@ -10,8 +10,8 @@ use sinex_primitives::constants::buffers::DEFAULT_CONFIRMATION_BUFFER_CAPACITY;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::builder::EventId;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use tokio::sync::RwLock;
 
 /// Processing model for automata
@@ -52,6 +52,57 @@ pub struct ConfirmationBufferSnapshot {
     pub late_confirmation_count: u64,
     pub approximate_payload_bytes: usize,
     pub approximate_payload_bytes_by_kind: BTreeMap<String, usize>,
+}
+
+static CONFIRMATION_BUFFER_REGISTRY: OnceLock<Mutex<Vec<Weak<ConfirmationBuffer>>>> =
+    OnceLock::new();
+
+/// Register a confirmation buffer for operator health/diagnostics surfaces.
+///
+/// The registry stores weak refs so diagnostics never extend a runtime buffer's
+/// lifetime. Duplicate registrations of the same `Arc` are ignored.
+pub fn register_confirmation_buffer(buffer: &Arc<ConfirmationBuffer>) {
+    let weak = Arc::downgrade(buffer);
+    let registry = CONFIRMATION_BUFFER_REGISTRY.get_or_init(|| Mutex::new(Vec::new()));
+    let mut guard = registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.retain(|existing| existing.upgrade().is_some());
+    if !guard.iter().any(|existing| existing.ptr_eq(&weak)) {
+        guard.push(weak);
+    }
+}
+
+/// Snapshot all live registered confirmation buffers.
+///
+/// Dead weak refs are discarded before snapshots are taken. Snapshotting occurs
+/// outside the registry lock, and each buffer snapshot already keeps its own
+/// pending-map lock section short.
+pub async fn registered_confirmation_buffer_snapshots() -> Vec<ConfirmationBufferSnapshot> {
+    let Some(registry) = CONFIRMATION_BUFFER_REGISTRY.get() else {
+        return Vec::new();
+    };
+    let buffers = {
+        let mut guard = registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut buffers = Vec::new();
+        guard.retain(|weak| {
+            if let Some(buffer) = weak.upgrade() {
+                buffers.push(buffer);
+                true
+            } else {
+                false
+            }
+        });
+        buffers
+    };
+
+    let mut snapshots = Vec::with_capacity(buffers.len());
+    for buffer in buffers {
+        snapshots.push(buffer.snapshot().await);
+    }
+    snapshots
 }
 
 /// Per-kind confirmation watermark from event_engine. Per #1306: a single message

@@ -4,8 +4,16 @@
 //! including the gateway content service and the db-owned PKM service.
 
 use sinex_primitives::domain::HealthStatus;
+use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::events::builder::EventId;
+use sinex_primitives::temporal::Timestamp;
 use sinexd::api::ServiceContainer;
+use sinexd::runtime::{
+    ConfirmationBuffer, ProvisionalEvent, register_confirmation_buffer,
+    registered_confirmation_buffer_snapshots,
+};
 use std::sync::Arc;
+use std::time::Duration;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
@@ -362,6 +370,97 @@ async fn test_health_report_structure(ctx: TestContext) -> TestResult<()> {
     assert!(
         report.replay.connected,
         "Replay control should be connected"
+    );
+
+    Ok(())
+}
+
+fn old_journald_provisional(index: usize, message: &str) -> ProvisionalEvent {
+    ProvisionalEvent {
+        event_id: EventId::new(),
+        source: EventSource::from_static("system.journald"),
+        event_type: EventType::from_static("journald.entry.written"),
+        payload: serde_json::json!({
+            "MESSAGE": message,
+            "_SYSTEMD_UNIT": "sinexd.service",
+            "SEQ": index,
+        }),
+        ts_orig: Timestamp::from_unix_timestamp(1)
+            .unwrap_or_else(|| panic!("fixture timestamp must be in range")),
+        received_at: Timestamp::from_unix_timestamp(1)
+            .unwrap_or_else(|| panic!("fixture timestamp must be in range")),
+    }
+}
+
+#[sinex_test]
+async fn confirmation_buffer_pressure_degrades_health_with_payload_attribution(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let mut env = EnvGuard::new();
+    let temp_dir = TempDir::new()?;
+    configure_gateway_env(&mut env, &ctx, temp_dir.path())?;
+
+    let buffer = Arc::new(ConfirmationBuffer::with_capacity_and_grace(
+        Duration::from_millis(0),
+        4,
+        Duration::from_secs(60),
+    ));
+    register_confirmation_buffer(&buffer);
+    for index in 0..3 {
+        assert!(
+            buffer
+                .add_provisional(old_journald_provisional(
+                    index,
+                    "Late confirmation arrived after provisional timeout",
+                ))
+                .await
+        );
+    }
+    assert_eq!(buffer.check_timeouts().await.len(), 3);
+
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
+    let report = container.health_report().await;
+    assert_eq!(report.confirmation_buffer.status, HealthStatus::Degraded);
+    assert!(report.confirmation_buffer.observed_buffers >= 1);
+    assert!(report.confirmation_buffer.pending_count >= 3);
+    assert!(report.confirmation_buffer.timed_out_retained_count >= 3);
+    assert!(report.confirmation_buffer.approximate_payload_bytes > 0);
+    assert!(
+        report
+            .confirmation_buffer
+            .approximate_payload_bytes_by_kind
+            .contains_key("system.journald:journald.entry.written")
+    );
+    assert!(
+        report
+            .degradation_reasons
+            .iter()
+            .any(|reason| reason.contains("confirmation buffers: observed="))
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn confirmation_buffer_registry_does_not_retain_dropped_buffers() -> TestResult<()> {
+    let buffer = Arc::new(ConfirmationBuffer::with_capacity_and_grace(
+        Duration::from_millis(0),
+        1,
+        Duration::from_millis(0),
+    ));
+    let weak = Arc::downgrade(&buffer);
+    register_confirmation_buffer(&buffer);
+    assert!(
+        weak.upgrade().is_some(),
+        "registered live buffer should be observable"
+    );
+    drop(buffer);
+
+    let _ = registered_confirmation_buffer_snapshots().await;
+    assert!(
+        weak.upgrade().is_none(),
+        "registry must use weak refs instead of retaining runtime buffers"
     );
 
     Ok(())
