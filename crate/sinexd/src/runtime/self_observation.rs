@@ -44,7 +44,7 @@ use sinex_primitives::events::payloads::{
     ConsumerStartupSnapshotPayload, EventEngineBatchStatsPayload, GatewayRpcCallPayload,
     HealthStatusPayload, MetricCounterPayload, MetricGaugePayload, MetricHistogramPayload,
     PoolStatsPayload, RateLimitExceededPayload, ReplayStatsPayload, RpcStatus,
-    SourceProcessingStatsPayload, StreamStatsPayload,
+    SourceProcessingStatsPayload, StreamPressureSnapshot, StreamStatsPayload,
 };
 use sinex_primitives::events::{Event, Provenance, SourceMaterial};
 use sinex_primitives::{Id, JsonValue, SinexError, Timestamp};
@@ -540,13 +540,8 @@ impl SelfObserver {
         first_seq: u64,
         last_seq: u64,
     ) -> Result<(), SelfObservationError> {
-        let fill_pct = if max_messages > 0 {
-            (messages as f64 / max_messages as f64) * 100.0
-        } else if max_bytes > 0 {
-            (bytes as f64 / max_bytes as f64) * 100.0
-        } else {
-            0.0
-        };
+        let pressure =
+            StreamPressureSnapshot::from_limits(messages, max_messages, bytes, max_bytes);
 
         self.publish(StreamStatsPayload {
             stream: stream.to_string(),
@@ -555,7 +550,11 @@ impl SelfObserver {
             bytes,
             max_bytes,
             consumer_count,
-            fill_pct,
+            fill_pct: pressure.fill_pct,
+            message_fill_pct: pressure.message_fill_pct,
+            byte_fill_pct: pressure.byte_fill_pct,
+            pressure_level: pressure.pressure_level,
+            limiting_dimension: pressure.limiting_dimension,
             first_seq,
             last_seq,
         })
