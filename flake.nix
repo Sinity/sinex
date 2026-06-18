@@ -711,6 +711,26 @@
                   esac
                 }
 
+                _sinex_xtask_requires_sqlx_database() {
+                  local command_name
+                  command_name="$(_sinex_xtask_command_name "$@")"
+                  case "$command_name" in
+                    check|test|build|deps|doctor)
+                      return 0
+                      ;;
+                    *)
+                      return 1
+                      ;;
+                  esac
+                }
+
+                _sinex_xtask_exec_checkout_binary() {
+                  if _sinex_xtask_requires_sqlx_database "$@"; then
+                    _sinex_xtask_ensure_sqlx_database || exit $?
+                  fi
+                  exec "$bin_path" "$@"
+                }
+
                 _sinex_xtask_wait_for_existing_build() {
                   while [ -d "$build_lock_dir" ]; do
                     if [ -r "$build_lock_dir/pid" ]; then
@@ -753,7 +773,7 @@
                     rebuild_started_ns="$(date +%s%N)"
                     rm -f "$build_stage_metrics" "$build_stage_metrics.tmp" "$build_rebuild_trigger"
                     _sinex_xtask_write_current_rebuild_trigger
-                    echo "ℹ  Rebuilding checkout-local xtask..." >&2
+                    echo "ℹ  Rebuilding checkout-local xtask (bootstraps SQLx Postgres/schema first)..." >&2
                     if _sinex_xtask_build_checkout_binary >"$build_failure_log" 2>&1; then
                       rebuild_finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
                       rebuild_finished_ns="$(date +%s%N)"
@@ -782,11 +802,90 @@
                     local build_rc
 
                     build_rc=0
+                    _sinex_xtask_ensure_sqlx_database || return $?
                     _stage_started_ns="$(_sinex_xtask_stage_start)"
                     cargo build --quiet -p xtask || build_rc=$?
                     _sinex_xtask_stage_record "xtask_build" "$_stage_started_ns"
+                    if [ "$build_rc" -eq 0 ]; then
+                      touch "$bin_path" "$cargo_target_dir/debug/xtask.d" 2>/dev/null || true
+                    fi
                     return "$build_rc"
                   )
+                }
+
+                _sinex_xtask_ensure_sqlx_database() {
+                  local pgdata pgrun pglog pgport runtime_conf include_line dev_user
+
+                  pgdata="$SINEX_DEV_STATE_DIR/data/postgres"
+                  pgrun="$SINEX_DEV_STATE_DIR/run"
+                  pglog="$SINEX_DEV_STATE_DIR/run/logs"
+                  pgport="''${PGPORT:-5432}"
+                  runtime_conf="$pgdata/sinex-dev.conf"
+                  include_line="include_if_exists = '$runtime_conf'"
+                  dev_user="''${USER:-$(id -un)}"
+
+                  mkdir -p "$pgdata" "$pgrun" "$pglog"
+
+                  if [ ! -f "$pgdata/PG_VERSION" ]; then
+                    echo "ℹ  Initializing checkout-local Postgres for SQLx validation..." >&2
+                    ${postgresForSqlx}/bin/initdb \
+                      --auth=trust \
+                      --no-locale \
+                      --encoding=UTF8 \
+                      -U postgres \
+                      -D "$pgdata"
+                  fi
+
+                  {
+                    printf "unix_socket_directories = '%s'\n" "$pgrun"
+                    printf "%s = '%s'\n" "listen_addresses" ""
+                    printf "port = %s\n" "$pgport"
+                    printf "max_connections = 800\n"
+                    printf "max_worker_processes = 24\n"
+                    printf "shared_preload_libraries = 'timescaledb'\n"
+                    printf "timescaledb.max_background_workers = 16\n"
+                    printf "log_destination = 'stderr'\n"
+                    printf "logging_collector = on\n"
+                    printf "log_directory = '%s'\n" "$pglog"
+                    printf "log_filename = 'postgres.log'\n"
+                  } >"$runtime_conf"
+
+                  if ! grep -Fqx "$include_line" "$pgdata/postgresql.conf"; then
+                    printf '\n%s\n' "$include_line" >>"$pgdata/postgresql.conf"
+                  fi
+
+                  if ! ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1; then
+                    echo "ℹ  Starting checkout-local Postgres for SQLx validation..." >&2
+                    ${postgresForSqlx}/bin/pg_ctl \
+                      -D "$pgdata" \
+                      start \
+                      -w \
+                      -l "$pglog/postgres-start.log" \
+                      -o "-k $pgrun -p $pgport"
+                  fi
+
+                  ${postgresForSqlx}/bin/psql \
+                    -h "$pgrun" \
+                    -p "$pgport" \
+                    -U postgres \
+                    -d postgres \
+                    -v ON_ERROR_STOP=1 \
+                    -v dev_user="$dev_user" <<'SQL'
+SELECT format('CREATE ROLE %I LOGIN SUPERUSER CREATEDB', :'dev_user')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'dev_user')\gexec
+SELECT format('ALTER ROLE %I WITH SUPERUSER CREATEDB LOGIN', :'dev_user')
+WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'dev_user')\gexec
+SELECT format('CREATE DATABASE sinex_dev OWNER %I', :'dev_user')
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sinex_dev')\gexec
+SQL
+
+                  echo "ℹ  Applying checkout-local schema for SQLx validation..." >&2
+                  DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres" \
+                    ${schemaApplyBootstrap}/bin/schema-apply-bootstrap
+
+                  export PGHOST="$pgrun"
+                  export PGPORT="$pgport"
+                  export DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres"
                 }
 
                 cd "$root_dir"
@@ -815,14 +914,14 @@
                           if [ -r "$build_failure_log" ]; then
                             echo "  log: $build_failure_log" >&2
                           fi
-                          exec "$bin_path" "$@"
+                          _sinex_xtask_exec_checkout_binary "$@"
                         fi
                         exit 1
                       fi
-                      exec "$bin_path" "$@"
+                      _sinex_xtask_exec_checkout_binary "$@"
                     fi
                   fi
-                  exec "$bin_path" "$@"
+                  _sinex_xtask_exec_checkout_binary "$@"
                 fi
 
                 if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
@@ -833,7 +932,7 @@
                         if [ -r "$build_failure_log" ]; then
                           echo "  log: $build_failure_log" >&2
                         fi
-                        exec "$bin_path" "$@"
+                        _sinex_xtask_exec_checkout_binary "$@"
                       fi
                       _sinex_xtask_report_current_failure
                       exit 101
@@ -841,7 +940,7 @@
                     exit 1
                   fi
                 fi
-                exec "$bin_path" "$@"
+                _sinex_xtask_exec_checkout_binary "$@"
               '';
             in
             pkgs.mkShell {
