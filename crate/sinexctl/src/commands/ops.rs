@@ -1,12 +1,13 @@
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 use serde_json::Value;
 use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::ops::{Operation as OpsOperation, OpsStartResponse};
 use sinex_primitives::views::{
-    ActionAvailability, ActionAvailabilityState, CaveatView, DebtKind, DebtListView, DebtOwnerView,
-    DebtRowView, DebtStage, OperationJobListView, OperationView, SinexObjectKind, SinexObjectRef,
-    ViewEnvelope,
+    ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, DebtKind,
+    DebtListView, DebtOwnerView, DebtRowView, DebtStage, OperationJobListView, OperationView,
+    SinexObjectKind, SinexObjectRef, ViewEnvelope,
 };
+use sinex_primitives::{DerivationSpec, InvalidationTrigger, affected_derivations};
 
 use crate::Result;
 use crate::client::GatewayClient;
@@ -182,7 +183,34 @@ EXAMPLES:
 pub enum DebtCommands {
     /// List debt rows from currently wired providers
     #[command(alias = "ls")]
-    List,
+    List {
+        /// Include derivations invalidated by the selected trigger as projection debt.
+        #[arg(long, value_enum)]
+        projection_trigger: Option<DebtProjectionTrigger>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum DebtProjectionTrigger {
+    Replay,
+    Archive,
+    Redaction,
+    SourceMaterialChange,
+    ParserSemanticsChange,
+    DisclosurePolicyChange,
+}
+
+impl DebtProjectionTrigger {
+    const fn into_invalidation_trigger(self) -> InvalidationTrigger {
+        match self {
+            Self::Replay => InvalidationTrigger::Replay,
+            Self::Archive => InvalidationTrigger::Archive,
+            Self::Redaction => InvalidationTrigger::Redaction,
+            Self::SourceMaterialChange => InvalidationTrigger::SourceMaterialChange,
+            Self::ParserSemanticsChange => InvalidationTrigger::ParserSemanticsChange,
+            Self::DisclosurePolicyChange => InvalidationTrigger::DisclosurePolicyChange,
+        }
+    }
 }
 
 impl OpsCommands {
@@ -335,13 +363,24 @@ impl JobsCommands {
 impl DebtCommands {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
-            Self::List => {
+            Self::List { projection_trigger } => {
                 let dlq = client.dlq_list().await?;
-                let rows = debt_rows_from_dlq(&dlq);
+                let mut rows = debt_rows_from_dlq(&dlq);
+                if let Some(trigger) = projection_trigger {
+                    rows.extend(debt_rows_from_derivation_trigger(
+                        trigger.into_invalidation_trigger(),
+                    ));
+                }
+                let mut providers = vec!["raw_ingest_dlq"];
+                if projection_trigger.is_some() {
+                    providers.push("derivation_specs");
+                }
                 let envelope =
                     ViewEnvelope::new("sinexctl.ops.debt", DebtListView::new(rows.clone()))
                         .with_query_echo(serde_json::json!({
-                            "providers": ["raw_ingest_dlq"],
+                            "providers": providers,
+                            "projection_trigger": projection_trigger
+                                .map(|trigger| projection_trigger_name(trigger.into_invalidation_trigger())),
                         }));
 
                 if let Some(output) = render_envelope(&envelope, &rows, format)? {
@@ -411,6 +450,86 @@ pub(crate) fn debt_rows_from_dlq(stats: &DlqListResponse) -> Vec<DebtRowView> {
     }]
 }
 
+pub(crate) fn debt_rows_from_derivation_trigger(trigger: InvalidationTrigger) -> Vec<DebtRowView> {
+    affected_derivations(trigger)
+        .map(|spec| debt_row_from_derivation(spec, trigger))
+        .collect()
+}
+
+fn debt_row_from_derivation(spec: &DerivationSpec, trigger: InvalidationTrigger) -> DebtRowView {
+    DebtRowView {
+        id: format!("debt:projection:{}:{trigger:?}", spec.id),
+        kind: DebtKind::Projection,
+        stage: DebtStage::ProjectionStale,
+        summary: format!(
+            "derived output `{}` is invalidated by {trigger:?}",
+            spec.output_id
+        ),
+        refs: vec![SinexObjectRef::new(
+            SinexObjectKind::Projection,
+            spec.output_id,
+        )],
+        owner: Some(DebtOwnerView {
+            package_ref: None,
+            mode_ref: None,
+            policy_ref: spec.rebuild_resource_policy_ref.map(ToOwned::to_owned),
+            operation_ref: None,
+        }),
+        age_secs: None,
+        freshness: None,
+        caveats: vec![CaveatView {
+            id: "projection.invalidated".to_string(),
+            message: format!(
+                "derivation `{}` should be rebuilt or explained before the output is treated as fresh",
+                spec.id
+            ),
+            ref_: spec
+                .disclosure_policy_ref
+                .map(|policy| SinexObjectRef::new(SinexObjectKind::Policy, policy)),
+        }],
+        actions: vec![
+            ActionAvailability {
+                id: "projection.rebuild".to_string(),
+                label: "Rebuild".to_string(),
+                state: ActionAvailabilityState::Disabled,
+                reason: Some(
+                    "projection rebuild operations are planned by #1569/#1691".to_string(),
+                ),
+                command_hint: None,
+                rpc_method: None,
+                side_effect: ActionSideEffect::Write,
+                requires_confirmation: false,
+                dry_run_available: false,
+                audit_output_ref: None,
+            }
+            .with_command_hint(format!(
+                "sinexctl ops start -t projection-rebuild -s '{{\"derivation\":\"{}\"}}'",
+                spec.id
+            )),
+            ActionAvailability::read(
+                "projection.explain",
+                "Explain",
+                ActionAvailabilityState::Enabled,
+            )
+            .with_command_hint(format!(
+                "sinexctl ops debt list --projection-trigger {}",
+                projection_trigger_name(trigger)
+            )),
+        ],
+    }
+}
+
+const fn projection_trigger_name(trigger: InvalidationTrigger) -> &'static str {
+    match trigger {
+        InvalidationTrigger::Replay => "replay",
+        InvalidationTrigger::Archive => "archive",
+        InvalidationTrigger::Redaction => "redaction",
+        InvalidationTrigger::SourceMaterialChange => "source-material-change",
+        InvalidationTrigger::ParserSemanticsChange => "parser-semantics-change",
+        InvalidationTrigger::DisclosurePolicyChange => "disclosure-policy-change",
+    }
+}
+
 fn print_machine_output(output: &str) {
     print!("{output}");
     if !output.is_empty() && !output.ends_with('\n') {
@@ -460,6 +579,7 @@ fn object_kind_label(kind: &SinexObjectKind) -> &'static str {
         SinexObjectKind::Projection => "projection",
         SinexObjectKind::Artifact => "artifact",
         SinexObjectKind::AdmissionOutcome => "admission_outcome",
+        SinexObjectKind::Policy => "policy",
         _ => "object",
     }
 }
@@ -647,8 +767,70 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn debt_rows_from_derivation_trigger_reports_projection_debt() -> xtask::TestResult<()> {
+        let rows = debt_rows_from_derivation_trigger(InvalidationTrigger::Replay);
+
+        assert!(!rows.is_empty());
+        let row = rows
+            .iter()
+            .find(|row| row.id.contains("domain.current_objects"))
+            .expect("current objects projection reports replay debt");
+
+        assert_eq!(row.kind, DebtKind::Projection);
+        assert_eq!(row.stage, DebtStage::ProjectionStale);
+        assert_eq!(row.refs[0].kind, SinexObjectKind::Projection);
+        assert_eq!(row.refs[0].id, "domain.current_objects");
+        assert_eq!(
+            row.owner
+                .as_ref()
+                .and_then(|owner| owner.policy_ref.as_deref()),
+            Some("resource-policy:projection.rebuild.standard")
+        );
+        assert_eq!(row.caveats[0].id, "projection.invalidated");
+        assert_eq!(
+            row.caveats[0].ref_.as_ref().map(|ref_| &ref_.kind),
+            Some(&SinexObjectKind::Policy)
+        );
+
+        let rebuild = row
+            .actions
+            .iter()
+            .find(|action| action.id == "projection.rebuild")
+            .expect("rebuild action is advertised");
+        assert_eq!(rebuild.side_effect, ActionSideEffect::Write);
+        assert_eq!(rebuild.state, ActionAvailabilityState::Disabled);
+        assert!(
+            rebuild
+                .command_hint
+                .as_deref()
+                .unwrap_or_default()
+                .contains("projection-rebuild")
+        );
+
+        let explain = row
+            .actions
+            .iter()
+            .find(|action| action.id == "projection.explain")
+            .expect("explain action is advertised");
+        assert_eq!(explain.side_effect, ActionSideEffect::Read);
+        assert_eq!(explain.state, ActionAvailabilityState::Enabled);
+        assert_eq!(
+            explain.command_hint.as_deref(),
+            Some("sinexctl ops debt list --projection-trigger replay")
+        );
+
+        assert!(
+            debt_rows_from_derivation_trigger(InvalidationTrigger::SourceMaterialChange).is_empty()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn ops_debt_list_json_renders_finite_debt_envelope() -> xtask::TestResult<()> {
-        let rows = debt_rows_from_dlq(&fixture_dlq(12));
+        let mut rows = debt_rows_from_dlq(&fixture_dlq(12));
+        rows.extend(debt_rows_from_derivation_trigger(
+            InvalidationTrigger::Replay,
+        ));
         let envelope = ViewEnvelope::new("sinexctl.ops.debt", DebtListView::new(rows.clone()));
 
         let output =
@@ -656,11 +838,16 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&output)?;
 
         assert_eq!(parsed["source_surface"], "sinexctl.ops.debt");
-        assert_eq!(parsed["payload"]["count"], 1);
+        assert_eq!(parsed["payload"]["count"], 2);
         assert_eq!(parsed["payload"]["rows"][0]["kind"], "admission");
         assert_eq!(
             parsed["payload"]["rows"][0]["refs"][0]["kind"],
             "dlq_message"
+        );
+        assert_eq!(parsed["payload"]["rows"][1]["kind"], "projection");
+        assert_eq!(
+            parsed["payload"]["rows"][1]["refs"][0]["kind"],
+            "projection"
         );
         Ok(())
     }
