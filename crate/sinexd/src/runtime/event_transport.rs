@@ -1085,4 +1085,20 @@ mod tests {
         );
         Ok(())
     }
+
+    #[sinex_test]
+    async fn direct_transport_reports_nats_required_operations() -> TestResult<()> {
+        let transport = EventTransport::new_noop_direct();
+
+        let error = transport
+            .nats_publisher()
+            .expect_err("Direct transport should not expose a NATS publisher");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("Direct transport does not provide a NATS publisher"),
+            "NATS-required call sites should receive an explicit Direct-transport error: {message}"
+        );
+        Ok(())
+    }
 }
