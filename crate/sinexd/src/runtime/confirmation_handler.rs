@@ -40,6 +40,7 @@ pub struct ProvisionalEvent {
 struct PendingEntry {
     event: ProvisionalEvent,
     timed_out_at: Option<sinex_primitives::temporal::Timestamp>,
+    payload_bytes: usize,
 }
 
 /// Point-in-time diagnostics for the confirmation buffer.
@@ -168,6 +169,7 @@ impl ConfirmationBuffer {
     /// dispatch the confirmed handler synchronously when it returns true.
     #[tracing::instrument(skip(self, event), fields(event_id = %event.event_id, buffer_size))]
     pub async fn add_provisional(&self, event: ProvisionalEvent) -> bool {
+        let payload_bytes = serde_json::to_vec(&event.payload).map_or(0, |bytes| bytes.len());
         let acquire_start = std::time::Instant::now();
         let mut pending = self.pending.write().await;
         let acquire_ms = acquire_start.elapsed().as_millis() as u64;
@@ -207,6 +209,7 @@ impl ConfirmationBuffer {
             PendingEntry {
                 event,
                 timed_out_at: None,
+                payload_bytes,
             },
         );
         tracing::Span::current().record("buffer_size", pending.len());
@@ -443,28 +446,36 @@ impl ConfirmationBuffer {
 
     /// Snapshot confirmation-buffer diagnostics without exposing retained events.
     pub async fn snapshot(&self) -> ConfirmationBufferSnapshot {
-        let pending = self.pending.read().await;
+        let (pending_count, rows) = {
+            let pending = self.pending.read().await;
+            let rows = pending
+                .values()
+                .map(|entry| {
+                    (
+                        entry.event.source.as_str().to_string(),
+                        entry.event.event_type.as_str().to_string(),
+                        entry.payload_bytes,
+                        entry.timed_out_at.is_some(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (pending.len(), rows)
+        };
+
         let mut approximate_payload_bytes_by_kind = BTreeMap::new();
         let mut approximate_payload_bytes = 0;
         let mut timed_out_retained_count = 0;
-
-        for entry in pending.values() {
-            if entry.timed_out_at.is_some() {
+        for (source, event_type, payload_bytes, timed_out) in rows {
+            if timed_out {
                 timed_out_retained_count += 1;
             }
-            let payload_bytes =
-                serde_json::to_vec(&entry.event.payload).map_or(0, |bytes| bytes.len());
             approximate_payload_bytes += payload_bytes;
-            let key = format!(
-                "{}:{}",
-                entry.event.source.as_str(),
-                entry.event.event_type.as_str()
-            );
+            let key = format!("{source}:{event_type}");
             *approximate_payload_bytes_by_kind.entry(key).or_insert(0) += payload_bytes;
         }
 
         ConfirmationBufferSnapshot {
-            pending_count: pending.len(),
+            pending_count,
             timed_out_retained_count,
             rejected_count: self.rejected_count(),
             late_confirmation_count: self.late_confirmation_count(),
