@@ -76,6 +76,15 @@ fn telemetry_query_error(relation: &'static str, error: sqlx::Error) -> SinexErr
     SinexError::database(format!("Failed to query {relation}")).with_std_error(&error)
 }
 
+fn stream_pressure_level(rank: i32) -> Option<String> {
+    match rank {
+        0 => Some("nominal".to_string()),
+        1 => Some("warning".to_string()),
+        2 => Some("critical".to_string()),
+        _ => None,
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct CurrentHealthRow {
     source: String,
@@ -162,6 +171,10 @@ struct StreamStatsRow {
     stream_name: Option<String>,
     avg_fill_pct: Option<f64>,
     max_fill_pct: Option<f64>,
+    max_message_fill_pct: Option<f64>,
+    max_byte_fill_pct: Option<f64>,
+    max_pressure_rank: Option<i32>,
+    limiting_dimension: Option<String>,
     avg_messages: Option<f64>,
     max_messages: Option<i64>,
     sample_count: i64,
@@ -604,6 +617,10 @@ pub async fn handle_telemetry_stream_stats(
             stream_name,
             avg_fill_pct::float8 AS avg_fill_pct,
             max_fill_pct::float8 AS max_fill_pct,
+            max_message_fill_pct::float8 AS max_message_fill_pct,
+            max_byte_fill_pct::float8 AS max_byte_fill_pct,
+            max_pressure_rank::int4 AS max_pressure_rank,
+            limiting_dimension,
             avg_messages::float8 AS avg_messages,
             max_messages::bigint AS max_messages,
             sample_count
@@ -628,6 +645,10 @@ pub async fn handle_telemetry_stream_stats(
             stream_name: row.stream_name,
             avg_fill_pct: row.avg_fill_pct,
             max_fill_pct: row.max_fill_pct,
+            max_message_fill_pct: row.max_message_fill_pct,
+            max_byte_fill_pct: row.max_byte_fill_pct,
+            max_pressure_level: row.max_pressure_rank.and_then(stream_pressure_level),
+            limiting_dimension: row.limiting_dimension,
             avg_messages: row.avg_messages,
             max_messages: row.max_messages,
             sample_count: row.sample_count,

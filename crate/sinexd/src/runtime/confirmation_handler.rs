@@ -702,6 +702,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn timed_out_journald_payload_retention_is_bounded_by_capacity_and_grace() {
+        const CAPACITY: usize = 16;
+        const OVERFLOW_ATTEMPTS: usize = 32;
+
+        let buffer = ConfirmationBuffer::with_capacity_and_grace(
+            Duration::from_millis(0),
+            CAPACITY,
+            Duration::from_millis(0),
+        );
+        let old = Timestamp::from_unix_timestamp(1).expect("timestamp in range");
+        let feedback_payload = "Late confirmation arrived after provisional timeout ".repeat(64);
+
+        for index in 0..CAPACITY {
+            assert!(
+                buffer
+                    .add_provisional(provisional(
+                        "system.journald",
+                        "journald.entry.written",
+                        old,
+                        json!({
+                            "MESSAGE": feedback_payload,
+                            "SEQ": index,
+                            "_SYSTEMD_UNIT": "sinexd.service"
+                        }),
+                    ))
+                    .await
+            );
+        }
+        for index in 0..OVERFLOW_ATTEMPTS {
+            assert!(
+                !buffer
+                    .add_provisional(provisional(
+                        "system.journald",
+                        "journald.entry.written",
+                        old,
+                        json!({
+                            "MESSAGE": feedback_payload,
+                            "SEQ": CAPACITY + index,
+                            "_SYSTEMD_UNIT": "sinexd.service"
+                        }),
+                    ))
+                    .await
+            );
+        }
+
+        assert_eq!(buffer.check_timeouts().await.len(), CAPACITY);
+        let retained = buffer.snapshot().await;
+        assert_eq!(retained.pending_count, CAPACITY);
+        assert_eq!(retained.timed_out_retained_count, CAPACITY);
+        assert_eq!(retained.rejected_count, OVERFLOW_ATTEMPTS as u64);
+        assert!(retained.approximate_payload_bytes > 0);
+        assert_eq!(
+            retained
+                .approximate_payload_bytes_by_kind
+                .get("system.journald:journald.entry.written"),
+            Some(&retained.approximate_payload_bytes)
+        );
+
+        let purged = buffer.purge_expired().await;
+        assert_eq!(purged.len(), CAPACITY);
+        let drained = buffer.snapshot().await;
+        assert_eq!(drained.pending_count, 0);
+        assert_eq!(drained.timed_out_retained_count, 0);
+        assert_eq!(drained.approximate_payload_bytes, 0);
+        assert!(drained.approximate_payload_bytes_by_kind.is_empty());
+        assert_eq!(drained.rejected_count, OVERFLOW_ATTEMPTS as u64);
+    }
+
+    #[tokio::test]
     async fn delayed_confirmation_feedback_logs_are_sparse_and_journald_suppressed() {
         const LATE_EVENTS: usize = 20;
         let buffer = ConfirmationBuffer::with_capacity_and_grace(

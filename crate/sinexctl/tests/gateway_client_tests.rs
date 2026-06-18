@@ -64,6 +64,12 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
                 latency_ms: Some(125.0),
                 detail: Some("nats unavailable".to_string()),
             },
+            raw_ingest_dlq: ComponentHealthReport {
+                status: HealthStatus::Unknown,
+                connected: false,
+                latency_ms: None,
+                detail: Some("raw-ingest DLQ pressure unknown".to_string()),
+            },
             replay_control: ReplayControlHealth {
                 status: HealthStatus::Healthy,
                 enabled: true,
@@ -833,6 +839,12 @@ async fn test_gateway_client_successful_health() -> TestResult<()> {
                         "connected": true,
                         "latency_ms": 2.5,
                         "detail": "jetstream responsive"
+                    },
+                    "raw_ingest_dlq": {
+                        "status": "healthy",
+                        "connected": true,
+                        "latency_ms": null,
+                        "detail": "raw-ingest DLQ empty"
                     },
                     "replay_control": {
                         "status": "healthy",

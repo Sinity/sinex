@@ -84,6 +84,10 @@ async fn dlq_list_returns_empty_for_new_stream(ctx: TestContext) -> TestResult<(
 
     assert_eq!(response.total_messages, 0);
     assert_eq!(response.total_bytes, 0);
+    assert_eq!(response.pressure_level, "nominal");
+    assert_eq!(response.pending_sequence_span, 0);
+    assert_eq!(response.recommended_action, "none");
+    assert_eq!(response.action_reason, "raw-ingest DLQ is empty");
 
     Ok(())
 }
@@ -118,6 +122,9 @@ async fn dlq_list_counts_messages_correctly(ctx: TestContext) -> TestResult<()> 
 
     assert_eq!(response.total_messages, 3);
     assert!(response.total_bytes > 0);
+    assert_eq!(response.pressure_level, "warning");
+    assert_eq!(response.recommended_action, "ops dlq peek");
+    assert!(response.action_reason.contains("paced requeue or purge"));
 
     Ok(())
 }
@@ -153,6 +160,10 @@ async fn dlq_list_shows_sequence_info(ctx: TestContext) -> TestResult<()> {
     // Should have valid sequence numbers
     assert!(response.first_seq > 0);
     assert!(response.last_seq >= response.first_seq);
+    assert_eq!(
+        response.pending_sequence_span,
+        response.last_seq - response.first_seq + 1
+    );
 
     Ok(())
 }
