@@ -56,8 +56,8 @@ use command::{CommandContext, HistoryAccessMode, XtaskCommand};
 use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, FreshnessCommand,
     GitStackCommand, ImpactCommand, JobsCommand, PrivacyCommand, RaDiagnoseCommand,
-    RecordDriftBypassCommand, ResetCommand, SchemaCommand, StatusCommand, TestCommand,
-    ci::CiCommand, completions::CompletionsCommand, verify::VerifyCommand,
+    RecordDriftBypassCommand, ReleaseReadinessCommand, ResetCommand, SchemaCommand, StatusCommand,
+    TestCommand, ci::CiCommand, completions::CompletionsCommand, verify::VerifyCommand,
 };
 use config::config;
 pub use config::workspace_target_dir_for;
@@ -310,6 +310,8 @@ enum Commands {
     Schema(SchemaCommand),
     #[command(hide = true)]
     Verify(VerifyCommand),
+    #[command(hide = true)]
+    ReleaseReadiness(ReleaseReadinessCommand),
 
     // ─── Generation ────────────────────────────────────────────────
     #[command(hide = true)]
@@ -401,6 +403,7 @@ fn command_dispatch_metadata(
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata()),
         Commands::Schema(cmd) => ("schema", None, None, cmd.metadata()),
         Commands::Verify(cmd) => ("verify", None, None, cmd.metadata()),
+        Commands::ReleaseReadiness(cmd) => ("release-readiness", None, None, cmd.metadata()),
         Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata()),
         Commands::Reset(cmd) => ("reset", None, None, cmd.metadata()),
         Commands::Ci(cmd) => ("ci", None, None, cmd.metadata()),
@@ -549,6 +552,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,
             Commands::Schema(cmd) => cmd.execute(&ctx).await,
             Commands::Verify(cmd) => cmd.execute(&ctx).await,
+            Commands::ReleaseReadiness(cmd) => cmd.execute(&ctx).await,
             Commands::Exercise(cmd) => cmd.execute(&ctx).await,
             Commands::Reset(cmd) => cmd.execute(&ctx).await,
             Commands::Ci(cmd) => cmd.execute(&ctx).await,

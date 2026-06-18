@@ -42,6 +42,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `privacy` | Run privacy-engine catalog, test, key, and config utilities |
 | `schema` | Schema verification command group |
 | `verify` | Verify phase plans and performance contracts |
+| `release-readiness` | Emit the release-readiness claim matrix and optionally execute required gates |
 | `docs` | Generate and verify repo documentation surfaces |
 | `exercise` | Full surface area validation for xtask commands |
 | `reset` | Reset developer state for a fresh start |
@@ -1764,6 +1765,19 @@ Operationalize the 2026-05-11 closure-verification policy: fetch an issue body v
 | `issue` | yes | yes | GitHub issue number to verify |
 | `--json` | no | no | Emit JSON output |
 | `--dry-run` | no | no | Dry-run: parse and print commands without executing them |
+
+
+## `xtask release-readiness`
+
+Emit the release-readiness claim matrix and optionally execute required gates
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--target` | yes | no | Release target/name to report in the readiness payload |
+| `--base-ref` | yes | no | Base ref for changed-surface checks |
+| `--run-required-checks` | no | no | Execute the required command bundle. Without this flag the command emits the release contract and required commands without running expensive gates |
 
 
 ## `xtask docs`
