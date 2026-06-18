@@ -99,8 +99,8 @@ crate-level docs, not in this record.
 These surfaces are best understood as ergonomic shortcuts that launch the
 authoritative surfaces — not as separate substrates.
 
-- Prompt segments should read cached status emitted by `sinexctl status` or
-  the MCP read role. They must degrade silently when no runtime is reachable;
+- Prompt segments should read cached status emitted by the bare `sinexctl`
+  command center, `sinexctl runtime health`, or the MCP read role. They must degrade silently when no runtime is reachable;
   they must not synthesize state.
 - Tab completions should derive their option lists from the runtime
   (registered sources, schema-known event types, known material ids,

@@ -11,7 +11,7 @@
 #     this scenario proves that preflight passes on a production-shaped stack.
 #   - sinexVmTestSuite: not used. All assertions are inline Python so the
 #     proof is self-contained and readable in isolation.
-#   - API query: via `sinexctl query --source fs-watcher` which hits the
+#   - API query: via `sinexctl events query --source fs-watcher` which hits the
 #     real `events.query` RPC over mTLS. No DB-direct queries — the scenario
 #     asserts the full stack, not just persistence.
 #
@@ -19,7 +19,7 @@
 #   - "VM smoke/integration can boot a production-shaped Sinex stack with no
 #     failed sinex-* units and with preflight enabled." ✅
 #   - "source binding/source-driver host deployment state appears in readiness/
-#     preflight output." ✅ (sinexctl verify --source-evidence check)
+#     preflight output." ✅ (sinexctl ops verify --source-evidence check)
 #   - "emit a smoke event through the deployed runtime path; wait for event_engine
 #     persistence; query it back through the production-facing surface." ✅
 #
@@ -101,10 +101,10 @@ pkgs.testers.nixosTest {
     # ── Phase 2: Preflight must pass with source-driver host bindings ────────────
     with subtest("Preflight passes on production-shaped stack"):
         machine.succeed("systemctl is-active sinex-preflight.service || true")
-        # sinexctl verify surfaces source-driver host deployment state.
+        # sinexctl ops verify surfaces source-driver host deployment state.
         # Tolerate sinexctl not being in PATH in all build configurations.
         rc, out = machine.execute(
-            "sinexctl --insecure verify --source-evidence 2>&1 || true"
+            "sinexctl --insecure ops verify --source-evidence 2>&1 || true"
         )
         print(f"verify output (rc={rc}): {out[:500]}")
 
@@ -124,14 +124,17 @@ pkgs.testers.nixosTest {
         last_output = ""
         for attempt in range(deadline):
             rc, raw = machine.execute(
-                "sinexctl --insecure query --source fs-watcher --format json 2>&1"
+                "sinexctl --insecure events query --source fs-watcher --format json 2>&1"
             )
             last_output = raw.strip()
             if rc == 0 and last_output:
                 try:
                     parsed = json.loads(last_output.split("\n")[-1])
-                    events = parsed.get("events", []) if isinstance(parsed, dict) else \
-                             parsed if isinstance(parsed, list) else []
+                    if isinstance(parsed, dict):
+                        events = parsed.get("payload", {}).get("cards", []) \
+                            or parsed.get("events", [])
+                    else:
+                        events = parsed if isinstance(parsed, list) else []
                     if len(events) > 0:
                         found = True
                         print(f"Found {len(events)} event(s) after {attempt + 1}s.")
@@ -148,17 +151,21 @@ pkgs.testers.nixosTest {
     # ── Phase 4: API RPC returns correct event fields ───────────────────
     with subtest("API RPC returns persisted event with correct shape"):
         raw = machine.succeed(
-            "sinexctl --insecure query --source fs-watcher --format json"
+            "sinexctl --insecure events query --source fs-watcher --format json"
         ).strip()
         parsed = json.loads(raw.split("\n")[-1])
-        events = parsed.get("events", []) if isinstance(parsed, dict) else \
-                 parsed if isinstance(parsed, list) else []
+        if isinstance(parsed, dict):
+            events = parsed.get("payload", {}).get("cards", []) \
+                or parsed.get("events", [])
+        else:
+            events = parsed if isinstance(parsed, list) else []
 
         assert len(events) > 0, "events.query returned empty list"
 
         # Pick most-recent event (list is newest-first by default).
         ev = events[0]
-        source = ev.get("source", ev.get("event_source", ""))
+        raw_source = ev.get("source", ev.get("event_source", ""))
+        source = raw_source.get("raw", "") if isinstance(raw_source, dict) else raw_source
         event_type = ev.get("event_type", ev.get("type", ""))
         assert source == SOURCE, \
             f"Expected source='{SOURCE}', got '{source}'. Full event: {ev}"

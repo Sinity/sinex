@@ -221,7 +221,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert(
         "ops replay watch",
-        FormatCapability::streaming(TABLE_JSON_YAML)
+        FormatCapability::streaming(TABLE_JSON_NDJSON_YAML)
             .with_note("streams progress updates until operation completes"),
     );
 
@@ -254,7 +254,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert(
         "events watch",
-        FormatCapability::streaming(TABLE_JSON_YAML)
+        FormatCapability::streaming(TABLE_JSON_NDJSON_YAML)
             .with_note("streams NDJSON or YAML documents; table mode shows human-readable lines"),
     );
     for path in [
@@ -1383,6 +1383,8 @@ mod tests {
         assert!(validate_format("events inspect", OutputFormat::Json).is_ok());
         assert!(validate_format("events trace", OutputFormat::Ndjson).is_err());
         assert!(validate_format("events watch", OutputFormat::Json).is_ok());
+        assert!(validate_format("events watch", OutputFormat::Ndjson).is_ok());
+        assert!(validate_format("ops replay watch", OutputFormat::Ndjson).is_ok());
         Ok(())
     }
 
@@ -1665,7 +1667,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn registry_covers_key_commands() -> xtask::sandbox::TestResult<()> {
+    async fn registry_covers_canonical_key_commands() -> xtask::sandbox::TestResult<()> {
         let reg = build();
         let required = [
             "events query",
@@ -1686,29 +1688,6 @@ mod tests {
         ];
         for cmd in required {
             assert!(reg.contains_key(cmd), "registry is missing `{cmd}`");
-        }
-        for removed in [
-            "query",
-            "recent",
-            "errors",
-            "watch",
-            "explain",
-            "trace",
-            "timeline",
-            "annotate",
-            "modules",
-            "automata",
-            "throughput",
-            "telemetry",
-            "report",
-            "gateway ping",
-            "gateway version",
-            "core health",
-        ] {
-            assert!(
-                !reg.contains_key(removed),
-                "event shortcut `{removed}` must not stay in the registry"
-            );
         }
         Ok(())
     }

@@ -1,6 +1,6 @@
 # Sinex Snapshot Runbook
 
-`sinexctl state snapshot` captures a point-in-time archive of the complete
+`sinexctl ops state snapshot` captures a point-in-time archive of the complete
 sinex runtime state surface — Postgres, NATS JetStream, CAS blob repository,
 and source runtime state — into a single zstd-compressed tar archive.
 
@@ -8,9 +8,8 @@ The default is a **quiesce-mode** backup: services must be stopped before the
 snapshot runs, or `--auto-stop` can stop `sinex-*` services for the command.
 `--mode live` is available for urgent forensic capture while services remain
 active; it records `mode: live` in `manifest.json` and should be treated as a
-weaker-consistency artifact.
-The older `sinexctl admin snapshot*` paths remain as maintenance aliases; use
-the `sinexctl state ...` surface for operator runbooks.
+weaker-consistency artifact. Operator runbooks use the
+`sinexctl ops state ...` surface.
 
 ## Quick start
 
@@ -19,20 +18,20 @@ the `sinexctl state ...` surface for operator runbooks.
 sudo systemctl stop 'sinex-*'
 
 # Create a snapshot (defaults: zstd level 3, all components)
-sinexctl state snapshot --output /var/backup/sinex/$(date +%Y-%m-%d).sinex.tar.zst
+sinexctl ops state snapshot --output /var/backup/sinex/$(date +%Y-%m-%d).sinex.tar.zst
 
 # Estimate sizes without writing anything
-sinexctl state snapshot --output /var/backup/sinex/check.tar.zst --dry-run
+sinexctl ops state snapshot --output /var/backup/sinex/check.tar.zst --dry-run
 
 # Capture without stopping services when preserving the live state is more
 # important than component-level consistency
-sinexctl state snapshot --output /var/backup/sinex/live-forensics.sinex.tar.zst --mode live
+sinexctl ops state snapshot --output /var/backup/sinex/live-forensics.sinex.tar.zst --mode live
 ```
 
 ## Command reference
 
 ```
-sinexctl state snapshot --output <path>
+sinexctl ops state snapshot --output <path>
   [--compression <1-19>]           # zstd level, default 3
   [--workers <N>]                  # zstd parallel workers, default all cores
   [--mode quiesce|live]            # quiesce default; live does not stop services
@@ -42,10 +41,10 @@ sinexctl state snapshot --output <path>
   [--auto-stop]                    # stop sinex-* services automatically
   [--components postgres,nats,cas,state]  # subset, default all
 
-sinexctl state restore --archive <path> --target-dir <empty-dir> --dry-run
+sinexctl ops state restore --archive <path> --target-dir <empty-dir> --dry-run
   [--allow-non-empty-target]       # planning only; destructive restore still refuses ambiguity
 
-sinexctl state restore --archive <path> --target-dir <empty-dir>
+sinexctl ops state restore --archive <path> --target-dir <empty-dir>
   --confirm-restore
   [--allow-active-services]        # only for explicitly isolated drill targets
 ```
@@ -92,7 +91,7 @@ transport for off-host copies.
 Before a destructive restore, validate the archive and target with:
 
 ```bash
-sinexctl state restore \
+sinexctl ops state restore \
     --archive /var/backup/sinex/2026-05-15.sinex.tar.zst \
     --target-dir /tmp/sinex-restore-drill \
     --dry-run
@@ -120,7 +119,7 @@ Postgres drill databases, `state restore` can execute an isolated drill into an
 empty target directory:
 
 ```bash
-sinexctl state restore \
+sinexctl ops state restore \
     --archive /var/backup/sinex/2026-05-15.sinex.tar.zst \
     --target-dir /tmp/sinex-restore-drill \
     --confirm-restore
@@ -131,7 +130,7 @@ throwaway database:
 
 ```bash
 createdb sinex_restore_drill
-sinexctl state restore \
+sinexctl ops state restore \
     --archive /var/backup/sinex/2026-05-15.sinex.tar.zst \
     --target-dir /tmp/sinex-restore-drill \
     --restore-database-url "$SINEX_RESTORE_DATABASE_URL" \
@@ -187,7 +186,7 @@ tar -xaf /var/backup/sinex/2026-05-15.sinex.tar.zst -C "$RESTORE_DIR"
 Before extracting, the archive can be inspected directly:
 
 ```bash
-sinexctl state inspect \
+sinexctl ops state inspect \
     --archive /var/backup/sinex/2026-05-15.sinex.tar.zst
 ```
 
@@ -260,7 +259,8 @@ sudo systemctl start 'sinex-*'
 ### 10. Verify
 
 ```bash
-sinexctl status
+sinexctl
+sinexctl runtime health
 sinexctl metrics telemetry current-health
 psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM core.events;"
 ```
@@ -284,7 +284,7 @@ For a horizon-3 wipe (complete state replacement):
 1. Run `--dry-run` to confirm estimate and disk space.
 2. Stop services.
 3. Run the snapshot with a high compression level: `--compression 15`.
-4. Verify the manifest: `sinexctl state inspect --archive <archive>`.
+4. Verify the manifest: `sinexctl ops state inspect --archive <archive>`.
 5. Copy to off-machine storage (e.g., `rsync` to NAS or object storage).
 6. Proceed with the wipe only after confirming the archive is readable.
 

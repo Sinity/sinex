@@ -126,9 +126,9 @@ instead of on demand. Today, schema-level `retention_seconds` can drive
 #1072/#1172.
 
 ```
-sinexctl lifecycle retention status
-sinexctl lifecycle retention apply --dry-run
-sinexctl lifecycle retention apply --confirm
+sinexctl ops lifecycle retention status
+sinexctl ops lifecycle retention apply --dry-run
+sinexctl ops lifecycle retention apply --confirm
 ```
 
 Do not add broad auto-pruning defaults without an explicit policy and preview.
