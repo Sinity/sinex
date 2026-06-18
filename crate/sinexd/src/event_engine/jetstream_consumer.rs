@@ -31,6 +31,7 @@ use sinex_db::repositories::COPY_BATCH_THRESHOLD;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_primitives::Timestamp;
 use sinex_primitives::constants::env_vars;
+use sinex_primitives::events::payloads::{StreamPressureLevel, StreamPressureSnapshot};
 use sinex_primitives::{
     JsonValue, Uuid,
     nats::{JetStreamTopology, NatsTrafficClass, insert_traffic_class_header},
@@ -302,7 +303,6 @@ const BATCH_ATOMICITY_SCOPE: &str = "per_successful_persistence_attempt";
 /// 5 s × 10 retries = 50 s is the practical upper bound a healthy assembler
 /// should clear; longer delays mainly hurt liveness under transient races.
 const FK_VIOLATION_RETRY_DELAY: Duration = Duration::from_secs(5);
-const STREAM_CAPACITY_WARNING_THRESHOLD: f64 = 0.8; // Alert at 80% capacity
 const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Check every 5 minutes
 // Keep runtime-created stream caps aligned with the Nix bootstrap path. The current
 // nats CLI rejects --max-bytes values above signed 32-bit range.
@@ -2821,32 +2821,26 @@ impl JetStreamConsumer {
                             Self::log_observer_error(&self.stats, "event_engine.stream", &error);
                         }
 
-                        // Check message count capacity
-                        if config.max_messages > 0 {
-                            let usage_ratio = state.messages as f64 / config.max_messages as f64;
-                            if usage_ratio >= STREAM_CAPACITY_WARNING_THRESHOLD {
-                                warn!(
-                                    stream = %stream_name,
-                                    messages = state.messages,
-                                    max_messages = config.max_messages,
-                                    usage_percent = format!("{:.1}%", usage_ratio * 100.0),
-                                    "Stream approaching message capacity limit"
-                                );
-                            }
-                        }
-
-                        // Check byte capacity if configured
-                        if config.max_bytes > 0 {
-                            let bytes_ratio = state.bytes as f64 / config.max_bytes as f64;
-                            if bytes_ratio >= STREAM_CAPACITY_WARNING_THRESHOLD {
-                                warn!(
-                                    stream = %stream_name,
-                                    bytes = state.bytes,
-                                    max_bytes = config.max_bytes,
-                                    usage_percent = format!("{:.1}%", bytes_ratio * 100.0),
-                                    "Stream approaching byte capacity limit"
-                                );
-                            }
+                        let pressure = StreamPressureSnapshot::from_limits(
+                            state.messages,
+                            config.max_messages as u64,
+                            state.bytes,
+                            config.max_bytes as u64,
+                        );
+                        if pressure.pressure_level != StreamPressureLevel::Nominal {
+                            warn!(
+                                stream = %stream_name,
+                                pressure_level = ?pressure.pressure_level,
+                                limiting_dimension = ?pressure.limiting_dimension,
+                                messages = state.messages,
+                                max_messages = config.max_messages,
+                                bytes = state.bytes,
+                                max_bytes = config.max_bytes,
+                                fill_percent = format!("{:.1}%", pressure.fill_pct),
+                                message_fill_percent = format!("{:.1}%", pressure.message_fill_pct),
+                                byte_fill_percent = format!("{:.1}%", pressure.byte_fill_pct),
+                                "Stream capacity pressure detected"
+                            );
                         }
                     }
                     Err(error) => {

@@ -2,7 +2,6 @@
 
 use crate::runtime::parser::{MaterialParser, ParserError};
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::JournalSyncType;
 use sinex_primitives::events::payloads::system::{
@@ -13,6 +12,10 @@ use sinex_primitives::parser::{
     SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
+use sinex_primitives::source_contracts::{
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape,
+};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::units::{Microseconds, ProcessId, SyslogPriority, UnixGid, UnixUid};
 
@@ -23,6 +26,31 @@ use std::collections::HashMap;
 // ---------------------------------------------------------------------------
 
 const MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
+
+fn journal_field<'a>(json: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    json.get(key).and_then(|v| v.as_str())
+}
+
+fn is_sinexd_journal_entry(json: &serde_json::Value) -> bool {
+    journal_field(json, "_SYSTEMD_UNIT") == Some("sinexd.service")
+        || journal_field(json, "SYSLOG_IDENTIFIER") == Some("sinexd")
+        || journal_field(json, "_EXE").is_some_and(|exe| exe.ends_with("/sinexd"))
+        || journal_field(json, "_CMDLINE").is_some_and(|cmdline| {
+            cmdline
+                .split_whitespace()
+                .any(|part| part.ends_with("/sinexd") || part == "sinexd")
+        })
+}
+
+fn is_confirmation_feedback_message(message: &str) -> bool {
+    message.contains("Late confirmation arrived after provisional timeout")
+        || message.contains("Late confirmations accepted after timeout")
+        || message.contains("runtime.confirmation_late_total")
+}
+
+fn suppresses_confirmation_feedback_entry(json: &serde_json::Value, message: &str) -> bool {
+    is_sinexd_journal_entry(json) && is_confirmation_feedback_message(message)
+}
 
 /// Parser for `system.journald` — converts journal JSON lines into typed events.
 #[derive(Default, SourceMeta)]
@@ -146,6 +174,10 @@ impl MaterialParser for JournaldParser {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+
+        if suppresses_confirmation_feedback_entry(&json, &message) {
+            return Ok(Vec::new());
+        }
 
         let cmdline = json
             .get("_CMDLINE")
@@ -307,6 +339,45 @@ mod tests {
             records.is_empty(),
             "journal helper should mirror live stream filtering for empty lines"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_journald_parser_suppresses_sinexd_confirmation_feedback() -> TestResult<()> {
+        let mid = Id::<SourceMaterial>::new();
+        let lines = [
+            r#"{"__CURSOR":"s=feedback;i=1","__REALTIME_TIMESTAMP":"1700000000000000","_SYSTEMD_UNIT":"sinexd.service","SYSLOG_IDENTIFIER":"sinexd","MESSAGE":"Late confirmation arrived after provisional timeout; accepting during grace period"}"#,
+            r#"{"__CURSOR":"s=feedback;i=2","__REALTIME_TIMESTAMP":"1700000000000001","_SYSTEMD_UNIT":"sinexd.service","SYSLOG_IDENTIFIER":"sinexd","MESSAGE":"Late confirmations accepted after timeout; aggregated during grace period metric=runtime.confirmation_late_total"}"#,
+        ];
+        let records = records_from_journal_lines(mid, &lines);
+        let mut parser = JournaldParser;
+        let ctx = make_ctx(mid);
+
+        for record in records {
+            let intents = parser.parse_record(record?, &ctx).await?;
+            assert!(
+                intents.is_empty(),
+                "confirmation feedback journal entries should not create journald.entry.written events"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_journald_parser_keeps_unrelated_sinexd_logs() -> TestResult<()> {
+        let mid = Id::<SourceMaterial>::new();
+        let line = r#"{"__CURSOR":"s=ordinary;i=1","__REALTIME_TIMESTAMP":"1700000000000000","_SYSTEMD_UNIT":"sinexd.service","SYSLOG_IDENTIFIER":"sinexd","MESSAGE":"source catalog exported"}"#;
+        let records = records_from_journal_lines(mid, &[line]);
+        let record = records[0].as_ref().unwrap().clone();
+
+        let mut parser = JournaldParser;
+        let ctx = make_ctx(mid);
+        let intents = parser.parse_record(record, &ctx).await?;
+
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].event_type.as_str(), "entry.written");
+        assert_eq!(intents[0].payload["message"], "source catalog exported");
         Ok(())
     }
 }
