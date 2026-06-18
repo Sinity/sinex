@@ -24,10 +24,10 @@
 //! seed and candidate events to [`EventRelationExpr::evaluate`]. That keeps this
 //! layer a pure, fixture-testable function with no DB/FTS coupling.
 
-use crate::events::{Event, Timestamp};
-use crate::domain::TemporalSourceType;
-use crate::views::{CaveatView, SinexObjectKind, SinexObjectRef, ViewEnvelope};
 use crate::JsonValue;
+use crate::domain::TemporalSourceType;
+use crate::events::{Event, Timestamp};
+use crate::views::{CaveatView, SinexObjectKind, SinexObjectRef, ViewEnvelope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use time::Duration;
@@ -410,6 +410,29 @@ impl EvidenceWindow {
         self
     }
 
+    /// Attach an explicit caveat that points at the limited/suppressed object.
+    #[must_use]
+    pub fn with_caveat_ref(
+        mut self,
+        id: impl Into<String>,
+        message: impl Into<String>,
+        object_ref: SinexObjectRef,
+    ) -> Self {
+        let id = id.into();
+        let message = message.into();
+        self.expansion_trace.push_ref(
+            ExpansionStepKind::CoverageGapCaveat,
+            format!("{id}: {message}"),
+            object_ref.clone(),
+        );
+        self.caveats.push(CaveatView {
+            id,
+            message,
+            ref_: Some(object_ref),
+        });
+        self
+    }
+
     /// Wrap the window in a [`ViewEnvelope`] for the read-only CLI/API surface,
     /// lifting the window's caveats onto the envelope.
     #[must_use]
@@ -539,7 +562,12 @@ impl EventRelationExpr {
                     cand_range
                         .gap_to(seed)
                         .filter(|gap| *gap <= bound)
-                        .map(|gap| format!("within {within_secs}s of a seed (gap {}s)", gap.whole_seconds()))
+                        .map(|gap| {
+                            format!(
+                                "within {within_secs}s of a seed (gap {}s)",
+                                gap.whole_seconds()
+                            )
+                        })
                 })
             }
             EventRelationExpr::Overlaps => seed_ranges
@@ -551,7 +579,10 @@ impl EventRelationExpr {
                 seed_ranges.iter().find_map(|seed| {
                     let (cand_hi, seed_lo) = (cand_range.upper()?, seed.lower()?);
                     (cand_hi < seed_lo && (seed_lo - cand_hi) <= bound).then(|| {
-                        format!("before a seed (gap {}s ≤ {max_gap_secs}s)", (seed_lo - cand_hi).whole_seconds())
+                        format!(
+                            "before a seed (gap {}s ≤ {max_gap_secs}s)",
+                            (seed_lo - cand_hi).whole_seconds()
+                        )
                     })
                 })
             }
@@ -560,7 +591,10 @@ impl EventRelationExpr {
                 seed_ranges.iter().find_map(|seed| {
                     let (cand_lo, seed_hi) = (cand_range.lower()?, seed.upper()?);
                     (cand_lo > seed_hi && (cand_lo - seed_hi) <= bound).then(|| {
-                        format!("after a seed (gap {}s ≤ {max_gap_secs}s)", (cand_lo - seed_hi).whole_seconds())
+                        format!(
+                            "after a seed (gap {}s ≤ {max_gap_secs}s)",
+                            (cand_lo - seed_hi).whole_seconds()
+                        )
                     })
                 })
             }
@@ -678,13 +712,176 @@ fn describe_range(range: &ObservedRange) -> String {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
+pub mod fixtures {
+    //! Deterministic relation fixtures for native Sinex replacements of
+    //! Lynchpin analysis products.
+
+    use super::*;
+    use crate::OffsetKind;
+    use crate::domain::{EventSource, EventType, HostName};
+    use crate::events::SourceMaterial;
+    use crate::events::builder::Provenance;
+    use crate::ids::Id;
+    use serde_json::json;
+
+    /// Native Sinex fixture for the Lynchpin machine-session causal-footprint
+    /// behavior: an agent work interval, the work/build evidence near it, and a
+    /// privacy-limited material ref that explains missing evidence.
+    #[derive(Debug, Clone)]
+    pub struct CausalFootprintFixture {
+        pub source_behavior: &'static str,
+        pub native_owner_surface: &'static str,
+        pub query: EventRelationExpr,
+        pub seed_events: Vec<Event<JsonValue>>,
+        pub candidate_events: Vec<Event<JsonValue>>,
+        pub suppressed_refs: Vec<SinexObjectRef>,
+    }
+
+    impl CausalFootprintFixture {
+        /// Evaluate the fixture as a read-only native EvidenceWindow view.
+        #[must_use]
+        pub fn evidence_window(&self) -> EvidenceWindow {
+            let mut window = self
+                .query
+                .evaluate(&self.seed_events, &self.candidate_events);
+            for suppressed in &self.suppressed_refs {
+                window = window.with_caveat_ref(
+                    "privacy.evidence_suppressed",
+                    "source coverage/redaction limits this causal-footprint window",
+                    suppressed.clone(),
+                );
+            }
+            window
+        }
+
+        /// Render through the native owner surface; the result is a view, not a
+        /// canonical event.
+        #[must_use]
+        pub fn view(&self) -> ViewEnvelope<EvidenceWindow> {
+            self.evidence_window().into_view(self.native_owner_surface)
+        }
+    }
+
+    /// Causal-footprint fixture derived from Lynchpin's
+    /// `machine_session_profiles`: an agent session seed, nearby xtask/build
+    /// work as supporting evidence, unrelated work outside the window, and a
+    /// suppressed source-material ref represented as a caveat.
+    #[must_use]
+    pub fn lynchpin_machine_session_causal_footprint() -> CausalFootprintFixture {
+        let seed = material_event(
+            "polylogue.agent-session",
+            "agent.session.active",
+            Some(at(0)),
+            json!({
+                "session_id": "session-42",
+                "project": "sinex",
+                "scope": "sinnix-agent-codex-42"
+            }),
+        );
+        let xtask = material_event(
+            "dev.xtask",
+            "xtask.invoked",
+            Some(at(45)),
+            json!({
+                "command": "xtask test -p sinex-primitives --lib",
+                "scope": "sinnix-build-xtask-42"
+            }),
+        );
+        let rust_build = material_event(
+            "machine.scope",
+            "build.scope.completed",
+            Some(at(90)),
+            json!({
+                "comm": "rustc",
+                "io_mb": 6144,
+                "attributed_agent_scope": "sinnix-agent-codex-42"
+            }),
+        );
+        let co_present_agent = material_event(
+            "polylogue.agent-session",
+            "agent.session.active",
+            Some(at(120)),
+            json!({
+                "session_id": "session-99",
+                "project": "sinex",
+                "scope": "sinnix-agent-codex-99"
+            }),
+        );
+        let unrelated = material_event(
+            "machine.scope",
+            "build.scope.completed",
+            Some(at(7200)),
+            json!({
+                "comm": "nix",
+                "io_mb": 128,
+                "attributed_agent_scope": null
+            }),
+        );
+
+        CausalFootprintFixture {
+            source_behavior: "Lynchpin machine_session_profiles causal footprint",
+            native_owner_surface: "sinex.relations.evidence_window",
+            query: EventRelationExpr::Within { within_secs: 300 },
+            seed_events: vec![seed],
+            candidate_events: vec![xtask, rust_build, co_present_agent, unrelated],
+            suppressed_refs: vec![
+                SinexObjectRef::new(
+                    SinexObjectKind::SourceMaterial,
+                    "journald.redacted/session-42",
+                )
+                .with_label("redacted journald slice"),
+            ],
+        }
+    }
+
+    fn material_event(
+        source: &str,
+        event_type: &str,
+        ts: Option<Timestamp>,
+        payload: JsonValue,
+    ) -> Event<JsonValue> {
+        Event {
+            id: Some(Id::<Event<JsonValue>>::new()),
+            source: EventSource::new(source).expect("fixture source must be valid"),
+            event_type: EventType::new(event_type).expect("fixture event type must be valid"),
+            payload,
+            ts_orig: ts,
+            ts_quality: ts.map(|_| TemporalSourceType::RealtimeCapture),
+            host: HostName::new("fixture-host").expect("fixture host must be valid"),
+            module_run_id: None,
+            payload_schema_id: None,
+            provenance: Provenance::Material {
+                id: Id::<SourceMaterial>::new(),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
+            anchor_payload_hash: None,
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            automaton_model: None,
+        }
+    }
+
+    fn at(secs: i64) -> Timestamp {
+        Timestamp::from_unix_timestamp(1_700_000_000 + secs)
+            .expect("fixture timestamp must be in range")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::events::builder::Provenance;
     use crate::events::SourceMaterial;
+    use crate::events::builder::Provenance;
     use crate::ids::Id;
     use crate::{EventSource, EventType, HostName};
     use serde_json::json;
@@ -823,26 +1020,40 @@ mod tests {
         assert_eq!(window.support_refs.len(), 1);
         assert_eq!(window.support_refs[0].role, EvidenceRole::Support);
         // The untimed candidate became a coverage caveat.
-        assert!(window.caveats.iter().any(|c| c.id == "evidence.timing_unknown"));
+        assert!(
+            window
+                .caveats
+                .iter()
+                .any(|c| c.id == "evidence.timing_unknown")
+        );
         // The contradiction was recorded (explicit, never inferred).
         assert_eq!(window.contradiction_refs.len(), 1);
-        assert_eq!(window.contradiction_refs[0].role, EvidenceRole::Contradiction);
+        assert_eq!(
+            window.contradiction_refs[0].role,
+            EvidenceRole::Contradiction
+        );
         // The trace explains every inclusion.
-        assert!(window
-            .expansion_trace
-            .steps
-            .iter()
-            .any(|s| s.kind == ExpansionStepKind::SeedMatched));
-        assert!(window
-            .expansion_trace
-            .steps
-            .iter()
-            .any(|s| s.kind == ExpansionStepKind::RelationIncluded));
-        assert!(window
-            .expansion_trace
-            .steps
-            .iter()
-            .any(|s| s.kind == ExpansionStepKind::CoverageGapCaveat));
+        assert!(
+            window
+                .expansion_trace
+                .steps
+                .iter()
+                .any(|s| s.kind == ExpansionStepKind::SeedMatched)
+        );
+        assert!(
+            window
+                .expansion_trace
+                .steps
+                .iter()
+                .any(|s| s.kind == ExpansionStepKind::RelationIncluded)
+        );
+        assert!(
+            window
+                .expansion_trace
+                .steps
+                .iter()
+                .any(|s| s.kind == ExpansionStepKind::CoverageGapCaveat)
+        );
     }
 
     #[test]
@@ -880,25 +1091,62 @@ mod tests {
 
     #[test]
     fn sequence_relation_flags_out_of_order_and_span() {
-        let a = material_event("a", "a.evt", Some(at(0)), Some(TemporalSourceType::RealtimeCapture), json!({}));
-        let b = material_event("b", "b.evt", Some(at(60)), Some(TemporalSourceType::RealtimeCapture), json!({}));
-        let c = material_event("c", "c.evt", Some(at(120)), Some(TemporalSourceType::RealtimeCapture), json!({}));
+        let a = material_event(
+            "a",
+            "a.evt",
+            Some(at(0)),
+            Some(TemporalSourceType::RealtimeCapture),
+            json!({}),
+        );
+        let b = material_event(
+            "b",
+            "b.evt",
+            Some(at(60)),
+            Some(TemporalSourceType::RealtimeCapture),
+            json!({}),
+        );
+        let c = material_event(
+            "c",
+            "c.evt",
+            Some(at(120)),
+            Some(TemporalSourceType::RealtimeCapture),
+            json!({}),
+        );
 
-        let ok = EventRelationExpr::Sequence { within_secs: 300 }.evaluate(&[a.clone(), b.clone(), c.clone()], &[]);
+        let ok = EventRelationExpr::Sequence { within_secs: 300 }
+            .evaluate(&[a.clone(), b.clone(), c.clone()], &[]);
         assert_eq!(ok.support_refs.len(), 3);
         assert!(!ok.caveats.iter().any(|c| c.id == "sequence.out_of_order"));
         assert!(!ok.caveats.iter().any(|c| c.id == "sequence.span_exceeded"));
 
-        let too_long = EventRelationExpr::Sequence { within_secs: 30 }.evaluate(&[a.clone(), b.clone(), c.clone()], &[]);
-        assert!(too_long.caveats.iter().any(|c| c.id == "sequence.span_exceeded"));
+        let too_long = EventRelationExpr::Sequence { within_secs: 30 }
+            .evaluate(&[a.clone(), b.clone(), c.clone()], &[]);
+        assert!(
+            too_long
+                .caveats
+                .iter()
+                .any(|c| c.id == "sequence.span_exceeded")
+        );
 
-        let out_of_order = EventRelationExpr::Sequence { within_secs: 300 }.evaluate(&[c, b, a], &[]);
-        assert!(out_of_order.caveats.iter().any(|c| c.id == "sequence.out_of_order"));
+        let out_of_order =
+            EventRelationExpr::Sequence { within_secs: 300 }.evaluate(&[c, b, a], &[]);
+        assert!(
+            out_of_order
+                .caveats
+                .iter()
+                .any(|c| c.id == "sequence.out_of_order")
+        );
     }
 
     #[test]
     fn evidence_window_renders_as_view_envelope_with_caveats() {
-        let seed = material_event("s", "s.evt", Some(at(0)), Some(TemporalSourceType::RealtimeCapture), json!({}));
+        let seed = material_event(
+            "s",
+            "s.evt",
+            Some(at(0)),
+            Some(TemporalSourceType::RealtimeCapture),
+            json!({}),
+        );
         let window = EventRelationExpr::Overlaps
             .evaluate(&[seed], &[])
             .with_caveat("test.caveat", "demonstration caveat");
@@ -907,7 +1155,98 @@ mod tests {
         assert_eq!(value["source_surface"], "sinexctl.relations");
         assert_eq!(value["payload"]["query"]["relation"], "overlaps");
         // Window caveats are lifted onto the envelope.
-        assert!(value["caveats"].as_array().unwrap().iter().any(|c| c["id"] == "test.caveat"));
+        assert!(
+            value["caveats"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["id"] == "test.caveat")
+        );
+    }
+
+    #[test]
+    fn causal_footprint_fixture_models_lynchpin_behavior_as_evidence_window() {
+        let fixture = fixtures::lynchpin_machine_session_causal_footprint();
+        let window = fixture.evidence_window();
+
+        assert_eq!(
+            fixture.source_behavior,
+            "Lynchpin machine_session_profiles causal footprint"
+        );
+        assert_eq!(
+            fixture.native_owner_surface,
+            "sinex.relations.evidence_window"
+        );
+        assert_eq!(window.query, EventRelationExpr::Within { within_secs: 300 });
+        assert_eq!(window.seed_refs.len(), 1);
+        assert_eq!(
+            window.support_refs.len(),
+            3,
+            "xtask, rust build, and co-present agent evidence should support the footprint"
+        );
+        assert!(
+            window
+                .support_refs
+                .iter()
+                .all(|evidence| evidence.role == EvidenceRole::Support)
+        );
+        assert!(
+            window
+                .support_refs
+                .iter()
+                .any(|evidence| evidence.object.label.as_deref()
+                    == Some("dev.xtask · xtask.invoked"))
+        );
+        assert!(window.support_refs.iter().any(|evidence| {
+            evidence.object.label.as_deref() == Some("machine.scope · build.scope.completed")
+        }));
+        assert!(window.support_refs.iter().any(|evidence| {
+            evidence.object.label.as_deref()
+                == Some("polylogue.agent-session · agent.session.active")
+        }));
+        assert!(
+            window.caveats.iter().any(|caveat| {
+                caveat.id == "privacy.evidence_suppressed"
+                    && caveat
+                        .ref_
+                        .as_ref()
+                        .is_some_and(|object| object.kind == SinexObjectKind::SourceMaterial)
+            }),
+            "privacy-limited source material should remain a caveated object ref"
+        );
+        assert!(
+            window
+                .expansion_trace
+                .steps
+                .iter()
+                .any(|step| step.kind == ExpansionStepKind::CoverageGapCaveat)
+        );
+    }
+
+    #[test]
+    fn causal_footprint_fixture_renders_as_view_not_canonical_event() {
+        let fixture = fixtures::lynchpin_machine_session_causal_footprint();
+        let envelope = fixture.view();
+        let value = serde_json::to_value(&envelope).unwrap();
+
+        assert_eq!(value["source_surface"], "sinex.relations.evidence_window");
+        assert_eq!(value["payload"]["query"]["relation"], "within");
+        assert_eq!(
+            crate::declared_output_kind("relations.evidence_window"),
+            Some(crate::OutputKind::EphemeralView)
+        );
+        assert!(
+            !crate::declared_output_kind("relations.evidence_window")
+                .unwrap()
+                .is_canonical_event()
+        );
+        assert!(
+            value["caveats"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|caveat| caveat["id"] == "privacy.evidence_suppressed")
+        );
     }
 
     #[test]
