@@ -10,6 +10,7 @@ pub mod constants;
 #[cfg(feature = "nats")]
 pub mod coordination;
 pub mod deployment_readiness;
+pub mod derivations;
 pub mod domain;
 pub mod domain_reducer;
 pub mod env;
@@ -78,8 +79,8 @@ pub mod prelude {
         SubscriptionFilter, TimeBucketEntry, TimeRange, TimeSeriesOrder,
     };
     pub use crate::relations::{
-        EventRelationExpr, EvidenceRef, EvidenceRole, EvidenceWindow, ExpansionTrace, ObservedRange,
-        SameField, TimeBasis, TimeQuality,
+        EventRelationExpr, EvidenceRef, EvidenceRole, EvidenceWindow, ExpansionTrace,
+        ObservedRange, SameField, TimeBasis, TimeQuality,
     };
     pub use crate::temporal::OffsetDateTime;
 }
@@ -90,6 +91,9 @@ pub const EXPECTED_BINARY_SCHEMA_VERSION: &str = "1";
 
 // Re-export commonly used types at crate root
 pub use activity::{ActivitySourceKind, classify_trusted_activity_signal, primary_activity_source};
+pub use authority::{
+    DuplicateCandidatePayload, FinalizerRegistration, Judgment, JudgmentVerdict, ProposalKind,
+};
 pub use constants::filesystem;
 pub use deployment_readiness::{
     AutomataDeploymentSurface, BrowserDeploymentSurface, BrowserSqliteSource,
@@ -98,9 +102,15 @@ pub use deployment_readiness::{
     DeploymentSecrets, DeploymentSurface, DeploymentTarget, DesktopDeploymentSurface,
     DocumentDeploymentSurface, TerminalDeploymentSurface, TerminalHistorySource,
 };
+pub use derivations::{
+    DERIVATION_SPECS, DerivationInputScope, DerivationOperationHook, DerivationSpec,
+    DerivationSpecId, FreshnessPolicy, InvalidationTrigger, TASK_CURRENT_OBJECTS_DERIVATION,
+    TASK_CURRENT_OBJECTS_DERIVATION_ID, affected_derivations, derivation_specs,
+    derivations_for_output, find_derivation_spec,
+};
 pub use domain::{
-    ControlSubject, EventName, EventSource, EventType, HostName, MaterialStatus,
-    OperationKind, OperationRunStatus, RecordedPath, SanitizedPath, ServiceName, SourceIdentifier,
+    ControlSubject, EventName, EventSource, EventType, HostName, MaterialStatus, OperationKind,
+    OperationRunStatus, RecordedPath, SanitizedPath, ServiceName, SourceIdentifier,
     SourceMaterialFormat, SourceMaterialTimingInfoType,
 };
 pub use domain_reducer::{
@@ -141,8 +151,5 @@ pub use units::{Bytes, Seconds};
 pub use validation::{
     sanitize_filename_component, validate_json, validate_json_value, validate_path,
     validate_path_within_root,
-};
-pub use authority::{
-    DuplicateCandidatePayload, FinalizerRegistration, Judgment, JudgmentVerdict, ProposalKind,
 };
 pub use views::*;
