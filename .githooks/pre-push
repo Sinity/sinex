@@ -18,6 +18,9 @@
 
 set -euo pipefail
 
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
 if [[ "${SINEX_SKIP_DRIFT_GUARD:-}" == "1" ]]; then
   echo "[pre-push] SINEX_SKIP_DRIFT_GUARD=1 — drift guard bypassed." >&2
   # Record the bypass in xtask history (#1565)
@@ -49,7 +52,32 @@ if [[ -z "$(git diff --name-only "$BASE_REF" HEAD -- '*.rs' 2>/dev/null)" ]]; th
 fi
 
 echo "[pre-push] Running xtask check --changed-strict $BASE_REF --allow-contended-host ..." >&2
-if ! xtask check --changed-strict "$BASE_REF" --allow-contended-host >&2; then
+if ! env \
+  -u CARGO_TARGET_DIR \
+  -u DATABASE_URL \
+  -u PGHOST \
+  -u PGPORT \
+  -u SINEX_API_ADMIN_TOKEN \
+  -u SINEX_API_TCP_LISTEN \
+  -u SINEX_API_TLS_CERT \
+  -u SINEX_API_TLS_CLIENT_CA \
+  -u SINEX_API_TLS_KEY \
+  -u SINEX_API_URL \
+  -u SINEX_CACHE_DIR \
+  -u SINEX_DEV_CACHE_ROOT \
+  -u SINEX_DEV_GATEWAY_PORT \
+  -u SINEX_DEV_NATS_PORT \
+  -u SINEX_DEV_PG_PORT \
+  -u SINEX_DEV_ROOT \
+  -u SINEX_DEV_STATE_DIR \
+  -u SINEX_NATS_DIR \
+  -u SINEX_NATS_URL \
+  -u SINEX_ROOT \
+  -u SINEX_STATE_DIR \
+  -u SINEX_TEST_PGDATA_DIR \
+  -u SINEX_TEST_RESULTS_DIR \
+  -u SINEX_TEST_TMPDIR \
+  nix develop "$REPO_ROOT" --command xtask check --changed-strict "$BASE_REF" --allow-contended-host >&2; then
   echo "" >&2
   echo "[pre-push] DRIFT GUARD FAILED." >&2
   echo "Your changes introduce diagnostics on affected packages that didn't exist on $BASE_REF." >&2
