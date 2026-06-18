@@ -410,6 +410,44 @@
                   esac
                 }
 
+                _sinex_cargo_direct_command_replacement() {
+                  local command_name
+                  command_name="$(_sinex_cargo_command_name "$@" || true)"
+                  case "$command_name" in
+                    test|nextest)
+                      printf '%s\n' "xtask test"
+                      ;;
+                    check)
+                      printf '%s\n' "xtask check"
+                      ;;
+                    clippy)
+                      printf '%s\n' "xtask check --lint"
+                      ;;
+                    fmt)
+                      printf '%s\n' "xtask check --fmt"
+                      ;;
+                    *)
+                      return 1
+                      ;;
+                  esac
+                }
+
+                _sinex_cargo_guard_xtask_surface() {
+                  if [ "''${SINEX_XTASK_MANAGED_CARGO:-0}" = 1 ] || [ "''${SINEX_ALLOW_DIRECT_CARGO:-0}" = 1 ]; then
+                    return 0
+                  fi
+
+                  local replacement
+                  if replacement="$(_sinex_cargo_direct_command_replacement "$@")"; then
+                    echo "✗ Direct cargo $(_sinex_cargo_command_name "$@" || printf command) is disabled in the Sinex devshell." >&2
+                    echo "  Use the repo-native gate instead: $replacement" >&2
+                    echo "  For xtask/tooling debugging only, rerun with SINEX_ALLOW_DIRECT_CARGO=1." >&2
+                    return 2
+                  fi
+
+                  return 0
+                }
+
                 _sinex_cargo_write_runtime_config() {
                   {
                     printf "unix_socket_directories = '%s'\n" "$pgrun"
@@ -502,6 +540,8 @@ SQL
                   rm -rf "$bootstrap_lock_dir"
                   trap - EXIT INT TERM
                 }
+
+                _sinex_cargo_guard_xtask_surface "$@"
 
                 if _sinex_cargo_requires_sqlx_database "$@"; then
                   if [ "''${SINEX_CARGO_SQLX_BOOTSTRAP:-1}" = 1 ]; then
@@ -972,7 +1012,7 @@ SQL
                     build_rc=0
                     _sinex_xtask_ensure_sqlx_database || return $?
                     _stage_started_ns="$(_sinex_xtask_stage_start)"
-                    cargo build --quiet -p xtask || build_rc=$?
+                    SINEX_XTASK_MANAGED_CARGO=1 cargo build --quiet -p xtask || build_rc=$?
                     _sinex_xtask_stage_record "xtask_build" "$_stage_started_ns"
                     if [ "$build_rc" -eq 0 ]; then
                       touch "$bin_path" "$cargo_target_dir/debug/xtask.d" 2>/dev/null || true
