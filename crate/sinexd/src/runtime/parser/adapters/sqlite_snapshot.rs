@@ -54,7 +54,8 @@ use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
 use sinex_primitives::SinexError;
-use sinex_primitives::Uuid;
+use sinex_primitives::events::SourceMaterial;
+use sinex_primitives::ids::Id;
 
 use crate::runtime::RuntimeResult;
 use crate::runtime::acquisition_manager::AcquisitionManager;
@@ -167,7 +168,7 @@ impl SnapshotLaneSpec {
 /// stream materials to the strongest available substrate material.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SqliteSnapshotEvidence {
-    pub material_id: Uuid,
+    pub material_id: Id<SourceMaterial>,
     pub source_identifier: String,
     pub source_path: String,
     pub content_hash_blake3: String,
@@ -371,7 +372,7 @@ impl SqliteSnapshotLane {
         self.snapshots_captured += 1;
         if let Some(latest) = &self.latest_evidence {
             latest.update(SqliteSnapshotEvidence {
-                material_id,
+                material_id: Id::<SourceMaterial>::from_uuid(material_id),
                 source_identifier: self.spec.source_identifier.clone(),
                 source_path: self.spec.path.display().to_string(),
                 content_hash_blake3: hex_full(&hash),
@@ -412,6 +413,7 @@ fn hex_full(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::Uuid;
     use std::sync::Arc;
     use tempfile::NamedTempFile;
     use xtask::sandbox::prelude::*;
@@ -511,10 +513,13 @@ mod tests {
         let evidence = latest
             .latest()
             .ok_or_else(|| SinexError::processing("missing latest snapshot evidence"))?;
-        assert_ne!(evidence.material_id, Uuid::nil());
+        assert_ne!(evidence.material_id.to_uuid(), Uuid::nil());
         assert_eq!(evidence.source_identifier, "test.atuin.snapshot");
         assert_eq!(evidence.source_path, db.path().display().to_string());
-        assert_eq!(evidence.size_bytes, std::fs::metadata(db.path())?.len() as usize);
+        assert_eq!(
+            evidence.size_bytes,
+            std::fs::metadata(db.path())?.len() as usize
+        );
         assert!(!evidence.content_hash_blake3.is_empty());
         Ok(())
     }

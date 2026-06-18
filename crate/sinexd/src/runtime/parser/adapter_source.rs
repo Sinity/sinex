@@ -657,22 +657,22 @@ where
         };
 
         let row_material_uuid = row_material_id.to_uuid();
-        if row_material_uuid == snapshot.material_id {
+        let snapshot_material_uuid = snapshot.material_id.to_uuid();
+        if row_material_uuid == snapshot_material_uuid {
             return;
         }
 
         #[cfg(feature = "db")]
         {
-            let Some(pool) = self.runtime.as_ref().and_then(|runtime| {
-                runtime
-                    .handles()
-                    .db_pool()
-                    .map(std::clone::Clone::clone)
-            }) else {
+            let Some(pool) = self
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.handles().db_pool().map(std::clone::Clone::clone))
+            else {
                 debug!(
                     source = self.source_id,
                     row_material_id = %row_material_uuid,
-                    snapshot_material_id = %snapshot.material_id,
+                    snapshot_material_id = %snapshot_material_uuid,
                     "SQLite snapshot evidence link skipped; runtime has no DB pool"
                 );
                 return;
@@ -688,13 +688,13 @@ where
 
             match pool
                 .source_materials()
-                .link_backing_material(row_material_uuid, snapshot.material_id, metadata)
+                .link_backing_material(row_material_uuid, snapshot_material_uuid, metadata)
                 .await
             {
                 Ok(_) => debug!(
                     source = self.source_id,
                     row_material_id = %row_material_uuid,
-                    snapshot_material_id = %snapshot.material_id,
+                    snapshot_material_id = %snapshot_material_uuid,
                     "linked SQLite row material to snapshot evidence"
                 ),
                 Err(error) => warn!(
@@ -1472,6 +1472,8 @@ mod tests {
     use async_trait::async_trait;
     use camino::Utf8PathBuf;
     use futures::stream::{self, BoxStream};
+    use sinex_db::DbPoolExt;
+    use sinex_db::repositories::source_material_relation_types;
     use sinex_primitives::domain::{EventSource, EventType};
     use sinex_primitives::events::Event;
     use sinex_primitives::parser::{MaterialAnchor, ParserId, ParserManifest, SourceId};
@@ -1482,8 +1484,6 @@ mod tests {
     };
     use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
     use sinex_primitives::{HostName, JsonValue, SinexError};
-    use sinex_db::repositories::source_material_relation_types;
-    use sinex_db::DbPoolExt;
     use std::collections::HashMap;
     use tokio::sync::mpsc;
     use xtask::sandbox::prelude::{TestContext, TestResult, WaitHelpers, sinex_test};
@@ -2329,15 +2329,15 @@ mod tests {
 
         let mut source = AdapterBackedSource::<TestAdapter, EmittingParser>::new("test.sqlite");
         source.runtime = Some(runtime);
-        source
-            .sqlite_snapshot_evidence
-            .update(crate::runtime::parser::adapters::SqliteSnapshotEvidence {
-                material_id: snapshot_material_id,
+        source.sqlite_snapshot_evidence.update(
+            crate::runtime::parser::adapters::SqliteSnapshotEvidence {
+                material_id: Id::<SourceMaterial>::from_uuid(snapshot_material_id),
                 source_identifier: "test.sqlite.snapshot".to_string(),
                 source_path: "/tmp/test.sqlite".to_string(),
                 content_hash_blake3: "abc123".to_string(),
                 size_bytes: 123,
-            });
+            },
+        );
 
         let row_material = Id::<SourceMaterial>::from_uuid(row_material_id);
         source
