@@ -92,6 +92,14 @@ fn checkpoint_states_match(lhs: &CheckpointState, rhs: &CheckpointState) -> bool
         && lhs.version == rhs.version
 }
 
+fn checkpoint_conflict_would_regress(
+    existing: &CheckpointState,
+    candidate: &CheckpointState,
+) -> bool {
+    !checkpoint_states_match(existing, candidate)
+        && candidate.processed_count <= existing.processed_count
+}
+
 impl CheckpointState {
     #[must_use]
     pub fn last_processed_id(&self) -> Option<String> {
@@ -568,19 +576,50 @@ impl CheckpointManager {
                         Some(entry) => {
                             // CAS failure with existing entry: stale revision (e.g. loaded from
                             // file after restart while NATS KV advanced further). Refresh the
-                            // revision from the current entry and retry once.
+                            // revision from the current entry and retry once only when the
+                            // candidate state is a forward move for this checkpoint key.
                             let current_revision = entry.revision;
-                            warn!(
-                                target: "sinex_metrics",
-                                metric = "runtime.checkpoint_kv_cas_retry_total",
-                                module = %self.module_name,
-                                consumer_group = %self.consumer_group,
-                                consumer_name = %self.consumer_name,
-                                stale_revision = state.revision,
-                                current_revision,
-                                "Checkpoint CAS failed with stale revision; refreshing and retrying"
-                            );
-                            self.kv
+                            let mut current_state =
+                                self.decode_checkpoint_state(&key, &entry.value)?;
+                            current_state.revision = current_revision;
+
+                            if checkpoint_states_match(&current_state, state) {
+                                warn!(
+                                    target: "sinex_metrics",
+                                    metric = "runtime.checkpoint_idempotent_save_total",
+                                    module = %self.module_name,
+                                    consumer_group = %self.consumer_group,
+                                    consumer_name = %self.consumer_name,
+                                    revision = current_revision,
+                                    "Checkpoint CAS failed but the matching entry already exists; treating as an idempotent save"
+                                );
+                                current_revision
+                            } else if checkpoint_conflict_would_regress(&current_state, state) {
+                                return Err(SinexError::checkpoint(
+                                    "Refusing to overwrite newer checkpoint after CAS conflict",
+                                )
+                                .with_context("stale_revision", state.revision.to_string())
+                                .with_context("current_revision", current_revision.to_string())
+                                .with_context(
+                                    "candidate_processed_count",
+                                    state.processed_count.to_string(),
+                                )
+                                .with_context(
+                                    "current_processed_count",
+                                    current_state.processed_count.to_string(),
+                                ));
+                            } else {
+                                warn!(
+                                    target: "sinex_metrics",
+                                    metric = "runtime.checkpoint_kv_cas_retry_total",
+                                    module = %self.module_name,
+                                    consumer_group = %self.consumer_group,
+                                    consumer_name = %self.consumer_name,
+                                    stale_revision = state.revision,
+                                    current_revision,
+                                    "Checkpoint CAS failed with stale revision; refreshing and retrying"
+                                );
+                                self.kv
                                 .update(&key, encoded.into(), current_revision)
                                 .await
                                 .map_err(|retry_error| {
@@ -589,6 +628,7 @@ impl CheckpointManager {
                                     )
                                     .with_source(retry_error)
                                 })?
+                            }
                         }
                     }
                 }
