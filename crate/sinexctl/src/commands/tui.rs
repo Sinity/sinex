@@ -2335,12 +2335,14 @@ mod tests {
                 )],
                 0,
                 Vec::new(),
-                vec![ActionAvailability::read(
-                    "sources.readiness",
-                    "Readiness",
-                    ActionAvailabilityState::Disabled,
-                )
-                .with_reason("binding unavailable")],
+                vec![
+                    ActionAvailability::read(
+                        "sources.readiness",
+                        "Readiness",
+                        ActionAvailabilityState::Disabled,
+                    )
+                    .with_reason("binding unavailable"),
+                ],
             ),
         ];
         let matrix = rows
@@ -2614,6 +2616,7 @@ mod tests {
                 )),
             },
             event_type: "ux.fixture".to_string(),
+            origin_kind: sinex_primitives::views::EventOriginKind::Derived,
             summary: id.to_string(),
             payload_preview: Some(serde_json::json!({
                 "fixture": id,
@@ -2629,6 +2632,10 @@ mod tests {
                 SinexObjectKind::ReplayRun,
                 "replay-fixture",
             )],
+            trace_links: vec![sinex_primitives::views::EventTraceLink {
+                relation: sinex_primitives::views::EventTraceRelation::Operation,
+                target: SinexObjectRef::new(SinexObjectKind::ReplayRun, "replay-fixture"),
+            }],
             projection_badges: vec!["ux-mk3".to_string()],
             actions: vec![
                 ActionAvailability::read("trace", "Trace", ActionAvailabilityState::Enabled)
