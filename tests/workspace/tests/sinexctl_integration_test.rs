@@ -259,18 +259,18 @@ async fn sinexctl_dlq_list_command_reports_entries(ctx: TestContext) -> color_ey
     let gw = start_test_gateway(&ctx).await?;
     let url = format!("https://127.0.0.1:{}/rpc", gw.port);
 
-    let output = sinexctl_rpc_output(&url, &["dlq", "list", "-f", "json"]).await;
+    let output = sinexctl_rpc_output(&url, &["ops", "dlq", "list", "-f", "json"]).await;
 
     gw.handle.abort();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "`sinexctl dlq list` should succeed, got: stdout={}, stderr={}",
+        "`sinexctl ops dlq list` should succeed, got: stdout={}, stderr={}",
         String::from_utf8_lossy(&output.stdout),
         stderr,
     );
-    let response = parse_json_stdout(&output, "dlq list");
+    let response = parse_json_stdout(&output, "ops dlq list");
     assert_eq!(response["total_messages"].as_u64(), Some(2));
     assert!(
         response["total_bytes"]
@@ -286,7 +286,7 @@ async fn sinexctl_dlq_list_command_reports_entries(ctx: TestContext) -> color_ey
 #[sinex_test]
 async fn sinexctl_watch_command_streams_events(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
-    // `sinexctl watch` is an infinite polling loop — it never exits.
+    // `sinexctl events watch` is an infinite polling loop — it never exits.
     // We spawn it as a child process and verify it starts successfully
     // (connects to the gateway), then kill it after a brief window.
     let gw = start_test_gateway(&ctx).await?;
@@ -298,13 +298,19 @@ async fn sinexctl_watch_command_streams_events(ctx: TestContext) -> color_eyre::
         .arg("--insecure")
         .arg("--rpc-url")
         .arg(&url)
+        .arg("events")
         .arg("watch")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("sinexctl binary should be executable");
 
-    assert_process_stays_running(&mut child, Duration::from_secs(2), "`sinexctl watch`").await?;
+    assert_process_stays_running(
+        &mut child,
+        Duration::from_secs(2),
+        "`sinexctl events watch`",
+    )
+    .await?;
     child.kill().await.ok();
     let _ = child.wait().await;
 
@@ -329,18 +335,19 @@ async fn sinexctl_dlq_peek_command_reports_entries(ctx: TestContext) -> color_ey
     let gw = start_test_gateway(&ctx).await?;
     let url = format!("https://127.0.0.1:{}/rpc", gw.port);
 
-    let output = sinexctl_rpc_output(&url, &["dlq", "peek", "-n", "1", "-f", "json"]).await;
+    let output =
+        sinexctl_rpc_output(&url, &["ops", "dlq", "peek", "-n", "1", "-f", "json"]).await;
 
     gw.handle.abort();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "`sinexctl dlq peek` should succeed, got: stdout={}, stderr={}",
+        "`sinexctl ops dlq peek` should succeed, got: stdout={}, stderr={}",
         String::from_utf8_lossy(&output.stdout),
         stderr,
     );
-    let message = parse_json_stdout(&output, "dlq peek");
+    let message = parse_json_stdout(&output, "ops dlq peek");
     assert!(
         message["subject"]
             .as_str()
