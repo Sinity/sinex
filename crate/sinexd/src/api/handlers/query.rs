@@ -1,16 +1,22 @@
 //! Composable event query, provenance lineage, and event-annotation handlers.
 
+use crate::api::service_container::ServiceContainer;
+use crate::event_engine::policy::{
+    DisclosureCaveat, DisclosureContext, DisclosureDecision, PolicyEngine,
+};
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::query::{
-    EventQuery, EventQueryResult, LineageQuery, LineageResult, TimeRange,
+    EventQuery, EventQueryResult, LineageQuery, LineageResult, QueryResultEvent, TimeRange,
 };
 use sinex_primitives::relations::{EventRelationExpr, EvidenceWindow, ObservedRange, TimeBasis};
 use sinex_primitives::rpc::events::{
     EventsAnnotateRequest, EventsAnnotateResponse, EventsRelationEvidenceRequest,
 };
-use sinex_primitives::views::{EventCardListView, ViewEnvelope};
+use sinex_primitives::views::{
+    CaveatView, EventCardListView, PrivacyStateView, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 use sinex_primitives::{Id, JsonValue, Result, SinexError};
 use sqlx::PgPool;
 use std::future::Future;
@@ -98,16 +104,108 @@ pub async fn handle_events_annotate(
 
 /// `events.cards` — query events and return them as `EventCardView`s
 /// with refs, caveats, privacy state, and action availability preserved.
-pub async fn handle_events_cards(pool: &PgPool, query: EventQuery) -> Result<EventCardListView> {
-    let result = pool.events().query(query).await?;
+pub async fn handle_events_cards(
+    services: &ServiceContainer,
+    query: EventQuery,
+) -> Result<EventCardListView> {
+    let result = services.pool().events().query(query).await?;
     match result {
         EventQueryResult::Events { events, .. } => {
-            Ok(EventCardListView::from_query_events(&events))
+            Ok(event_card_list_with_policy(&events, services.privacy_policy()).await)
         }
         other => Err(SinexError::validation(format!(
             "events.cards requires an Events query result, got {:?}",
             std::mem::discriminant(&other)
         ))),
+    }
+}
+
+pub(crate) async fn event_card_list_with_policy(
+    events: &[QueryResultEvent],
+    policy: &PolicyEngine,
+) -> EventCardListView {
+    let mut disclosed_events = Vec::with_capacity(events.len());
+    let mut disclosure_meta = Vec::with_capacity(events.len());
+
+    for result in events {
+        let mut disclosed = result.clone();
+        let payload_decision = policy
+            .disclose_event_payload(&result.event, DisclosureContext::View)
+            .await;
+        disclosed.event.payload = payload_decision.value.clone();
+
+        let snippet_decision = if let Some(snippet) = result.snippet.as_deref() {
+            let decision = policy
+                .disclose_event_text(&result.event, snippet, DisclosureContext::View)
+                .await;
+            disclosed.snippet = match decision.value.as_str() {
+                Some(text) => Some(text.to_string()),
+                None if decision.changed => Some("[suppressed by privacy policy]".to_string()),
+                None => disclosed.snippet,
+            };
+            Some(decision)
+        } else {
+            None
+        };
+
+        let privacy_state = merged_privacy_state(&payload_decision, snippet_decision.as_ref());
+        let caveats = disclosure_caveats(&payload_decision, snippet_decision.as_ref());
+        disclosed_events.push(disclosed);
+        disclosure_meta.push((privacy_state, caveats));
+    }
+
+    let mut view = EventCardListView::from_query_events(&disclosed_events);
+    for (card, (privacy_state, caveats)) in view.cards.iter_mut().zip(disclosure_meta) {
+        if let Some(privacy_state) = privacy_state {
+            card.privacy_state = privacy_state;
+        }
+        card.caveats.extend(caveats);
+    }
+    view
+}
+
+fn merged_privacy_state(
+    payload: &DisclosureDecision,
+    snippet: Option<&DisclosureDecision>,
+) -> Option<PrivacyStateView> {
+    if payload.changed {
+        return Some(payload.privacy_state.clone());
+    }
+    snippet
+        .filter(|decision| decision.changed)
+        .map(|decision| decision.privacy_state.clone())
+}
+
+fn disclosure_caveats(
+    payload: &DisclosureDecision,
+    snippet: Option<&DisclosureDecision>,
+) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    append_disclosure_caveats(&mut caveats, &payload.caveats);
+    if let Some(snippet) = snippet {
+        append_disclosure_caveats(&mut caveats, &snippet.caveats);
+    }
+    caveats
+}
+
+fn append_disclosure_caveats(output: &mut Vec<CaveatView>, caveats: &[DisclosureCaveat]) {
+    for caveat in caveats {
+        if output
+            .iter()
+            .any(|existing| existing.id == caveat.code && existing.message == caveat.message)
+        {
+            continue;
+        }
+        output.push(CaveatView {
+            id: caveat.code.clone(),
+            message: caveat.message.clone(),
+            ref_: Some(
+                SinexObjectRef::new(SinexObjectKind::Policy, caveat.policy_ref.clone())
+                    .with_label("privacy policy")
+                    .with_command_hint("sinexctl privacy policy list")
+                    .with_rpc_method("privacy.policy.list"),
+            ),
+        });
     }
 }
 

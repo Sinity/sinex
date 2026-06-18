@@ -8,7 +8,7 @@
 //! - Purge raw DLQ messages
 
 use crate::api::service_container::ServiceContainer;
-use crate::event_engine::policy::PolicyEngine;
+use crate::event_engine::policy::{DisclosureContext, PolicyEngine};
 use crate::runtime::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
 use serde_json::Value as JsonValue;
 use sinex_primitives::validation::normalize_unicode;
@@ -99,18 +99,19 @@ async fn payload_preview(
 ) -> SanitizedPreview {
     let original = serde_json::from_str::<JsonValue>(payload)
         .unwrap_or_else(|_| JsonValue::String(payload.to_string()));
-    let redacted_value = policy_engine.redact_json_value(original.clone()).await;
-    let redacted = redacted_value != original;
-    let current = render_preview_value(&redacted_value);
+    let decision = policy_engine
+        .disclose_json_value(original, DisclosureContext::Dlq)
+        .await;
+    let current = render_preview_value(&decision.value);
 
     SanitizedPreview {
         text: truncate_preview(&current, max_chars),
-        redacted,
-        caveats: if redacted {
-            vec!["redacted:privacy_policy".to_string()]
-        } else {
-            Vec::new()
-        },
+        redacted: decision.changed,
+        caveats: decision
+            .caveats
+            .into_iter()
+            .map(|caveat| format!("{}: {}", caveat.code, caveat.message))
+            .collect(),
     }
 }
 
@@ -387,9 +388,15 @@ mod tests {
         dlq_operator_action, dlq_pending_sequence_span, dlq_pressure_level,
         parse_retry_count_header, payload_preview, require_stream_sequence,
     };
+    use crate::api::handlers::query::event_card_list_with_policy;
     use crate::event_engine::policy::PolicyEngine;
+    use serde_json::json;
     use sinex_db::DbPoolExt;
     use sinex_primitives::error::ErrorClass;
+    use sinex_primitives::events::DynamicPayload;
+    use sinex_primitives::query::QueryResultEvent;
+    use sinex_primitives::views::PrivacyStateKind;
+    use sinex_primitives::{Id, SourceMaterial, Uuid};
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -468,6 +475,128 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn disclosure_policy_leak_fixture_covers_event_cards_and_dlq(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "event-card-command-secret",
+                "test field-scoped disclosure policy for rendered event cards",
+                "regex",
+                r"evt_secret_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<COMMAND_SECRET>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule(
+                "event-card-command-secret",
+                Some("shell.history"),
+                Some("command.imported"),
+                Some("command"),
+                0,
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "dlq-preview-secret",
+                "test global disclosure policy for untyped DLQ previews",
+                "regex",
+                r"dlq_secret_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<DLQ_SECRET>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule("dlq-preview-secret", None, None, None, 0)
+            .await?;
+        let policy = PolicyEngine::load(ctx.pool().clone()).await?;
+        let command_token = "evt_secret_alpha123";
+        let dlq_token = "dlq_secret_bravo456";
+        let command = format!("export COMMAND_SECRET={command_token}");
+
+        let material_id = Id::<SourceMaterial>::from_uuid(Uuid::from_u128(0x1693));
+        let event = DynamicPayload::new(
+            "shell.history",
+            "command.imported",
+            json!({ "command": command, "cwd": "/home/sinity/private" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        let cards = event_card_list_with_policy(
+            &[QueryResultEvent {
+                event,
+                relevance_score: Some(1.0),
+                snippet: Some(format!(
+                    "matched command: export COMMAND_SECRET={command_token}"
+                )),
+            }],
+            &policy,
+        )
+        .await;
+        let cards_json = serde_json::to_string(&cards)?;
+
+        assert!(
+            !cards_json.contains(command_token),
+            "event-card view must not leak the fixture token: {cards_json}"
+        );
+        assert!(
+            cards_json.contains("<COMMAND_SECRET>"),
+            "event-card view must show the operator-owned replacement label: {cards_json}"
+        );
+        assert_eq!(
+            cards.cards[0].privacy_state.state,
+            PrivacyStateKind::Redacted
+        );
+        assert!(
+            cards.cards[0]
+                .caveats
+                .iter()
+                .any(|caveat| caveat.id == "policy.disclosure_applied"),
+            "event-card redaction must be caveated: {:?}",
+            cards.cards[0].caveats
+        );
+
+        let dlq_payload = format!(
+            r#"{{
+            "original_subject": "dev.sinex.events.raw.shell.command",
+            "original_payload": {{ "command": "export DLQ_SECRET={dlq_token}" }}
+        }}"#
+        );
+        let preview = payload_preview(&dlq_payload, 400, &policy).await;
+
+        assert!(preview.redacted);
+        assert!(
+            !preview.text.contains(dlq_token),
+            "DLQ preview must not leak the fixture token: {}",
+            preview.text
+        );
+        assert!(
+            preview.text.contains("<DLQ_SECRET>"),
+            "DLQ preview must show the operator-owned replacement label: {}",
+            preview.text
+        );
+        assert!(
+            preview
+                .caveats
+                .iter()
+                .any(|caveat| caveat.contains("policy.disclosure_applied")),
+            "DLQ redaction must be caveated: {:?}",
+            preview.caveats
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn payload_preview_redacts_raw_dlq_secret_bytes_by_db_policy(
         ctx: TestContext,
     ) -> TestResult<()> {
@@ -506,7 +635,7 @@ mod tests {
             preview
                 .caveats
                 .iter()
-                .any(|caveat| caveat == "redacted:privacy_policy"),
+                .any(|caveat| caveat.contains("policy.disclosure_applied")),
             "redaction must be visible to machine clients: {:?}",
             preview.caveats
         );
