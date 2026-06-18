@@ -834,31 +834,19 @@ pub mod fixtures {
     }
 
     fn material_event(
-        source: &str,
-        event_type: &str,
+        source: &'static str,
+        event_type: &'static str,
         ts: Option<Timestamp>,
         payload: JsonValue,
     ) -> Event<JsonValue> {
-        let source = match EventSource::new(source) {
-            Ok(source) => source,
-            Err(error) => panic!("fixture source must be valid: {error}"),
-        };
-        let event_type = match EventType::new(event_type) {
-            Ok(event_type) => event_type,
-            Err(error) => panic!("fixture event type must be valid: {error}"),
-        };
-        let host = match HostName::new("fixture-host") {
-            Ok(host) => host,
-            Err(error) => panic!("fixture host must be valid: {error}"),
-        };
         Event {
             id: Some(Id::<Event<JsonValue>>::new()),
-            source,
-            event_type,
+            source: EventSource::from_static(source),
+            event_type: EventType::from_static(event_type),
             payload,
             ts_orig: ts,
             ts_quality: ts.map(|_| TemporalSourceType::RealtimeCapture),
-            host,
+            host: HostName::from_static("fixture-host"),
             module_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
