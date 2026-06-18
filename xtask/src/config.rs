@@ -982,11 +982,10 @@ mod tests {
 
         let mut env = EnvGuard::with_keys(&["SINEX_TEST_PINNED_PATH"]);
         env.set("SINEX_TEST_PINNED_PATH", &foreign);
-        let resolved = workspace_pinned_env_path(
-            "SINEX_TEST_PINNED_PATH",
-            workspace.path(),
-            || fallback_dir.clone(),
-        );
+        let resolved =
+            workspace_pinned_env_path("SINEX_TEST_PINNED_PATH", workspace.path(), || {
+                fallback_dir.clone()
+            });
         assert_eq!(
             resolved, fallback_dir,
             "a foreign-hash sinnix cache path must fall back to the workspace-local default"
