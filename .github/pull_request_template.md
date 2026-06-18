@@ -60,11 +60,24 @@ recorded in this PR body."
 - Docs / canon:
 - Security / privacy:
 
+## Output Kind
+
+If this PR adds or changes a durable output, operator-visible view, generated
+artifact, proposal/judgment path, operation record, projection row, or event
+payload, name its `OutputKind` from `sinex_primitives::output_kind` and link the
+registry/doc entry. A new canonical event must explain why the output is not a
+projection row, artifact, proposal, judgment, operation record, or ephemeral
+view.
+
+- OutputKind:
+- Registry/doc reference:
+
 ## Sinex Guardrails
 
 - [ ] Existing shared abstractions were reused instead of adding local shims.
 - [ ] Query/persistence paths still flow through the typed `sinex-*` layers rather than ad-hoc escape hatches.
 - [ ] Provenance, replay, and identifier semantics remain honest.
+- [ ] New output-producing boundaries declare or reference their `OutputKind`.
 - [ ] Schema or generated artifacts were updated if this change requires them.
 
 ## Follow-Ups

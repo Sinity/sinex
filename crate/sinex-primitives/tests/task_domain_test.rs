@@ -8,7 +8,7 @@ use sinex_primitives::task_domain::{
     TASK_REDUCER_SPEC, TaskFieldUpdate, TaskLifecycleInput, TaskSourceSystem, TaskStatus,
     reduce_task_event,
 };
-use sinex_primitives::{Timestamp, Uuid};
+use sinex_primitives::{OutputKind, Timestamp, Uuid};
 use xtask::sandbox::prelude::*;
 
 fn created_payload(task_id: Uuid) -> TaskCreatedPayload {
@@ -76,6 +76,7 @@ async fn task_reducer_exports_projection_spec() -> TestResult<()> {
             .input_event_types
             .contains(&"task.cancelled")
     );
+    assert_eq!(TASK_REDUCER_SPEC.output_kind, OutputKind::ProjectionRow);
     Ok(())
 }
 

@@ -7,6 +7,8 @@
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use crate::output_kind::OutputKind;
+
 /// Declarative identity and contract metadata for one reducer projection family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct DomainProjectionSpec {
@@ -18,6 +20,7 @@ pub struct DomainProjectionSpec {
     pub ordering_policy: ProjectionOrderingPolicy,
     pub settlement_policy: ProjectionSettlementPolicy,
     pub conflict_policy: ProjectionConflictPolicy,
+    pub output_kind: OutputKind,
     pub output_shape: ProjectionOutputShape,
 }
 
