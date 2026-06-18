@@ -1,10 +1,12 @@
 use sinex_db::DbPoolExt;
 use sinex_primitives::{
-    DynamicPayload, Id, JsonValue, SourceMaterial, Timestamp, Uuid, events::Event,
+    AdmissionOutcome, AdmissionOutcomeRef, DynamicPayload, Id, JsonValue,
+    STANDARD_EVENT_ADMISSION_POLICY_ID, SourceMaterial, Timestamp, Uuid,
+    event_contracts::SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID, events::Event,
 };
 use sinexd::event_engine::{
-    AdmissionDecision, AdmissionRejectionKind, AdmissionService, AdmittedEvent, CandidateEvent,
-    CandidateEventMetadata, IngestEventValidator,
+    AdmissionDecision, AdmissionRejection, AdmissionRejectionKind, AdmissionService, AdmittedEvent,
+    CandidateEvent, CandidateEventMetadata, IngestEventValidator,
 };
 use sqlx::Row;
 use std::sync::Arc;
@@ -65,6 +67,113 @@ async fn insert_tombstone(ctx: &TestContext, event_id: Uuid, event_type: &str) -
     .bind(Uuid::now_v7())
     .execute(&ctx.pool)
     .await?;
+    Ok(())
+}
+
+#[sinex_test]
+async fn admission_decision_outcome_refs_event_contract_for_admitted_shell_history(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("admission-contract-shell-history"))
+        .await?;
+    let event_id = Uuid::now_v7();
+    let event = material_event(
+        material_id,
+        event_id,
+        "shell.history",
+        "command.imported",
+        serde_json::json!({ "command": "git status", "shell": "bash" }),
+    )?;
+
+    let service = admission_service(&ctx);
+    let decision = service.admit_event(event).await?;
+    let outcome = decision.to_admission_outcome();
+
+    match outcome {
+        AdmissionOutcome::Admitted {
+            policy_id,
+            event_contract_id,
+            event_ids,
+        } => {
+            assert_eq!(policy_id, STANDARD_EVENT_ADMISSION_POLICY_ID);
+            assert_eq!(
+                event_contract_id.as_deref(),
+                Some(SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID)
+            );
+            assert_eq!(event_ids, vec![Id::from_uuid(event_id)]);
+        }
+        other => panic!("shell-history event should map to admitted outcome: {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn admission_decision_outcome_maps_negative_anchor_rejection(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("admission-contract-negative-anchor"))
+        .await?;
+    let event_id = Uuid::now_v7();
+    let mut event = DynamicPayload::new(
+        "shell.history",
+        "command.imported",
+        serde_json::json!({ "command": "git status", "shell": "bash" }),
+    )
+    .from_material_at(material_id, -1)
+    .build()?
+    .to_json_event()?;
+    event.id = Some(Id::from_uuid(event_id));
+    event.ts_orig = Some(Timestamp::now());
+
+    let service = admission_service(&ctx);
+    let decision = service.admit_event(event).await?;
+    let outcome = decision.to_admission_outcome();
+
+    match outcome {
+        AdmissionOutcome::Rejected {
+            policy_id,
+            reason,
+            refs,
+        } => {
+            assert_eq!(policy_id, STANDARD_EVENT_ADMISSION_POLICY_ID);
+            assert_eq!(reason.code, "negative_anchor");
+            assert!(refs.contains(&AdmissionOutcomeRef::Policy(
+                STANDARD_EVENT_ADMISSION_POLICY_ID.to_string(),
+            )));
+        }
+        other => panic!("negative-anchor event should map to rejected outcome: {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn admission_decision_outcome_maps_occurrence_duplicate_to_deduplicated() -> TestResult<()> {
+    let decision = AdmissionDecision::Suppressed(AdmissionRejection {
+        kind: AdmissionRejectionKind::OccurrenceDuplicate,
+        reason: "live event with equivalence_key test-key already exists".to_string(),
+    });
+
+    match decision.to_admission_outcome() {
+        AdmissionOutcome::Deduplicated {
+            policy_id,
+            reason,
+            existing_event_id,
+            refs,
+        } => {
+            assert_eq!(policy_id, STANDARD_EVENT_ADMISSION_POLICY_ID);
+            assert_eq!(reason.code, "occurrence_duplicate");
+            assert!(existing_event_id.is_none());
+            assert!(refs.contains(&AdmissionOutcomeRef::Policy(
+                STANDARD_EVENT_ADMISSION_POLICY_ID.to_string(),
+            )));
+        }
+        other => panic!("occurrence duplicate should map to deduplicated outcome: {other:?}"),
+    }
+
     Ok(())
 }
 
