@@ -671,7 +671,7 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // Composable event query methods (ReadOnly)
         .pool_typed_rpc(EVENTS_QUERY_METHOD, boxed!(handle_events_query))
-        .pool_typed_rpc(EVENTS_CARDS_METHOD, boxed!(handle_events_cards))
+        .service_typed_rpc(EVENTS_CARDS_METHOD, boxed!(handle_events_cards))
         .pool_typed_rpc(
             EVENTS_RELATION_EVIDENCE_METHOD,
             boxed!(handle_events_relation_evidence),

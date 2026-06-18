@@ -41,6 +41,7 @@ use sinex_primitives::privacy::{
     CategorySet, Matcher, PatternRule, PrivacyConfig, PrivacyEngine, ProcessingContext,
     RuleCategory, Strategy,
 };
+use sinex_primitives::views::{PrivacyStateKind, PrivacyStateView};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
@@ -535,6 +536,98 @@ fn compile_rules(
     })
 }
 
+// ─── Disclosure decisions ─────────────────────────────────────────────────────
+
+/// Operator-visible disclosure destination for runtime privacy policy.
+///
+/// Admission redaction mutates event payloads before persistence. Disclosure
+/// evaluation is a second, presentation-time path: it decides what a given
+/// operator surface may show and always returns caveats when it changes content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisclosureContext {
+    /// Human/agent views such as event cards, timeline rows, TUI panels, and MCP read views.
+    View,
+    /// Exported artifacts or reports that may leave the live runtime boundary.
+    Export,
+    /// Logs or diagnostics emitted by Sinex processes.
+    Log,
+    /// Shell completions or prompt adornments.
+    Completion,
+    /// Dead-letter queue previews.
+    Dlq,
+}
+
+impl DisclosureContext {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::View => "view",
+            Self::Export => "export",
+            Self::Log => "log",
+            Self::Completion => "completion",
+            Self::Dlq => "dlq",
+        }
+    }
+}
+
+/// Machine-readable caveat emitted when disclosure policy changes content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisclosureCaveat {
+    pub code: String,
+    pub message: String,
+    pub policy_ref: String,
+}
+
+/// Result of applying operator-owned disclosure policy to a value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DisclosureDecision {
+    pub context: DisclosureContext,
+    pub value: JsonValue,
+    pub changed: bool,
+    pub privacy_state: PrivacyStateView,
+    pub caveats: Vec<DisclosureCaveat>,
+}
+
+impl DisclosureDecision {
+    fn new(context: DisclosureContext, original: JsonValue, value: JsonValue) -> Self {
+        let changed = value != original;
+        if !changed {
+            return Self {
+                context,
+                value,
+                changed: false,
+                privacy_state: PrivacyStateView::raw_visible(),
+                caveats: Vec::new(),
+            };
+        }
+
+        let state = if value.is_null() {
+            PrivacyStateKind::Suppressed
+        } else {
+            PrivacyStateKind::Redacted
+        };
+        let context_name = context.as_str();
+        Self {
+            context,
+            value,
+            changed: true,
+            privacy_state: PrivacyStateView {
+                state,
+                reason: Some(format!(
+                    "operator privacy policy applied for {context_name} disclosure"
+                )),
+            },
+            caveats: vec![DisclosureCaveat {
+                code: "policy.disclosure_applied".to_string(),
+                message: format!(
+                    "operator privacy policy changed content for {context_name} disclosure; raw stored data was not silently removed"
+                ),
+                policy_ref: "privacy.policy".to_string(),
+            }],
+        }
+    }
+}
+
 // ─── PolicyEngine ────────────────────────────────────────────────────────────
 
 /// DB-backed, cached policy engine.
@@ -647,18 +740,94 @@ impl PolicyEngine {
         batch
     }
 
-    /// Apply the policy to a single JSON value (used for DLQ redaction).
+    /// Apply operator disclosure policy to one event payload for a target surface.
     ///
-    /// Applies all global rules (NULL source/type scope). Returns the possibly
-    /// mutated value. On policy engine error, returns a metadata-only stub.
-    pub async fn redact_json_value(&self, value: JsonValue) -> JsonValue {
-        // Snapshot (Arc clone) and release the lock before any external-recognizer await.
+    /// This does not mutate the stored event. It clones the event payload,
+    /// applies the same DB/user policy used by admission, and returns an
+    /// operator-visible decision with caveats when content changes.
+    pub async fn disclose_event_payload(
+        &self,
+        event: &Event<JsonValue>,
+        context: DisclosureContext,
+    ) -> DisclosureDecision {
+        self.ensure_fresh().await;
+        let original = event.payload.clone();
+        let mut disclosed = event.clone();
         let rules = self.rules.read().await.clone();
         if rules.scopes.is_empty() && rules.external_rules.is_empty() {
-            return value;
+            return DisclosureDecision::new(context, original.clone(), original);
         }
 
-        // For DLQ redaction: apply global (None, None) scoped engines conservatively.
+        apply_policy_to_event(&mut disclosed, &rules);
+        apply_external_policy_to_event(&self.http_client, &mut disclosed, &rules).await;
+        DisclosureDecision::new(context, original, disclosed.payload)
+    }
+
+    /// Apply operator disclosure policy to event-derived text such as query snippets.
+    ///
+    /// Snippets do not carry JSON field paths, but they are derived from a known
+    /// event. Therefore every operator rule whose source/type selector matches
+    /// the event is applied to the snippet text, including field-bound rules.
+    /// This is a disclosure-context rule application, not stored-data mutation.
+    pub async fn disclose_event_text(
+        &self,
+        event: &Event<JsonValue>,
+        text: &str,
+        context: DisclosureContext,
+    ) -> DisclosureDecision {
+        self.ensure_fresh().await;
+        let original = JsonValue::String(text.to_string());
+        let mut result = original.clone();
+        let rules = self.rules.read().await.clone();
+        if rules.scopes.is_empty() && rules.external_rules.is_empty() {
+            return DisclosureDecision::new(context, original, result);
+        }
+
+        let source = event.source.as_str();
+        let event_type = event.event_type.as_str();
+        for scope in &rules.scopes {
+            let source_match = scope.event_source.as_deref().is_none_or(|s| s == source);
+            let type_match = scope.event_type.as_deref().is_none_or(|t| t == event_type);
+            if !source_match || !type_match {
+                continue;
+            }
+            result = scope
+                .engine
+                .process_json(&result, ProcessingContext::Document);
+        }
+
+        for rule in &rules.external_rules {
+            let source_match = rule.event_source.as_deref().is_none_or(|s| s == source);
+            let type_match = rule.event_type.as_deref().is_none_or(|t| t == event_type);
+            if !source_match || !type_match {
+                continue;
+            }
+            let Some(text) = result.as_str().map(ToOwned::to_owned) else {
+                break;
+            };
+            result = apply_external_rule_to_string(&self.http_client, &text, rule).await;
+        }
+
+        DisclosureDecision::new(context, original, result)
+    }
+
+    /// Apply operator disclosure policy to an untyped JSON value.
+    ///
+    /// Used for DLQ previews where source/type identity may be unavailable.
+    /// Only global DB rules apply, so scoped rules never get silently promoted
+    /// beyond their operator-declared scope.
+    pub async fn disclose_json_value(
+        &self,
+        value: JsonValue,
+        context: DisclosureContext,
+    ) -> DisclosureDecision {
+        self.ensure_fresh().await;
+        let original = value.clone();
+        let rules = self.rules.read().await.clone();
+        if rules.scopes.is_empty() && rules.external_rules.is_empty() {
+            return DisclosureDecision::new(context, original, value);
+        }
+
         let mut result = value;
         for scope in &rules.scopes {
             if scope.event_source.is_none() && scope.event_type.is_none() {
@@ -670,7 +839,14 @@ impl PolicyEngine {
                 result = apply_external_rule_to_json(&self.http_client, result, rule).await;
             }
         }
-        result
+        DisclosureDecision::new(context, original, result)
+    }
+
+    /// Compatibility wrapper for the admission-era DLQ redaction helper.
+    pub async fn redact_json_value(&self, value: JsonValue) -> JsonValue {
+        self.disclose_json_value(value, DisclosureContext::Dlq)
+            .await
+            .value
     }
 }
 
