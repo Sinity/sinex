@@ -26,6 +26,19 @@ pub struct DlqListResponse {
     pub total_bytes: u64,
     pub first_seq: u64,
     pub last_seq: u64,
+    /// Depth-derived pressure classification for operator surfaces.
+    ///
+    /// Empty DLQ is `nominal`; non-empty DLQ is `warning`; depth beyond the
+    /// retry batch size is `critical` because recovery requires more than one
+    /// paced operator retry batch.
+    pub pressure_level: String,
+    /// Sequence span covered by pending DLQ messages. This is the DLQ lag
+    /// signal when timestamps are not available from the stream summary.
+    pub pending_sequence_span: u64,
+    /// Next practical operator action for the current DLQ state.
+    pub recommended_action: String,
+    /// Human-readable reason for the recommended action or its absence.
+    pub action_reason: String,
 }
 
 // ─────────────────────────────────────────────────────────────

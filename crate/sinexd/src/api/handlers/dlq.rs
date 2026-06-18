@@ -46,6 +46,35 @@ fn require_stream_sequence(sequence: std::result::Result<u64, String>) -> Result
     })
 }
 
+fn dlq_pending_sequence_span(total_messages: u64, first_seq: u64, last_seq: u64) -> u64 {
+    if total_messages == 0 || first_seq == 0 || last_seq < first_seq {
+        0
+    } else {
+        last_seq - first_seq + 1
+    }
+}
+
+fn dlq_pressure_level(total_messages: u64, retry_batch_size: usize) -> &'static str {
+    if total_messages == 0 {
+        "nominal"
+    } else if total_messages > retry_batch_size as u64 {
+        "critical"
+    } else {
+        "warning"
+    }
+}
+
+fn dlq_operator_action(total_messages: u64) -> (&'static str, &'static str) {
+    if total_messages == 0 {
+        ("none", "raw-ingest DLQ is empty")
+    } else {
+        (
+            "ops dlq peek",
+            "inspect failures before running paced requeue or purge",
+        )
+    }
+}
+
 fn truncate_preview(payload: &str, max_chars: usize) -> String {
     let preview: String = payload.chars().take(max_chars).collect();
     if payload.chars().count() > max_chars {
@@ -95,6 +124,7 @@ pub async fn handle_dlq_list(
         .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
     let config = DlqRetryConfig::default();
+    let retry_batch_size = config.batch_size;
     let handler = DlqRetryHandler::new(nats_client.clone(), env.clone(), config);
 
     let stats = handler
@@ -102,11 +132,20 @@ pub async fn handle_dlq_list(
         .await
         .map_err(|error| SinexError::service("Failed to get DLQ statistics").with_source(error))?;
 
+    let (recommended_action, action_reason) = dlq_operator_action(stats.total_messages);
     let response = DlqListResponse {
         total_messages: stats.total_messages,
         total_bytes: stats.total_bytes,
         first_seq: stats.first_seq,
         last_seq: stats.last_seq,
+        pressure_level: dlq_pressure_level(stats.total_messages, retry_batch_size).to_string(),
+        pending_sequence_span: dlq_pending_sequence_span(
+            stats.total_messages,
+            stats.first_seq,
+            stats.last_seq,
+        ),
+        recommended_action: recommended_action.to_string(),
+        action_reason: action_reason.to_string(),
     };
 
     Ok(response)
@@ -344,7 +383,10 @@ pub async fn handle_dlq_purge(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_retry_count_header, payload_preview, require_stream_sequence};
+    use super::{
+        dlq_operator_action, dlq_pending_sequence_span, dlq_pressure_level,
+        parse_retry_count_header, payload_preview, require_stream_sequence,
+    };
     use crate::event_engine::policy::PolicyEngine;
     use sinex_db::DbPoolExt;
     use sinex_primitives::error::ErrorClass;
@@ -382,6 +424,29 @@ mod tests {
         );
         assert!(error.to_string().contains("missing reply metadata"));
         Ok(())
+    }
+
+    #[test]
+    fn dlq_list_pressure_classifies_empty_warning_and_critical_depth() {
+        assert_eq!(dlq_pressure_level(0, 10), "nominal");
+        assert_eq!(dlq_pressure_level(10, 10), "warning");
+        assert_eq!(dlq_pressure_level(11, 10), "critical");
+    }
+
+    #[test]
+    fn dlq_list_pressure_reports_sequence_span_and_action() {
+        assert_eq!(dlq_pending_sequence_span(0, 4, 9), 0);
+        assert_eq!(dlq_pending_sequence_span(2, 4, 9), 6);
+        assert_eq!(dlq_pending_sequence_span(2, 9, 4), 0);
+
+        assert_eq!(dlq_operator_action(0), ("none", "raw-ingest DLQ is empty"));
+        assert_eq!(
+            dlq_operator_action(1),
+            (
+                "ops dlq peek",
+                "inspect failures before running paced requeue or purge"
+            )
+        );
     }
 
     #[sinex_test]

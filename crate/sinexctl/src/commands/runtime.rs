@@ -231,6 +231,13 @@ fn format_health_table(health: &SystemHealthResponse) -> String {
         output.push_str(&format!("    Detail: {detail}\n"));
     }
     output.push_str(&format!(
+        "  Raw Ingest DLQ: {} (connected: {})\n",
+        health.components.raw_ingest_dlq.status, health.components.raw_ingest_dlq.connected
+    ));
+    if let Some(ref detail) = health.components.raw_ingest_dlq.detail {
+        output.push_str(&format!("    Detail: {detail}\n"));
+    }
+    output.push_str(&format!(
         "  Replay Control: {} (enabled: {}, connected: {})\n",
         health.components.replay_control.status,
         health.components.replay_control.enabled,

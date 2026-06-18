@@ -339,6 +339,22 @@ async fn test_health_report_structure(ctx: TestContext) -> TestResult<()> {
         !report.nats.detail.is_empty(),
         "NATS probe detail should always be populated"
     );
+    assert_eq!(
+        report.raw_ingest_dlq.status,
+        HealthStatus::Unknown,
+        "fresh gateway stacks may not have a raw-ingest DLQ stream yet"
+    );
+    assert_eq!(
+        report.raw_ingest_dlq.pending_messages, None,
+        "absent DLQ stream should not invent a backlog count"
+    );
+    assert!(
+        !report
+            .degradation_reasons
+            .iter()
+            .any(|reason| reason.contains("raw-ingest DLQ pressure")),
+        "unknown DLQ pressure must not degrade health without a confirmed backlog"
+    );
     assert!(
         report.replay.enabled,
         "Replay control should be initialized"

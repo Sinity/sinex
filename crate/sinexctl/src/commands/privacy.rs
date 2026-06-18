@@ -15,11 +15,11 @@ use sinex_primitives::query::{
 };
 use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::privacy::{
-    PrivacyPolicyBackendAddRequest, PrivacyPolicyDictionaryAddRequest, PrivacyPolicyListResponse,
+    PrivacyPolicyBackendAddRequest, PrivacyPolicyDictionaryAddRequest,
+    PrivacyPolicyFieldUnbindRequest, PrivacyPolicyFieldUnbindResponse, PrivacyPolicyListResponse,
     PrivacyPolicyMutationResponse, PrivacyPolicyRule, PrivacyPolicyRuleAddRequest,
     PrivacyPolicyRuleRemoveRequest, PrivacyPolicyRuleRemoveResponse,
     PrivacyPolicyRuleSetEnabledRequest, PrivacyPolicyRuleSetEnabledResponse,
-    PrivacyPolicyFieldUnbindRequest, PrivacyPolicyFieldUnbindResponse,
     PrivacyPolicyScopeBindRequest, PrivacyPolicySeedBuiltinRequest,
     PrivacyPolicySeedBuiltinResponse,
 };
@@ -1332,6 +1332,10 @@ mod tests {
                 total_bytes: 128,
                 first_seq: 1,
                 last_seq: 2,
+                pressure_level: "warning".to_string(),
+                pending_sequence_span: 2,
+                recommended_action: "ops dlq peek".to_string(),
+                action_reason: "inspect failures before running paced requeue or purge".to_string(),
             },
             &SourcesReadinessListResponse {
                 sources: vec![SourceReadiness {
