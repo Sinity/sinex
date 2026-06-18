@@ -11,7 +11,6 @@ use sinex_primitives::events::payloads::{
 };
 use sinex_primitives::events::{Event, EventId, EventPayload, Provenance};
 use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter};
-use sinex_primitives::rpc::ops::Operation;
 use sinex_primitives::rpc::curation::{
     CurationDuplicateAction, CurationDuplicateCandidateCluster, CurationDuplicateCandidateEvent,
     CurationFinalizeRequest, CurationFinalizeResponse, CurationListDuplicateCandidatesRequest,
@@ -19,6 +18,7 @@ use sinex_primitives::rpc::curation::{
     CurationRecordDuplicateJudgmentRequest, CurationRecordDuplicateJudgmentResponse,
     CurationRecordJudgmentRequest, CurationRecordJudgmentResponse,
 };
+use sinex_primitives::rpc::ops::Operation;
 use sinex_primitives::views::{SinexObjectKind, SinexObjectRef};
 use sinex_primitives::{Id, JsonValue, Result, SinexError, Timestamp, Uuid};
 use sqlx::{PgPool, Row};

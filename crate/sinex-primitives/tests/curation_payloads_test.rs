@@ -1,7 +1,7 @@
 use serde_json::json;
-use sinex_primitives::authority::{Judgment, JudgmentVerdict, Proposal, ProposalKind};
 use sinex_primitives::Timestamp;
 use sinex_primitives::Uuid;
+use sinex_primitives::authority::{Judgment, JudgmentVerdict, Proposal, ProposalKind};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     CurationFinalizedPayload, CurationJudgmentDecision, CurationJudgmentPayload,
@@ -196,9 +196,11 @@ fn authority_backed_curation_pair(
         ],
         "preferred_event_id": "00000000-0000-0000-0000-000000000101"
     });
-    let subject =
-        SinexObjectRef::new(SinexObjectKind::Event, "duplicate:webhistory/page.visited/visit-1")
-            .with_label("duplicate candidate cluster");
+    let subject = SinexObjectRef::new(
+        SinexObjectKind::Event,
+        "duplicate:webhistory/page.visited/visit-1",
+    )
+    .with_label("duplicate candidate cluster");
     let authority_proposal = Proposal::new(
         ProposalKind::DuplicateCandidate,
         subject,
@@ -210,11 +212,8 @@ fn authority_backed_curation_pair(
         "authority.human_required",
         "duplicate finalization requires an explicit accept judgment",
     );
-    let authority_judgment = Judgment::new(
-        authority_proposal.id.clone(),
-        verdict,
-        "operator:sinity",
-    );
+    let authority_judgment =
+        Judgment::new(authority_proposal.id.clone(), verdict, "operator:sinity");
 
     (
         CurationProposalPayload {

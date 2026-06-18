@@ -1,12 +1,12 @@
 //! Curation proposal and judgment RPC contracts.
 
 use crate::JsonValue;
-use crate::rpc::ops::Operation;
 use crate::events::{
     Event, SourceMaterial,
     payloads::{CurationFinalizedPayload, CurationJudgmentPayload},
 };
 use crate::query::EventQueryResult;
+use crate::rpc::ops::Operation;
 use crate::{Id, Timestamp, Uuid};
 
 use serde::{Deserialize, Serialize};

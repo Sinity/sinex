@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::source_contracts::{
     RunnerPack, SourceContract, SourceRuntimeBinding, all_source_contracts, source_runtime_bindings,
@@ -1052,5 +1052,11 @@ fn operator_enablement(
 }
 
 fn to_json_value<T: Serialize>(value: T) -> Value {
-    serde_json::to_value(value).expect("package completeness metadata serializes")
+    match serde_json::to_value(value) {
+        Ok(value) => value,
+        Err(error) => json!({
+            "error": "package_completeness_metadata_serialization_failed",
+            "message": error.to_string(),
+        }),
+    }
 }
