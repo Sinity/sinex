@@ -9,14 +9,17 @@ use serde_json::json;
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::privacy::{load_private_mode_state, resolve_private_mode_state_dir};
 use sinex_primitives::query::{
-    EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange,
+    EventQuery, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange,
 };
 use sinex_primitives::rpc::source_status::EmitStallThresholds;
 use sinex_primitives::rpc::sources::{
     SourceReadiness, SourceReadinessStatus, SourcesReadinessListRequest,
 };
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::views::{EventCardListView, EventCardView, EventErrorListView, ViewEnvelope};
+use sinex_primitives::views::{
+    EVENT_ERROR_LIST_SCHEMA_VERSION, EventCardListView, EventCardView, EventErrorListView,
+    ViewEnvelope,
+};
 use sinex_primitives::{
     RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeStatusWarning,
     RuntimeTargetDescriptor, RuntimeTargetKind,
@@ -723,9 +726,9 @@ mod status_tests {
 
     #[sinex_test]
     async fn errors_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
-        let output =
-            render_errors_machine_output(&[error_event_fixture()], "24h", OutputFormat::Json)?
-                .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+        let cards = EventCardListView::from_query_events(&[error_event_fixture()]);
+        let output = render_errors_machine_output(&cards, "24h", OutputFormat::Json)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
         assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
@@ -743,8 +746,8 @@ mod status_tests {
 
     #[sinex_test]
     async fn errors_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<()> {
-        let result =
-            render_errors_machine_output(&[error_event_fixture()], "24h", OutputFormat::Ndjson);
+        let cards = EventCardListView::from_query_events(&[error_event_fixture()]);
+        let result = render_errors_machine_output(&cards, "24h", OutputFormat::Ndjson);
         assert!(result.is_err(), "errors must remain a finite view");
         Ok(())
     }
@@ -939,11 +942,7 @@ impl RecentCommand {
             ..Default::default()
         };
 
-        let events = match client.query_events(query).await? {
-            EventQueryResult::Events { events, .. } => events,
-            _ => vec![],
-        };
-        let event_cards = EventCardListView::from_query_events(&events);
+        let event_cards = client.event_cards(query).await?;
         let envelope =
             ViewEnvelope::new("sinexctl.events.recent", event_cards).with_query_echo(json!({
                 "since": self.since,
@@ -956,14 +955,14 @@ impl RecentCommand {
         }
         // OutputFormat::Table — fall through to human rendering below
 
-        if events.is_empty() {
+        if envelope.payload.cards.is_empty() {
             println!("No events found in the last {}", self.since);
             return Ok(());
         }
 
         println!(
             "{} events (last {})",
-            style(events.len()).bold(),
+            style(envelope.payload.count).bold(),
             self.since
         );
         println!("{}", style("─".repeat(80)).dim());
@@ -1048,17 +1047,14 @@ impl ErrorsCommand {
             ..Default::default()
         };
 
-        let events = match client.query_events(query).await? {
-            EventQueryResult::Events { events, .. } => events,
-            _ => vec![],
-        };
+        let error_cards = client.event_cards(query).await?;
 
-        if let Some(output) = render_errors_machine_output(&events, &self.since, format)? {
+        if let Some(output) = render_errors_machine_output(&error_cards, &self.since, format)? {
             println!("{output}");
             return Ok(());
         }
 
-        if events.is_empty() {
+        if error_cards.cards.is_empty() {
             println!(
                 "{} No errors found in the last {}",
                 style("✓").green(),
@@ -1070,13 +1066,13 @@ impl ErrorsCommand {
         println!(
             "{} {} errors (last {})",
             style("⚠").yellow(),
-            style(events.len()).bold(),
+            style(error_cards.count).bold(),
             self.since
         );
         println!("{}", style("─".repeat(80)).dim());
 
-        for result_event in &events {
-            let timestamp = result_event.event.ts_orig.map_or_else(
+        for card in &error_cards.cards {
+            let timestamp = card.timestamp.original.map_or_else(
                 || "unknown".to_string(),
                 |ts| {
                     ts.format(time::macros::format_description!(
@@ -1085,21 +1081,16 @@ impl ErrorsCommand {
                     .unwrap_or_else(|_| "invalid".to_string())
                 },
             );
-            let source = style(result_event.event.source.as_str()).cyan();
-            let event_type = style(result_event.event.event_type.as_str()).red();
-            let snippet = result_event.snippet.as_deref().unwrap_or("");
-            let snippet_display = if snippet.len() > 60 {
-                format!("{}...", &snippet[..57])
-            } else {
-                snippet.to_string()
-            };
+            let source = style(card.source.raw.as_str()).cyan();
+            let event_type = style(card.event_type.as_str()).red();
+            let summary = truncate_chars(&card.summary, 60);
 
             println!(
                 "{} [{}] {} - {}",
                 style(timestamp).dim(),
                 source,
                 event_type,
-                snippet_display
+                summary
             );
         }
 
@@ -1108,7 +1099,7 @@ impl ErrorsCommand {
 }
 
 fn render_errors_machine_output(
-    events: &[sinex_primitives::query::QueryResultEvent],
+    cards: &EventCardListView,
     since: &str,
     format: OutputFormat,
 ) -> Result<Option<String>> {
@@ -1117,7 +1108,12 @@ fn render_errors_machine_output(
         OutputFormat::Json | OutputFormat::Yaml => {
             let envelope = ViewEnvelope::new(
                 "sinexctl.events.errors",
-                EventErrorListView::from_query_events(since, events),
+                EventErrorListView {
+                    schema_version: EVENT_ERROR_LIST_SCHEMA_VERSION.to_string(),
+                    since: since.to_string(),
+                    count: cards.count,
+                    cards: cards.cards.clone(),
+                },
             )
             .with_query_echo(json!({ "since": since }));
 

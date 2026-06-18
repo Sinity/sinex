@@ -36,7 +36,7 @@ use sinex_primitives::rpc::{
         DocumentsSearchRequest, DocumentsSearchResponse,
     },
     events::{
-        EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD,
+        EVENTS_ANNOTATE_METHOD, EVENTS_CARDS_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD,
         EVENTS_RELATION_EVIDENCE_METHOD, EventsAnnotateRequest, EventsAnnotateResponse,
         EventsRelationEvidenceRequest,
     },
@@ -197,7 +197,7 @@ use sinex_primitives::query::{
     EventQuery, EventQueryResult, LineageQuery, LineageResult, SubscriptionFilter,
 };
 use sinex_primitives::relations::EvidenceWindow;
-use sinex_primitives::views::{SourceCoverageListView, ViewEnvelope};
+use sinex_primitives::views::{EventCardListView, SourceCoverageListView, ViewEnvelope};
 
 /// Gateway RPC client
 #[derive(Clone)]
@@ -964,9 +964,17 @@ impl GatewayClient {
 
     // ==================== Event Query Commands ====================
 
-    /// Query events using the composable query engine
+    /// Query events using the composable query engine.
+    ///
+    /// This returns raw query DTOs for admin/query operations. Rendered view
+    /// surfaces should prefer `event_cards`, which applies disclosure policy.
     pub async fn query_events(&self, query: EventQuery) -> Result<EventQueryResult> {
         self.call_typed(EVENTS_QUERY_METHOD, &query).await
+    }
+
+    /// Query events as privacy-policy-enforced event cards.
+    pub async fn event_cards(&self, query: EventQuery) -> Result<EventCardListView> {
+        self.call_typed(EVENTS_CARDS_METHOD, &query).await
     }
 
     /// Trace provenance lineage for an event
