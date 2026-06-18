@@ -20,6 +20,9 @@ pub const TASK_REDUCER_INPUT_EVENT_TYPES: &[&str] = &[
     "task.status_changed",
     "task.completed",
     "task.cancelled",
+    "task.split",
+    "task.merged",
+    "task.linked",
 ];
 /// Metadata only: no generic runtime consumes this spec. `reduce_task_event()`
 /// is called directly from the task handlers. Spec-driven reduction is #1120.
