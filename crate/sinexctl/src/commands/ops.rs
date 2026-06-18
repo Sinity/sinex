@@ -1,7 +1,12 @@
 use clap::Subcommand;
 use serde_json::Value;
+use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::ops::{Operation as OpsOperation, OpsStartResponse};
-use sinex_primitives::views::{OperationJobListView, OperationView, ViewEnvelope};
+use sinex_primitives::views::{
+    ActionAvailability, ActionAvailabilityState, CaveatView, DebtKind, DebtListView, DebtOwnerView,
+    DebtRowView, DebtStage, OperationJobListView, OperationView, SinexObjectKind, SinexObjectRef,
+    ViewEnvelope,
+};
 
 use crate::Result;
 use crate::client::GatewayClient;
@@ -87,6 +92,10 @@ pub enum OpsCommands {
     #[command(subcommand)]
     Jobs(JobsCommands),
 
+    /// Read-only debt view over work stuck between Sinex planes
+    #[command(subcommand)]
+    Debt(DebtCommands),
+
     /// Dead letter queue operations
     #[command(subcommand)]
     Dlq(DlqCommands),
@@ -158,6 +167,22 @@ pub enum JobsCommands {
         /// Operation ID
         operation_id: String,
     },
+}
+
+/// Read-only debt surface (rendered through ViewEnvelope)
+#[derive(Debug, Subcommand)]
+#[command(after_help = "\
+EXAMPLES:
+    # List operator-visible debt rows
+    sinexctl ops debt list
+
+    # Render debt rows as JSON
+    sinexctl ops debt list --format json
+")]
+pub enum DebtCommands {
+    /// List debt rows from currently wired providers
+    #[command(alias = "ls")]
+    List,
 }
 
 impl OpsCommands {
@@ -240,6 +265,7 @@ impl OpsCommands {
             Self::Jobs(jobs_cmd) => {
                 jobs_cmd.execute(client, format).await?;
             }
+            Self::Debt(debt_cmd) => debt_cmd.execute(client, format).await?,
             Self::Dlq(cmd) => cmd.execute(client, format).await?,
             Self::Replay(cmd) => cmd.execute(client, format).await?,
             Self::Lifecycle(cmd) => cmd.execute(client, format).await?,
@@ -306,6 +332,34 @@ impl JobsCommands {
     }
 }
 
+impl DebtCommands {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        match self {
+            Self::List => {
+                let dlq = client.dlq_list().await?;
+                let rows = debt_rows_from_dlq(&dlq);
+                let envelope =
+                    ViewEnvelope::new("sinexctl.ops.debt", DebtListView::new(rows.clone()))
+                        .with_query_echo(serde_json::json!({
+                            "providers": ["raw_ingest_dlq"],
+                        }));
+
+                if let Some(output) = render_envelope(&envelope, &rows, format)? {
+                    print_machine_output(&output);
+                    return Ok(());
+                }
+
+                if envelope.payload.rows.is_empty() {
+                    println!("No debt rows reported by wired providers.");
+                } else {
+                    println!("{}", format_debt_table(&envelope.payload.rows));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Convert the RPC `Operation` type to an [`OperationView`] for CLI rendering.
 pub(crate) fn operation_to_view(op: &OpsOperation) -> OperationView {
     OperationView::from_rpc(
@@ -324,10 +378,89 @@ pub(crate) fn operations_to_views(operations: &[OpsOperation]) -> Vec<OperationV
     operations.iter().map(operation_to_view).collect()
 }
 
+pub(crate) fn debt_rows_from_dlq(stats: &DlqListResponse) -> Vec<DebtRowView> {
+    if stats.total_messages == 0 {
+        return Vec::new();
+    }
+
+    vec![DebtRowView {
+        id: "debt:admission:raw-ingest-dlq".to_string(),
+        kind: DebtKind::Admission,
+        stage: DebtStage::CandidateQuarantined,
+        summary: format!(
+            "{} raw-ingest message(s) are pending in DLQ pressure={} span={}",
+            stats.total_messages, stats.pressure_level, stats.pending_sequence_span
+        ),
+        refs: vec![SinexObjectRef::new(
+            SinexObjectKind::DlqMessage,
+            format!("raw-ingest-dlq:{}..{}", stats.first_seq, stats.last_seq),
+        )],
+        owner: Some(DebtOwnerView::admission_policy("raw-ingest-dlq")),
+        age_secs: None,
+        freshness: None,
+        caveats: vec![CaveatView {
+            id: format!("raw_ingest_dlq.{}", stats.pressure_level),
+            message: stats.action_reason.clone(),
+            ref_: Some(SinexObjectRef::new(SinexObjectKind::RpcMethod, "dlq.list")),
+        }],
+        actions: vec![
+            ActionAvailability::read("debt.inspect", "Inspect", ActionAvailabilityState::Enabled)
+                .with_command_hint(format!("sinexctl {}", stats.recommended_action))
+                .with_rpc_method("dlq.peek"),
+        ],
+    }]
+}
+
 fn print_machine_output(output: &str) {
     print!("{output}");
     if !output.is_empty() && !output.ends_with('\n') {
         println!();
+    }
+}
+
+fn format_debt_table(rows: &[DebtRowView]) -> String {
+    let mut output = String::new();
+    output.push_str("Debt:\n");
+    output.push_str(&format!("{}\n", "─".repeat(80)));
+    for row in rows {
+        output.push_str(&format!("ID:      {}\n", row.id));
+        output.push_str(&format!("Kind:    {:?}\n", row.kind));
+        output.push_str(&format!("Stage:   {:?}\n", row.stage));
+        output.push_str(&format!("Summary: {}\n", row.summary));
+        if !row.refs.is_empty() {
+            let refs = row
+                .refs
+                .iter()
+                .map(|r| format!("{}:{}", object_kind_label(&r.kind), r.id))
+                .collect::<Vec<_>>()
+                .join(", ");
+            output.push_str(&format!("Refs:    {refs}\n"));
+        }
+        if !row.actions.is_empty() {
+            let actions = row
+                .actions
+                .iter()
+                .filter_map(|action| action.command_hint.as_deref())
+                .collect::<Vec<_>>()
+                .join(", ");
+            if !actions.is_empty() {
+                output.push_str(&format!("Actions: {actions}\n"));
+            }
+        }
+        output.push_str(&format!("{}\n", "─".repeat(80)));
+    }
+    output
+}
+
+fn object_kind_label(kind: &SinexObjectKind) -> &'static str {
+    match kind {
+        SinexObjectKind::DlqMessage => "dlq_message",
+        SinexObjectKind::RpcMethod => "rpc_method",
+        SinexObjectKind::Operation => "operation",
+        SinexObjectKind::Projection => "projection",
+        SinexObjectKind::Artifact => "artifact",
+        SinexObjectKind::AdmissionOutcome => "admission_outcome",
+        _ => "object",
     }
 }
 
@@ -461,6 +594,74 @@ mod tests {
         let err = crate::fmt::render_finite_envelope(&envelope, OutputFormat::Ndjson)
             .expect_err("finite operation view rejects ndjson");
         assert!(err.to_string().contains("finite view"));
+        Ok(())
+    }
+
+    fn fixture_dlq(total_messages: u64) -> DlqListResponse {
+        DlqListResponse {
+            total_messages,
+            total_bytes: total_messages * 1024,
+            first_seq: if total_messages == 0 { 0 } else { 10 },
+            last_seq: if total_messages == 0 {
+                0
+            } else {
+                10 + total_messages
+            },
+            pressure_level: if total_messages > 10 {
+                "critical".to_string()
+            } else if total_messages > 0 {
+                "warning".to_string()
+            } else {
+                "nominal".to_string()
+            },
+            pending_sequence_span: total_messages,
+            recommended_action: if total_messages == 0 {
+                "none".to_string()
+            } else {
+                "ops dlq peek".to_string()
+            },
+            action_reason: if total_messages == 0 {
+                "raw-ingest DLQ is empty".to_string()
+            } else {
+                "inspect raw-ingest DLQ before retry".to_string()
+            },
+        }
+    }
+
+    #[sinex_test]
+    async fn debt_rows_from_dlq_reports_only_pending_admission_debt() -> xtask::TestResult<()> {
+        assert!(debt_rows_from_dlq(&fixture_dlq(0)).is_empty());
+
+        let rows = debt_rows_from_dlq(&fixture_dlq(3));
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.kind, DebtKind::Admission);
+        assert_eq!(row.stage, DebtStage::CandidateQuarantined);
+        assert_eq!(row.refs[0].kind, SinexObjectKind::DlqMessage);
+        assert_eq!(
+            row.actions[0].command_hint.as_deref(),
+            Some("sinexctl ops dlq peek")
+        );
+        assert_eq!(row.caveats[0].id, "raw_ingest_dlq.warning");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ops_debt_list_json_renders_finite_debt_envelope() -> xtask::TestResult<()> {
+        let rows = debt_rows_from_dlq(&fixture_dlq(12));
+        let envelope = ViewEnvelope::new("sinexctl.ops.debt", DebtListView::new(rows.clone()));
+
+        let output =
+            render_envelope(&envelope, &rows, OutputFormat::Json)?.expect("json renders envelope");
+        let parsed: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(parsed["source_surface"], "sinexctl.ops.debt");
+        assert_eq!(parsed["payload"]["count"], 1);
+        assert_eq!(parsed["payload"]["rows"][0]["kind"], "admission");
+        assert_eq!(
+            parsed["payload"]["rows"][0]["refs"][0]["kind"],
+            "dlq_message"
+        );
         Ok(())
     }
 }

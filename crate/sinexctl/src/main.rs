@@ -552,6 +552,9 @@ fn command_path(cmd: &Commands) -> String {
                 sinexctl::commands::ops::JobsCommands::List { .. } => "ops jobs list".to_string(),
                 sinexctl::commands::ops::JobsCommands::Show { .. } => "ops jobs show".to_string(),
             },
+            OpsCommands::Debt(debt_cmd) => match debt_cmd {
+                sinexctl::commands::ops::DebtCommands::List => "ops debt list".to_string(),
+            },
             OpsCommands::Dlq(cmd) => prefixed("ops", dlq_command_path(cmd)),
             OpsCommands::Replay(cmd) => prefixed("ops", replay_command_path(cmd)),
             OpsCommands::Lifecycle(cmd) => prefixed("ops", lifecycle_command_path(cmd)),
