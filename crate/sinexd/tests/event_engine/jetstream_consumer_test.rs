@@ -6,10 +6,10 @@ mod support;
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
+use sinex_primitives::{Uuid, error::SinexError, temporal};
 use sinexd::event_engine::material_ready_set::MaterialReadySet;
 use sinexd::event_engine::validator::IngestEventValidator;
 use sinexd::event_engine::{JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::{Uuid, error::SinexError, temporal};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
@@ -213,7 +213,8 @@ async fn consumer_accepts_db_registered_material_outside_ready_set(
     let topology = JetStreamTopology::new(
         env,
         ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
-        ctx.pipeline_namespace().consumer_name("event-engine-ready-set"),
+        ctx.pipeline_namespace()
+            .consumer_name("event-engine-ready-set"),
         Some(&namespace),
     );
     let ready_topology = topology.clone();
@@ -276,7 +277,8 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let topology = JetStreamTopology::new(
         env,
         ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
-        ctx.pipeline_namespace().consumer_name("event-engine-confirm"),
+        ctx.pipeline_namespace()
+            .consumer_name("event-engine-confirm"),
         Some(&namespace),
     );
     let ready_topology = topology.clone();
@@ -387,8 +389,10 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
     // Serialize and publish through NATS
     let subject =
         env.nats_subject_with_namespace(Some(&namespace), "events.raw.offset_test.offset_check");
-    let event_json =
-        serde_json::to_vec(&admission_envelope("offset-test", serde_json::to_value(&event)?))?;
+    let event_json = serde_json::to_vec(&admission_envelope(
+        "offset-test",
+        serde_json::to_value(&event)?,
+    ))?;
     nats_client.publish(subject, event_json.into()).await?;
     nats_client.flush().await?;
 
@@ -469,8 +473,10 @@ async fn consumer_loads_externally_registered_materials_via_db_fallback(
 
     let subject = env
         .nats_subject_with_namespace(Some(&namespace), "events.raw.fallback_test.material_ready");
-    let event_json =
-        serde_json::to_vec(&admission_envelope("fallback-test", serde_json::to_value(&event)?))?;
+    let event_json = serde_json::to_vec(&admission_envelope(
+        "fallback-test",
+        serde_json::to_value(&event)?,
+    ))?;
     nats_client.publish(subject, event_json.into()).await?;
     nats_client.flush().await?;
 

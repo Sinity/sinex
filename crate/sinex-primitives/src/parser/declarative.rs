@@ -2141,8 +2141,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn transform_split_first_keeps_segment_before_separator()
-    -> xtask::sandbox::TestResult<()> {
+    async fn transform_split_first_keeps_segment_before_separator() -> xtask::sandbox::TestResult<()>
+    {
         // Atuin host:user -> host parity.
         let spec = spec_with_hook(
             "hostname",
@@ -2187,8 +2187,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn validator_i32_accepts_in_range_and_rejects_overflow()
-    -> xtask::sandbox::TestResult<()> {
+    async fn validator_i32_accepts_in_range_and_rejects_overflow() -> xtask::sandbox::TestResult<()>
+    {
         let spec = spec_with_hook(
             "exit",
             "/exit",

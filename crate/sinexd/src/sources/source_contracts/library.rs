@@ -39,7 +39,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::source_contracts::{
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape,
+};
 use sinex_primitives::{
     domain::{EventSource, EventType},
     parser::{

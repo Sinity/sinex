@@ -19,8 +19,8 @@ use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily as ContractCheckpointFamily, Horizon as ContractHorizon,
     OccurrenceIdentity as ContractOccurrenceIdentity, PrivacyTier as ContractPrivacyTier,
-    ResourceProfile, RetentionPolicy as ContractRetentionPolicy, RunnerPack, RuntimeShape as ContractRuntimeShape,
-    SourceContract, SourceRuntimeBinding, SubjectRef,
+    ResourceProfile, RetentionPolicy as ContractRetentionPolicy, RunnerPack,
+    RuntimeShape as ContractRuntimeShape, SourceContract, SourceRuntimeBinding, SubjectRef,
 };
 use sinex_primitives::{
     JsonValue, Timestamp, Uuid, register_source_contract, register_source_runtime_binding,

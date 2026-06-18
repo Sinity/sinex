@@ -6,12 +6,13 @@ use sinex_primitives::{
 };
 use xtask::sandbox::prelude::*;
 
-fn repo_root() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    match manifest_dir.ancestors().nth(2) {
-        Some(root) => root.to_path_buf(),
-        None => panic!("crate/sinex-primitives has a repository root"),
-    }
+fn repo_root() -> TestResult<PathBuf> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .ok_or_else(|| color_eyre::eyre::eyre!("crate/sinex-primitives has a repository root"))?
+        .to_path_buf();
+    Ok(root)
 }
 
 #[sinex_test]
@@ -78,7 +79,7 @@ async fn projection_specs_declare_projection_row_outputs() -> TestResult<()> {
 
 #[sinex_test]
 async fn repo_templates_require_output_kind_classification() -> TestResult<()> {
-    let root = repo_root();
+    let root = repo_root()?;
     let pr_template = std::fs::read_to_string(root.join(".github/pull_request_template.md"))?;
     let issue_template =
         std::fs::read_to_string(root.join(".github/ISSUE_TEMPLATE/01-feature-or-change.yml"))?;

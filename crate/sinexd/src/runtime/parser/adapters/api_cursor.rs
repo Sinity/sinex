@@ -31,8 +31,8 @@
 use std::{error::Error, fmt, future::Future, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use futures::stream::{self, BoxStream};
 use futures::StreamExt;
+use futures::stream::{self, BoxStream};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as JsonValue};
@@ -372,7 +372,6 @@ impl<C: ApiClient + 'static> ApiCursorAdapter<C> {
         self.retry = retry;
         self
     }
-
 }
 
 #[async_trait]
@@ -464,9 +463,7 @@ where
                             };
 
                             let bytes = serde_json::to_vec(&record).map_err(|e| {
-                                ParserError::Adapter(format!(
-                                    "failed to serialize api record: {e}"
-                                ))
+                                ParserError::Adapter(format!("failed to serialize api record: {e}"))
                             })?;
                             let metadata =
                                 build_record_metadata(cursor_after, etag_after, page_index);
@@ -487,8 +484,7 @@ where
 
                     // Advance to the next page cursor, or terminate when this was
                     // the final page (next_page_cursor == None).
-                    let next_state = next_page_cursor
-                        .map(|nc| (Some(nc), page_index + 1));
+                    let next_state = next_page_cursor.map(|nc| (Some(nc), page_index + 1));
 
                     Some((records, next_state))
                 }
@@ -582,15 +578,9 @@ mod tests {
             }
 
             // Cursor encodes page index as decimal string; None → page 0.
-            let page_idx: usize = cursor
-                .and_then(|c| c.parse().ok())
-                .unwrap_or(0);
+            let page_idx: usize = cursor.and_then(|c| c.parse().ok()).unwrap_or(0);
 
-            let records = self
-                .pages
-                .get(page_idx)
-                .cloned()
-                .unwrap_or_default();
+            let records = self.pages.get(page_idx).cloned().unwrap_or_default();
 
             let next_page = page_idx + 1;
             let next_cursor = if next_page < self.pages.len() {
@@ -717,8 +707,8 @@ mod tests {
 
     #[sinex_test]
     async fn retry_succeeds_after_transient_failure() -> xtask::sandbox::TestResult<()> {
-        let client = MockClient::new(vec![vec![serde_json::json!({"ok": true})]])
-            .with_transient_failures(2);
+        let client =
+            MockClient::new(vec![vec![serde_json::json!({"ok": true})]]).with_transient_failures(2);
         let adapter = ApiCursorAdapter::new(client).with_retry(RetryPolicy {
             max_attempts: 5,
             base_delay: Duration::ZERO, // no actual sleep in tests
@@ -756,7 +746,11 @@ mod tests {
             .expect("open() must succeed even when the first page fetch will fail");
 
         let items: Vec<_> = stream.collect().await;
-        assert_eq!(items.len(), 1, "expected exactly one error item in the stream");
+        assert_eq!(
+            items.len(),
+            1,
+            "expected exactly one error item in the stream"
+        );
         match &items[0] {
             Err(ParserError::Adapter(msg)) => {
                 assert!(
@@ -799,7 +793,11 @@ mod tests {
             } else {
                 None
             };
-            Ok(ApiFetchPage { records, next_cursor, etag: None })
+            Ok(ApiFetchPage {
+                records,
+                next_cursor,
+                etag: None,
+            })
         }
     }
 
@@ -808,7 +806,10 @@ mod tests {
         let fetch_count = Arc::new(AtomicU32::new(0));
         let client = TrackedMockClient {
             pages: vec![
-                vec![serde_json::json!({"page": 0, "i": 0}), serde_json::json!({"page": 0, "i": 1})],
+                vec![
+                    serde_json::json!({"page": 0, "i": 0}),
+                    serde_json::json!({"page": 0, "i": 1}),
+                ],
                 vec![serde_json::json!({"page": 1, "i": 0})],
             ],
             fetch_count: Arc::clone(&fetch_count),
@@ -856,7 +857,11 @@ mod tests {
             stream.next().await.is_none(),
             "stream should be exhausted after all records"
         );
-        assert_eq!(fetch_count.load(Ordering::SeqCst), 2, "total pages fetched should be 2");
+        assert_eq!(
+            fetch_count.load(Ordering::SeqCst),
+            2,
+            "total pages fetched should be 2"
+        );
         Ok(())
     }
 
@@ -889,7 +894,10 @@ mod tests {
         assert!(
             matches!(
                 r00.anchor,
-                MaterialAnchor::StreamFrame { material_offset: 0, frame_index: 0 }
+                MaterialAnchor::StreamFrame {
+                    material_offset: 0,
+                    frame_index: 0
+                }
             ),
             "unexpected anchor: {:?}",
             r00.anchor
@@ -900,7 +908,10 @@ mod tests {
         assert!(
             matches!(
                 r01.anchor,
-                MaterialAnchor::StreamFrame { material_offset: 0, frame_index: 1 }
+                MaterialAnchor::StreamFrame {
+                    material_offset: 0,
+                    frame_index: 1
+                }
             ),
             "unexpected anchor: {:?}",
             r01.anchor
@@ -911,7 +922,10 @@ mod tests {
         assert!(
             matches!(
                 r10.anchor,
-                MaterialAnchor::StreamFrame { material_offset: 1, frame_index: 0 }
+                MaterialAnchor::StreamFrame {
+                    material_offset: 1,
+                    frame_index: 0
+                }
             ),
             "unexpected anchor: {:?}",
             r10.anchor
@@ -937,7 +951,11 @@ mod tests {
             .unwrap();
         let records: Vec<_> = stream.collect().await;
 
-        assert_eq!(records.len(), 1, "should start from page 1 and get 1 record");
+        assert_eq!(
+            records.len(),
+            1,
+            "should start from page 1 and get 1 record"
+        );
         let val: serde_json::Value =
             serde_json::from_slice(&records[0].as_ref().unwrap().bytes).unwrap();
         assert_eq!(val["p"], 1);
@@ -1027,7 +1045,10 @@ mod tests {
         // First record should have no etag (mid-page).
         let first = records[0].as_ref().unwrap();
         let cursor_first = adapter.cursor_after(first).unwrap();
-        assert!(cursor_first.last_etag.is_none(), "mid-page record should have no etag");
+        assert!(
+            cursor_first.last_etag.is_none(),
+            "mid-page record should have no etag"
+        );
 
         // Last record carries the page's etag.
         let last = records.last().unwrap().as_ref().unwrap();

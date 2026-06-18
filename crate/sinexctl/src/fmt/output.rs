@@ -44,7 +44,9 @@ pub fn format_single<T: Serialize>(
 ) -> Result<()> {
     match format {
         OutputFormat::Table => println!("{}", table_formatter(item)),
-        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => println!("{}", format_json(item)?),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
+            println!("{}", format_json(item)?)
+        }
         OutputFormat::Yaml => println!("{}", format_yaml(item)?),
     }
     Ok(())

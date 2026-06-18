@@ -386,7 +386,9 @@ mod tests {
         let schema_id = Uuid::now_v7();
         validator.register_test_schema(schema_id, "test", "event", &simple_schema())?;
 
-        let id = validator.validate("test", "event", &json!({ "n": 1 })).await?;
+        let id = validator
+            .validate("test", "event", &json!({ "n": 1 }))
+            .await?;
         assert_eq!(id, schema_id);
 
         let err = validator

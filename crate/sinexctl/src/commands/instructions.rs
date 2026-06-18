@@ -90,7 +90,9 @@ fn render_hyprland_workspace_switch(
     format: OutputFormat,
 ) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => println!("{}", format_json(response)?),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
+            println!("{}", format_json(response)?)
+        }
         OutputFormat::Yaml => println!("{}", format_yaml(response)?),
         OutputFormat::Table => {
             let instruction_event_id = response

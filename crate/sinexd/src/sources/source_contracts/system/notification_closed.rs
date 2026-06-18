@@ -5,13 +5,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
     SourceId, SourceRecord, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
+use sinex_primitives::source_contracts::{
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape,
+};
 use sinex_primitives::temporal::Timestamp;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -83,29 +86,31 @@ impl MaterialParser for NotificationClosedParser {
         // No in-process correlation with notification.sent is available here;
         // cross-event linkage is a downstream analysis concern.
 
-        Ok(vec![ParsedEventIntent::builder()
-            .source_id(SourceId::from_static("desktop.notification.closed"))
-            .parser_id(ParserId::from_static("desktop-notification-closed"))
-            .parser_version("1.0.0")
-            .event_source(EventSource::from_static("dbus"))
-            .event_type(EventType::from_static("notification.closed"))
-            .payload(serde_json::json!({
-                "notification_id": notification_id,
-                "reason": reason,
-                "reason_label": label,
-                "timestamp": ts_orig,
-            }))
-            .ts_orig(ts_orig)
-            .timing(TimingEvidence::Intrinsic {
-                field: "timestamp".into(),
-                confidence: TimingConfidence::Intrinsic,
-            })
-            .anchor(MaterialAnchor::ByteRange { start: 0, len: 1 })
-            .occurrence_key(OccurrenceKey {
-                source_id: SourceId::from_static("desktop.notification.closed"),
-                fields: vec![("notification_id".into(), notification_id.to_string())],
-            })
-            .privacy_context(ProcessingContext::Notification)
-            .build()])
+        Ok(vec![
+            ParsedEventIntent::builder()
+                .source_id(SourceId::from_static("desktop.notification.closed"))
+                .parser_id(ParserId::from_static("desktop-notification-closed"))
+                .parser_version("1.0.0")
+                .event_source(EventSource::from_static("dbus"))
+                .event_type(EventType::from_static("notification.closed"))
+                .payload(serde_json::json!({
+                    "notification_id": notification_id,
+                    "reason": reason,
+                    "reason_label": label,
+                    "timestamp": ts_orig,
+                }))
+                .ts_orig(ts_orig)
+                .timing(TimingEvidence::Intrinsic {
+                    field: "timestamp".into(),
+                    confidence: TimingConfidence::Intrinsic,
+                })
+                .anchor(MaterialAnchor::ByteRange { start: 0, len: 1 })
+                .occurrence_key(OccurrenceKey {
+                    source_id: SourceId::from_static("desktop.notification.closed"),
+                    fields: vec![("notification_id".into(), notification_id.to_string())],
+                })
+                .privacy_context(ProcessingContext::Notification)
+                .build(),
+        ])
     }
 }

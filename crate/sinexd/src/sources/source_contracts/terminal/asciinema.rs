@@ -15,7 +15,10 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sinex_macros::SourceMeta;
-use sinex_primitives::source_contracts::{AccessScope, ResourceProfile, RunnerPack, PrivacyTier, CheckpointFamily, RuntimeShape, RetentionPolicy, OccurrenceIdentity, Horizon};
+use sinex_primitives::source_contracts::{
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape,
+};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_primitives::domain::{EventSource, EventType};
@@ -246,10 +249,7 @@ fn parse_events_jsonl(
             }
         };
 
-        let record_type = event
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let record_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
         // Only emit events for prompt records; skip session_start, recorder, etc.
         if record_type != "prompt" {

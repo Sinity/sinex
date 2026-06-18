@@ -63,11 +63,15 @@ async fn rate_limit_rejects_requests_over_limit(ctx: TestContext) -> TestResult<
 
     // Exhaust the limit
     for _ in 0..5 {
-        limiter.check_and_increment("token-exhaust", Role::ReadOnly).await;
+        limiter
+            .check_and_increment("token-exhaust", Role::ReadOnly)
+            .await;
     }
 
     // Next request must be rejected
-    let allowed = limiter.check_and_increment("token-exhaust", Role::ReadOnly).await;
+    let allowed = limiter
+        .check_and_increment("token-exhaust", Role::ReadOnly)
+        .await;
     assert!(!allowed, "Request over the limit must be rejected");
 
     Ok(())
@@ -109,10 +113,7 @@ async fn rate_limit_kv_uses_hashed_token_keys(ctx: TestContext) -> TestResult<()
     let nats = ctx.nats_handle()?;
     let js = nats.jetstream().await?;
     let kv = js.get_key_value("sinex_api_rate_limits").await?;
-    let hashed_key = format!(
-        "token.{}.readonly",
-        blake3::hash(token.as_bytes()).to_hex()
-    );
+    let hashed_key = format!("token.{}.readonly", blake3::hash(token.as_bytes()).to_hex());
     let raw_key = format!("token.{token}");
 
     assert!(
@@ -143,7 +144,9 @@ async fn disabled_limiter_always_allows(ctx: TestContext) -> TestResult<()> {
 
     // Even with limit=1, disabled should allow everything
     for _ in 0..50 {
-        let allowed = limiter.check_and_increment("any-token", Role::ReadOnly).await;
+        let allowed = limiter
+            .check_and_increment("any-token", Role::ReadOnly)
+            .await;
         assert!(allowed, "Disabled limiter must always allow requests");
     }
 
@@ -179,7 +182,9 @@ async fn fail_closed_on_nats_kv_unavailable(ctx: TestContext) -> TestResult<()> 
     let (ctx, limiter) = start_limiter(ctx, config_with_limit(1000)).await?;
 
     // Verify it works while NATS is alive
-    let allowed = limiter.check_and_increment("fail-closed-token", Role::ReadOnly).await;
+    let allowed = limiter
+        .check_and_increment("fail-closed-token", Role::ReadOnly)
+        .await;
     assert!(allowed, "Should allow while NATS is up");
 
     // Kill NATS server
@@ -193,7 +198,10 @@ async fn fail_closed_on_nats_kv_unavailable(ctx: TestContext) -> TestResult<()> 
     let mut first_fail_closed_elapsed = None;
     for _ in 0..100 {
         let started = Instant::now();
-        if !limiter.check_and_increment("fail-closed-token", Role::ReadOnly).await {
+        if !limiter
+            .check_and_increment("fail-closed-token", Role::ReadOnly)
+            .await
+        {
             first_fail_closed_elapsed = Some(started.elapsed());
             break;
         }
@@ -209,7 +217,9 @@ async fn fail_closed_on_nats_kv_unavailable(ctx: TestContext) -> TestResult<()> 
 
     // Once local bucket is drained, next request MUST be rejected (fail closed)
     let same_token_started = Instant::now();
-    let result = limiter.check_and_increment("fail-closed-token", Role::ReadOnly).await;
+    let result = limiter
+        .check_and_increment("fail-closed-token", Role::ReadOnly)
+        .await;
     let same_token_elapsed = same_token_started.elapsed();
     assert!(
         !result,
@@ -223,7 +233,9 @@ async fn fail_closed_on_nats_kv_unavailable(ctx: TestContext) -> TestResult<()> 
 
     // A different token with no local bucket should also be rejected immediately
     let new_token_started = Instant::now();
-    let result_new_token = limiter.check_and_increment("brand-new-token", Role::ReadOnly).await;
+    let result_new_token = limiter
+        .check_and_increment("brand-new-token", Role::ReadOnly)
+        .await;
     let new_token_elapsed = new_token_started.elapsed();
     assert!(
         !result_new_token,
@@ -291,7 +303,9 @@ async fn rate_limit_same_token_first_request_race_respects_limit(
         let barrier = barrier.clone();
         handles.push(tokio::spawn(async move {
             barrier.wait().await;
-            limiter.check_and_increment("same-token-race", Role::ReadOnly).await
+            limiter
+                .check_and_increment("same-token-race", Role::ReadOnly)
+                .await
         }));
     }
 

@@ -28,8 +28,14 @@ async fn snapshot_structured_completion_shape() -> TestResult<()> {
         .expect("Failed to run structured completion endpoint");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("\"candidates\""), "Should return candidates");
-    assert!(stdout.contains("source:wm.hyprland"), "Should complete sources");
+    assert!(
+        stdout.contains("\"candidates\""),
+        "Should return candidates"
+    );
+    assert!(
+        stdout.contains("source:wm.hyprland"),
+        "Should complete sources"
+    );
     Ok(())
 }
 

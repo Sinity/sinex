@@ -831,9 +831,7 @@ mod tests {
         (emitter, sink)
     }
 
-    fn emitter_with_sink_and_summary_every(
-        n: u64,
-    ) -> (HeartbeatEmitter, Arc<RecordingSink>) {
+    fn emitter_with_sink_and_summary_every(n: u64) -> (HeartbeatEmitter, Arc<RecordingSink>) {
         let sink = Arc::new(RecordingSink::default());
         let emitter = HeartbeatEmitter::new(
             ServiceName::new("heartbeat-test"),
@@ -941,8 +939,14 @@ mod tests {
         let fields = &summary["fields"];
         assert!(fields["service_name"].is_string(), "service_name present");
         assert!(fields["status"].is_string(), "status present");
-        assert!(fields["uptime_seconds"].is_number(), "uptime_seconds present");
-        assert!(fields["events_processed"].is_number(), "events_processed present");
+        assert!(
+            fields["uptime_seconds"].is_number(),
+            "uptime_seconds present"
+        );
+        assert!(
+            fields["events_processed"].is_number(),
+            "events_processed present"
+        );
         // No full-metadata fields in summary.
         assert!(fields["version"].is_null(), "version absent from summary");
         assert!(fields["git_hash"].is_null(), "git_hash absent from summary");

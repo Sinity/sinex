@@ -30,23 +30,15 @@ mod weechat;
 pub use adapter_source::{AdapterBackedSource, AdapterModuleState, AdapterSourceConfig};
 
 pub use adapters::{
+    // Adapter JSON Schema export (#1238).
+    AdapterSchema,
     // ApiCursor adapter (#1746).
     ApiClient,
-    ApiFetchError,
-    ApiFetchPage,
     ApiCursorAdapter,
     ApiCursorConfig,
     ApiCursorPosition,
-    RetryPolicy,
-    // IncrementalDump adapter (#1774).
-    DumpLoader,
-    IncrementalDumpAdapter,
-    IncrementalDumpConfig,
-    IncrementalDumpCursor,
-    IncrementalDumpError,
-    IncrementalDumpPosition,
-    // Adapter JSON Schema export (#1238).
-    AdapterSchema,
+    ApiFetchError,
+    ApiFetchPage,
     // Existing adapters.
     AppendOnlyCursor,
     AppendOnlyFileAdapter,
@@ -75,6 +67,8 @@ pub use adapters::{
     DirectoryWalkAdapter,
     DirectoryWalkConfig,
     DirectoryWalkCursor,
+    // IncrementalDump adapter (#1774).
+    DumpLoader,
     FileContentDropAdapter,
     FileContentDropConfig,
     FileDropAdapter,
@@ -88,6 +82,11 @@ pub use adapters::{
     FileDropWatchPlan,
     FileDropWatchSurvey,
     FileFingerprint,
+    IncrementalDumpAdapter,
+    IncrementalDumpConfig,
+    IncrementalDumpCursor,
+    IncrementalDumpError,
+    IncrementalDumpPosition,
     JOURNALCTL_BROADCAST_CAPACITY,
     JournalctlCursor,
     JournalctlStreamAdapter,
@@ -95,6 +94,7 @@ pub use adapters::{
     JournalctlSubscriber,
     MockClipboardBackend,
     MockDbusBackend,
+    RetryPolicy,
     SharedJournalctlStream,
     SqliteRowAdapter,
     SqliteRowConfig,

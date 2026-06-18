@@ -28,9 +28,8 @@ use tracing::{debug, error, info, warn};
 /// In production, callers in `event_engine` construct this by capturing
 /// `Arc<AdmissionService>` in a closure. In tests, use
 /// `EventTransport::new_noop_direct()` for a no-op variant that discards events.
-pub type DirectAdmissionFn = Arc<
-    dyn Fn(Vec<Event<JsonValue>>) -> BoxFuture<'static, RuntimeResult<()>> + Send + Sync,
->;
+pub type DirectAdmissionFn =
+    Arc<dyn Fn(Vec<Event<JsonValue>>) -> BoxFuture<'static, RuntimeResult<()>> + Send + Sync>;
 
 /// Event transport mechanism.
 #[derive(Clone)]
@@ -66,9 +65,9 @@ impl EventTransport {
     #[must_use]
     pub fn new_direct(
         f: impl Fn(Vec<Event<JsonValue>>) -> BoxFuture<'static, RuntimeResult<()>>
-            + Send
-            + Sync
-            + 'static,
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
         EventTransport::Direct(Arc::new(f))
     }
@@ -543,9 +542,7 @@ impl EventBatcher {
                 )
                 .await
             }
-            EventTransport::Direct(direct_fn) => {
-                Self::send_batch_direct(direct_fn, batch).await
-            }
+            EventTransport::Direct(direct_fn) => Self::send_batch_direct(direct_fn, batch).await,
         };
 
         if result.published > 0 {
@@ -707,7 +704,10 @@ impl EventBatcher {
         match direct_fn(to_deliver).await {
             Ok(()) => {
                 events.clear();
-                debug!(published = event_count, "Intent batch sent via Direct admission");
+                debug!(
+                    published = event_count,
+                    "Intent batch sent via Direct admission"
+                );
                 BatchPublishResult {
                     published: event_count,
                     failed: 0,
@@ -943,7 +943,10 @@ mod tests {
         // raw-event-to-intent switch in #1653 left this asserting `event_type`
         // at the envelope root, where it is always null.)
         let payload: JsonValue = serde_json::from_slice(&message.payload)?;
-        assert_eq!(payload["events"][0]["event_type"], "recovery_spool.recovered");
+        assert_eq!(
+            payload["events"][0]["event_type"],
+            "recovery_spool.recovered"
+        );
         assert!(
             tokio::fs::metadata(&recovery_spool_path).await.is_err(),
             "fully replayed recovery spool should be removed"
@@ -1055,7 +1058,11 @@ mod tests {
     #[sinex_test]
     async fn direct_transport_failure_routes_to_recovery_spool() -> TestResult<()> {
         let transport = EventTransport::new_direct(|_events| {
-            Box::pin(async { Err(sinex_primitives::SinexError::processing("admission rejected")) })
+            Box::pin(async {
+                Err(sinex_primitives::SinexError::processing(
+                    "admission rejected",
+                ))
+            })
         });
 
         let work_dir = tempdir()?;

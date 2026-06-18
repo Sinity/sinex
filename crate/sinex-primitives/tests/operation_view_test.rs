@@ -1,7 +1,7 @@
 use sinex_primitives::domain::{OperationKind, OperationStatus};
 use sinex_primitives::views::{
     OPERATION_JOB_LIST_SCHEMA_VERSION, OPERATION_VIEW_SCHEMA_VERSION, OperationJobListView,
-    OperationView, ViewEnvelope, VIEW_ENVELOPE_SCHEMA_VERSION,
+    OperationView, VIEW_ENVELOPE_SCHEMA_VERSION, ViewEnvelope,
 };
 use xtask::sandbox::prelude::*;
 
@@ -35,11 +35,26 @@ async fn operation_kind_known_variants_round_trip() -> TestResult<()> {
 #[sinex_test]
 async fn operation_kind_from_str_for_known() -> TestResult<()> {
     use std::str::FromStr;
-    assert_eq!(OperationKind::from_str("replay").unwrap(), OperationKind::Replay);
-    assert_eq!(OperationKind::from_str("archive").unwrap(), OperationKind::Archive);
-    assert_eq!(OperationKind::from_str("restore").unwrap(), OperationKind::Restore);
-    assert_eq!(OperationKind::from_str("purge").unwrap(), OperationKind::Purge);
-    assert_eq!(OperationKind::from_str("tombstone").unwrap(), OperationKind::Tombstone);
+    assert_eq!(
+        OperationKind::from_str("replay").unwrap(),
+        OperationKind::Replay
+    );
+    assert_eq!(
+        OperationKind::from_str("archive").unwrap(),
+        OperationKind::Archive
+    );
+    assert_eq!(
+        OperationKind::from_str("restore").unwrap(),
+        OperationKind::Restore
+    );
+    assert_eq!(
+        OperationKind::from_str("purge").unwrap(),
+        OperationKind::Purge
+    );
+    assert_eq!(
+        OperationKind::from_str("tombstone").unwrap(),
+        OperationKind::Tombstone
+    );
     Ok(())
 }
 
@@ -114,7 +129,10 @@ async fn operation_view_from_rpc_unknown_type() -> TestResult<()> {
 
     assert_eq!(view.kind, OperationKind::Other("maintenance".to_string()));
     assert_eq!(view.duration_ms, Some(1234));
-    assert_eq!(view.result_message.as_deref(), Some("completed successfully"));
+    assert_eq!(
+        view.result_message.as_deref(),
+        Some("completed successfully")
+    );
     Ok(())
 }
 
@@ -155,10 +173,22 @@ async fn operation_view_optional_fields_skip_serialization() -> TestResult<()> {
 
     let json = serde_json::to_value(&view)?;
     // Optional fields that are None should be absent from JSON
-    assert!(json.get("duration_ms").is_none(), "duration_ms should be absent when None");
-    assert!(json.get("result_message").is_none(), "result_message should be absent when None");
-    assert!(json.get("scope").is_none(), "scope should be absent when None");
-    assert!(json.get("preview_summary").is_none(), "preview_summary should be absent when None");
+    assert!(
+        json.get("duration_ms").is_none(),
+        "duration_ms should be absent when None"
+    );
+    assert!(
+        json.get("result_message").is_none(),
+        "result_message should be absent when None"
+    );
+    assert!(
+        json.get("scope").is_none(),
+        "scope should be absent when None"
+    );
+    assert!(
+        json.get("preview_summary").is_none(),
+        "preview_summary should be absent when None"
+    );
     Ok(())
 }
 
@@ -168,12 +198,24 @@ async fn operation_view_optional_fields_skip_serialization() -> TestResult<()> {
 async fn operation_job_list_view_new_sets_count() -> TestResult<()> {
     let views = vec![
         OperationView::from_rpc(
-            "id1".to_string(), "replay", "op".to_string(),
-            OperationStatus::Success, None, None, None, None,
+            "id1".to_string(),
+            "replay",
+            "op".to_string(),
+            OperationStatus::Success,
+            None,
+            None,
+            None,
+            None,
         ),
         OperationView::from_rpc(
-            "id2".to_string(), "archive", "op".to_string(),
-            OperationStatus::Running, None, None, None, None,
+            "id2".to_string(),
+            "archive",
+            "op".to_string(),
+            OperationStatus::Running,
+            None,
+            None,
+            None,
+            None,
         ),
     ];
 
@@ -216,22 +258,28 @@ async fn view_envelope_wraps_operation_job_list() -> TestResult<()> {
     let json = serde_json::to_string(&envelope)?;
     let back: ViewEnvelope<OperationJobListView> = serde_json::from_str(&json)?;
     assert_eq!(back.payload.count, 1);
-    assert_eq!(back.payload.schema_version, OPERATION_JOB_LIST_SCHEMA_VERSION);
+    assert_eq!(
+        back.payload.schema_version,
+        OPERATION_JOB_LIST_SCHEMA_VERSION
+    );
     Ok(())
 }
 
 #[sinex_test]
 async fn view_envelope_with_query_echo() -> TestResult<()> {
     let list = OperationJobListView::new(vec![]);
-    let envelope = ViewEnvelope::new("sinexctl.ops.jobs.list", list)
-        .with_query_echo(serde_json::json!({
+    let envelope =
+        ViewEnvelope::new("sinexctl.ops.jobs.list", list).with_query_echo(serde_json::json!({
             "kind": "replay",
             "status": null,
             "limit": 50,
         }));
 
     let json = serde_json::to_value(&envelope)?;
-    assert!(json.get("query_echo").is_some(), "query_echo should be present");
+    assert!(
+        json.get("query_echo").is_some(),
+        "query_echo should be present"
+    );
     assert_eq!(json["query_echo"]["kind"], "replay");
     assert_eq!(json["query_echo"]["limit"], 50);
     Ok(())

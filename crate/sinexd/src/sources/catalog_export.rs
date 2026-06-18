@@ -54,7 +54,10 @@ fn build_catalog() -> SourceCatalog<'static> {
     let entries = contracts
         .into_iter()
         .map(|contract| {
-            let binding = bindings.iter().copied().find(|b| b.source_id == contract.id);
+            let binding = bindings
+                .iter()
+                .copied()
+                .find(|b| b.source_id == contract.id);
             CatalogEntry {
                 contract,
                 binding,
@@ -80,8 +83,8 @@ pub fn render_catalog() -> serde_json::Result<String> {
 /// Returns `Ok(true)` when the on-disk artifact differs from the freshly
 /// rendered catalog (i.e. it was rewritten, or — under `check_only` — is stale).
 pub fn export_catalog(output: &Path, check_only: bool) -> std::io::Result<bool> {
-    let rendered = render_catalog()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let rendered =
+        render_catalog().map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     let current = std::fs::read_to_string(output).ok();
     let changed = current.as_deref() != Some(rendered.as_str());
 
