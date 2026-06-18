@@ -35,9 +35,9 @@ pub trait CargoRunner: Send + Sync {
         on_package_done: &mut dyn FnMut(usize),
     ) -> Result<DiagnosticSummary>;
 
-    /// Run `cargo fmt --all -- --check`.  Returns `Ok(())` on success,
+    /// Run `cargo fmt` with the given package/workspace args.  Returns `Ok(())` on success,
     /// `Err` on formatting violations or process failure.
-    fn run_fmt_check(&self) -> Result<()>;
+    fn run_fmt_check(&self, args: &[&str]) -> Result<()>;
 }
 
 // ─── Real implementation ───────────────────────────────────────────────────────
@@ -63,9 +63,11 @@ impl CargoRunner for RealCargoRunner {
         crate::cargo_diagnostics::run_cargo_clippy_streaming(args, on_package_done)
     }
 
-    fn run_fmt_check(&self) -> Result<()> {
+    fn run_fmt_check(&self, args: &[&str]) -> Result<()> {
         crate::process::ProcessBuilder::cargo()
-            .args(["fmt", "--all", "--", "--check"])
+            .arg("fmt")
+            .args(args)
+            .args(["--", "--check"])
             .with_description("cargo fmt --check")
             .inherit_output()
             .run_ok()
@@ -98,6 +100,7 @@ pub struct MockCallCounts {
     pub check: usize,
     pub clippy: usize,
     pub fmt: usize,
+    pub fmt_args: Vec<String>,
 }
 
 #[cfg(any(test, feature = "sandbox"))]
@@ -150,6 +153,7 @@ impl MockCargoRunner {
             check: guard.check,
             clippy: guard.clippy,
             fmt: guard.fmt,
+            fmt_args: guard.fmt_args.clone(),
         }
     }
 }
@@ -183,8 +187,11 @@ impl CargoRunner for MockCargoRunner {
         Ok(self.clippy_response.clone())
     }
 
-    fn run_fmt_check(&self) -> Result<()> {
-        self.calls.lock().fmt += 1;
+    fn run_fmt_check(&self, args: &[&str]) -> Result<()> {
+        let mut calls = self.calls.lock();
+        calls.fmt += 1;
+        calls.fmt_args = args.iter().map(|arg| (*arg).to_string()).collect();
+        drop(calls);
         if self.fmt_ok {
             Ok(())
         } else {
