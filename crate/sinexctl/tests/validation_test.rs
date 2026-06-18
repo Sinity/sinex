@@ -1984,7 +1984,10 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "status": "degraded",
                     "healthy": false,
                     "serving": true,
-                    "degradation_reasons": ["confirmation fan-out degraded"],
+                    "degradation_reasons": [
+                        "confirmation fan-out degraded",
+                        "raw-ingest DLQ pressure: 3 pending message(s), sequence span 3"
+                    ],
                     "components": {
                         "database": {
                             "status": "healthy",
@@ -1997,6 +2000,12 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "connected": true,
                             "latency_ms": 2.0,
                             "detail": null
+                        },
+                        "raw_ingest_dlq": {
+                            "status": "degraded",
+                            "connected": true,
+                            "latency_ms": null,
+                            "detail": "raw-ingest DLQ pressure: 3 pending message(s), sequence span 3"
                         },
                         "replay_control": {
                             "status": "healthy",

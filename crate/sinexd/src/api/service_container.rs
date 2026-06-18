@@ -45,6 +45,15 @@ pub struct SseConfirmationStatus {
     pub detail: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RawIngestDlqHealth {
+    pub status: GatewayHealthStatus,
+    pub connected: bool,
+    pub pending_messages: Option<u64>,
+    pub pending_sequence_span: Option<u64>,
+    pub detail: String,
+}
+
 /// Type alias — gateway uses the canonical `HealthStatus` domain enum.
 pub type GatewayHealthStatus = sinex_primitives::domain::HealthStatus;
 
@@ -345,6 +354,113 @@ impl ServiceContainer {
         }
     }
 
+    /// Inspect raw-ingest DLQ pressure through JetStream stream state.
+    pub async fn probe_raw_ingest_dlq_pressure(&self) -> RawIngestDlqHealth {
+        let Some(client) = self.nats_client.as_ref() else {
+            return RawIngestDlqHealth {
+                status: GatewayHealthStatus::Unknown,
+                connected: false,
+                pending_messages: None,
+                pending_sequence_span: None,
+                detail: "NATS client not configured; raw-ingest DLQ pressure unknown".to_string(),
+            };
+        };
+
+        if !matches!(
+            client.connection_state(),
+            async_nats::connection::State::Connected
+        ) {
+            return RawIngestDlqHealth {
+                status: GatewayHealthStatus::Unknown,
+                connected: false,
+                pending_messages: None,
+                pending_sequence_span: None,
+                detail: "NATS connection state is not connected; raw-ingest DLQ pressure unknown"
+                    .to_string(),
+            };
+        }
+
+        let js = async_nats::jetstream::new(client.clone());
+        let dlq_stream = self.env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
+        let mut stream = match tokio::time::timeout(
+            Duration::from_millis(500),
+            js.get_stream(&dlq_stream),
+        )
+        .await
+        {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(error)) => {
+                return RawIngestDlqHealth {
+                    status: GatewayHealthStatus::Unknown,
+                    connected: true,
+                    pending_messages: None,
+                    pending_sequence_span: None,
+                    detail: format!("raw-ingest DLQ stream {dlq_stream} unavailable: {error}"),
+                };
+            }
+            Err(_timeout) => {
+                return RawIngestDlqHealth {
+                    status: GatewayHealthStatus::Unknown,
+                    connected: true,
+                    pending_messages: None,
+                    pending_sequence_span: None,
+                    detail: "raw-ingest DLQ stream lookup timed out (>500ms)".to_string(),
+                };
+            }
+        };
+
+        let state = match tokio::time::timeout(Duration::from_millis(500), stream.info()).await {
+            Ok(Ok(info)) => info.state.clone(),
+            Ok(Err(error)) => {
+                return RawIngestDlqHealth {
+                    status: GatewayHealthStatus::Unknown,
+                    connected: true,
+                    pending_messages: None,
+                    pending_sequence_span: None,
+                    detail: format!("raw-ingest DLQ stream inspection failed: {error}"),
+                };
+            }
+            Err(_timeout) => {
+                return RawIngestDlqHealth {
+                    status: GatewayHealthStatus::Unknown,
+                    connected: true,
+                    pending_messages: None,
+                    pending_sequence_span: None,
+                    detail: "raw-ingest DLQ stream inspection timed out (>500ms)".to_string(),
+                };
+            }
+        };
+
+        let pending_sequence_span = if state.messages == 0
+            || state.first_sequence == 0
+            || state.last_sequence < state.first_sequence
+        {
+            0
+        } else {
+            state.last_sequence - state.first_sequence + 1
+        };
+        if state.messages == 0 {
+            RawIngestDlqHealth {
+                status: GatewayHealthStatus::Healthy,
+                connected: true,
+                pending_messages: Some(0),
+                pending_sequence_span: Some(0),
+                detail: "raw-ingest DLQ empty".to_string(),
+            }
+        } else {
+            RawIngestDlqHealth {
+                status: GatewayHealthStatus::Degraded,
+                connected: true,
+                pending_messages: Some(state.messages),
+                pending_sequence_span: Some(pending_sequence_span),
+                detail: format!(
+                    "raw-ingest DLQ pressure: {} pending message(s), sequence span {}",
+                    state.messages, pending_sequence_span
+                ),
+            }
+        }
+    }
+
     /// Produce a unified health report for the gateway.
     ///
     /// Covers:
@@ -379,6 +495,7 @@ impl ServiceContainer {
         };
 
         let nats = self.probe_nats_active().await;
+        let raw_ingest_dlq = self.probe_raw_ingest_dlq_pressure().await;
         let replay = self.replay_control_status();
         let sse_confirmation = self.sse_confirmation_status();
         let mut degradation_reasons = Vec::new();
@@ -396,13 +513,20 @@ impl ServiceContainer {
                 "replay control unavailable".to_string()
             });
         }
+        if raw_ingest_dlq.status == GatewayHealthStatus::Degraded {
+            degradation_reasons.push(raw_ingest_dlq.detail.clone());
+        }
         if !sse_confirmation.running {
             degradation_reasons.push("SSE confirmation bus not running".to_string());
         } else if sse_confirmation.degraded {
             degradation_reasons.push("SSE confirmation fan-out degraded".to_string());
         }
 
-        let healthy = db_ok && nats.connected && replay.connected && !sse_confirmation.degraded;
+        let healthy = db_ok
+            && nats.connected
+            && raw_ingest_dlq.status != GatewayHealthStatus::Degraded
+            && replay.connected
+            && !sse_confirmation.degraded;
         // Gateway is ready to serve end-to-end RPC traffic only when both
         // the database (query/write path) and NATS (event publishing path)
         // are reachable. Replay control is coordination-only and does not
@@ -421,6 +545,7 @@ impl ServiceContainer {
             db_latency_ms,
             db_detail,
             nats,
+            raw_ingest_dlq,
             replay,
             sse_confirmation,
             healthy,
@@ -454,6 +579,8 @@ pub struct GatewayHealthReport {
     pub db_detail: String,
     /// NATS active probe result
     pub nats: NatsHealthProbe,
+    /// Raw-ingest DLQ pressure state.
+    pub raw_ingest_dlq: RawIngestDlqHealth,
     /// Replay control bus status
     pub replay: ReplayControlStatus,
     /// SSE confirmation fan-out status

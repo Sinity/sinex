@@ -162,6 +162,12 @@ impl MockGatewayClient {
                         latency_ms: None,
                         detail: None,
                     },
+                    raw_ingest_dlq: ComponentHealthReport {
+                        status: HealthStatus::Healthy,
+                        connected: true,
+                        latency_ms: None,
+                        detail: Some("raw-ingest DLQ empty".to_string()),
+                    },
                     replay_control: ReplayControlHealth {
                         status: HealthStatus::Healthy,
                         enabled: true,
