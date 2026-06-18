@@ -128,8 +128,14 @@ pub struct EventIntent {
     #[serde(default = "default_envelope_version")]
     pub envelope_version: String,
 
-    /// Source identifier (e.g., "fs-watcher", "terminal-source").
-    /// Must match a registered `SourceContract::source_id`.
+    /// Source package / producer binding identifier (e.g., "fs-watcher",
+    /// "terminal-source").
+    ///
+    /// This is transport and parser provenance for the producer that emitted
+    /// the intent. It is not the semantic event contract coordinate. When a
+    /// registered source contract exists, this should reference
+    /// `SourceContract::id`; admission policy should still use explicit event
+    /// contract ids for semantic authority.
     pub source_id: String,
 
     /// Parser that interpreted the source material (e.g., "inotify-watcher",
