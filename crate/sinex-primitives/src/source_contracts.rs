@@ -6,6 +6,7 @@
 
 use std::marker::PhantomData;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::privacy::ProcessingContext;
@@ -475,7 +476,7 @@ pub enum RetentionPolicy {
 /// Adjacently tagged (`content = "key"`) so the `Uuid5From` newtype variant
 /// serializes — internal tagging cannot serialize a newtype variant holding a
 /// primitive. The catalog export (#1727) is the first JSON consumer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(tag = "kind", content = "key", rename_all = "snake_case")]
 pub enum OccurrenceIdentity {
     Uuid5From(&'static str),
