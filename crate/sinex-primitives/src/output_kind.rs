@@ -137,6 +137,12 @@ pub const OUTPUT_KIND_DECLARATIONS: &[OutputKindDeclaration] = &[
         rationale: "rebuildable focus-session state computed from admitted desktop/browser/terminal observations",
     },
     OutputKindDeclaration {
+        output_id: "desktop.project_context",
+        kind: OutputKind::ProjectionRow,
+        owner: "sinex desktop context derivations",
+        rationale: "rebuildable project-context candidates computed from admitted desktop/browser/terminal observations",
+    },
+    OutputKindDeclaration {
         output_id: "desktop.notification_pressure",
         kind: OutputKind::ProjectionRow,
         owner: "sinex desktop context derivations",

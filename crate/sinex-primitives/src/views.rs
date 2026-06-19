@@ -21,6 +21,8 @@ pub const DESKTOP_CONTEXT_VIEW_SCHEMA_VERSION: &str = "sinex.desktop-context-vie
 pub const DESKTOP_FOCUS_SESSION_LIST_SCHEMA_VERSION: &str = "sinex.desktop-focus-session-list/v1";
 pub const DESKTOP_NOTIFICATION_PRESSURE_SCHEMA_VERSION: &str =
     "sinex.desktop-notification-pressure/v1";
+pub const DESKTOP_PROJECT_CONTEXT_LIST_SCHEMA_VERSION: &str =
+    "sinex.desktop-project-context-list/v1";
 pub const EVENT_CARD_LIST_SCHEMA_VERSION: &str = "sinex.event-card-list/v3";
 pub const EVENT_ERROR_LIST_SCHEMA_VERSION: &str = "sinex.event-error-list/v1";
 pub const EVENT_QUERY_LIST_SCHEMA_VERSION: &str = "sinex.event-query-list/v1";
@@ -224,6 +226,74 @@ impl DesktopNotificationPressureView {
                 )
                 .with_command_hint(
                     "sinexctl events context --desktop --notification-pressure --format json",
+                ),
+            ],
+        }
+    }
+
+    #[must_use]
+    pub fn into_envelope(self, source_surface: impl Into<String>) -> ViewEnvelope<Self> {
+        let mut envelope = ViewEnvelope::new(source_surface, self);
+        envelope.caveats = envelope.payload.caveats.clone();
+        envelope.actions = envelope.payload.actions.clone();
+        envelope
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DesktopProjectContextRowView {
+    pub label: String,
+    pub confidence: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_session_ref: Option<SinexObjectRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_families: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_refs: Vec<SinexObjectRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_ref: Option<SinexObjectRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<CaveatView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DesktopProjectContextListView {
+    pub schema_version: String,
+    pub output_kind: DesktopContextOutputKind,
+    pub derivation_ref: String,
+    pub output_id: String,
+    pub generated_at: Timestamp,
+    pub since: String,
+    pub row_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rows: Vec<DesktopProjectContextRowView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<CaveatView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<ActionAvailability>,
+}
+
+impl DesktopProjectContextListView {
+    #[must_use]
+    pub fn new(derivation_ref: impl Into<String>, since: impl Into<String>) -> Self {
+        Self {
+            schema_version: DESKTOP_PROJECT_CONTEXT_LIST_SCHEMA_VERSION.to_string(),
+            output_kind: DesktopContextOutputKind::ProjectContextProjection,
+            derivation_ref: derivation_ref.into(),
+            output_id: "desktop.project_context".to_string(),
+            generated_at: Timestamp::now(),
+            since: since.into(),
+            row_count: 0,
+            rows: Vec::new(),
+            caveats: Vec::new(),
+            actions: vec![
+                ActionAvailability::read(
+                    "desktop.project_context.explain",
+                    "Explain",
+                    ActionAvailabilityState::Enabled,
+                )
+                .with_command_hint(
+                    "sinexctl events context --desktop --project-contexts --format json",
                 ),
             ],
         }
@@ -2653,12 +2723,71 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn desktop_project_context_list_carries_projection_contract() -> xtask::TestResult<()> {
+        let terminal_ref = SinexObjectRef::new(SinexObjectKind::Event, "event:terminal-cwd")
+            .with_label("shell.atuin · command.executed");
+        let browser_ref = SinexObjectRef::new(SinexObjectKind::Event, "event:browser-tab")
+            .with_label("activitywatch · browser.tab.active");
+        let mut view =
+            DesktopProjectContextListView::new(crate::DESKTOP_PROJECT_CONTEXT_DERIVATION_ID, "2h");
+        view.rows.push(DesktopProjectContextRowView {
+            label: "sinex".to_string(),
+            confidence: 0.74,
+            focus_session_ref: Some(SinexObjectRef::new(
+                SinexObjectKind::Projection,
+                "desktop.focus_session:event:terminal-cwd..event:browser-tab",
+            )),
+            input_families: vec!["browser".to_string(), "terminal".to_string()],
+            evidence_refs: vec![terminal_ref.clone(), browser_ref.clone()],
+            proposal_ref: None,
+            caveats: vec![CaveatView {
+                id: "project_context.ranked_view_only".to_string(),
+                message: "fixture project context is a ranked projection candidate".to_string(),
+                ref_: Some(SinexObjectRef::new(
+                    SinexObjectKind::Projection,
+                    "desktop.project_context",
+                )),
+            }],
+        });
+        view.row_count = view.rows.len();
+
+        let envelope = view
+            .into_envelope("sinexctl.events.context.desktop.project_contexts")
+            .with_query_echo(json!({ "mode": "desktop_project_contexts" }));
+        let value = serde_json::to_value(&envelope)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(
+            value["payload"]["schema_version"],
+            DESKTOP_PROJECT_CONTEXT_LIST_SCHEMA_VERSION
+        );
+        assert_eq!(
+            value["payload"]["derivation_ref"],
+            crate::DESKTOP_PROJECT_CONTEXT_DERIVATION_ID
+        );
+        assert_eq!(
+            value["payload"]["output_kind"],
+            "project_context_projection"
+        );
+        assert_eq!(value["payload"]["output_id"], "desktop.project_context");
+        assert_eq!(value["payload"]["rows"][0]["label"], "sinex");
+        assert_eq!(
+            value["payload"]["rows"][0]["evidence_refs"][0]["id"],
+            terminal_ref.id
+        );
+        assert_eq!(value["actions"][0]["id"], "desktop.project_context.explain");
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn desktop_context_derivations_are_not_canonical_events() -> xtask::TestResult<()> {
         let current =
             crate::find_derivation_spec(crate::DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID)
                 .expect("desktop current-view derivation is registered");
         let focus = crate::find_derivation_spec(crate::DESKTOP_FOCUS_SESSION_DERIVATION_ID)
             .expect("desktop focus-session derivation is registered");
+        let project = crate::find_derivation_spec(crate::DESKTOP_PROJECT_CONTEXT_DERIVATION_ID)
+            .expect("desktop project-context derivation is registered");
         let notification =
             crate::find_derivation_spec(crate::DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID)
                 .expect("desktop notification-pressure derivation is registered");
@@ -2666,11 +2795,14 @@ mod tests {
         assert_eq!(current.output_id, "desktop.context.current_view");
         assert_eq!(current.output_kind, crate::OutputKind::EphemeralView);
         assert_eq!(focus.output_kind, crate::OutputKind::ProjectionRow);
+        assert_eq!(project.output_kind, crate::OutputKind::ProjectionRow);
         assert_eq!(notification.output_kind, crate::OutputKind::ProjectionRow);
         assert!(focus.invalidates_on(crate::InvalidationTrigger::Redaction));
+        assert!(project.invalidates_on(crate::InvalidationTrigger::Replay));
         assert!(current.invalidates_on(crate::InvalidationTrigger::DisclosurePolicyChange));
         assert!(!current.output_kind.is_canonical_event());
         assert!(!focus.output_kind.is_canonical_event());
+        assert!(!project.output_kind.is_canonical_event());
 
         assert_eq!(
             crate::declared_output_kind("desktop.context.current_view"),
@@ -2678,6 +2810,10 @@ mod tests {
         );
         assert_eq!(
             crate::declared_output_kind("desktop.focus_session"),
+            Some(crate::OutputKind::ProjectionRow)
+        );
+        assert_eq!(
+            crate::declared_output_kind("desktop.project_context"),
             Some(crate::OutputKind::ProjectionRow)
         );
         assert_eq!(
@@ -2740,6 +2876,9 @@ mod tests {
             serde_json::to_value(schemars::schema_for!(ViewEnvelope<ContextSummaryView>))?;
         let desktop_context_envelope_schema =
             serde_json::to_value(schemars::schema_for!(ViewEnvelope<DesktopContextView>))?;
+        let desktop_project_context_envelope_schema = serde_json::to_value(schemars::schema_for!(
+            ViewEnvelope<DesktopProjectContextListView>
+        ))?;
         let envelope_schema =
             serde_json::to_value(schemars::schema_for!(ViewEnvelope<EventCardListView>))?;
         let debt_envelope_schema =
@@ -2765,6 +2904,12 @@ mod tests {
                 .get("payload")
                 .is_some(),
             "desktop-context envelope schema should include the typed view payload"
+        );
+        assert!(
+            desktop_project_context_envelope_schema["properties"]
+                .get("payload")
+                .is_some(),
+            "desktop project-context envelope schema should include the typed list payload"
         );
         assert!(envelope_schema["properties"].get("payload").is_some());
         assert!(debt_envelope_schema["properties"].get("payload").is_some());
