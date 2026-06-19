@@ -1,5 +1,6 @@
 //! Operator-facing source status handler.
 
+use crate::api::service_container::{ConfirmationBufferHealth, ServiceContainer};
 use sinex_db::DbPoolExt;
 use sinex_primitives::SinexError;
 use sinex_primitives::rpc::source_status::{
@@ -86,9 +87,11 @@ pub async fn handle_sources_status(
 }
 
 pub async fn handle_sources_status_view(
-    pool: &PgPool,
+    services: &ServiceContainer,
     _request: SourcesStatusViewRequest,
 ) -> Result<ViewEnvelope<SourceCoverageListView>> {
+    let pool = services.pool();
+    let confirmation_buffer = services.probe_confirmation_buffer_pressure().await;
     let event_rows = sqlx::query_as!(
         SourceEventAggregateRow,
         r#"
@@ -149,6 +152,7 @@ pub async fn handle_sources_status_view(
             &source_bindings,
             &event_aggregates,
             &material_aggregates,
+            &confirmation_buffer,
         ));
     }
 
@@ -163,6 +167,7 @@ fn source_coverage_view(
     bindings: &[&SourceRuntimeBinding],
     event_aggregates: &HashMap<(String, String), SourceEventAggregateRow>,
     material_aggregates: &HashMap<String, SourceMaterialAggregateRow>,
+    confirmation_buffer: &ConfirmationBufferHealth,
 ) -> SourceCoverageView {
     let mut event_count = 0i64;
     let mut last_event_at = None;
@@ -212,6 +217,18 @@ fn source_coverage_view(
             kind: "missing_events".to_string(),
             message: "no live events match the contract's declared source/event_type pairs"
                 .to_string(),
+        });
+    }
+    let pressure = source_confirmation_pressure(contract, confirmation_buffer);
+    if let Some(pressure) = &pressure {
+        caveats.push(CaveatView {
+            id: "source.pressure.confirmation_buffer.retained_payload".to_string(),
+            message: format!(
+                "confirmation buffer retains approximately {} byte(s) across {} declared event kind(s) for this source",
+                pressure.total_bytes,
+                pressure.event_kind_count
+            ),
+            ref_: None,
         });
     }
 
@@ -264,8 +281,42 @@ fn source_coverage_view(
             proposed: live_binding_count == 0 && proposed_binding_count > 0,
         },
         resource_budget,
-        actions: source_actions(contract.id),
+        actions: source_actions(contract.id, pressure.is_some()),
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SourceConfirmationPressure {
+    total_bytes: usize,
+    event_kind_count: usize,
+}
+
+fn source_confirmation_pressure(
+    contract: &SourceContract,
+    confirmation_buffer: &ConfirmationBufferHealth,
+) -> Option<SourceConfirmationPressure> {
+    let mut total_bytes = 0usize;
+    let mut event_kind_count = 0usize;
+    for (source, event_type) in contract.event_types {
+        let key = format!("{source}:{event_type}");
+        let Some(bytes) = confirmation_buffer
+            .approximate_payload_bytes_by_kind
+            .get(&key)
+            .copied()
+        else {
+            continue;
+        };
+        if bytes == 0 {
+            continue;
+        }
+        total_bytes = total_bytes.saturating_add(bytes);
+        event_kind_count += 1;
+    }
+
+    (total_bytes > 0).then_some(SourceConfirmationPressure {
+        total_bytes,
+        event_kind_count,
+    })
 }
 
 fn source_resource_budget_view(binding: &SourceRuntimeBinding) -> SourceResourceBudgetView {
@@ -339,8 +390,8 @@ fn max_timestamp(
     }
 }
 
-fn source_actions(source_id: &str) -> Vec<ActionAvailability> {
-    vec![
+fn source_actions(source_id: &str, has_pressure: bool) -> Vec<ActionAvailability> {
+    let mut actions = vec![
         ActionAvailability::read(
             "sources.readiness",
             "Readiness",
@@ -355,7 +406,19 @@ fn source_actions(source_id: &str) -> Vec<ActionAvailability> {
         )
         .with_command_hint("sinexctl sources coverage")
         .with_rpc_method("sources.coverage"),
-    ]
+    ];
+    if has_pressure {
+        actions.push(
+            ActionAvailability::read(
+                "runtime.health.inspect",
+                "Inspect runtime pressure",
+                ActionAvailabilityState::Enabled,
+            )
+            .with_command_hint("sinexctl runtime health")
+            .with_rpc_method("system.health"),
+        );
+    }
+    actions
 }
 
 #[cfg(test)]
@@ -363,11 +426,13 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+    use sinex_primitives::domain::HealthStatus;
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::source_contracts::{
         AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
         RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SubjectRef,
     };
+    use std::collections::BTreeMap;
     use xtask::sandbox::sinex_test;
 
     static CONTRACT: SourceContract = SourceContract {
@@ -422,7 +487,13 @@ mod tests {
             },
         );
 
-        let view = source_coverage_view(&CONTRACT, &[&BINDING], &events, &materials);
+        let view = source_coverage_view(
+            &CONTRACT,
+            &[&BINDING],
+            &events,
+            &materials,
+            &healthy_confirmation_buffer(),
+        );
 
         assert_eq!(view.readiness, SourceCoverageReadiness::Ready);
         assert_eq!(view.continuity, SourceCoverageContinuity::Active);
@@ -451,7 +522,13 @@ mod tests {
         let events = HashMap::new();
         let materials = HashMap::new();
 
-        let view = source_coverage_view(&CONTRACT, &[&BINDING], &events, &materials);
+        let view = source_coverage_view(
+            &CONTRACT,
+            &[&BINDING],
+            &events,
+            &materials,
+            &healthy_confirmation_buffer(),
+        );
 
         assert_eq!(view.readiness, SourceCoverageReadiness::MissingMaterial);
         assert_eq!(view.continuity, SourceCoverageContinuity::Gapped);
@@ -462,5 +539,91 @@ mod tests {
                 .any(|caveat| caveat.id == "source.material.match.v0_exact_id")
         );
         Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_coverage_view_surfaces_attributed_confirmation_pressure()
+    -> xtask::TestResult<()> {
+        let mut confirmation_buffer = healthy_confirmation_buffer();
+        confirmation_buffer.status = HealthStatus::Degraded;
+        confirmation_buffer.approximate_payload_bytes = 1536;
+        confirmation_buffer.approximate_payload_bytes_by_kind = BTreeMap::from([
+            ("fixture:fixture.event".to_string(), 1024),
+            ("other.source:other.event".to_string(), 512),
+        ]);
+
+        let view = source_coverage_view(
+            &CONTRACT,
+            &[&BINDING],
+            &HashMap::new(),
+            &HashMap::new(),
+            &confirmation_buffer,
+        );
+
+        let caveat = view
+            .caveats
+            .iter()
+            .find(|caveat| caveat.id == "source.pressure.confirmation_buffer.retained_payload")
+            .ok_or_else(|| color_eyre::eyre::eyre!("pressure caveat expected"))?;
+        assert!(
+            caveat.message.contains("1024 byte(s)"),
+            "source-local caveat should report only bytes attributed to the source contract"
+        );
+        assert!(
+            view.actions
+                .iter()
+                .any(|action| action.id == "runtime.health.inspect"),
+            "source-local pressure should expose the runtime health inspection action"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_coverage_view_does_not_localize_unattributed_pressure() -> xtask::TestResult<()>
+    {
+        let mut confirmation_buffer = healthy_confirmation_buffer();
+        confirmation_buffer.status = HealthStatus::Degraded;
+        confirmation_buffer.approximate_payload_bytes = 512;
+        confirmation_buffer.approximate_payload_bytes_by_kind =
+            BTreeMap::from([("other.source:other.event".to_string(), 512)]);
+
+        let view = source_coverage_view(
+            &CONTRACT,
+            &[&BINDING],
+            &HashMap::new(),
+            &HashMap::new(),
+            &confirmation_buffer,
+        );
+
+        assert!(
+            !view
+                .caveats
+                .iter()
+                .any(|caveat| caveat.id == "source.pressure.confirmation_buffer.retained_payload"),
+            "unattributed/global pressure must stay in runtime health instead of becoming source-local"
+        );
+        assert!(
+            !view
+                .actions
+                .iter()
+                .any(|action| action.id == "runtime.health.inspect"),
+            "global pressure without source ownership should not create source-local actions"
+        );
+        Ok(())
+    }
+
+    fn healthy_confirmation_buffer() -> ConfirmationBufferHealth {
+        ConfirmationBufferHealth {
+            status: HealthStatus::Healthy,
+            connected: true,
+            observed_buffers: 0,
+            pending_count: 0,
+            timed_out_retained_count: 0,
+            rejected_count: 0,
+            late_confirmation_count: 0,
+            approximate_payload_bytes: 0,
+            approximate_payload_bytes_by_kind: BTreeMap::new(),
+            detail: "confirmation buffers nominal".to_string(),
+        }
     }
 }

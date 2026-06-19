@@ -759,7 +759,7 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(RUNTIME_HEALTH_METHOD, boxed!(handle_runtime_health))
         .pool_typed_rpc(AUTOMATA_STATUS_METHOD, boxed!(handle_automata_status))
         .pool_typed_rpc(SOURCES_STATUS_METHOD, boxed!(handle_sources_status))
-        .pool_typed_rpc(
+        .service_typed_rpc(
             SOURCES_STATUS_VIEW_METHOD,
             boxed!(handle_sources_status_view),
         )
