@@ -76,6 +76,8 @@ struct ScopedEngine {
     event_type: Option<String>,
     /// Field paths covered by at least one rule in this scope (None = all fields).
     field_paths: Vec<Option<String>>,
+    /// Operator policy rules compiled into this scoped engine.
+    policy_refs: Vec<String>,
     /// The compiled engine for this scope.
     engine: PrivacyEngine,
 }
@@ -89,6 +91,7 @@ impl std::fmt::Debug for ScopedEngine {
             .field("event_source", &self.event_source)
             .field("event_type", &self.event_type)
             .field("field_paths", &self.field_paths)
+            .field("policy_refs", &self.policy_refs)
             .finish_non_exhaustive()
     }
 }
@@ -509,6 +512,7 @@ fn compile_rules(
     for ((event_source, event_type), rule_fps) in scope_map {
         let rules: Vec<PatternRule> = rule_fps.iter().map(|(r, _)| r.clone()).collect();
         let field_paths: Vec<Option<String>> = rule_fps.iter().map(|(_, fp)| fp.clone()).collect();
+        let policy_refs: Vec<String> = rules.iter().map(|rule| rule.name.clone()).collect();
 
         let mut config = PrivacyConfig::default();
         // Disable built-in catalog rules: the chokepoint only applies DB policy.
@@ -526,6 +530,7 @@ fn compile_rules(
             event_source,
             event_type,
             field_paths,
+            policy_refs,
             engine,
         });
     }
@@ -590,6 +595,15 @@ pub struct DisclosureDecision {
 
 impl DisclosureDecision {
     fn new(context: DisclosureContext, original: JsonValue, value: JsonValue) -> Self {
+        Self::new_with_policy_refs(context, original, value, Vec::new())
+    }
+
+    fn new_with_policy_refs(
+        context: DisclosureContext,
+        original: JsonValue,
+        value: JsonValue,
+        mut policy_refs: Vec<String>,
+    ) -> Self {
         let changed = value != original;
         if !changed {
             return Self {
@@ -607,6 +621,11 @@ impl DisclosureDecision {
             PrivacyStateKind::Redacted
         };
         let context_name = context.as_str();
+        policy_refs.sort();
+        policy_refs.dedup();
+        if policy_refs.is_empty() {
+            policy_refs.push("privacy.policy".to_string());
+        }
         Self {
             context,
             value,
@@ -617,13 +636,16 @@ impl DisclosureDecision {
                     "operator privacy policy applied for {context_name} disclosure"
                 )),
             },
-            caveats: vec![DisclosureCaveat {
-                code: "policy.disclosure_applied".to_string(),
-                message: format!(
-                    "operator privacy policy changed content for {context_name} disclosure; raw stored data was not silently removed"
-                ),
-                policy_ref: "privacy.policy".to_string(),
-            }],
+            caveats: policy_refs
+                .into_iter()
+                .map(|policy_ref| DisclosureCaveat {
+                    code: "policy.disclosure_applied".to_string(),
+                    message: format!(
+                        "operator privacy policy changed content for {context_name} disclosure; raw stored data was not silently removed"
+                    ),
+                    policy_ref,
+                })
+                .collect(),
         }
     }
 }
@@ -758,9 +780,10 @@ impl PolicyEngine {
             return DisclosureDecision::new(context, original.clone(), original);
         }
 
+        let policy_refs = event_disclosure_policy_refs(event, &rules);
         apply_policy_to_event(&mut disclosed, &rules);
         apply_external_policy_to_event(&self.http_client, &mut disclosed, &rules).await;
-        DisclosureDecision::new(context, original, disclosed.payload)
+        DisclosureDecision::new_with_policy_refs(context, original, disclosed.payload, policy_refs)
     }
 
     /// Apply operator disclosure policy to event-derived text such as query snippets.
@@ -785,12 +808,14 @@ impl PolicyEngine {
 
         let source = event.source.as_str();
         let event_type = event.event_type.as_str();
+        let mut policy_refs = Vec::new();
         for scope in &rules.scopes {
             let source_match = scope.event_source.as_deref().is_none_or(|s| s == source);
             let type_match = scope.event_type.as_deref().is_none_or(|t| t == event_type);
             if !source_match || !type_match {
                 continue;
             }
+            policy_refs.extend(scope.policy_refs.iter().cloned());
             result = scope
                 .engine
                 .process_json(&result, ProcessingContext::Document);
@@ -802,13 +827,14 @@ impl PolicyEngine {
             if !source_match || !type_match {
                 continue;
             }
+            policy_refs.push(rule.name.clone());
             let Some(text) = result.as_str().map(ToOwned::to_owned) else {
                 break;
             };
             result = apply_external_rule_to_string(&self.http_client, &text, rule).await;
         }
 
-        DisclosureDecision::new(context, original, result)
+        DisclosureDecision::new_with_policy_refs(context, original, result, policy_refs)
     }
 
     /// Apply operator disclosure policy to an untyped JSON value.
@@ -829,17 +855,20 @@ impl PolicyEngine {
         }
 
         let mut result = value;
+        let mut policy_refs = Vec::new();
         for scope in &rules.scopes {
             if scope.event_source.is_none() && scope.event_type.is_none() {
+                policy_refs.extend(scope.policy_refs.iter().cloned());
                 result = apply_scoped_engine_to_json(result, scope);
             }
         }
         for rule in &rules.external_rules {
             if rule.event_source.is_none() && rule.event_type.is_none() {
+                policy_refs.push(rule.name.clone());
                 result = apply_external_rule_to_json(&self.http_client, result, rule).await;
             }
         }
-        DisclosureDecision::new(context, original, result)
+        DisclosureDecision::new_with_policy_refs(context, original, result, policy_refs)
     }
 
     /// Compatibility wrapper for the admission-era DLQ redaction helper.
@@ -881,6 +910,33 @@ fn apply_policy_to_event(event: &mut Event<JsonValue>, rules: &CompiledPolicyRul
             scope,
         );
     }
+}
+
+fn event_disclosure_policy_refs(
+    event: &Event<JsonValue>,
+    rules: &CompiledPolicyRuleSet,
+) -> Vec<String> {
+    let source = event.source.as_str();
+    let event_type = event.event_type.as_str();
+    let mut policy_refs = Vec::new();
+
+    for scope in &rules.scopes {
+        let source_match = scope.event_source.as_deref().is_none_or(|s| s == source);
+        let type_match = scope.event_type.as_deref().is_none_or(|t| t == event_type);
+        if source_match && type_match {
+            policy_refs.extend(scope.policy_refs.iter().cloned());
+        }
+    }
+
+    for rule in &rules.external_rules {
+        let source_match = rule.event_source.as_deref().is_none_or(|s| s == source);
+        let type_match = rule.event_type.as_deref().is_none_or(|t| t == event_type);
+        if source_match && type_match {
+            policy_refs.push(rule.name.clone());
+        }
+    }
+
+    policy_refs
 }
 
 async fn apply_external_policy_to_event(
