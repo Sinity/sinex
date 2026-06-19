@@ -2079,8 +2079,10 @@ impl std::str::FromStr for ModuleState {
 /// Typed registry over the `operation_type` strings stored in `core.operations_log`.
 ///
 /// The five managed kinds are enforced by the DB `core.start_operation()` function
-/// (see `sinex-schema/src/apply.rs`). `Other` captures future or non-managed
-/// kinds without breaking deserialization.
+/// (see `sinex-schema/src/apply.rs`). Additional variants name operation
+/// records emitted by API/CLI handlers that write directly to
+/// `core.operations_log`. `Other` captures future or non-managed kinds without
+/// breaking deserialization.
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -2096,6 +2098,30 @@ pub enum OperationKind {
     Purge,
     /// Schedule permanent deletion with operator approval
     Tombstone,
+    /// Requeue raw-ingest DLQ entries.
+    #[serde(rename = "dlq.requeue")]
+    DlqRequeue,
+    /// Purge raw-ingest DLQ entries.
+    #[serde(rename = "dlq.purge")]
+    DlqPurge,
+    /// Drain a runtime module or package.
+    #[serde(rename = "runtime.drain")]
+    RuntimeDrain,
+    /// Resume a drained runtime module or package.
+    #[serde(rename = "runtime.resume")]
+    RuntimeResume,
+    /// Set a runtime processing horizon.
+    #[serde(rename = "runtime.set_horizon")]
+    RuntimeSetHorizon,
+    /// Finalize an accepted curation judgment.
+    #[serde(rename = "curation.finalize")]
+    CurationFinalize,
+    /// Change private-mode runtime state.
+    #[serde(rename = "privacy.private_mode")]
+    PrivacyPrivateMode,
+    /// Archive events whose source-material bytes fail integrity validation.
+    #[serde(rename = "archive.integrity_mismatch")]
+    ArchiveIntegrityMismatch,
     /// An operation kind not in the managed set (forward-compat)
     #[serde(untagged)]
     Other(String),
@@ -2111,6 +2137,14 @@ impl OperationKind {
             Self::Restore => "restore",
             Self::Purge => "purge",
             Self::Tombstone => "tombstone",
+            Self::DlqRequeue => "dlq.requeue",
+            Self::DlqPurge => "dlq.purge",
+            Self::RuntimeDrain => "runtime.drain",
+            Self::RuntimeResume => "runtime.resume",
+            Self::RuntimeSetHorizon => "runtime.set_horizon",
+            Self::CurationFinalize => "curation.finalize",
+            Self::PrivacyPrivateMode => "privacy.private_mode",
+            Self::ArchiveIntegrityMismatch => "archive.integrity_mismatch",
             Self::Other(s) => s.as_str(),
         }
     }
@@ -2132,6 +2166,14 @@ impl FromStr for OperationKind {
             "restore" => Self::Restore,
             "purge" => Self::Purge,
             "tombstone" => Self::Tombstone,
+            "dlq.requeue" => Self::DlqRequeue,
+            "dlq.purge" => Self::DlqPurge,
+            "runtime.drain" => Self::RuntimeDrain,
+            "runtime.resume" => Self::RuntimeResume,
+            "runtime.set_horizon" => Self::RuntimeSetHorizon,
+            "curation.finalize" => Self::CurationFinalize,
+            "privacy.private_mode" => Self::PrivacyPrivateMode,
+            "archive.integrity_mismatch" => Self::ArchiveIntegrityMismatch,
             other => Self::Other(other.to_string()),
         })
     }
