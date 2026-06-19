@@ -135,6 +135,7 @@ mod tests {
                 context: "command".to_string(),
                 proposed: false,
             },
+            resource_budget: None,
             actions: Vec::new(),
         }
     }

@@ -6,13 +6,14 @@ use sinex_primitives::rpc::source_status::{
     SourceStatus, SourcesStatusRequest, SourcesStatusResponse, SourcesStatusViewRequest,
 };
 use sinex_primitives::source_contracts::{
-    SourceContract, SourceRuntimeBinding, all_source_contracts, source_runtime_bindings,
+    BudgetPressureAction, ResourceBudgetSpec, ResourceProfile, SourceContract,
+    SourceRuntimeBinding, WorkClass, all_source_contracts, source_runtime_bindings,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, CaveatView, CoverageGapView,
     SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView,
-    SourcePrivacyPosture, ViewEnvelope,
+    SourcePrivacyPosture, SourceResourceBudgetView, ViewEnvelope,
 };
 use sqlx::FromRow;
 use sqlx::PgPool;
@@ -232,14 +233,15 @@ fn source_coverage_view(
         (false, false) if bindings.is_empty() => SourceCoverageContinuity::Unknown,
         (false, false) => SourceCoverageContinuity::Gapped,
     };
-    let privacy_context = bindings
+    let selected_binding = bindings
         .iter()
         .copied()
         .find(|binding| !binding.proposed)
-        .or_else(|| bindings.first().copied())
-        .map_or("none".to_string(), |binding| {
-            format!("{:?}", binding.privacy_context).to_ascii_lowercase()
-        });
+        .or_else(|| bindings.first().copied());
+    let privacy_context = selected_binding.map_or("none".to_string(), |binding| {
+        format!("{:?}", binding.privacy_context).to_ascii_lowercase()
+    });
+    let resource_budget = selected_binding.map(source_resource_budget_view);
 
     SourceCoverageView {
         source_id: contract.id.to_string(),
@@ -261,7 +263,67 @@ fn source_coverage_view(
             context: privacy_context,
             proposed: live_binding_count == 0 && proposed_binding_count > 0,
         },
+        resource_budget,
         actions: source_actions(contract.id),
+    }
+}
+
+fn source_resource_budget_view(binding: &SourceRuntimeBinding) -> SourceResourceBudgetView {
+    let budget = binding.resource_budget();
+    SourceResourceBudgetView {
+        resource_profile: resource_profile_name(binding.resource_profile).to_string(),
+        work_class: work_class_name(&budget).to_string(),
+        steady_memory_mib: budget.steady_memory_mib,
+        burst_memory_mib: budget.burst_memory_mib,
+        cpu_weight: budget.cpu_weight,
+        max_input_bytes_per_sec: budget.max_input_bytes_per_sec,
+        max_input_events_per_sec: budget.max_input_events_per_sec,
+        max_pending_material_bytes: budget.max_pending_material_bytes,
+        max_pending_candidates: budget.max_pending_candidates,
+        max_unacked_transport_messages: budget.max_unacked_transport_messages,
+        batch_size: budget.batch_size,
+        flush_interval_ms: budget.flush_interval_ms,
+        checkpoint_interval_ms: budget.checkpoint_interval_ms,
+        pressure_actions: budget
+            .pressure_actions
+            .iter()
+            .map(|action| pressure_action_name(*action).to_string())
+            .collect(),
+    }
+}
+
+fn resource_profile_name(profile: ResourceProfile) -> &'static str {
+    match profile {
+        ResourceProfile::BoundedFile => "bounded_file",
+        ResourceProfile::BoundedStream => "bounded_stream",
+        ResourceProfile::LiveWatcher => "live_watcher",
+        ResourceProfile::DirectoryScan => "directory_scan",
+        ResourceProfile::Oneshot => "oneshot",
+        ResourceProfile::EventStreamConsumer => "event_stream_consumer",
+        ResourceProfile::EmbeddedEmitter => "embedded_emitter",
+    }
+}
+
+fn work_class_name(budget: &ResourceBudgetSpec) -> &'static str {
+    match budget.work_class {
+        WorkClass::Interactive => "interactive",
+        WorkClass::AdmissionHot => "admission_hot",
+        WorkClass::CaptureLive => "capture_live",
+        WorkClass::ProjectionHot => "projection_hot",
+        WorkClass::ProjectionCold => "projection_cold",
+        WorkClass::BulkImport => "bulk_import",
+        WorkClass::Maintenance => "maintenance",
+    }
+}
+
+fn pressure_action_name(action: BudgetPressureAction) -> &'static str {
+    match action {
+        BudgetPressureAction::Throttle => "throttle",
+        BudgetPressureAction::Defer => "defer",
+        BudgetPressureAction::Pause => "pause",
+        BudgetPressureAction::Drain => "drain",
+        BudgetPressureAction::Inspect => "inspect",
+        BudgetPressureAction::Retry => "retry",
     }
 }
 
@@ -369,6 +431,13 @@ mod tests {
         assert!(view.gaps.is_empty());
         assert_eq!(view.privacy.tier, "sensitive");
         assert_eq!(view.privacy.context, "command");
+        let budget = view
+            .resource_budget
+            .as_ref()
+            .ok_or_else(|| color_eyre::eyre::eyre!("resource budget expected"))?;
+        assert_eq!(budget.resource_profile, "bounded_file");
+        assert_eq!(budget.work_class, "bulk_import");
+        assert!(budget.pressure_actions.contains(&"inspect".to_string()));
         assert!(
             view.actions
                 .iter()

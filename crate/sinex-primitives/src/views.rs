@@ -94,6 +94,31 @@ pub struct SourcePrivacyPosture {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SourceResourceBudgetView {
+    pub resource_profile: String,
+    pub work_class: String,
+    pub steady_memory_mib: u32,
+    pub burst_memory_mib: u32,
+    pub cpu_weight: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_input_bytes_per_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_input_events_per_sec: Option<u32>,
+    pub max_pending_material_bytes: u64,
+    pub max_pending_candidates: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_unacked_transport_messages: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_size: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flush_interval_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_interval_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pressure_actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CoverageGapView {
     pub kind: String,
     pub message: String,
@@ -120,6 +145,8 @@ pub struct SourceCoverageView {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub caveats: Vec<CaveatView>,
     pub privacy: SourcePrivacyPosture,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_budget: Option<SourceResourceBudgetView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ActionAvailability>,
 }
@@ -1989,6 +2016,27 @@ mod tests {
                 context: "command".to_string(),
                 proposed: false,
             },
+            resource_budget: Some(SourceResourceBudgetView {
+                resource_profile: "bounded_stream".to_string(),
+                work_class: "admission_hot".to_string(),
+                steady_memory_mib: 256,
+                burst_memory_mib: 512,
+                cpu_weight: 100,
+                max_input_bytes_per_sec: Some(32 * 1024 * 1024),
+                max_input_events_per_sec: Some(10_000),
+                max_pending_material_bytes: 128 * 1024 * 1024,
+                max_pending_candidates: 25_000,
+                max_unacked_transport_messages: Some(1_000),
+                batch_size: Some(2_000),
+                flush_interval_ms: Some(500),
+                checkpoint_interval_ms: Some(2_000),
+                pressure_actions: vec![
+                    "throttle".to_string(),
+                    "defer".to_string(),
+                    "retry".to_string(),
+                    "inspect".to_string(),
+                ],
+            }),
             actions: vec![ActionAvailability::read(
                 "sources.readiness",
                 "Readiness",
@@ -2009,6 +2057,14 @@ mod tests {
         );
         assert_eq!(value["payload"]["sources"][0]["readiness"], "ready");
         assert_eq!(value["payload"]["sources"][0]["continuity"], "active");
+        assert_eq!(
+            value["payload"]["sources"][0]["resource_budget"]["work_class"],
+            "admission_hot"
+        );
+        assert_eq!(
+            value["payload"]["sources"][0]["resource_budget"]["pressure_actions"][2],
+            "retry"
+        );
         Ok(())
     }
 
