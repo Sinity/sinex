@@ -10,7 +10,8 @@ use sinexctl::commands::lifecycle::TombstoneCommands;
 use sinexctl::commands::{
     CompletionEndpointCommand, ConfigCommands, DlqCommands, DocumentsCommand, EventsCommand,
     LifecycleCommands, MetricsCommands, OpsCommands, PrivacyCommand, RecordCommand, ReplayCommands,
-    RuntimeCommands, SemanticCommand, SourcesCommand, StateCommands, TasksCommand, TuiCommand,
+    RuntimeCommands, SemanticCommand, ShowCommand, SourcesCommand, StateCommands, TasksCommand,
+    TuiCommand,
 };
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
@@ -123,6 +124,9 @@ enum Commands {
 
     /// Source material inventory and staging
     Sources(SourcesCommand),
+
+    /// Resolve and inspect a public Sinex object ref
+    Show(ShowCommand),
 
     /// Manual canonical records
     Record(RecordCommand),
@@ -268,6 +272,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
+                Commands::Show(cmd) => cmd.execute(&client, format).await?,
                 Commands::Record(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
                 Commands::Semantic(cmd) => cmd.execute(&client, format).await?,
@@ -392,6 +397,10 @@ fn command_center_view(config: &Config, format: OutputFormat) -> CommandCenterVi
             CommandCenterRootGroup {
                 root: "sources",
                 purpose: "source material, readiness, continuity, and coverage",
+            },
+            CommandCenterRootGroup {
+                root: "show",
+                purpose: "resolve and inspect one public Sinex object ref",
             },
             CommandCenterRootGroup {
                 root: "runtime",
@@ -615,6 +624,7 @@ fn command_path(cmd: &Commands) -> String {
                 SourcesSubcommand::Status(_) => "sources status".to_string(),
             }
         }
+        Commands::Show(_) => "show".to_string(),
         Commands::Record(cmd) => {
             use sinexctl::commands::record::RecordSubcommand;
             match cmd.subcommand() {
@@ -1174,7 +1184,7 @@ mod tests {
 
     #[sinex_test]
     async fn validate_format_rejects_ndjson_for_finite_view_envelopes() -> TestResult<()> {
-        for command in ["events recent", "sources status"] {
+        for command in ["events recent", "sources status", "show"] {
             let result = sinexctl::validate_format(command, sinexctl::OutputFormat::Ndjson);
             assert!(
                 result.is_err(),
@@ -1610,6 +1620,7 @@ mod tests {
                 ],
                 "ops lifecycle tombstone status",
             ),
+            (vec!["sinexctl", "show", "source-material:0196ed62"], "show"),
         ];
 
         for (args, expected) in cases {

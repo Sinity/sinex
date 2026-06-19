@@ -27,6 +27,7 @@ mod help_tests {
             .stdout(predicate::str::contains("sinexctl runtime health"))
             .stdout(predicate::str::contains("Root groups"))
             .stdout(predicate::str::contains("sources"))
+            .stdout(predicate::str::contains("show"))
             .stdout(predicate::str::contains("record"))
             .stdout(predicate::str::contains("tui"));
         Ok(())
@@ -60,8 +61,8 @@ mod help_tests {
         assert_eq!(
             roots,
             vec![
-                "events", "sources", "runtime", "metrics", "ops", "privacy", "tasks", "record",
-                "docs", "semantic", "tui", "config"
+                "events", "sources", "show", "runtime", "metrics", "ops", "privacy", "tasks",
+                "record", "docs", "semantic", "tui", "config"
             ]
         );
         assert!(
