@@ -82,6 +82,8 @@ pub const DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID: DerivationSpecId =
     "derivation:desktop.context.current_view@v1";
 pub const DESKTOP_FOCUS_SESSION_DERIVATION_ID: DerivationSpecId =
     "derivation:desktop.focus_session@v1";
+pub const DESKTOP_PROJECT_CONTEXT_DERIVATION_ID: DerivationSpecId =
+    "derivation:desktop.project_context@v1";
 pub const DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID: DerivationSpecId =
     "derivation:desktop.notification_pressure@v1";
 
@@ -154,6 +156,29 @@ pub const DESKTOP_FOCUS_SESSION_DERIVATION: DerivationSpec = DerivationSpec {
     ],
 };
 
+pub const DESKTOP_PROJECT_CONTEXT_DERIVATION: DerivationSpec = DerivationSpec {
+    id: DESKTOP_PROJECT_CONTEXT_DERIVATION_ID,
+    input_scope: DerivationInputScope::QueryScope {
+        scope: "desktop.project_context.inputs",
+    },
+    output_id: "desktop.project_context",
+    output_kind: OutputKind::ProjectionRow,
+    freshness_policy: FreshnessPolicy::RebuildOnInputChange,
+    invalidates_on: &[
+        InvalidationTrigger::Replay,
+        InvalidationTrigger::Archive,
+        InvalidationTrigger::Redaction,
+        InvalidationTrigger::ParserSemanticsChange,
+        InvalidationTrigger::DisclosurePolicyChange,
+    ],
+    rebuild_resource_policy_ref: Some("resource-policy:desktop.context.projection-rebuild"),
+    disclosure_policy_ref: Some("disclosure-policy:desktop.context.projection"),
+    operation_hooks: &[
+        DerivationOperationHook::Rebuild,
+        DerivationOperationHook::Explain,
+    ],
+};
+
 pub const DESKTOP_NOTIFICATION_PRESSURE_DERIVATION: DerivationSpec = DerivationSpec {
     id: DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID,
     input_scope: DerivationInputScope::EventTypes {
@@ -184,6 +209,7 @@ pub const DERIVATION_SPECS: &[DerivationSpec] = &[
     TASK_CURRENT_OBJECTS_DERIVATION,
     DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION,
     DESKTOP_FOCUS_SESSION_DERIVATION,
+    DESKTOP_PROJECT_CONTEXT_DERIVATION,
     DESKTOP_NOTIFICATION_PRESSURE_DERIVATION,
 ];
 
