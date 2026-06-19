@@ -59,7 +59,7 @@ impl ShowCommand {
     }
 }
 
-async fn resolve_ref(
+pub(crate) async fn resolve_ref(
     client: &GatewayClient,
     public_ref: PublicSinexRef,
 ) -> Result<ViewEnvelope<ResolvedObjectView>> {
