@@ -7,17 +7,19 @@ use serde_json::json;
 use sinex_primitives::query::QueryResultEvent;
 use sinex_primitives::query::{EventQuery, SortDirection, TimeRange};
 use sinex_primitives::relations::{
-    EventRelationExpr, EvidenceRef, EvidenceRole, EvidenceWindow, ExpansionStep,
-    ExpansionStepKind, ExpansionTrace, ObservedRange, TimeBasis,
+    EventRelationExpr, EvidenceRef, EvidenceRole, EvidenceWindow, ExpansionStep, ExpansionStepKind,
+    ExpansionTrace, ObservedRange, TimeBasis,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, CaveatView, ContextSourceView, ContextSummaryView,
     DesktopContextCandidateView, DesktopContextInputEvidence, DesktopContextInputState,
-    DesktopContextView, EventCardListView, EventCardView, PrivacyStateKind, SinexObjectKind,
-    SinexObjectRef, ViewEnvelope,
+    DesktopContextView, DesktopNotificationPressureView, EventCardListView, EventCardView,
+    PrivacyStateKind, SinexObjectKind, SinexObjectRef, ViewEnvelope,
 };
 use std::collections::HashMap;
+
+const MAX_NOTIFICATION_PRESSURE_EVIDENCE_REFS: usize = 12;
 
 use crate::client::GatewayClient;
 use crate::fmt::format_duration_age;
@@ -51,8 +53,12 @@ pub struct ContextCommand {
     desktop: bool,
 
     /// Explain desktop.context current-view candidates as an EvidenceWindow
-    #[arg(long, requires = "desktop")]
+    #[arg(long, requires = "desktop", conflicts_with = "notification_pressure")]
     explain: bool,
+
+    /// Render notification-pressure projection over recent notification evidence
+    #[arg(long, requires = "desktop", conflicts_with = "explain")]
+    notification_pressure: bool,
 }
 
 impl ContextCommand {
@@ -81,6 +87,7 @@ impl ContextCommand {
                 &self.since,
                 format,
                 self.explain,
+                self.notification_pressure,
             )?;
             println!("{output}");
             return Ok(());
@@ -203,6 +210,7 @@ fn render_desktop_context_output(
     since: &str,
     format: OutputFormat,
     explain: bool,
+    notification_pressure: bool,
 ) -> Result<String> {
     if matches!(format, OutputFormat::Ndjson | OutputFormat::Dot) {
         return Err(color_eyre::eyre::eyre!(
@@ -221,6 +229,23 @@ fn render_desktop_context_output(
             }));
         return render_finite_envelope(&envelope, format)?
             .ok_or_else(|| color_eyre::eyre::eyre!("desktop context evidence output expected"));
+    }
+
+    if notification_pressure {
+        let view = build_notification_pressure_view(event_cards, since);
+        if matches!(format, OutputFormat::Json | OutputFormat::Yaml) {
+            let envelope = view
+                .into_envelope("sinexctl.events.context.desktop.notification_pressure")
+                .with_query_echo(json!({
+                    "since": since,
+                    "limit": event_cards.count,
+                    "mode": "desktop_notification_pressure"
+                }));
+            return render_finite_envelope(&envelope, format)?.ok_or_else(|| {
+                color_eyre::eyre::eyre!("desktop notification-pressure output expected")
+            });
+        }
+        return Ok(render_notification_pressure_table(&view));
     }
 
     if matches!(format, OutputFormat::Json | OutputFormat::Yaml) {
@@ -328,7 +353,10 @@ fn desktop_context_candidates(
 
     if activity_refs.len() >= 2 {
         candidates.push(DesktopContextCandidateView {
-            label: format!("current activity from {} evidence refs", activity_refs.len()),
+            label: format!(
+                "current activity from {} evidence refs",
+                activity_refs.len()
+            ),
             confidence: (0.55 + (activity_refs.len() as f32 * 0.05)).min(0.85),
             evidence_refs: activity_refs,
             proposal_ref: None,
@@ -415,6 +443,75 @@ fn desktop_context_evidence_window(view: &DesktopContextView) -> EvidenceWindow 
 
 fn same_ref(left: &SinexObjectRef, right: &SinexObjectRef) -> bool {
     left.kind == right.kind && left.id == right.id
+}
+
+fn build_notification_pressure_view(
+    event_cards: &EventCardListView,
+    since: &str,
+) -> DesktopNotificationPressureView {
+    let mut view = DesktopNotificationPressureView::new(
+        sinex_primitives::DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID,
+        since,
+    );
+
+    for card in event_cards
+        .cards
+        .iter()
+        .filter(|card| is_notification_evidence(card))
+    {
+        match card.event_type.as_str() {
+            "notification.sent" => view.sent_count += 1,
+            "notification.action_invoked" => view.action_count += 1,
+            "notification.closed" => view.closed_count += 1,
+            _ => {}
+        }
+        view.total_notification_events += 1;
+
+        if view.evidence_refs.len() < MAX_NOTIFICATION_PRESSURE_EVIDENCE_REFS
+            && !view
+                .evidence_refs
+                .iter()
+                .any(|existing| same_ref(existing, &card.ref_))
+        {
+            view.evidence_refs.push(card.ref_.clone());
+        }
+
+        for caveat in &card.caveats {
+            if !view
+                .caveats
+                .iter()
+                .any(|existing| existing.id == caveat.id && existing.ref_ == caveat.ref_)
+            {
+                view.caveats.push(caveat.clone());
+            }
+        }
+    }
+
+    if view.total_notification_events == 0 {
+        view.caveats.push(CaveatView {
+            id: "notification_pressure.no_recent_notifications".to_string(),
+            message: format!("no notification evidence was found in the last {since}"),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::Projection,
+                "desktop.notification_pressure",
+            )),
+        });
+    } else if view.total_notification_events > view.evidence_refs.len() {
+        view.caveats.push(CaveatView {
+            id: "notification_pressure.evidence_truncated".to_string(),
+            message: format!(
+                "showing {} notification evidence refs out of {} recent notification events",
+                view.evidence_refs.len(),
+                view.total_notification_events
+            ),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::Projection,
+                "desktop.notification_pressure",
+            )),
+        });
+    }
+
+    view
 }
 
 fn desktop_context_input_for_family(
@@ -518,6 +615,24 @@ fn render_desktop_context_table(view: &DesktopContextView, since: &str) -> Strin
     lines.join("\n")
 }
 
+fn render_notification_pressure_table(view: &DesktopNotificationPressureView) -> String {
+    let mut lines = vec![
+        format!("Desktop notification pressure (last {})", view.since),
+        format!("sent:   {}", view.sent_count),
+        format!("action: {}", view.action_count),
+        format!("closed: {}", view.closed_count),
+        format!("refs:   {}", view.evidence_refs.len()),
+    ];
+    if !view.caveats.is_empty() {
+        lines.push(String::new());
+        lines.push("caveats".to_string());
+        for caveat in &view.caveats {
+            lines.push(format!("- {}: {}", caveat.id, caveat.message));
+        }
+    }
+    lines.join("\n")
+}
+
 fn desktop_context_family(card: &EventCardView) -> String {
     if is_notification_evidence(card) {
         return "notification".to_string();
@@ -572,7 +687,10 @@ fn is_active_window_evidence(card: &EventCardView) -> bool {
             matches!(card.event_type.as_str(), "window.focused" | "window.active")
         }
         "activitywatch" => {
-            matches!(card.event_type.as_str(), "window.active" | "app.window.active")
+            matches!(
+                card.event_type.as_str(),
+                "window.active" | "app.window.active"
+            )
         }
         _ => false,
     }
@@ -658,10 +776,10 @@ mod tests {
     fn context_event_with_ref(
         source: &'static str,
         event_type: &'static str,
-        ref_id: &'static str,
+        ref_id: impl Into<String>,
     ) -> EventCardView {
         let mut card = context_event(source, event_type);
-        card.ref_.id = ref_id.to_string();
+        card.ref_.id = ref_id.into();
         card
     }
 
@@ -750,8 +868,14 @@ mod tests {
             total_estimate: None,
         };
         let sources = grouped_context_sources(&event_cards.cards);
-        let output =
-            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json, false)?;
+        let output = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            "2h",
+            OutputFormat::Json,
+            false,
+            false,
+        )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
         assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
@@ -815,8 +939,14 @@ mod tests {
             total_estimate: None,
         };
         let sources = grouped_context_sources(&event_cards.cards);
-        let output =
-            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json, false)?;
+        let output = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            "2h",
+            OutputFormat::Json,
+            false,
+            false,
+        )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
         let inputs = value["payload"]["inputs"]
             .as_array()
@@ -850,33 +980,36 @@ mod tests {
             total_estimate: None,
         };
         let sources = grouped_context_sources(&event_cards.cards);
-        let output =
-            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json, false)?;
+        let output = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            "2h",
+            OutputFormat::Json,
+            false,
+            false,
+        )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
         let candidates = value["payload"]["candidates"]
             .as_array()
             .ok_or_else(|| color_eyre::eyre::eyre!("desktop candidates must be an array"))?;
         assert!(
-            candidates
-                .iter()
-                .any(|candidate| candidate["label"]
-                    .as_str()
-                    .is_some_and(|label| label.starts_with("active window:"))
-                    && candidate["evidence_refs"]
-                        .as_array()
-                        .is_some_and(|refs| refs.len() == 1)
-                    && candidate["proposal_ref"].is_null()),
+            candidates.iter().any(|candidate| candidate["label"]
+                .as_str()
+                .is_some_and(|label| label.starts_with("active window:"))
+                && candidate["evidence_refs"]
+                    .as_array()
+                    .is_some_and(|refs| refs.len() == 1)
+                && candidate["proposal_ref"].is_null()),
             "active-window candidate should be evidence-backed view output: {candidates:?}"
         );
         assert!(
-            candidates
-                .iter()
-                .any(|candidate| candidate["label"] == "current activity from 3 evidence refs"
-                    && candidate["evidence_refs"]
-                        .as_array()
-                        .is_some_and(|refs| refs.len() == 3)
-                    && candidate["proposal_ref"].is_null()),
+            candidates.iter().any(|candidate| candidate["label"]
+                == "current activity from 3 evidence refs"
+                && candidate["evidence_refs"]
+                    .as_array()
+                    .is_some_and(|refs| refs.len() == 3)
+                && candidate["proposal_ref"].is_null()),
             "multi-signal activity candidate should cite each evidence ref without claiming authority: {candidates:?}"
         );
         assert!(value["caveats"].as_array().is_some_and(|caveats| {
@@ -901,8 +1034,14 @@ mod tests {
             total_estimate: None,
         };
         let sources = grouped_context_sources(&event_cards.cards);
-        let output =
-            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Table, false)?;
+        let output = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            "2h",
+            OutputFormat::Table,
+            false,
+            false,
+        )?;
 
         assert!(output.contains("candidates"));
         assert!(output.contains("active window: context fixture (1 refs)"));
@@ -924,8 +1063,14 @@ mod tests {
             total_estimate: None,
         };
         let sources = grouped_context_sources(&event_cards.cards);
-        let output =
-            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json, true)?;
+        let output = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            "2h",
+            OutputFormat::Json,
+            true,
+            false,
+        )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
         assert_eq!(
@@ -973,22 +1118,145 @@ mod tests {
             total_estimate: None,
         };
         let sources = grouped_context_sources(&event_cards.cards);
-        let output =
-            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json, true)?;
+        let output = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            "2h",
+            OutputFormat::Json,
+            true,
+            false,
+        )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
-        assert!(value["payload"]["expansion_trace"]["steps"]
-            .as_array()
-            .is_some_and(|steps| steps
-                .iter()
-                .any(|step| step["kind"] == "coverage_gap_caveat"
+        assert!(
+            value["payload"]["expansion_trace"]["steps"]
+                .as_array()
+                .is_some_and(|steps| steps.iter().any(|step| step["kind"]
+                    == "coverage_gap_caveat"
                     && step["detail"]
                         .as_str()
-                        .is_some_and(|detail| detail.contains("browser input caveat")))));
+                        .is_some_and(|detail| detail.contains("browser input caveat"))))
+        );
         assert!(value["caveats"].as_array().is_some_and(|caveats| {
             caveats
                 .iter()
                 .any(|caveat| caveat["id"] == "input.browser.missing")
+        }));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_notification_pressure_counts_notification_evidence()
+    -> xtask::sandbox::TestResult<()> {
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: 4,
+            cards: vec![
+                context_event_with_ref("desktop.notification", "notification.sent", "event:sent"),
+                context_event_with_ref(
+                    "desktop.notification.action",
+                    "notification.action_invoked",
+                    "event:action",
+                ),
+                context_event_with_ref(
+                    "desktop.notification.closed",
+                    "notification.closed",
+                    "event:closed",
+                ),
+                context_event("wm.hyprland", "window.focused"),
+            ],
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            "2h",
+            OutputFormat::Json,
+            false,
+            true,
+        )?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(
+            value["source_surface"],
+            "sinexctl.events.context.desktop.notification_pressure"
+        );
+        assert_eq!(
+            value["payload"]["derivation_ref"],
+            sinex_primitives::DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID
+        );
+        assert_eq!(
+            value["payload"]["output_kind"],
+            "notification_pressure_projection"
+        );
+        assert_eq!(value["payload"]["sent_count"], 1);
+        assert_eq!(value["payload"]["action_count"], 1);
+        assert_eq!(value["payload"]["closed_count"], 1);
+        assert_eq!(value["payload"]["total_notification_events"], 3);
+        let refs = value["payload"]["evidence_refs"]
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("evidence_refs must be an array"))?;
+        for expected_id in ["event:sent", "event:action", "event:closed"] {
+            assert!(
+                refs.iter().any(|ref_| ref_["id"] == expected_id),
+                "notification-pressure view should cite {expected_id}: {refs:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_notification_pressure_bounds_evidence_refs() -> xtask::sandbox::TestResult<()>
+    {
+        let mut cards = Vec::new();
+        for index in 0..(MAX_NOTIFICATION_PRESSURE_EVIDENCE_REFS + 3) {
+            cards.push(context_event_with_ref(
+                "desktop.notification",
+                "notification.sent",
+                format!("event:notification:{index}"),
+            ));
+        }
+        cards[0].caveats.push(CaveatView {
+            id: "policy.disclosure_applied".to_string(),
+            message: "notification body hidden by fixture disclosure policy".to_string(),
+            ref_: None,
+        });
+
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: cards.len(),
+            cards,
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            "2h",
+            OutputFormat::Json,
+            false,
+            true,
+        )?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(
+            value["payload"]["total_notification_events"],
+            MAX_NOTIFICATION_PRESSURE_EVIDENCE_REFS + 3
+        );
+        assert_eq!(
+            value["payload"]["evidence_refs"].as_array().map(Vec::len),
+            Some(MAX_NOTIFICATION_PRESSURE_EVIDENCE_REFS)
+        );
+        assert!(value["caveats"].as_array().is_some_and(|caveats| {
+            caveats
+                .iter()
+                .any(|caveat| caveat["id"] == "notification_pressure.evidence_truncated")
+                && caveats
+                    .iter()
+                    .any(|caveat| caveat["id"] == "policy.disclosure_applied")
         }));
         Ok(())
     }
@@ -1003,8 +1271,14 @@ mod tests {
             total_estimate: None,
         };
         let sources = grouped_context_sources(&event_cards.cards);
-        let result =
-            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Ndjson, false);
+        let result = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            "2h",
+            OutputFormat::Ndjson,
+            false,
+            false,
+        );
 
         assert!(result.is_err(), "desktop context must remain a finite view");
         Ok(())
