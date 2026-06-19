@@ -1,6 +1,7 @@
 //! Raw-ingest DLQ management types
 
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
+use crate::views::CaveatView;
 use serde::{Deserialize, Serialize};
 
 // ─────────────────────────────────────────────────────────────
@@ -102,7 +103,7 @@ pub struct DlqMessagePeek {
     #[serde(default, skip_serializing_if = "is_false")]
     pub payload_redacted: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub privacy_caveats: Vec<String>,
+    pub privacy_caveats: Vec<CaveatView>,
 }
 
 fn is_false(value: &bool) -> bool {

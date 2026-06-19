@@ -16,6 +16,7 @@ use sinex_db::DbPoolExt;
 use sinex_db::repositories::Operation;
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::validation::normalize_unicode;
+use sinex_primitives::views::{CaveatView, SinexObjectKind, SinexObjectRef};
 use sinex_primitives::{Result, SinexError};
 use tracing::warn;
 
@@ -25,11 +26,11 @@ pub use sinex_primitives::rpc::dlq::{
     DlqPressureSignal, DlqPurgeRequest, DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct SanitizedPreview {
     text: String,
     redacted: bool,
-    caveats: Vec<String>,
+    caveats: Vec<CaveatView>,
 }
 
 fn parse_retry_count_header(headers: Option<&async_nats::HeaderMap>) -> Result<u32> {
@@ -149,11 +150,17 @@ fn render_preview_value(value: &JsonValue) -> String {
     }
 }
 
-fn format_disclosure_caveat(caveat: DisclosureCaveat) -> String {
-    format!(
-        "{} [{}]: {}",
-        caveat.code, caveat.policy_ref, caveat.message
-    )
+fn format_disclosure_caveat(caveat: DisclosureCaveat) -> CaveatView {
+    CaveatView {
+        id: caveat.code,
+        message: caveat.message,
+        ref_: Some(
+            SinexObjectRef::new(SinexObjectKind::Policy, caveat.policy_ref)
+                .with_label("privacy policy")
+                .with_command_hint("sinexctl privacy policy list")
+                .with_rpc_method("privacy.policy.list"),
+        ),
+    }
 }
 
 async fn payload_preview(
@@ -769,7 +776,7 @@ mod tests {
             preview
                 .caveats
                 .iter()
-                .any(|caveat| caveat.contains("policy.disclosure_applied")),
+                .any(|caveat| caveat.id == "policy.disclosure_applied"),
             "DLQ redaction must be caveated: {:?}",
             preview.caveats
         );
@@ -777,7 +784,10 @@ mod tests {
             preview
                 .caveats
                 .iter()
-                .any(|caveat| caveat.contains("dlq-preview-secret")),
+                .any(|caveat| caveat
+                    .ref_
+                    .as_ref()
+                    .is_some_and(|ref_| ref_.id == "dlq-preview-secret")),
             "DLQ redaction must name the operator-owned policy rule: {:?}",
             preview.caveats
         );
@@ -824,7 +834,7 @@ mod tests {
             preview
                 .caveats
                 .iter()
-                .any(|caveat| caveat.contains("policy.disclosure_applied")),
+                .any(|caveat| caveat.id == "policy.disclosure_applied"),
             "redaction must be visible to machine clients: {:?}",
             preview.caveats
         );
@@ -832,7 +842,10 @@ mod tests {
             preview
                 .caveats
                 .iter()
-                .any(|caveat| caveat.contains("dlq-preview-secret")),
+                .any(|caveat| caveat
+                    .ref_
+                    .as_ref()
+                    .is_some_and(|ref_| ref_.id == "dlq-preview-secret")),
             "machine clients must see which policy owned the redaction: {:?}",
             preview.caveats
         );

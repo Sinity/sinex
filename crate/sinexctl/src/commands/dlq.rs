@@ -210,10 +210,18 @@ fn format_dlq_messages_table(messages: &[DlqMessagePeek]) -> String {
             output.push_str("  Privacy: redacted\n");
         }
         if !msg.privacy_caveats.is_empty() {
-            output.push_str(&format!(
-                "  Privacy caveats: {}\n",
-                msg.privacy_caveats.join(", ")
-            ));
+            let caveats = msg
+                .privacy_caveats
+                .iter()
+                .map(|caveat| {
+                    caveat.ref_.as_ref().map_or_else(
+                        || caveat.id.clone(),
+                        |ref_| format!("{} [{}]", caveat.id, ref_.id),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            output.push_str(&format!("  Privacy caveats: {caveats}\n"));
         }
         if i < messages.len() - 1 {
             output.push_str(&format!("{}\n", "─".repeat(80)));
