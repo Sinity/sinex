@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::constants::buffers::DEFAULT_CONFIRMATION_BUFFER_CAPACITY;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::builder::EventId;
+use sinex_primitives::source_contracts::ResourceBudgetSpec;
 use sinex_primitives::units::Bytes;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -261,6 +262,16 @@ impl ConfirmationBuffer {
             max_capacity,
             grace_period,
             DEFAULT_CONFIRMATION_BUFFER_PENDING_BYTES.as_usize(),
+        )
+    }
+
+    #[must_use]
+    pub fn with_resource_budget(timeout: std::time::Duration, budget: ResourceBudgetSpec) -> Self {
+        Self::with_capacity_grace_and_payload_budget(
+            timeout,
+            resource_budget_pending_candidates(budget),
+            timeout,
+            resource_budget_pending_payload_bytes(budget),
         )
     }
 
@@ -761,6 +772,18 @@ impl ConfirmationBuffer {
     }
 }
 
+fn resource_budget_pending_candidates(budget: ResourceBudgetSpec) -> usize {
+    usize::try_from(budget.max_pending_candidates)
+        .unwrap_or(usize::MAX)
+        .max(1)
+}
+
+fn resource_budget_pending_payload_bytes(budget: ResourceBudgetSpec) -> usize {
+    usize::try_from(budget.max_pending_material_bytes)
+        .unwrap_or(usize::MAX)
+        .max(1)
+}
+
 fn warning_fill(limit: usize) -> usize {
     if limit == 0 {
         return usize::MAX;
@@ -786,12 +809,38 @@ mod tests {
     use sinex_primitives::ids::Id;
     use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceId};
     use sinex_primitives::primitives::Uuid;
+    use sinex_primitives::source_contracts::{BudgetPressureAction, WorkClass};
     use sinex_primitives::temporal::Timestamp;
     use sinex_primitives::{Event, JsonValue};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use tracing_subscriber::fmt::MakeWriter;
     use xtask::sandbox::{TestResult, sinex_test};
+
+    static TEST_PRESSURE_ACTIONS: &[BudgetPressureAction] = &[BudgetPressureAction::Inspect];
+
+    fn test_budget(
+        max_pending_candidates: u32,
+        max_pending_material_bytes: u64,
+    ) -> ResourceBudgetSpec {
+        ResourceBudgetSpec {
+            work_class: WorkClass::ProjectionHot,
+            steady_memory_mib: 1,
+            burst_memory_mib: 1,
+            cpu_weight: 100,
+            max_input_bytes_per_sec: None,
+            max_input_events_per_sec: None,
+            max_pending_material_bytes,
+            max_pending_candidates,
+            max_unacked_transport_messages: None,
+            batch_size: None,
+            flush_interval_ms: None,
+            checkpoint_interval_ms: None,
+            expected_disk_write_bytes_per_min: None,
+            expected_wal_write_bytes_per_min: None,
+            pressure_actions: TEST_PRESSURE_ACTIONS,
+        }
+    }
 
     #[derive(Clone, Default)]
     struct CapturedLogs {
@@ -975,6 +1024,73 @@ mod tests {
             rejected.rejected_redelivery_delay(),
             Some(Duration::from_millis(500))
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn resource_budget_sets_candidate_and_payload_runtime_limits() -> TestResult<()> {
+        let now = Timestamp::now();
+        let first_payload = json!({ "MESSAGE": "accepted by exact budget" });
+        let first_payload_bytes = payload_bytes(&first_payload)?;
+        let buffer = ConfirmationBuffer::with_resource_budget(
+            Duration::from_secs(60),
+            test_budget(1, u64::try_from(first_payload_bytes)?),
+        );
+
+        assert_eq!(buffer.max_capacity(), 1);
+        assert_eq!(buffer.max_payload_bytes(), first_payload_bytes);
+
+        let admitted = buffer
+            .add_provisional_with_pressure(provisional(
+                "system.journald",
+                "journald.entry.written",
+                now,
+                first_payload,
+            ))
+            .await;
+        assert!(admitted.accepted);
+        assert_eq!(admitted.rejection_reason, None);
+        assert_eq!(buffer.retained_payload_bytes(), first_payload_bytes);
+
+        let rejected = buffer
+            .add_provisional_with_pressure(provisional(
+                "system.journald",
+                "journald.entry.written",
+                now,
+                json!({ "MESSAGE": "second event exceeds candidate budget" }),
+            ))
+            .await;
+        assert!(!rejected.accepted);
+        assert_eq!(
+            rejected.rejection_reason,
+            Some(ConfirmationBufferRejectionReason::EventCapacity)
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn resource_budget_rejects_payloads_above_material_byte_budget() -> TestResult<()> {
+        let now = Timestamp::now();
+        let buffer =
+            ConfirmationBuffer::with_resource_budget(Duration::from_secs(60), test_budget(8, 1));
+
+        let rejected = buffer
+            .add_provisional_with_pressure(provisional(
+                "system.journald",
+                "journald.entry.written",
+                now,
+                json!({ "MESSAGE": "larger than one byte" }),
+            ))
+            .await;
+
+        assert!(!rejected.accepted);
+        assert_eq!(
+            rejected.rejection_reason,
+            Some(ConfirmationBufferRejectionReason::PayloadBytes)
+        );
+        assert_eq!(buffer.retained_payload_bytes(), 0);
+
         Ok(())
     }
 
