@@ -16,6 +16,7 @@ pub mod parsers;
 pub mod privacy_coverage;
 pub mod registry;
 pub mod runner;
+pub mod source_skeleton;
 pub mod source_contracts;
 pub mod source_factory;
 

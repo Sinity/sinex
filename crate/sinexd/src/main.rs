@@ -170,6 +170,25 @@ enum Command {
         #[arg(long)]
         strict: bool,
     },
+
+    /// Emit a reviewed Rust source/package skeleton for one package mode (#1737).
+    ///
+    /// The skeleton is generated from the #1792 completeness report so it starts
+    /// from compiled SourceContract, SourceRuntimeBinding, EventContract,
+    /// AdmissionPolicy, catalog, and privacy-coverage evidence.
+    ExportSourceSkeleton {
+        /// Package id from the package-completeness report.
+        #[arg(long)]
+        package_id: String,
+
+        /// Mode id from the package-completeness report.
+        #[arg(long)]
+        mode_id: String,
+
+        /// Output path. If omitted, writes Rust skeleton text to stdout.
+        #[arg(long)]
+        output: Option<String>,
+    },
 }
 
 fn parse_kv(s: &str) -> Result<(String, String), String> {
@@ -226,6 +245,11 @@ async fn main() -> color_eyre::Result<()> {
         Command::ExportPackageCompleteness { output, strict } => {
             export_package_completeness(output, strict)
         }
+        Command::ExportSourceSkeleton {
+            package_id,
+            mode_id,
+            output,
+        } => export_source_skeleton(&package_id, &mode_id, output),
     }
 }
 
@@ -298,6 +322,29 @@ fn export_package_completeness(output: Option<String>, strict: bool) -> color_ey
         color_eyre::eyre::bail!(
             "package completeness strict gate found {blocking_missing} blocking missing requirement(s)"
         );
+    }
+
+    Ok(())
+}
+
+fn export_source_skeleton(
+    package_id: &str,
+    mode_id: &str,
+    output: Option<String>,
+) -> color_eyre::Result<()> {
+    use sinexd::sources::source_skeleton::render_source_skeleton;
+
+    let rendered = render_source_skeleton(package_id, mode_id)?;
+    if let Some(path) = output {
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        std::fs::write(&path, rendered)?;
+        println!("source skeleton written: {path}");
+    } else {
+        print!("{rendered}");
     }
 
     Ok(())
