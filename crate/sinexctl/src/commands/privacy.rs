@@ -700,6 +700,7 @@ impl PrivacyExportArgs {
                 output_path: path.display().to_string(),
                 exported_events: report.events.len(),
                 next_cursor: report.next_cursor.clone(),
+                disclosure_context: report.disclosure_context,
                 payload_policy: report.payload_policy,
             };
             CommandOutput::single(receipt, format_privacy_export_receipt).display(&format)?;
@@ -811,6 +812,7 @@ struct PrivacyAuditFinding {
 #[derive(Debug, Clone, Serialize)]
 struct PrivacyExportReport {
     schema_version: u32,
+    disclosure_context: &'static str,
     payload_policy: &'static str,
     scope: PrivacyExportScope,
     exported_events: usize,
@@ -867,6 +869,7 @@ struct PrivacyExportReceipt {
     output_path: String,
     exported_events: usize,
     next_cursor: Option<Cursor>,
+    disclosure_context: &'static str,
     payload_policy: &'static str,
 }
 
@@ -957,6 +960,7 @@ fn build_privacy_export_report(
 
     PrivacyExportReport {
         schema_version: 1,
+        disclosure_context: "export",
         payload_policy: "metadata_only_payloads_and_snippets_omitted",
         scope,
         exported_events: events.len(),
@@ -1031,6 +1035,7 @@ fn format_privacy_export_receipt(receipt: &PrivacyExportReceipt) -> String {
         "Privacy Export".to_string(),
         format!("Output: {}", receipt.output_path),
         format!("Events: {}", receipt.exported_events),
+        format!("Disclosure context: {}", receipt.disclosure_context),
         format!("Payload policy: {}", receipt.payload_policy),
     ];
     if receipt.next_cursor.is_some() {
@@ -1043,6 +1048,7 @@ fn format_privacy_export_report(report: &PrivacyExportReport) -> String {
     let mut lines = vec![
         "Privacy Export".to_string(),
         format!("Events: {}", report.exported_events),
+        format!("Disclosure context: {}", report.disclosure_context),
         format!("Payload policy: {}", report.payload_policy),
     ];
     if let Some(total) = report.total_estimate {
@@ -1437,6 +1443,7 @@ mod tests {
         );
 
         assert_eq!(report.exported_events, 1);
+        assert_eq!(report.disclosure_context, "export");
         assert_eq!(report.scope.sources, vec!["terminal".to_string()]);
         assert!(report.scope.text_search_used);
 
@@ -1470,6 +1477,7 @@ mod tests {
         }
 
         let encoded = serde_json::to_string(&report)?;
+        assert!(encoded.contains("\"disclosure_context\":\"export\""));
         assert!(encoded.contains("\"payload_redacted\":true"));
         assert!(encoded.contains("\"snippet_redacted\":true"));
         assert!(encoded.contains("\"associated_blob_count\":1"));
