@@ -9,7 +9,7 @@ use crate::runtime::error_helpers::elapsed_seconds_with_warning;
 use crate::runtime::stream::RuntimeContext;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_primitives::domain::{HealthStatus, ModuleName, ServiceName};
+use sinex_primitives::domain::{HealthStatus, ServiceName};
 use sinex_primitives::env as shared_env;
 use sinex_primitives::events::payloads::process::{ProcessDegradedPayload, ProcessFailedPayload};
 use sinex_primitives::utils::CoordinationPrimitive;
@@ -106,7 +106,6 @@ impl HeartbeatLogSink for StdoutHeartbeatSink {
 #[derive(Debug, Clone)]
 pub struct HeartbeatEmitter {
     service_name: ServiceName,
-    module_name: Option<ModuleName>,
     start_time: SystemTime,
     events_processed: CoordinationPrimitive,
     errors_count: CoordinationPrimitive,
@@ -132,8 +131,9 @@ pub struct HeartbeatEmitter {
     /// [`HeartbeatEmitter::with_summary_every`] for tests.
     summary_every: u64,
     /// Optional database pool for persisting heartbeat status to `core.runs`.
-    /// When set, each heartbeat emission also updates the `last_heartbeat_at` and `status`
-    /// columns for this module, enabling efficient active-module queries.
+    ///
+    /// Persistence requires a concrete `module_run_id`; manifest identity is
+    /// inventory/provenance, not runtime liveness.
     #[cfg(feature = "db")]
     db_pool: Option<sinex_db::DbPool>,
 }
@@ -158,7 +158,6 @@ impl HeartbeatEmitter {
 
         Self {
             service_name,
-            module_name: None,
             start_time: SystemTime::now(),
             events_processed: CoordinationPrimitive::event_counter(0, "events_processed"),
             errors_count: CoordinationPrimitive::event_counter(0, "errors_count"),
@@ -188,12 +187,6 @@ impl HeartbeatEmitter {
     }
 
     #[must_use]
-    pub fn with_module_name(mut self, module_name: ModuleName) -> Self {
-        self.module_name = Some(module_name);
-        self
-    }
-
-    #[must_use]
     pub fn with_version(mut self, version: impl Into<String>) -> Self {
         self.version = version.into();
         self
@@ -217,8 +210,9 @@ impl HeartbeatEmitter {
 
     /// Configure a database pool for persisting heartbeat status.
     ///
-    /// When set, each heartbeat emission will also update `last_heartbeat_at`
-    /// and `status = 'active'` in `core.runs` for this module.
+    /// When set with a `module_run_id`, each heartbeat emission refreshes
+    /// `last_heartbeat_at` on that concrete run. Without a run id, heartbeat
+    /// persistence is skipped so manifest rows cannot become liveness evidence.
     #[cfg(feature = "db")]
     #[must_use]
     pub fn with_db_pool(mut self, pool: sinex_db::DbPool) -> Self {
@@ -233,7 +227,6 @@ impl HeartbeatEmitter {
             runtime.service_info().service_name().clone(),
             interval_seconds,
         )
-        .with_module_name(ModuleName::new(runtime.module_name()))
         .with_version(runtime.version().to_string());
 
         let emitter = if let Some(module_run_id) = runtime.module_run_id() {
@@ -468,49 +461,12 @@ impl HeartbeatEmitter {
             let log_persistence_warn = warn_skipped.is_multiple_of(100);
 
             use sinex_db::DbPoolExt;
-            if self.module_name.is_none() && self.module_run_id.is_none() && log_persistence_warn {
+            if self.module_run_id.is_none() && log_persistence_warn {
                 warn!(
                     service = %metrics.service_name,
                     skipped = warn_skipped,
-                    "Heartbeat persistence is configured without a module identity; database heartbeat updates are disabled (rate-limited)"
+                    "Heartbeat persistence is configured without a module run id; database heartbeat updates are disabled (rate-limited)"
                 );
-            }
-            if let Some(module_name) = &self.module_name {
-                match pool
-                    .state()
-                    .update_module_heartbeat_for_version(module_name, &metrics.version)
-                    .await
-                {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        self.record_error(&format!(
-                            "Heartbeat did not persist because the module manifest row is missing for {module_name}"
-                        ));
-                        if log_persistence_warn {
-                            warn!(
-                                module = %module_name,
-                                service = %metrics.service_name,
-                                version = %metrics.version,
-                                skipped = warn_skipped,
-                                "Heartbeat did not persist because the module manifest row is missing (rate-limited)"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        self.record_error(&format!(
-                            "Failed to persist module manifest heartbeat to database: {e}"
-                        ));
-                        if log_persistence_warn {
-                            warn!(
-                                module = %module_name,
-                                service = %metrics.service_name,
-                                error = %e,
-                                skipped = warn_skipped,
-                                "Failed to persist module manifest heartbeat to database (rate-limited)"
-                            );
-                        }
-                    }
-                }
             }
 
             if let Some(module_run_id) = self.module_run_id {

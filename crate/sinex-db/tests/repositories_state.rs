@@ -417,11 +417,9 @@ async fn cancel_tombstone_operation_rejects_invalid_created_at(ctx: TestContext)
 }
 
 #[sinex_test]
-async fn node_manifest_heartbeat_updates_only_requested_version(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn registered_manifests_do_not_create_runtime_liveness(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
-    let module_name = ModuleName::new("versioned-heartbeat-module");
+    let module_name = ModuleName::new("manifest-inventory-module");
 
     repo.register_module(
         &module_name,
@@ -438,15 +436,6 @@ async fn node_manifest_heartbeat_updates_only_requested_version(
     )
     .await?;
 
-    assert!(
-        repo.mark_module_inactive_for_version(&module_name, "1.0.0")
-            .await?
-    );
-    assert!(
-        repo.update_module_heartbeat_for_version(&module_name, "2.0.0")
-            .await?
-    );
-
     let manifests = repo.get_all_modules().await?;
     let older = manifests
         .iter()
@@ -457,13 +446,74 @@ async fn node_manifest_heartbeat_updates_only_requested_version(
         .find(|manifest| manifest.module_name == module_name && manifest.version == "2.0.0")
         .expect("newer manifest version should exist");
 
-    assert_eq!(older.status, "inactive");
+    assert_eq!(older.status, "unknown");
     assert!(older.last_heartbeat_at.is_none());
-    assert_eq!(newer.status, "active");
+    assert_eq!(newer.status, "unknown");
+    assert!(newer.last_heartbeat_at.is_none());
+
+    let live_modules = repo
+        .list_live_runtime_presence(Duration::from_mins(2))
+        .await?;
     assert!(
-        newer.last_heartbeat_at.is_some(),
-        "heartbeat should only be persisted for the requested version"
+        live_modules.is_empty(),
+        "manifest registration is inventory, not liveness evidence"
     );
+
+    let health = repo.get_runtime_health(Duration::from_mins(2)).await?;
+    assert_eq!(health.unique_modules, 1);
+    assert_eq!(health.active_count, 0);
+    assert_eq!(health.inactive_count, 1);
+    assert_eq!(health.active_run_count, 0);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn concrete_runs_are_runtime_liveness(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let module_name = ModuleName::new("concrete-liveness-module");
+
+    let older = repo
+        .register_module(
+            &module_name,
+            ModuleKind::Service,
+            "1.0.0",
+            Some("older build"),
+        )
+        .await?;
+    let newer = repo
+        .register_module(
+            &module_name,
+            ModuleKind::Service,
+            "2.0.0",
+            Some("newer build"),
+        )
+        .await?;
+
+    let older_run = repo
+        .start_module_run(
+            older.id,
+            "sinex-old",
+            "old-instance",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+    repo.update_module_run_status(older_run.id, ModuleState::Stopped)
+        .await?;
+
+    let newer_run = repo
+        .start_module_run(
+            newer.id,
+            "sinex-new",
+            "new-instance",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+    assert!(repo.update_module_run_heartbeat(newer_run.id).await?);
 
     let live_modules = repo
         .list_live_runtime_presence(Duration::from_mins(2))
@@ -471,74 +521,14 @@ async fn node_manifest_heartbeat_updates_only_requested_version(
     assert_eq!(live_modules.len(), 1);
     assert_eq!(live_modules[0].module_name, module_name);
     assert_eq!(live_modules[0].version, "2.0.0");
-    assert!(live_modules[0].module_run_id.is_none());
-    assert_eq!(live_modules[0].heartbeat_source, "manifest");
+    assert_eq!(live_modules[0].module_run_id, Some(newer_run.id.to_uuid()));
+    assert_eq!(live_modules[0].heartbeat_source, "run");
 
     let health = repo.get_runtime_health(Duration::from_mins(2)).await?;
     assert_eq!(health.unique_modules, 1);
     assert_eq!(health.active_count, 1);
     assert_eq!(health.inactive_count, 0);
-    assert_eq!(health.active_run_count, 0);
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn node_manifest_inactive_marks_only_requested_version(ctx: TestContext) -> TestResult<()> {
-    let repo = ctx.pool.state();
-    let module_name = ModuleName::new("versioned-inactive-module");
-
-    repo.register_module(
-        &module_name,
-        ModuleKind::Service,
-        "1.0.0",
-        Some("older build"),
-    )
-    .await?;
-    repo.register_module(
-        &module_name,
-        ModuleKind::Service,
-        "2.0.0",
-        Some("newer build"),
-    )
-    .await?;
-    assert!(
-        repo.update_module_heartbeat_for_version(&module_name, "1.0.0")
-            .await?
-    );
-    assert!(
-        repo.update_module_heartbeat_for_version(&module_name, "2.0.0")
-            .await?
-    );
-
-    assert!(
-        repo.mark_module_inactive_for_version(&module_name, "1.0.0")
-            .await?
-    );
-
-    let manifests = repo.get_all_modules().await?;
-    let older = manifests
-        .iter()
-        .find(|manifest| manifest.module_name == module_name && manifest.version == "1.0.0")
-        .expect("older manifest version should exist");
-    let newer = manifests
-        .iter()
-        .find(|manifest| manifest.module_name == module_name && manifest.version == "2.0.0")
-        .expect("newer manifest version should exist");
-
-    assert_eq!(older.status, "inactive");
-    assert_eq!(newer.status, "active");
-    assert!(
-        newer.last_heartbeat_at.is_some(),
-        "marking one version inactive must not clear the other version heartbeat"
-    );
-
-    let live_modules = repo
-        .list_live_runtime_presence(Duration::from_mins(2))
-        .await?;
-    assert_eq!(live_modules.len(), 1);
-    assert_eq!(live_modules[0].version, "2.0.0");
-    assert_eq!(live_modules[0].heartbeat_source, "manifest");
+    assert_eq!(health.active_run_count, 1);
 
     Ok(())
 }
@@ -614,24 +604,10 @@ async fn module_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Te
     Ok(())
 }
 
-/// Regression for the production "module run row is missing" symptom observed
-/// on sinnix-prime 2026-05-15: the two heartbeat paths called sequentially
-/// from a single module's heartbeat tick must not collide on `core.runs.status`.
-///
-/// Mechanism: `start_run` inserts with `status = 'running'`.
-/// `update_module_heartbeat_for_version` (manifest-keyed) previously
-/// flipped the row to `status = 'active'`. The next call,
-/// `update_module_run_heartbeat` (id-keyed), filtered on `WHERE status =
-/// 'running'` and matched zero rows, logging "Heartbeat did not persist
-/// because the module run row is missing" every tick for every module.
-///
-/// Five automatons on sinnix-prime were silently stuck in this loop:
-/// `relation-extractor` (also leaking 4.5 GB), `entity-extractor`,
-/// `entity-resolver`, `tag-applier`, `activitywatch` source host.
 #[sinex_test]
-async fn heartbeat_paths_do_not_collide_on_status(ctx: TestContext) -> TestResult<()> {
+async fn module_run_heartbeats_preserve_live_run_status(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
-    let module_name = ModuleName::new("heartbeat-collision-regression");
+    let module_name = ModuleName::new("run-heartbeat-liveness");
 
     let manifest = repo
         .register_module(&module_name, ModuleKind::Automaton, "1.0.0", None)
@@ -648,39 +624,25 @@ async fn heartbeat_paths_do_not_collide_on_status(ctx: TestContext) -> TestResul
         .await?;
     assert_eq!(run.status, "running", "start_run sets status='running'");
 
-    // Manifest-keyed heartbeat path — must NOT mutate status away from
-    // 'running'. (Previously this flipped status to 'active'.)
-    assert!(
-        repo.update_module_heartbeat_for_version(&module_name, "1.0.0")
-            .await?,
-        "manifest-keyed heartbeat must find and update the live run row"
-    );
-
-    // Id-keyed heartbeat path — must succeed because the row is still alive.
-    // Previously this returned `Ok(false)` because the manifest path had
-    // mutated status away from 'running', and the production heartbeat
-    // emitter logged "module run row is missing".
     assert!(
         repo.update_module_run_heartbeat(run.id).await?,
-        "id-keyed heartbeat must find the run regardless of which other \
-         heartbeat path ran first"
+        "heartbeats refresh a concrete run row"
     );
 
-    // Run stays alive after both heartbeats.
     let refreshed = sqlx::query!(
         r#"SELECT status FROM core.runs WHERE id = $1::uuid"#,
         run.id.as_uuid()
     )
     .fetch_one(ctx.pool())
     .await?;
-    assert_ne!(
-        refreshed.status, "failed",
-        "heartbeat path must not transition the run to a terminal state"
-    );
-    assert_ne!(
-        refreshed.status, "stopped",
-        "heartbeat path must not transition the run to a terminal state"
-    );
+    assert_eq!(refreshed.status, "running");
+
+    let live_modules = repo
+        .list_live_runtime_presence(Duration::from_mins(2))
+        .await?;
+    assert_eq!(live_modules.len(), 1);
+    assert_eq!(live_modules[0].module_run_id, Some(run.id.to_uuid()));
+    assert_eq!(live_modules[0].heartbeat_source, "run");
 
     Ok(())
 }

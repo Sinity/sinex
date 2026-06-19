@@ -19,7 +19,7 @@ use sinex_db::advisory_lock::AdvisoryLock;
 use sinex_db::repositories::EventPayloadSchema;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::{ModuleKind, ModuleName, ServiceName};
+use sinex_primitives::domain::{ModuleKind, ModuleName, ModuleState, ServiceName};
 use sinex_primitives::environment as sinex_environment;
 use sinex_primitives::nats::create_or_open_kv_store;
 use sinex_primitives::transport;
@@ -48,20 +48,6 @@ fn trigger_shutdown(shutdown_flag: &Arc<AtomicBool>, shutdown_notify: &Arc<tokio
     if !shutdown_flag.swap(true, Ordering::AcqRel) {
         shutdown_notify.notify_waiters();
     }
-}
-
-fn log_module_manifest_write_failure(
-    operation: &'static str,
-    module_name: &ModuleName,
-    error: &SinexError,
-) {
-    warn!(
-        operation,
-        module = %module_name,
-        version = env!("CARGO_PKG_VERSION"),
-        error = %error,
-        "Failed to persist event_engine module manifest state"
-    );
 }
 
 async fn await_ready_signal(
@@ -422,17 +408,22 @@ impl IngestService {
                     None
                 }
             };
-            match pool
+            let module_run_id = match pool
                 .state()
                 .start_run(manifest_id, "sinexd", "default", &host, None, None)
                 .await
             {
                 Ok(run) => {
                     info!(run_id = %run.id, "Started event_engine run");
-                    self.observer.set_module_run_id(run.id.to_uuid());
+                    let run_id = run.id.to_uuid();
+                    self.observer.set_module_run_id(run_id);
+                    Some(run_id)
                 }
-                Err(e) => warn!(%e, "Failed to start event_engine run"),
-            }
+                Err(e) => {
+                    warn!(%e, "Failed to start event_engine run");
+                    None
+                }
+            };
 
             // Emit health-aware heartbeats on a fixed cadence.
             // Tracks error window for Healthy/Degraded/Failed status determination.
@@ -440,9 +431,13 @@ impl IngestService {
             let emitter = HeartbeatEmitter::new(
                 ServiceName::new("sinexd"),
                 sinex_primitives::Seconds::from_secs(60),
-            )
-            .with_module_name(ModuleName::new("sinexd"))
-            .with_db_pool(pool.clone());
+            );
+            let emitter = if let Some(module_run_id) = module_run_id {
+                emitter.with_module_run_id(module_run_id)
+            } else {
+                emitter
+            };
+            let emitter = emitter.with_db_pool(pool.clone());
             self.heartbeat_counter_handle = Some(emitter.get_counter_handle());
 
             let shutdown_flag = self.shutdown_flag.clone();
@@ -452,13 +447,24 @@ impl IngestService {
                 tokio::select! {
                     () = emitter.start_periodic_heartbeat(None) => {}
                     () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
-                        let module_name = ModuleName::new("sinexd");
-                        if let Err(error) = heartbeat_pool
-                            .state()
-                            .mark_module_inactive_for_version(&module_name, env!("CARGO_PKG_VERSION"))
-                            .await
-                        {
-                            log_module_manifest_write_failure("mark_module_inactive", &module_name, &error);
+                        if let Some(module_run_id) = module_run_id {
+                            let module_run_id =
+                                Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(module_run_id);
+                            if let Err(error) = heartbeat_pool
+                                .state()
+                                .update_module_run_status(module_run_id, ModuleState::Stopped)
+                                .await
+                            {
+                                warn!(
+                                    module_run_id = %module_run_id,
+                                    error = %error,
+                                    "Failed to persist event_engine module run shutdown state"
+                                );
+                            }
+                        } else {
+                            warn!(
+                                "Skipping event_engine shutdown liveness update because no module run was registered"
+                            );
                         }
                     }
                 }
@@ -1946,12 +1952,4 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn log_module_manifest_write_failure_accepts_processing_errors()
-    -> xtask::sandbox::TestResult<()> {
-        let module_name = ModuleName::new("sinexd");
-        let error = SinexError::processing("module manifest update exploded");
-        log_module_manifest_write_failure("mark_module_inactive", &module_name, &error);
-        Ok(())
-    }
 }
