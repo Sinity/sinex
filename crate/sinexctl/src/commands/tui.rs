@@ -2401,6 +2401,7 @@ mod tests {
                 context: "metadata".to_string(),
                 proposed: false,
             },
+            resource_budget: None,
             actions,
         }
     }
