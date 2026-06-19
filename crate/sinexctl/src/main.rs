@@ -9,9 +9,9 @@ use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::lifecycle::TombstoneCommands;
 use sinexctl::commands::{
     CompletionEndpointCommand, ConfigCommands, DlqCommands, DocumentsCommand, EventsCommand,
-    LifecycleCommands, MetricsCommands, OpsCommands, PrivacyCommand, RecordCommand, ReplayCommands,
-    RuntimeCommands, SemanticCommand, ShowCommand, SourcesCommand, StateCommands, TasksCommand,
-    TuiCommand,
+    LifecycleCommands, MetricsCommands, OpsCommands, PrivacyCommand, QueryUnitsCommand,
+    RecordCommand, ReplayCommands, RuntimeCommands, SemanticCommand, ShowCommand, SourcesCommand,
+    StateCommands, TasksCommand, TuiCommand,
 };
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
@@ -103,6 +103,9 @@ enum Commands {
         #[command(subcommand)]
         cmd: EventsCommand,
     },
+
+    /// Shared Sinex query unit selection
+    Query(QueryUnitsCommand),
 
     /// Operations log commands
     Ops {
@@ -268,6 +271,7 @@ async fn main() -> color_eyre::Result<()> {
             match other {
                 Commands::Runtime { cmd } => cmd.execute(&client, format).await?,
                 Commands::Events { cmd } => cmd.execute(&client, format).await?,
+                Commands::Query(cmd) => cmd.execute(&client, format).await?,
                 Commands::Ops { cmd } => cmd.execute(&client, format).await?,
                 Commands::Privacy(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
@@ -561,6 +565,7 @@ fn command_path(cmd: &Commands) -> String {
             RuntimeCommands::SetHorizon { .. } => "runtime set-horizon".to_string(),
         },
         Commands::Events { cmd } => cmd.command_path().to_string(),
+        Commands::Query(_) => "query".to_string(),
         Commands::Ops { cmd } => match cmd {
             OpsCommands::Start { .. } => "ops start".to_string(),
             OpsCommands::List { .. } => "ops list".to_string(),
@@ -1227,6 +1232,14 @@ mod tests {
     #[sinex_test]
     async fn command_path_preserves_format_registry_leaf_commands() -> TestResult<()> {
         let cases = [
+            (
+                vec![
+                    "sinexctl",
+                    "query",
+                    "events where source = \"terminal.fish-history\" limit 10",
+                ],
+                "query",
+            ),
             (
                 vec!["sinexctl", "ops", "dlq", "requeue", "--all"],
                 "ops dlq requeue",

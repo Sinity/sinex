@@ -188,6 +188,7 @@ pub fn public_kind_name(kind: &SinexObjectKind) -> &'static str {
         SinexObjectKind::Artifact => "artifact",
         SinexObjectKind::QueryRun => "query-run",
         SinexObjectKind::AdmissionOutcome => "admission-outcome",
+        SinexObjectKind::DebtRow => "debt-row",
         SinexObjectKind::Proposal => "proposal",
         SinexObjectKind::Judgment => "judgment",
         SinexObjectKind::ExternalRef => "external-ref",
@@ -200,6 +201,7 @@ pub fn public_kind_name(kind: &SinexObjectKind) -> &'static str {
         SinexObjectKind::PrivacySession => "privacy-session",
         SinexObjectKind::Caveat => "caveat",
         SinexObjectKind::RpcMethod => "rpc-method",
+        SinexObjectKind::RuntimeModule => "runtime-module",
         SinexObjectKind::Command => "command",
     }
 }
@@ -222,6 +224,7 @@ pub fn parse_public_kind(kind: &str) -> Option<SinexObjectKind> {
         "artifact" => SinexObjectKind::Artifact,
         "query-run" => SinexObjectKind::QueryRun,
         "admission-outcome" => SinexObjectKind::AdmissionOutcome,
+        "debt-row" => SinexObjectKind::DebtRow,
         "proposal" => SinexObjectKind::Proposal,
         "judgment" => SinexObjectKind::Judgment,
         "external-ref" => SinexObjectKind::ExternalRef,
@@ -234,6 +237,7 @@ pub fn parse_public_kind(kind: &str) -> Option<SinexObjectKind> {
         "privacy-session" => SinexObjectKind::PrivacySession,
         "caveat" => SinexObjectKind::Caveat,
         "rpc-method" => SinexObjectKind::RpcMethod,
+        "runtime-module" => SinexObjectKind::RuntimeModule,
         "command" => SinexObjectKind::Command,
         _ => return None,
     })

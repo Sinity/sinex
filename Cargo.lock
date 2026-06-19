@@ -5133,6 +5133,7 @@ dependencies = [
  "url",
  "uuid",
  "validator",
+ "winnow 1.0.3",
  "xtask",
 ]
 
