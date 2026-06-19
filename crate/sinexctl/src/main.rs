@@ -252,6 +252,7 @@ async fn main() -> color_eyre::Result<()> {
                 .transpose()?;
             cmd.execute(client.as_ref(), format).await?;
         }
+        Commands::Show(cmd) if cmd.execute_local_if_supported(format)? => {}
         // `sinexctl ops verify --sources` (alone) is a static descriptor /
         // payload coverage check that does not need a gateway connection
         // or auth token. Short-circuit so it can be run in CI without
@@ -1629,6 +1630,20 @@ mod tests {
             sinexctl::validate_format(&actual, OutputFormat::Table).map_err(|msg| eyre!(msg))?;
         }
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn show_catalog_ref_executes_before_gateway_client_is_required() -> TestResult<()> {
+        let (_, cli) = parse_cli(&["sinexctl", "show", "command:show"])?;
+        let command = cli
+            .command
+            .expect("show command should parse as a concrete subcommand");
+        let Commands::Show(show) = command else {
+            panic!("expected parsed command to be show");
+        };
+
+        assert!(show.execute_local_if_supported(OutputFormat::Table)?);
         Ok(())
     }
 
