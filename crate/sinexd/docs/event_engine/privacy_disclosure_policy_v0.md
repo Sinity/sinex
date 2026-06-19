@@ -16,8 +16,9 @@ The runtime path is intentionally operator-owned. It uses the DB-backed privacy 
 - `log`: process diagnostics and debug output.
 - `completion`: shell completions and prompt adornments.
 - `dlq`: dead-letter queue previews where source/type may be unavailable.
+- `telemetry`: metrics, traces, and OpenTelemetry-compatible projections.
 
-Only `view` and `dlq` are wired in this patch. `sinexctl timeline`, `sinexctl events recent`, `sinexctl events errors`, and the TUI recent-event panel consume the server-side `events.cards` view path, so they inherit the same disclosure decisions and caveats instead of rebuilding cards from raw query DTOs. The other contexts exist so follow-on surfaces cannot invent parallel privacy vocabularies. v0 applies the same operator-authored DB rules in every disclosure context; destination-specific rule scopes should be added as a policy-schema extension rather than hard-coded at call sites.
+`sinexctl timeline`, `sinexctl events recent`, `sinexctl events errors`, SSE payload subscriptions, and the TUI recent-event panel consume the server-side `events.cards`/SSE view paths, so they inherit the same disclosure decisions and caveats instead of rebuilding cards from raw query DTOs. DLQ previews call `DisclosureContext::Dlq` over untyped JSON and only apply global operator rules. Completion and telemetry surfaces do not sample raw payload values: completions expose command grammar, source IDs, event types, and schema keys; OpenTelemetry-compatible projections expose refs, counts, timings, and bounded aggregate attributes with an explicit disclosure boundary. v0 applies the same operator-authored DB rules wherever a surface renders event/DLQ content; destination-specific rule scopes should be added as a policy-schema extension rather than hard-coded at call sites.
 
 ## Runtime behavior
 
@@ -51,6 +52,6 @@ This patch wires caveats into `EventCardView.caveats` and `DlqMessagePeek.privac
 Immediate residuals:
 
 - `events.query` still returns raw `EventQueryResult` because that DTO has no caveat/privacy-state channel. `sinexctl timeline`, `sinexctl events recent`, `sinexctl events errors`, and the TUI recent-event panel now prefer `events.cards`; other operator-facing clients should do the same until the raw query result grows an explicit disclosure envelope or is split into a raw/admin method.
-- `export`, `log`, and `completion` contexts are vocabulary only in this patch. They must call `PolicyEngine::disclose_*` before rendering sensitive values.
+- Log/error helpers must use structured metadata or explicit disclosure before rendering user/material/event text.
 - Destination-specific rule bindings should extend the policy schema so operators can choose different actions for view/export/log/completion/DLQ without runtime hard-coding.
 - Field metadata and source package disclosure defaults should compile into DB policy seed/proposal records rather than becoming hard-coded runtime behavior.
