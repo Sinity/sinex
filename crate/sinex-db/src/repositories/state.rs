@@ -18,7 +18,7 @@ use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::lifecycle::{TombstoneOperation, TombstoneOperationState};
 use sinex_primitives::{Seconds, Timestamp};
 use sqlx::postgres::types::PgRange;
-use sqlx::{Executor, FromRow, PgPool, Postgres};
+use sqlx::{Executor, FromRow, PgPool, Postgres, Row};
 use std::ops::Bound;
 use std::str::FromStr;
 use std::time::Duration;
@@ -63,7 +63,16 @@ pub struct StateRepository<'a> {
 
 const DEFAULT_MODULE_HEARTBEAT_STALE_SECS: Seconds = Seconds::from_secs(120);
 const SQLSTATE_UNDEFINED_FUNCTION: &str = "42883";
-const MANAGED_OPERATION_TYPES: &[&str] = &["replay", "archive", "restore", "purge", "tombstone"];
+pub const PROJECTION_REBUILD_OPERATION_TYPE: &str = "projection-rebuild";
+
+const MANAGED_OPERATION_TYPES: &[&str] = &[
+    "replay",
+    "archive",
+    "restore",
+    "purge",
+    "tombstone",
+    PROJECTION_REBUILD_OPERATION_TYPE,
+];
 
 fn module_heartbeat_stale_after() -> DbResult<Duration> {
     match std::env::var("SINEX_MODULE_HEARTBEAT_STALE_SECS") {
@@ -704,6 +713,209 @@ impl StateRepository<'_> {
         self.get_operation(&op_id).await?.ok_or_else(|| {
             SinexError::database("operation created by core.start_operation() not found")
         })
+    }
+
+    /// Drain a pending replay scope invalidation marker through a completed
+    /// projection-rebuild operation.
+    ///
+    /// Replay/archive records `scope_invalidation.phase = pending` before the
+    /// archive commit. This helper is the durable recovery side of that marker:
+    /// it locks the replay operation metadata, records the rebuild operation,
+    /// and marks the marker published in the same transaction.
+    pub async fn recover_replay_scope_invalidation(
+        &self,
+        operator: &str,
+        replay_operation_id: Uuid,
+    ) -> DbResult<OperationRecord> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin replay invalidation recovery"))?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT preview_summary
+            FROM core.operations_log
+            WHERE id = $1::uuid
+              AND operation_type = 'replay'
+            FOR UPDATE
+            "#,
+        )
+        .bind(replay_operation_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "fetch replay invalidation metadata"))?
+        .ok_or_else(|| {
+            SinexError::not_found(format!("Replay operation not found: {replay_operation_id}"))
+        })?;
+
+        let mut meta: JsonValue = row
+            .try_get::<Option<JsonValue>, _>("preview_summary")
+            .map_err(|e| db_error(e, "decode replay preview_summary"))?
+            .ok_or_else(|| {
+                SinexError::invalid_state("Replay operation is missing preview_summary metadata")
+                    .with_id("operation_id", replay_operation_id.to_string())
+                    .with_operation("projection_rebuild_recovery")
+            })?;
+
+        let scope = serde_json::json!({
+            "source": "replay-invalidation",
+            "replay_operation_id": replay_operation_id.to_string(),
+        });
+
+        if let Some(existing) = Self::find_replay_invalidation_recovery_operation(
+            &mut tx,
+            replay_operation_id,
+            OperationStatus::Success,
+        )
+        .await?
+        {
+            Self::mark_replay_scope_invalidation_published(
+                &mut meta,
+                replay_operation_id,
+                &existing,
+            )?;
+            sqlx::query(
+                r#"
+                UPDATE core.operations_log
+                SET preview_summary = $2
+                WHERE id = $1::uuid
+                "#,
+            )
+            .bind(replay_operation_id)
+            .bind(meta)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "mark replay invalidation recovered"))?;
+            tx.commit()
+                .await
+                .map_err(|e| db_error(e, "commit replay invalidation recovery"))?;
+            return Ok(existing);
+        }
+
+        let recovery = Operation {
+            id: None,
+            operation_type: PROJECTION_REBUILD_OPERATION_TYPE.to_string(),
+            operator: operator.to_string(),
+            scope: Some(scope),
+            result_status: OperationStatus::Success,
+            result_message: Some(format!(
+                "Recovered pending replay invalidation for operation {replay_operation_id}"
+            )),
+            preview_summary: Some(serde_json::json!({
+                "message": "Recovered pending replay invalidation",
+                "source": "replay-invalidation",
+                "replay_operation_id": replay_operation_id.to_string(),
+                "recovery": "scope_invalidation marker marked published",
+            })),
+            duration_ms: Some(0),
+        };
+
+        let recovery = self.log_operation_with_executor(&mut *tx, recovery).await?;
+
+        Self::mark_replay_scope_invalidation_published(&mut meta, replay_operation_id, &recovery)?;
+        sqlx::query(
+            r#"
+            UPDATE core.operations_log
+            SET preview_summary = $2
+            WHERE id = $1::uuid
+            "#,
+        )
+        .bind(replay_operation_id)
+        .bind(meta)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "mark replay invalidation recovered"))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit replay invalidation recovery"))?;
+        Ok(recovery)
+    }
+
+    async fn find_replay_invalidation_recovery_operation(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        replay_operation_id: Uuid,
+        status: OperationStatus,
+    ) -> DbResult<Option<OperationRecord>> {
+        let scope = serde_json::json!({
+            "source": "replay-invalidation",
+            "replay_operation_id": replay_operation_id.to_string(),
+        });
+        let status = status.to_string();
+        sqlx::query_as::<_, OperationRecord>(
+            r#"
+            SELECT
+                id,
+                operation_type,
+                operator,
+                scope,
+                result_status,
+                result_message,
+                preview_summary,
+                duration_ms
+            FROM core.operations_log
+            WHERE operation_type = $1
+              AND result_status = $2
+              AND scope @> $3
+            ORDER BY id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(PROJECTION_REBUILD_OPERATION_TYPE)
+        .bind(status)
+        .bind(scope)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|e| db_error(e, "find replay invalidation recovery operation"))
+    }
+
+    fn mark_replay_scope_invalidation_published(
+        meta: &mut JsonValue,
+        replay_operation_id: Uuid,
+        recovery: &OperationRecord,
+    ) -> DbResult<()> {
+        let invalidation = meta
+            .get_mut("scope_invalidation")
+            .and_then(JsonValue::as_object_mut)
+            .ok_or_else(|| {
+                SinexError::invalid_state(
+                    "Replay operation does not have pending scope invalidation metadata",
+                )
+                .with_id("operation_id", replay_operation_id.to_string())
+                .with_operation("projection_rebuild_recovery")
+            })?;
+
+        let phase = invalidation
+            .get("phase")
+            .and_then(JsonValue::as_str)
+            .unwrap_or_default();
+        if phase != "pending" && phase != "published" {
+            return Err(SinexError::invalid_state(format!(
+                "Unsupported replay scope invalidation phase: {phase}"
+            ))
+            .with_id("operation_id", replay_operation_id.to_string())
+            .with_operation("projection_rebuild_recovery"));
+        }
+
+        invalidation.insert(
+            "phase".to_string(),
+            JsonValue::String("published".to_string()),
+        );
+        invalidation.insert(
+            "published_at".to_string(),
+            serde_json::to_value(sinex_primitives::temporal::now())?,
+        );
+        invalidation.insert(
+            "recovery_operation_id".to_string(),
+            JsonValue::String(recovery.id.to_string()),
+        );
+        invalidation.insert(
+            "recovery_mode".to_string(),
+            JsonValue::String(PROJECTION_REBUILD_OPERATION_TYPE.to_string()),
+        );
+        Ok(())
     }
 
     /// List operations with optional type and status filters.

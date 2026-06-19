@@ -1,5 +1,6 @@
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
+use sinex_db::repositories::state::PROJECTION_REBUILD_OPERATION_TYPE;
 use sinex_primitives::Id;
 use sinex_primitives::SinexError;
 use sqlx::PgPool;
@@ -45,10 +46,13 @@ pub async fn handle_ops_start(
     let scope_jsonb = request.scope.unwrap_or(serde_json::json!({}));
     let actor = auth.actor_id();
 
-    let record = pool
-        .state()
-        .start_operation(&request.operation_type, actor, scope_jsonb)
-        .await?;
+    let record = if request.operation_type == PROJECTION_REBUILD_OPERATION_TYPE {
+        start_projection_rebuild_operation(pool, actor, scope_jsonb).await?
+    } else {
+        pool.state()
+            .start_operation(&request.operation_type, actor, scope_jsonb)
+            .await?
+    };
 
     info!(
         actor = %actor,
@@ -62,6 +66,32 @@ pub async fn handle_ops_start(
     };
 
     Ok(response)
+}
+
+async fn start_projection_rebuild_operation(
+    pool: &PgPool,
+    actor: &str,
+    scope: serde_json::Value,
+) -> Result<sinex_db::repositories::OperationRecord> {
+    let replay_operation_id = scope
+        .get("replay_operation_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            SinexError::validation(
+                "projection-rebuild scope requires replay_operation_id for replay invalidation recovery",
+            )
+            .with_operation("ops.start")
+        })?;
+    let replay_operation_id = uuid::Uuid::parse_str(replay_operation_id).map_err(|error| {
+        SinexError::validation("projection-rebuild replay_operation_id must be a UUID")
+            .with_std_error(&error)
+            .with_operation("ops.start")
+            .with_context("replay_operation_id", replay_operation_id.to_string())
+    })?;
+
+    pool.state()
+        .recover_replay_scope_invalidation(actor, replay_operation_id)
+        .await
 }
 
 /// Handle GET /ops - list operations with optional filtering

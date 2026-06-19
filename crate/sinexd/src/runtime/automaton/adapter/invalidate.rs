@@ -3,11 +3,10 @@
 //! Carved out of `adapter/mod.rs` as part of #697. Pure mechanical move; the
 //! methods, control flow, and instrumentation are unchanged.
 //!
-//! DEPLOYMENT-INACTIVE: this machinery is only reached via the `run_continuous`
-//! scan path, which the runtime never takes — `manages_own_continuous_loop` is
-//! `false`, so dispatch goes through `run_automaton_event_bridge`, which has no
-//! `derived.invalidation` subscription. Replay publishes invalidation signals
-//! but no automaton currently reacts. Wiring tracked by #1974.
+//! This machinery is the direct `derived.invalidation` consumer used by the
+//! scan-driven automaton loop. The deployed event-bridge path does not consume
+//! this subject directly; replay/archive therefore also records pending scope
+//! invalidations durably and drains them through operation/debt recovery.
 
 #[cfg(feature = "messaging")]
 use super::log_self_observation_failure;

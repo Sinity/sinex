@@ -2078,7 +2078,7 @@ impl std::str::FromStr for ModuleState {
 ///
 /// Typed registry over the `operation_type` strings stored in `core.operations_log`.
 ///
-/// The five managed kinds are enforced by the DB `core.start_operation()` function
+/// The managed kinds are enforced by the DB `core.start_operation()` function
 /// (see `sinex-schema/src/apply.rs`). Additional variants name operation
 /// records emitted by API/CLI handlers that write directly to
 /// `core.operations_log`. `Other` captures future or non-managed kinds without
@@ -2122,6 +2122,9 @@ pub enum OperationKind {
     /// Archive events whose source-material bytes fail integrity validation.
     #[serde(rename = "archive.integrity_mismatch")]
     ArchiveIntegrityMismatch,
+    /// Rebuild derived projections/artifacts from an invalidation scope.
+    #[serde(rename = "projection-rebuild")]
+    ProjectionRebuild,
     /// An operation kind not in the managed set (forward-compat)
     #[serde(untagged)]
     Other(String),
@@ -2145,6 +2148,7 @@ impl OperationKind {
             Self::CurationFinalize => "curation.finalize",
             Self::PrivacyPrivateMode => "privacy.private_mode",
             Self::ArchiveIntegrityMismatch => "archive.integrity_mismatch",
+            Self::ProjectionRebuild => "projection-rebuild",
             Self::Other(s) => s.as_str(),
         }
     }
@@ -2174,6 +2178,7 @@ impl FromStr for OperationKind {
             "curation.finalize" => Self::CurationFinalize,
             "privacy.private_mode" => Self::PrivacyPrivateMode,
             "archive.integrity_mismatch" => Self::ArchiveIntegrityMismatch,
+            "projection-rebuild" => Self::ProjectionRebuild,
             other => Self::Other(other.to_string()),
         })
     }

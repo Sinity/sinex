@@ -215,6 +215,119 @@ async fn ops_start_rejects_unknown_operation_type(ctx: TestContext) -> TestResul
 }
 
 #[sinex_test]
+async fn ops_start_projection_rebuild_recovers_pending_replay_invalidation(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let replay = ReplayStateMachine::new(ctx.pool.clone());
+    let operation = replay
+        .create_operation(
+            ReplayScope {
+                source_name: "ops-replay-invalidation-source".to_string(),
+                time_window: None,
+                material_filter: None,
+                filters: HashMap::new(),
+                ..Default::default()
+            },
+            "test:planner".to_string(),
+        )
+        .await?;
+
+    let mut tx = ctx.pool().begin().await?;
+    replay
+        .record_scope_invalidations_pending_with_tx(&mut tx, operation.operation_id, 7, 2, 3, 4)
+        .await?;
+    tx.commit().await?;
+
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "projection-rebuild",
+                "scope": {
+                    "source": "replay-invalidation",
+                    "replay_operation_id": operation.operation_id.to_string(),
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.operation_type, "projection-rebuild");
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    assert_eq!(response.operation.operator, auth.actor_id());
+    assert_eq!(
+        response.operation.scope.as_ref().and_then(|scope| {
+            scope
+                .get("replay_operation_id")
+                .and_then(serde_json::Value::as_str)
+        }),
+        Some(operation.operation_id.to_string().as_str())
+    );
+
+    let replay_meta: serde_json::Value = sqlx::query_scalar::<_, Option<serde_json::Value>>(
+        r#"SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid"#,
+    )
+    .bind(operation.operation_id)
+    .fetch_one(ctx.pool())
+    .await?
+    .expect("replay operation should keep metadata");
+    assert_eq!(
+        replay_meta
+            .pointer("/scope_invalidation/phase")
+            .and_then(serde_json::Value::as_str),
+        Some("published")
+    );
+    assert_eq!(
+        replay_meta
+            .pointer("/scope_invalidation/recovery_operation_id")
+            .and_then(serde_json::Value::as_str),
+        Some(response.operation.id.as_str())
+    );
+    assert_eq!(
+        replay_meta
+            .pointer("/scope_invalidation/recovery_mode")
+            .and_then(serde_json::Value::as_str),
+        Some("projection-rebuild")
+    );
+
+    let second_response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "projection-rebuild",
+                "scope": {
+                    "source": "replay-invalidation",
+                    "replay_operation_id": operation.operation_id.to_string(),
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(second_response.operation.id, response.operation.id);
+
+    let count: i64 = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM core.operations_log
+        WHERE operation_type = 'projection-rebuild'
+          AND scope @> $1
+        "#,
+    )
+    .bind(json!({
+        "source": "replay-invalidation",
+        "replay_operation_id": operation.operation_id.to_string(),
+    }))
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(count, 1);
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_list_returns_operations(ctx: TestContext) -> TestResult<()> {
     let auth = system_auth();
 
