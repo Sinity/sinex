@@ -276,6 +276,49 @@ impl Default for ReplayCheckpoint {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayScopeInvalidationPhase {
+    Pending,
+    Published,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayScopeInvalidationRecovery {
+    pub phase: ReplayScopeInvalidationPhase,
+    pub archived_count: u64,
+    pub bucket_count: usize,
+    pub scope_key_count: usize,
+    pub event_count: usize,
+    pub recorded_at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<Timestamp>,
+}
+
+impl ReplayScopeInvalidationRecovery {
+    fn pending(
+        archived_count: u64,
+        bucket_count: usize,
+        scope_key_count: usize,
+        event_count: usize,
+    ) -> Self {
+        Self {
+            phase: ReplayScopeInvalidationPhase::Pending,
+            archived_count,
+            bucket_count,
+            scope_key_count,
+            event_count,
+            recorded_at: temporal::now(),
+            published_at: None,
+        }
+    }
+
+    fn mark_published(&mut self) {
+        self.phase = ReplayScopeInvalidationPhase::Published;
+        self.published_at = Some(temporal::now());
+    }
+}
+
 /// Complete replay operation record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayOperation {
@@ -439,6 +482,7 @@ impl ReplayStateMachine {
             outcome: operation.outcome,
             error_details: operation.error_details.clone(),
             preview: None,
+            scope_invalidation: None,
         };
         let meta_json = serde_json::to_value(&meta)?;
         operation.preview_summary = Some(meta_json.clone());
@@ -897,6 +941,46 @@ impl ReplayStateMachine {
         Ok(())
     }
 
+    pub async fn record_scope_invalidations_pending_with_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        operation_id: Uuid,
+        archived_count: u64,
+        bucket_count: usize,
+        scope_key_count: usize,
+        event_count: usize,
+    ) -> Result<()> {
+        let repo = self.repo();
+        let existing = repo.fetch_meta_for_update(tx, operation_id).await?;
+        let mut meta = decode_meta_json(Some(existing))?;
+        meta.scope_invalidation = Some(ReplayScopeInvalidationRecovery::pending(
+            archived_count,
+            bucket_count,
+            scope_key_count,
+            event_count,
+        ));
+        let meta_json = serde_json::to_value(&meta)?;
+        repo.update_operation_meta_only(tx, operation_id, meta_json)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn record_scope_invalidations_published(&self, operation_id: Uuid) -> Result<()> {
+        let repo = self.repo();
+        let mut tx = repo.begin_context("record_scope_invalidations_published").await?;
+
+        let existing = repo.fetch_meta_for_update(&mut tx, operation_id).await?;
+        let mut meta = decode_meta_json(Some(existing))?;
+        if let Some(invalidation) = meta.scope_invalidation.as_mut() {
+            invalidation.mark_published();
+            let meta_json = serde_json::to_value(&meta)?;
+            repo.update_operation_meta_only(&mut tx, operation_id, meta_json)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Mark operation as failed
     pub async fn mark_failed(&self, operation_id: Uuid, error: String) -> Result<()> {
         let repo = self.repo();
@@ -1203,6 +1287,8 @@ pub struct MetaJson {
     pub outcome: Option<ReplayOutcome>,
     pub error_details: Option<String>,
     pub preview: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_invalidation: Option<ReplayScopeInvalidationRecovery>,
 }
 
 /// Fetch and validate the operation meta within an owned transaction.
