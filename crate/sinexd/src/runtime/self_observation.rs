@@ -265,6 +265,8 @@ impl SelfObserver {
             "module_kind",
             "method",
             "token_prefix",
+            "previous_status",
+            "current_status",
         ] {
             if let Some(value) = payload.get(key) {
                 let value = value
@@ -657,7 +659,7 @@ impl SelfObserver {
         .await
     }
 
-    /// Emit health status change
+    /// Emit a health status observation
     pub async fn emit_health_status(
         &self,
         component: &str,
@@ -1033,6 +1035,41 @@ mod tests {
         let second_key = SelfObserver::metric_identity_key("metric.gauge", &second);
 
         assert_ne!(first_key, second_key);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn health_status_metric_identity_includes_transition() -> TestResult<()> {
+        let initial = JsonValue::Object(
+            serde_json::json!({
+                "component": "source.email",
+                "previous_status": "healthy",
+                "current_status": "healthy",
+                "reason": "initial observation"
+            })
+            .as_object()
+            .cloned()
+            .expect("json object"),
+        );
+        let degraded = JsonValue::Object(
+            serde_json::json!({
+                "component": "source.email",
+                "previous_status": "healthy",
+                "current_status": "degraded",
+                "reason": "status changed"
+            })
+            .as_object()
+            .cloned()
+            .expect("json object"),
+        );
+
+        let initial_key = SelfObserver::metric_identity_key("health.status", &initial);
+        let degraded_key = SelfObserver::metric_identity_key("health.status", &degraded);
+
+        assert_ne!(
+            initial_key, degraded_key,
+            "health.status rate limiting must not collapse a real status transition into the initial observation slot"
+        );
         Ok(())
     }
 
