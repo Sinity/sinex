@@ -60,7 +60,7 @@ impl QueryUnitsCommand {
     }
 }
 
-async fn execute_query_unit(
+pub(crate) async fn execute_query_unit(
     client: &GatewayClient,
     query: &SinexQuery,
 ) -> Result<Vec<SinexQueryResultRow>> {
@@ -360,6 +360,7 @@ async fn query_runtime_health(
         "runtime health",
         payload,
     )
+    .with_ref(SinexObjectRef::new(SinexObjectKind::RuntimeModule, "runtime").with_label("runtime"))
     .with_summary(format!(
         "{} active modules, {} inactive modules",
         health.active_count, health.inactive_count
@@ -367,6 +368,8 @@ async fn query_runtime_health(
     .with_field("module", "runtime")
     .with_field("role", "summary")
     .with_field("state", state)
+    .with_field("active_count", health.active_count)
+    .with_field("inactive_count", health.inactive_count)
     .with_field("stale_after", "300s");
     Ok(vec![row]
         .into_iter()

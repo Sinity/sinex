@@ -44,6 +44,7 @@ control plane and not an actuator.
 | `sinex.ops_get` |
 | `sinex.ops_list` |
 | `sinex.privacy_status` |
+| `sinex.query` |
 | `sinex.recent_activity` |
 | `sinex.relation_evidence` |
 | `sinex.replay_operations` |
@@ -91,6 +92,8 @@ instruction loops.
 Allowed v1 behavior:
 
 - search events and source materials;
+- execute descriptor-backed query-unit selections over events, sources,
+  debt, operations, and runtime health;
 - trace provenance and material evidence links;
 - return source readiness and continuity caveats;
 - expose runtime privacy, health, source, automata, replay,
