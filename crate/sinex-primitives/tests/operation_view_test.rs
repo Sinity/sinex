@@ -26,6 +26,7 @@ async fn operation_kind_known_variants_round_trip() -> TestResult<()> {
             OperationKind::ArchiveIntegrityMismatch,
             "archive.integrity_mismatch",
         ),
+        (OperationKind::ProjectionRebuild, "projection-rebuild"),
     ];
 
     for (kind, expected_str) in cases {
