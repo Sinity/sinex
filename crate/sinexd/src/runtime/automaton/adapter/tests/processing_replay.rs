@@ -1,4 +1,18 @@
 use super::*;
+
+async fn make_db_input_event(
+    ctx: &TestContext,
+    material_label: &str,
+    value: &str,
+) -> TestResult<Event<JsonValue>> {
+    let material_id = ctx.create_source_material(Some(material_label)).await?;
+    let mut event = DynamicPayload::new("test.source", "test.input", json!({ "value": value }))
+        .from_material(material_id)
+        .build()?;
+    event.id = Some(event.id.unwrap_or_else(Id::new));
+    Ok(event)
+}
+
 #[sinex_test]
 async fn process_batch_halts_after_three_consecutive_checkpoint_save_failures(
     ctx: TestContext,
@@ -422,9 +436,9 @@ async fn historical_replay_resumes_from_internal_checkpoint(ctx: TestContext) ->
         .pool()
         .events()
         .insert_batch(vec![
-            make_input_event("first")?,
-            make_input_event("second")?,
-            make_input_event("third")?,
+            make_db_input_event(&ctx, "history-resume-first", "first").await?,
+            make_db_input_event(&ctx, "history-resume-second", "second").await?,
+            make_db_input_event(&ctx, "history-resume-third", "third").await?,
         ])
         .await?;
     let second_id = inserted[1].id.expect("inserted event must have an id");
@@ -488,7 +502,17 @@ async fn historical_replay_filters_wildcard_material_only_inputs(
     .build()?;
     material_event.id = Some(material_event.id.unwrap_or_else(Id::new));
 
-    let synthesized_event = make_input_event("synthesized-history")?;
+    let material_event_id = material_event
+        .id
+        .expect("material event fixture should carry an id");
+    let mut synthesized_event = DynamicPayload::new(
+        "test.source",
+        "test.input",
+        json!({ "value": "synthesized-history" }),
+    )
+    .from_parents([material_event_id])?
+    .build()?;
+    synthesized_event.id = Some(synthesized_event.id.unwrap_or_else(Id::new));
 
     ctx.pool()
         .events()
@@ -700,7 +724,9 @@ async fn historical_replay_fails_when_dlq_routing_fails(ctx: TestContext) -> Tes
     let inserted = ctx
         .pool()
         .events()
-        .insert_batch(vec![make_input_event("route-to-dlq")?])
+        .insert_batch(vec![
+            make_db_input_event(&ctx, "route-to-dlq", "route-to-dlq").await?,
+        ])
         .await?;
     let input_id = inserted[0].id.expect("inserted event should have an id");
 
