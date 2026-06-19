@@ -11,8 +11,12 @@ paths. The shared vocabulary lives in `sinex_primitives::output_kind`.
 | `Proposal` | Candidate change or truth claim requiring authority. | `curation.proposal` |
 | `Judgment` | Explicit authority decision over a proposal. | `curation.judgment` |
 | `OperationRecord` | Intentional control-plane activity or finalization record. | `operations_log` |
-| `EphemeralView` | Read result delivered to CLI, API, TUI, MCP, or another view surface. | `relations.evidence_window`, `views.view_envelope` |
+| `EphemeralView` | Read result delivered to CLI, API, TUI, MCP, or another view surface. | `relations.evidence_window`, `views.view_envelope`, `views.debt_list` |
 
 New output-producing work should add or reference an
 `OutputKindDeclaration`. A derived status, report, proposal, operation, or view
 needs an explicit reason before it is admitted as a canonical event.
+
+`views.debt_list` is the shared operator surface for capture, admission, and
+projection gaps. New debt providers should append typed rows to that unified
+view rather than creating separate public debt-list DTO families.
