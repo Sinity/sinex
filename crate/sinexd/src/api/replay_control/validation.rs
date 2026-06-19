@@ -328,7 +328,7 @@ pub(super) async fn run_safety_analysis(
                     "level": "critical",
                     "message": format!(
                         "{} integrity violation(s) detected: live events reference events that \
-                        would be archived. Execution may leave dangling references.",
+                        are already outside the live cascade. Refresh the preview before execution.",
                         critical_violation_count
                     ),
                 }));

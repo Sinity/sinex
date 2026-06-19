@@ -18,6 +18,12 @@ use tracing::debug;
 
 use sinex_db::replay::state_machine::ReplayScope;
 
+pub(crate) struct ArchivedReplayCascade {
+    pub(crate) cascade_ids: Vec<Uuid>,
+    pub(crate) scope_metadata: Vec<ScopeInvalidationBucket>,
+    pub(crate) archived_count: u64,
+}
+
 impl ReplayExecutionEngine {
     pub(crate) async fn collect_scope_events(
         &self,
@@ -300,90 +306,162 @@ impl ReplayExecutionEngine {
         Ok(resolved)
     }
 
-    pub(crate) async fn derive_cascade_ids(
+    pub(crate) async fn archive_replay_cascade_atomically(
         &self,
         pool: &sqlx::PgPool,
         operation_id: Uuid,
         root_ids: &[Uuid],
-    ) -> Result<Vec<Uuid>> {
+        archived_by: &str,
+    ) -> Result<ArchivedReplayCascade> {
+        if root_ids.is_empty() {
+            return Ok(ArchivedReplayCascade {
+                cascade_ids: Vec::new(),
+                scope_metadata: Vec::new(),
+                archived_count: 0,
+            });
+        }
+
+        self.maybe_fail_scope_metadata_collection().map_err(|err| {
+            SinexError::service("Failed to collect replay cascade scope metadata").with_source(err)
+        })?;
+
         let session_id = format!("replay_{}", operation_id.simple());
+        let reason = "superseded by replay re-execution";
+        let operation_id_string = operation_id.to_string();
+        let archived_by = archived_by.to_string();
 
-        let mut cascade_ids = pool
-            .with_transaction(async |tx| {
-                let mut repo_tx = EventRepositoryTx::new(tx);
+        pool.with_transaction(async |tx| {
+            sqlx::query("LOCK TABLE core.events IN SHARE MODE")
+                .execute(&mut **tx)
+                .await
+                .map_err(|err| {
+                    SinexError::database("Failed to lock replay archive event set").with_source(err)
+                })?;
 
-                let table_name = repo_tx
-                    .prepare_cascade_session(&session_id, false)
-                    .await
-                    .map_err(|e| e.with_context("operation", "prepare replay cascade session"))?;
-                repo_tx
-                    .populate_cascade_roots(&table_name, root_ids)
-                    .await
-                    .map_err(|e| e.with_context("operation", "populate replay cascade roots"))?;
-                repo_tx
-                    .expand_cascade(
-                        &table_name,
-                        i32::try_from(
-                            sinex_primitives::constants::replay::DEFAULT_CASCADE_MAX_DEPTH,
-                        )
+            let mut repo_tx = EventRepositoryTx::new(tx);
+            let table_name = repo_tx
+                .prepare_cascade_session(&session_id, false)
+                .await
+                .map_err(|e| e.with_context("operation", "prepare replay cascade session"))?;
+            repo_tx
+                .populate_cascade_roots(&table_name, root_ids)
+                .await
+                .map_err(|e| e.with_context("operation", "populate replay cascade roots"))?;
+            repo_tx
+                .expand_cascade(
+                    &table_name,
+                    i32::try_from(sinex_primitives::constants::replay::DEFAULT_CASCADE_MAX_DEPTH)
                         .unwrap_or(i32::MAX),
-                    )
-                    .await
-                    .map_err(|e| e.with_context("operation", "expand replay cascade"))?;
+                )
+                .await
+                .map_err(|e| e.with_context("operation", "expand replay cascade"))?;
 
-                let cascade_ids: Vec<Uuid> = repo_tx
-                    .get_event_dependencies(&table_name)
-                    .await
-                    .map_err(|e| e.with_context("operation", "read replay cascade members"))?
-                    .into_iter()
-                    .map(|(event_id, _)| event_id)
-                    .collect();
+            let mut cascade_ids: Vec<Uuid> = repo_tx
+                .get_event_dependencies(&table_name)
+                .await
+                .map_err(|e| e.with_context("operation", "read replay cascade members"))?
+                .into_iter()
+                .map(|(event_id, _)| event_id)
+                .collect();
+            cascade_ids.sort_unstable();
+            cascade_ids.dedup();
 
+            if cascade_ids.is_empty() {
                 repo_tx
                     .cleanup_cascade_session(&table_name)
                     .await
                     .map_err(|e| e.with_context("operation", "cleanup replay cascade session"))?;
+                return Ok(ArchivedReplayCascade {
+                    cascade_ids,
+                    scope_metadata: Vec::new(),
+                    archived_count: 0,
+                });
+            }
 
-                Ok(cascade_ids)
-            })
+            let rows = sqlx::query!(
+                "SELECT id, source, event_type, scope_key, \
+                        (source_event_ids IS NOT NULL) AS \"has_lineage!: bool\" \
+                 FROM core.events \
+                 WHERE id = ANY($1::uuid[]) AND scope_key IS NOT NULL",
+                &cascade_ids,
+            )
+            .fetch_all(&mut **repo_tx.transaction())
             .await
             .map_err(|err| {
-                SinexError::database("Failed to derive replay cascade ids").with_source(err)
+                SinexError::database("Failed to collect cascade scope metadata")
+                    .with_std_error(&err)
             })?;
 
-        cascade_ids.sort_unstable();
-        cascade_ids.dedup();
-        Ok(cascade_ids)
-    }
+            let mut grouped: HashMap<(EventSource, EventType, bool), ScopeInvalidationBucket> =
+                HashMap::new();
+            for row in rows {
+                if let Some(sk) = row.scope_key {
+                    let event_source = EventSource::new(row.source.clone()).map_err(|error| {
+                        SinexError::validation(format!(
+                            "Invalid event source '{}' in replay cascade scope metadata: {error}",
+                            row.source
+                        ))
+                    })?;
+                    let event_type = EventType::new(row.event_type.clone()).map_err(|error| {
+                        SinexError::validation(format!(
+                            "Invalid event type '{}' in replay cascade scope metadata: {error}",
+                            row.event_type
+                        ))
+                    })?;
+                    let bucket = grouped
+                        .entry((event_source.clone(), event_type.clone(), row.has_lineage))
+                        .or_insert_with(|| ScopeInvalidationBucket {
+                            event_ids: Vec::new(),
+                            event_source,
+                            event_type,
+                            has_lineage: row.has_lineage,
+                            scope_keys: Vec::new(),
+                        });
+                    bucket.event_ids.push(row.id);
+                    bucket.scope_keys.push(sk);
+                }
+            }
 
-    pub(crate) async fn archive_cascade(
-        &self,
-        pool: &sqlx::PgPool,
-        cascade_ids: &[Uuid],
-        operation_id: Uuid,
-        archived_by: &str,
-    ) -> Result<u64> {
-        if cascade_ids.is_empty() {
-            return Ok(0);
-        }
+            let mut scope_metadata = grouped.into_values().collect::<Vec<_>>();
+            for bucket in &mut scope_metadata {
+                bucket.event_ids.sort_unstable();
+                bucket.event_ids.dedup();
+                bucket.scope_keys.sort_unstable();
+                bucket.scope_keys.dedup();
+            }
 
-        pool.events()
-            .execute_cascade_archive(
+            let archived_count = repo_tx
+                .execute_cascade_archive(
+                    &cascade_ids,
+                    reason,
+                    &operation_id_string,
+                    archived_by.as_str(),
+                )
+                .await
+                .map_err(|e| e.with_context("operation", "archive replay cascade"))?;
+
+            repo_tx
+                .cleanup_cascade_session(&table_name)
+                .await
+                .map_err(|e| e.with_context("operation", "cleanup replay cascade session"))?;
+
+            Ok(ArchivedReplayCascade {
                 cascade_ids,
-                "superseded by replay re-execution",
-                &operation_id.to_string(),
-                archived_by,
-            )
-            .await
-            .map_err(|err| {
-                SinexError::database("Failed to archive replay cascade").with_source(err)
+                scope_metadata,
+                archived_count,
             })
+        })
+        .await
+        .map_err(|err| {
+            SinexError::database("Failed to archive replay cascade atomically").with_source(err)
+        })
     }
 
     /// Collect scope metadata from events about to be archived.
     ///
     /// Returns `(event_type, scope_keys)` pairs grouped by `event_type`.
-    /// Called before `archive_cascade` so we can emit invalidation signals after.
+    /// Use when a caller needs scope invalidation metadata before moving events
+    /// out of `core.events`.
     pub(crate) async fn collect_cascade_scope_metadata(
         &self,
         pool: &sqlx::PgPool,

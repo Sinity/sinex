@@ -181,6 +181,67 @@ where
     Ok(())
 }
 
+async fn ensure_source_event_ids_are_live<'e, E>(
+    executor: E,
+    event_id: &Id<Event<JsonValue>>,
+    source_event_ids: &[EventId],
+    batch_event_ids: Option<&HashSet<Uuid>>,
+) -> DbResult<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    if source_event_ids.is_empty() {
+        return Ok(());
+    }
+
+    let source_uuids = source_event_ids
+        .iter()
+        .map(EventId::to_uuid)
+        .filter(|source_id| {
+            batch_event_ids
+                .map(|batch_ids| !batch_ids.contains(source_id))
+                .unwrap_or(true)
+        })
+        .collect::<Vec<_>>();
+    if source_uuids.is_empty() {
+        return Ok(());
+    }
+
+    let live_ids = sqlx::query_scalar::<_, Uuid>(
+        r"
+        SELECT id::uuid
+        FROM core.events
+        WHERE id = ANY($1::uuid[])
+        FOR KEY SHARE
+        ",
+    )
+    .bind(&source_uuids)
+    .fetch_all(executor)
+    .await
+    .map_err(|e| db_error(e, "validate live derived event parents"))?;
+
+    let live_set = live_ids.into_iter().collect::<HashSet<_>>();
+    let missing_ids = source_uuids
+        .iter()
+        .copied()
+        .filter(|source_id| !live_set.contains(source_id))
+        .collect::<Vec<_>>();
+
+    if !missing_ids.is_empty() {
+        return Err(SinexError::validation(format!(
+            "derived event {event_id} references {} non-live source_event_ids: {}",
+            missing_ids.len(),
+            missing_ids
+                .iter()
+                .map(Uuid::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+
+    Ok(())
+}
+
 fn ensure_no_intra_batch_synthesis_cycles(
     synthesis_checks: &[(Id<Event<JsonValue>>, Vec<EventId>)],
 ) -> DbResult<()> {
@@ -753,6 +814,8 @@ impl<'a> EventRepository<'a> {
 
                     if let Some(source_event_ids) = source_event_ids.as_ref() {
                         ensure_no_synthesis_cycles(&mut **tx, &id, source_event_ids)?;
+                        ensure_source_event_ids_are_live(&mut **tx, &id, source_event_ids, None)
+                            .await?;
                     }
 
                     let record = sqlx::query_as!(
@@ -873,6 +936,7 @@ impl<'a> EventRepository<'a> {
 
         if let Some(source_event_ids) = source_event_ids.as_ref() {
             ensure_no_synthesis_cycles(&mut **tx, &id, source_event_ids)?;
+            ensure_source_event_ids_are_live(&mut **tx, &id, source_event_ids, None).await?;
         }
 
         // Convert IDs to UUIDs before the query to avoid temporary value issues
@@ -1194,10 +1258,18 @@ impl<'a> EventRepository<'a> {
         }
 
         ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
+        let batch_event_ids = ids.iter().copied().collect::<HashSet<_>>();
 
         // Enforce derived cycle detection (parity with insert/insert_stream_batch)
         for (event_id, source_ids) in &synthesis_checks {
             ensure_no_synthesis_cycles(&mut **tx, event_id, source_ids)?;
+            ensure_source_event_ids_are_live(
+                &mut **tx,
+                event_id,
+                source_ids,
+                Some(&batch_event_ids),
+            )
+            .await?;
         }
 
         // QueryBuilder is required here because UNNEST cannot represent ragged arrays
@@ -1334,9 +1406,17 @@ impl<'a> EventRepository<'a> {
                         .await
                         .map_err(|e| db_error(e, "begin stream batch transaction"))?;
                     set_repeatable_read(&mut tx).await?;
+                    let chunk_event_ids = chunk.iter().map(|row| row.id).collect::<HashSet<_>>();
 
                     for (event_id, source_ids) in &chunk_synthesis_checks {
                         ensure_no_synthesis_cycles(&mut *tx, event_id, source_ids)?;
+                        ensure_source_event_ids_are_live(
+                            &mut *tx,
+                            event_id,
+                            source_ids,
+                            Some(&chunk_event_ids),
+                        )
+                        .await?;
                     }
 
                     let result = Self::execute_batch_insert(&mut *tx, chunk).await?;
@@ -2094,7 +2174,6 @@ impl<'a> EventRepository<'a> {
             ));
         }
 
-        // Begin transaction and set audit context
         let mut tx = self.pool.begin().await.map_err(|e| {
             db_error(
                 e,
@@ -2105,92 +2184,8 @@ impl<'a> EventRepository<'a> {
             )
         })?;
 
-        // Set session variables for audit trail (the trigger reads these)
-        sqlx::query("SELECT pg_catalog.set_config('sinex.operation_id', $1, true)")
-            .bind(operation_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| db_error(e, "set operation_id"))?;
-
-        sqlx::query("SELECT pg_catalog.set_config('sinex.archived_by', $1, true)")
-            .bind(archived_by)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| db_error(e, "set archived_by"))?;
-
-        sqlx::query("SELECT pg_catalog.set_config('sinex.archive_reason', $1, true)")
-            .bind(reason)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| db_error(e, "set archive_reason"))?;
-
-        // Copy annotations to archive before the DELETE cascade destroys them.
-        let annotation_count = sqlx::query(
-            r"INSERT INTO audit.archived_annotations
-              SELECT a.*, now(), $2, $3
-              FROM core.event_annotations a
-              WHERE a.event_id = ANY($1::uuid[])",
-        )
-        .bind(&ids)
-        .bind(archived_by)
-        .bind(reason)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "archive annotations"))?
-        .rows_affected();
-
-        // Copy embeddings to archive before the DELETE cascade destroys them.
-        let embedding_count = sqlx::query(
-            r"INSERT INTO audit.archived_embeddings
-              SELECT e.*, now(), $2, $3
-              FROM core.event_embeddings e
-              WHERE e.event_id = ANY($1::uuid[])",
-        )
-        .bind(&ids)
-        .bind(archived_by)
-        .bind(reason)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "archive embeddings"))?
-        .rows_affected();
-
-        // Copy tagged_items referencing the archived events, then clean up the
-        // live table. Unlike annotations/embeddings, tagged_items has no FK to
-        // events, so the DELETE below will not cascade — we must remove
-        // dangling references explicitly.
-        let tagged_count = sqlx::query(
-            r"INSERT INTO audit.archived_tagged_items
-              SELECT t.*, now(), $2, $3
-              FROM core.tagged_items t
-              WHERE t.item_type = 'event' AND t.item_id = ANY($1::uuid[])",
-        )
-        .bind(&ids)
-        .bind(archived_by)
-        .bind(reason)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "archive tagged items"))?
-        .rows_affected();
-
-        if tagged_count > 0 {
-            sqlx::query(
-                r"DELETE FROM core.tagged_items
-                  WHERE item_type = 'event' AND item_id = ANY($1::uuid[])",
-            )
-            .bind(&ids)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| db_error(e, "cleanup archived tagged items"))?;
-        }
-
-        // Delete events - the trigger fn_archive_before_delete copies them to archive.
-        // Pre-validation (above) guarantees all IDs exist, so this DELETE cannot
-        // come up short due to missing roots.
-        sqlx::query("DELETE FROM core.events WHERE id = ANY($1::uuid[])")
-            .bind(&ids)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| db_error(e, "execute cascade archive"))?;
+        let archived_count =
+            execute_cascade_archive_in_tx(&mut tx, &ids, reason, operation_id, archived_by).await?;
 
         tx.commit().await.map_err(|e| {
             db_error(
@@ -2203,15 +2198,136 @@ impl<'a> EventRepository<'a> {
             operation_id = %operation_id,
             archived_by = %archived_by,
             reason = %reason,
-            archived_count = %requested_count,
-            annotations_archived = annotation_count,
-            embeddings_archived = embedding_count,
-            tagged_items_archived = tagged_count,
+            archived_count,
             "Archived events via cascade operation"
         );
 
-        Ok(requested_count)
+        Ok(archived_count)
     }
+}
+
+async fn execute_cascade_archive_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    ids: &[Uuid],
+    reason: &str,
+    operation_id: &str,
+    archived_by: &str,
+) -> DbResult<u64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+
+    let requested_count = ids.len() as u64;
+
+    // Set session variables for audit trail (the trigger reads these)
+    sqlx::query("SELECT pg_catalog.set_config('sinex.operation_id', $1, true)")
+        .bind(operation_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| db_error(e, "set operation_id"))?;
+
+    sqlx::query("SELECT pg_catalog.set_config('sinex.archived_by', $1, true)")
+        .bind(archived_by)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| db_error(e, "set archived_by"))?;
+
+    sqlx::query("SELECT pg_catalog.set_config('sinex.archive_reason', $1, true)")
+        .bind(reason)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| db_error(e, "set archive_reason"))?;
+
+    // Copy annotations to archive before the DELETE cascade destroys them.
+    let annotation_count = sqlx::query(
+        r"INSERT INTO audit.archived_annotations
+              SELECT a.*, now(), $2, $3
+              FROM core.event_annotations a
+              WHERE a.event_id = ANY($1::uuid[])",
+    )
+    .bind(ids)
+    .bind(archived_by)
+    .bind(reason)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "archive annotations"))?
+    .rows_affected();
+
+    // Copy embeddings to archive before the DELETE cascade destroys them.
+    let embedding_count = sqlx::query(
+        r"INSERT INTO audit.archived_embeddings
+              SELECT e.*, now(), $2, $3
+              FROM core.event_embeddings e
+              WHERE e.event_id = ANY($1::uuid[])",
+    )
+    .bind(ids)
+    .bind(archived_by)
+    .bind(reason)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "archive embeddings"))?
+    .rows_affected();
+
+    // Copy tagged_items referencing the archived events, then clean up the
+    // live table. Unlike annotations/embeddings, tagged_items has no FK to
+    // events, so the DELETE below will not cascade — we must remove
+    // dangling references explicitly.
+    let tagged_count = sqlx::query(
+        r"INSERT INTO audit.archived_tagged_items
+              SELECT t.*, now(), $2, $3
+              FROM core.tagged_items t
+              WHERE t.item_type = 'event' AND t.item_id = ANY($1::uuid[])",
+    )
+    .bind(ids)
+    .bind(archived_by)
+    .bind(reason)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "archive tagged items"))?
+    .rows_affected();
+
+    if tagged_count > 0 {
+        sqlx::query(
+            r"DELETE FROM core.tagged_items
+                  WHERE item_type = 'event' AND item_id = ANY($1::uuid[])",
+        )
+        .bind(ids)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| db_error(e, "cleanup archived tagged items"))?;
+    }
+
+    // Delete events - the trigger fn_archive_before_delete copies them to archive.
+    // Pre-validation (above) guarantees all IDs exist, so this DELETE cannot
+    // come up short due to missing roots.
+    let archived_count = sqlx::query("DELETE FROM core.events WHERE id = ANY($1::uuid[])")
+        .bind(ids)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| db_error(e, "execute cascade archive"))?
+        .rows_affected();
+
+    if archived_count != requested_count {
+        return Err(db_error(
+            sqlx::Error::RowNotFound,
+            &format!(
+                "archive_cascade: archived {archived_count} of {requested_count} requested live IDs"
+            ),
+        ));
+    }
+
+    tracing::debug!(
+        operation_id = %operation_id,
+        archived_by = %archived_by,
+        reason = %reason,
+        archived_count,
+        annotations_archived = annotation_count,
+        embeddings_archived = embedding_count,
+        tagged_items_archived = tagged_count,
+        "Archived cascade rows inside caller transaction"
+    );
+
+    Ok(archived_count)
 }
 
 /// Relation kind for event replacements.
@@ -2337,6 +2453,21 @@ pub struct EventRepositoryTx<'a, 't> {
 impl<'a, 't> EventRepositoryTx<'a, 't> {
     pub fn new(tx: &'a mut Transaction<'t, Postgres>) -> Self {
         Self { tx }
+    }
+
+    pub fn transaction(&mut self) -> &mut Transaction<'t, Postgres> {
+        self.tx
+    }
+
+    pub async fn execute_cascade_archive(
+        &mut self,
+        live_ids: &[Uuid],
+        reason: &str,
+        operation_id: &str,
+        archived_by: &str,
+    ) -> DbResult<u64> {
+        execute_cascade_archive_in_tx(&mut *self.tx, live_ids, reason, operation_id, archived_by)
+            .await
     }
 
     pub async fn prepare_cascade_session(
@@ -2843,6 +2974,53 @@ mod tests {
             EventRepository::stream_batch_insert_strategy(&batch),
             Some(StreamBatchInsertStrategy::Derived)
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn derived_insert_rejects_non_live_parent(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let missing_parent = Id::<Event<JsonValue>>::new();
+        let provenance = crate::models::Provenance::from_derived([EventId::from_uuid(
+            missing_parent.to_uuid(),
+        )])
+        .ok_or_else(|| color_eyre::eyre::eyre!("expected derived provenance"))?;
+        let event = Event {
+            id: Some(Id::new()),
+            source: EventSource::new("test.source")?,
+            event_type: EventType::new("test.derived")?,
+            host: HostName::from_static("localhost"),
+            payload: json!({"derived": true}),
+            ts_orig: Some(Timestamp::now()),
+            ts_quality: None,
+            module_run_id: None,
+            payload_schema_id: None,
+            provenance,
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            automaton_model: None,
+            anchor_payload_hash: None,
+        };
+
+        let error = match EventRepository::new(ctx.pool()).insert(event).await {
+            Ok(_) => {
+                return Err(color_eyre::eyre::eyre!(
+                    "derived insert unexpectedly accepted a missing parent"
+                ));
+            }
+            Err(error) => error,
+        };
+
+        assert!(
+            format!("{error}").contains("non-live source_event_ids"),
+            "unexpected error: {error}"
+        );
+
         Ok(())
     }
 

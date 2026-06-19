@@ -245,25 +245,17 @@ impl ReplayExecutionEngine {
     /// 4. The source re-reads source material and emits fresh events through normal flow
     /// 5. Downstream automatons process the new events naturally via `JetStream`
     ///
-    /// ## Transaction-boundary note (known-accepted race window)
+    /// ## Transaction-boundary note
     ///
-    /// The cascade expansion (`derive_cascade_ids`) and the archive
-    /// (`archive_cascade`) execute in **separate** database transactions.
-    /// Between them, a newly-arriving event can reference an event that is
-    /// about to be archived, creating a dangling `source_event_ids` reference.
+    /// Replay cascade expansion, scope-metadata collection, and live-row archive
+    /// execute inside one database transaction. That transaction takes a narrow
+    /// `core.events` archive critical section so newly-arriving derived events
+    /// cannot interleave between cascade selection and deletion.
     ///
-    /// This window **cannot be closed** without a distributed-transaction
-    /// protocol (2PC): steps after the archive publish invalidation signals
-    /// and dispatch scan commands via NATS, which sit outside the database.
-    /// Holding a DB transaction open across NATS request-reply would block
-    /// the connection pool and risk indefinite locks on `core.events`.
-    ///
-    /// Mitigations that make this safe in practice:
-    /// - `abort_before_scan_ack` restores the cascade and emits compensating
-    ///   invalidations when the invalidation-publish or scan-command steps fail.
-    /// - The cascade analyzer's integrity-violation check (`cascade_analyzer.rs`)
-    ///   catches dangling references before the next replay of the same scope,
-    ///   so the race is detectable and self-healing rather than silent.
+    /// NATS invalidation publish and source scan dispatch remain outside the DB
+    /// transaction. Failures after the archive commit are handled by the replay
+    /// saga (`abort_before_scan_ack`) rather than holding database locks across
+    /// request-reply messaging.
     pub(crate) async fn replay_events(
         &self,
         operation_id: Uuid,
@@ -330,18 +322,12 @@ impl ReplayExecutionEngine {
         )?;
 
         // Step 1: Archive the affected cascade
-        let cascade_ids = self
-            .derive_cascade_ids(pool, operation_id, &root_ids)
+        let archived_cascade = self
+            .archive_replay_cascade_atomically(pool, operation_id, &root_ids, executor_name)
             .await?;
-
-        // Collect scope metadata before archiving (events move to audit after)
-        let scope_metadata = self
-            .collect_cascade_scope_metadata(pool, &cascade_ids)
-            .await?;
-
-        let archived_count = self
-            .archive_cascade(pool, &cascade_ids, operation_id, executor_name)
-            .await?;
+        let cascade_ids = archived_cascade.cascade_ids;
+        let scope_metadata = archived_cascade.scope_metadata;
+        let archived_count = archived_cascade.archived_count;
         info!(
             operation_id = %operation_id,
             material_roots = material_roots.len(),
@@ -357,12 +343,12 @@ impl ReplayExecutionEngine {
         // replay integrity checks/operator recovery rather than reintroducing
         // the retired outbox machinery.
         //
-        // Known race (#751 F1): if the process crashes after archive_cascade
+        // Known race (#751 F1): if the process crashes after the DB archive
         // commits but before publish_scope_invalidations completes, archived
         // rows stay in audit.archived_events but no invalidation signals reach
-        // downstream automata. On recovery, the cascade analyzer's integrity
-        // check catches dangling references before the next replay — the race
-        // is detectable and self-healing rather than silent data corruption.
+        // downstream automata. That is stale recomputation state, not a live
+        // lineage orphan; durable ProjectionDebt/OperationView reporting is the
+        // follow-up lane for surfacing it after the DerivationSpec work lands.
 
         // Publish scope invalidation signals for archived derived events
         if !scope_metadata.is_empty()
