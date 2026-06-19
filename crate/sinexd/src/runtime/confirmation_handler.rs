@@ -295,6 +295,9 @@ impl ConfirmationBuffer {
         let existing_payload_bytes = pending
             .get(&event.event_id)
             .map_or(0, |entry| entry.payload_bytes);
+        let existing_timed_out_at = pending
+            .get(&event.event_id)
+            .and_then(|entry| entry.timed_out_at);
         let pending_count = pending.len() + usize::from(!pending.contains_key(&event.event_id));
         let retained_payload_bytes = self.retained_payload_bytes();
         let projected_payload_bytes = retained_payload_bytes
@@ -348,7 +351,7 @@ impl ConfirmationBuffer {
             event.event_id,
             PendingEntry {
                 event,
-                timed_out_at: None,
+                timed_out_at: existing_timed_out_at,
                 payload_bytes,
             },
         );
@@ -959,6 +962,41 @@ mod tests {
         );
         assert_eq!(buffer.len().await, 1);
         assert_eq!(buffer.retained_payload_bytes(), max_payload_bytes);
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn same_event_replacement_preserves_timeout_grace_state() -> TestResult<()> {
+        let old = Timestamp::from_unix_timestamp(1).expect("timestamp in range");
+        let initial = provisional(
+            "system.journald",
+            "journald.entry.written",
+            old,
+            json!({ "MESSAGE": "original" }),
+        );
+        let replacement = ProvisionalEvent {
+            payload: json!({ "MESSAGE": "redelivered replacement" }),
+            ..initial.clone()
+        };
+        let buffer = ConfirmationBuffer::with_capacity_and_grace(
+            Duration::from_millis(0),
+            1,
+            Duration::from_millis(0),
+        );
+
+        assert!(buffer.add_provisional(initial).await);
+        assert_eq!(buffer.check_timeouts().await, vec![replacement.event_id]);
+
+        let replaced = buffer.add_provisional_with_pressure(replacement).await;
+        assert!(replaced.accepted);
+        let retained = buffer.snapshot().await;
+        assert_eq!(retained.pending_count, 1);
+        assert_eq!(retained.timed_out_retained_count, 1);
+
+        let purged = buffer.purge_expired().await;
+        assert_eq!(purged.len(), 1);
+        assert_eq!(buffer.len().await, 0);
 
         Ok(())
     }
