@@ -110,9 +110,15 @@ pub async fn handle_events_cards(
 ) -> Result<EventCardListView> {
     let result = services.pool().events().query(query).await?;
     match result {
-        EventQueryResult::Events { events, .. } => {
-            Ok(event_card_list_with_policy(&events, services.privacy_policy()).await)
-        }
+        EventQueryResult::Events {
+            events,
+            next_cursor,
+            total_estimate,
+        } => Ok(
+            event_card_list_with_policy(&events, services.privacy_policy())
+                .await
+                .with_query_metadata(next_cursor, total_estimate),
+        ),
         other => Err(SinexError::validation(format!(
             "events.cards requires an Events query result, got {:?}",
             std::mem::discriminant(&other)

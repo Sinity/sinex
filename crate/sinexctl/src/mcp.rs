@@ -444,7 +444,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             name: "sinex.search_events",
             kind: McpSurfaceKind::Tool,
             description: "Read-only search over persisted Sinex events.",
-            backing_rpc_methods: &[methods::EVENTS_QUERY],
+            backing_rpc_methods: &[methods::EVENTS_CARDS],
             read_only: true,
         },
         McpCatalogEntry {
@@ -1744,8 +1744,7 @@ async fn search_events(client: &GatewayClient, arguments: Value) -> Result<Value
     query.include_total_estimate = args.include_total_estimate;
     query.validate()?;
 
-    let mut result = serde_json::to_value(client.query_events(query).await?)?;
-    redact_raw_samples(&mut result);
+    let result = serde_json::to_value(client.event_cards(query).await?)?;
     Ok(mcp_view_envelope(
         "sinex.search_events",
         &json!(args),

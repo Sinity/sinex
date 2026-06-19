@@ -281,20 +281,22 @@ async fn mcp_search_events_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["source_surface"], "sinex.search_events");
     assert_eq!(response["query_echo"]["sources"][0], "fixture");
-    assert_eq!(response["payload"]["result"]["type"], "events");
     assert_eq!(
-        response["payload"]["result"]["events"][0]["payload"]["reason"],
-        "mcp_raw_samples_disabled"
+        response["payload"]["result"]["schema_version"],
+        "event_card_list.v1"
     );
     assert_eq!(
-        response["payload"]["result"]["events"][0]["snippet"],
-        "[REDACTED]"
+        response["payload"]["result"]["cards"][0]["payload_preview"]["reason"],
+        "server_disclosed"
+    );
+    assert_eq!(
+        response["payload"]["result"]["cards"][0]["summary"],
+        "disclosed fixture event"
     );
     assert_eq!(response["privacy_state"]["state"], "redacted");
-    assert_eq!(response["caveats"][0]["id"], "mcp.raw_samples_redacted");
     assert!(
         !response.to_string().contains("secret_fixture_value"),
-        "MCP event search leaked raw payload or snippet text"
+        "MCP event search leaked raw query payload or snippet text"
     );
     Ok(())
 }
@@ -1839,6 +1841,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "next_cursor": null,
                     "total_estimate": null
                 }),
+                "events.cards" => fixture_event_card_list(),
                 "events.lineage" => {
                     let event_id = match body["params"]["event_id"].as_str() {
                         Some(value) => value.to_string(),
@@ -3065,4 +3068,56 @@ fn fixture_sensitive_query_event() -> Value {
         json!("search snippet secret_fixture_value should not leak"),
     );
     event
+}
+
+fn fixture_event_card_list() -> Value {
+    json!({
+        "schema_version": "event_card_list.v1",
+        "count": 1,
+        "cards": [
+            {
+                "ref": {
+                    "kind": "event",
+                    "id": fixture_event_id()
+                },
+                "timestamp": {
+                    "original": "2026-05-18T12:00:00Z",
+                    "ingested": "2026-05-18T12:00:00Z",
+                    "quality": "original_timestamp"
+                },
+                "source": {
+                    "family": "fixture",
+                    "raw": "fixture",
+                    "source_ref": {
+                        "kind": "source_driver",
+                        "id": "fixture",
+                        "label": "fixture"
+                    }
+                },
+                "event_type": "fixture.event",
+                "origin_kind": "material",
+                "summary": "disclosed fixture event",
+                "payload_preview": {
+                    "reason": "server_disclosed"
+                },
+                "material_refs": [],
+                "privacy_state": {
+                    "state": "redacted",
+                    "reason": "fixture disclosure policy"
+                },
+                "caveats": [
+                    {
+                        "id": "event.payload.disclosed",
+                        "message": "fixture payload was disclosed by the event card endpoint"
+                    }
+                ],
+                "trace_refs": [],
+                "trace_links": [],
+                "projection_badges": [],
+                "actions": []
+            }
+        ],
+        "next_cursor": null,
+        "total_estimate": 1
+    })
 }

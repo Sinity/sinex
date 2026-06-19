@@ -1,16 +1,19 @@
 use clap::Args;
 use console::style;
 use sinex_primitives::domain::{EventSource, EventType};
-use sinex_primitives::query::{
-    EventQuery, EventQueryResult, PayloadFilter, QueryResultEvent, SortDirection, TimeRange,
-};
+use sinex_primitives::query::{EventQuery, PayloadFilter, SortDirection, TimeRange};
+#[cfg(test)]
+use sinex_primitives::query::{EventQueryResult, QueryResultEvent};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::validation::query_validation::{self, DEFAULT_MAX_LIMIT};
-use sinex_primitives::views::{EventQueryListView, ViewEnvelope};
+#[cfg(test)]
+use sinex_primitives::views::EventQueryListView;
+use sinex_primitives::views::{EventCardListView, EventCardView, ViewEnvelope};
 
 use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::render_envelope;
+#[cfg(test)]
 use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
 use crate::prompt;
@@ -146,11 +149,35 @@ async fn execute_query(
     format: OutputFormat,
 ) -> Result<()> {
     let query_echo = serde_json::to_value(&query).ok();
-    let result = client.query_events(query).await?;
-    println!("{}", render_query_result(&result, format, query_echo)?);
+    let result = client.event_cards(query).await?;
+    println!(
+        "{}",
+        render_event_card_query_result(&result, format, query_echo)?
+    );
     Ok(())
 }
 
+fn render_event_card_query_result(
+    result: &EventCardListView,
+    format: OutputFormat,
+    query_echo: Option<serde_json::Value>,
+) -> Result<String> {
+    match format {
+        OutputFormat::Table => Ok(format_event_card_query_result_table(result)),
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Yaml | OutputFormat::Dot => {
+            let mut envelope = ViewEnvelope::new("sinexctl.events.query", result.clone());
+            if let Some(query_echo) = query_echo {
+                envelope = envelope.with_query_echo(query_echo);
+            }
+
+            render_envelope(&envelope, &envelope.payload.cards, format)?.ok_or_else(|| {
+                color_eyre::eyre::eyre!("query event results require an envelope-capable format")
+            })
+        }
+    }
+}
+
+#[cfg(test)]
 fn render_query_result(
     result: &EventQueryResult,
     format: OutputFormat,
@@ -172,6 +199,7 @@ fn render_query_result(
     }
 }
 
+#[cfg(test)]
 fn render_event_query_result(
     events: &[QueryResultEvent],
     next_cursor: Option<&sinex_primitives::query::Cursor>,
@@ -200,6 +228,7 @@ fn render_event_query_result(
     }
 }
 
+#[cfg(test)]
 fn render_non_event_query_result(
     result: &EventQueryResult,
     format: OutputFormat,
@@ -211,6 +240,7 @@ fn render_non_event_query_result(
     }
 }
 
+#[cfg(test)]
 fn format_non_event_query_result_table(result: &EventQueryResult) -> String {
     match result {
         EventQueryResult::Events { events, .. } => format_table_results(events),
@@ -230,6 +260,7 @@ fn format_non_event_query_result_table(result: &EventQueryResult) -> String {
     }
 }
 
+#[cfg(test)]
 fn format_event_query_result_table(
     events: &[QueryResultEvent],
     next_cursor: Option<&sinex_primitives::query::Cursor>,
@@ -259,6 +290,32 @@ fn format_event_query_result_table(
     output
 }
 
+fn format_event_card_query_result_table(result: &EventCardListView) -> String {
+    if result.cards.is_empty() {
+        return "No events found.".to_string();
+    }
+
+    let mut output = format_card_table_results(&result.cards);
+    output.push_str("\n\n");
+    output.push_str(&format!("Displayed {} event(s).", result.count));
+
+    if let Some(total_estimate) = result.total_estimate {
+        output.push_str(&format!("\nApproximate total matches: {total_estimate}."));
+    }
+
+    if let Some(cursor) = result.next_cursor.as_ref() {
+        let cursor_json =
+            serde_json::to_string(cursor).unwrap_or_else(|_| "<failed to serialize cursor>".into());
+        output.push_str("\nNext cursor:");
+        output.push_str(&format!("\n  {cursor_json}"));
+        output.push_str("\nReuse with:");
+        output.push_str(&format!("\n  --cursor-json '{cursor_json}'"));
+    }
+
+    output
+}
+
+#[cfg(test)]
 fn format_grouped_counts_table(groups: &[sinex_primitives::query::GroupedCount]) -> String {
     use tabled::{builder::Builder, settings::Style};
 
@@ -274,6 +331,7 @@ fn format_grouped_counts_table(groups: &[sinex_primitives::query::GroupedCount])
     table.to_string()
 }
 
+#[cfg(test)]
 fn format_grouped_values_table(
     aggregation: sinex_primitives::query::GroupedValueAggregation,
     groups: &[sinex_primitives::query::GroupedValue],
@@ -300,6 +358,7 @@ fn format_grouped_values_table(
     table.to_string()
 }
 
+#[cfg(test)]
 fn format_time_series_table(buckets: &[sinex_primitives::query::TimeBucketEntry]) -> String {
     use tabled::{builder::Builder, settings::Style};
 
@@ -318,6 +377,7 @@ fn format_time_series_table(buckets: &[sinex_primitives::query::TimeBucketEntry]
     table.to_string()
 }
 
+#[cfg(test)]
 fn format_source_stats_table(sources: &[sinex_primitives::query::SourceStatsEntry]) -> String {
     use tabled::{builder::Builder, settings::Style};
 
@@ -357,6 +417,7 @@ fn format_source_stats_table(sources: &[sinex_primitives::query::SourceStatsEntr
     table.to_string()
 }
 
+#[cfg(test)]
 fn format_query_timestamp(timestamp: &Timestamp) -> String {
     timestamp
         .format(&time::macros::format_description!(
@@ -365,6 +426,7 @@ fn format_query_timestamp(timestamp: &Timestamp) -> String {
         .unwrap_or_else(|_| timestamp.to_string())
 }
 
+#[cfg(test)]
 fn format_numeric_value(value: f64) -> String {
     if (value.fract()).abs() < 1e-9 {
         format!("{value:.0}")
@@ -570,6 +632,7 @@ fn parse_cursor_json(input: &str) -> Result<sinex_primitives::query::Cursor> {
 }
 
 /// Format search results as a table
+#[cfg(test)]
 fn format_table_results(results: &[QueryResultEvent]) -> String {
     use console::style;
     use tabled::{builder::Builder, settings::Style};
@@ -604,6 +667,37 @@ fn format_table_results(results: &[QueryResultEvent]) -> String {
     table.to_string()
 }
 
+fn format_card_table_results(results: &[EventCardView]) -> String {
+    use console::style;
+    use tabled::{builder::Builder, settings::Style};
+
+    let mut builder = Builder::new();
+    builder.push_record(["TIMESTAMP", "SOURCE", "EVENT TYPE", "ORIGIN", "SUMMARY"]);
+
+    for card in results {
+        let timestamp = card.timestamp.original.map_or_else(
+            || "unknown".to_string(),
+            |ts| {
+                ts.format(time::macros::format_description!(
+                    "[year]-[month]-[day] [hour]:[minute]:[second]"
+                ))
+                .unwrap_or_else(|_| "invalid".to_string())
+            },
+        );
+        builder.push_record([
+            style(timestamp).dim().to_string(),
+            card.source.raw.clone(),
+            card.event_type.clone(),
+            format!("{:?}", card.origin_kind),
+            truncate_string(&card.summary, 60),
+        ]);
+    }
+
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
 /// Truncate string to max length with ellipsis, stopping at character boundaries.
 fn truncate_string(s: &str, max_len: usize) -> String {
     // Reserve 3 characters for "..." in the truncated case.
@@ -627,7 +721,10 @@ mod tests {
     use sinex_primitives::temporal::Duration;
     use sinex_primitives::testing::event_fixture;
     use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
-    use sinex_primitives::views::{EVENT_QUERY_LIST_SCHEMA_VERSION, VIEW_ENVELOPE_SCHEMA_VERSION};
+    use sinex_primitives::views::{
+        EVENT_CARD_LIST_SCHEMA_VERSION, EVENT_QUERY_LIST_SCHEMA_VERSION,
+        VIEW_ENVELOPE_SCHEMA_VERSION,
+    };
     use sinex_primitives::{Event, Id, JsonValue, Uuid};
     use xtask::TestResult;
     use xtask::sandbox::{sinex_proptest, sinex_test};
@@ -867,6 +964,46 @@ mod tests {
         assert_eq!(
             value["payload"]["schema_version"],
             EVENT_QUERY_LIST_SCHEMA_VERSION
+        );
+        assert_eq!(value["payload"]["total_estimate"], serde_json::json!(42));
+        assert!(value["payload"]["next_cursor"]["after"]["id"].is_string());
+        assert_eq!(value["payload"]["cards"].as_array().map(Vec::len), Some(1));
+        assert_eq!(value["payload"]["cards"][0]["event_type"], "test.event");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn render_disclosed_event_cards_preserves_pagination_metadata() -> TestResult<()> {
+        let mut event = event_fixture(
+            sinex_primitives::EventSource::from_static("test"),
+            sinex_primitives::EventType::from_static("test.event"),
+            serde_json::json!({"message": "hello"}),
+        );
+        let event_id = Id::<Event<JsonValue>>::from_uuid(Uuid::now_v7());
+        event.id = Some(event_id);
+        let view = EventCardListView::from_query_events_with_metadata(
+            &[QueryResultEvent {
+                event,
+                relevance_score: Some(0.75),
+                snippet: Some("hello".to_string()),
+            }],
+            Some(sinex_primitives::query::Cursor::after_id(event_id)),
+            Some(42),
+        );
+
+        let rendered = render_event_card_query_result(
+            &view,
+            OutputFormat::Json,
+            Some(serde_json::json!({ "limit": 1 })),
+        )?;
+        let value: serde_json::Value = serde_json::from_str(&rendered)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(value["source_surface"], "sinexctl.events.query");
+        assert_eq!(value["query_echo"]["limit"], serde_json::json!(1));
+        assert_eq!(
+            value["payload"]["schema_version"],
+            EVENT_CARD_LIST_SCHEMA_VERSION
         );
         assert_eq!(value["payload"]["total_estimate"], serde_json::json!(42));
         assert!(value["payload"]["next_cursor"]["after"]["id"].is_string());
