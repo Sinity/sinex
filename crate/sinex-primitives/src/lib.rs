@@ -19,6 +19,7 @@ pub mod environment;
 pub mod error;
 pub mod event_contracts;
 pub mod events;
+pub mod evidence_bundle;
 pub mod fs;
 pub mod ids;
 pub mod llm;
