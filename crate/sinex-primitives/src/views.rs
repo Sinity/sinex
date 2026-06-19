@@ -18,6 +18,7 @@ use serde_json::json;
 pub const VIEW_ENVELOPE_SCHEMA_VERSION: &str = "sinex.view-envelope/v3";
 pub const CONTEXT_SUMMARY_SCHEMA_VERSION: &str = "sinex.context-summary/v1";
 pub const DESKTOP_CONTEXT_VIEW_SCHEMA_VERSION: &str = "sinex.desktop-context-view/v1";
+pub const DESKTOP_FOCUS_SESSION_LIST_SCHEMA_VERSION: &str = "sinex.desktop-focus-session-list/v1";
 pub const DESKTOP_NOTIFICATION_PRESSURE_SCHEMA_VERSION: &str =
     "sinex.desktop-notification-pressure/v1";
 pub const EVENT_CARD_LIST_SCHEMA_VERSION: &str = "sinex.event-card-list/v3";
@@ -109,6 +110,74 @@ pub struct DesktopContextCandidateView {
     pub evidence_refs: Vec<SinexObjectRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposal_ref: Option<SinexObjectRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DesktopFocusSessionView {
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<Timestamp>,
+    pub event_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_families: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_refs: Vec<SinexObjectRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<CaveatView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DesktopFocusSessionListView {
+    pub schema_version: String,
+    pub output_kind: DesktopContextOutputKind,
+    pub derivation_ref: String,
+    pub output_id: String,
+    pub generated_at: Timestamp,
+    pub since: String,
+    pub session_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<DesktopFocusSessionView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<CaveatView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<ActionAvailability>,
+}
+
+impl DesktopFocusSessionListView {
+    #[must_use]
+    pub fn new(derivation_ref: impl Into<String>, since: impl Into<String>) -> Self {
+        Self {
+            schema_version: DESKTOP_FOCUS_SESSION_LIST_SCHEMA_VERSION.to_string(),
+            output_kind: DesktopContextOutputKind::FocusSessionProjection,
+            derivation_ref: derivation_ref.into(),
+            output_id: "desktop.focus_session".to_string(),
+            generated_at: Timestamp::now(),
+            since: since.into(),
+            session_count: 0,
+            sessions: Vec::new(),
+            caveats: Vec::new(),
+            actions: vec![
+                ActionAvailability::read(
+                    "desktop.focus_session.explain",
+                    "Explain",
+                    ActionAvailabilityState::Enabled,
+                )
+                .with_command_hint(
+                    "sinexctl events context --desktop --focus-sessions --format json",
+                ),
+            ],
+        }
+    }
+
+    #[must_use]
+    pub fn into_envelope(self, source_surface: impl Into<String>) -> ViewEnvelope<Self> {
+        let mut envelope = ViewEnvelope::new(source_surface, self);
+        envelope.caveats = envelope.payload.caveats.clone();
+        envelope.actions = envelope.payload.actions.clone();
+        envelope
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -2528,6 +2597,58 @@ mod tests {
         );
         assert_eq!(value["payload"]["evidence_refs"][0]["id"], event_ref.id);
         assert_eq!(value["caveats"][0]["id"], "notification_pressure.partial");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_focus_session_list_carries_projection_contract() -> xtask::TestResult<()> {
+        let window_ref = SinexObjectRef::new(SinexObjectKind::Event, "event:window-focused")
+            .with_label("wm.hyprland · window.focused");
+        let terminal_ref = SinexObjectRef::new(SinexObjectKind::Event, "event:command-executed")
+            .with_label("shell.atuin · command.executed");
+        let mut view =
+            DesktopFocusSessionListView::new(crate::DESKTOP_FOCUS_SESSION_DERIVATION_ID, "2h");
+        view.sessions.push(DesktopFocusSessionView {
+            session_id: "desktop.focus_session:event:window-focused..event:command-executed"
+                .to_string(),
+            started_at: None,
+            ended_at: None,
+            event_count: 2,
+            input_families: vec!["desktop".to_string(), "terminal".to_string()],
+            evidence_refs: vec![window_ref.clone(), terminal_ref.clone()],
+            caveats: vec![CaveatView {
+                id: "focus_session.open_window".to_string(),
+                message: "fixture focus session is still open".to_string(),
+                ref_: Some(SinexObjectRef::new(
+                    SinexObjectKind::Projection,
+                    "desktop.focus_session",
+                )),
+            }],
+        });
+        view.session_count = view.sessions.len();
+
+        let envelope = view
+            .into_envelope("sinexctl.events.context.desktop.focus_sessions")
+            .with_query_echo(json!({ "mode": "desktop_focus_sessions" }));
+        let value = serde_json::to_value(&envelope)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(
+            value["payload"]["schema_version"],
+            DESKTOP_FOCUS_SESSION_LIST_SCHEMA_VERSION
+        );
+        assert_eq!(
+            value["payload"]["derivation_ref"],
+            crate::DESKTOP_FOCUS_SESSION_DERIVATION_ID
+        );
+        assert_eq!(value["payload"]["output_kind"], "focus_session_projection");
+        assert_eq!(value["payload"]["output_id"], "desktop.focus_session");
+        assert_eq!(value["payload"]["sessions"][0]["event_count"], 2);
+        assert_eq!(
+            value["payload"]["sessions"][0]["evidence_refs"][0]["id"],
+            window_ref.id
+        );
+        assert_eq!(value["actions"][0]["id"], "desktop.focus_session.explain");
         Ok(())
     }
 
