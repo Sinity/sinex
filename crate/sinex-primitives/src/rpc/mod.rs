@@ -197,6 +197,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         documents::DOCUMENTS_GET_METHOD.info(),
         documents::DOCUMENTS_SEARCH_METHOD.info(),
         events::EVENTS_ANNOTATE_METHOD.info(),
+        events::EVENTS_CARDS_METHOD.info(),
         events::EVENTS_LINEAGE_METHOD.info(),
         events::EVENTS_QUERY_METHOD.info(),
         events::EVENTS_RELATION_EVIDENCE_METHOD.info(),

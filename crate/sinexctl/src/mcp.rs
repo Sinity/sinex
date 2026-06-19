@@ -6,6 +6,7 @@
 
 use crate::GatewayClient;
 use crate::commands::ops::{operation_to_view, operations_to_views};
+use crate::commands::query_units::execute_query_unit;
 use color_eyre::Result;
 use color_eyre::eyre::{WrapErr, eyre};
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::SourceId;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
+use sinex_primitives::query_units::{SinexQueryResultListView, parse_sinex_query};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
 use sinex_primitives::rpc::curation::CurationListProposalsRequest;
 use sinex_primitives::rpc::documents::{
@@ -138,6 +140,11 @@ struct SearchEventsArgs {
     has_lineage: Option<bool>,
     #[serde(default)]
     include_total_estimate: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct QueryArgs {
+    query: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -452,6 +459,20 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only event query projection for AI context packs.",
             backing_rpc_methods: &[methods::EVENTS_QUERY],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.query",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only Sinex query-unit selection over events, sources, debt, operations, and runtime health.",
+            backing_rpc_methods: &[
+                methods::EVENTS_CARDS,
+                methods::SOURCES_STATUS_VIEW,
+                methods::SOURCES_LIST,
+                methods::DLQ_LIST,
+                methods::REPLAY_LIST_OPERATIONS,
+                methods::RUNTIME_HEALTH,
+            ],
             read_only: true,
         },
         McpCatalogEntry {
@@ -934,6 +955,20 @@ pub fn tools() -> Vec<McpTool> {
                 "properties": {
                     "project_path": {"type": "string", "description": "Project path to filter events"},
                     "limit": {"type": "integer", "default": 50}
+                },
+                "additionalProperties": false
+            }),
+        ),
+        mcp_tool(
+            "sinex.query",
+            json!({
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Sinex query-unit expression, for example: runtime-health limit 1"
+                    }
                 },
                 "additionalProperties": false
             }),
@@ -1632,6 +1667,7 @@ async fn call_tool_events_sources(
 ) -> Result<Option<Value>> {
     let result = match name {
         "sinex.search_events" => search_events(client, arguments).await?,
+        "sinex.query" => query(client, arguments).await?,
         "sinex.trace_lineage" => trace_lineage(client, arguments).await?,
         "sinex.relation_evidence" => relation_evidence(client, arguments).await?,
         "sinex.source_readiness" => source_readiness(client, arguments).await?,
@@ -1661,6 +1697,16 @@ async fn call_tool_events_sources(
         _ => return Ok(None),
     };
     Ok(Some(result))
+}
+
+async fn query(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: QueryArgs = serde_json::from_value(arguments)?;
+    let query = parse_sinex_query(&args.query)?;
+    let rows = execute_query_unit(client, &query).await?;
+    let view = SinexQueryResultListView::new(query.clone(), rows);
+    let envelope =
+        ViewEnvelope::new("sinex.query", view).with_query_echo(serde_json::to_value(&query)?);
+    Ok(serde_json::to_value(envelope)?)
 }
 
 async fn call_tool_runtime_analytics(
