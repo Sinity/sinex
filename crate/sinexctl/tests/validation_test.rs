@@ -964,6 +964,32 @@ async fn mcp_runtime_health_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_query_call_uses_descriptor_executor_and_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.query",
+        json!({ "query": "runtime-health limit 1" }),
+    )
+    .await?;
+
+    assert_eq!(response["source_surface"], "sinex.query");
+    assert_eq!(response["query_echo"]["unit"], "runtime-health");
+    assert_eq!(
+        response["payload"]["rows"][0]["object_kind"],
+        "runtime_module"
+    );
+    assert_eq!(
+        response["payload"]["rows"][0]["ref"]["kind"],
+        "runtime_module"
+    );
+    assert_eq!(response["payload"]["rows"][0]["fields"]["active_count"], 2);
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_runtime_active_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;

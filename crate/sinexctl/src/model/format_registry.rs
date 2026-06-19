@@ -239,6 +239,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Query ────────────────────────────────────────────────────────────────
     m.insert(
+        "query",
+        FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML)
+            .with_note("ndjson emits one SinexQueryResultRow object per line"),
+    );
+    m.insert(
         "events query",
         FormatCapability::single_shot(TABLE_JSON_NDJSON_YAML).with_note(
             "ndjson emits one EventCardView object per line (envelope metadata omitted)",
@@ -1034,6 +1039,15 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "events query" | "events recent" | "events errors" | "events timeline" => {
             &[methods::EVENTS_CARDS]
         }
+        "query" => &[
+            methods::EVENTS_CARDS,
+            methods::SOURCES_LIST,
+            methods::SOURCES_STATUS_VIEW,
+            methods::SOURCES_COVERAGE,
+            methods::DLQ_LIST,
+            methods::OPS_LIST,
+            methods::RUNTIME_HEALTH,
+        ],
         "events context"
         | "metrics report today"
         | "metrics report yesterday"
@@ -1461,6 +1475,7 @@ mod tests {
         };
 
         assert_eq!(effect_for("events query"), Some(CommandEffect::ReadOnly));
+        assert_eq!(effect_for("query"), Some(CommandEffect::ReadOnly));
         assert_eq!(
             effect_for("events relations within"),
             Some(CommandEffect::ReadOnly)
