@@ -15,13 +15,15 @@ use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, CaveatView, ContextSourceView, ContextSummaryView,
     DesktopContextCandidateView, DesktopContextInputEvidence, DesktopContextInputState,
     DesktopContextView, DesktopFocusSessionListView, DesktopFocusSessionView,
-    DesktopNotificationPressureView, EventCardListView, EventCardView, PrivacyStateKind,
-    SinexObjectKind, SinexObjectRef, ViewEnvelope,
+    DesktopNotificationPressureView, DesktopProjectContextListView, DesktopProjectContextRowView,
+    EventCardListView, EventCardView, PrivacyStateKind, SinexObjectKind, SinexObjectRef,
+    ViewEnvelope,
 };
 use std::collections::HashMap;
 
 const MAX_FOCUS_SESSION_EVIDENCE_REFS: usize = 12;
 const MAX_NOTIFICATION_PRESSURE_EVIDENCE_REFS: usize = 12;
+const MAX_PROJECT_CONTEXT_EVIDENCE_REFS: usize = 12;
 
 use crate::client::GatewayClient;
 use crate::fmt::format_duration_age;
@@ -74,9 +76,17 @@ pub struct ContextCommand {
     #[arg(
         long,
         requires = "desktop",
-        conflicts_with_all = ["explain", "notification_pressure"]
+        conflicts_with_all = ["explain", "notification_pressure", "project_contexts"]
     )]
     focus_sessions: bool,
+
+    /// Render project-context projection candidates over recent desktop activity evidence
+    #[arg(
+        long,
+        requires = "desktop",
+        conflicts_with_all = ["explain", "notification_pressure", "focus_sessions"]
+    )]
+    project_contexts: bool,
 }
 
 impl ContextCommand {
@@ -107,6 +117,7 @@ impl ContextCommand {
                 self.explain,
                 self.notification_pressure,
                 self.focus_sessions,
+                self.project_contexts,
             )?;
             println!("{output}");
             return Ok(());
@@ -231,6 +242,7 @@ fn render_desktop_context_output(
     explain: bool,
     notification_pressure: bool,
     focus_sessions: bool,
+    project_contexts: bool,
 ) -> Result<String> {
     if matches!(format, OutputFormat::Ndjson | OutputFormat::Dot) {
         return Err(color_eyre::eyre::eyre!(
@@ -282,6 +294,22 @@ fn render_desktop_context_output(
                 .ok_or_else(|| color_eyre::eyre::eyre!("desktop focus-session output expected"));
         }
         return Ok(render_focus_session_table(&view));
+    }
+
+    if project_contexts {
+        let view = build_project_context_list_view(event_cards, since);
+        if matches!(format, OutputFormat::Json | OutputFormat::Yaml) {
+            let envelope = view
+                .into_envelope("sinexctl.events.context.desktop.project_contexts")
+                .with_query_echo(json!({
+                    "since": since,
+                    "limit": event_cards.count,
+                    "mode": "desktop_project_contexts"
+                }));
+            return render_finite_envelope(&envelope, format)?
+                .ok_or_else(|| color_eyre::eyre::eyre!("desktop project-context output expected"));
+        }
+        return Ok(render_project_context_table(&view));
     }
 
     if matches!(format, OutputFormat::Json | OutputFormat::Yaml) {
@@ -644,6 +672,90 @@ fn build_focus_session_list_view(
     view
 }
 
+fn build_project_context_list_view(
+    event_cards: &EventCardListView,
+    since: &str,
+) -> DesktopProjectContextListView {
+    let mut view = DesktopProjectContextListView::new(
+        sinex_primitives::DESKTOP_PROJECT_CONTEXT_DERIVATION_ID,
+        since,
+    );
+    let project_cards = event_cards
+        .cards
+        .iter()
+        .filter(|card| is_project_context_evidence(card))
+        .collect::<Vec<_>>();
+
+    if project_cards.is_empty() {
+        view.caveats.push(CaveatView {
+            id: "project_context.no_recent_activity".to_string(),
+            message: format!("no project-context evidence was found in the last {since}"),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::Projection,
+                "desktop.project_context",
+            )),
+        });
+        return view;
+    }
+
+    let evidence_refs = project_cards
+        .iter()
+        .map(|card| card.ref_.clone())
+        .take(MAX_PROJECT_CONTEXT_EVIDENCE_REFS)
+        .collect::<Vec<_>>();
+    let mut input_families = project_cards
+        .iter()
+        .map(|card| desktop_context_family(card))
+        .collect::<Vec<_>>();
+    input_families.sort();
+    input_families.dedup();
+
+    let mut caveats = project_cards
+        .iter()
+        .flat_map(|card| card.caveats.clone())
+        .collect::<Vec<_>>();
+    caveats.push(CaveatView {
+        id: "project_context.ranked_view_only".to_string(),
+        message: "project context rows are ranked projection candidates; durable labels require Proposal/Judgment finalization".to_string(),
+        ref_: Some(SinexObjectRef::new(
+            SinexObjectKind::Projection,
+            "desktop.project_context",
+        )),
+    });
+    if project_cards.len() > evidence_refs.len() {
+        caveats.push(CaveatView {
+            id: "project_context.evidence_truncated".to_string(),
+            message: format!(
+                "showing {} project-context evidence refs out of {} recent activity events",
+                evidence_refs.len(),
+                project_cards.len()
+            ),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::Projection,
+                "desktop.project_context",
+            )),
+        });
+    }
+
+    let label = project_context_label(&project_cards);
+    let confidence = (0.45 + (evidence_refs.len() as f32 * 0.04)).min(0.82);
+    view.rows.push(DesktopProjectContextRowView {
+        label,
+        confidence,
+        focus_session_ref: Some(SinexObjectRef::new(
+            SinexObjectKind::Projection,
+            "desktop.focus_session:current-window",
+        )),
+        input_families,
+        evidence_refs,
+        proposal_ref: None,
+        caveats: caveats.clone(),
+    });
+    view.row_count = view.rows.len();
+    view.caveats = caveats;
+    view
+}
+
 fn desktop_context_input_for_family(
     family: &str,
     sources: &[(String, &EventCardView)],
@@ -787,8 +899,49 @@ fn render_focus_session_table(view: &DesktopFocusSessionListView) -> String {
     lines.join("\n")
 }
 
+fn render_project_context_table(view: &DesktopProjectContextListView) -> String {
+    let mut lines = vec![
+        format!("Desktop project contexts (last {})", view.since),
+        format!("rows: {}", view.row_count),
+    ];
+    for row in &view.rows {
+        lines.push(format!(
+            "- {:.0}% {} ({} refs, families: {})",
+            row.confidence * 100.0,
+            row.label,
+            row.evidence_refs.len(),
+            row.input_families.join(", ")
+        ));
+    }
+    if !view.caveats.is_empty() {
+        lines.push(String::new());
+        lines.push("caveats".to_string());
+        for caveat in &view.caveats {
+            lines.push(format!("- {}: {}", caveat.id, caveat.message));
+        }
+    }
+    lines.join("\n")
+}
+
 fn is_focus_session_evidence(card: &EventCardView) -> bool {
     is_active_window_evidence(card) || is_terminal_evidence(card) || is_browser_evidence(card)
+}
+
+fn is_project_context_evidence(card: &EventCardView) -> bool {
+    is_terminal_evidence(card) || is_browser_evidence(card) || is_active_window_evidence(card)
+}
+
+fn project_context_label(cards: &[&EventCardView]) -> String {
+    if let Some(card) = cards.iter().find(|card| is_terminal_evidence(card)) {
+        return format!("terminal activity: {}", truncate(&card.summary, 72));
+    }
+    if let Some(card) = cards.iter().find(|card| is_browser_evidence(card)) {
+        return format!("browser activity: {}", truncate(&card.summary, 72));
+    }
+    if let Some(card) = cards.iter().find(|card| is_active_window_evidence(card)) {
+        return format!("window activity: {}", truncate(&card.summary, 72));
+    }
+    "ambiguous project context".to_string()
 }
 
 fn desktop_context_family(card: &EventCardView) -> String {
@@ -1034,6 +1187,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
@@ -1106,6 +1260,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
         let inputs = value["payload"]["inputs"]
@@ -1145,6 +1300,7 @@ mod tests {
             &sources,
             "2h",
             OutputFormat::Json,
+            false,
             false,
             false,
             false,
@@ -1203,6 +1359,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         )?;
 
         assert!(output.contains("candidates"));
@@ -1231,6 +1388,7 @@ mod tests {
             "2h",
             OutputFormat::Json,
             true,
+            false,
             false,
             false,
         )?;
@@ -1289,6 +1447,7 @@ mod tests {
             true,
             false,
             false,
+            false,
         )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
@@ -1340,6 +1499,7 @@ mod tests {
             OutputFormat::Json,
             false,
             true,
+            false,
             false,
         )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
@@ -1405,6 +1565,7 @@ mod tests {
             false,
             true,
             false,
+            false,
         )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
@@ -1455,6 +1616,7 @@ mod tests {
             false,
             false,
             true,
+            false,
         )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
@@ -1527,6 +1689,7 @@ mod tests {
             false,
             false,
             true,
+            false,
         )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
@@ -1540,6 +1703,140 @@ mod tests {
             caveats
                 .iter()
                 .any(|caveat| caveat["id"] == "focus_session.evidence_truncated")
+                && caveats
+                    .iter()
+                    .any(|caveat| caveat["id"] == "policy.disclosure_applied")
+        }));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_project_contexts_project_ranked_activity_evidence()
+    -> xtask::sandbox::TestResult<()> {
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: 4,
+            cards: vec![
+                context_event_with_ref("wm.hyprland", "window.focused", "event:desktop"),
+                context_event_with_ref("shell.atuin", "command.executed", "event:terminal"),
+                context_event_with_ref("activitywatch", "browser.tab.active", "event:browser"),
+                context_event_with_ref(
+                    "desktop.notification",
+                    "notification.sent",
+                    "event:notification",
+                ),
+            ],
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            "2h",
+            OutputFormat::Json,
+            false,
+            false,
+            false,
+            true,
+        )?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(
+            value["source_surface"],
+            "sinexctl.events.context.desktop.project_contexts"
+        );
+        assert_eq!(
+            value["payload"]["derivation_ref"],
+            sinex_primitives::DESKTOP_PROJECT_CONTEXT_DERIVATION_ID
+        );
+        assert_eq!(
+            value["payload"]["output_kind"],
+            "project_context_projection"
+        );
+        assert_eq!(value["payload"]["row_count"], 1);
+        let row = &value["payload"]["rows"][0];
+        assert!(
+            row["label"]
+                .as_str()
+                .is_some_and(|label| { label.starts_with("terminal activity:") })
+        );
+        assert!(
+            row["input_families"].as_array().is_some_and(|families| [
+                "browser", "desktop", "terminal"
+            ]
+            .iter()
+            .all(|family| families.iter().any(|value| value == family))),
+            "project-context projection should classify desktop, terminal, and browser evidence: {row:?}"
+        );
+        let refs = row["evidence_refs"]
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("evidence_refs must be an array"))?;
+        for expected_id in ["event:desktop", "event:terminal", "event:browser"] {
+            assert!(
+                refs.iter().any(|ref_| ref_["id"] == expected_id),
+                "project-context view should cite {expected_id}: {refs:?}"
+            );
+        }
+        assert!(
+            refs.iter().all(|ref_| ref_["id"] != "event:notification"),
+            "notification pressure remains a sibling projection, not project-context evidence"
+        );
+        assert!(row["proposal_ref"].is_null());
+        assert!(value["caveats"].as_array().is_some_and(|caveats| {
+            caveats
+                .iter()
+                .any(|caveat| caveat["id"] == "project_context.ranked_view_only")
+        }));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_project_contexts_bound_evidence_refs_and_preserve_caveats()
+    -> xtask::sandbox::TestResult<()> {
+        let mut cards = Vec::new();
+        for index in 0..(MAX_PROJECT_CONTEXT_EVIDENCE_REFS + 3) {
+            cards.push(context_event_with_ref(
+                "shell.atuin",
+                "command.executed",
+                format!("event:terminal:{index}"),
+            ));
+        }
+        cards[0].caveats.push(CaveatView {
+            id: "policy.disclosure_applied".to_string(),
+            message: "terminal command hidden by fixture disclosure policy".to_string(),
+            ref_: None,
+        });
+
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: cards.len(),
+            cards,
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            "2h",
+            OutputFormat::Json,
+            false,
+            false,
+            false,
+            true,
+        )?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+        let row = &value["payload"]["rows"][0];
+
+        assert_eq!(
+            row["evidence_refs"].as_array().map(Vec::len),
+            Some(MAX_PROJECT_CONTEXT_EVIDENCE_REFS)
+        );
+        assert!(value["caveats"].as_array().is_some_and(|caveats| {
+            caveats
+                .iter()
+                .any(|caveat| caveat["id"] == "project_context.evidence_truncated")
                 && caveats
                     .iter()
                     .any(|caveat| caveat["id"] == "policy.disclosure_applied")
@@ -1562,6 +1859,7 @@ mod tests {
             &sources,
             "2h",
             OutputFormat::Ndjson,
+            false,
             false,
             false,
             false,

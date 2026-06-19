@@ -1023,17 +1023,18 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&output)?;
 
         assert_eq!(parsed["source_surface"], "sinexctl.ops.debt");
-        assert_eq!(parsed["payload"]["count"], 2);
+        assert_eq!(parsed["payload"]["count"], rows.len());
         assert_eq!(parsed["payload"]["rows"][0]["kind"], "admission");
         assert_eq!(
             parsed["payload"]["rows"][0]["refs"][0]["kind"],
             "dlq_message"
         );
-        assert_eq!(parsed["payload"]["rows"][1]["kind"], "projection");
-        assert_eq!(
-            parsed["payload"]["rows"][1]["refs"][0]["kind"],
-            "projection"
-        );
+        let debt_rows = parsed["payload"]["rows"]
+            .as_array()
+            .expect("debt rows render as an array");
+        assert!(debt_rows.iter().any(|row| {
+            row["kind"] == "projection" && row["refs"][0]["id"] == "desktop.project_context"
+        }));
         Ok(())
     }
 }
