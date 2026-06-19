@@ -7,7 +7,7 @@
 //! scan path, which the runtime never takes — `manages_own_continuous_loop` is
 //! `false`, so dispatch goes through `run_automaton_event_bridge`, which has no
 //! `derived.invalidation` subscription. Replay publishes invalidation signals
-//! but no automaton currently reacts. Wiring tracked by #1569.
+//! but no automaton currently reacts. Wiring tracked by #1974.
 
 #[cfg(feature = "messaging")]
 use super::log_self_observation_failure;

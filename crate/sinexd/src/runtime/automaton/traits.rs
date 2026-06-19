@@ -179,7 +179,7 @@ pub trait Transducer: Send + Sync + 'static {
 /// # Scope invalidation
 ///
 /// Windowed modules do **not** set `scope_key` on their outputs and are
-/// **out of scope** for scope-based invalidation recompute (see #1569).
+/// **out of scope** for scope-based invalidation recompute (see #1974).
 /// The input-driven accumulation model is authoritative; `recompute_window`
 /// is provided for ad-hoc replay but is not called by the invalidation path.
 ///

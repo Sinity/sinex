@@ -570,6 +570,13 @@ impl DebtCommands {
                         trigger.into_invalidation_trigger(),
                     ));
                 }
+                let operations = client
+                    .ops_list(Some("replay".to_string()), None, Some(100))
+                    .await?;
+                let replay_debt = debt_rows_from_replay_operations(&operations);
+                if !replay_debt.is_empty() {
+                    rows.extend(replay_debt);
+                }
                 let mut providers = vec!["raw_ingest_dlq"];
                 if *include_capture {
                     providers.push("source_coverage");
@@ -577,6 +584,7 @@ impl DebtCommands {
                 if projection_trigger.is_some() {
                     providers.push("derivation_specs");
                 }
+                providers.push("replay_operations");
                 let envelope =
                     ViewEnvelope::new("sinexctl.ops.debt", DebtListView::new(rows.clone()))
                         .with_query_echo(serde_json::json!({
@@ -749,6 +757,68 @@ pub(crate) fn debt_rows_from_derivation_trigger(trigger: InvalidationTrigger) ->
         .collect()
 }
 
+pub(crate) fn debt_rows_from_replay_operations(operations: &[OpsOperation]) -> Vec<DebtRowView> {
+    operations
+        .iter()
+        .filter_map(debt_row_from_replay_operation)
+        .collect()
+}
+
+fn debt_row_from_replay_operation(operation: &OpsOperation) -> Option<DebtRowView> {
+    let marker = operation
+        .preview_summary
+        .as_ref()?
+        .get("scope_invalidation")?;
+    if marker.get("phase").and_then(Value::as_str) != Some("pending") {
+        return None;
+    }
+
+    let archived_count = marker.get("archived_count").and_then(Value::as_u64);
+    let bucket_count = marker.get("bucket_count").and_then(Value::as_u64);
+    let scope_key_count = marker.get("scope_key_count").and_then(Value::as_u64);
+    let event_count = marker.get("event_count").and_then(Value::as_u64);
+    let summary = format!(
+        "replay operation `{}` archived {} event(s) with {} pending invalidation bucket(s), {} scope key(s), {} affected event id(s)",
+        operation.id,
+        archived_count.unwrap_or_default(),
+        bucket_count.unwrap_or_default(),
+        scope_key_count.unwrap_or_default(),
+        event_count.unwrap_or_default()
+    );
+    let operation_ref = SinexObjectRef::new(SinexObjectKind::Operation, operation.id.clone());
+
+    Some(DebtRowView {
+        id: format!("debt:projection:replay-invalidation:{}", operation.id),
+        kind: DebtKind::Projection,
+        stage: DebtStage::ProjectionStale,
+        summary,
+        refs: vec![operation_ref.clone()],
+        owner: Some(DebtOwnerView::operation(operation_ref.clone())),
+        age_secs: None,
+        freshness: None,
+        caveats: vec![CaveatView {
+            id: "replay.invalidation.pending".to_string(),
+            message: "archive committed before the replay scope invalidation marker was cleared; inspect or rerun replay recovery before treating affected projections as fresh".to_string(),
+            ref_: Some(operation_ref.clone()),
+        }],
+        actions: vec![
+            ActionAvailability::read(
+                "replay.operation.inspect",
+                "Inspect",
+                ActionAvailabilityState::Enabled,
+            )
+            .with_command_hint(format!("sinexctl ops jobs show {}", operation.id))
+            .with_rpc_method("ops.get"),
+            ActionAvailability::read(
+                "projection.explain",
+                "Explain",
+                ActionAvailabilityState::Enabled,
+            )
+            .with_command_hint("sinexctl ops debt list --projection-trigger replay"),
+        ],
+    })
+}
+
 fn debt_row_from_derivation(spec: &DerivationSpec, trigger: InvalidationTrigger) -> DebtRowView {
     DebtRowView {
         id: format!("debt:projection:{}:{trigger:?}", spec.id),
@@ -786,7 +856,7 @@ fn debt_row_from_derivation(spec: &DerivationSpec, trigger: InvalidationTrigger)
                 label: "Rebuild".to_string(),
                 state: ActionAvailabilityState::Disabled,
                 reason: Some(
-                    "projection rebuild operations are planned by #1569/#1691".to_string(),
+                    "projection rebuild operations are tracked by #1974".to_string(),
                 ),
                 command_hint: None,
                 rpc_method: None,
@@ -1000,6 +1070,29 @@ mod tests {
             result_message: Some("complete".to_string()),
             preview_summary: Some(serde_json::json!({"events": 2})),
             duration_ms: Some(42),
+        }
+    }
+
+    fn fixture_replay_operation_with_invalidation_phase(phase: &str) -> OpsOperation {
+        OpsOperation {
+            id: "op-replay-1".to_string(),
+            operation_type: "replay".to_string(),
+            operator: "operator.local".to_string(),
+            scope: Some(serde_json::json!({"source_name": "test"})),
+            result_status: OperationStatus::Running,
+            result_message: Some("executing".to_string()),
+            preview_summary: Some(serde_json::json!({
+                "state": "Executing",
+                "scope_invalidation": {
+                    "phase": phase,
+                    "archived_count": 3,
+                    "bucket_count": 2,
+                    "scope_key_count": 2,
+                    "event_count": 3,
+                    "recorded_at": "2026-06-19T20:00:00Z"
+                }
+            })),
+            duration_ms: None,
         }
     }
 
@@ -1278,6 +1371,38 @@ mod tests {
 
         assert!(
             debt_rows_from_derivation_trigger(InvalidationTrigger::SourceMaterialChange).is_empty()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn debt_rows_from_replay_operations_reports_pending_invalidation() -> xtask::TestResult<()>
+    {
+        let rows = debt_rows_from_replay_operations(&[
+            fixture_replay_operation_with_invalidation_phase("pending"),
+            fixture_replay_operation_with_invalidation_phase("published"),
+        ]);
+
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.kind, DebtKind::Projection);
+        assert_eq!(row.stage, DebtStage::ProjectionStale);
+        assert_eq!(row.refs[0].kind, SinexObjectKind::Operation);
+        assert_eq!(row.refs[0].id, "op-replay-1");
+        assert_eq!(
+            row.owner
+                .as_ref()
+                .and_then(|owner| owner.operation_ref.as_ref())
+                .map(|ref_| (&ref_.kind, ref_.id.as_str())),
+            Some((&SinexObjectKind::Operation, "op-replay-1"))
+        );
+        assert!(row.summary.contains("3 event(s)"));
+        assert!(row.caveats[0].id.contains("replay.invalidation.pending"));
+        assert!(
+            row.actions
+                .iter()
+                .any(|action| action.command_hint.as_deref()
+                    == Some("sinexctl ops jobs show op-replay-1"))
         );
         Ok(())
     }
