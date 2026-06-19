@@ -1665,7 +1665,7 @@ Detect strict schema drift that declarative apply does not reconcile
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `--database-url` | yes | no | Database URL to inspect. Without this, prepares the checkout-local stack first. |
+| `--database-url` | yes | no | Database URL to inspect. Without this, prepares the checkout-local stack first |
 
 
 ## `xtask verify`
