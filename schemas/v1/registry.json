@@ -429,6 +429,62 @@
       "content_hash": "86e239a4a3fbf02e78f1a4bdbfe2467607cf91246f37be5bea812f7804375164"
     },
     {
+      "source": "media.audio",
+      "event_type": "media.audio.capture_session_ended",
+      "version": "1.0.0",
+      "path": "media.audio/media.audio.capture_session_ended.json",
+      "content_hash": "0c80ddbb28bd6a09e6e468b359635a0b7557d6db5bc089b581d12a19390e0587"
+    },
+    {
+      "source": "media.audio",
+      "event_type": "media.audio.capture_session_started",
+      "version": "1.0.0",
+      "path": "media.audio/media.audio.capture_session_started.json",
+      "content_hash": "5bf11bd9f06351dab15383ca7ccab336a7aff658b7f8a0cb53c1b8a06e8ee40d"
+    },
+    {
+      "source": "media.audio",
+      "event_type": "media.audio.recording_observed",
+      "version": "1.0.0",
+      "path": "media.audio/media.audio.recording_observed.json",
+      "content_hash": "797728a7794ad3c40584369e9b1645c5f9cbbb5e1a145d256319bacaf4fc4b01"
+    },
+    {
+      "source": "media.audio",
+      "event_type": "media.audio.transcript_segment_observed",
+      "version": "1.0.0",
+      "path": "media.audio/media.audio.transcript_segment_observed.json",
+      "content_hash": "3989cc943e8b94e8f3b22c31e4300a3c254f927f4ecddc0ba0274c11ee746ccd"
+    },
+    {
+      "source": "media.audio",
+      "event_type": "media.audio.transcription_run_observed",
+      "version": "1.0.0",
+      "path": "media.audio/media.audio.transcription_run_observed.json",
+      "content_hash": "6867b56461e660c274d54d06a2047f6dffedf82bf25e2fae6b78fe652cffea22"
+    },
+    {
+      "source": "media.screen",
+      "event_type": "media.screen.ocr_run_observed",
+      "version": "1.0.0",
+      "path": "media.screen/media.screen.ocr_run_observed.json",
+      "content_hash": "a633e6a42007e806265614a42b436d30077ee5582b63e8a315ace026692a7f3a"
+    },
+    {
+      "source": "media.screen",
+      "event_type": "media.screen.ocr_segment_observed",
+      "version": "1.0.0",
+      "path": "media.screen/media.screen.ocr_segment_observed.json",
+      "content_hash": "999b6e23078831535a4269cc95194cafbe6dc55d5b477cdc472b6d66bc63bc29"
+    },
+    {
+      "source": "media.screen",
+      "event_type": "media.screen.screenshot_observed",
+      "version": "1.0.0",
+      "path": "media.screen/media.screen.screenshot_observed.json",
+      "content_hash": "2a06bc37a9fc65f16b166b9591ca2461d2b5c5d6423e5365cd3a0a1f47e2274c"
+    },
+    {
       "source": "messenger",
       "event_type": "message.sent",
       "version": "1.0.0",

@@ -1,0 +1,96 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "segment_index": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "text": {
+      "type": "string"
+    },
+    "start_ms": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "end_ms": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "speaker_label": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "language": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "confidence": {
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "source_file": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "raw_material_id": {
+      "type": "string"
+    },
+    "model_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "producer_run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "timestamp_quality": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "observed_at": {
+      "$ref": "#/$defs/DateTime"
+    }
+  },
+  "required": [
+    "segment_index",
+    "text",
+    "raw_material_id",
+    "observed_at"
+  ],
+  "title": "AudioTranscriptSegmentObservedPayload",
+  "type": "object",
+  "x-sinex-event-type": "media.audio.transcript_segment_observed",
+  "x-sinex-source": "media.audio",
+  "x-sinex-version": "1.0.0"
+}
