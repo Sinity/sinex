@@ -2,12 +2,14 @@
 //!
 //! These payloads enable Sinex to observe itself without requiring external
 //! observability infrastructure (OpenTelemetry, Prometheus). Metrics become
-//! events in core.events, queryable via the same interfaces as all other data.
+//! events in core.events, queryable via the same interfaces as all other data;
+//! optional external exports are projections from Sinex read models, not the
+//! internal source of truth.
 //!
 //! # Design Philosophy
 //!
-//! Instead of exporting metrics to Prometheus or OpenTelemetry, Sinex emits
-//! its own health and performance data as events. This enables:
+//! Sinex emits its own health and performance data as events before any
+//! external observability export. This enables:
 //!
 //! - **Unified query interface**: One query language for all data
 //! - **Local-first**: No external dependencies for observability

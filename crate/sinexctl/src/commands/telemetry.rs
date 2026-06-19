@@ -1,5 +1,8 @@
 use clap::Subcommand;
 use console::style;
+use sinex_primitives::otel_projection::{
+    OtelMetricsProjectionView, gateway_stats_to_otel_metrics_projection,
+};
 use sinex_primitives::rpc::telemetry::{
     AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
     EventEngineBatchStatsBucket, EventEngineValidationSnapshot, FileActivityEntry,
@@ -92,6 +95,9 @@ pub enum TelemetryCommands {
         to: Option<String>,
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
+        /// Render this read model as an OpenTelemetry-compatible metrics projection.
+        #[arg(long)]
+        otel: bool,
     },
 
     /// Stream hourly operator telemetry
@@ -237,18 +243,29 @@ impl TelemetryCommands {
                 .display(&format)?;
             }
 
-            Self::GatewayStats { from, to, limit } => {
+            Self::GatewayStats {
+                from,
+                to,
+                limit,
+                otel,
+            } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let buckets = client
                     .telemetry_gateway_stats(from_rfc, to_rfc, Some(*limit))
                     .await?;
-                CommandOutput::list(
-                    buckets,
-                    "No gateway-stats data found.",
-                    format_gateway_stats_table,
-                )
-                .display(&format)?;
+                if *otel {
+                    let projection = gateway_stats_to_otel_metrics_projection(buckets);
+                    CommandOutput::single(projection, format_otel_metrics_projection_table)
+                        .display(&format)?;
+                } else {
+                    CommandOutput::list(
+                        buckets,
+                        "No gateway-stats data found.",
+                        format_gateway_stats_table,
+                    )
+                    .display(&format)?;
+                }
             }
 
             Self::StreamStats { from, to, limit } => {
@@ -556,6 +573,24 @@ fn format_gateway_stats_table(buckets: &[GatewayStatsBucket]) -> String {
     table.to_string()
 }
 
+fn format_otel_metrics_projection_table(view: &OtelMetricsProjectionView) -> String {
+    let mut builder = Builder::new();
+    builder.push_record(["FIELD", "VALUE"]);
+    builder.push_record(["Schema", view.schema_version.as_str()]);
+    builder.push_record(["Source Surface", view.source_surface.as_str()]);
+    builder.push_record(["Source Response", view.source_response.as_str()]);
+    let metric_count = view.metric_count().to_string();
+    let point_count = view.point_count().to_string();
+    builder.push_record(["Metrics", metric_count.as_str()]);
+    builder.push_record(["Data Points", point_count.as_str()]);
+    builder.push_record(["Disclosure Policy", view.disclosure.policy.as_str()]);
+    let omitted = view.disclosure.omitted_attribute_families.join(", ");
+    builder.push_record(["Omitted Families", omitted.as_str()]);
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
 fn format_stream_stats_table(buckets: &[StreamStatsBucket]) -> String {
     let mut builder = Builder::new();
     builder.push_record([
@@ -748,4 +783,31 @@ fn format_opt_f64(value: Option<f64>) -> String {
 
 fn format_opt_i64(value: Option<i64>) -> String {
     value.map_or_else(|| "—".to_string(), |value| value.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_primitives::rpc::telemetry::GatewayStatsBucket;
+    use xtask::sandbox::prelude::sinex_test;
+
+    #[sinex_test]
+    async fn otel_projection_table_summarizes_gateway_metric_projection() -> xtask::TestResult<()> {
+        let projection = gateway_stats_to_otel_metrics_projection(vec![GatewayStatsBucket {
+            bucket: "2026-06-19T18:00:00Z".to_string(),
+            source: "sinex.gateway".to_string(),
+            stat_events: 1,
+            avg_total_requests: Some(3.0),
+            total_rate_limited: Some(0),
+            avg_latency_ms: Some(5.0),
+            max_p99_latency_ms: Some(9.0),
+        }]);
+
+        let table = format_otel_metrics_projection_table(&projection);
+
+        assert!(table.contains("sinex.otel.metrics-projection/v1"));
+        assert!(table.contains("sinexctl.metrics.telemetry.gateway-stats"));
+        assert!(table.contains("raw_event_payload"));
+        Ok(())
+    }
 }
