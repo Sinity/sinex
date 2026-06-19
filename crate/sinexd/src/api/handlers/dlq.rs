@@ -8,7 +8,7 @@
 //! - Purge raw DLQ messages
 
 use crate::api::service_container::ServiceContainer;
-use crate::event_engine::policy::{DisclosureContext, PolicyEngine};
+use crate::event_engine::policy::{DisclosureCaveat, DisclosureContext, PolicyEngine};
 use crate::runtime::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
 use serde_json::Value as JsonValue;
 use serde_json::json;
@@ -149,6 +149,13 @@ fn render_preview_value(value: &JsonValue) -> String {
     }
 }
 
+fn format_disclosure_caveat(caveat: DisclosureCaveat) -> String {
+    format!(
+        "{} [{}]: {}",
+        caveat.code, caveat.policy_ref, caveat.message
+    )
+}
+
 async fn payload_preview(
     payload: &str,
     max_chars: usize,
@@ -167,7 +174,7 @@ async fn payload_preview(
         caveats: decision
             .caveats
             .into_iter()
-            .map(|caveat| format!("{}: {}", caveat.code, caveat.message))
+            .map(format_disclosure_caveat)
             .collect(),
     }
 }
@@ -766,6 +773,14 @@ mod tests {
             "DLQ redaction must be caveated: {:?}",
             preview.caveats
         );
+        assert!(
+            preview
+                .caveats
+                .iter()
+                .any(|caveat| caveat.contains("dlq-preview-secret")),
+            "DLQ redaction must name the operator-owned policy rule: {:?}",
+            preview.caveats
+        );
 
         Ok(())
     }
@@ -811,6 +826,14 @@ mod tests {
                 .iter()
                 .any(|caveat| caveat.contains("policy.disclosure_applied")),
             "redaction must be visible to machine clients: {:?}",
+            preview.caveats
+        );
+        assert!(
+            preview
+                .caveats
+                .iter()
+                .any(|caveat| caveat.contains("dlq-preview-secret")),
+            "machine clients must see which policy owned the redaction: {:?}",
             preview.caveats
         );
         assert!(!preview.text.contains(&token));
