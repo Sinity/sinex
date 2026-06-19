@@ -60,6 +60,8 @@ pub struct ComponentHealthReport {
     pub latency_ms: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub attributes: std::collections::BTreeMap<String, String>,
 }
 
 /// Replay control component health
