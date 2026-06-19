@@ -124,6 +124,10 @@ pub const BROWSER_PAGE_VISITED_CONTRACT_ID: EventContractId =
 pub const EMAIL_MESSAGE_RECEIVED_CONTRACT_ID: EventContractId =
     "event-contract:email/message.received@v1";
 pub const EMAIL_MESSAGE_SENT_CONTRACT_ID: EventContractId = "event-contract:email/message.sent@v1";
+pub const MEDIA_AUDIO_TRANSCRIPT_SEGMENT_CONTRACT_ID: EventContractId =
+    "event-contract:media.audio/transcript_segment.observed@v1";
+pub const MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID: EventContractId =
+    "event-contract:media.screen/ocr_segment.observed@v1";
 
 const SHELL_HISTORY_PACKAGES: &[&str] = &[
     "terminal.bash-history",
@@ -144,6 +148,16 @@ const BROWSER_HISTORY_SOURCE_OCCURRENCES: &[OccurrenceIdentity] = &[OccurrenceId
 const EMAIL_MAILBOX_PACKAGES: &[&str] = &["email.mailbox"];
 const EMAIL_MAILBOX_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
     &[OccurrenceIdentity::Uuid5From("(message_id, folder)")];
+const MEDIA_AUDIO_TRANSCRIPT_PACKAGES: &[&str] = &["media.audio-transcript"];
+const MEDIA_AUDIO_TRANSCRIPT_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
+    &[OccurrenceIdentity::Uuid5From(
+        "(material_id, segment_index, start_ms, end_ms)",
+    )];
+const MEDIA_SCREEN_OCR_PACKAGES: &[&str] = &["media.screen-ocr"];
+const MEDIA_SCREEN_OCR_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
+    &[OccurrenceIdentity::Uuid5From(
+        "(material_id, segment_index, bbox)",
+    )];
 
 inventory::submit! {
     EventContract {
@@ -250,6 +264,48 @@ inventory::submit! {
     }
 }
 
+inventory::submit! {
+    EventContract {
+        id: MEDIA_AUDIO_TRANSCRIPT_SEGMENT_CONTRACT_ID,
+        event_source: "media.audio",
+        event_type: "media.audio.transcript_segment_observed",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "media.audio",
+            event_type: "media.audio.transcript_segment_observed",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::SourceDeclared,
+        source_occurrences: MEDIA_AUDIO_TRANSCRIPT_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicOrMaterial,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.media.audio-transcript.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: MEDIA_AUDIO_TRANSCRIPT_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
+inventory::submit! {
+    EventContract {
+        id: MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID,
+        event_source: "media.screen",
+        event_type: "media.screen.ocr_segment_observed",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "media.screen",
+            event_type: "media.screen.ocr_segment_observed",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::SourceDeclared,
+        source_occurrences: MEDIA_SCREEN_OCR_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicOrMaterial,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.media.screen-ocr.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: MEDIA_SCREEN_OCR_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
 pub fn event_contracts() -> impl Iterator<Item = &'static EventContract> {
     inventory::iter::<EventContract>()
 }
@@ -345,6 +401,43 @@ mod tests {
                     && policy.accepted_event_contracts.contains(&id)
             });
             assert!(accepted_by_standard, "{id} must be admission-addressable");
+        }
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn media_text_contracts_are_package_and_policy_addressable() -> TestResult<()> {
+        for (contract_id, package_id, source, event_type) in [
+            (
+                MEDIA_AUDIO_TRANSCRIPT_SEGMENT_CONTRACT_ID,
+                "media.audio-transcript",
+                "media.audio",
+                "media.audio.transcript_segment_observed",
+            ),
+            (
+                MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID,
+                "media.screen-ocr",
+                "media.screen",
+                "media.screen.ocr_segment_observed",
+            ),
+        ] {
+            let Some(contract) = find_event_contract(contract_id) else {
+                panic!("missing media EventContract {contract_id}");
+            };
+            assert_eq!(contract.event_source, source);
+            assert_eq!(contract.event_type, event_type);
+            assert!(contract.package_refs.contains(&package_id));
+            assert_eq!(
+                contract.admission_policy_ref,
+                Some(STANDARD_EVENT_ADMISSION_POLICY_ID)
+            );
+
+            let accepted_by_standard = admission_policies().any(|policy| {
+                policy.id == STANDARD_EVENT_ADMISSION_POLICY_ID
+                    && policy.accepted_event_contracts.contains(&contract_id)
+            });
+            assert!(accepted_by_standard);
         }
 
         Ok(())

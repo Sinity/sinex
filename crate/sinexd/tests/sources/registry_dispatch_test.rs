@@ -302,12 +302,15 @@ async fn source_meta_external_producer_registers_metadata_without_factory() -> T
 }
 
 #[sinex_test]
-async fn source_meta_proposed_media_sources_are_metadata_only() -> TestResult<()> {
+async fn source_meta_media_staged_sources_register_parser_and_factory() -> TestResult<()> {
     use sinex_primitives::source_contracts::{all_source_contracts, source_runtime_bindings};
 
     for (source_id, event_type) in [
-        ("media.audio", "media.audio.transcription"),
-        ("media.screen", "media.screen.ocr"),
+        (
+            "media.audio-transcript",
+            "media.audio.transcript_segment_observed",
+        ),
+        ("media.screen-ocr", "media.screen.ocr_segment_observed"),
     ] {
         let source = sui(source_id);
         assert!(
@@ -318,23 +321,23 @@ async fn source_meta_proposed_media_sources_are_metadata_only() -> TestResult<()
                         .iter()
                         .any(|(_, declared)| *declared == event_type)
             }),
-            "proposed media source must still register its SourceContract"
+            "staged media source must register its SourceContract"
         );
         assert!(
             source_runtime_bindings().any(|binding| {
                 binding.source_id == source_id
                     && binding.output_event_type == event_type
-                    && binding.proposed
+                    && !binding.proposed
             }),
-            "proposed media source must still register a proposed SourceRuntimeBinding"
+            "staged media source must register an accepted SourceRuntimeBinding"
         );
         assert!(
-            find_source_factory(&source).is_none(),
-            "proposed media source must not register a source factory"
+            find_source_factory(&source).is_some(),
+            "staged media source must register a source factory"
         );
         assert!(
-            find_parser_factory(&source).is_none(),
-            "proposed media source must not register a parser factory"
+            find_parser_factory(&source).is_some(),
+            "staged media source must register a parser factory"
         );
     }
     Ok(())
@@ -535,7 +538,8 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
     use sinex_primitives::STANDARD_EVENT_ADMISSION_POLICY_ID;
     use sinex_primitives::event_contracts::{
         BROWSER_PAGE_VISITED_CONTRACT_ID, EMAIL_MESSAGE_RECEIVED_CONTRACT_ID,
-        EMAIL_MESSAGE_SENT_CONTRACT_ID, SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
+        EMAIL_MESSAGE_SENT_CONTRACT_ID, MEDIA_AUDIO_TRANSCRIPT_SEGMENT_CONTRACT_ID,
+        MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID, SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
     };
     use sinexd::sources::package_completeness::build_package_completeness_report;
 
@@ -646,6 +650,53 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
             .is_some_and(|binding| !binding.resource_budget.is_null()),
         "email runtime binding rows should expose the derived ResourceBudgetSpec"
     );
+
+    for (package_id, event_source, event_type, contract_id) in [
+        (
+            "media.audio-transcript",
+            "media.audio",
+            "media.audio.transcript_segment_observed",
+            MEDIA_AUDIO_TRANSCRIPT_SEGMENT_CONTRACT_ID,
+        ),
+        (
+            "media.screen-ocr",
+            "media.screen",
+            "media.screen.ocr_segment_observed",
+            MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID,
+        ),
+    ] {
+        let media = report
+            .packages
+            .get(package_id)
+            .and_then(|package| package.modes.get(package_id))
+            .expect("media staged package/mode row");
+        assert!(
+            media.event_contract_refs.contains(&contract_id.to_string()),
+            "media staged mode must consume its EventContract registry row"
+        );
+        assert!(
+            media
+                .admission_policy_refs
+                .contains(&STANDARD_EVENT_ADMISSION_POLICY_ID.to_string()),
+            "media staged mode must be accepted by the standard admission policy"
+        );
+        assert!(
+            media.event_pairs.iter().any(|pair| {
+                pair.source == event_source
+                    && pair.event_type == event_type
+                    && pair.event_contract_ref.as_deref() == Some(contract_id)
+            }),
+            "media staged event pair rows should carry the matching EventContract ref"
+        );
+        assert!(
+            media
+                .sources
+                .runtime_binding
+                .as_ref()
+                .is_some_and(|binding| !binding.resource_budget.is_null()),
+            "media runtime binding rows should expose the derived ResourceBudgetSpec"
+        );
+    }
 
     Ok(())
 }
@@ -758,6 +809,47 @@ async fn package_completeness_report_consumes_coverage_debt_and_operation_refs()
         "email operation refs should satisfy the package completeness requirement"
     );
 
+    for (package_id, operation_ref) in [
+        (
+            "media.audio-transcript",
+            "operation:media.audio-transcript.check",
+        ),
+        ("media.screen-ocr", "operation:media.screen-ocr.check"),
+    ] {
+        let media = report
+            .packages
+            .get(package_id)
+            .and_then(|package| package.modes.get(package_id))
+            .expect("media staged package/mode row");
+        assert!(
+            media
+                .coverage_debt_refs
+                .contains(&"coverage:source-coverage".to_string()),
+            "media staged mode must declare the coverage provider consumed by the package gate"
+        );
+        assert!(
+            media
+                .coverage_debt_refs
+                .contains(&"debt:unified-debt-view".to_string()),
+            "media staged mode must declare the unified debt provider consumed by the package gate"
+        );
+        assert!(
+            media.operation_refs.contains(&operation_ref.to_string()),
+            "media staged mode must declare operator action refs consumed by the package gate"
+        );
+        assert!(
+            !media
+                .missing
+                .iter()
+                .any(|field| field == "coverage_and_debt_views"),
+            "media coverage/debt refs should satisfy the package completeness requirement"
+        );
+        assert!(
+            !media.missing.iter().any(|field| field == "operations"),
+            "media operation refs should satisfy the package completeness requirement"
+        );
+    }
+
     Ok(())
 }
 
@@ -799,6 +891,19 @@ async fn package_completeness_report_distinguishes_proposed_and_manual_modes() -
         sent.sources.catalog_projection_registered,
         "generated source catalog must project every binding mode in multi-binding packages"
     );
+
+    for package_id in ["media.audio-transcript", "media.screen-ocr"] {
+        let mode = report
+            .packages
+            .get(package_id)
+            .and_then(|package| package.modes.get(package_id))
+            .expect("media staged mode row");
+        assert_eq!(mode.mode_state, PackageModeState::Accepted);
+        assert!(
+            mode.missing.is_empty(),
+            "accepted media staged mode should satisfy the package gate"
+        );
+    }
 
     let external = report
         .packages
