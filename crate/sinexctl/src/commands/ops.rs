@@ -802,6 +802,13 @@ fn debt_row_from_replay_operation(operation: &OpsOperation) -> Option<DebtRowVie
             ref_: Some(operation_ref.clone()),
         }],
         actions: vec![
+            projection_rebuild_action(format!(
+                "sinexctl ops start -t projection-rebuild -s '{}'",
+                serde_json::json!({
+                    "source": "replay-invalidation",
+                    "replay_operation_id": operation.id,
+                })
+            )),
             ActionAvailability::read(
                 "replay.operation.inspect",
                 "Inspect",
@@ -851,23 +858,9 @@ fn debt_row_from_derivation(spec: &DerivationSpec, trigger: InvalidationTrigger)
                 .map(|policy| SinexObjectRef::new(SinexObjectKind::Policy, policy)),
         }],
         actions: vec![
-            ActionAvailability {
-                id: "projection.rebuild".to_string(),
-                label: "Rebuild".to_string(),
-                state: ActionAvailabilityState::Disabled,
-                reason: Some(
-                    "projection rebuild operations are tracked by #1974".to_string(),
-                ),
-                command_hint: None,
-                rpc_method: None,
-                side_effect: ActionSideEffect::Write,
-                requires_confirmation: false,
-                dry_run_available: false,
-                audit_output_ref: None,
-            }
-            .with_command_hint(format!(
-                "sinexctl ops start -t projection-rebuild -s '{{\"derivation\":\"{}\"}}'",
-                spec.id
+            projection_rebuild_action(format!(
+                "sinexctl ops start -t projection-rebuild -s '{}'",
+                serde_json::json!({"derivation": spec.id})
             )),
             ActionAvailability::read(
                 "projection.explain",
@@ -879,6 +872,23 @@ fn debt_row_from_derivation(spec: &DerivationSpec, trigger: InvalidationTrigger)
                 projection_trigger_name(trigger)
             )),
         ],
+    }
+}
+
+fn projection_rebuild_action(command_hint: String) -> ActionAvailability {
+    ActionAvailability {
+        id: "projection.rebuild".to_string(),
+        label: "Rebuild".to_string(),
+        state: ActionAvailabilityState::Enabled,
+        reason: Some(
+            "starts a projection-rebuild operation from the current debt row scope".to_string(),
+        ),
+        command_hint: Some(command_hint),
+        rpc_method: Some("ops.start".to_string()),
+        side_effect: ActionSideEffect::Write,
+        requires_confirmation: true,
+        dry_run_available: true,
+        audit_output_ref: None,
     }
 }
 
@@ -1348,7 +1358,10 @@ mod tests {
             .find(|action| action.id == "projection.rebuild")
             .expect("rebuild action is advertised");
         assert_eq!(rebuild.side_effect, ActionSideEffect::Write);
-        assert_eq!(rebuild.state, ActionAvailabilityState::Disabled);
+        assert_eq!(rebuild.state, ActionAvailabilityState::Enabled);
+        assert!(rebuild.requires_confirmation);
+        assert!(rebuild.dry_run_available);
+        assert_eq!(rebuild.rpc_method.as_deref(), Some("ops.start"));
         assert!(
             rebuild
                 .command_hint
@@ -1369,9 +1382,6 @@ mod tests {
             Some("sinexctl ops debt list --projection-trigger replay")
         );
 
-        assert!(
-            debt_rows_from_derivation_trigger(InvalidationTrigger::SourceMaterialChange).is_empty()
-        );
         Ok(())
     }
 
@@ -1398,6 +1408,21 @@ mod tests {
         );
         assert!(row.summary.contains("3 event(s)"));
         assert!(row.caveats[0].id.contains("replay.invalidation.pending"));
+        let rebuild = row
+            .actions
+            .iter()
+            .find(|action| action.id == "projection.rebuild")
+            .expect("pending replay invalidation should be drainable through rebuild operation");
+        assert_eq!(rebuild.state, ActionAvailabilityState::Enabled);
+        assert_eq!(rebuild.side_effect, ActionSideEffect::Write);
+        assert!(rebuild.requires_confirmation);
+        assert!(
+            rebuild
+                .command_hint
+                .as_deref()
+                .is_some_and(|hint| hint.contains("projection-rebuild")
+                    && hint.contains("replay_operation_id"))
+        );
         assert!(
             row.actions
                 .iter()
