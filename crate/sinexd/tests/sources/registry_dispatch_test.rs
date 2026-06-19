@@ -538,8 +538,12 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
     use sinex_primitives::STANDARD_EVENT_ADMISSION_POLICY_ID;
     use sinex_primitives::event_contracts::{
         BROWSER_PAGE_VISITED_CONTRACT_ID, EMAIL_MESSAGE_RECEIVED_CONTRACT_ID,
-        EMAIL_MESSAGE_SENT_CONTRACT_ID, MEDIA_AUDIO_TRANSCRIPT_SEGMENT_CONTRACT_ID,
-        MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID, SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
+        EMAIL_MESSAGE_SENT_CONTRACT_ID, MEDIA_AUDIO_CAPTURE_SESSION_ENDED_CONTRACT_ID,
+        MEDIA_AUDIO_CAPTURE_SESSION_STARTED_CONTRACT_ID,
+        MEDIA_AUDIO_RECORDING_OBSERVED_CONTRACT_ID, MEDIA_AUDIO_TRANSCRIPT_SEGMENT_CONTRACT_ID,
+        MEDIA_AUDIO_TRANSCRIPTION_RUN_OBSERVED_CONTRACT_ID,
+        MEDIA_SCREEN_OCR_RUN_OBSERVED_CONTRACT_ID, MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID,
+        MEDIA_SCREEN_SCREENSHOT_OBSERVED_CONTRACT_ID, SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
     };
     use sinexd::sources::package_completeness::build_package_completeness_report;
 
@@ -651,18 +655,30 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
         "email runtime binding rows should expose the derived ResourceBudgetSpec"
     );
 
-    for (package_id, event_source, event_type, contract_id) in [
+    for (package_id, event_source, event_type, contract_id, package_contract_ids) in [
         (
             "media.audio-transcript",
             "media.audio",
             "media.audio.transcript_segment_observed",
             MEDIA_AUDIO_TRANSCRIPT_SEGMENT_CONTRACT_ID,
+            &[
+                MEDIA_AUDIO_RECORDING_OBSERVED_CONTRACT_ID,
+                MEDIA_AUDIO_CAPTURE_SESSION_STARTED_CONTRACT_ID,
+                MEDIA_AUDIO_CAPTURE_SESSION_ENDED_CONTRACT_ID,
+                MEDIA_AUDIO_TRANSCRIPT_SEGMENT_CONTRACT_ID,
+                MEDIA_AUDIO_TRANSCRIPTION_RUN_OBSERVED_CONTRACT_ID,
+            ][..],
         ),
         (
             "media.screen-ocr",
             "media.screen",
             "media.screen.ocr_segment_observed",
             MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID,
+            &[
+                MEDIA_SCREEN_SCREENSHOT_OBSERVED_CONTRACT_ID,
+                MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID,
+                MEDIA_SCREEN_OCR_RUN_OBSERVED_CONTRACT_ID,
+            ][..],
         ),
     ] {
         let media = report
@@ -670,15 +686,23 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
             .get(package_id)
             .and_then(|package| package.modes.get(package_id))
             .expect("media staged package/mode row");
+        for expected_contract_id in package_contract_ids {
+            assert!(
+                media
+                    .event_contract_refs
+                    .contains(&expected_contract_id.to_string()),
+                "media package mode {package_id} must consume EventContract {expected_contract_id}"
+            );
+        }
         assert!(
             media.event_contract_refs.contains(&contract_id.to_string()),
-            "media staged mode must consume its EventContract registry row"
+            "media package mode must consume its parser EventContract registry row"
         );
         assert!(
             media
                 .admission_policy_refs
                 .contains(&STANDARD_EVENT_ADMISSION_POLICY_ID.to_string()),
-            "media staged mode must be accepted by the standard admission policy"
+            "media package mode must be accepted by the standard admission policy"
         );
         assert!(
             media.event_pairs.iter().any(|pair| {
@@ -686,7 +710,7 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
                     && pair.event_type == event_type
                     && pair.event_contract_ref.as_deref() == Some(contract_id)
             }),
-            "media staged event pair rows should carry the matching EventContract ref"
+            "media package event pair rows should carry the matching EventContract ref"
         );
         assert!(
             media
@@ -825,17 +849,17 @@ async fn package_completeness_report_consumes_coverage_debt_and_operation_refs()
             media
                 .coverage_debt_refs
                 .contains(&"coverage:source-coverage".to_string()),
-            "media staged mode must declare the coverage provider consumed by the package gate"
+            "media package mode must declare the coverage provider consumed by the package gate"
         );
         assert!(
             media
                 .coverage_debt_refs
                 .contains(&"debt:unified-debt-view".to_string()),
-            "media staged mode must declare the unified debt provider consumed by the package gate"
+            "media package mode must declare the unified debt provider consumed by the package gate"
         );
         assert!(
             media.operation_refs.contains(&operation_ref.to_string()),
-            "media staged mode must declare operator action refs consumed by the package gate"
+            "media package mode must declare operator action refs consumed by the package gate"
         );
         assert!(
             !media
@@ -897,11 +921,11 @@ async fn package_completeness_report_distinguishes_proposed_and_manual_modes() -
             .packages
             .get(package_id)
             .and_then(|package| package.modes.get(package_id))
-            .expect("media staged mode row");
+            .expect("media package mode row");
         assert_eq!(mode.mode_state, PackageModeState::Accepted);
         assert!(
             mode.missing.is_empty(),
-            "accepted media staged mode should satisfy the package gate"
+            "accepted media package mode should satisfy the package gate"
         );
     }
 

@@ -2,7 +2,7 @@ use sinex_primitives::{
     AdmissionOutcome, AdmissionOutcomeReason, AdmissionPolicyScope, EventOccurrenceContract,
     EventSource, EventType, OutputKind, ProposalKind, STANDARD_EVENT_ADMISSION_POLICY_ID,
     event_contracts::{
-        SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID, find_event_contract,
+        SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID, event_contracts, find_event_contract,
         find_event_contract_for_pair,
     },
     find_admission_policy,
@@ -55,10 +55,30 @@ async fn admission_policy_registry_references_event_contracts() -> TestResult<()
 
     assert_eq!(policy.id, STANDARD_EVENT_ADMISSION_POLICY_ID);
     assert_eq!(policy.scope, AdmissionPolicyScope::GlobalDefault);
-    assert_eq!(
-        policy.accepted_event_contracts,
-        &[SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID]
+    assert!(
+        policy
+            .accepted_event_contracts
+            .contains(&SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID)
     );
+    assert!(
+        policy.accepted_event_contracts.len() > 1,
+        "standard admission policy should enumerate accepted EventContracts across packages"
+    );
+    for contract_id in policy.accepted_event_contracts.iter().copied() {
+        assert!(
+            find_event_contract(contract_id).is_some(),
+            "admission policy references unknown EventContract {contract_id}"
+        );
+    }
+    for contract in event_contracts() {
+        if contract.admission_policy_ref == Some(STANDARD_EVENT_ADMISSION_POLICY_ID) {
+            assert!(
+                policy.accepted_event_contracts.contains(&contract.id),
+                "EventContract {} names the standard admission policy but is not accepted by it",
+                contract.id
+            );
+        }
+    }
     assert_eq!(
         policy.disclosure_policy_ref,
         Some("operator.default-disclosure")
