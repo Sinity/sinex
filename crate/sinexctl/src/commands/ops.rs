@@ -718,6 +718,23 @@ mod tests {
     }
 
     fn fixture_dlq(total_messages: u64) -> DlqListResponse {
+        let pressure_level = if total_messages > 10 {
+            "critical"
+        } else if total_messages > 0 {
+            "warning"
+        } else {
+            "nominal"
+        };
+        let recommended_action = if total_messages == 0 {
+            "none"
+        } else {
+            "ops dlq peek"
+        };
+        let action_reason = if total_messages == 0 {
+            "raw-ingest DLQ is empty"
+        } else {
+            "inspect raw-ingest DLQ before retry"
+        };
         DlqListResponse {
             total_messages,
             total_bytes: total_messages * 1024,
@@ -727,24 +744,25 @@ mod tests {
             } else {
                 10 + total_messages
             },
-            pressure_level: if total_messages > 10 {
-                "critical".to_string()
-            } else if total_messages > 0 {
-                "warning".to_string()
-            } else {
-                "nominal".to_string()
+            pressure_level: pressure_level.to_string(),
+            resource_pressure: sinex_primitives::rpc::dlq::DlqPressureSignal {
+                pressure_level: pressure_level.to_string(),
+                runtime_action: if total_messages > 10 {
+                    "throttle".to_string()
+                } else if total_messages > 0 {
+                    "inspect".to_string()
+                } else {
+                    "admit".to_string()
+                },
+                pending_messages: total_messages,
+                pending_bytes: total_messages * 1024,
+                retry_batch_size: 10,
+                recommended_action: recommended_action.to_string(),
+                reason: action_reason.to_string(),
             },
             pending_sequence_span: total_messages,
-            recommended_action: if total_messages == 0 {
-                "none".to_string()
-            } else {
-                "ops dlq peek".to_string()
-            },
-            action_reason: if total_messages == 0 {
-                "raw-ingest DLQ is empty".to_string()
-            } else {
-                "inspect raw-ingest DLQ before retry".to_string()
-            },
+            recommended_action: recommended_action.to_string(),
+            action_reason: action_reason.to_string(),
         }
     }
 

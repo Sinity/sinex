@@ -18,7 +18,7 @@ use tracing::warn;
 // Re-export RPC types for consistency
 pub use sinex_primitives::rpc::dlq::{
     DlqListRequest, DlqListResponse, DlqMessagePeek, DlqPeekRequest, DlqPeekResponse,
-    DlqPurgeRequest, DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
+    DlqPressureSignal, DlqPurgeRequest, DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +64,16 @@ fn dlq_pressure_level(total_messages: u64, retry_batch_size: usize) -> &'static 
     }
 }
 
+fn dlq_runtime_action(total_messages: u64, retry_batch_size: usize) -> &'static str {
+    if total_messages == 0 {
+        "admit"
+    } else if total_messages > retry_batch_size as u64 {
+        "throttle"
+    } else {
+        "inspect"
+    }
+}
+
 fn dlq_operator_action(total_messages: u64) -> (&'static str, &'static str) {
     if total_messages == 0 {
         ("none", "raw-ingest DLQ is empty")
@@ -72,6 +82,23 @@ fn dlq_operator_action(total_messages: u64) -> (&'static str, &'static str) {
             "ops dlq peek",
             "inspect failures before running paced requeue or purge",
         )
+    }
+}
+
+fn dlq_pressure_signal(
+    total_messages: u64,
+    total_bytes: u64,
+    retry_batch_size: usize,
+) -> DlqPressureSignal {
+    let (recommended_action, reason) = dlq_operator_action(total_messages);
+    DlqPressureSignal {
+        pressure_level: dlq_pressure_level(total_messages, retry_batch_size).to_string(),
+        runtime_action: dlq_runtime_action(total_messages, retry_batch_size).to_string(),
+        pending_messages: total_messages,
+        pending_bytes: total_bytes,
+        retry_batch_size: retry_batch_size as u64,
+        recommended_action: recommended_action.to_string(),
+        reason: reason.to_string(),
     }
 }
 
@@ -133,20 +160,21 @@ pub async fn handle_dlq_list(
         .await
         .map_err(|error| SinexError::service("Failed to get DLQ statistics").with_source(error))?;
 
-    let (recommended_action, action_reason) = dlq_operator_action(stats.total_messages);
+    let pressure = dlq_pressure_signal(stats.total_messages, stats.total_bytes, retry_batch_size);
     let response = DlqListResponse {
         total_messages: stats.total_messages,
         total_bytes: stats.total_bytes,
         first_seq: stats.first_seq,
         last_seq: stats.last_seq,
-        pressure_level: dlq_pressure_level(stats.total_messages, retry_batch_size).to_string(),
+        pressure_level: pressure.pressure_level.clone(),
+        resource_pressure: pressure.clone(),
         pending_sequence_span: dlq_pending_sequence_span(
             stats.total_messages,
             stats.first_seq,
             stats.last_seq,
         ),
-        recommended_action: recommended_action.to_string(),
-        action_reason: action_reason.to_string(),
+        recommended_action: pressure.recommended_action,
+        action_reason: pressure.reason,
     };
 
     Ok(response)
@@ -385,7 +413,7 @@ pub async fn handle_dlq_purge(
 #[cfg(test)]
 mod tests {
     use super::{
-        dlq_operator_action, dlq_pending_sequence_span, dlq_pressure_level,
+        dlq_operator_action, dlq_pending_sequence_span, dlq_pressure_level, dlq_pressure_signal,
         parse_retry_count_header, payload_preview, require_stream_sequence,
     };
     use crate::api::handlers::query::event_card_list_with_policy;
@@ -457,6 +485,20 @@ mod tests {
             )
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dlq_pressure_signal_carries_runtime_action_and_batch_limit() -> TestResult<()> {
+        let pressure = dlq_pressure_signal(11, 4096, 10);
+
+        assert_eq!(pressure.pressure_level, "critical");
+        assert_eq!(pressure.runtime_action, "throttle");
+        assert_eq!(pressure.pending_messages, 11);
+        assert_eq!(pressure.pending_bytes, 4096);
+        assert_eq!(pressure.retry_batch_size, 10);
+        assert_eq!(pressure.recommended_action, "ops dlq peek");
+        assert!(pressure.reason.contains("paced requeue or purge"));
         Ok(())
     }
 

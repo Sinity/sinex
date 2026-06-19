@@ -19,6 +19,23 @@ pub const DLQ_LIST_METHOD: RpcMethod<DlqListRequest, DlqListResponse> = RpcMetho
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DlqListRequest {}
 
+/// Structured pressure signal for raw-ingest DLQ depth.
+///
+/// This is intentionally scoped to the DLQ response instead of introducing a
+/// parallel runtime scheduler model. It gives operator surfaces a typed view of
+/// the same decision already exposed by `pressure_level`, `recommended_action`,
+/// and `action_reason`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DlqPressureSignal {
+    pub pressure_level: String,
+    pub runtime_action: String,
+    pub pending_messages: u64,
+    pub pending_bytes: u64,
+    pub retry_batch_size: u64,
+    pub recommended_action: String,
+    pub reason: String,
+}
+
 /// Response: dlq.list
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DlqListResponse {
@@ -32,6 +49,8 @@ pub struct DlqListResponse {
     /// retry batch size is `critical` because recovery requires more than one
     /// paced operator retry batch.
     pub pressure_level: String,
+    /// Structured pressure signal for runtime/operator surfaces.
+    pub resource_pressure: DlqPressureSignal,
     /// Sequence span covered by pending DLQ messages. This is the DLQ lag
     /// signal when timestamps are not available from the stream summary.
     pub pending_sequence_span: u64,
