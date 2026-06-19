@@ -523,7 +523,9 @@ async fn package_completeness_report_is_keyed_by_package_and_mode() -> TestResul
 #[sinex_test]
 async fn package_completeness_report_consumes_event_admission_and_budget_refs() -> TestResult<()> {
     use sinex_primitives::STANDARD_EVENT_ADMISSION_POLICY_ID;
-    use sinex_primitives::event_contracts::SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID;
+    use sinex_primitives::event_contracts::{
+        BROWSER_PAGE_VISITED_CONTRACT_ID, SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
+    };
     use sinexd::sources::package_completeness::build_package_completeness_report;
 
     let report = build_package_completeness_report();
@@ -558,6 +560,40 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
             .as_ref()
             .is_some_and(|binding| !binding.resource_budget.is_null()),
         "runtime binding rows should expose the derived ResourceBudgetSpec"
+    );
+
+    let browser = report
+        .packages
+        .get("browser.history")
+        .and_then(|package| package.modes.get("browser.history"))
+        .expect("browser.history package/mode row");
+    assert!(
+        browser
+            .event_contract_refs
+            .contains(&BROWSER_PAGE_VISITED_CONTRACT_ID.to_string()),
+        "browser history mode must consume the page-visit EventContract registry row"
+    );
+    assert!(
+        browser
+            .admission_policy_refs
+            .contains(&STANDARD_EVENT_ADMISSION_POLICY_ID.to_string()),
+        "browser history mode must be accepted by the standard admission policy"
+    );
+    assert!(
+        browser.event_pairs.iter().any(|pair| {
+            pair.source == "webhistory"
+                && pair.event_type == "page.visited"
+                && pair.event_contract_ref.as_deref() == Some(BROWSER_PAGE_VISITED_CONTRACT_ID)
+        }),
+        "browser event pair rows should carry the matching EventContract ref"
+    );
+    assert!(
+        browser
+            .sources
+            .runtime_binding
+            .as_ref()
+            .is_some_and(|binding| !binding.resource_budget.is_null()),
+        "browser runtime binding rows should expose the derived ResourceBudgetSpec"
     );
 
     Ok(())
@@ -599,6 +635,41 @@ async fn package_completeness_report_consumes_coverage_debt_and_operation_refs()
     assert!(
         !mode.missing.iter().any(|field| field == "operations"),
         "operation refs should satisfy the package completeness requirement"
+    );
+
+    let browser = report
+        .packages
+        .get("browser.history")
+        .and_then(|package| package.modes.get("browser.history"))
+        .expect("browser.history package/mode row");
+    assert!(
+        browser
+            .coverage_debt_refs
+            .contains(&"coverage:source-coverage".to_string()),
+        "browser history mode must declare the coverage provider consumed by the package gate"
+    );
+    assert!(
+        browser
+            .coverage_debt_refs
+            .contains(&"debt:unified-debt-view".to_string()),
+        "browser history mode must declare the unified debt provider consumed by the package gate"
+    );
+    assert!(
+        browser
+            .operation_refs
+            .contains(&"operation:browser.web.check".to_string()),
+        "browser history mode must declare operator action refs consumed by the package gate"
+    );
+    assert!(
+        !browser
+            .missing
+            .iter()
+            .any(|field| field == "coverage_and_debt_views"),
+        "browser coverage/debt refs should satisfy the package completeness requirement"
+    );
+    assert!(
+        !browser.missing.iter().any(|field| field == "operations"),
+        "browser operation refs should satisfy the package completeness requirement"
     );
 
     Ok(())
