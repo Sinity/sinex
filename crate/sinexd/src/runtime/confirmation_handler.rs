@@ -86,6 +86,29 @@ pub struct ConfirmationBufferInsertDecision {
     pub projected_payload_bytes: usize,
 }
 
+impl ConfirmationBufferInsertDecision {
+    /// Redelivery pacing for a rejected provisional message.
+    ///
+    /// The delay is intentionally finite and deterministic so resource-pressure
+    /// response is visible in tests and operator logs instead of being hidden
+    /// behind a generic immediate retry.
+    #[must_use]
+    pub fn rejected_redelivery_delay(&self) -> Option<std::time::Duration> {
+        if self.accepted {
+            return None;
+        }
+        let delay = match self.rejection_reason {
+            Some(ConfirmationBufferRejectionReason::PayloadBytes) => {
+                std::time::Duration::from_secs(2)
+            }
+            Some(ConfirmationBufferRejectionReason::EventCapacity) | None => {
+                std::time::Duration::from_millis(500)
+            }
+        };
+        Some(delay)
+    }
+}
+
 static CONFIRMATION_BUFFER_REGISTRY: OnceLock<Mutex<Vec<Weak<ConfirmationBuffer>>>> =
     OnceLock::new();
 
@@ -893,6 +916,10 @@ mod tests {
             Some(ConfirmationBufferRejectionReason::PayloadBytes)
         );
         assert_eq!(
+            rejected.rejected_redelivery_delay(),
+            Some(Duration::from_secs(2))
+        );
+        assert_eq!(
             rejected.pressure_level,
             ConfirmationBufferPressureLevel::Critical
         );
@@ -910,6 +937,44 @@ mod tests {
         assert_eq!(recovered.rejection_reason, None);
         assert_eq!(buffer.retained_payload_bytes(), max_payload_bytes);
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn event_capacity_rejection_uses_short_resource_backoff() -> TestResult<()> {
+        let now = Timestamp::now();
+        let buffer = ConfirmationBuffer::with_capacity_grace_and_payload_budget(
+            Duration::from_secs(60),
+            1,
+            Duration::from_secs(60),
+            1024 * 1024,
+        );
+        let admitted = buffer
+            .add_provisional_with_pressure(provisional(
+                "system.journald",
+                "journald.entry.written",
+                now,
+                json!({ "MESSAGE": "first" }),
+            ))
+            .await;
+        let rejected = buffer
+            .add_provisional_with_pressure(provisional(
+                "system.journald",
+                "journald.entry.written",
+                now,
+                json!({ "MESSAGE": "second" }),
+            ))
+            .await;
+
+        assert_eq!(admitted.rejected_redelivery_delay(), None);
+        assert_eq!(
+            rejected.rejection_reason,
+            Some(ConfirmationBufferRejectionReason::EventCapacity)
+        );
+        assert_eq!(
+            rejected.rejected_redelivery_delay(),
+            Some(Duration::from_millis(500))
+        );
         Ok(())
     }
 

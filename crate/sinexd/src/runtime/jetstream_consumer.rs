@@ -392,12 +392,23 @@ impl JetStreamEventConsumer {
         for event in &events {
             // Memory protection: if the buffer is full, NAK the whole message to
             // apply backpressure; redelivery re-buffers any siblings idempotently.
-            if !buffer.add_provisional(event.clone()).await {
+            let decision = buffer.add_provisional_with_pressure(event.clone()).await;
+            if !decision.accepted {
                 warn!(
+                    target: "sinex_metrics",
+                    metric = "runtime.confirmation_buffer_backpressure_total",
                     event_id = %event.event_id,
-                    "Buffer at capacity, NAKing message to apply backpressure"
+                    pressure_level = ?decision.pressure_level,
+                    rejection_reason = ?decision.rejection_reason,
+                    pending_count = decision.pending_count,
+                    max_capacity = decision.max_capacity,
+                    retained_payload_bytes = decision.retained_payload_bytes,
+                    max_payload_bytes = decision.max_payload_bytes,
+                    attempted_payload_bytes = decision.attempted_payload_bytes,
+                    projected_payload_bytes = decision.projected_payload_bytes,
+                    "Confirmation buffer rejected provisional event; NAKing with resource-pressure backoff"
                 );
-                let nak_delay = Some(std::time::Duration::from_millis(500));
+                let nak_delay = decision.rejected_redelivery_delay();
                 msg.ack_with(async_nats::jetstream::AckKind::Nak(nak_delay))
                     .await
                     .map_err(|error| {
