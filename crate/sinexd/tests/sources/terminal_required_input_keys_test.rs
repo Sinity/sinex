@@ -1,25 +1,22 @@
-//! Required input-key declarations for imperative terminal parsers.
+//! Required input-key declarations for terminal parsers.
 
-use sinexd::runtime::parser::{MaterialParser, SourceRecordFingerprint};
-use sinex_primitives::{
-    parser::SourceId,
-    rpc::sources::{CaveatSeverity, caveat_codes},
+#[path = "required_input_keys_support.rs"]
+mod required_input_keys_support;
+
+use required_input_keys_support::{
+    assert_required_input_keys, assert_required_key_blocks_readiness,
 };
+use sinex_primitives::parser::SourceId;
+use sinexd::runtime::parser::SourceRecordFingerprint;
 use sinexd::sources::source_contracts::terminal::{
-    atuin_history::AtuinHistoryParser, fish_history::FishHistoryParser,
+    atuin_history::AtuinHistoryRecord, fish_history::FishHistoryRecord,
 };
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn terminal_sqlite_parsers_declare_required_input_keys() -> TestResult<()> {
-    assert_eq!(
-        AtuinHistoryParser.required_input_keys(),
-        vec!["history.command", "history.timestamp"]
-    );
-    assert_eq!(
-        FishHistoryParser.required_input_keys(),
-        vec!["fish_history.command"]
-    );
+    assert_required_input_keys(AtuinHistoryRecord::default(), &["command", "timestamp"]);
+    assert_required_input_keys(FishHistoryRecord::default(), &["command"]);
     Ok(())
 }
 
@@ -43,20 +40,12 @@ async fn atuin_required_schema_removal_blocks_readiness() -> TestResult<()> {
 
     let before = SourceRecordFingerprint::from_sqlite_connection(&before)?;
     let after = SourceRecordFingerprint::from_sqlite_connection(&after)?;
-    let mut drift = SourceRecordFingerprint::diff(
+    let drift = SourceRecordFingerprint::diff(
         SourceId::from_static("terminal.atuin-history"),
         &before,
         &after,
     )
     .expect("removing command should produce schema drift");
-    drift.required_input_keys = AtuinHistoryParser.required_input_keys();
-
-    let caveats = drift.readiness_caveats();
-
-    assert!(caveats.iter().any(|caveat| {
-        caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
-            && caveat.severity == CaveatSeverity::Blocking
-            && caveat.message.contains("history.command")
-    }));
+    assert_required_key_blocks_readiness(drift, AtuinHistoryRecord::default(), "command");
     Ok(())
 }

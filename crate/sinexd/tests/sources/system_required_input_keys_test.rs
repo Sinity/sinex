@@ -1,23 +1,26 @@
 //! Required input-key declarations for system JSON-line parsers.
 
-use serde_json::json;
-use sinexd::runtime::parser::{MaterialParser, SourceRecordFingerprint};
-use sinex_primitives::{
-    parser::SourceId,
-    rpc::sources::{CaveatSeverity, caveat_codes},
+#[path = "required_input_keys_support.rs"]
+mod required_input_keys_support;
+
+use required_input_keys_support::{
+    assert_required_input_keys, assert_required_key_blocks_readiness,
 };
+use serde_json::json;
+use sinex_primitives::parser::SourceId;
+use sinexd::runtime::parser::SourceRecordFingerprint;
 use sinexd::sources::source_contracts::system::{journald::JournaldParser, systemd::SystemdParser};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn system_json_parsers_declare_required_input_keys() -> TestResult<()> {
-    assert_eq!(
-        JournaldParser.required_input_keys(),
-        vec!["/MESSAGE", "/__CURSOR", "/__REALTIME_TIMESTAMP"]
+    assert_required_input_keys(
+        JournaldParser,
+        &["/MESSAGE", "/__CURSOR", "/__REALTIME_TIMESTAMP"],
     );
-    assert_eq!(
-        SystemdParser.required_input_keys(),
-        vec![
+    assert_required_input_keys(
+        SystemdParser,
+        &[
             "/ACTIVE_STATE",
             "/MESSAGE",
             "/SUB_STATE",
@@ -25,7 +28,7 @@ async fn system_json_parsers_declare_required_input_keys() -> TestResult<()> {
             "/__CURSOR",
             "/__REALTIME_TIMESTAMP",
             "/_SYSTEMD_UNIT",
-        ]
+        ],
     );
     Ok(())
 }
@@ -42,21 +45,10 @@ async fn journald_required_cursor_removal_blocks_readiness() -> TestResult<()> {
         "MESSAGE": "service started"
     }));
 
-    let mut drift = SourceRecordFingerprint::diff(
-        SourceId::from_static("system.journald"),
-        &before,
-        &after,
-    )
-    .expect("removing __CURSOR should produce JSON shape drift");
-    drift.required_input_keys = JournaldParser.required_input_keys();
-
-    let caveats = drift.readiness_caveats();
-
-    assert!(caveats.iter().any(|caveat| {
-        caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
-            && caveat.severity == CaveatSeverity::Blocking
-            && caveat.message.contains("/__CURSOR")
-    }));
+    let drift =
+        SourceRecordFingerprint::diff(SourceId::from_static("system.journald"), &before, &after)
+            .expect("removing __CURSOR should produce JSON shape drift");
+    assert_required_key_blocks_readiness(drift, JournaldParser, "/__CURSOR");
     Ok(())
 }
 
@@ -80,17 +72,9 @@ async fn systemd_required_unit_removal_blocks_readiness() -> TestResult<()> {
         "SUB_STATE": "running"
     }));
 
-    let mut drift =
+    let drift =
         SourceRecordFingerprint::diff(SourceId::from_static("system.systemd"), &before, &after)
             .expect("removing _SYSTEMD_UNIT should produce JSON shape drift");
-    drift.required_input_keys = SystemdParser.required_input_keys();
-
-    let caveats = drift.readiness_caveats();
-
-    assert!(caveats.iter().any(|caveat| {
-        caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
-            && caveat.severity == CaveatSeverity::Blocking
-            && caveat.message.contains("/_SYSTEMD_UNIT")
-    }));
+    assert_required_key_blocks_readiness(drift, SystemdParser, "/_SYSTEMD_UNIT");
     Ok(())
 }
