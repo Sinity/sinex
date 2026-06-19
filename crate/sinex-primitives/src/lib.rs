@@ -29,6 +29,7 @@ pub mod output_kind;
 pub mod parser;
 pub mod primitives;
 pub mod privacy;
+pub mod public_ref;
 pub mod query;
 pub mod relations;
 pub mod rpc;
@@ -148,6 +149,10 @@ pub use output_kind::{
     OUTPUT_KIND_DECLARATIONS, OutputKind, OutputKindDeclaration, declared_output_kind,
 };
 pub use primitives::Uuid;
+pub use public_ref::{
+    PublicSinexRef, PublicSinexRefParseError, RESOLVED_OBJECT_VIEW_SCHEMA_VERSION,
+    ResolvedObjectStatus, ResolvedObjectView, parse_public_kind, public_kind_name,
+};
 pub use query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
     LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PathOp, PayloadFilter,
