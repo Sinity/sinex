@@ -59,6 +59,7 @@ pub struct RawIngestDlqHealth {
 pub struct ConfirmationBufferHealth {
     pub status: GatewayHealthStatus,
     pub connected: bool,
+    pub memory_owner: ConfirmationBufferMemoryOwner,
     pub observed_buffers: usize,
     pub pending_count: usize,
     pub timed_out_retained_count: usize,
@@ -69,6 +70,28 @@ pub struct ConfirmationBufferHealth {
     pub timed_out_retained_payload_bytes: usize,
     pub approximate_payload_bytes_by_kind: BTreeMap<String, usize>,
     pub detail: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfirmationBufferMemoryOwner {
+    NotObserved,
+    None,
+    ActivePendingPayloads,
+    TimedOutGracePayloads,
+    CountersOnly,
+}
+
+impl ConfirmationBufferMemoryOwner {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotObserved => "not_observed",
+            Self::None => "none",
+            Self::ActivePendingPayloads => "active_pending_payloads",
+            Self::TimedOutGracePayloads => "timed_out_grace_payloads",
+            Self::CountersOnly => "counters_only",
+        }
+    }
 }
 
 const CONFIRMATION_BUFFER_DEGRADED_BYTES: usize = 64 * 1024 * 1024;
@@ -487,6 +510,7 @@ impl ServiceContainer {
             return ConfirmationBufferHealth {
                 status: GatewayHealthStatus::Unknown,
                 connected: false,
+                memory_owner: ConfirmationBufferMemoryOwner::NotObserved,
                 observed_buffers: 0,
                 pending_count: 0,
                 timed_out_retained_count: 0,
@@ -532,13 +556,19 @@ impl ServiceContainer {
         } else {
             GatewayHealthStatus::Healthy
         };
+        let memory_owner = confirmation_buffer_memory_owner(
+            active_payload_bytes,
+            timed_out_retained_payload_bytes,
+            rejected_count,
+            late_confirmation_count,
+        );
         let top_kind = approximate_payload_bytes_by_kind
             .iter()
             .max_by_key(|(_, bytes)| *bytes)
             .map(|(kind, bytes)| format!(", top_kind={kind} ({bytes} bytes)"))
             .unwrap_or_default();
         let detail = format!(
-            "confirmation buffers: observed={}, pending={}, timed_out_retained={}, rejected={}, late_confirmations={}, approximate_payload_bytes={}, active_payload_bytes={}, timed_out_retained_payload_bytes={}{}",
+            "confirmation buffers: observed={}, pending={}, timed_out_retained={}, rejected={}, late_confirmations={}, approximate_payload_bytes={}, active_payload_bytes={}, timed_out_retained_payload_bytes={}, memory_owner={}{}",
             snapshots.len(),
             pending_count,
             timed_out_retained_count,
@@ -547,12 +577,14 @@ impl ServiceContainer {
             approximate_payload_bytes,
             active_payload_bytes,
             timed_out_retained_payload_bytes,
+            memory_owner.as_str(),
             top_kind
         );
 
         ConfirmationBufferHealth {
             status,
             connected: true,
+            memory_owner,
             observed_buffers: snapshots.len(),
             pending_count,
             timed_out_retained_count,
@@ -663,6 +695,23 @@ impl ServiceContainer {
             serving,
             degradation_reasons,
         }
+    }
+}
+
+fn confirmation_buffer_memory_owner(
+    active_payload_bytes: usize,
+    timed_out_retained_payload_bytes: usize,
+    rejected_count: u64,
+    late_confirmation_count: u64,
+) -> ConfirmationBufferMemoryOwner {
+    if timed_out_retained_payload_bytes > 0 {
+        ConfirmationBufferMemoryOwner::TimedOutGracePayloads
+    } else if active_payload_bytes > 0 {
+        ConfirmationBufferMemoryOwner::ActivePendingPayloads
+    } else if rejected_count > 0 || late_confirmation_count > 0 {
+        ConfirmationBufferMemoryOwner::CountersOnly
+    } else {
+        ConfirmationBufferMemoryOwner::None
     }
 }
 
