@@ -10,7 +10,9 @@ use async_nats::jetstream;
 use common::{NatsHarness, admin_auth, ensure_dlq_stream};
 use futures::StreamExt;
 use serde_json::json;
+use sinex_db::DbPoolExt;
 use sinex_primitives::Timestamp;
+use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::error::{ErrorClass, SinexError};
 use sinex_primitives::rpc::dlq::{DlqListRequest, DlqPurgeRequest, DlqRequeueRequest};
 use sinexd::api::handlers::dlq::{handle_dlq_list, handle_dlq_purge, handle_dlq_requeue};
@@ -130,7 +132,10 @@ async fn dlq_list_counts_messages_correctly(ctx: TestContext) -> TestResult<()> 
     assert_eq!(response.resource_pressure.pressure_level, "warning");
     assert_eq!(response.resource_pressure.runtime_action, "inspect");
     assert_eq!(response.resource_pressure.pending_messages, 3);
-    assert_eq!(response.resource_pressure.pending_bytes, response.total_bytes);
+    assert_eq!(
+        response.resource_pressure.pending_bytes,
+        response.total_bytes
+    );
     assert_eq!(response.recommended_action, "ops dlq peek");
     assert!(response.action_reason.contains("paced requeue or purge"));
 
@@ -242,6 +247,30 @@ async fn dlq_purge_clears_all_messages(ctx: TestContext) -> TestResult<()> {
 
     assert_eq!(response.purged_count, 5);
     assert_eq!(response.status, "success");
+    let operations = harness
+        .services
+        .pool()
+        .state()
+        .list_operations(Some("dlq.purge"), Some(OperationStatus::Success), 10)
+        .await?;
+    let operation = operations
+        .first()
+        .expect("purge should write a successful operation record");
+    assert_eq!(operation.id.to_uuid().to_string(), response.operation_id);
+    assert_eq!(
+        operation
+            .scope
+            .as_ref()
+            .and_then(|scope| scope["action"].as_str()),
+        Some("purge")
+    );
+    assert_eq!(
+        operation
+            .scope
+            .as_ref()
+            .and_then(|scope| scope["messages_before"].as_u64()),
+        Some(5)
+    );
 
     // Verify stream is empty
     let after = handle_dlq_list(&harness.services, DlqListRequest {}).await?;
@@ -271,6 +300,23 @@ async fn dlq_purge_handles_empty_stream(ctx: TestContext) -> TestResult<()> {
 
     assert_eq!(response.purged_count, 0);
     assert_eq!(response.status, "success");
+    let operations = harness
+        .services
+        .pool()
+        .state()
+        .list_operations(Some("dlq.purge"), Some(OperationStatus::Success), 10)
+        .await?;
+    let operation = operations
+        .first()
+        .expect("empty purge should still write an operation record");
+    assert_eq!(operation.id.to_uuid().to_string(), response.operation_id);
+    assert_eq!(
+        operation
+            .scope
+            .as_ref()
+            .and_then(|scope| scope["messages_before"].as_u64()),
+        Some(0)
+    );
 
     Ok(())
 }
@@ -419,6 +465,37 @@ async fn dlq_requeue_by_id_requeues_event_engine_style_entry(ctx: TestContext) -
     .await?;
     assert_eq!(response.status, "success");
     assert_eq!(response.requeued_count, 1);
+    let operations = harness
+        .services
+        .pool()
+        .state()
+        .list_operations(Some("dlq.requeue"), Some(OperationStatus::Success), 10)
+        .await?;
+    let operation = operations
+        .first()
+        .expect("requeue should write a successful operation record");
+    assert_eq!(operation.id.to_uuid().to_string(), response.operation_id);
+    assert_eq!(
+        operation
+            .scope
+            .as_ref()
+            .and_then(|scope| scope["action"].as_str()),
+        Some("requeue")
+    );
+    assert_eq!(
+        operation
+            .scope
+            .as_ref()
+            .and_then(|scope| scope["selector"].as_str()),
+        Some("event_id")
+    );
+    assert_eq!(
+        operation
+            .scope
+            .as_ref()
+            .and_then(|scope| scope["event_id"].as_str()),
+        Some(event_id.as_str())
+    );
 
     let requeued = tokio::time::timeout(Duration::from_secs(5), original_sub.next())
         .await

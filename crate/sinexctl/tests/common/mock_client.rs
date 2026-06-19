@@ -374,6 +374,7 @@ impl MockGatewayClient {
             .unwrap_or_else(|| DlqRequeueResponse {
                 status: "success".to_string(),
                 requeued_count: 0,
+                operation_id: "00000000-0000-0000-0000-000000000000".to_string(),
             }))
     }
 
@@ -391,6 +392,7 @@ impl MockGatewayClient {
             .unwrap_or_else(|| DlqPurgeResponse {
                 status: "success".to_string(),
                 purged_count: 0,
+                operation_id: "00000000-0000-0000-0000-000000000000".to_string(),
             }))
     }
 
