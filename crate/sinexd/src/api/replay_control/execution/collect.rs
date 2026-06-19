@@ -440,6 +440,29 @@ impl ReplayExecutionEngine {
                 .await
                 .map_err(|e| e.with_context("operation", "archive replay cascade"))?;
 
+            let bucket_count = scope_metadata.len();
+            let scope_key_count = scope_metadata
+                .iter()
+                .map(|bucket| bucket.scope_keys.len())
+                .sum();
+            let event_count = scope_metadata
+                .iter()
+                .map(|bucket| bucket.event_ids.len())
+                .sum();
+            self.replay
+                .record_scope_invalidations_pending_with_tx(
+                    repo_tx.transaction(),
+                    operation_id,
+                    archived_count,
+                    bucket_count,
+                    scope_key_count,
+                    event_count,
+                )
+                .await
+                .map_err(|e| {
+                    e.with_context("operation", "record replay invalidation recovery marker")
+                })?;
+
             repo_tx
                 .cleanup_cascade_session(&table_name)
                 .await
