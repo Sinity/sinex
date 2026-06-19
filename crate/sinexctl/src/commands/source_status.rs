@@ -1,8 +1,8 @@
 use clap::Args;
 use console::style;
 use sinex_primitives::views::{
-    SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView,
-    ViewEnvelope,
+    ActionAvailabilityState, SourceCoverageContinuity, SourceCoverageListView,
+    SourceCoverageReadiness, SourceCoverageView, ViewEnvelope,
 };
 use tabled::{builder::Builder, settings::Style};
 
@@ -66,6 +66,39 @@ fn event_types_summary(source: &SourceCoverageView) -> String {
     }
 }
 
+fn caveats_summary(source: &SourceCoverageView) -> String {
+    match source.caveats.len() {
+        0 => style("-").dim().to_string(),
+        1 => source.caveats[0].id.clone(),
+        n => format!("{} (+{})", source.caveats[0].id, n - 1),
+    }
+}
+
+fn actions_summary(source: &SourceCoverageView) -> String {
+    let action_ids = source
+        .actions
+        .iter()
+        .map(|action| format!("{}:{}", action.id, action_state_label(action.state)))
+        .collect::<Vec<_>>();
+    match action_ids.len() {
+        0 => style("-").dim().to_string(),
+        1 => action_ids[0].clone(),
+        n => format!("{} (+{})", action_ids[0], n - 1),
+    }
+}
+
+const fn action_state_label(state: ActionAvailabilityState) -> &'static str {
+    match state {
+        ActionAvailabilityState::Enabled => "enabled",
+        ActionAvailabilityState::Disabled => "disabled",
+        ActionAvailabilityState::Target => "target",
+        ActionAvailabilityState::Loading => "loading",
+        ActionAvailabilityState::Dangerous => "dangerous",
+        ActionAvailabilityState::Partial => "partial",
+        ActionAvailabilityState::Unavailable => "unavailable",
+    }
+}
+
 fn format_sources_status_table(envelope: &ViewEnvelope<SourceCoverageListView>) -> String {
     if envelope.payload.sources.is_empty() {
         return "No sources registered.".to_string();
@@ -82,6 +115,8 @@ fn format_sources_status_table(envelope: &ViewEnvelope<SourceCoverageListView>) 
         "LAST MATERIAL",
         "PRIVACY",
         "TYPES",
+        "CAVEATS",
+        "ACTIONS",
     ]);
 
     for source in &envelope.payload.sources {
@@ -95,6 +130,8 @@ fn format_sources_status_table(envelope: &ViewEnvelope<SourceCoverageListView>) 
             format_optional_timestamp(source.last_material_at.as_ref()),
             format!("{}/{}", source.privacy.tier, source.privacy.context),
             event_types_summary(source),
+            caveats_summary(source),
+            actions_summary(source),
         ]);
     }
 
@@ -110,7 +147,8 @@ mod tests {
     use super::*;
     use crate::fmt::render_finite_envelope;
     use sinex_primitives::views::{
-        SourceCoverageListView, SourcePrivacyPosture, VIEW_ENVELOPE_SCHEMA_VERSION,
+        ActionAvailability, CaveatView, SourceCoverageListView, SourcePrivacyPosture,
+        VIEW_ENVELOPE_SCHEMA_VERSION,
     };
     use xtask::sandbox::sinex_test;
 
@@ -142,9 +180,20 @@ mod tests {
 
     #[sinex_test]
     async fn table_renderer_shows_source_coverage_view_fields() -> xtask::TestResult<()> {
+        let mut source = fixture_source();
+        source.caveats.push(CaveatView {
+            id: "source.runtime_bridge.unobserved".to_string(),
+            message: "bridge is declared but no records have been observed".to_string(),
+            ref_: None,
+        });
+        source.actions.push(ActionAvailability::read(
+            "terminal.activity.check",
+            "Check Bridge",
+            ActionAvailabilityState::Enabled,
+        ));
         let envelope = ViewEnvelope::new(
             "sinexctl.sources.status",
-            SourceCoverageListView::new(vec![fixture_source()]),
+            SourceCoverageListView::new(vec![source]),
         );
 
         let table = format_sources_status_table(&envelope);
@@ -153,6 +202,8 @@ mod tests {
         assert!(table.contains("ready"));
         assert!(table.contains("active"));
         assert!(table.contains("fixture/fixture.event"));
+        assert!(table.contains("source.runtime_bridge.unobserved"));
+        assert!(table.contains("terminal.activity.check:enabled"));
         Ok(())
     }
 
