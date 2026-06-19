@@ -271,22 +271,23 @@ fn parse_last_event_id(headers: &HeaderMap) -> Result<Option<Id<Event<JsonValue>
 /// Format an [`SseMessage`] into an axum SSE event.
 async fn format_sse_message(msg: SseMessage, policy: &PolicyEngine) -> SseEvent {
     match msg {
-        SseMessage::Event { seq, mut event } => {
+        SseMessage::Event { seq, event } => {
             let decision = policy
                 .disclose_event_payload(&event, DisclosureContext::View)
                 .await;
-            event.payload = decision.value.clone();
+            let mut disclosed_event = (*event).clone();
+            disclosed_event.payload = decision.value.clone();
             let privacy_caveats = disclosure_caveats(&decision.caveats);
             match serialize_sse_payload(
                 "event",
                 &SseEventPayload {
-                    event: &event,
+                    event: &disclosed_event,
                     privacy_caveats: &privacy_caveats,
                 },
             ) {
                 Ok(data) => {
                     let mut frame = SseEvent::default().event("event").data(data);
-                    if let Some(event_id) = event.id {
+                    if let Some(event_id) = disclosed_event.id {
                         frame = frame.id(event_id.to_string());
                     } else {
                         frame = frame.id(seq.to_string());
