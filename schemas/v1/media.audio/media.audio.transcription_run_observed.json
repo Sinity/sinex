@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "producer_run_id": {
+      "type": "string"
+    },
+    "model_id": {
+      "type": "string"
+    },
+    "model_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "input_material_ids": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "output_refs": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "resource_posture": {
+      "type": "string"
+    },
+    "failure_class": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "observed_at": {
+      "$ref": "#/$defs/DateTime"
+    }
+  },
+  "required": [
+    "producer_run_id",
+    "model_id",
+    "input_material_ids",
+    "output_refs",
+    "resource_posture",
+    "observed_at"
+  ],
+  "title": "AudioTranscriptionRunObservedPayload",
+  "type": "object",
+  "x-sinex-event-type": "media.audio.transcription_run_observed",
+  "x-sinex-source": "media.audio",
+  "x-sinex-version": "1.0.0"
+}
