@@ -119,6 +119,8 @@ pub const SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID: EventContractId =
     "event-contract:shell.history/command.imported@v1";
 pub const SHELL_KITTY_COMMAND_EXECUTED_CONTRACT_ID: EventContractId =
     "event-contract:shell.kitty/command.executed@v1";
+pub const BROWSER_PAGE_VISITED_CONTRACT_ID: EventContractId =
+    "event-contract:webhistory/page.visited@v1";
 
 const SHELL_HISTORY_PACKAGES: &[&str] = &[
     "terminal.bash-history",
@@ -131,6 +133,10 @@ const SHELL_HISTORY_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
 const SHELL_KITTY_PACKAGES: &[&str] = &["terminal.kitty-osc-live"];
 const SHELL_KITTY_SOURCE_OCCURRENCES: &[OccurrenceIdentity] = &[OccurrenceIdentity::Uuid5From(
     "(terminal_session, sequence, command, cwd, ts)",
+)];
+const BROWSER_HISTORY_PACKAGES: &[&str] = &["browser.history"];
+const BROWSER_HISTORY_SOURCE_OCCURRENCES: &[OccurrenceIdentity] = &[OccurrenceIdentity::Uuid5From(
+    "(source, browser_profile, visit_id)",
 )];
 
 inventory::submit! {
@@ -171,6 +177,27 @@ inventory::submit! {
         disclosure_policy_ref: Some("operator.terminal-live.default"),
         admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
         package_refs: SHELL_KITTY_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
+inventory::submit! {
+    EventContract {
+        id: BROWSER_PAGE_VISITED_CONTRACT_ID,
+        event_source: "webhistory",
+        event_type: "page.visited",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "webhistory",
+            event_type: "page.visited",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::SourceDeclared,
+        source_occurrences: BROWSER_HISTORY_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicOrMaterial,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.browser-history.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: BROWSER_HISTORY_PACKAGES,
         output_kind: OutputKind::CanonicalEvent,
     }
 }
@@ -217,6 +244,31 @@ mod tests {
                 && policy
                     .accepted_event_contracts
                     .contains(&SHELL_KITTY_COMMAND_EXECUTED_CONTRACT_ID)
+        });
+        assert!(accepted_by_standard);
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn browser_page_visit_contract_is_package_and_policy_addressable() -> TestResult<()> {
+        let Some(contract) = find_event_contract(BROWSER_PAGE_VISITED_CONTRACT_ID) else {
+            panic!("missing browser page visit EventContract");
+        };
+
+        assert_eq!(contract.event_source, "webhistory");
+        assert_eq!(contract.event_type, "page.visited");
+        assert!(contract.package_refs.contains(&"browser.history"));
+        assert_eq!(
+            contract.admission_policy_ref,
+            Some(STANDARD_EVENT_ADMISSION_POLICY_ID)
+        );
+
+        let accepted_by_standard = admission_policies().any(|policy| {
+            policy.id == STANDARD_EVENT_ADMISSION_POLICY_ID
+                && policy
+                    .accepted_event_contracts
+                    .contains(&BROWSER_PAGE_VISITED_CONTRACT_ID)
         });
         assert!(accepted_by_standard);
 
