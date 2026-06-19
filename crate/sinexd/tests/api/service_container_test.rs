@@ -7,7 +7,7 @@ use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::builder::EventId;
 use sinex_primitives::temporal::Timestamp;
-use sinexd::api::ServiceContainer;
+use sinexd::api::{ConfirmationBufferMemoryOwner, ServiceContainer};
 use sinexd::runtime::{
     ConfirmationBuffer, ProvisionalEvent, register_confirmation_buffer,
     registered_confirmation_buffer_snapshots,
@@ -422,6 +422,10 @@ async fn confirmation_buffer_pressure_degrades_health_with_payload_attribution(
     let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
     let report = container.health_report().await;
     assert_eq!(report.confirmation_buffer.status, HealthStatus::Degraded);
+    assert_eq!(
+        report.confirmation_buffer.memory_owner,
+        ConfirmationBufferMemoryOwner::TimedOutGracePayloads
+    );
     assert!(report.confirmation_buffer.observed_buffers >= 1);
     assert!(report.confirmation_buffer.pending_count >= 3);
     assert!(report.confirmation_buffer.timed_out_retained_count >= 3);
@@ -437,6 +441,12 @@ async fn confirmation_buffer_pressure_degrades_health_with_payload_attribution(
             .degradation_reasons
             .iter()
             .any(|reason| reason.contains("confirmation buffers: observed="))
+    );
+    assert!(
+        report
+            .degradation_reasons
+            .iter()
+            .any(|reason| reason.contains("memory_owner=timed_out_grace_payloads"))
     );
 
     Ok(())

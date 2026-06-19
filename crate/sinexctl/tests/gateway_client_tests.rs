@@ -57,24 +57,31 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
                 connected: true,
                 latency_ms: None,
                 detail: None,
+                attributes: Default::default(),
             },
             nats: ComponentHealthReport {
                 status: HealthStatus::Unhealthy,
                 connected: false,
                 latency_ms: Some(125.0),
                 detail: Some("nats unavailable".to_string()),
+                attributes: Default::default(),
             },
             raw_ingest_dlq: ComponentHealthReport {
                 status: HealthStatus::Unknown,
                 connected: false,
                 latency_ms: None,
                 detail: Some("raw-ingest DLQ pressure unknown".to_string()),
+                attributes: Default::default(),
             },
             confirmation_buffer: ComponentHealthReport {
                 status: HealthStatus::Unknown,
                 connected: false,
                 latency_ms: None,
                 detail: Some("confirmation buffers not registered".to_string()),
+                attributes: std::collections::BTreeMap::from([(
+                    "memory_owner".to_string(),
+                    "not_observed".to_string(),
+                )]),
             },
             replay_control: ReplayControlHealth {
                 status: HealthStatus::Healthy,
@@ -87,6 +94,7 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
                 connected: true,
                 latency_ms: None,
                 detail: None,
+                attributes: Default::default(),
             },
         },
     };

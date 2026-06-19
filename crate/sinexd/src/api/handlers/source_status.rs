@@ -616,6 +616,7 @@ mod tests {
         ConfirmationBufferHealth {
             status: HealthStatus::Healthy,
             connected: true,
+            memory_owner: crate::api::service_container::ConfirmationBufferMemoryOwner::None,
             observed_buffers: 0,
             pending_count: 0,
             timed_out_retained_count: 0,
