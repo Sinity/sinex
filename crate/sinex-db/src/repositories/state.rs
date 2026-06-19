@@ -1006,33 +1006,6 @@ impl StateRepository<'_> {
         .map_err(|e| db_error(e, "start module run"))
     }
 
-    /// Refresh the heartbeat timestamp for a module run that is still alive.
-    ///
-    /// Filters on `status NOT IN ('failed', 'stopped')` rather than the
-    /// narrower `status = 'running'` so this path tolerates rows that the
-    /// manifest-keyed heartbeat (or any other future bookkeeping path)
-    /// might have left in a non-terminal-but-non-'running' state. Terminal
-    /// rows are still excluded so a crashed run does not silently
-    /// resurrect via heartbeats.
-    pub async fn update_module_run_heartbeat(
-        &self,
-        module_run_id: Id<ModuleRun>,
-    ) -> DbResult<bool> {
-        let result = sqlx::query!(
-            r#"
-            UPDATE core.runs
-            SET last_heartbeat_at = NOW()
-            WHERE id = $1::uuid
-              AND status NOT IN ('failed', 'stopped')
-            "#,
-            module_run_id.as_uuid(),
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "update module run heartbeat"))?;
-        Ok(result.rows_affected() > 0)
-    }
-
     /// Mark a module run as terminal or transitional.
     pub async fn update_module_run_status(
         &self,
@@ -1045,13 +1018,12 @@ impl StateRepository<'_> {
 
         // Guard against resurrecting a terminal row. Once a run is failed or
         // stopped the row is immutable — new runs create new rows via
-        // `start_module_run`. Setting last_heartbeat_at on a terminal row would
-        // also transiently make it appear live to the presence query.
+        // `start_module_run`. This mutates only lifecycle fields; freshness is
+        // derived from append-only health.status telemetry.
         let result = sqlx::query!(
             r#"
             UPDATE core.runs
             SET status = $2,
-                last_heartbeat_at = NOW(),
                 ended_at = CASE
                     WHEN $3::timestamptz IS NULL THEN ended_at
                     ELSE COALESCE(ended_at, $3::timestamptz)

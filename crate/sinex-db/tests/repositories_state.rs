@@ -510,9 +510,9 @@ async fn registered_manifests_do_not_create_runtime_liveness(ctx: TestContext) -
 }
 
 #[sinex_test]
-async fn concrete_runs_are_runtime_liveness(ctx: TestContext) -> TestResult<()> {
+async fn health_events_attach_live_run_identity(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
-    let module_name = ModuleName::new("concrete-liveness-module");
+    let module_name = ModuleName::new("health-backed-liveness-module");
 
     let older = repo
         .register_module(
@@ -554,12 +554,11 @@ async fn concrete_runs_are_runtime_liveness(ctx: TestContext) -> TestResult<()> 
             None,
         )
         .await?;
-    assert!(repo.update_module_run_heartbeat(newer_run.id).await?);
     insert_runtime_health_status(
         &ctx,
         module_name.as_ref(),
         "healthy",
-        "runtime heartbeat observed",
+        "runtime health observed",
     )
     .await?;
 
@@ -582,14 +581,16 @@ async fn concrete_runs_are_runtime_liveness(ctx: TestContext) -> TestResult<()> 
 }
 
 #[sinex_test]
-async fn runtime_liveness_requires_health_evidence(ctx: TestContext) -> TestResult<()> {
+async fn concrete_runs_without_health_are_not_runtime_liveness(
+    ctx: TestContext,
+) -> TestResult<()> {
     let repo = ctx.pool.state();
     let module_name = ModuleName::new("run-without-health-evidence");
 
     let manifest = repo
         .register_module(&module_name, ModuleKind::Automaton, "1.0.0", None)
         .await?;
-    let run = repo
+    let _run = repo
         .start_module_run(
             manifest.id,
             "sinex-relation-extractor",
@@ -599,14 +600,12 @@ async fn runtime_liveness_requires_health_evidence(ctx: TestContext) -> TestResu
             None,
         )
         .await?;
-    assert!(repo.update_module_run_heartbeat(run.id).await?);
-
     let live_modules = repo
         .list_live_runtime_presence(Duration::from_mins(2))
         .await?;
     assert!(
         live_modules.is_empty(),
-        "a mutable run heartbeat is provenance, not operator liveness"
+        "a concrete run row is provenance, not operator liveness"
     );
 
     let health = repo.get_runtime_health(Duration::from_mins(2)).await?;
@@ -626,7 +625,7 @@ async fn runtime_liveness_excludes_unhealthy_health_events(ctx: TestContext) -> 
     let manifest = repo
         .register_module(&module_name, ModuleKind::Service, "1.0.0", None)
         .await?;
-    let run = repo
+    let _run = repo
         .start_module_run(
             manifest.id,
             "sinex-unhealthy",
@@ -636,7 +635,6 @@ async fn runtime_liveness_excludes_unhealthy_health_events(ctx: TestContext) -> 
             None,
         )
         .await?;
-    assert!(repo.update_module_run_heartbeat(run.id).await?);
     insert_runtime_health_status(&ctx, module_name.as_ref(), "unhealthy", "crashed").await?;
 
     let live_modules = repo
@@ -692,7 +690,6 @@ async fn module_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Te
     assert_eq!(run.effective_config_hash.as_deref(), Some("b3-abc123"));
     assert_eq!(run.effective_config, Some(config.clone()));
 
-    assert!(repo.update_module_run_heartbeat(run.id).await?);
     assert!(
         repo.update_module_run_status(run.id, ModuleState::Stopped)
             .await?
@@ -702,6 +699,7 @@ async fn module_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Te
         r#"
         SELECT
             status,
+            last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
             ended_at as "ended_at: sinex_primitives::temporal::Timestamp",
             effective_config_hash,
             effective_config
@@ -714,6 +712,7 @@ async fn module_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Te
     .await?;
 
     assert_eq!(refreshed.status, "stopped");
+    assert_eq!(refreshed.last_heartbeat_at, run.last_heartbeat_at);
     assert!(refreshed.ended_at.is_some());
     assert_eq!(
         refreshed.effective_config_hash.as_deref(),
@@ -727,7 +726,7 @@ async fn module_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Te
 #[sinex_test]
 async fn fresh_runtime_health_preserves_live_run_identity(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
-    let module_name = ModuleName::new("run-heartbeat-liveness");
+    let module_name = ModuleName::new("run-health-liveness");
 
     let manifest = repo
         .register_module(&module_name, ModuleKind::Automaton, "1.0.0", None)
@@ -743,11 +742,6 @@ async fn fresh_runtime_health_preserves_live_run_identity(ctx: TestContext) -> T
         )
         .await?;
     assert_eq!(run.status, "running", "start_run sets status='running'");
-
-    assert!(
-        repo.update_module_run_heartbeat(run.id).await?,
-        "heartbeats refresh a concrete run row"
-    );
 
     let refreshed = sqlx::query!(
         r#"SELECT status FROM core.runs WHERE id = $1::uuid"#,
@@ -775,9 +769,9 @@ async fn fresh_runtime_health_preserves_live_run_identity(ctx: TestContext) -> T
 }
 
 #[sinex_test]
-async fn module_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) -> TestResult<()> {
+async fn module_run_status_does_not_revive_terminal_runs(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
-    let module_name = ModuleName::new("module-run-heartbeat-terminal");
+    let module_name = ModuleName::new("module-run-status-terminal");
 
     let manifest = repo
         .register_module(
@@ -804,14 +798,17 @@ async fn module_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) ->
             .await?
     );
     assert!(
-        !repo.update_module_run_heartbeat(run.id).await?,
-        "terminal runs must not be revived by a late heartbeat"
+        !repo
+            .update_module_run_status(run.id, ModuleState::Running)
+            .await?,
+        "terminal runs must not be revived by a late status update"
     );
 
     let refreshed = sqlx::query!(
         r#"
         SELECT
             status,
+            last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
             ended_at as "ended_at: sinex_primitives::temporal::Timestamp"
         FROM core.runs
         WHERE id = $1::uuid
@@ -822,6 +819,7 @@ async fn module_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) ->
     .await?;
 
     assert_eq!(refreshed.status, "stopped");
+    assert_eq!(refreshed.last_heartbeat_at, run.last_heartbeat_at);
     assert!(refreshed.ended_at.is_some());
 
     Ok(())
