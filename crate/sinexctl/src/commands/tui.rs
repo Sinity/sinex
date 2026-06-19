@@ -16,15 +16,12 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 use sinex_primitives::query::{EventQuery, QueryResultEvent, SortDirection, TimeRange};
-use sinex_primitives::rpc::dlq::{DlqMessagePeek, DlqPeekResponse};
-use sinex_primitives::rpc::lifecycle::LifecycleStatusResponse;
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
-use sinex_primitives::rpc::replay::{ReplayOperation, ReplayState};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, EventCardView,
-    OperationJobListView, OperationView, PrivacyStateKind, SinexObjectKind,
-    SourceCoverageContinuity, SourceCoverageReadiness, SourceCoverageView,
+    OperationControlCardView, OperationJobListView, OperationView, PrivacyStateKind,
+    SinexObjectKind, SourceCoverageContinuity, SourceCoverageReadiness, SourceCoverageView,
 };
 use std::io;
 use std::time::Instant;
@@ -93,10 +90,11 @@ struct App {
     // Live data
     modules: Vec<InstanceInfo>,
     dlq_stats: Option<DlqListResponse>,
-    dlq_peek: Option<DlqPeekResponse>,
+    dlq_operation_card: Option<OperationControlCardView>,
+    automaton_dlq_operation_card: Option<OperationControlCardView>,
     ops_jobs: OperationJobListView,
-    replay_operations: Vec<ReplayOperation>,
-    lifecycle_status: Option<LifecycleStatusResponse>,
+    replay_operations: Vec<OperationControlCardView>,
+    lifecycle_operation_card: Option<OperationControlCardView>,
     private_mode: Option<PrivateModeStateResponse>,
     source_coverage: Vec<SourceCoverageView>,
     recent_events: Vec<EventCardView>,
@@ -124,10 +122,11 @@ impl App {
             refresh_interval,
             modules: Vec::new(),
             dlq_stats: None,
-            dlq_peek: None,
+            dlq_operation_card: None,
+            automaton_dlq_operation_card: None,
             ops_jobs: OperationJobListView::new(Vec::new()),
             replay_operations: Vec::new(),
-            lifecycle_status: None,
+            lifecycle_operation_card: None,
             private_mode: None,
             source_coverage: Vec::new(),
             recent_events: Vec::new(),
@@ -309,7 +308,10 @@ impl App {
             }
         }
         match self.client.dlq_list().await {
-            Ok(stats) => self.dlq_stats = Some(stats),
+            Ok(stats) => {
+                self.dlq_operation_card = Some(OperationControlCardView::from_dlq_status(&stats));
+                self.dlq_stats = Some(stats);
+            }
             Err(e) => {
                 if self.error.is_none() {
                     self.error = Some(format!("Failed to fetch DLQ: {e}"));
@@ -317,7 +319,12 @@ impl App {
             }
         }
         match self.client.dlq_peek(Some(5)).await {
-            Ok(peek) => self.dlq_peek = Some(peek),
+            Ok(peek) => {
+                self.automaton_dlq_operation_card = peek
+                    .messages
+                    .iter()
+                    .find_map(OperationControlCardView::from_automaton_dlq_message);
+            }
             Err(e) => {
                 if self.error.is_none() {
                     self.error = Some(format!("Failed to fetch DLQ previews: {e}"));
@@ -338,7 +345,12 @@ impl App {
             }
         }
         match self.client.replay_list_filtered(None, None, Some(10)).await {
-            Ok(operations) => self.replay_operations = operations,
+            Ok(operations) => {
+                self.replay_operations = operations
+                    .iter()
+                    .map(OperationControlCardView::from_replay_operation)
+                    .collect();
+            }
             Err(e) => {
                 if self.error.is_none() {
                     self.error = Some(format!("Failed to fetch replay operations: {e}"));
@@ -346,7 +358,10 @@ impl App {
             }
         }
         match self.client.lifecycle_status().await {
-            Ok(status) => self.lifecycle_status = Some(status),
+            Ok(status) => {
+                self.lifecycle_operation_card =
+                    Some(OperationControlCardView::from_lifecycle_status(&status));
+            }
             Err(e) => {
                 if self.error.is_none() {
                     self.error = Some(format!("Failed to fetch lifecycle status: {e}"));
@@ -832,11 +847,17 @@ fn render_operation_card_detail(f: &mut Frame, area: Rect, card: &OperationRoomC
         Style::default().add_modifier(Modifier::BOLD),
     )));
     for action in &card.actions {
+        let command = action.command_hint.as_deref().unwrap_or("no command");
+        let reason = action
+            .reason
+            .as_ref()
+            .map_or(String::new(), |reason| format!(" ({reason})"));
         lines.push(Line::from(format!(
-            "{} [{}] — {}",
+            "{} [{}] — {}{}",
             action.label,
             action_state_label(action.state),
-            action.command
+            command,
+            reason
         )));
     }
 
@@ -869,29 +890,8 @@ struct OperationRoomCard {
     progress: String,
     affected_refs: Vec<String>,
     caveats: Vec<String>,
-    actions: Vec<OperationRoomAction>,
+    actions: Vec<ActionAvailability>,
     audit_refs: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-struct OperationRoomAction {
-    label: String,
-    state: ActionAvailabilityState,
-    command: String,
-}
-
-impl OperationRoomAction {
-    fn new(
-        label: impl Into<String>,
-        state: ActionAvailabilityState,
-        command: impl Into<String>,
-    ) -> Self {
-        Self {
-            label: label.into(),
-            state,
-            command: command.into(),
-        }
-    }
 }
 
 fn operations_room_cards(app: &App) -> Vec<OperationRoomCard> {
@@ -900,116 +900,44 @@ fn operations_room_cards(app: &App) -> Vec<OperationRoomCard> {
         app.replay_operations
             .iter()
             .take(6)
-            .map(replay_operation_card),
+            .map(operation_control_card),
     );
     cards.extend(app.ops_jobs.jobs.iter().take(6).map(ops_operation_card));
-    cards.push(dlq_operation_card(app));
-    if let Some(card) = automaton_dlq_card(app) {
-        cards.push(card);
+    let dlq_unavailable;
+    let dlq_card = if let Some(card) = &app.dlq_operation_card {
+        card
+    } else {
+        dlq_unavailable = OperationControlCardView::dlq_unavailable();
+        &dlq_unavailable
+    };
+    cards.push(operation_control_card(dlq_card));
+    if let Some(card) = &app.automaton_dlq_operation_card {
+        cards.push(operation_control_card(card));
     }
-    cards.push(lifecycle_operation_card(app));
+    let lifecycle_unavailable;
+    let lifecycle_card = if let Some(card) = &app.lifecycle_operation_card {
+        card
+    } else {
+        lifecycle_unavailable = OperationControlCardView::lifecycle_unavailable();
+        &lifecycle_unavailable
+    };
+    cards.push(operation_control_card(lifecycle_card));
     cards.push(state_snapshot_operation_card());
     cards.push(privacy_operation_card(app));
     cards
 }
 
-fn replay_operation_card(operation: &ReplayOperation) -> OperationRoomCard {
-    let progress = format!(
-        "{} / {} events, batch {}",
-        operation.checkpoint.processed_events,
-        operation.checkpoint.total_events,
-        operation.checkpoint.batch_number
-    );
-    let mut actions = vec![
-        OperationRoomAction::new(
-            "monitor",
-            ActionAvailabilityState::Enabled,
-            format!("sinexctl ops replay watch {}", operation.operation_id),
-        ),
-        OperationRoomAction::new(
-            "status",
-            ActionAvailabilityState::Enabled,
-            format!("sinexctl ops replay status {}", operation.operation_id),
-        ),
-    ];
-    match operation.state {
-        ReplayState::Planning => actions.push(OperationRoomAction::new(
-            "preview",
-            ActionAvailabilityState::Enabled,
-            format!("sinexctl ops replay preview {}", operation.operation_id),
-        )),
-        ReplayState::Previewed => actions.push(OperationRoomAction::new(
-            "confirm",
-            ActionAvailabilityState::Dangerous,
-            format!("sinexctl ops replay approve {}", operation.operation_id),
-        )),
-        ReplayState::Approved => actions.push(OperationRoomAction::new(
-            "execute",
-            ActionAvailabilityState::Dangerous,
-            format!("sinexctl ops replay execute {}", operation.operation_id),
-        )),
-        ReplayState::Executing | ReplayState::Cancelling | ReplayState::Committing => {
-            actions.push(OperationRoomAction::new(
-                "cancel",
-                ActionAvailabilityState::Dangerous,
-                format!(
-                    "sinexctl ops replay cancel {} --reason <reason>",
-                    operation.operation_id
-                ),
-            ));
-        }
-        ReplayState::Completed | ReplayState::Failed | ReplayState::Cancelled => {}
-    }
+fn operation_control_card(view: &OperationControlCardView) -> OperationRoomCard {
     OperationRoomCard {
-        title: format!("ops replay {}", operation.operation_id),
-        authority: "write".to_string(),
-        phase: format!("{:?}", operation.state).to_lowercase(),
-        progress,
-        affected_refs: replay_scope_refs(operation),
-        caveats: replay_caveats(operation),
-        actions,
-        audit_refs: vec![format!("sinexctl ops audit {}", operation.operation_id)],
+        title: view.title.clone(),
+        authority: view.authority.clone(),
+        phase: view.phase.clone(),
+        progress: view.progress.clone(),
+        affected_refs: view.affected_refs.clone(),
+        caveats: view.caveats.clone(),
+        actions: view.actions.clone(),
+        audit_refs: view.audit_refs.clone(),
     }
-}
-
-fn replay_scope_refs(operation: &ReplayOperation) -> Vec<String> {
-    let scope = &operation.scope;
-    let mut refs = vec![format!("source: {}", scope.source_name)];
-    if let Some((start, end)) = &scope.time_window {
-        refs.push(format!("time: {start} -> {end}"));
-    }
-    if let Some(materials) = &scope.material_filter {
-        refs.push(format!("materials: {}", materials.len()));
-    }
-    if let Some(source_id) = &scope.source_id {
-        refs.push(format!("source: {source_id}"));
-    }
-    if let Some(source_material_id) = &scope.source_material_id {
-        refs.push(format!("source-material: {source_material_id}"));
-    }
-    if let Some(parser_id) = &scope.parser_id {
-        refs.push(format!("parser: {parser_id}"));
-    }
-    refs
-}
-
-fn replay_caveats(operation: &ReplayOperation) -> Vec<String> {
-    let mut caveats = Vec::new();
-    if operation.scope.is_staged_source_scope() {
-        caveats.push("staged-source replay: inspect source readiness before execute".to_string());
-    }
-    if !operation.state.is_terminal()
-        && matches!(
-            operation.state,
-            ReplayState::Previewed | ReplayState::Approved | ReplayState::Executing
-        )
-    {
-        caveats.push("mutating replay phase: confirmation/audit trail required".to_string());
-    }
-    if let Some(error) = &operation.error_details {
-        caveats.push(format!("error: {}", truncate_chars(error, 96)));
-    }
-    caveats
 }
 
 fn ops_operation_card(view: &OperationView) -> OperationRoomCard {
@@ -1031,16 +959,14 @@ fn ops_operation_card(view: &OperationView) -> OperationRoomCard {
         actions: view
             .actions
             .iter()
-            .filter_map(operation_room_action_from_availability)
+            .filter_map(operation_room_action_for_display)
             .collect(),
         audit_refs: vec![format!("sinexctl ops audit {}", view.id)],
     }
 }
 
-fn operation_room_action_from_availability(
-    action: &ActionAvailability,
-) -> Option<OperationRoomAction> {
-    let command = action.command_hint.as_ref()?;
+fn operation_room_action_for_display(action: &ActionAvailability) -> Option<ActionAvailability> {
+    action.command_hint.as_ref()?;
     let state = match (action.state, action.side_effect) {
         (
             ActionAvailabilityState::Enabled,
@@ -1048,172 +974,32 @@ fn operation_room_action_from_availability(
         ) => ActionAvailabilityState::Dangerous,
         (state, _) => state,
     };
-    Some(OperationRoomAction::new(
-        action.label.to_lowercase(),
+    let mut display = action.clone();
+    display.state = state;
+    Some(display)
+}
+
+fn operation_room_action(
+    id: impl Into<String>,
+    label: impl Into<String>,
+    state: ActionAvailabilityState,
+    command: impl Into<String>,
+    side_effect: ActionSideEffect,
+) -> ActionAvailability {
+    ActionAvailability {
+        id: id.into(),
+        label: label.into(),
         state,
-        command.clone(),
-    ))
-}
-
-fn dlq_operation_card(app: &App) -> OperationRoomCard {
-    let stats = app.dlq_stats.as_ref();
-    let total = stats.map_or(0, |stats| stats.total_messages);
-    let bytes = stats.map_or(0, |stats| stats.total_bytes);
-    let mut caveats = Vec::new();
-    if total > 0 {
-        caveats.push(
-            "requeue/purge is mutating; inspect peek output and source readiness first".to_string(),
-        );
-    }
-    OperationRoomCard {
-        title: "raw-ingest DLQ".to_string(),
-        authority: if total > 0 { "admin" } else { "read" }.to_string(),
-        phase: if total > 0 { "blocked" } else { "clear" }.to_string(),
-        progress: format!("{total} message(s), {}", format_bytes(bytes)),
-        affected_refs: stats.map_or_else(Vec::new, |stats| {
-            vec![format!("seq {}..{}", stats.first_seq, stats.last_seq)]
-        }),
-        caveats,
-        actions: vec![
-            OperationRoomAction::new(
-                "peek",
-                ActionAvailabilityState::Enabled,
-                "sinexctl ops dlq peek --limit 10",
-            ),
-            OperationRoomAction::new(
-                "requeue",
-                ActionAvailabilityState::Dangerous,
-                "sinexctl ops dlq requeue --all",
-            ),
-            OperationRoomAction::new(
-                "purge",
-                ActionAvailabilityState::Dangerous,
-                "sinexctl ops dlq purge --confirm",
-            ),
-        ],
-        audit_refs: vec!["sinexctl ops dlq list".to_string()],
-    }
-}
-
-fn automaton_dlq_card(app: &App) -> Option<OperationRoomCard> {
-    let message = app
-        .dlq_peek
-        .as_ref()?
-        .messages
-        .iter()
-        .find(|message| is_automaton_material_dlq(message))?;
-    Some(OperationRoomCard {
-        title: "automaton telemetry DLQ material gap".to_string(),
-        authority: "admin".to_string(),
-        phase: "blocked".to_string(),
-        progress: format!(
-            "sample seq {}, retry {}",
-            message.sequence, message.retry_count
+        reason: None,
+        command_hint: Some(command.into()),
+        rpc_method: None,
+        side_effect,
+        requires_confirmation: matches!(
+            side_effect,
+            ActionSideEffect::Admin | ActionSideEffect::Destructive
         ),
-        affected_refs: vec![
-            format!("subject: {}", message.subject),
-            format!(
-                "original: {}",
-                message.original_subject.as_deref().unwrap_or("unknown")
-            ),
-            format!(
-                "failed event sample: {}",
-                truncate_chars(&message.payload_preview, 96)
-            ),
-        ],
-        caveats: vec![
-            "first-class DLQ class: likely missing source-material registration for derived telemetry".to_string(),
-            "requeue will probably re-DLQ until the Source Readiness Cockpit row is fixed".to_string(),
-            "downstream projections may miss automaton telemetry until repaired".to_string(),
-        ],
-        actions: vec![
-            OperationRoomAction::new(
-                "inspect source",
-                ActionAvailabilityState::Enabled,
-                "sinexctl tui --tab sources",
-            ),
-            OperationRoomAction::new(
-                "peek",
-                ActionAvailabilityState::Enabled,
-                "sinexctl ops dlq peek --limit 10",
-            ),
-            OperationRoomAction::new(
-                "requeue after repair",
-                ActionAvailabilityState::Dangerous,
-                "sinexctl ops dlq requeue --all",
-            ),
-        ],
-        audit_refs: vec!["Ref #1241 automaton telemetry DLQ verification".to_string()],
-    })
-}
-
-fn is_automaton_material_dlq(message: &DlqMessagePeek) -> bool {
-    let haystack = format!(
-        "{} {} {}",
-        message.subject,
-        message.original_subject.as_deref().unwrap_or_default(),
-        message.payload_preview
-    )
-    .to_ascii_lowercase();
-    haystack.contains("derived")
-        && (haystack.contains("source_material")
-            || haystack.contains("source material")
-            || haystack.contains("material"))
-}
-
-fn lifecycle_operation_card(app: &App) -> OperationRoomCard {
-    let affected_refs = app
-        .lifecycle_status
-        .as_ref()
-        .map_or_else(Vec::new, |status| {
-            status
-                .tiers
-                .iter()
-                .map(|tier| {
-                    format!(
-                        "{:?}: {} event(s), {} source(s)",
-                        tier.tier, tier.event_count, tier.distinct_sources
-                    )
-                })
-                .collect()
-        });
-    let total_events = app
-        .lifecycle_status
-        .as_ref()
-        .map_or(0, |status| status.total_events);
-    OperationRoomCard {
-        title: "ops lifecycle archive/restore/tombstone".to_string(),
-        authority: "admin".to_string(),
-        phase: "guarded".to_string(),
-        progress: format!("{total_events} event(s) across lifecycle tiers"),
-        affected_refs,
-        caveats: vec![
-            "archive/restore supports dry-run; tombstone is destructive and preview/approve gated"
-                .to_string(),
-        ],
-        actions: vec![
-            OperationRoomAction::new(
-                "archive dry-run",
-                ActionAvailabilityState::Enabled,
-                "sinexctl ops lifecycle archive --limit 1000",
-            ),
-            OperationRoomAction::new(
-                "restore dry-run",
-                ActionAvailabilityState::Enabled,
-                "sinexctl ops lifecycle restore <event-id>...",
-            ),
-            OperationRoomAction::new(
-                "tombstone preview",
-                ActionAvailabilityState::Dangerous,
-                "sinexctl ops lifecycle tombstone preview <operation-id>",
-            ),
-            OperationRoomAction::new(
-                "tombstone approve",
-                ActionAvailabilityState::Dangerous,
-                "sinexctl ops lifecycle tombstone approve <operation-id>",
-            ),
-        ],
-        audit_refs: vec!["sinexctl ops lifecycle status".to_string()],
+        dry_run_available: false,
+        audit_output_ref: None,
     }
 }
 
@@ -1226,20 +1012,26 @@ fn state_snapshot_operation_card() -> OperationRoomCard {
         affected_refs: vec!["runtime state bundle".to_string()],
         caveats: vec!["restore drill must not look like navigation; require explicit target directory and plan review".to_string()],
         actions: vec![
-            OperationRoomAction::new(
+            operation_room_action(
+                "state.snapshot",
                 "snapshot",
                 ActionAvailabilityState::Enabled,
                 "sinexctl ops state snapshot",
+                ActionSideEffect::Read,
             ),
-            OperationRoomAction::new(
+            operation_room_action(
+                "state.inspect",
                 "inspect",
                 ActionAvailabilityState::Enabled,
                 "sinexctl ops state inspect --archive <archive>",
+                ActionSideEffect::Read,
             ),
-            OperationRoomAction::new(
+            operation_room_action(
+                "state.restore_plan",
                 "restore plan",
                 ActionAvailabilityState::Dangerous,
                 "sinexctl ops state restore --archive <archive> --target-dir <dir> --dry-run",
+                ActionSideEffect::Admin,
             ),
         ],
         audit_refs: vec!["state snapshot artifact path".to_string()],
@@ -1283,25 +1075,33 @@ fn privacy_operation_card(app: &App) -> OperationRoomCard {
                 .to_string(),
         ],
         actions: vec![
-            OperationRoomAction::new(
+            operation_room_action(
+                "privacy.audit",
                 "audit",
                 ActionAvailabilityState::Enabled,
                 "sinexctl privacy audit",
+                ActionSideEffect::Read,
             ),
-            OperationRoomAction::new(
+            operation_room_action(
+                "privacy.export_scoped",
                 "export scoped",
                 ActionAvailabilityState::Dangerous,
                 "sinexctl privacy export --since 24h --source <source> --output <file>",
+                ActionSideEffect::Admin,
             ),
-            OperationRoomAction::new(
+            operation_room_action(
+                "privacy.delete",
                 "delete",
                 ActionAvailabilityState::Target,
                 "not implemented: privacy delete",
+                ActionSideEffect::Destructive,
             ),
-            OperationRoomAction::new(
+            operation_room_action(
+                "privacy.redact",
                 "redact",
                 ActionAvailabilityState::Target,
                 "not implemented: privacy redact",
+                ActionSideEffect::Admin,
             ),
         ],
         audit_refs: vec!["sinexctl privacy private-mode status".to_string()],
@@ -2381,10 +2181,11 @@ mod tests {
             refresh_interval: 0,
             modules: Vec::new(),
             dlq_stats: None,
-            dlq_peek: None,
+            dlq_operation_card: None,
+            automaton_dlq_operation_card: None,
             ops_jobs: OperationJobListView::new(Vec::new()),
             replay_operations: Vec::new(),
-            lifecycle_status: None,
+            lifecycle_operation_card: None,
             private_mode: None,
             source_coverage: vec![coverage_fixture(
                 "ux.runtime.actions",
@@ -2492,20 +2293,26 @@ mod tests {
                 "error: fixture replay failed after preview".to_string(),
             ],
             actions: vec![
-                OperationRoomAction::new(
+                operation_room_action(
+                    "replay.status",
                     "status",
                     ActionAvailabilityState::Enabled,
                     "sinexctl ops replay status op-fixture",
+                    ActionSideEffect::Read,
                 ),
-                OperationRoomAction::new(
+                operation_room_action(
+                    "replay.execute",
                     "execute",
                     ActionAvailabilityState::Dangerous,
                     "sinexctl ops replay execute op-fixture",
+                    ActionSideEffect::Admin,
                 ),
-                OperationRoomAction::new(
+                operation_room_action(
+                    "context_pack",
                     "context pack",
                     ActionAvailabilityState::Target,
                     "not implemented: context pack",
+                    ActionSideEffect::Read,
                 ),
             ],
             audit_refs: vec!["sinexctl ops audit op-fixture".to_string()],
@@ -2537,22 +2344,28 @@ mod tests {
         let actions = card
             .actions
             .iter()
-            .map(|action| (action.label.as_str(), action.state, action.command.as_str()))
+            .map(|action| {
+                (
+                    action.label.as_str(),
+                    action.state,
+                    action.command_hint.as_deref().unwrap_or(""),
+                )
+            })
             .collect::<Vec<_>>();
 
         assert_eq!(card.title, "operation op-fixture (replay)");
         assert!(actions.contains(&(
-            "show",
+            "Show",
             ActionAvailabilityState::Enabled,
             "sinexctl ops get op-fixture",
         )));
         assert!(actions.contains(&(
-            "cancel",
+            "Cancel",
             ActionAvailabilityState::Disabled,
             "sinexctl ops cancel op-fixture",
         )));
         assert!(actions.contains(&(
-            "replay",
+            "Replay",
             ActionAvailabilityState::Dangerous,
             "sinexctl ops replay submit --ref-op op-fixture",
         )));
