@@ -5,6 +5,7 @@
 
 use sinex_db::DbPoolExt;
 use sinex_primitives::domain::{ModuleKind, ModuleName};
+use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::runtime::{RuntimeHealthRequest, RuntimeListActiveRequest};
 use sinexd::api::handlers::runtime_presence::{handle_runtime_health, handle_runtime_list_active};
 use xtask::sandbox::prelude::*;
@@ -33,6 +34,28 @@ fn find_module_in_list<'a>(
                 && module["instance_id"].as_str() == instance_id
         })
     })
+}
+
+async fn insert_runtime_health_status(
+    ctx: &TestContext,
+    component: &str,
+    status: &str,
+    reason: &str,
+) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("sinex")).await?;
+    let event = DynamicPayload::new(
+        "sinex",
+        "health.status",
+        serde_json::json!({
+            "component": component,
+            "current_status": status,
+            "reason": reason,
+        }),
+    )
+    .from_material(material_id)
+    .build()?;
+    ctx.pool().events().insert(event).await?;
+    Ok(())
 }
 
 #[sinex_test]
@@ -74,6 +97,13 @@ async fn list_active_surfaces_run_identity_when_available(ctx: TestContext) -> T
             None,
         )
         .await?;
+    insert_runtime_health_status(
+        &ctx,
+        "run-backed-module",
+        "healthy",
+        "runtime heartbeat observed",
+    )
+    .await?;
 
     let list_result = handle_runtime_list_active(pool, RuntimeListActiveRequest::default()).await?;
     let list_result = serde_json::to_value(&list_result)?;
@@ -118,6 +148,14 @@ async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResul
             None,
         )
         .await?;
+    insert_runtime_health_status(
+        &ctx,
+        "parallel-run-module",
+        "healthy",
+        "runtime heartbeat observed",
+    )
+    .await?;
+
     pool.state()
         .start_module_run(
             manifest.id,
@@ -128,6 +166,13 @@ async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResul
             None,
         )
         .await?;
+    insert_runtime_health_status(
+        &ctx,
+        "parallel-run-module",
+        "healthy",
+        "runtime heartbeat observed",
+    )
+    .await?;
 
     let list_result = handle_runtime_list_active(pool, RuntimeListActiveRequest::default()).await?;
     let list_result = serde_json::to_value(&list_result)?;
@@ -182,6 +227,13 @@ async fn health_counts_unique_modules_and_concrete_runs(ctx: TestContext) -> Tes
             None,
         )
         .await?;
+    insert_runtime_health_status(
+        &ctx,
+        "run-health-module",
+        "degraded",
+        "runtime heartbeat observed",
+    )
+    .await?;
 
     let health_result = handle_runtime_health(pool, RuntimeHealthRequest::default()).await?;
     assert_eq!(health_result.unique_modules, 3);

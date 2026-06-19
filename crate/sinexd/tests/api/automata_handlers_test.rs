@@ -52,6 +52,26 @@ async fn insert_metric_gauge(
     Ok(())
 }
 
+async fn insert_runtime_health_status(
+    ctx: &TestContext,
+    component: &str,
+    status: &str,
+    reason: &str,
+) -> TestResult<()> {
+    insert_material_event(
+        ctx,
+        "sinex",
+        "health.status",
+        json!({
+            "component": component,
+            "current_status": status,
+            "reason": reason,
+        }),
+    )
+    .await?;
+    Ok(())
+}
+
 #[sinex_test]
 async fn automata_status_surfaces_registry_run_and_derived_metrics(
     ctx: TestContext,
@@ -78,6 +98,13 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
             None,
         )
         .await?;
+    insert_runtime_health_status(
+        &ctx,
+        "canonicalizer-test",
+        "healthy",
+        "runtime heartbeat observed",
+    )
+    .await?;
 
     insert_metric_gauge(
         &ctx,
@@ -182,6 +209,13 @@ async fn automata_status_handles_live_run_without_metric_events(
             None,
         )
         .await?;
+    insert_runtime_health_status(
+        &ctx,
+        "session-detector-test",
+        "healthy",
+        "runtime heartbeat observed",
+    )
+    .await?;
 
     let response = handle_automata_status(
         pool,
