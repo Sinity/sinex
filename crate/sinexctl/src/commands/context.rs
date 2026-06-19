@@ -14,11 +14,13 @@ use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, CaveatView, ContextSourceView, ContextSummaryView,
     DesktopContextCandidateView, DesktopContextInputEvidence, DesktopContextInputState,
-    DesktopContextView, DesktopNotificationPressureView, EventCardListView, EventCardView,
-    PrivacyStateKind, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+    DesktopContextView, DesktopFocusSessionListView, DesktopFocusSessionView,
+    DesktopNotificationPressureView, EventCardListView, EventCardView, PrivacyStateKind,
+    SinexObjectKind, SinexObjectRef, ViewEnvelope,
 };
 use std::collections::HashMap;
 
+const MAX_FOCUS_SESSION_EVIDENCE_REFS: usize = 12;
 const MAX_NOTIFICATION_PRESSURE_EVIDENCE_REFS: usize = 12;
 
 use crate::client::GatewayClient;
@@ -53,12 +55,28 @@ pub struct ContextCommand {
     desktop: bool,
 
     /// Explain desktop.context current-view candidates as an EvidenceWindow
-    #[arg(long, requires = "desktop", conflicts_with = "notification_pressure")]
+    #[arg(
+        long,
+        requires = "desktop",
+        conflicts_with_all = ["notification_pressure", "focus_sessions"]
+    )]
     explain: bool,
 
     /// Render notification-pressure projection over recent notification evidence
-    #[arg(long, requires = "desktop", conflicts_with = "explain")]
+    #[arg(
+        long,
+        requires = "desktop",
+        conflicts_with_all = ["explain", "focus_sessions"]
+    )]
     notification_pressure: bool,
+
+    /// Render focus-session projection over recent desktop activity evidence
+    #[arg(
+        long,
+        requires = "desktop",
+        conflicts_with_all = ["explain", "notification_pressure"]
+    )]
+    focus_sessions: bool,
 }
 
 impl ContextCommand {
@@ -88,6 +106,7 @@ impl ContextCommand {
                 format,
                 self.explain,
                 self.notification_pressure,
+                self.focus_sessions,
             )?;
             println!("{output}");
             return Ok(());
@@ -211,6 +230,7 @@ fn render_desktop_context_output(
     format: OutputFormat,
     explain: bool,
     notification_pressure: bool,
+    focus_sessions: bool,
 ) -> Result<String> {
     if matches!(format, OutputFormat::Ndjson | OutputFormat::Dot) {
         return Err(color_eyre::eyre::eyre!(
@@ -246,6 +266,22 @@ fn render_desktop_context_output(
             });
         }
         return Ok(render_notification_pressure_table(&view));
+    }
+
+    if focus_sessions {
+        let view = build_focus_session_list_view(event_cards, since);
+        if matches!(format, OutputFormat::Json | OutputFormat::Yaml) {
+            let envelope = view
+                .into_envelope("sinexctl.events.context.desktop.focus_sessions")
+                .with_query_echo(json!({
+                    "since": since,
+                    "limit": event_cards.count,
+                    "mode": "desktop_focus_sessions"
+                }));
+            return render_finite_envelope(&envelope, format)?
+                .ok_or_else(|| color_eyre::eyre::eyre!("desktop focus-session output expected"));
+        }
+        return Ok(render_focus_session_table(&view));
     }
 
     if matches!(format, OutputFormat::Json | OutputFormat::Yaml) {
@@ -514,6 +550,100 @@ fn build_notification_pressure_view(
     view
 }
 
+fn build_focus_session_list_view(
+    event_cards: &EventCardListView,
+    since: &str,
+) -> DesktopFocusSessionListView {
+    let mut view = DesktopFocusSessionListView::new(
+        sinex_primitives::DESKTOP_FOCUS_SESSION_DERIVATION_ID,
+        since,
+    );
+    let mut activity_cards = event_cards
+        .cards
+        .iter()
+        .filter(|card| is_focus_session_evidence(card))
+        .collect::<Vec<_>>();
+    activity_cards.sort_by(|left, right| {
+        let left_ts = left.timestamp.original.unwrap_or(Timestamp::UNIX_EPOCH);
+        let right_ts = right.timestamp.original.unwrap_or(Timestamp::UNIX_EPOCH);
+        left_ts.inner().cmp(&right_ts.inner())
+    });
+
+    if activity_cards.is_empty() {
+        view.caveats.push(CaveatView {
+            id: "focus_session.no_recent_activity".to_string(),
+            message: format!("no focus-session evidence was found in the last {since}"),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::Projection,
+                "desktop.focus_session",
+            )),
+        });
+        return view;
+    }
+
+    let first = activity_cards
+        .first()
+        .expect("activity cards cannot be empty after guard");
+    let last = activity_cards
+        .last()
+        .expect("activity cards cannot be empty after guard");
+    let mut session = DesktopFocusSessionView {
+        session_id: format!("desktop.focus_session:{}..{}", first.ref_.id, last.ref_.id),
+        started_at: first.timestamp.original,
+        ended_at: last.timestamp.original,
+        event_count: activity_cards.len(),
+        input_families: Vec::new(),
+        evidence_refs: Vec::new(),
+        caveats: Vec::new(),
+    };
+
+    for card in activity_cards {
+        let family = desktop_context_family(card);
+        if !session.input_families.iter().any(|known| known == &family) {
+            session.input_families.push(family);
+        }
+
+        if session.evidence_refs.len() < MAX_FOCUS_SESSION_EVIDENCE_REFS
+            && !session
+                .evidence_refs
+                .iter()
+                .any(|existing| same_ref(existing, &card.ref_))
+        {
+            session.evidence_refs.push(card.ref_.clone());
+        }
+
+        for caveat in &card.caveats {
+            if !session
+                .caveats
+                .iter()
+                .any(|existing| existing.id == caveat.id && existing.ref_ == caveat.ref_)
+            {
+                session.caveats.push(caveat.clone());
+            }
+        }
+    }
+
+    if session.event_count > session.evidence_refs.len() {
+        session.caveats.push(CaveatView {
+            id: "focus_session.evidence_truncated".to_string(),
+            message: format!(
+                "showing {} focus-session evidence refs out of {} recent activity events",
+                session.evidence_refs.len(),
+                session.event_count
+            ),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::Projection,
+                "desktop.focus_session",
+            )),
+        });
+    }
+    session.input_families.sort();
+    view.caveats = session.caveats.clone();
+    view.sessions.push(session);
+    view.session_count = view.sessions.len();
+    view
+}
+
 fn desktop_context_input_for_family(
     family: &str,
     sources: &[(String, &EventCardView)],
@@ -631,6 +761,34 @@ fn render_notification_pressure_table(view: &DesktopNotificationPressureView) ->
         }
     }
     lines.join("\n")
+}
+
+fn render_focus_session_table(view: &DesktopFocusSessionListView) -> String {
+    let mut lines = vec![
+        format!("Desktop focus sessions (last {})", view.since),
+        format!("sessions: {}", view.session_count),
+    ];
+    for session in &view.sessions {
+        lines.push(format!(
+            "- {}: {} events, {} refs, families: {}",
+            session.session_id,
+            session.event_count,
+            session.evidence_refs.len(),
+            session.input_families.join(", ")
+        ));
+    }
+    if !view.caveats.is_empty() {
+        lines.push(String::new());
+        lines.push("caveats".to_string());
+        for caveat in &view.caveats {
+            lines.push(format!("- {}: {}", caveat.id, caveat.message));
+        }
+    }
+    lines.join("\n")
+}
+
+fn is_focus_session_evidence(card: &EventCardView) -> bool {
+    is_active_window_evidence(card) || is_terminal_evidence(card) || is_browser_evidence(card)
 }
 
 fn desktop_context_family(card: &EventCardView) -> String {
@@ -875,6 +1033,7 @@ mod tests {
             OutputFormat::Json,
             false,
             false,
+            false,
         )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
@@ -946,6 +1105,7 @@ mod tests {
             OutputFormat::Json,
             false,
             false,
+            false,
         )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
         let inputs = value["payload"]["inputs"]
@@ -985,6 +1145,7 @@ mod tests {
             &sources,
             "2h",
             OutputFormat::Json,
+            false,
             false,
             false,
         )?;
@@ -1041,6 +1202,7 @@ mod tests {
             OutputFormat::Table,
             false,
             false,
+            false,
         )?;
 
         assert!(output.contains("candidates"));
@@ -1069,6 +1231,7 @@ mod tests {
             "2h",
             OutputFormat::Json,
             true,
+            false,
             false,
         )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
@@ -1125,6 +1288,7 @@ mod tests {
             OutputFormat::Json,
             true,
             false,
+            false,
         )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
@@ -1176,6 +1340,7 @@ mod tests {
             OutputFormat::Json,
             false,
             true,
+            false,
         )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
@@ -1239,6 +1404,7 @@ mod tests {
             OutputFormat::Json,
             false,
             true,
+            false,
         )?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
@@ -1262,6 +1428,126 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn desktop_focus_sessions_project_recent_activity_evidence()
+    -> xtask::sandbox::TestResult<()> {
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: 4,
+            cards: vec![
+                context_event_with_ref("wm.hyprland", "window.focused", "event:desktop"),
+                context_event_with_ref("shell.atuin", "command.executed", "event:terminal"),
+                context_event_with_ref("activitywatch", "browser.tab.active", "event:browser"),
+                context_event_with_ref(
+                    "desktop.notification",
+                    "notification.sent",
+                    "event:notification",
+                ),
+            ],
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            "2h",
+            OutputFormat::Json,
+            false,
+            false,
+            true,
+        )?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(
+            value["source_surface"],
+            "sinexctl.events.context.desktop.focus_sessions"
+        );
+        assert_eq!(
+            value["payload"]["derivation_ref"],
+            sinex_primitives::DESKTOP_FOCUS_SESSION_DERIVATION_ID
+        );
+        assert_eq!(value["payload"]["output_kind"], "focus_session_projection");
+        assert_eq!(value["payload"]["session_count"], 1);
+        let session = &value["payload"]["sessions"][0];
+        assert_eq!(session["event_count"], 3);
+        assert!(
+            session["input_families"]
+                .as_array()
+                .is_some_and(|families| ["browser", "desktop", "terminal"]
+                    .iter()
+                    .all(|family| families.iter().any(|value| value == family))),
+            "focus-session projection should classify desktop, terminal, and browser evidence: {session:?}"
+        );
+        let refs = session["evidence_refs"]
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("evidence_refs must be an array"))?;
+        for expected_id in ["event:desktop", "event:terminal", "event:browser"] {
+            assert!(
+                refs.iter().any(|ref_| ref_["id"] == expected_id),
+                "focus-session view should cite {expected_id}: {refs:?}"
+            );
+        }
+        assert!(
+            refs.iter().all(|ref_| ref_["id"] != "event:notification"),
+            "notification pressure is a sibling projection, not focus-session evidence"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_focus_sessions_bound_evidence_refs_and_preserve_caveats()
+    -> xtask::sandbox::TestResult<()> {
+        let mut cards = Vec::new();
+        for index in 0..(MAX_FOCUS_SESSION_EVIDENCE_REFS + 3) {
+            cards.push(context_event_with_ref(
+                "wm.hyprland",
+                "window.focused",
+                format!("event:window:{index}"),
+            ));
+        }
+        cards[0].caveats.push(CaveatView {
+            id: "policy.disclosure_applied".to_string(),
+            message: "window title hidden by fixture disclosure policy".to_string(),
+            ref_: None,
+        });
+
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: cards.len(),
+            cards,
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            "2h",
+            OutputFormat::Json,
+            false,
+            false,
+            true,
+        )?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        let session = &value["payload"]["sessions"][0];
+        assert_eq!(session["event_count"], MAX_FOCUS_SESSION_EVIDENCE_REFS + 3);
+        assert_eq!(
+            session["evidence_refs"].as_array().map(Vec::len),
+            Some(MAX_FOCUS_SESSION_EVIDENCE_REFS)
+        );
+        assert!(value["caveats"].as_array().is_some_and(|caveats| {
+            caveats
+                .iter()
+                .any(|caveat| caveat["id"] == "focus_session.evidence_truncated")
+                && caveats
+                    .iter()
+                    .any(|caveat| caveat["id"] == "policy.disclosure_applied")
+        }));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn desktop_context_output_rejects_streaming_formats() -> xtask::sandbox::TestResult<()> {
         let event_cards = EventCardListView {
             schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
@@ -1276,6 +1562,7 @@ mod tests {
             &sources,
             "2h",
             OutputFormat::Ndjson,
+            false,
             false,
             false,
         );
