@@ -401,6 +401,7 @@ fn grammar_candidates(
     const ROOTS: &[(&str, &str)] = &[
         ("events", "event query, inspect, trace, watch, and annotate"),
         ("sources", "source material inventory and readiness"),
+        ("show", "resolve and inspect one public Sinex object ref"),
         ("runtime", "module lifecycle and automata status"),
         ("ops", "operation records and jobs"),
         ("privacy", "private mode and policy posture"),
@@ -697,8 +698,8 @@ mod tests {
             .map(|candidate| candidate.value.as_str())
             .collect();
         for root in [
-            "events", "sources", "runtime", "metrics", "ops", "privacy", "tasks", "record", "docs",
-            "semantic", "tui", "config",
+            "events", "sources", "show", "runtime", "metrics", "ops", "privacy", "tasks", "record",
+            "docs", "semantic", "tui", "config",
         ] {
             assert!(
                 values.contains(root),
