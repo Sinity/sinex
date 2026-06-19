@@ -8,8 +8,8 @@
 
 use crate::api::service_container::ServiceContainer;
 use serde_json::{Value, json};
-use sinex_db::{DbPool, DbPoolExt};
 use sinex_db::repositories::Operation;
+use sinex_db::{DbPool, DbPoolExt};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{
     SinexError, domain::OperationStatus, environment::SinexEnvironment, transport,
@@ -63,8 +63,7 @@ async fn finalize_runtime_control_operation(
             .with_std_error(&error)
     })?;
     let operation_id = sinex_db::Id::<Operation>::from_uuid(operation_uuid);
-    pool
-        .state()
+    pool.state()
         .update_operation_meta(&operation_id, status, Some(message), preview_summary)
         .await
 }
@@ -112,7 +111,9 @@ async fn publish_runtime_control_operation(
     let nats_client = services
         .nats_client()
         .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
-    if let Err(error) = publish_runtime_control(nats_client, subject.clone(), payload, command_label).await {
+    if let Err(error) =
+        publish_runtime_control(nats_client, subject.clone(), payload, command_label).await
+    {
         let message = error.to_string();
         scope["error"] = json!(message);
         let _ = finalize_runtime_control_operation(
@@ -448,7 +449,10 @@ mod tests {
         assert_eq!(operation.operation_type, "runtime.drain");
         assert_eq!(operation.operator, "operator:alice");
         assert_eq!(operation.result_status, OperationStatus::Running);
-        assert_eq!(operation.scope.as_ref().unwrap()["surface"], RUNTIME_CONTROL_SURFACE);
+        assert_eq!(
+            operation.scope.as_ref().unwrap()["surface"],
+            RUNTIME_CONTROL_SURFACE
+        );
         assert_eq!(operation.scope.as_ref().unwrap()["action"], "drain");
         assert_eq!(operation.scope.as_ref().unwrap()["reason"], "maintenance");
         assert_eq!(
@@ -506,7 +510,10 @@ mod tests {
         assert_eq!(operation.operation_type, "runtime.resume");
         assert_eq!(operation.result_status, OperationStatus::Failed);
         assert_eq!(operation.result_message.as_deref(), Some("publish failed"));
-        assert_eq!(operation.preview_summary.as_ref().unwrap()["error"], "publish failed");
+        assert_eq!(
+            operation.preview_summary.as_ref().unwrap()["error"],
+            "publish failed"
+        );
         Ok(())
     }
 }

@@ -2026,5 +2026,4 @@ mod tests {
         assert!(message.contains(&missing_schema_id));
         Ok(())
     }
-
 }

@@ -341,7 +341,7 @@ async fn source_meta_proposed_media_sources_are_metadata_only() -> TestResult<()
 }
 
 #[sinex_test]
-async fn source_meta_email_source_registers_multiple_proposed_bindings() -> TestResult<()> {
+async fn source_meta_email_source_registers_rfc822_binding_and_sent_proposal() -> TestResult<()> {
     use sinex_primitives::source_contracts::{all_source_contracts, source_runtime_bindings};
 
     let source_id = sui("email.mailbox");
@@ -377,20 +377,30 @@ async fn source_meta_email_source_registers_multiple_proposed_bindings() -> Test
     ] {
         assert!(
             bindings.iter().any(|binding| {
-                binding.subject.as_str() == subject
-                    && binding.output_event_type == event_type
-                    && binding.proposed
+                binding.subject.as_str() == subject && binding.output_event_type == event_type
             }),
-            "email mailbox must register proposed binding {subject} -> {event_type}"
+            "email mailbox must register binding {subject} -> {event_type}"
         );
     }
     assert!(
-        find_source_factory(&source_id).is_none(),
-        "proposed email source must not register a source factory"
+        bindings.iter().any(|binding| {
+            binding.subject.as_str() == "source:email.mailbox" && !binding.proposed
+        }),
+        "email received staged mode must be an accepted runnable binding"
     );
     assert!(
-        find_parser_factory(&source_id).is_none(),
-        "proposed email source must not register a parser factory"
+        bindings.iter().any(|binding| {
+            binding.subject.as_str() == "source:email.mailbox.sent" && binding.proposed
+        }),
+        "email sent mode remains proposed until its runtime mode is accepted"
+    );
+    assert!(
+        find_source_factory(&source_id).is_some(),
+        "accepted email staged mode must register a source factory"
+    );
+    assert!(
+        find_parser_factory(&source_id).is_some(),
+        "accepted email staged mode must register a parser factory"
     );
     Ok(())
 }
@@ -524,7 +534,8 @@ async fn package_completeness_report_is_keyed_by_package_and_mode() -> TestResul
 async fn package_completeness_report_consumes_event_admission_and_budget_refs() -> TestResult<()> {
     use sinex_primitives::STANDARD_EVENT_ADMISSION_POLICY_ID;
     use sinex_primitives::event_contracts::{
-        BROWSER_PAGE_VISITED_CONTRACT_ID, SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
+        BROWSER_PAGE_VISITED_CONTRACT_ID, EMAIL_MESSAGE_RECEIVED_CONTRACT_ID,
+        EMAIL_MESSAGE_SENT_CONTRACT_ID, SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
     };
     use sinexd::sources::package_completeness::build_package_completeness_report;
 
@@ -594,6 +605,46 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
             .as_ref()
             .is_some_and(|binding| !binding.resource_budget.is_null()),
         "browser runtime binding rows should expose the derived ResourceBudgetSpec"
+    );
+
+    let email = report
+        .packages
+        .get("email.mailbox")
+        .and_then(|package| package.modes.get("email.mailbox"))
+        .expect("email.mailbox package/mode row");
+    assert!(
+        email
+            .event_contract_refs
+            .contains(&EMAIL_MESSAGE_RECEIVED_CONTRACT_ID.to_string()),
+        "email staged mode must consume the received-message EventContract registry row"
+    );
+    assert!(
+        email
+            .event_contract_refs
+            .contains(&EMAIL_MESSAGE_SENT_CONTRACT_ID.to_string()),
+        "email package row must expose the sent-message EventContract registry row"
+    );
+    assert!(
+        email
+            .admission_policy_refs
+            .contains(&STANDARD_EVENT_ADMISSION_POLICY_ID.to_string()),
+        "email staged mode must be accepted by the standard admission policy"
+    );
+    assert!(
+        email.event_pairs.iter().any(|pair| {
+            pair.source == "email"
+                && pair.event_type == "email.message.received"
+                && pair.event_contract_ref.as_deref() == Some(EMAIL_MESSAGE_RECEIVED_CONTRACT_ID)
+        }),
+        "email received event pair rows should carry the matching EventContract ref"
+    );
+    assert!(
+        email
+            .sources
+            .runtime_binding
+            .as_ref()
+            .is_some_and(|binding| !binding.resource_budget.is_null()),
+        "email runtime binding rows should expose the derived ResourceBudgetSpec"
     );
 
     Ok(())
@@ -672,6 +723,41 @@ async fn package_completeness_report_consumes_coverage_debt_and_operation_refs()
         "browser operation refs should satisfy the package completeness requirement"
     );
 
+    let email = report
+        .packages
+        .get("email.mailbox")
+        .and_then(|package| package.modes.get("email.mailbox"))
+        .expect("email.mailbox package/mode row");
+    assert!(
+        email
+            .coverage_debt_refs
+            .contains(&"coverage:source-coverage".to_string()),
+        "email staged mode must declare the coverage provider consumed by the package gate"
+    );
+    assert!(
+        email
+            .coverage_debt_refs
+            .contains(&"debt:unified-debt-view".to_string()),
+        "email staged mode must declare the unified debt provider consumed by the package gate"
+    );
+    assert!(
+        email
+            .operation_refs
+            .contains(&"operation:email.mailbox.check".to_string()),
+        "email staged mode must declare operator action refs consumed by the package gate"
+    );
+    assert!(
+        !email
+            .missing
+            .iter()
+            .any(|field| field == "coverage_and_debt_views"),
+        "email coverage/debt refs should satisfy the package completeness requirement"
+    );
+    assert!(
+        !email.missing.iter().any(|field| field == "operations"),
+        "email operation refs should satisfy the package completeness requirement"
+    );
+
     Ok(())
 }
 
@@ -689,11 +775,20 @@ async fn package_completeness_report_distinguishes_proposed_and_manual_modes() -
         .expect("email.mailbox package row");
     assert!(
         email.modes.contains_key("email.mailbox"),
-        "received-mail proposed mode must be listed"
+        "received-mail staged mode must be listed"
     );
     assert!(
         email.modes.contains_key("email.mailbox.sent"),
         "sent-mail proposed multi-binding mode must be listed separately"
+    );
+    let received = email
+        .modes
+        .get("email.mailbox")
+        .expect("received staged mode");
+    assert_eq!(received.mode_state, PackageModeState::Accepted);
+    assert!(
+        received.missing.is_empty(),
+        "accepted email staged mode should satisfy the package gate"
     );
     let sent = email
         .modes
@@ -701,8 +796,8 @@ async fn package_completeness_report_distinguishes_proposed_and_manual_modes() -
         .expect("sent proposed mode");
     assert_eq!(sent.mode_state, PackageModeState::Proposed);
     assert!(
-        !sent.sources.catalog_projection_registered,
-        "first #1792 slice should expose the current catalog's one-binding collapse for multi-binding packages"
+        sent.sources.catalog_projection_registered,
+        "generated source catalog must project every binding mode in multi-binding packages"
     );
 
     let external = report
