@@ -9,6 +9,7 @@ use crate::api::sse_bus::{
     SseErrorPayload, SseEventPayload, SseGapPayload, SseHeartbeatPayload, SseMessage,
     SubscriptionBus,
 };
+use crate::event_engine::policy::{DisclosureCaveat, DisclosureContext, PolicyEngine};
 use axum::extract::{Query, State};
 use axum::http::header::HeaderName;
 use axum::http::{HeaderMap, StatusCode};
@@ -20,6 +21,7 @@ use sinex_primitives::constants::services::HEARTBEAT_INTERVAL;
 use sinex_primitives::events::Event;
 use sinex_primitives::query::SubscriptionFilter;
 use sinex_primitives::validation::validate_json;
+use sinex_primitives::views::{CaveatView, SinexObjectKind, SinexObjectRef};
 use sinex_primitives::{Id, JsonValue};
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -224,9 +226,13 @@ pub(crate) async fn handle_sse_stream(
 
     // Convert to SSE events
     let bus_for_cleanup = Arc::clone(&bus);
-    let event_stream = merged.map(move |item| {
-        let MergedItem::Msg(msg) = item;
-        Ok::<_, Infallible>(format_sse_message(msg))
+    let privacy_policy = Arc::clone(state.services.privacy_policy());
+    let event_stream = merged.then(move |item| {
+        let privacy_policy = Arc::clone(&privacy_policy);
+        async move {
+            let MergedItem::Msg(msg) = item;
+            Ok::<_, Infallible>(format_sse_message(msg, &privacy_policy).await)
+        }
     });
 
     // Wrap in a stream that unregisters on drop
@@ -263,10 +269,21 @@ fn parse_last_event_id(headers: &HeaderMap) -> Result<Option<Id<Event<JsonValue>
 }
 
 /// Format an [`SseMessage`] into an axum SSE event.
-fn format_sse_message(msg: SseMessage) -> SseEvent {
+async fn format_sse_message(msg: SseMessage, policy: &PolicyEngine) -> SseEvent {
     match msg {
-        SseMessage::Event { seq, event } => {
-            match serialize_sse_payload("event", &SseEventPayload { event: &event }) {
+        SseMessage::Event { seq, mut event } => {
+            let decision = policy
+                .disclose_event_payload(&event, DisclosureContext::View)
+                .await;
+            event.payload = decision.value.clone();
+            let privacy_caveats = disclosure_caveats(&decision.caveats);
+            match serialize_sse_payload(
+                "event",
+                &SseEventPayload {
+                    event: &event,
+                    privacy_caveats: &privacy_caveats,
+                },
+            ) {
                 Ok(data) => {
                     let mut frame = SseEvent::default().event("event").data(data);
                     if let Some(event_id) = event.id {
@@ -305,6 +322,22 @@ fn format_sse_message(msg: SseMessage) -> SseEvent {
             format_sse_error_event(SseErrorPayload { code, message })
         }
     }
+}
+
+fn disclosure_caveats(caveats: &[DisclosureCaveat]) -> Vec<CaveatView> {
+    caveats
+        .iter()
+        .map(|caveat| CaveatView {
+            id: caveat.code.clone(),
+            message: caveat.message.clone(),
+            ref_: Some(
+                SinexObjectRef::new(SinexObjectKind::Policy, caveat.policy_ref.clone())
+                    .with_label("privacy policy")
+                    .with_command_hint("sinexctl privacy policy list")
+                    .with_rpc_method("privacy.policy.list"),
+            ),
+        })
+        .collect()
 }
 
 fn format_sse_error_event(payload: SseErrorPayload) -> SseEvent {
@@ -362,7 +395,7 @@ struct CleanupStream<S> {
 
 impl<S> futures::Stream for CleanupStream<S>
 where
-    S: futures::Stream + Unpin,
+    S: futures::Stream,
 {
     type Item = S::Item;
 

@@ -1184,13 +1184,24 @@ impl WatchCommand {
 
         while let Some(result) = stream.next().await {
             match result {
-                Ok(SseClientMessage::Event { event }) => match format {
+                Ok(SseClientMessage::Event {
+                    event,
+                    privacy_caveats,
+                }) => match format {
                     OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-                        let line = json!({ "kind": "event", "event": event });
+                        let line = json!({
+                            "kind": "event",
+                            "event": event,
+                            "privacy_caveats": privacy_caveats,
+                        });
                         println!("{}", serde_json::to_string(&line)?);
                     }
                     OutputFormat::Yaml => {
-                        let doc = json!({ "kind": "event", "event": event });
+                        let doc = json!({
+                            "kind": "event",
+                            "event": event,
+                            "privacy_caveats": privacy_caveats,
+                        });
                         println!("---");
                         print!("{}", format_yaml(&doc)?);
                     }
@@ -1225,12 +1236,19 @@ impl WatchCommand {
                             summary.to_string()
                         };
 
+                        let privacy_marker = if privacy_caveats.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" {}", style("[privacy policy]").magenta())
+                        };
+
                         println!(
-                            "{} [{}] {} {}",
+                            "{} [{}] {} {}{}",
                             style(timestamp).dim(),
                             source,
                             event_type,
-                            summary_display
+                            summary_display,
+                            privacy_marker
                         );
                     }
                 },

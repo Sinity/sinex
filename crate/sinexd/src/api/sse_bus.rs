@@ -11,6 +11,7 @@ use serde::Serialize;
 use sinex_db::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::query::SubscriptionFilter;
+use sinex_primitives::views::CaveatView;
 use sinex_primitives::{Id, JsonValue, Timestamp};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -66,6 +67,7 @@ pub enum SseMessage {
 #[derive(Serialize)]
 pub(crate) struct SseEventPayload<'a> {
     pub event: &'a Event<JsonValue>,
+    pub privacy_caveats: &'a [CaveatView],
 }
 
 /// Wire format for the SSE `gap` type.

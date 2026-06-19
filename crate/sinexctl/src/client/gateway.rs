@@ -198,7 +198,9 @@ use sinex_primitives::query::{
     EventQuery, EventQueryResult, LineageQuery, LineageResult, SubscriptionFilter,
 };
 use sinex_primitives::relations::EvidenceWindow;
-use sinex_primitives::views::{EventCardListView, SourceCoverageListView, ViewEnvelope};
+use sinex_primitives::views::{
+    CaveatView, EventCardListView, SourceCoverageListView, ViewEnvelope,
+};
 
 /// Gateway RPC client
 #[derive(Clone)]
@@ -2085,6 +2087,7 @@ data: {"code":"serialization_error","message":"failed to serialize SSE event pay
 pub enum SseClientMessage {
     Event {
         event: sinex_primitives::events::Event<serde_json::Value>,
+        privacy_caveats: Vec<CaveatView>,
     },
     Gap {
         from_seq: u64,
@@ -2224,10 +2227,13 @@ impl SseFrameState {
                 #[derive(Deserialize)]
                 struct EventWrapper {
                     event: sinex_primitives::events::Event<serde_json::Value>,
+                    #[serde(default)]
+                    privacy_caveats: Vec<CaveatView>,
                 }
                 let wrapper: EventWrapper = serde_json::from_str(&self.current_data).ok()?;
                 Some(SseClientMessage::Event {
                     event: wrapper.event,
+                    privacy_caveats: wrapper.privacy_caveats,
                 })
             }
             "gap" => {
