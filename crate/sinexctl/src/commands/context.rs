@@ -6,6 +6,10 @@ use serde_json::json;
 #[cfg(test)]
 use sinex_primitives::query::QueryResultEvent;
 use sinex_primitives::query::{EventQuery, SortDirection, TimeRange};
+use sinex_primitives::relations::{
+    EventRelationExpr, EvidenceRef, EvidenceRole, EvidenceWindow, ExpansionStep,
+    ExpansionStepKind, ExpansionTrace, ObservedRange, TimeBasis,
+};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, CaveatView, ContextSourceView, ContextSummaryView,
@@ -45,6 +49,10 @@ pub struct ContextCommand {
     /// Render the desktop.context current-view contract over recent evidence
     #[arg(long)]
     desktop: bool,
+
+    /// Explain desktop.context current-view candidates as an EvidenceWindow
+    #[arg(long, requires = "desktop")]
+    explain: bool,
 }
 
 impl ContextCommand {
@@ -67,8 +75,13 @@ impl ContextCommand {
 
         let sources = grouped_context_sources(&event_cards.cards);
         if self.desktop {
-            let output =
-                render_desktop_context_output(&event_cards, &sources, &self.since, format)?;
+            let output = render_desktop_context_output(
+                &event_cards,
+                &sources,
+                &self.since,
+                format,
+                self.explain,
+            )?;
             println!("{output}");
             return Ok(());
         }
@@ -189,6 +202,7 @@ fn render_desktop_context_output(
     sources: &[(String, &EventCardView)],
     since: &str,
     format: OutputFormat,
+    explain: bool,
 ) -> Result<String> {
     if matches!(format, OutputFormat::Ndjson | OutputFormat::Dot) {
         return Err(color_eyre::eyre::eyre!(
@@ -197,6 +211,18 @@ fn render_desktop_context_output(
     }
 
     let view = build_desktop_context_view(event_cards, sources, since);
+    if explain {
+        let envelope = desktop_context_evidence_window(&view)
+            .into_view("sinexctl.events.context.desktop.explain")
+            .with_query_echo(json!({
+                "since": since,
+                "limit": event_cards.count,
+                "mode": "desktop_context_evidence_window"
+            }));
+        return render_finite_envelope(&envelope, format)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("desktop context evidence output expected"));
+    }
+
     if matches!(format, OutputFormat::Json | OutputFormat::Yaml) {
         let envelope = view
             .clone()
@@ -310,6 +336,85 @@ fn desktop_context_candidates(
     }
 
     candidates
+}
+
+fn desktop_context_evidence_window(view: &DesktopContextView) -> EvidenceWindow {
+    let mut support_refs = Vec::new();
+    let mut expansion_steps = Vec::new();
+    let observed_range = ObservedRange::unknown(TimeBasis::DerivedInterval);
+
+    for candidate in &view.candidates {
+        for object_ref in &candidate.evidence_refs {
+            if support_refs
+                .iter()
+                .any(|existing: &EvidenceRef| same_ref(&existing.object, object_ref))
+            {
+                continue;
+            }
+            expansion_steps.push(ExpansionStep {
+                kind: ExpansionStepKind::RelationIncluded,
+                detail: format!("candidate `{}` cited this evidence", candidate.label),
+                object_ref: Some(object_ref.clone()),
+            });
+            support_refs.push(EvidenceRef {
+                object: object_ref.clone(),
+                role: EvidenceRole::Support,
+                observed_range,
+                rationale: format!(
+                    "supports ranked desktop-context candidate `{}`; confidence is view ranking only",
+                    candidate.label
+                ),
+            });
+        }
+    }
+
+    let mut caveats = view.caveats.clone();
+    for input in &view.inputs {
+        match input.state {
+            DesktopContextInputState::Missing
+            | DesktopContextInputState::Omitted
+            | DesktopContextInputState::Redacted
+            | DesktopContextInputState::Stale => {
+                for caveat in &input.caveats {
+                    expansion_steps.push(ExpansionStep {
+                        kind: ExpansionStepKind::CoverageGapCaveat,
+                        detail: format!("{} input caveat: {}", input.family, caveat.message),
+                        object_ref: caveat.ref_.clone(),
+                    });
+                    caveats.push(caveat.clone());
+                }
+            }
+            DesktopContextInputState::Included => {}
+        }
+    }
+
+    if support_refs.is_empty() {
+        caveats.push(CaveatView {
+            id: "context.no_candidate_evidence".to_string(),
+            message: "desktop context has no ranked candidates with evidence refs".to_string(),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::Projection,
+                "desktop.context.current_view",
+            )),
+        });
+    }
+
+    EvidenceWindow {
+        seed_refs: view.active_window_ref.iter().cloned().collect(),
+        support_refs,
+        contradiction_refs: Vec::new(),
+        caveats,
+        observed_range,
+        expansion_trace: ExpansionTrace {
+            steps: expansion_steps,
+        },
+        generated_at: Timestamp::now(),
+        query: EventRelationExpr::Sequence { within_secs: 0 },
+    }
+}
+
+fn same_ref(left: &SinexObjectRef, right: &SinexObjectRef) -> bool {
+    left.kind == right.kind && left.id == right.id
 }
 
 fn desktop_context_input_for_family(
@@ -550,6 +655,16 @@ mod tests {
         })
     }
 
+    fn context_event_with_ref(
+        source: &'static str,
+        event_type: &'static str,
+        ref_id: &'static str,
+    ) -> EventCardView {
+        let mut card = context_event(source, event_type);
+        card.ref_.id = ref_id.to_string();
+        card
+    }
+
     #[sinex_test]
     async fn context_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
         let mut shell_card = context_event("shell.atuin", "command.executed");
@@ -636,7 +751,7 @@ mod tests {
         };
         let sources = grouped_context_sources(&event_cards.cards);
         let output =
-            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json)?;
+            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json, false)?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
         assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
@@ -701,7 +816,7 @@ mod tests {
         };
         let sources = grouped_context_sources(&event_cards.cards);
         let output =
-            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json)?;
+            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json, false)?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
         let inputs = value["payload"]["inputs"]
             .as_array()
@@ -727,16 +842,16 @@ mod tests {
             schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
             count: 3,
             cards: vec![
-                context_event("wm.hyprland", "window.focused"),
-                context_event("shell.atuin", "command.executed"),
-                context_event("activitywatch", "browser.tab.active"),
+                context_event_with_ref("wm.hyprland", "window.focused", "event:desktop"),
+                context_event_with_ref("shell.atuin", "command.executed", "event:terminal"),
+                context_event_with_ref("activitywatch", "browser.tab.active", "event:browser"),
             ],
             next_cursor: None,
             total_estimate: None,
         };
         let sources = grouped_context_sources(&event_cards.cards);
         let output =
-            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json)?;
+            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json, false)?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
         let candidates = value["payload"]["candidates"]
@@ -787,11 +902,94 @@ mod tests {
         };
         let sources = grouped_context_sources(&event_cards.cards);
         let output =
-            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Table)?;
+            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Table, false)?;
 
         assert!(output.contains("candidates"));
         assert!(output.contains("active window: context fixture (1 refs)"));
         assert!(output.contains("current activity from 2 evidence refs (2 refs)"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_context_explain_returns_evidence_window() -> xtask::sandbox::TestResult<()> {
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: 3,
+            cards: vec![
+                context_event_with_ref("wm.hyprland", "window.focused", "event:desktop"),
+                context_event_with_ref("shell.atuin", "command.executed", "event:terminal"),
+                context_event_with_ref("activitywatch", "browser.tab.active", "event:browser"),
+            ],
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output =
+            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json, true)?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(
+            value["source_surface"],
+            "sinexctl.events.context.desktop.explain"
+        );
+        assert_eq!(
+            value["query_echo"]["mode"],
+            "desktop_context_evidence_window"
+        );
+        assert_eq!(value["payload"]["query"]["relation"], "sequence");
+        let support_refs = value["payload"]["support_refs"]
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("support_refs must be an array"))?;
+        for expected_id in ["event:desktop", "event:terminal", "event:browser"] {
+            assert!(
+                support_refs
+                    .iter()
+                    .any(|support| support["object"]["id"] == expected_id),
+                "explain output should cite {expected_id}: {support_refs:?}"
+            );
+        }
+        assert!(
+            value["payload"]["contradiction_refs"]
+                .as_array()
+                .is_some_and(Vec::is_empty),
+            "desktop context explain must not invent contradictions"
+        );
+        assert!(value["caveats"].as_array().is_some_and(|caveats| {
+            caveats
+                .iter()
+                .any(|caveat| caveat["id"] == "context.candidates_ranked_view")
+        }));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_context_explain_surfaces_missing_input_caveats()
+    -> xtask::sandbox::TestResult<()> {
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: 1,
+            cards: vec![context_event("wm.hyprland", "window.focused")],
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output =
+            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json, true)?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert!(value["payload"]["expansion_trace"]["steps"]
+            .as_array()
+            .is_some_and(|steps| steps
+                .iter()
+                .any(|step| step["kind"] == "coverage_gap_caveat"
+                    && step["detail"]
+                        .as_str()
+                        .is_some_and(|detail| detail.contains("browser input caveat")))));
+        assert!(value["caveats"].as_array().is_some_and(|caveats| {
+            caveats
+                .iter()
+                .any(|caveat| caveat["id"] == "input.browser.missing")
+        }));
         Ok(())
     }
 
@@ -806,7 +1004,7 @@ mod tests {
         };
         let sources = grouped_context_sources(&event_cards.cards);
         let result =
-            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Ndjson);
+            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Ndjson, false);
 
         assert!(result.is_err(), "desktop context must remain a finite view");
         Ok(())
