@@ -239,8 +239,9 @@ fn surface_audit_coverage() -> Vec<SurfaceAuditCoverage> {
             surface: "completion_scripts",
             behavior: "formatless_static_command_metadata",
             evidence: &[
-                "crate/sinexctl/src/commands/completions.rs::completion_dynamic_vocab_omits_sensitive_fixture_material",
-                "crate/sinexctl/src/commands/completions.rs::zsh_postprocessor_injects_dynamic_source_and_event_type_lists",
+                "crate/sinexctl/src/commands/completion_endpoint.rs::payload_key_completion_exposes_schema_keys_not_values",
+                "crate/sinexctl/src/commands/completion_endpoint.rs::source_completion_uses_inventory_without_gateway",
+                "crate/sinexctl/src/commands/completion_endpoint.rs::event_type_completion_is_narrowed_by_source",
             ],
             caveats: &[
                 "completion dynamic vocab is restricted to source and event-type identifiers from payload inventory",
