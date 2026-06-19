@@ -225,7 +225,7 @@ fn gateway_bucket_attributes(bucket: &GatewayStatsBucket) -> Vec<OtelAttribute> 
 
 fn default_otel_disclosure_boundary() -> OtelDisclosureBoundary {
     OtelDisclosureBoundary {
-        policy: "project stable refs, counts, timings, and bounded aggregate attributes only"
+        policy: "telemetry disclosure: project stable refs, counts, timings, and bounded aggregate attributes only"
             .to_string(),
         omitted_attribute_families: vec![
             "raw_event_payload".to_string(),
@@ -277,6 +277,7 @@ mod tests {
         let view = gateway_stats_to_otel_metrics_projection(vec![gateway_bucket()]);
         let serialized = serde_json::to_string(&view)?;
 
+        assert!(view.disclosure.policy.contains("telemetry disclosure"));
         assert!(serialized.contains("sinex.source"));
         assert!(serialized.contains("sinex.gateway.latency.average"));
         assert!(!serialized.contains("raw_payload"));

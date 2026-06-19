@@ -560,6 +560,8 @@ pub enum DisclosureContext {
     Completion,
     /// Dead-letter queue previews.
     Dlq,
+    /// Metrics, traces, and OpenTelemetry-compatible projections.
+    Telemetry,
 }
 
 impl DisclosureContext {
@@ -571,6 +573,7 @@ impl DisclosureContext {
             Self::Log => "log",
             Self::Completion => "completion",
             Self::Dlq => "dlq",
+            Self::Telemetry => "telemetry",
         }
     }
 }
@@ -1330,6 +1333,28 @@ mod tests {
             event,
             metadata: None,
         }
+    }
+
+    #[sinex_test]
+    async fn disclosure_contexts_cover_operator_destinations() -> TestResult<()> {
+        let contexts = [
+            DisclosureContext::View,
+            DisclosureContext::Export,
+            DisclosureContext::Log,
+            DisclosureContext::Completion,
+            DisclosureContext::Dlq,
+            DisclosureContext::Telemetry,
+        ];
+        let names = contexts
+            .into_iter()
+            .map(DisclosureContext::as_str)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec!["view", "export", "log", "completion", "dlq", "telemetry"]
+        );
+        Ok(())
     }
 
     async fn insert_global_rule(
