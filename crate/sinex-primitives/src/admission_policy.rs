@@ -95,6 +95,8 @@ inventory::submit! {
             crate::event_contracts::SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
             crate::event_contracts::SHELL_KITTY_COMMAND_EXECUTED_CONTRACT_ID,
             crate::event_contracts::BROWSER_PAGE_VISITED_CONTRACT_ID,
+            crate::event_contracts::EMAIL_MESSAGE_RECEIVED_CONTRACT_ID,
+            crate::event_contracts::EMAIL_MESSAGE_SENT_CONTRACT_ID,
         ],
         schema_validation: SchemaValidationBehavior::AllowPayloadInventoryLookup,
         occurrence: OccurrenceAdmissionBehavior::AllowSourceContractIdentity,

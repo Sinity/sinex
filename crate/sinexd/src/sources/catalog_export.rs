@@ -33,6 +33,13 @@ const CATALOG_SCHEMA_VERSION: u32 = 2;
 struct CatalogEntry<'a> {
     contract: &'a SourceContract,
     binding: Option<&'a SourceRuntimeBinding>,
+    /// Full binding projection for package-completeness/reporting consumers.
+    ///
+    /// `binding` remains the deployment default consumed by the Nix module,
+    /// which keys the catalog by unique contract id. Multi-binding packages use
+    /// this list so the generated catalog still represents each declared mode.
+    #[serde(skip_serializing_if = "skip_binding_projection")]
+    runtime_bindings: Vec<&'a SourceRuntimeBinding>,
     /// `binding.resource_profile.limits()` lifted into the artifact so Nix does
     /// not need to re-encode the profile→limits mapping.
     resource_limits: Option<ResourceLimits>,
@@ -48,6 +55,10 @@ struct SourceCatalog<'a> {
     entries: Vec<CatalogEntry<'a>>,
 }
 
+fn skip_binding_projection(bindings: &[&SourceRuntimeBinding]) -> bool {
+    bindings.len() <= 1
+}
+
 /// Build the catalog from the link-time inventory, joined by `source_id` and
 /// ordered by contract id for deterministic output.
 fn build_catalog() -> SourceCatalog<'static> {
@@ -59,13 +70,21 @@ fn build_catalog() -> SourceCatalog<'static> {
     let entries = contracts
         .into_iter()
         .map(|contract| {
-            let binding = bindings
+            let mut runtime_bindings = bindings
                 .iter()
                 .copied()
-                .find(|b| b.source_id == contract.id);
+                .filter(|b| b.source_id == contract.id)
+                .collect::<Vec<_>>();
+            runtime_bindings.sort_by(|a, b| a.subject.as_str().cmp(b.subject.as_str()));
+            let binding = runtime_bindings
+                .iter()
+                .copied()
+                .find(|binding| !binding.proposed)
+                .or_else(|| runtime_bindings.first().copied());
             CatalogEntry {
                 contract,
                 binding,
+                runtime_bindings,
                 resource_limits: binding.map(|b| b.resource_profile.limits()),
                 resource_budget: binding.map(|b| b.resource_budget()),
             }

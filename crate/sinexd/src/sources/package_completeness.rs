@@ -865,16 +865,24 @@ fn catalog_has_mode(catalog: &Value, contract_id: &str, subject: Option<&str>) -
                 return false;
             }
             match subject {
-                Some(subject) => {
-                    entry
-                        .get("binding")
-                        .and_then(|binding| binding.get("subject"))
-                        .and_then(Value::as_str)
-                        == Some(subject)
-                }
+                Some(subject) => catalog_entry_has_subject(entry, subject),
                 None => true,
             }
         })
+}
+
+fn catalog_entry_has_subject(entry: &Value, subject: &str) -> bool {
+    entry
+        .get("runtime_bindings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|binding| binding.get("subject").and_then(Value::as_str) == Some(subject))
+        || entry
+            .get("binding")
+            .and_then(|binding| binding.get("subject"))
+            .and_then(Value::as_str)
+            == Some(subject)
 }
 
 fn manual_reason(

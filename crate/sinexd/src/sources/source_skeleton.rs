@@ -101,7 +101,10 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
     writeln!(out, "    pub struct {type_name}SourceMeta;")
         .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out).map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(out, "    // Contract references observed by the #1792 gate:")
+    writeln!(
+        out,
+        "    // Contract references observed by the #1792 gate:"
+    )
     .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(
         out,
@@ -137,15 +140,14 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
     )
     .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out).map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(out, "    // Blocking requirements from the package-completeness row:")
+    writeln!(
+        out,
+        "    // Blocking requirements from the package-completeness row:"
+    )
     .map_err(|_| SourceSkeletonError::Render)?;
     for requirement in blocking_requirements(&mode.requirements) {
-        writeln!(
-            out,
-            "    // - {}: {}",
-            requirement.id, requirement.detail
-        )
-        .map_err(|_| SourceSkeletonError::Render)?;
+        writeln!(out, "    // - {}: {}", requirement.id, requirement.detail)
+            .map_err(|_| SourceSkeletonError::Render)?;
     }
     if !mode.caveats.is_empty() {
         writeln!(out).map_err(|_| SourceSkeletonError::Render)?;
@@ -188,7 +190,9 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
 fn blocking_requirements(
     requirements: &[RequirementDiagnostic],
 ) -> impl Iterator<Item = &RequirementDiagnostic> {
-    requirements.iter().filter(|requirement| requirement.blocking)
+    requirements
+        .iter()
+        .filter(|requirement| requirement.blocking)
 }
 
 fn comma_list(values: &[String]) -> String {
