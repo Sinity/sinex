@@ -103,7 +103,8 @@ use sinex_primitives::rpc::{
     runtime::{
         RuntimeDrainRequest, RuntimeHealthRequest, RuntimeHealthResponse, RuntimeListActiveRequest,
         RuntimeListActiveResponse, RuntimeListRequest, RuntimeListResponse, RuntimeResumeRequest,
-        RuntimeSetHorizonRequest,
+        RuntimeResumeResponse, RuntimeSetHorizonRequest, RuntimeSetHorizonResponse,
+        RuntimeDrainResponse,
     },
     semantic::{
         SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
@@ -684,34 +685,39 @@ impl GatewayClient {
     }
 
     /// Drain a runtime module for maintenance
-    pub async fn drain_runtime(&self, module_name: &str, reason: Option<&str>) -> Result<()> {
+    pub async fn drain_runtime(
+        &self,
+        module_name: &str,
+        reason: Option<&str>,
+    ) -> Result<RuntimeDrainResponse> {
         let req = RuntimeDrainRequest {
             module_name: module_name.into(),
             reason: reason.map(String::from),
         };
-        self.call_typed(RUNTIME_DRAIN_METHOD, &req).await?;
-        Ok(())
+        self.call_typed(RUNTIME_DRAIN_METHOD, &req).await
     }
 
     /// Resume a drained runtime module
-    pub async fn resume_runtime(&self, module_name: &str) -> Result<()> {
+    pub async fn resume_runtime(&self, module_name: &str) -> Result<RuntimeResumeResponse> {
         let req = RuntimeResumeRequest {
             module_name: module_name.into(),
         };
-        self.call_typed(RUNTIME_RESUME_METHOD, &req).await?;
-        Ok(())
+        self.call_typed(RUNTIME_RESUME_METHOD, &req).await
     }
 
     /// Set runtime module horizon (cutoff time for event processing)
-    pub async fn set_runtime_horizon(&self, module_name: &str, horizon: &str) -> Result<()> {
+    pub async fn set_runtime_horizon(
+        &self,
+        module_name: &str,
+        horizon: &str,
+    ) -> Result<RuntimeSetHorizonResponse> {
         let horizon_ts = parse_time_input(horizon)?;
 
         let req = RuntimeSetHorizonRequest {
             module_name: module_name.into(),
             horizon: horizon_ts,
         };
-        self.call_typed(RUNTIME_SET_HORIZON_METHOD, &req).await?;
-        Ok(())
+        self.call_typed(RUNTIME_SET_HORIZON_METHOD, &req).await
     }
 
     // ==================== Replay Commands ====================

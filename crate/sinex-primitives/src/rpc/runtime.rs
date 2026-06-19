@@ -187,6 +187,7 @@ pub struct RuntimeDrainRequest {
 pub struct RuntimeDrainResponse {
     pub status: OperationStatus,
     pub module_name: ModuleName,
+    pub operation_id: String,
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -204,6 +205,7 @@ pub struct RuntimeResumeRequest {
 pub struct RuntimeResumeResponse {
     pub status: OperationStatus,
     pub module_name: ModuleName,
+    pub operation_id: String,
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -224,4 +226,5 @@ pub struct RuntimeSetHorizonResponse {
     pub status: OperationStatus,
     pub module_name: ModuleName,
     pub horizon: Timestamp,
+    pub operation_id: String,
 }

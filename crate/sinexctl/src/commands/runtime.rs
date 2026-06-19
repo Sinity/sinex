@@ -166,28 +166,31 @@ impl RuntimeCommands {
                 CommandOutput::single(response, format_runtime_status_table).display(&format)?;
             }
             Self::Drain { module, reason } => {
-                with_spinner_result(
+                let response = with_spinner_result(
                     format!("Draining runtime module {module}..."),
                     format!("Runtime module {module} drained"),
                     client.drain_runtime(module, reason.as_deref()),
                 )
                 .await?;
+                println!("Operation ID: {}", response.operation_id);
             }
             Self::Resume { module } => {
-                with_spinner_result(
+                let response = with_spinner_result(
                     format!("Resuming runtime module {module}..."),
                     format!("Runtime module {module} resumed"),
                     client.resume_runtime(module),
                 )
                 .await?;
+                println!("Operation ID: {}", response.operation_id);
             }
             Self::SetHorizon { module, horizon } => {
-                with_spinner_result(
+                let response = with_spinner_result(
                     format!("Setting horizon for {module}..."),
                     format!("Runtime module {module} horizon set to {horizon}"),
                     client.set_runtime_horizon(module, horizon),
                 )
                 .await?;
+                println!("Operation ID: {}", response.operation_id);
             }
         }
         Ok(())
