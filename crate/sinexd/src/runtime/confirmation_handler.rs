@@ -9,10 +9,14 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::constants::buffers::DEFAULT_CONFIRMATION_BUFFER_CAPACITY;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::builder::EventId;
+use sinex_primitives::units::Bytes;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use tokio::sync::RwLock;
+
+const DEFAULT_CONFIRMATION_BUFFER_PENDING_BYTES: Bytes = Bytes::from_mebibytes(512);
+const CONFIRMATION_BUFFER_WARNING_FILL_PCT: usize = 80;
 
 /// Processing model for automata
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,8 +54,36 @@ pub struct ConfirmationBufferSnapshot {
     pub timed_out_retained_count: usize,
     pub rejected_count: u64,
     pub late_confirmation_count: u64,
+    pub retained_payload_bytes: usize,
+    pub max_payload_bytes: usize,
     pub approximate_payload_bytes: usize,
     pub approximate_payload_bytes_by_kind: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmationBufferPressureLevel {
+    Nominal,
+    Warning,
+    Critical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmationBufferRejectionReason {
+    EventCapacity,
+    PayloadBytes,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmationBufferInsertDecision {
+    pub accepted: bool,
+    pub rejection_reason: Option<ConfirmationBufferRejectionReason>,
+    pub pressure_level: ConfirmationBufferPressureLevel,
+    pub pending_count: usize,
+    pub max_capacity: usize,
+    pub retained_payload_bytes: usize,
+    pub max_payload_bytes: usize,
+    pub attempted_payload_bytes: usize,
+    pub projected_payload_bytes: usize,
 }
 
 static CONFIRMATION_BUFFER_REGISTRY: OnceLock<Mutex<Vec<Weak<ConfirmationBuffer>>>> =
@@ -173,6 +205,11 @@ pub struct ConfirmationBuffer {
     grace_period: std::time::Duration,
     /// Maximum number of pending events (prevents unbounded memory growth)
     max_capacity: usize,
+    /// Maximum retained provisional payload bytes. This prevents a small number
+    /// of large provisional events from bypassing the event-count budget.
+    max_payload_bytes: usize,
+    /// Retained provisional payload bytes across pending entries.
+    retained_payload_bytes: AtomicU64,
     /// Counter for rejected events due to capacity limits
     rejected_count: AtomicU64,
     /// Counter for confirmations accepted after timeout while still inside grace.
@@ -196,6 +233,21 @@ impl ConfirmationBuffer {
         max_capacity: usize,
         grace_period: std::time::Duration,
     ) -> Self {
+        Self::with_capacity_grace_and_payload_budget(
+            timeout,
+            max_capacity,
+            grace_period,
+            DEFAULT_CONFIRMATION_BUFFER_PENDING_BYTES.as_usize(),
+        )
+    }
+
+    #[must_use]
+    pub fn with_capacity_grace_and_payload_budget(
+        timeout: std::time::Duration,
+        max_capacity: usize,
+        grace_period: std::time::Duration,
+        max_payload_bytes: usize,
+    ) -> Self {
         Self {
             pending: Arc::new(RwLock::new(HashMap::with_capacity(
                 max_capacity.min(1000), // Pre-allocate reasonably
@@ -204,6 +256,8 @@ impl ConfirmationBuffer {
             timeout,
             grace_period,
             max_capacity,
+            max_payload_bytes,
+            retained_payload_bytes: AtomicU64::new(0),
             rejected_count: AtomicU64::new(0),
             late_confirmation_count: AtomicU64::new(0),
         }
@@ -220,6 +274,16 @@ impl ConfirmationBuffer {
     /// dispatch the confirmed handler synchronously when it returns true.
     #[tracing::instrument(skip(self, event), fields(event_id = %event.event_id, buffer_size))]
     pub async fn add_provisional(&self, event: ProvisionalEvent) -> bool {
+        self.add_provisional_with_pressure(event).await.accepted
+    }
+
+    /// Add a provisional event and return the resource-pressure decision that
+    /// admitted or rejected it.
+    #[tracing::instrument(skip(self, event), fields(event_id = %event.event_id, buffer_size))]
+    pub async fn add_provisional_with_pressure(
+        &self,
+        event: ProvisionalEvent,
+    ) -> ConfirmationBufferInsertDecision {
         let payload_bytes = serde_json::to_vec(&event.payload).map_or(0, |bytes| bytes.len());
         let acquire_start = std::time::Instant::now();
         let mut pending = self.pending.write().await;
@@ -228,7 +292,25 @@ impl ConfirmationBuffer {
             tracing::warn!(acquire_ms, "Slow lock acquisition in add_provisional");
         }
 
-        if pending.len() >= self.max_capacity {
+        let existing_payload_bytes = pending
+            .get(&event.event_id)
+            .map_or(0, |entry| entry.payload_bytes);
+        let existing_timed_out_at = pending
+            .get(&event.event_id)
+            .and_then(|entry| entry.timed_out_at);
+        let pending_count = pending.len() + usize::from(!pending.contains_key(&event.event_id));
+        let retained_payload_bytes = self.retained_payload_bytes();
+        let projected_payload_bytes = retained_payload_bytes
+            .saturating_sub(existing_payload_bytes)
+            .saturating_add(payload_bytes);
+        let decision = self.insert_decision(
+            pending_count,
+            retained_payload_bytes,
+            payload_bytes,
+            projected_payload_bytes,
+        );
+
+        if let Some(reason) = decision.rejection_reason {
             let rejected = self.rejected_count.fetch_add(1, Ordering::Relaxed);
 
             // Log periodically to avoid log spam
@@ -237,20 +319,30 @@ impl ConfirmationBuffer {
                     target: "sinex_metrics",
                     metric = "runtime.confirmation_buffer_rejections_total",
                     max_capacity = self.max_capacity,
+                    max_payload_bytes = self.max_payload_bytes,
+                    retained_payload_bytes,
+                    attempted_payload_bytes = payload_bytes,
+                    projected_payload_bytes,
+                    reason = ?reason,
                     rejected_total = rejected + 1,
                     event_id = %event.event_id,
-                    "ConfirmationBuffer at capacity - event rejected (memory protection)"
+                    "ConfirmationBuffer over budget - event rejected (memory protection)"
                 );
             }
-            return false;
+            return decision;
         }
 
         // Warn when approaching capacity
         let current_len = pending.len();
-        if current_len > 0 && current_len % 1000 == 0 && current_len > self.max_capacity * 8 / 10 {
+        if current_len > 0
+            && current_len % 1000 == 0
+            && decision.pressure_level != ConfirmationBufferPressureLevel::Nominal
+        {
             tracing::warn!(
                 current = current_len,
                 max = self.max_capacity,
+                retained_payload_bytes,
+                max_payload_bytes = self.max_payload_bytes,
                 "ConfirmationBuffer approaching capacity limit"
             );
         }
@@ -259,12 +351,13 @@ impl ConfirmationBuffer {
             event.event_id,
             PendingEntry {
                 event,
-                timed_out_at: None,
+                timed_out_at: existing_timed_out_at,
                 payload_bytes,
             },
         );
+        self.set_retained_payload_bytes(projected_payload_bytes);
         tracing::Span::current().record("buffer_size", pending.len());
-        true
+        decision
     }
 
     /// Retrieve and remove an event upon confirmation
@@ -277,6 +370,9 @@ impl ConfirmationBuffer {
             tracing::warn!(acquire_ms, "Slow lock acquisition in confirm");
         }
         let result = pending.remove(&event_id);
+        if let Some(entry) = &result {
+            self.subtract_retained_payload_bytes(entry.payload_bytes);
+        }
         if result
             .as_ref()
             .is_some_and(|entry| entry.timed_out_at.is_some())
@@ -352,6 +448,8 @@ impl ConfirmationBuffer {
             .into_iter()
             .filter_map(|id| pending.remove(&id))
             .collect();
+        let removed_payload_bytes = removed.iter().map(|entry| entry.payload_bytes).sum();
+        self.subtract_retained_payload_bytes(removed_payload_bytes);
         let pending_after_remove = pending.len();
         let confirmed: Vec<ProvisionalEvent> = removed
             .into_iter()
@@ -451,7 +549,12 @@ impl ConfirmationBuffer {
 
         expired_ids
             .into_iter()
-            .filter_map(|event_id| pending.remove(&event_id).map(|entry| entry.event))
+            .filter_map(|event_id| {
+                pending.remove(&event_id).map(|entry| {
+                    self.subtract_retained_payload_bytes(entry.payload_bytes);
+                    entry.event
+                })
+            })
             .collect()
     }
 
@@ -466,7 +569,12 @@ impl ConfirmationBuffer {
         }
         event_ids
             .iter()
-            .filter_map(|id| pending.remove(id).map(|entry| entry.event))
+            .filter_map(|id| {
+                pending.remove(id).map(|entry| {
+                    self.subtract_retained_payload_bytes(entry.payload_bytes);
+                    entry.event
+                })
+            })
             .collect()
     }
 
@@ -490,13 +598,24 @@ impl ConfirmationBuffer {
         self.late_confirmation_count.load(Ordering::Relaxed)
     }
 
+    /// Get retained payload bytes across pending provisional events.
+    pub fn retained_payload_bytes(&self) -> usize {
+        self.retained_payload_bytes.load(Ordering::Relaxed) as usize
+    }
+
     /// Get the maximum capacity
     pub fn max_capacity(&self) -> usize {
         self.max_capacity
     }
 
+    /// Get the maximum retained payload-byte budget.
+    pub fn max_payload_bytes(&self) -> usize {
+        self.max_payload_bytes
+    }
+
     /// Snapshot confirmation-buffer diagnostics without exposing retained events.
     pub async fn snapshot(&self) -> ConfirmationBufferSnapshot {
+        let retained_payload_bytes = self.retained_payload_bytes();
         let (pending_count, rows) = {
             let pending = self.pending.read().await;
             let rows = pending
@@ -530,9 +649,64 @@ impl ConfirmationBuffer {
             timed_out_retained_count,
             rejected_count: self.rejected_count(),
             late_confirmation_count: self.late_confirmation_count(),
+            retained_payload_bytes,
+            max_payload_bytes: self.max_payload_bytes,
             approximate_payload_bytes,
             approximate_payload_bytes_by_kind,
         }
+    }
+
+    fn insert_decision(
+        &self,
+        pending_count: usize,
+        retained_payload_bytes: usize,
+        attempted_payload_bytes: usize,
+        projected_payload_bytes: usize,
+    ) -> ConfirmationBufferInsertDecision {
+        let rejection_reason = if pending_count > self.max_capacity {
+            Some(ConfirmationBufferRejectionReason::EventCapacity)
+        } else if projected_payload_bytes > self.max_payload_bytes {
+            Some(ConfirmationBufferRejectionReason::PayloadBytes)
+        } else {
+            None
+        };
+        let pressure_level = if rejection_reason.is_some()
+            || pending_count == self.max_capacity
+            || projected_payload_bytes == self.max_payload_bytes
+        {
+            ConfirmationBufferPressureLevel::Critical
+        } else if pending_count >= warning_fill(self.max_capacity)
+            || projected_payload_bytes >= warning_fill(self.max_payload_bytes)
+        {
+            ConfirmationBufferPressureLevel::Warning
+        } else {
+            ConfirmationBufferPressureLevel::Nominal
+        };
+
+        ConfirmationBufferInsertDecision {
+            accepted: rejection_reason.is_none(),
+            rejection_reason,
+            pressure_level,
+            pending_count,
+            max_capacity: self.max_capacity,
+            retained_payload_bytes,
+            max_payload_bytes: self.max_payload_bytes,
+            attempted_payload_bytes,
+            projected_payload_bytes,
+        }
+    }
+
+    fn set_retained_payload_bytes(&self, retained_payload_bytes: usize) {
+        self.retained_payload_bytes
+            .store(retained_payload_bytes as u64, Ordering::Relaxed);
+    }
+
+    fn subtract_retained_payload_bytes(&self, payload_bytes: usize) {
+        self.retained_payload_bytes
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                Some(current.saturating_sub(payload_bytes as u64))
+            })
+            .ok();
     }
 
     fn record_late_confirmation(
@@ -564,6 +738,16 @@ impl ConfirmationBuffer {
     }
 }
 
+fn warning_fill(limit: usize) -> usize {
+    if limit == 0 {
+        return usize::MAX;
+    }
+    limit
+        .saturating_mul(CONFIRMATION_BUFFER_WARNING_FILL_PCT)
+        .saturating_add(99)
+        / 100
+}
+
 fn should_log_late_confirmation_aggregate(late_total: u64) -> bool {
     late_total == 1 || late_total.is_power_of_two() || late_total.is_multiple_of(10_000)
 }
@@ -584,7 +768,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use tracing_subscriber::fmt::MakeWriter;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[derive(Clone, Default)]
     struct CapturedLogs {
@@ -661,6 +845,162 @@ mod tests {
         }
     }
 
+    fn payload_bytes(payload: &Value) -> TestResult<usize> {
+        Ok(serde_json::to_vec(payload)?.len())
+    }
+
+    #[sinex_test]
+    async fn payload_budget_admits_at_limit_rejects_over_limit_and_recovers() -> TestResult<()> {
+        let now = Timestamp::now();
+        let at_limit_payload = json!({ "MESSAGE": "fits exactly at the byte budget" });
+        let over_limit_payload = json!({ "MESSAGE": "this would exceed the retained byte budget" });
+        let max_payload_bytes = payload_bytes(&at_limit_payload)?;
+        let at_limit = provisional(
+            "system.journald",
+            "journald.entry.written",
+            now,
+            at_limit_payload,
+        );
+        let over_limit = provisional(
+            "system.journald",
+            "journald.entry.written",
+            now,
+            over_limit_payload,
+        );
+        let buffer = ConfirmationBuffer::with_capacity_grace_and_payload_budget(
+            Duration::from_secs(60),
+            16,
+            Duration::from_secs(60),
+            max_payload_bytes,
+        );
+
+        let admitted = buffer.add_provisional_with_pressure(at_limit.clone()).await;
+        assert!(admitted.accepted);
+        assert_eq!(admitted.rejection_reason, None);
+        assert_eq!(
+            admitted.pressure_level,
+            ConfirmationBufferPressureLevel::Critical
+        );
+        assert_eq!(admitted.projected_payload_bytes, max_payload_bytes);
+        assert_eq!(buffer.retained_payload_bytes(), max_payload_bytes);
+
+        let rejected = buffer
+            .add_provisional_with_pressure(over_limit.clone())
+            .await;
+        assert!(!rejected.accepted);
+        assert_eq!(
+            rejected.rejection_reason,
+            Some(ConfirmationBufferRejectionReason::PayloadBytes)
+        );
+        assert_eq!(
+            rejected.pressure_level,
+            ConfirmationBufferPressureLevel::Critical
+        );
+        assert_eq!(buffer.retained_payload_bytes(), max_payload_bytes);
+        assert_eq!(buffer.rejected_count(), 1);
+
+        let confirmed = buffer.confirm(at_limit.event_id).await.ok_or_else(|| {
+            color_eyre::eyre::eyre!("expected at-limit event to remain confirmable")
+        })?;
+        assert_eq!(confirmed.event_id, at_limit.event_id);
+        assert_eq!(buffer.retained_payload_bytes(), 0);
+
+        let recovered = buffer.add_provisional_with_pressure(at_limit).await;
+        assert!(recovered.accepted);
+        assert_eq!(recovered.rejection_reason, None);
+        assert_eq!(buffer.retained_payload_bytes(), max_payload_bytes);
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn payload_budget_accounts_for_same_event_replacement() -> TestResult<()> {
+        let now = Timestamp::now();
+        let initial_payload = json!({ "MESSAGE": "small" });
+        let replacement_payload = json!({ "MESSAGE": "larger replacement payload" });
+        let oversized_payload = json!({ "MESSAGE": "oversized replacement payload".repeat(16) });
+        let max_payload_bytes = payload_bytes(&replacement_payload)?;
+        let initial = provisional(
+            "system.journald",
+            "journald.entry.written",
+            now,
+            initial_payload,
+        );
+        let replacement = ProvisionalEvent {
+            payload: replacement_payload,
+            ..initial.clone()
+        };
+        let oversized = ProvisionalEvent {
+            payload: oversized_payload,
+            ..initial.clone()
+        };
+        let buffer = ConfirmationBuffer::with_capacity_grace_and_payload_budget(
+            Duration::from_secs(60),
+            1,
+            Duration::from_secs(60),
+            max_payload_bytes,
+        );
+
+        assert!(
+            buffer
+                .add_provisional_with_pressure(initial.clone())
+                .await
+                .accepted
+        );
+        let replaced = buffer.add_provisional_with_pressure(replacement).await;
+        assert!(replaced.accepted);
+        assert_eq!(replaced.pending_count, 1);
+        assert_eq!(replaced.projected_payload_bytes, max_payload_bytes);
+        assert_eq!(buffer.len().await, 1);
+        assert_eq!(buffer.retained_payload_bytes(), max_payload_bytes);
+
+        let rejected = buffer.add_provisional_with_pressure(oversized).await;
+        assert!(!rejected.accepted);
+        assert_eq!(
+            rejected.rejection_reason,
+            Some(ConfirmationBufferRejectionReason::PayloadBytes)
+        );
+        assert_eq!(buffer.len().await, 1);
+        assert_eq!(buffer.retained_payload_bytes(), max_payload_bytes);
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn same_event_replacement_preserves_timeout_grace_state() -> TestResult<()> {
+        let old = Timestamp::from_unix_timestamp(1).expect("timestamp in range");
+        let initial = provisional(
+            "system.journald",
+            "journald.entry.written",
+            old,
+            json!({ "MESSAGE": "original" }),
+        );
+        let replacement = ProvisionalEvent {
+            payload: json!({ "MESSAGE": "redelivered replacement" }),
+            ..initial.clone()
+        };
+        let buffer = ConfirmationBuffer::with_capacity_and_grace(
+            Duration::from_millis(0),
+            1,
+            Duration::from_millis(0),
+        );
+
+        assert!(buffer.add_provisional(initial).await);
+        assert_eq!(buffer.check_timeouts().await, vec![replacement.event_id]);
+
+        let replaced = buffer.add_provisional_with_pressure(replacement).await;
+        assert!(replaced.accepted);
+        let retained = buffer.snapshot().await;
+        assert_eq!(retained.pending_count, 1);
+        assert_eq!(retained.timed_out_retained_count, 1);
+
+        let purged = buffer.purge_expired().await;
+        assert_eq!(purged.len(), 1);
+        assert_eq!(buffer.len().await, 0);
+
+        Ok(())
+    }
+
     #[sinex_test]
     async fn snapshot_reports_pending_timeout_rejections_and_payload_bytes() -> TestResult<()> {
         let buffer = ConfirmationBuffer::with_capacity_and_grace(
@@ -700,6 +1040,11 @@ mod tests {
         assert_eq!(snapshot.rejected_count, 1);
         assert_eq!(snapshot.late_confirmation_count, 0);
         assert!(snapshot.approximate_payload_bytes > 0);
+        assert_eq!(
+            snapshot.retained_payload_bytes,
+            snapshot.approximate_payload_bytes
+        );
+        assert_eq!(snapshot.max_payload_bytes, buffer.max_payload_bytes());
         assert!(
             snapshot
                 .approximate_payload_bytes_by_kind
@@ -812,6 +1157,11 @@ mod tests {
         assert_eq!(retained.rejected_count, OVERFLOW_ATTEMPTS as u64);
         assert!(retained.approximate_payload_bytes > 0);
         assert_eq!(
+            retained.retained_payload_bytes,
+            retained.approximate_payload_bytes
+        );
+        assert_eq!(retained.max_payload_bytes, buffer.max_payload_bytes());
+        assert_eq!(
             retained
                 .approximate_payload_bytes_by_kind
                 .get("system.journald:journald.entry.written"),
@@ -823,6 +1173,8 @@ mod tests {
         let drained = buffer.snapshot().await;
         assert_eq!(drained.pending_count, 0);
         assert_eq!(drained.timed_out_retained_count, 0);
+        assert_eq!(drained.retained_payload_bytes, 0);
+        assert_eq!(drained.max_payload_bytes, buffer.max_payload_bytes());
         assert_eq!(drained.approximate_payload_bytes, 0);
         assert!(drained.approximate_payload_bytes_by_kind.is_empty());
         assert_eq!(drained.rejected_count, OVERFLOW_ATTEMPTS as u64);
