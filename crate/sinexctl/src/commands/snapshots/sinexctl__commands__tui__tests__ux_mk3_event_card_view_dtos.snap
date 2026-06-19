@@ -1,5 +1,6 @@
 ---
 source: crate/sinexctl/src/commands/tui.rs
+assertion_line: 2475
 expression: cards
 ---
 [
@@ -22,6 +23,7 @@ expression: cards
       }
     },
     "event_type": "ux.fixture",
+    "origin_kind": "derived",
     "summary": "ux.event.full_provenance",
     "payload_preview": {
       "fixture": "ux.event.full_provenance",
@@ -42,6 +44,15 @@ expression: cards
       {
         "kind": "replay_run",
         "id": "replay-fixture"
+      }
+    ],
+    "trace_links": [
+      {
+        "relation": "operation",
+        "target": {
+          "kind": "replay_run",
+          "id": "replay-fixture"
+        }
       }
     ],
     "projection_badges": [
@@ -85,6 +96,7 @@ expression: cards
       }
     },
     "event_type": "ux.fixture",
+    "origin_kind": "derived",
     "summary": "ux.event.redacted",
     "payload_preview": {
       "fixture": "ux.event.redacted",
@@ -111,6 +123,15 @@ expression: cards
       {
         "kind": "replay_run",
         "id": "replay-fixture"
+      }
+    ],
+    "trace_links": [
+      {
+        "relation": "operation",
+        "target": {
+          "kind": "replay_run",
+          "id": "replay-fixture"
+        }
       }
     ],
     "projection_badges": [
@@ -154,6 +175,7 @@ expression: cards
       }
     },
     "event_type": "ux.fixture",
+    "origin_kind": "derived",
     "summary": "ux.event.missing_material_anchor",
     "payload_preview": {
       "fixture": "ux.event.missing_material_anchor",
@@ -173,6 +195,15 @@ expression: cards
       {
         "kind": "replay_run",
         "id": "replay-fixture"
+      }
+    ],
+    "trace_links": [
+      {
+        "relation": "operation",
+        "target": {
+          "kind": "replay_run",
+          "id": "replay-fixture"
+        }
       }
     ],
     "projection_badges": [

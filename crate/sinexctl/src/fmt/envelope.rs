@@ -112,6 +112,8 @@ mod tests {
                 schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
                 count,
                 cards: vec![],
+                next_cursor: None,
+                total_estimate: None,
             },
         )
     }
