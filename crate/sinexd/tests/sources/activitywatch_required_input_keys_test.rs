@@ -1,18 +1,21 @@
 //! Required input-key declarations for the `ActivityWatch` `SQLite` parser.
 
-use sinexd::runtime::parser::{MaterialParser, SourceRecordFingerprint};
-use sinex_primitives::{
-    parser::SourceId,
-    rpc::sources::{CaveatSeverity, caveat_codes},
+#[path = "required_input_keys_support.rs"]
+mod required_input_keys_support;
+
+use required_input_keys_support::{
+    assert_required_input_keys, assert_required_key_blocks_readiness,
 };
+use sinex_primitives::parser::SourceId;
+use sinexd::runtime::parser::SourceRecordFingerprint;
 use sinexd::sources::source_contracts::desktop::activitywatch::ActivityWatchParser;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn activitywatch_parser_declares_required_sqlite_keys() -> TestResult<()> {
-    assert_eq!(
-        ActivityWatchParser.required_input_keys(),
-        vec![
+    assert_required_input_keys(
+        ActivityWatchParser,
+        &[
             "buckets.id",
             "buckets.name",
             "events.bucketrow",
@@ -20,7 +23,7 @@ async fn activitywatch_parser_declares_required_sqlite_keys() -> TestResult<()> 
             "events.endtime",
             "events.id",
             "events.starttime",
-        ]
+        ],
     );
     Ok(())
 }
@@ -58,20 +61,12 @@ async fn activitywatch_required_join_column_removal_blocks_readiness() -> TestRe
 
     let before = SourceRecordFingerprint::from_sqlite_connection(&before)?;
     let after = SourceRecordFingerprint::from_sqlite_connection(&after)?;
-    let mut drift = SourceRecordFingerprint::diff(
+    let drift = SourceRecordFingerprint::diff(
         SourceId::from_static("desktop.activitywatch"),
         &before,
         &after,
     )
     .expect("removing buckets.name should produce SQLite schema drift");
-    drift.required_input_keys = ActivityWatchParser.required_input_keys();
-
-    let caveats = drift.readiness_caveats();
-
-    assert!(caveats.iter().any(|caveat| {
-        caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
-            && caveat.severity == CaveatSeverity::Blocking
-            && caveat.message.contains("buckets.name")
-    }));
+    assert_required_key_blocks_readiness(drift, ActivityWatchParser, "buckets.name");
     Ok(())
 }

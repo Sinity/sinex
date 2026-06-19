@@ -256,16 +256,24 @@ pub(crate) fn generate_material_parser(
     let default_privacy_context_token = privacy_context_token(&attrs.default_privacy_context)?;
     let input_format_token = input_format_token(&attrs.input_shape)?;
 
+    let mut sqlite_required_key_table: Option<String> = None;
+
     // Optional baseline adapter config override. Parsed as JSON at runtime
     // (LazyLock-free; the trait method returns a fresh value each call).
     let baseline_adapter_config_impl = if let Some(json) = &attrs.baseline_adapter_config {
         // Validate the literal is parseable JSON at macro-expansion time.
-        serde_json::from_str::<serde_json::Value>(json).map_err(|e| {
+        let config = serde_json::from_str::<serde_json::Value>(json).map_err(|e| {
             Error::new(
                 proc_macro2::Span::call_site(),
                 format!("baseline_adapter_config is not valid JSON: {e}"),
             )
         })?;
+        if attrs.input_shape == "sqlite_row" {
+            sqlite_required_key_table = config
+                .get("table")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned);
+        }
         quote! {
             fn baseline_adapter_config() -> ::serde_json::Value {
                 ::serde_json::from_str(#json)
@@ -274,6 +282,24 @@ pub(crate) fn generate_material_parser(
         }
     } else {
         quote! {}
+    };
+    let required_input_keys_impl = if let Some(table) = sqlite_required_key_table {
+        quote! {
+            fn required_input_keys(&self) -> Vec<String> {
+                let table = #table;
+                Self::parser_spec()
+                    .required_input_keys()
+                    .into_iter()
+                    .map(|key| format!("{table}.{key}"))
+                    .collect()
+            }
+        }
+    } else {
+        quote! {
+            fn required_input_keys(&self) -> Vec<String> {
+                Self::parser_spec().required_input_keys()
+            }
+        }
     };
 
     // Determine whether any field uses carry — if so, use StatefulDeclarativeParser.
@@ -407,9 +433,7 @@ pub(crate) fn generate_material_parser(
                     }
                 }
 
-                fn required_input_keys(&self) -> Vec<String> {
-                    Self::parser_spec().required_input_keys()
-                }
+                #required_input_keys_impl
 
                 fn field_privacy_metadata(&self) -> Vec<_sdk_parser::ParserFieldPrivacyMetadata> {
                     collect_field_privacy_metadata(Self::parser_spec())
