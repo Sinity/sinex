@@ -7,6 +7,7 @@ use sinex_primitives::rpc::system::{
     ComponentHealthReport, ComponentsHealth, ReplayControlHealth, SystemHealthRequest,
     SystemHealthResponse, SystemPingRequest, SystemVersionRequest,
 };
+use std::collections::BTreeMap;
 
 pub async fn handle_system_ping(
     _services: &ServiceContainer,
@@ -60,6 +61,7 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
                 connected: db_ok,
                 latency_ms: db_latency_ms.map(|value| value as f64),
                 detail: (!db_detail.trim().is_empty()).then_some(db_detail),
+                attributes: BTreeMap::new(),
             },
             nats: system_component_health(
                 nats.connected,
@@ -71,12 +73,17 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
                 connected: raw_ingest_dlq.connected,
                 latency_ms: None,
                 detail: Some(raw_ingest_dlq.detail),
+                attributes: BTreeMap::new(),
             },
             confirmation_buffer: ComponentHealthReport {
                 status: confirmation_buffer.status,
                 connected: confirmation_buffer.connected,
                 latency_ms: None,
                 detail: Some(confirmation_buffer.detail),
+                attributes: BTreeMap::from([(
+                    "memory_owner".to_string(),
+                    confirmation_buffer.memory_owner.as_str().to_string(),
+                )]),
             },
             replay_control: ReplayControlHealth {
                 status: if replay.connected {
@@ -99,6 +106,7 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
                 connected: sse_confirmation.running,
                 latency_ms: None,
                 detail: Some(sse_confirmation.detail),
+                attributes: BTreeMap::new(),
             },
         },
     }
@@ -118,6 +126,7 @@ fn system_component_health(
         connected,
         latency_ms,
         detail,
+        attributes: BTreeMap::new(),
     }
 }
 
@@ -174,6 +183,8 @@ mod tests {
             confirmation_buffer: crate::api::service_container::ConfirmationBufferHealth {
                 status: HealthStatus::Degraded,
                 connected: true,
+                memory_owner:
+                    crate::api::service_container::ConfirmationBufferMemoryOwner::TimedOutGracePayloads,
                 observed_buffers: 1,
                 pending_count: 3,
                 timed_out_retained_count: 1,
@@ -186,7 +197,7 @@ mod tests {
                     "system.journald:journald.entry.written".to_string(),
                     4096,
                 )]),
-                detail: "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072"
+                detail: "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072, memory_owner=timed_out_grace_payloads"
                     .to_string(),
             },
             replay: ReplayControlStatus {
@@ -229,8 +240,17 @@ mod tests {
         assert_eq!(
             response.components.confirmation_buffer.detail.as_deref(),
             Some(
-                "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072"
+                "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072, memory_owner=timed_out_grace_payloads"
             )
+        );
+        assert_eq!(
+            response
+                .components
+                .confirmation_buffer
+                .attributes
+                .get("memory_owner")
+                .map(String::as_str),
+            Some("timed_out_grace_payloads")
         );
         assert!(response.components.replay_control.enabled);
         assert_eq!(
