@@ -1,10 +1,13 @@
 //! Required input-key declarations for conversation export parsers.
 
-use sinexd::runtime::parser::{MaterialParser, SourceRecordFingerprint};
-use sinex_primitives::{
-    parser::SourceId,
-    rpc::sources::{CaveatSeverity, caveat_codes},
+#[path = "required_input_keys_support.rs"]
+mod required_input_keys_support;
+
+use required_input_keys_support::{
+    assert_required_input_keys, assert_required_key_blocks_readiness,
 };
+use sinex_primitives::parser::SourceId;
+use sinexd::runtime::parser::SourceRecordFingerprint;
 use sinexd::sources::source_contracts::{
     ai_session::{ChatGptSessionParser, ClaudeSessionParser},
     messaging::MessengerThreadParser,
@@ -13,18 +16,12 @@ use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn conversation_parsers_declare_required_input_keys() -> TestResult<()> {
-    assert_eq!(
-        ClaudeSessionParser.required_input_keys(),
-        vec!["/[]/uuid", "/[]/chat_messages"]
+    assert_required_input_keys(ClaudeSessionParser, &["/[]/uuid", "/[]/chat_messages"]);
+    assert_required_input_keys(
+        ChatGptSessionParser,
+        &["/[]/id", "/[]/current_node", "/[]/mapping"],
     );
-    assert_eq!(
-        ChatGptSessionParser.required_input_keys(),
-        vec!["/[]/id", "/[]/current_node", "/[]/mapping"]
-    );
-    assert_eq!(
-        MessengerThreadParser.required_input_keys(),
-        vec!["/messages"]
-    );
+    assert_required_input_keys(MessengerThreadParser, &["/messages"]);
     Ok(())
 }
 
@@ -43,20 +40,9 @@ async fn claude_required_conversation_field_removal_blocks_readiness() -> TestRe
             "chat_messages": []
         }
     ]));
-    let mut drift = SourceRecordFingerprint::diff(
-        SourceId::from_static("ai-session-claude"),
-        &before,
-        &after,
-    )
-    .expect("removing uuid should produce JSON array shape drift");
-    drift.required_input_keys = ClaudeSessionParser.required_input_keys();
-
-    let caveats = drift.readiness_caveats();
-
-    assert!(caveats.iter().any(|caveat| {
-        caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
-            && caveat.severity == CaveatSeverity::Blocking
-            && caveat.message.contains("/[]/uuid")
-    }));
+    let drift =
+        SourceRecordFingerprint::diff(SourceId::from_static("ai-session-claude"), &before, &after)
+            .expect("removing uuid should produce JSON array shape drift");
+    assert_required_key_blocks_readiness(drift, ClaudeSessionParser, "/[]/uuid");
     Ok(())
 }
