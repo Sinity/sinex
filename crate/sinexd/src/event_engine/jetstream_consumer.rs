@@ -109,6 +109,11 @@ fn signal_ready(ready_tx: Option<tokio::sync::oneshot::Sender<()>>, component: &
     }
 }
 
+fn disclosure_safe_fingerprint(value: &str) -> String {
+    let hash = blake3::hash(value.as_bytes()).to_hex();
+    format!("len={} blake3={}", value.len(), &hash[..16])
+}
+
 #[derive(Debug, Serialize)]
 struct DlqEntry {
     /// NATS Msg-Id header value (not a Sinex event `UUIDv7`).
@@ -2603,7 +2608,7 @@ impl JetStreamConsumer {
                 Ok(event_id) => event_id,
                 Err(err) => {
                     warn!(
-                        event_id = %retry.event_id,
+                        event_id_fingerprint = %disclosure_safe_fingerprint(&retry.event_id),
                         error = %err,
                         "Confirmation retry payload contained an invalid event id; acknowledging corrupt retry message"
                     );
@@ -3005,6 +3010,18 @@ mod tests {
         drop(rx);
 
         assert!(!signal_ready(Some(tx), "jetstream-consumer"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn disclosure_safe_fingerprint_omits_raw_confirmation_retry_id() -> TestResult<()> {
+        let fingerprint = disclosure_safe_fingerprint("terminal-secret-not-a-uuid");
+
+        assert!(fingerprint.contains("len=26"));
+        assert!(fingerprint.contains("blake3="));
+        assert!(!fingerprint.contains("terminal"));
+        assert!(!fingerprint.contains("secret"));
+        assert!(!fingerprint.contains("not-a-uuid"));
         Ok(())
     }
 

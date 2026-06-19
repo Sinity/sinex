@@ -784,7 +784,7 @@ mod tests {
             preview.caveats.iter().any(|caveat| caveat
                 .ref_
                 .as_ref()
-                .is_some_and(|ref_| ref_.id == "dlq-preview-secret")),
+                .is_some_and(|ref_| ref_.id == "db.dlq-preview-secret")),
             "DLQ redaction must name the operator-owned policy rule: {:?}",
             preview.caveats
         );
@@ -839,7 +839,7 @@ mod tests {
             preview.caveats.iter().any(|caveat| caveat
                 .ref_
                 .as_ref()
-                .is_some_and(|ref_| ref_.id == "dlq-preview-secret")),
+                .is_some_and(|ref_| ref_.id == "db.dlq-preview-secret")),
             "machine clients must see which policy owned the redaction: {:?}",
             preview.caveats
         );

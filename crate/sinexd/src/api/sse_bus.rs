@@ -525,10 +525,8 @@ impl SubscriptionBus {
             return Ok(None);
         }
         conf.event_id.parse().map(Some).map_err(|error| {
-            format!(
-                "failed to parse confirmation event_id '{}': {error}",
-                conf.event_id
-            )
+            let fingerprint = Self::payload_fingerprint(conf.event_id.as_bytes());
+            format!("failed to parse confirmation event_id ({fingerprint}): {error}")
         })
     }
 
@@ -742,6 +740,12 @@ mod tests {
         let error = SubscriptionBus::parse_confirmation(&serde_json::to_vec(&payload)?)
             .expect_err("invalid event_id should be reported");
         assert!(error.contains("failed to parse confirmation event_id"));
+        assert!(error.contains("len=10"));
+        assert!(error.contains("blake3="));
+        assert!(
+            !error.contains("not-a-uuid"),
+            "invalid confirmation ids are operator-supplied text and must not be copied into log-bound errors"
+        );
         Ok(())
     }
 
