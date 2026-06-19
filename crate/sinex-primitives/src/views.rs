@@ -17,6 +17,7 @@ use serde_json::json;
 
 pub const VIEW_ENVELOPE_SCHEMA_VERSION: &str = "sinex.view-envelope/v3";
 pub const CONTEXT_SUMMARY_SCHEMA_VERSION: &str = "sinex.context-summary/v1";
+pub const DESKTOP_CONTEXT_VIEW_SCHEMA_VERSION: &str = "sinex.desktop-context-view/v1";
 pub const EVENT_CARD_LIST_SCHEMA_VERSION: &str = "sinex.event-card-list/v3";
 pub const EVENT_ERROR_LIST_SCHEMA_VERSION: &str = "sinex.event-error-list/v1";
 pub const EVENT_QUERY_LIST_SCHEMA_VERSION: &str = "sinex.event-query-list/v1";
@@ -63,6 +64,131 @@ pub enum SinexObjectKind {
     Caveat,
     RpcMethod,
     Command,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopContextOutputKind {
+    CurrentView,
+    FocusSessionProjection,
+    ProjectContextProjection,
+    NotificationPressureProjection,
+    EvidenceWindowView,
+    ContextReportArtifact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopContextInputState {
+    Included,
+    Omitted,
+    Redacted,
+    Stale,
+    Missing,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DesktopContextInputEvidence {
+    pub family: String,
+    pub state: DesktopContextInputState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refs: Vec<SinexObjectRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<CaveatView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<ActionAvailability>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DesktopContextCandidateView {
+    pub label: String,
+    pub confidence: f32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_refs: Vec<SinexObjectRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_ref: Option<SinexObjectRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DesktopContextView {
+    pub schema_version: String,
+    pub output_kind: DesktopContextOutputKind,
+    pub derivation_ref: String,
+    pub output_id: String,
+    pub generated_at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_session_ref: Option<SinexObjectRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_window_ref: Option<SinexObjectRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<DesktopContextCandidateView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<DesktopContextInputEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<CaveatView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<ActionAvailability>,
+}
+
+impl DesktopContextView {
+    #[must_use]
+    pub fn current(
+        derivation_ref: impl Into<String>,
+        inputs: Vec<DesktopContextInputEvidence>,
+    ) -> Self {
+        Self {
+            schema_version: DESKTOP_CONTEXT_VIEW_SCHEMA_VERSION.to_string(),
+            output_kind: DesktopContextOutputKind::CurrentView,
+            derivation_ref: derivation_ref.into(),
+            output_id: "desktop.context.current_view".to_string(),
+            generated_at: Timestamp::now(),
+            focus_session_ref: None,
+            active_workspace: None,
+            active_window_ref: None,
+            candidates: Vec::new(),
+            inputs,
+            caveats: Vec::new(),
+            actions: vec![
+                ActionAvailability::read(
+                    "desktop.context.explain",
+                    "Explain",
+                    ActionAvailabilityState::Enabled,
+                )
+                .with_command_hint("sinexctl desktop context explain"),
+                ActionAvailability::read(
+                    "desktop.context.inspect",
+                    "Inspect",
+                    ActionAvailabilityState::Enabled,
+                )
+                .with_command_hint("sinexctl desktop context inspect"),
+            ],
+        }
+    }
+
+    #[must_use]
+    pub fn with_caveat(
+        mut self,
+        id: impl Into<String>,
+        message: impl Into<String>,
+        ref_: Option<SinexObjectRef>,
+    ) -> Self {
+        self.caveats.push(CaveatView {
+            id: id.into(),
+            message: message.into(),
+            ref_,
+        });
+        self
+    }
+
+    #[must_use]
+    pub fn into_envelope(self, source_surface: impl Into<String>) -> ViewEnvelope<Self> {
+        let mut envelope = ViewEnvelope::new(source_surface, self);
+        envelope.caveats = envelope.payload.caveats.clone();
+        envelope.actions = envelope.payload.actions.clone();
+        envelope
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2212,10 +2338,179 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn desktop_context_view_carries_evidence_caveats_and_actions() -> xtask::TestResult<()> {
+        let window_ref = SinexObjectRef::new(SinexObjectKind::Event, "event:window-focused")
+            .with_label("wm.hyprland · window.focused");
+        let browser_coverage_ref =
+            SinexObjectRef::new(SinexObjectKind::Projection, "source-coverage:browser.web")
+                .with_label("browser.web coverage");
+        let policy_ref = SinexObjectRef::new(
+            SinexObjectKind::Policy,
+            "disclosure-policy:desktop.context.view",
+        );
+
+        let view = DesktopContextView::current(
+            crate::DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID,
+            vec![
+                DesktopContextInputEvidence {
+                    family: "wm.hyprland".to_string(),
+                    state: DesktopContextInputState::Included,
+                    refs: vec![window_ref.clone()],
+                    caveats: Vec::new(),
+                    actions: Vec::new(),
+                },
+                DesktopContextInputEvidence {
+                    family: "browser.web".to_string(),
+                    state: DesktopContextInputState::Missing,
+                    refs: vec![browser_coverage_ref.clone()],
+                    caveats: vec![CaveatView {
+                        id: "input.browser.missing".to_string(),
+                        message: "browser context is unavailable for this view".to_string(),
+                        ref_: Some(browser_coverage_ref.clone()),
+                    }],
+                    actions: vec![
+                        ActionAvailability::read(
+                            "sources.browser.check",
+                            "Check Browser",
+                            ActionAvailabilityState::Enabled,
+                        )
+                        .with_command_hint("sinexctl sources status --family browser"),
+                    ],
+                },
+                DesktopContextInputEvidence {
+                    family: "terminal.activity".to_string(),
+                    state: DesktopContextInputState::Redacted,
+                    refs: vec![policy_ref.clone()],
+                    caveats: vec![CaveatView {
+                        id: "input.terminal.redacted".to_string(),
+                        message: "terminal command text is hidden by view disclosure policy"
+                            .to_string(),
+                        ref_: Some(policy_ref.clone()),
+                    }],
+                    actions: Vec::new(),
+                },
+            ],
+        )
+        .with_caveat(
+            "context.partial",
+            "desktop context is partial because one input family is unavailable",
+            Some(browser_coverage_ref),
+        );
+
+        let value = serde_json::to_value(view.into_envelope("sinexctl.desktop.context.current"))?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(value["source_surface"], "sinexctl.desktop.context.current");
+        assert_eq!(
+            value["payload"]["schema_version"],
+            DESKTOP_CONTEXT_VIEW_SCHEMA_VERSION
+        );
+        assert_eq!(value["payload"]["output_kind"], "current_view");
+        assert_eq!(
+            value["payload"]["derivation_ref"],
+            crate::DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID
+        );
+        assert_eq!(value["payload"]["inputs"][0]["state"], "included");
+        assert_eq!(value["payload"]["inputs"][1]["state"], "missing");
+        assert_eq!(value["payload"]["inputs"][2]["state"], "redacted");
+        assert_eq!(
+            value["payload"]["inputs"][1]["actions"][0]["command_hint"],
+            "sinexctl sources status --family browser"
+        );
+        assert_eq!(value["caveats"][0]["id"], "context.partial");
+        assert_eq!(value["actions"][0]["id"], "desktop.context.explain");
+        assert_eq!(window_ref.kind, SinexObjectKind::Event);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_context_derivations_are_not_canonical_events() -> xtask::TestResult<()> {
+        let current =
+            crate::find_derivation_spec(crate::DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID)
+                .expect("desktop current-view derivation is registered");
+        let focus = crate::find_derivation_spec(crate::DESKTOP_FOCUS_SESSION_DERIVATION_ID)
+            .expect("desktop focus-session derivation is registered");
+        let notification =
+            crate::find_derivation_spec(crate::DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID)
+                .expect("desktop notification-pressure derivation is registered");
+
+        assert_eq!(current.output_id, "desktop.context.current_view");
+        assert_eq!(current.output_kind, crate::OutputKind::EphemeralView);
+        assert_eq!(focus.output_kind, crate::OutputKind::ProjectionRow);
+        assert_eq!(notification.output_kind, crate::OutputKind::ProjectionRow);
+        assert!(focus.invalidates_on(crate::InvalidationTrigger::Redaction));
+        assert!(current.invalidates_on(crate::InvalidationTrigger::DisclosurePolicyChange));
+        assert!(!current.output_kind.is_canonical_event());
+        assert!(!focus.output_kind.is_canonical_event());
+
+        assert_eq!(
+            crate::declared_output_kind("desktop.context.current_view"),
+            Some(crate::OutputKind::EphemeralView)
+        );
+        assert_eq!(
+            crate::declared_output_kind("desktop.focus_session"),
+            Some(crate::OutputKind::ProjectionRow)
+        );
+        assert_eq!(
+            crate::declared_output_kind("desktop.notification_pressure"),
+            Some(crate::OutputKind::ProjectionRow)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_context_candidate_confidence_requires_authority_ref_for_durable_label()
+    -> xtask::TestResult<()> {
+        let judged = DesktopContextCandidateView {
+            label: "sinex".to_string(),
+            confidence: 0.91,
+            evidence_refs: vec![SinexObjectRef::new(SinexObjectKind::Event, "event:cwd")],
+            proposal_ref: Some(SinexObjectRef::new(
+                SinexObjectKind::Proposal,
+                "proposal:desktop-context-sinex",
+            )),
+        };
+        let unjudged = DesktopContextCandidateView {
+            label: "unknown".to_string(),
+            confidence: 0.99,
+            evidence_refs: vec![SinexObjectRef::new(SinexObjectKind::Event, "event:title")],
+            proposal_ref: None,
+        };
+        let view = DesktopContextView::current(
+            crate::DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID,
+            Vec::new(),
+        );
+        let mut value: DesktopContextView = serde_json::from_value(serde_json::to_value(view)?)?;
+        value.candidates = vec![judged, unjudged];
+
+        let durable_candidates = value
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.proposal_ref.is_some())
+            .count();
+
+        assert_eq!(durable_candidates, 1);
+        assert!(
+            value
+                .candidates
+                .iter()
+                .any(|candidate| candidate.confidence > 0.95 && candidate.proposal_ref.is_none()),
+            "high confidence alone remains only a ranked view candidate"
+        );
+        assert_eq!(
+            value.candidates[0].proposal_ref.as_ref().unwrap().kind,
+            SinexObjectKind::Proposal
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn view_schema_generation_covers_card_and_envelope() -> xtask::TestResult<()> {
         let card_schema = serde_json::to_value(schemars::schema_for!(EventCardView))?;
         let context_envelope_schema =
             serde_json::to_value(schemars::schema_for!(ViewEnvelope<ContextSummaryView>))?;
+        let desktop_context_envelope_schema =
+            serde_json::to_value(schemars::schema_for!(ViewEnvelope<DesktopContextView>))?;
         let envelope_schema =
             serde_json::to_value(schemars::schema_for!(ViewEnvelope<EventCardListView>))?;
         let debt_envelope_schema =
@@ -2235,6 +2530,12 @@ mod tests {
                 .get("payload")
                 .is_some(),
             "context envelope schema should include the typed summary payload"
+        );
+        assert!(
+            desktop_context_envelope_schema["properties"]
+                .get("payload")
+                .is_some(),
+            "desktop-context envelope schema should include the typed view payload"
         );
         assert!(envelope_schema["properties"].get("payload").is_some());
         assert!(debt_envelope_schema["properties"].get("payload").is_some());

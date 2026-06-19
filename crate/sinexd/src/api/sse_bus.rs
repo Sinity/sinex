@@ -2,7 +2,9 @@
 //!
 //! Subscribes to NATS `events.confirmations.>`, batches event IDs over a 20ms window,
 //! fetches full events from Postgres (buffer-cache hot), evaluates each client's
-//! [`SubscriptionFilter`], and pushes matches into bounded per-client channels.
+//! source/type/host subscription scope, and pushes candidates into bounded
+//! per-client channels. Payload predicates are evaluated after view disclosure
+//! in the SSE handler so raw payload fields cannot be inferred by filtering.
 
 use dashmap::DashMap;
 use futures::StreamExt;
@@ -11,6 +13,7 @@ use serde::Serialize;
 use sinex_db::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::query::SubscriptionFilter;
+use sinex_primitives::views::CaveatView;
 use sinex_primitives::{Id, JsonValue, Timestamp};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -66,6 +69,7 @@ pub enum SseMessage {
 #[derive(Serialize)]
 pub(crate) struct SseEventPayload<'a> {
     pub event: &'a Event<JsonValue>,
+    pub privacy_caveats: &'a [CaveatView],
 }
 
 /// Wire format for the SSE `gap` type.
@@ -168,8 +172,19 @@ impl SubscriptionSlot {
         (slot, rx)
     }
 
-    fn matches(&self, event: &Event<JsonValue>) -> bool {
-        self.filter.matches(event)
+    fn matches_delivery_scope(&self, event: &Event<JsonValue>) -> bool {
+        if !self.filter.sources.is_empty() && !self.filter.sources.contains(&event.source) {
+            return false;
+        }
+        if !self.filter.event_types.is_empty()
+            && !self.filter.event_types.contains(&event.event_type)
+        {
+            return false;
+        }
+        if !self.filter.hosts.is_empty() && !self.filter.hosts.contains(&event.host) {
+            return false;
+        }
+        true
     }
 
     fn deliver(&self, event: &Arc<Event<JsonValue>>) -> DeliveryOutcome {
@@ -653,7 +668,7 @@ impl SubscriptionBus {
 
         for (sub_id, slot) in subscriptions {
             for event in &events {
-                if !slot.matches(event) {
+                if !slot.matches_delivery_scope(event) {
                     continue;
                 }
 
@@ -903,6 +918,28 @@ mod tests {
                 .await
                 .is_err(),
             "the last delivered event id should not be replayed immediately on reconnect"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn delivery_scope_does_not_evaluate_payload_predicates() -> TestResult<()> {
+        use sinex_primitives::query::PayloadFilter;
+
+        let filter = SubscriptionFilter {
+            payload: Some(PayloadFilter::HasKey {
+                key: "missing_after_disclosure".to_string(),
+            }),
+            ..Default::default()
+        };
+        let (slot, _) = SubscriptionSlot::new(filter, None, CLIENT_CHANNEL_CAPACITY);
+        let event = DynamicPayload::new("sse-test", "sse.event", json!({"public": true}))
+            .from_material(Id::from_uuid(Uuid::now_v7()))
+            .build()?;
+
+        assert!(
+            slot.matches_delivery_scope(&event),
+            "SSE bus must only prefilter on source/type/host; payload predicates run after disclosure"
         );
         Ok(())
     }

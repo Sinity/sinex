@@ -352,8 +352,11 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
             GuideEntry {
                 path: "schema strict-diff",
                 fallback_summary: "Check strict live-schema drift",
-                when: "you need to verify the database has no drift in categories the declarative apply engine does not reconcile",
-                examples: &["xtask schema strict-diff"],
+                when: "you need to verify the checkout-local database has no drift in categories the declarative apply engine does not reconcile; the default form prepares the checkout-local stack before inspecting it",
+                examples: &[
+                    "xtask schema strict-diff",
+                    "xtask schema strict-diff --database-url postgresql:///sinex_dev?host=/path/to/socket",
+                ],
                 notes: &[],
             },
             GuideEntry {

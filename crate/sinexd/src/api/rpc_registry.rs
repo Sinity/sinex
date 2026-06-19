@@ -646,7 +646,7 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(LLM_PROMPTS_LIST_METHOD, boxed!(handle_llm_prompts_list))
         .pool_typed_rpc(LLM_ROUTE_EXPLAIN_METHOD, boxed!(handle_llm_route_explain))
         .pool_typed_rpc(LLM_BUDGET_REPORT_METHOD, boxed!(handle_llm_budget_report))
-        .pool_typed_rpc(EVENTS_LINEAGE_METHOD, boxed!(handle_events_lineage))
+        .service_typed_rpc(EVENTS_LINEAGE_METHOD, boxed!(handle_events_lineage))
         .pool_typed_rpc(TASKS_LIST_METHOD, boxed!(handle_tasks_list))
         .pool_typed_rpc(TASKS_STATE_GET_METHOD, boxed!(handle_tasks_state_get))
         .pool_typed_rpc(
