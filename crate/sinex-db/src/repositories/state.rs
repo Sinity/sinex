@@ -1071,8 +1071,11 @@ impl StateRepository<'_> {
 
     /// List live module presence from concrete runtime run rows.
     ///
-    /// `core.runs` is still used here for execution identity and attribution,
-    /// but manifest-only rows are no longer accepted as liveness evidence.
+    /// `core.runs` is still used here for execution identity and attribution.
+    /// Current liveness comes from append-only `health.status` telemetry via
+    /// `sinex_telemetry.current_health`, bounded by the caller's freshness
+    /// window, so mutable run heartbeat columns are not the authority for this
+    /// operator surface.
     pub async fn list_live_runtime_presence(
         &self,
         stale_after: Duration,
@@ -1081,24 +1084,47 @@ impl StateRepository<'_> {
         sqlx::query_as!(
             LiveModulePresence,
             r#"
-            WITH active_runs AS (
+            WITH candidate_runs AS (
+                SELECT
+                    nr.manifest_id,
+                    nr.service_name,
+                    nr.instance_id,
+                    nr.id AS module_run_id,
+                    nr.host,
+                    nr.status,
+                    nr.started_at
+                FROM core.runs nr
+                WHERE nr.manifest_id IS NOT NULL
+                  AND nr.status NOT IN ('failed', 'stopped')
+            ),
+            active_runs AS (
                 SELECT
                     nm.name,
                     nm.manifest_type::text as module_kind,
                     nm.version,
                     nm.description,
-                    nr.service_name,
-                    nr.instance_id,
-                    nr.id as module_run_id,
-                    nr.host,
-                    nr.status,
-                    nr.last_heartbeat_at,
-                    nr.started_at,
+                    cr.service_name,
+                    cr.instance_id,
+                    cr.module_run_id,
+                    cr.host,
+                    cr.status,
+                    health.last_update AS last_heartbeat_at,
+                    cr.started_at,
                     'run'::text as heartbeat_source
-                FROM core.runs nr
-                JOIN core.manifests nm ON nm.id = nr.manifest_id
-                WHERE nr.status = 'running'
-                  AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
+                FROM core.manifests nm
+                JOIN candidate_runs cr ON cr.manifest_id = nm.id
+                JOIN LATERAL (
+                    SELECT
+                        ch.status,
+                        ch.last_update
+                    FROM sinex_telemetry.current_health ch
+                    WHERE ch.source = 'sinex'
+                      AND ch.component = nm.name::text
+                      AND ch.last_update > NOW() - make_interval(secs => $1::float8)
+                    ORDER BY ch.last_update DESC
+                    LIMIT 1
+                ) health ON true
+                WHERE health.status IN ('healthy', 'degraded')
             )
             SELECT
                 live_modules.name as "module_name!: ModuleName",
@@ -1151,24 +1177,11 @@ impl StateRepository<'_> {
 
     /// Get runtime health status
     pub async fn get_runtime_health(&self, stale_after: Duration) -> DbResult<ModuleHealthSummary> {
-        let cutoff = Timestamp::now()
-            - sinex_primitives::temporal::Duration::seconds(stale_after.as_secs() as i64);
+        let stale_secs = stale_after.as_secs() as f64;
 
         let row = sqlx::query!(
             r#"
-            WITH active_runs AS (
-                SELECT
-                    nm.name,
-                    COUNT(*)::bigint AS active_run_count,
-                    MAX(nr.last_heartbeat_at) AS latest_heartbeat_at
-                FROM core.runs nr
-                JOIN core.manifests nm ON nm.id = nr.manifest_id
-                WHERE nr.status = 'running'
-                  AND nr.last_heartbeat_at IS NOT NULL
-                  AND nr.last_heartbeat_at >= $1
-                GROUP BY nm.name
-            ),
-            module_inventory AS (
+            WITH module_inventory AS (
                 SELECT DISTINCT name
                 FROM core.manifests
 
@@ -1178,14 +1191,43 @@ impl StateRepository<'_> {
                 FROM core.runs nr
                 JOIN core.manifests nm ON nm.id = nr.manifest_id
             ),
+            candidate_runs AS (
+                SELECT
+                    nr.manifest_id,
+                    nr.id,
+                    nm.name
+                FROM core.runs nr
+                JOIN core.manifests nm ON nm.id = nr.manifest_id
+                WHERE nr.status NOT IN ('failed', 'stopped')
+            ),
+            active_modules AS (
+                SELECT
+                    cr.name,
+                    cr.id AS module_run_id,
+                    health.last_update
+                FROM candidate_runs cr
+                JOIN LATERAL (
+                    SELECT
+                        ch.status,
+                        ch.last_update
+                    FROM sinex_telemetry.current_health ch
+                    WHERE ch.source = 'sinex'
+                      AND ch.component = cr.name::text
+                      AND ch.last_update > NOW() - make_interval(secs => $1::float8)
+                    ORDER BY ch.last_update DESC
+                    LIMIT 1
+                ) health ON true
+                WHERE health.status IN ('healthy', 'degraded')
+            ),
             module_status AS (
                 SELECT
                     ni.name,
-                    COALESCE(ar.active_run_count, 0) AS active_run_count,
-                    ar.latest_heartbeat_at,
-                    (ar.name IS NOT NULL) AS has_live_instance
+                    COALESCE(COUNT(am.module_run_id), 0)::bigint AS active_run_count,
+                    MAX(am.last_update) AS latest_heartbeat_at,
+                    (COUNT(am.module_run_id) > 0) AS has_live_instance
                 FROM module_inventory ni
-                LEFT JOIN active_runs ar ON ar.name = ni.name
+                LEFT JOIN active_modules am ON am.name = ni.name
+                GROUP BY ni.name
             )
             SELECT
                 COUNT(*) FILTER (WHERE has_live_instance) as "active_count!",
@@ -1195,7 +1237,7 @@ impl StateRepository<'_> {
                 MIN(latest_heartbeat_at) FILTER (WHERE has_live_instance) as "oldest_heartbeat: sinex_primitives::temporal::Timestamp"
             FROM module_status
             "#,
-            *cutoff
+            stale_secs
         )
         .fetch_one(self.pool)
         .await
@@ -1232,22 +1274,14 @@ impl StateRepository<'_> {
                 nm.version as "version!",
                 nm.description,
                 nr.status as "manifest_status?",
-                CASE
-                    WHEN health.status IS NOT NULL THEN health.status IN ('healthy', 'degraded')
-                    ELSE COALESCE(
-                        nr.id IS NOT NULL
-                            AND nr.status = 'running'
-                            AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8),
-                        false
-                    )
-                END as "live!",
+                COALESCE(health.status IN ('healthy', 'degraded'), false) as "live!",
                 nr.service_name,
                 nr.instance_id,
                 nr.id as "module_run_id: uuid::Uuid",
                 nr.host,
                 nr.status as run_status,
                 nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
-                COALESCE(nr.last_heartbeat_at, nr.last_heartbeat_at)
+                health.last_update
                     as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
                 processed.events_processed_current_run as "events_processed_current_run?",
                 checkpoint.checkpoint_kind as "checkpoint_kind?",
@@ -1272,8 +1306,7 @@ impl StateRepository<'_> {
                     nr.instance_id,
                     nr.host,
                     nr.status,
-                    nr.started_at,
-                    nr.last_heartbeat_at
+                    nr.started_at
                 FROM core.runs nr
                 WHERE nr.manifest_id = nm.id
                 -- Prefer an active (running/draining/paused) run over a more-recently-started
@@ -1284,10 +1317,12 @@ impl StateRepository<'_> {
             ) nr ON true
             LEFT JOIN LATERAL (
                 SELECT
-                    ch.status
+                    ch.status,
+                    ch.last_update
                 FROM sinex_telemetry.current_health ch
                 WHERE ch.source = 'sinex'
                   AND ch.component = nm.name::text
+                  AND ch.last_update > NOW() - make_interval(secs => $1::float8)
                 ORDER BY ch.last_update DESC
                 LIMIT 1
             ) health ON true
@@ -1407,22 +1442,14 @@ impl StateRepository<'_> {
                 nm.version as "version!",
                 nm.description,
                 nr.status as "manifest_status?",
-                CASE
-                    WHEN health.status IS NOT NULL THEN health.status IN ('healthy', 'degraded')
-                    ELSE COALESCE(
-                        nr.id IS NOT NULL
-                            AND nr.status = 'running'
-                            AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8),
-                        false
-                    )
-                END as "live!",
+                COALESCE(health.status IN ('healthy', 'degraded'), false) as "live!",
                 nr.service_name,
                 nr.instance_id,
                 nr.id as "module_run_id: uuid::Uuid",
                 nr.host,
                 nr.status as run_status,
                 nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
-                nr.last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
+                health.last_update as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
                 health.status as "current_health?: sinex_primitives::domain::HealthStatus",
                 health.last_update
                     as "health_changed_at?: sinex_primitives::temporal::Timestamp",
@@ -1437,8 +1464,7 @@ impl StateRepository<'_> {
                     nr.instance_id,
                     nr.host,
                     nr.status,
-                    nr.started_at,
-                    nr.last_heartbeat_at
+                    nr.started_at
                 FROM core.runs nr
                 WHERE nr.manifest_id = nm.id
                 ORDER BY (CASE WHEN nr.status IN ('running', 'draining', 'paused') THEN 1 ELSE 0 END) DESC,
@@ -1453,6 +1479,7 @@ impl StateRepository<'_> {
                 FROM sinex_telemetry.current_health ch
                 WHERE ch.source = 'sinex'
                   AND ch.component = nm.name::text
+                  AND ch.last_update > NOW() - make_interval(secs => $1::float8)
                 ORDER BY ch.last_update DESC
                 LIMIT 1
             ) health ON true

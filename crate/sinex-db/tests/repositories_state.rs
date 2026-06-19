@@ -7,7 +7,48 @@ use sinex_primitives::rpc::lifecycle::{
 };
 use sinex_primitives::{Id, Timestamp, Uuid};
 use std::time::Duration;
+use xtask::{TestContext, TestResult};
 use xtask::sandbox::sinex_test;
+
+async fn insert_runtime_health_status(
+    ctx: &TestContext,
+    component: &str,
+    status: &str,
+    reason: &str,
+) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("sinex")).await?;
+    sqlx::query!(
+        r#"
+        INSERT INTO core.events (
+            id,
+            source,
+            event_type,
+            host,
+            payload,
+            ts_orig,
+            source_material_id,
+            anchor_byte
+        )
+        VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)
+        "#,
+        Uuid::now_v7(),
+        "sinex",
+        "health.status",
+        "test-host",
+        json!({
+            "component": component,
+            "current_status": status,
+            "reason": reason,
+        }),
+        *sinex_primitives::temporal::now(),
+        material_id.to_uuid(),
+        0_i64,
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    Ok(())
+}
 
 #[sinex_test]
 async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
@@ -514,6 +555,13 @@ async fn concrete_runs_are_runtime_liveness(ctx: TestContext) -> TestResult<()> 
         )
         .await?;
     assert!(repo.update_module_run_heartbeat(newer_run.id).await?);
+    insert_runtime_health_status(
+        &ctx,
+        module_name.as_ref(),
+        "healthy",
+        "runtime heartbeat observed",
+    )
+    .await?;
 
     let live_modules = repo
         .list_live_runtime_presence(Duration::from_mins(2))
@@ -529,6 +577,78 @@ async fn concrete_runs_are_runtime_liveness(ctx: TestContext) -> TestResult<()> 
     assert_eq!(health.active_count, 1);
     assert_eq!(health.inactive_count, 0);
     assert_eq!(health.active_run_count, 1);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn runtime_liveness_requires_health_evidence(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let module_name = ModuleName::new("run-without-health-evidence");
+
+    let manifest = repo
+        .register_module(&module_name, ModuleKind::Automaton, "1.0.0", None)
+        .await?;
+    let run = repo
+        .start_module_run(
+            manifest.id,
+            "sinex-relation-extractor",
+            "instance-1",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+    assert!(repo.update_module_run_heartbeat(run.id).await?);
+
+    let live_modules = repo
+        .list_live_runtime_presence(Duration::from_mins(2))
+        .await?;
+    assert!(
+        live_modules.is_empty(),
+        "a mutable run heartbeat is provenance, not operator liveness"
+    );
+
+    let health = repo.get_runtime_health(Duration::from_mins(2)).await?;
+    assert_eq!(health.unique_modules, 1);
+    assert_eq!(health.active_count, 0);
+    assert_eq!(health.inactive_count, 1);
+    assert_eq!(health.active_run_count, 0);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn runtime_liveness_excludes_unhealthy_health_events(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let module_name = ModuleName::new("run-with-unhealthy-event");
+
+    let manifest = repo
+        .register_module(&module_name, ModuleKind::Service, "1.0.0", None)
+        .await?;
+    let run = repo
+        .start_module_run(
+            manifest.id,
+            "sinex-unhealthy",
+            "instance-1",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+    assert!(repo.update_module_run_heartbeat(run.id).await?);
+    insert_runtime_health_status(&ctx, module_name.as_ref(), "unhealthy", "crashed").await?;
+
+    let live_modules = repo
+        .list_live_runtime_presence(Duration::from_mins(2))
+        .await?;
+    assert!(live_modules.is_empty());
+
+    let health = repo.get_runtime_health(Duration::from_mins(2)).await?;
+    assert_eq!(health.unique_modules, 1);
+    assert_eq!(health.active_count, 0);
+    assert_eq!(health.inactive_count, 1);
+    assert_eq!(health.active_run_count, 0);
 
     Ok(())
 }
@@ -605,7 +725,7 @@ async fn module_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Te
 }
 
 #[sinex_test]
-async fn module_run_heartbeats_preserve_live_run_status(ctx: TestContext) -> TestResult<()> {
+async fn fresh_runtime_health_preserves_live_run_identity(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
     let module_name = ModuleName::new("run-heartbeat-liveness");
 
@@ -636,6 +756,13 @@ async fn module_run_heartbeats_preserve_live_run_status(ctx: TestContext) -> Tes
     .fetch_one(ctx.pool())
     .await?;
     assert_eq!(refreshed.status, "running");
+    insert_runtime_health_status(
+        &ctx,
+        module_name.as_ref(),
+        "degraded",
+        "runtime still emitting health",
+    )
+    .await?;
 
     let live_modules = repo
         .list_live_runtime_presence(Duration::from_mins(2))
