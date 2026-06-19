@@ -1,5 +1,11 @@
+use std::str::FromStr as _;
+
 use clap::{Subcommand, ValueEnum};
 use serde_json::Value;
+use sinex_primitives::evidence_bundle::{
+    EvidenceBundleOmissionView, EvidenceBundleSeedView, EvidenceBundleView,
+};
+use sinex_primitives::public_ref::PublicSinexRef;
 use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::ops::{Operation as OpsOperation, OpsStartResponse};
 use sinex_primitives::rpc::sources::{SourceCoverageEntry, SourcesCoverageRequest};
@@ -19,6 +25,7 @@ use crate::commands::dlq::DlqCommands;
 use crate::commands::instructions::InstructionsCommand;
 use crate::commands::lifecycle::LifecycleCommands;
 use crate::commands::replay::ReplayCommands;
+use crate::commands::show::resolve_ref;
 use crate::commands::state::StateCommands;
 use crate::commands::verify::VerifyCommand;
 use crate::fmt::{CommandOutput, print_finite_envelope, render_envelope, with_spinner_result};
@@ -97,6 +104,10 @@ pub enum OpsCommands {
     /// Read-only debt view over work stuck between Sinex planes
     #[command(subcommand)]
     Debt(DebtCommands),
+
+    /// Compile a finite evidence bundle from existing Sinex read surfaces
+    #[command(subcommand)]
+    Evidence(EvidenceCommands),
 
     /// Dead letter queue operations
     #[command(subcommand)]
@@ -194,6 +205,41 @@ pub enum DebtCommands {
         /// Include derivations invalidated by the selected trigger as projection debt.
         #[arg(long, value_enum)]
         projection_trigger: Option<DebtProjectionTrigger>,
+    },
+}
+
+/// Portable read-profile compiler over existing Sinex observability surfaces.
+#[derive(Debug, Subcommand)]
+#[command(after_help = "\
+EXAMPLES:
+    sinexctl ops evidence compile --ref operation:01HQ2KM...
+    sinexctl ops evidence compile --operation 01HQ2KM... --include-debt
+    sinexctl ops evidence compile --source-driver media.screen-ocr --include-debt --include-capture
+")]
+pub enum EvidenceCommands {
+    /// Compile a finite evidence bundle from explicit seeds.
+    Compile {
+        /// Public Sinex refs to resolve through `sinexctl show` semantics.
+        #[arg(long = "ref", value_name = "REF")]
+        refs: Vec<String>,
+        /// Operation ids to include via OperationView.
+        #[arg(long, value_name = "OPERATION_ID")]
+        operation: Vec<String>,
+        /// Source/package driver ids to include from SourceCoverage.
+        #[arg(long = "source-driver", value_name = "SOURCE_ID")]
+        source_driver: Vec<String>,
+        /// Include currently wired debt providers.
+        #[arg(long)]
+        include_debt: bool,
+        /// Include capture debt rows derived from source coverage.
+        #[arg(long)]
+        include_capture: bool,
+        /// Include projection debt derived from the selected invalidation trigger.
+        #[arg(long, value_enum)]
+        projection_trigger: Option<DebtProjectionTrigger>,
+        /// Non-authoritative operator note to carry with the bundle.
+        #[arg(long = "note", value_name = "TEXT")]
+        notes: Vec<String>,
     },
 }
 
@@ -301,6 +347,7 @@ impl OpsCommands {
                 jobs_cmd.execute(client, format).await?;
             }
             Self::Debt(debt_cmd) => debt_cmd.execute(client, format).await?,
+            Self::Evidence(evidence_cmd) => evidence_cmd.execute(client, format).await?,
             Self::Dlq(cmd) => cmd.execute(client, format).await?,
             Self::Replay(cmd) => cmd.execute(client, format).await?,
             Self::Lifecycle(cmd) => cmd.execute(client, format).await?,
@@ -313,6 +360,144 @@ impl OpsCommands {
         }
         Ok(())
     }
+}
+
+impl EvidenceCommands {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        match self {
+            Self::Compile {
+                refs,
+                operation,
+                source_driver,
+                include_debt,
+                include_capture,
+                projection_trigger,
+                notes,
+            } => {
+                let bundle = compile_evidence_bundle(
+                    client,
+                    refs,
+                    operation,
+                    source_driver,
+                    *include_debt,
+                    *include_capture,
+                    *projection_trigger,
+                    notes,
+                )
+                .await?;
+                let envelope = ViewEnvelope::new("sinexctl.ops.evidence.compile", bundle)
+                    .with_query_echo(serde_json::json!({
+                        "refs": refs,
+                        "operation": operation,
+                        "source_driver": source_driver,
+                        "include_debt": include_debt,
+                        "include_capture": include_capture,
+                        "projection_trigger": projection_trigger
+                            .map(|trigger| projection_trigger_name(trigger.into_invalidation_trigger())),
+                    }));
+
+                if print_finite_envelope(&envelope, format)? {
+                    return Ok(());
+                }
+
+                println!("{}", format_evidence_bundle_table(&envelope.payload));
+            }
+        }
+        Ok(())
+    }
+}
+
+async fn compile_evidence_bundle(
+    client: &GatewayClient,
+    refs: &[String],
+    operation_ids: &[String],
+    source_driver_ids: &[String],
+    include_debt: bool,
+    include_capture: bool,
+    projection_trigger: Option<DebtProjectionTrigger>,
+    notes: &[String],
+) -> Result<EvidenceBundleView> {
+    let mut bundle = EvidenceBundleView::new("sinexctl.ops.evidence.compile").with_target_context(
+        (!refs.is_empty() || !operation_ids.is_empty() || !source_driver_ids.is_empty())
+            .then(|| "explicit operator-selected seeds".to_string()),
+    );
+
+    for ref_text in refs {
+        let public_ref = PublicSinexRef::from_str(ref_text)?;
+        bundle.seeds.push(EvidenceBundleSeedView::public_ref(
+            public_ref.clone().into_object_ref(),
+        ));
+        bundle
+            .resolved_objects
+            .push(resolve_ref(client, public_ref).await?.payload);
+    }
+
+    for operation_id in operation_ids {
+        bundle
+            .seeds
+            .push(EvidenceBundleSeedView::operation(operation_id.clone()));
+        let operation = client.ops_get(operation_id).await?;
+        bundle.operations.push(operation_to_view(&operation));
+    }
+
+    if !source_driver_ids.is_empty() {
+        let coverage = client.sources_status_view().await?;
+        for source_id in source_driver_ids {
+            bundle
+                .seeds
+                .push(EvidenceBundleSeedView::source_driver(source_id.clone()));
+            if let Some(source) = coverage
+                .payload
+                .sources
+                .iter()
+                .find(|source| source.source_id == *source_id)
+            {
+                bundle.source_coverage.push(source.clone());
+            } else {
+                bundle.omitted_sections.push(EvidenceBundleOmissionView::new(
+                    format!("source_coverage:{source_id}"),
+                    "source-driver seed was requested but the source coverage view had no matching row",
+                ));
+            }
+        }
+    }
+
+    for note in notes {
+        bundle
+            .seeds
+            .push(EvidenceBundleSeedView::operator_note(note.clone()));
+    }
+
+    if include_debt || include_capture || projection_trigger.is_some() {
+        bundle.seeds.push(EvidenceBundleSeedView::debt_query(
+            evidence_debt_query_label(include_debt, include_capture, projection_trigger),
+        ));
+        if include_debt {
+            bundle
+                .debt_rows
+                .extend(debt_rows_from_dlq(&client.dlq_list().await?));
+        }
+        if include_capture {
+            let coverage = client.sources_coverage(SourcesCoverageRequest {}).await?;
+            bundle
+                .debt_rows
+                .extend(debt_rows_from_source_coverage(&coverage.sources));
+        }
+        if let Some(trigger) = projection_trigger {
+            bundle.debt_rows.extend(debt_rows_from_derivation_trigger(
+                trigger.into_invalidation_trigger(),
+            ));
+        }
+    }
+
+    if bundle.evidence_row_count() == 0 {
+        bundle.omitted_sections.push(EvidenceBundleOmissionView::new(
+            "evidence_rows",
+            "no requested seed produced evidence rows through the currently wired read surfaces",
+        ));
+    }
+
+    Ok(bundle)
 }
 
 impl JobsCommands {
@@ -679,6 +864,53 @@ fn format_debt_table(rows: &[DebtRowView]) -> String {
     output
 }
 
+fn evidence_debt_query_label(
+    include_debt: bool,
+    include_capture: bool,
+    projection_trigger: Option<DebtProjectionTrigger>,
+) -> String {
+    let mut parts = Vec::new();
+    if include_debt {
+        parts.push("dlq");
+    }
+    if include_capture {
+        parts.push("capture");
+    }
+    if let Some(trigger) = projection_trigger {
+        parts.push(projection_trigger_name(trigger.into_invalidation_trigger()));
+    }
+    if parts.is_empty() {
+        "none".to_string()
+    } else {
+        parts.join("+")
+    }
+}
+
+fn format_evidence_bundle_table(view: &EvidenceBundleView) -> String {
+    let mut output = String::new();
+    output.push_str("Evidence Bundle:\n");
+    output.push_str(&format!("  Schema:           {}\n", view.schema_version));
+    output.push_str(&format!("  Generated:        {}\n", view.generated_at));
+    output.push_str(&format!("  Source surface:   {}\n", view.source_surface));
+    output.push_str(&format!("  Seeds:            {}\n", view.seeds.len()));
+    output.push_str(&format!("  Included sections: {}\n", view.section_count()));
+    output.push_str(&format!(
+        "  Evidence rows:    {}\n",
+        view.evidence_row_count()
+    ));
+    output.push_str(&format!(
+        "  Omitted sections: {}\n",
+        view.omitted_sections.len()
+    ));
+    if !view.omitted_sections.is_empty() {
+        output.push_str("Omissions:\n");
+        for omission in &view.omitted_sections {
+            output.push_str(&format!("  - {}: {}\n", omission.section, omission.reason));
+        }
+    }
+    output
+}
+
 fn object_kind_label(kind: &SinexObjectKind) -> &'static str {
     match kind {
         SinexObjectKind::DlqMessage => "dlq_message",
@@ -755,6 +987,7 @@ mod tests {
 
     use super::*;
     use sinex_primitives::domain::OperationStatus;
+    use sinex_primitives::public_ref::ResolvedObjectView;
     use xtask::sandbox::sinex_test;
 
     fn fixture_operation(id: &str, operation_type: &str) -> OpsOperation {
@@ -768,6 +1001,45 @@ mod tests {
             preview_summary: Some(serde_json::json!({"events": 2})),
             duration_ms: Some(42),
         }
+    }
+
+    #[sinex_test]
+    async fn evidence_debt_query_label_names_included_providers() -> xtask::TestResult<()> {
+        assert_eq!(evidence_debt_query_label(false, false, None), "none");
+        assert_eq!(evidence_debt_query_label(true, false, None), "dlq");
+        assert_eq!(
+            evidence_debt_query_label(true, true, Some(DebtProjectionTrigger::Replay)),
+            "dlq+capture+replay"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn evidence_bundle_table_summarizes_existing_view_sections() -> xtask::TestResult<()> {
+        let mut view = EvidenceBundleView::new("sinexctl.ops.evidence.compile");
+        view.seeds
+            .push(EvidenceBundleSeedView::public_ref(SinexObjectRef::new(
+                SinexObjectKind::Command,
+                "show",
+            )));
+        view.resolved_objects
+            .push(ResolvedObjectView::unsupported(SinexObjectRef::new(
+                SinexObjectKind::Command,
+                "show",
+            )));
+        view.operations
+            .push(operation_to_view(&fixture_operation("op-1", "replay")));
+        view.debt_rows.extend(debt_rows_from_derivation_trigger(
+            InvalidationTrigger::Replay,
+        ));
+
+        let table = format_evidence_bundle_table(&view);
+
+        assert!(table.contains("Evidence Bundle"));
+        assert!(table.contains("sinex.evidence-bundle/v1"));
+        assert!(table.contains("Seeds:            1"));
+        assert!(table.contains("Included sections: 3"));
+        Ok(())
     }
 
     #[sinex_test]

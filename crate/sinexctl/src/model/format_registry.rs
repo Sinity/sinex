@@ -314,6 +314,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "ops debt list",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
+    m.insert(
+        "ops evidence compile",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Privacy ─────────────────────────────────────────────────────────────
     m.insert(
@@ -1047,6 +1051,13 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "ops list" | "ops jobs list" => &[methods::OPS_LIST],
         "ops get" | "ops jobs show" => &[methods::OPS_GET],
         "ops debt list" => &[methods::DLQ_LIST, methods::SOURCES_STATUS_VIEW],
+        "ops evidence compile" => &[
+            methods::OPS_GET,
+            methods::DLQ_LIST,
+            methods::SOURCES_STATUS_VIEW,
+            methods::SOURCES_SHOW,
+            methods::SOURCES_COVERAGE,
+        ],
         "ops cancel" => &[methods::OPS_CANCEL],
         "privacy private-mode status" => &[methods::PRIVACY_PRIVATE_MODE_STATUS],
         "privacy private-mode enable" => &[methods::PRIVACY_PRIVATE_MODE_ENABLE],
