@@ -19,6 +19,7 @@ use sinex_primitives::source_contracts::{
     RetentionPolicy, RunnerPack, RuntimeShape,
 };
 use sinex_primitives::temporal::Timestamp;
+use std::path::PathBuf;
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 
@@ -148,6 +149,35 @@ impl MaterialParser for KittyOscParser {
                 .build(),
         ])
     }
+
+    fn baseline_adapter_config() -> serde_json::Value {
+        match kitty_osc_socket_path() {
+            Some(socket_path) => serde_json::json!({
+                "socket_path": socket_path,
+                "reconnect_on_eof": true,
+            }),
+            None => serde_json::json!({}),
+        }
+    }
+}
+
+fn kitty_osc_socket_path() -> Option<String> {
+    std::env::var("SINEX_KITTY_OSC_SOCKET")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            let runtime_dir = std::env::var("SINEX_KITTY_OSC_RUNTIME_DIR")
+                .or_else(|_| std::env::var("XDG_RUNTIME_DIR"))
+                .ok()
+                .filter(|value| !value.is_empty())?;
+            Some(
+                PathBuf::from(runtime_dir)
+                    .join("sinex")
+                    .join("kitty-osc.sock")
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        })
 }
 
 fn required_string<'a>(value: &'a serde_json::Value, field: &str) -> ParserResult<&'a str> {
@@ -190,7 +220,55 @@ mod tests {
     use sinex_primitives::Id;
     use sinex_primitives::events::SourceMaterial;
     use sinex_primitives::parser::ParserContext;
+    use std::sync::{Mutex, OnceLock};
     use xtask::sandbox::prelude::*;
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> &'static Mutex<()> {
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvGuard {
+        values: [(&'static str, Option<std::ffi::OsString>); 3],
+    }
+
+    impl EnvGuard {
+        fn clear() -> Self {
+            let guard = Self {
+                values: [
+                    (
+                        "SINEX_KITTY_OSC_SOCKET",
+                        std::env::var_os("SINEX_KITTY_OSC_SOCKET"),
+                    ),
+                    (
+                        "SINEX_KITTY_OSC_RUNTIME_DIR",
+                        std::env::var_os("SINEX_KITTY_OSC_RUNTIME_DIR"),
+                    ),
+                    ("XDG_RUNTIME_DIR", std::env::var_os("XDG_RUNTIME_DIR")),
+                ],
+            };
+            unsafe {
+                std::env::remove_var("SINEX_KITTY_OSC_SOCKET");
+                std::env::remove_var("SINEX_KITTY_OSC_RUNTIME_DIR");
+                std::env::remove_var("XDG_RUNTIME_DIR");
+            }
+            guard
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in &self.values {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
 
     fn ctx() -> ParserContext {
         ParserContext {
@@ -338,6 +416,48 @@ mod tests {
                 EventType::from_static("command.executed")
             )]
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn kitty_osc_baseline_adapter_config_prefers_explicit_socket() -> TestResult<()> {
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        let _env = EnvGuard::clear();
+        unsafe {
+            std::env::set_var("SINEX_KITTY_OSC_SOCKET", "/run/user/1000/sinex/custom.sock");
+            std::env::set_var("SINEX_KITTY_OSC_RUNTIME_DIR", "/run/user/1000/ignored");
+        }
+
+        let config = <KittyOscParser as MaterialParser>::baseline_adapter_config();
+
+        assert_eq!(config["socket_path"], "/run/user/1000/sinex/custom.sock");
+        assert_eq!(config["reconnect_on_eof"], true);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn kitty_osc_baseline_adapter_config_uses_runtime_dir() -> TestResult<()> {
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        let _env = EnvGuard::clear();
+        unsafe {
+            std::env::set_var("SINEX_KITTY_OSC_RUNTIME_DIR", "/run/user/1000");
+        }
+
+        let config = <KittyOscParser as MaterialParser>::baseline_adapter_config();
+
+        assert_eq!(config["socket_path"], "/run/user/1000/sinex/kitty-osc.sock");
+        assert_eq!(config["reconnect_on_eof"], true);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn kitty_osc_baseline_adapter_config_is_empty_without_runtime_dir() -> TestResult<()> {
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        let _env = EnvGuard::clear();
+
+        let config = <KittyOscParser as MaterialParser>::baseline_adapter_config();
+
+        assert_eq!(config, serde_json::json!({}));
         Ok(())
     }
 }
