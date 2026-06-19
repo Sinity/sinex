@@ -702,6 +702,7 @@ async fn derived_source_state_reflects_failed_health_reporter(ctx: TestContext) 
             error_rate_failed: 0.20,
             window_seconds: 60,
             emit_stall_seconds: 0,
+            refresh_seconds: 900,
         },
     ));
     reporter.record_error(&SinexError::processing("automaton failure"));
@@ -749,6 +750,7 @@ async fn derived_health_check_reflects_failed_health_reporter(ctx: TestContext) 
             error_rate_failed: 0.20,
             window_seconds: 60,
             emit_stall_seconds: 0,
+            refresh_seconds: 900,
         },
     ));
     reporter.record_error(&SinexError::processing("automaton failure"));
