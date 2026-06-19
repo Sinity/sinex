@@ -19,7 +19,7 @@
 //! - `sinex.metric.counter` - Monotonically increasing values (requests, events)
 //! - `sinex.metric.gauge` - Point-in-time values (connections, queue depth)
 //! - `sinex.metric.histogram` - Distribution samples (latencies)
-//! - `sinex.health.status` - Component health state changes
+//! - `sinex.health.status` - Component health observations
 //! - `sinex.stream.stats` - NATS `JetStream` statistics
 
 use crate::domain::HealthStatus;
@@ -363,9 +363,10 @@ pub struct RateLimitExceededPayload {
     pub method: Option<String>,
 }
 
-/// Component health status change
+/// Component health status observation
 ///
-/// Emitted when a component's health status changes (healthy -> degraded, etc.)
+/// Emitted for initial health, status changes, and periodic unchanged refreshes
+/// that keep event-derived runtime liveness fresh.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex", event_type = "health.status")]
 pub struct HealthStatusPayload {
@@ -375,7 +376,7 @@ pub struct HealthStatusPayload {
     pub previous_status: HealthStatus,
     /// Current status (typed; serializes as `snake_case` string)
     pub current_status: HealthStatus,
-    /// Reason for status change
+    /// Reason for this status observation
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// Additional context

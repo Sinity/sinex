@@ -657,7 +657,7 @@ impl SelfObserver {
         .await
     }
 
-    /// Emit health status change
+    /// Emit a health status observation
     pub async fn emit_health_status(
         &self,
         component: &str,
