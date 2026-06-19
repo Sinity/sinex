@@ -15,6 +15,8 @@ Future work must preserve that shared surface.
 - Classify `views.debt_list` as an `EphemeralView` output kind.
 - Let derivation/invalidation code feed projection-debt rows into the unified
   debt surface.
+- Let source coverage material/event buckets feed capture-debt rows into the
+  unified debt surface.
 
 ## Rejected
 
@@ -42,8 +44,16 @@ Future work must preserve that shared surface.
 - `sinex-derivation-spec-v0.patch`: mostly superseded by current derivation
   primitives; remaining useful work is registry and documentation alignment.
 
+## Applied Slice
+
+The mined slice registers and documents `views.debt_list`, updates the package
+completeness gate wording to point at unified debt providers, and wires
+`sinexctl ops debt list --include-capture` so material-without-events and
+events-without-material coverage buckets become `DebtKind::Capture` rows in the
+existing `DebtListView`.
+
 ## Next Slice
 
-Wire capture/source coverage gaps into the existing `DebtListView` provider set
-as `DebtKind::Capture` rows. That should reuse source coverage gaps and actions
-instead of defining a new capture-debt list type.
+Move provider composition behind the gateway/RPC surface once the operator CLI
+semantics are settled. Preserve the single `DebtListView` payload rather than
+creating provider-specific envelopes.
