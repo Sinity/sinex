@@ -4,12 +4,13 @@ use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::json;
 use sinex_db::schema::strict_diff::{StrictDrift, check_strict};
 use sqlx::postgres::PgPoolOptions;
-use std::env;
 
 use crate::command::{
     CommandContext, CommandMetadata, CommandResult, HistoryAccessMode, XtaskCommand,
 };
+use crate::infra::stack::StackConfig;
 use crate::output::StructuredError;
+use crate::preflight;
 
 /// Schema verification command group.
 #[derive(Debug, Clone, clap::Args)]
@@ -23,7 +24,7 @@ pub struct SchemaCommand {
 pub enum SchemaSubcommand {
     /// Detect strict schema drift that declarative apply does not reconcile
     StrictDiff {
-        /// Database URL to inspect. Defaults to DATABASE_URL.
+        /// Database URL to inspect. Without this, prepares the checkout-local stack first.
         #[arg(long)]
         database_url: Option<String>,
     },
@@ -55,10 +56,7 @@ async fn execute_strict_diff(
 ) -> Result<CommandResult> {
     ctx.heading("schema strict-diff");
 
-    let database_url = database_url
-        .map(str::to_owned)
-        .or_else(|| env::var("DATABASE_URL").ok())
-        .ok_or_else(|| eyre!("schema strict-diff requires --database-url or DATABASE_URL"))?;
+    let database_url = resolve_strict_diff_database_url(database_url, ctx)?;
 
     let drifts = run_strict_diff(&database_url).await?;
     let drift_count = drifts.len();
@@ -84,6 +82,24 @@ async fn execute_strict_diff(
     .with_details(drifts.iter().take(10).map(ToString::to_string))
     .with_data(data)
     .with_duration(ctx.elapsed()))
+}
+
+fn resolve_strict_diff_database_url(
+    database_url: Option<&str>,
+    ctx: &CommandContext,
+) -> Result<String> {
+    if let Some(database_url) = database_url {
+        return Ok(database_url.to_owned());
+    }
+
+    let stage = ctx.start_stage("preflight");
+    let ready = preflight::ensure_ready(ctx);
+    ctx.finish_stage(stage, ready.is_ok());
+    ready?;
+
+    Ok(StackConfig::for_current_checkout()
+        .wrap_err("failed to resolve checkout-local database URL after preflight")?
+        .database_url())
 }
 
 pub(crate) async fn run_strict_diff(database_url: &str) -> Result<Vec<StrictDrift>> {
