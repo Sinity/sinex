@@ -907,12 +907,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn debt_rows_from_source_coverage_reports_material_without_events(
-    ) -> xtask::TestResult<()> {
-        let rows = debt_rows_from_source_coverage(&[fixture_source_coverage(
-            Some(12),
-            Some(0),
-        )]);
+    async fn debt_rows_from_source_coverage_reports_material_without_events()
+    -> xtask::TestResult<()> {
+        let rows = debt_rows_from_source_coverage(&[fixture_source_coverage(Some(12), Some(0))]);
 
         assert_eq!(rows.len(), 1);
         let row = &rows[0];
@@ -935,12 +932,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn debt_rows_from_source_coverage_reports_events_without_material(
-    ) -> xtask::TestResult<()> {
-        let rows = debt_rows_from_source_coverage(&[fixture_source_coverage(
-            Some(0),
-            Some(7),
-        )]);
+    async fn debt_rows_from_source_coverage_reports_events_without_material()
+    -> xtask::TestResult<()> {
+        let rows = debt_rows_from_source_coverage(&[fixture_source_coverage(Some(0), Some(7))]);
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].kind, DebtKind::Capture);
@@ -950,12 +944,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn debt_rows_from_source_coverage_omits_ready_active_sources(
-    ) -> xtask::TestResult<()> {
-        let rows = debt_rows_from_source_coverage(&[fixture_source_coverage(
-            Some(2),
-            Some(2),
-        )]);
+    async fn debt_rows_from_source_coverage_omits_ready_active_sources() -> xtask::TestResult<()> {
+        let rows = debt_rows_from_source_coverage(&[fixture_source_coverage(Some(2), Some(2))]);
 
         assert!(rows.is_empty());
         Ok(())
