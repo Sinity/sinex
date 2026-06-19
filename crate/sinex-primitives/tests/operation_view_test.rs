@@ -1,7 +1,7 @@
 use sinex_primitives::domain::{OperationKind, OperationStatus};
 use sinex_primitives::views::{
-    OPERATION_JOB_LIST_SCHEMA_VERSION, OPERATION_VIEW_SCHEMA_VERSION, OperationJobListView,
-    OperationView, VIEW_ENVELOPE_SCHEMA_VERSION, ViewEnvelope,
+    ActionAvailabilityState, OPERATION_JOB_LIST_SCHEMA_VERSION, OPERATION_VIEW_SCHEMA_VERSION,
+    OperationJobListView, OperationView, VIEW_ENVELOPE_SCHEMA_VERSION, ViewEnvelope,
 };
 use xtask::sandbox::prelude::*;
 
@@ -15,6 +15,17 @@ async fn operation_kind_known_variants_round_trip() -> TestResult<()> {
         (OperationKind::Restore, "restore"),
         (OperationKind::Purge, "purge"),
         (OperationKind::Tombstone, "tombstone"),
+        (OperationKind::DlqRequeue, "dlq.requeue"),
+        (OperationKind::DlqPurge, "dlq.purge"),
+        (OperationKind::RuntimeDrain, "runtime.drain"),
+        (OperationKind::RuntimeResume, "runtime.resume"),
+        (OperationKind::RuntimeSetHorizon, "runtime.set_horizon"),
+        (OperationKind::CurationFinalize, "curation.finalize"),
+        (OperationKind::PrivacyPrivateMode, "privacy.private_mode"),
+        (
+            OperationKind::ArchiveIntegrityMismatch,
+            "archive.integrity_mismatch",
+        ),
     ];
 
     for (kind, expected_str) in cases {
@@ -54,6 +65,38 @@ async fn operation_kind_from_str_for_known() -> TestResult<()> {
     assert_eq!(
         OperationKind::from_str("tombstone").unwrap(),
         OperationKind::Tombstone
+    );
+    assert_eq!(
+        OperationKind::from_str("dlq.requeue").unwrap(),
+        OperationKind::DlqRequeue
+    );
+    assert_eq!(
+        OperationKind::from_str("dlq.purge").unwrap(),
+        OperationKind::DlqPurge
+    );
+    assert_eq!(
+        OperationKind::from_str("runtime.drain").unwrap(),
+        OperationKind::RuntimeDrain
+    );
+    assert_eq!(
+        OperationKind::from_str("runtime.resume").unwrap(),
+        OperationKind::RuntimeResume
+    );
+    assert_eq!(
+        OperationKind::from_str("runtime.set_horizon").unwrap(),
+        OperationKind::RuntimeSetHorizon
+    );
+    assert_eq!(
+        OperationKind::from_str("curation.finalize").unwrap(),
+        OperationKind::CurationFinalize
+    );
+    assert_eq!(
+        OperationKind::from_str("privacy.private_mode").unwrap(),
+        OperationKind::PrivacyPrivateMode
+    );
+    assert_eq!(
+        OperationKind::from_str("archive.integrity_mismatch").unwrap(),
+        OperationKind::ArchiveIntegrityMismatch
     );
     Ok(())
 }
@@ -133,6 +176,43 @@ async fn operation_view_from_rpc_unknown_type() -> TestResult<()> {
         view.result_message.as_deref(),
         Some("completed successfully")
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn operation_view_from_rpc_runtime_and_dlq_types() -> TestResult<()> {
+    let dlq = OperationView::from_rpc(
+        "01HQ2KM0002DLQ".to_string(),
+        "dlq.requeue",
+        "admin".to_string(),
+        OperationStatus::Success,
+        Some(42),
+        None,
+        None,
+        None,
+    );
+    assert_eq!(dlq.kind, OperationKind::DlqRequeue);
+
+    let runtime = OperationView::from_rpc(
+        "01HQ2KM0002RUN".to_string(),
+        "runtime.set_horizon",
+        "operator".to_string(),
+        OperationStatus::Running,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(runtime.kind, OperationKind::RuntimeSetHorizon);
+    assert!(
+        runtime
+            .actions
+            .iter()
+            .any(|action| action.id == "ops.cancel"
+                && action.state == ActionAvailabilityState::Enabled),
+        "running runtime operations should still expose the shared cancel action"
+    );
+
     Ok(())
 }
 
