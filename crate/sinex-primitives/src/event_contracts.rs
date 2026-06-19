@@ -121,6 +121,9 @@ pub const SHELL_KITTY_COMMAND_EXECUTED_CONTRACT_ID: EventContractId =
     "event-contract:shell.kitty/command.executed@v1";
 pub const BROWSER_PAGE_VISITED_CONTRACT_ID: EventContractId =
     "event-contract:webhistory/page.visited@v1";
+pub const EMAIL_MESSAGE_RECEIVED_CONTRACT_ID: EventContractId =
+    "event-contract:email/message.received@v1";
+pub const EMAIL_MESSAGE_SENT_CONTRACT_ID: EventContractId = "event-contract:email/message.sent@v1";
 
 const SHELL_HISTORY_PACKAGES: &[&str] = &[
     "terminal.bash-history",
@@ -138,6 +141,9 @@ const BROWSER_HISTORY_PACKAGES: &[&str] = &["browser.history"];
 const BROWSER_HISTORY_SOURCE_OCCURRENCES: &[OccurrenceIdentity] = &[OccurrenceIdentity::Uuid5From(
     "(source, browser_profile, visit_id)",
 )];
+const EMAIL_MAILBOX_PACKAGES: &[&str] = &["email.mailbox"];
+const EMAIL_MAILBOX_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
+    &[OccurrenceIdentity::Uuid5From("(message_id, folder)")];
 
 inventory::submit! {
     EventContract {
@@ -198,6 +204,48 @@ inventory::submit! {
         disclosure_policy_ref: Some("operator.browser-history.default"),
         admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
         package_refs: BROWSER_HISTORY_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
+inventory::submit! {
+    EventContract {
+        id: EMAIL_MESSAGE_RECEIVED_CONTRACT_ID,
+        event_source: "email",
+        event_type: "email.message.received",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "email",
+            event_type: "email.message.received",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::SourceDeclared,
+        source_occurrences: EMAIL_MAILBOX_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicOrMaterial,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.email-mailbox.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: EMAIL_MAILBOX_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
+inventory::submit! {
+    EventContract {
+        id: EMAIL_MESSAGE_SENT_CONTRACT_ID,
+        event_source: "email",
+        event_type: "email.message.sent",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "email",
+            event_type: "email.message.sent",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::SourceDeclared,
+        source_occurrences: EMAIL_MAILBOX_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicOrMaterial,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.email-mailbox.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: EMAIL_MAILBOX_PACKAGES,
         output_kind: OutputKind::CanonicalEvent,
     }
 }
@@ -271,6 +319,33 @@ mod tests {
                     .contains(&BROWSER_PAGE_VISITED_CONTRACT_ID)
         });
         assert!(accepted_by_standard);
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn email_message_contracts_are_package_and_policy_addressable() -> TestResult<()> {
+        for id in [
+            EMAIL_MESSAGE_RECEIVED_CONTRACT_ID,
+            EMAIL_MESSAGE_SENT_CONTRACT_ID,
+        ] {
+            let Some(contract) = find_event_contract(id) else {
+                panic!("missing email EventContract {id}");
+            };
+
+            assert_eq!(contract.event_source, "email");
+            assert!(contract.package_refs.contains(&"email.mailbox"));
+            assert_eq!(
+                contract.admission_policy_ref,
+                Some(STANDARD_EVENT_ADMISSION_POLICY_ID)
+            );
+
+            let accepted_by_standard = admission_policies().any(|policy| {
+                policy.id == STANDARD_EVENT_ADMISSION_POLICY_ID
+                    && policy.accepted_event_contracts.contains(&id)
+            });
+            assert!(accepted_by_standard, "{id} must be admission-addressable");
+        }
 
         Ok(())
     }

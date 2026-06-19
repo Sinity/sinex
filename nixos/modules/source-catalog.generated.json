@@ -358,7 +358,16 @@
         "output_event_type": "page.visited",
         "privacy_context": "metadata",
         "resource_profile": "bounded_stream",
-        "capabilities": [],
+        "capabilities": [
+          "coverage:source-coverage",
+          "debt:unified-debt-view",
+          "operation:browser.web.check",
+          "operation:browser.web.reconnect",
+          "operation:browser.web.pause",
+          "operation:browser.web.resume",
+          "operation:browser.web.drain",
+          "operation:browser.web.inspect"
+        ],
         "source_id": "browser.history",
         "proposed": false,
         "runner_pack": "sinexd_source",
@@ -1249,8 +1258,7 @@
         ],
         "privacy_tier": "sensitive",
         "horizons": [
-          "historical",
-          "continuous"
+          "historical"
         ],
         "retention": {
           "kind": "forever"
@@ -1268,13 +1276,22 @@
         "id": "email.mailbox",
         "domain": "email",
         "implementation": "staged-parser",
-        "adapter": "AppendOnlyFileAdapter",
+        "adapter": "FileContentDropAdapter",
         "output_event_type": "email.message.received",
         "privacy_context": "document",
         "resource_profile": "bounded_file",
-        "capabilities": [],
+        "capabilities": [
+          "coverage:source-coverage",
+          "debt:unified-debt-view",
+          "operation:email.mailbox.check",
+          "operation:email.mailbox.sync",
+          "operation:email.mailbox.pause",
+          "operation:email.mailbox.resume",
+          "operation:email.mailbox.inspect",
+          "operation:email.mailbox.replay"
+        ],
         "source_id": "email.mailbox",
-        "proposed": true,
+        "proposed": false,
         "runner_pack": "staged",
         "checkpoint_family": {
           "kind": "append_stream"
@@ -1289,6 +1306,78 @@
           "dedicated_build_rationale": null
         }
       },
+      "runtime_bindings": [
+        {
+          "subject": "source:email.mailbox",
+          "id": "email.mailbox",
+          "domain": "email",
+          "implementation": "staged-parser",
+          "adapter": "FileContentDropAdapter",
+          "output_event_type": "email.message.received",
+          "privacy_context": "document",
+          "resource_profile": "bounded_file",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:email.mailbox.check",
+            "operation:email.mailbox.sync",
+            "operation:email.mailbox.pause",
+            "operation:email.mailbox.resume",
+            "operation:email.mailbox.inspect",
+            "operation:email.mailbox.replay"
+          ],
+          "source_id": "email.mailbox",
+          "proposed": false,
+          "runner_pack": "staged",
+          "checkpoint_family": {
+            "kind": "append_stream"
+          },
+          "runtime_shape": "scheduled",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        },
+        {
+          "subject": "source:email.mailbox.sent",
+          "id": "email.mailbox",
+          "domain": "email",
+          "implementation": "staged-parser",
+          "adapter": "FileContentDropAdapter",
+          "output_event_type": "email.message.sent",
+          "privacy_context": "document",
+          "resource_profile": "bounded_file",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:email.mailbox.check",
+            "operation:email.mailbox.sync",
+            "operation:email.mailbox.pause",
+            "operation:email.mailbox.resume",
+            "operation:email.mailbox.inspect",
+            "operation:email.mailbox.replay"
+          ],
+          "source_id": "email.mailbox",
+          "proposed": true,
+          "runner_pack": "staged",
+          "checkpoint_family": {
+            "kind": "append_stream"
+          },
+          "runtime_shape": "scheduled",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        }
+      ],
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100

@@ -228,17 +228,18 @@ pub(crate) async fn handle_sse_stream(
     let bus_for_cleanup = Arc::clone(&bus);
     let privacy_policy = Arc::clone(state.services.privacy_policy());
     let stream_filter = filter.clone();
-    let event_stream = merged.then(move |item| {
-        let privacy_policy = Arc::clone(&privacy_policy);
-        let stream_filter = stream_filter.clone();
-        async move {
-            let MergedItem::Msg(msg) = item;
-            format_sse_message(msg, &privacy_policy, &stream_filter)
-                .await
-                .map(Ok::<_, Infallible>)
-        }
-    })
-    .filter_map(|item| item);
+    let event_stream = merged
+        .then(move |item| {
+            let privacy_policy = Arc::clone(&privacy_policy);
+            let stream_filter = stream_filter.clone();
+            async move {
+                let MergedItem::Msg(msg) = item;
+                format_sse_message(msg, &privacy_policy, &stream_filter)
+                    .await
+                    .map(Ok::<_, Infallible>)
+            }
+        })
+        .filter_map(|item| item);
 
     // Wrap in a stream that unregisters on drop
     let cleanup_stream = CleanupStream {
