@@ -27,8 +27,12 @@ pub async fn handle_events_query(pool: &PgPool, query: EventQuery) -> Result<Eve
     pool.events().query(query).await
 }
 
-pub async fn handle_events_lineage(pool: &PgPool, query: LineageQuery) -> Result<LineageResult> {
-    pool.events().lineage(query).await
+pub async fn handle_events_lineage(
+    services: &ServiceContainer,
+    query: LineageQuery,
+) -> Result<LineageResult> {
+    let result = services.pool().events().lineage(query).await?;
+    Ok(lineage_result_with_policy(result, services.privacy_policy()).await)
 }
 
 pub async fn handle_events_relation_evidence(
@@ -168,6 +172,27 @@ pub(crate) async fn event_card_list_with_policy(
         card.caveats.extend(caveats);
     }
     view
+}
+
+async fn lineage_result_with_policy(
+    mut result: LineageResult,
+    policy: &PolicyEngine,
+) -> LineageResult {
+    disclose_lineage_event_payload(&mut result.root, policy).await;
+    for node in &mut result.ancestors {
+        disclose_lineage_event_payload(&mut node.event, policy).await;
+    }
+    for node in &mut result.descendants {
+        disclose_lineage_event_payload(&mut node.event, policy).await;
+    }
+    result
+}
+
+async fn disclose_lineage_event_payload(event: &mut Event<JsonValue>, policy: &PolicyEngine) {
+    let decision = policy
+        .disclose_event_payload(event, DisclosureContext::View)
+        .await;
+    event.payload = decision.value;
 }
 
 fn merged_privacy_state(
