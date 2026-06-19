@@ -91,7 +91,10 @@ inventory::submit! {
     AdmissionPolicy {
         id: STANDARD_EVENT_ADMISSION_POLICY_ID,
         scope: AdmissionPolicyScope::GlobalDefault,
-        accepted_event_contracts: &[crate::event_contracts::SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID],
+        accepted_event_contracts: &[
+            crate::event_contracts::SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
+            crate::event_contracts::SHELL_KITTY_COMMAND_EXECUTED_CONTRACT_ID,
+        ],
         schema_validation: SchemaValidationBehavior::AllowPayloadInventoryLookup,
         occurrence: OccurrenceAdmissionBehavior::AllowSourceContractIdentity,
         disclosure_policy_ref: Some("operator.default-disclosure"),

@@ -475,7 +475,7 @@ async fn package_completeness_report_is_keyed_by_package_and_mode() -> TestResul
     };
 
     let report = build_package_completeness_report();
-    assert_eq!(report.schema_version, 1);
+    assert_eq!(report.schema_version, 2);
     assert!(
         report.summary.package_count >= 1,
         "report must enumerate compiled SourceContract inventory"
@@ -558,6 +558,47 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
             .as_ref()
             .is_some_and(|binding| !binding.resource_budget.is_null()),
         "runtime binding rows should expose the derived ResourceBudgetSpec"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn package_completeness_report_consumes_coverage_debt_and_operation_refs() -> TestResult<()> {
+    use sinexd::sources::package_completeness::build_package_completeness_report;
+
+    let report = build_package_completeness_report();
+    let mode = report
+        .packages
+        .get("terminal.kitty-osc-live")
+        .and_then(|package| package.modes.get("terminal.kitty-osc-live"))
+        .expect("terminal.kitty-osc-live package/mode row");
+
+    assert!(
+        mode.coverage_debt_refs
+            .contains(&"coverage:source-coverage".to_string()),
+        "Kitty mode must declare the coverage provider consumed by the package gate"
+    );
+    assert!(
+        mode.coverage_debt_refs
+            .contains(&"debt:unified-debt-view".to_string()),
+        "Kitty mode must declare the unified debt provider consumed by the package gate"
+    );
+    assert!(
+        mode.operation_refs
+            .contains(&"operation:terminal.activity.check".to_string()),
+        "Kitty mode must declare operator action refs consumed by the package gate"
+    );
+    assert!(
+        !mode
+            .missing
+            .iter()
+            .any(|field| field == "coverage_and_debt_views"),
+        "coverage/debt refs should satisfy the package completeness requirement"
+    );
+    assert!(
+        !mode.missing.iter().any(|field| field == "operations"),
+        "operation refs should satisfy the package completeness requirement"
     );
 
     Ok(())
