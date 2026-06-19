@@ -14,6 +14,7 @@ use sinex_primitives::error::SinexErrorKind;
 use sinex_primitives::{
     domain::{EventSource, EventType},
     environment::SinexEnvironment,
+    source_contracts::ResourceProfile,
     temporal::Timestamp,
 };
 use std::sync::Arc;
@@ -135,7 +136,7 @@ impl JetStreamEventConsumer {
         provisional_handler: Option<Arc<dyn ProvisionalEventHandler>>,
         namespace: Option<String>,
     ) -> Self {
-        let confirmation_buffer = Arc::new(ConfirmationBuffer::new(config.confirmation_timeout));
+        let confirmation_buffer = event_stream_confirmation_buffer(config.confirmation_timeout);
 
         Self {
             nats_client,
@@ -1051,13 +1052,25 @@ impl JetStreamEventConsumer {
     }
 }
 
+fn event_stream_confirmation_buffer(timeout: Duration) -> Arc<ConfirmationBuffer> {
+    Arc::new(ConfirmationBuffer::with_resource_budget(
+        timeout,
+        ResourceProfile::EventStreamConsumer.budget_spec(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     // Small inline tests are justified here because they target private background-task
     // exit classification logic that is not exposed through the public consumer API.
-    use super::{EventConfirmation, JetStreamEventConsumer, JetStreamEventConsumerConfig};
+    use super::{
+        EventConfirmation, JetStreamEventConsumer, JetStreamEventConsumerConfig,
+        event_stream_confirmation_buffer,
+    };
     use async_nats::jetstream::consumer::DeliverPolicy;
-    use sinex_primitives::{SinexError, Uuid, events::builder::EventId};
+    use sinex_primitives::{
+        SinexError, Uuid, events::builder::EventId, source_contracts::ResourceProfile,
+    };
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -1101,6 +1114,23 @@ mod tests {
         assert!(config.buffer_raw_events);
         assert!(!config.accept_unbuffered_confirmations);
         assert_eq!(config.deliver_policy, DeliverPolicy::All);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn event_stream_confirmation_buffer_uses_runtime_budget() -> xtask::sandbox::TestResult<()>
+    {
+        let budget = ResourceProfile::EventStreamConsumer.budget_spec();
+        let buffer = event_stream_confirmation_buffer(std::time::Duration::from_secs(60));
+
+        assert_eq!(
+            buffer.max_capacity(),
+            usize::try_from(budget.max_pending_candidates)?
+        );
+        assert_eq!(
+            buffer.max_payload_bytes(),
+            usize::try_from(budget.max_pending_material_bytes)?
+        );
         Ok(())
     }
 
