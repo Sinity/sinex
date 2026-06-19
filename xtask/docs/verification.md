@@ -17,7 +17,8 @@ integration tests, schema strict-diff, or generated-surface checks can own.
 | Release readiness | release contract/report command | `xtask release-readiness --run-required-checks` | Emits claims, non-claims, caveats, artifacts, and required check results. |
 | Event admission and event-engine runtime | `sinexd` event-engine tests | `xtask test -p sinexd -E 'test(admission|event_engine)'` | Use focused integration tests for NATS, DLQ, admission, material assembly, schema sync, and runtime behavior. |
 | Source catalog drift | `sinexd` source catalog integration test | `xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)' --allow-contended-host` | The generated NixOS source catalog is rendered from the linked Rust source inventory and compared to the checked-in artifact. |
-| Privacy catalog loading | privacy command/runtime | `xtask privacy catalog --format json` | This proves the catalog loads. Field/view/export/log/completion enforcement remains owned by #1693. |
+| Privacy catalog loading | privacy command/runtime | `xtask privacy catalog --format json` | This proves the catalog loads. Destination enforcement is covered by focused privacy/disclosure tests. |
+| Replay invalidation recovery | `ops.start` projection-rebuild recovery path | `xtask test -p sinexd -E 'test(ops_start_projection_rebuild_recovers_pending_replay_invalidation)'` | Proves pending replay scope invalidation metadata can be drained through a durable operation instead of relying solely on post-commit NATS publish. |
 | Database schema drift | schema strict-diff | `xtask schema strict-diff` | Owns DB shape and migration drift against the checkout-local development database. |
 | Command reference drift | docs generated-surface command | `xtask docs command-reference --check` | Owns the checked-in command reference against the live clap tree. |
 | Payload schema bundle drift | docs generated-surface command | `xtask docs schema-bundle --check` | Owns the checked-in payload schema bundle against the Rust registry. |
@@ -52,11 +53,13 @@ Follow-up issue needed:
   complete source/package gate once package modes have EventContract,
   AdmissionPolicy, ResourceBudgetSpec, debt views, operations, fixtures, and
   generated catalog coverage.
-- #1693 must add enforcement tests for views, exports, logs, completions, DLQ,
-  and telemetry. The current release gate only proves the privacy catalog loads.
+- Privacy destination enforcement remains owned by focused runtime/CLI tests; do
+  not replace those with catalog-load proof.
 - #1735 must keep command catalog, help, completion, ViewEnvelope, API, and TUI
   DTO checks tied to generated-surface or focused Rust tests.
-- #1974 owns replay/archive crash-window and invalidation recovery tests.
+- Replay/archive invalidation recovery is covered by the `ops.start`
+  projection-rebuild recovery test. Broader replay changes should add focused
+  tests at the replay/debt/operation boundary they modify.
 
 Blocked by named human decision:
 
