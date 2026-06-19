@@ -679,7 +679,9 @@ mod tests {
             "hunter2",
         ] {
             assert!(
-                !rendered.to_lowercase().contains(&leaked_value.to_lowercase()),
+                !rendered
+                    .to_lowercase()
+                    .contains(&leaked_value.to_lowercase()),
                 "completion response leaked value-like material `{leaked_value}`"
             );
         }

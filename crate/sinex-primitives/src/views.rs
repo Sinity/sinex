@@ -18,6 +18,8 @@ use serde_json::json;
 pub const VIEW_ENVELOPE_SCHEMA_VERSION: &str = "sinex.view-envelope/v3";
 pub const CONTEXT_SUMMARY_SCHEMA_VERSION: &str = "sinex.context-summary/v1";
 pub const DESKTOP_CONTEXT_VIEW_SCHEMA_VERSION: &str = "sinex.desktop-context-view/v1";
+pub const DESKTOP_NOTIFICATION_PRESSURE_SCHEMA_VERSION: &str =
+    "sinex.desktop-notification-pressure/v1";
 pub const EVENT_CARD_LIST_SCHEMA_VERSION: &str = "sinex.event-card-list/v3";
 pub const EVENT_ERROR_LIST_SCHEMA_VERSION: &str = "sinex.event-error-list/v1";
 pub const EVENT_QUERY_LIST_SCHEMA_VERSION: &str = "sinex.event-query-list/v1";
@@ -107,6 +109,64 @@ pub struct DesktopContextCandidateView {
     pub evidence_refs: Vec<SinexObjectRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposal_ref: Option<SinexObjectRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DesktopNotificationPressureView {
+    pub schema_version: String,
+    pub output_kind: DesktopContextOutputKind,
+    pub derivation_ref: String,
+    pub output_id: String,
+    pub generated_at: Timestamp,
+    pub since: String,
+    pub sent_count: usize,
+    pub action_count: usize,
+    pub closed_count: usize,
+    pub total_notification_events: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_refs: Vec<SinexObjectRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<CaveatView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<ActionAvailability>,
+}
+
+impl DesktopNotificationPressureView {
+    #[must_use]
+    pub fn new(derivation_ref: impl Into<String>, since: impl Into<String>) -> Self {
+        Self {
+            schema_version: DESKTOP_NOTIFICATION_PRESSURE_SCHEMA_VERSION.to_string(),
+            output_kind: DesktopContextOutputKind::NotificationPressureProjection,
+            derivation_ref: derivation_ref.into(),
+            output_id: "desktop.notification_pressure".to_string(),
+            generated_at: Timestamp::now(),
+            since: since.into(),
+            sent_count: 0,
+            action_count: 0,
+            closed_count: 0,
+            total_notification_events: 0,
+            evidence_refs: Vec::new(),
+            caveats: Vec::new(),
+            actions: vec![
+                ActionAvailability::read(
+                    "desktop.notification_pressure.explain",
+                    "Explain",
+                    ActionAvailabilityState::Enabled,
+                )
+                .with_command_hint(
+                    "sinexctl events context --desktop --notification-pressure --format json",
+                ),
+            ],
+        }
+    }
+
+    #[must_use]
+    pub fn into_envelope(self, source_surface: impl Into<String>) -> ViewEnvelope<Self> {
+        let mut envelope = ViewEnvelope::new(source_surface, self);
+        envelope.caveats = envelope.payload.caveats.clone();
+        envelope.actions = envelope.payload.actions.clone();
+        envelope
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -2420,6 +2480,54 @@ mod tests {
         assert_eq!(value["caveats"][0]["id"], "context.partial");
         assert_eq!(value["actions"][0]["id"], "desktop.context.explain");
         assert_eq!(window_ref.kind, SinexObjectKind::Event);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_notification_pressure_view_carries_projection_contract()
+    -> xtask::TestResult<()> {
+        let event_ref = SinexObjectRef::new(SinexObjectKind::Event, "event:notification-sent")
+            .with_label("desktop.notification · notification.sent");
+        let mut view = DesktopNotificationPressureView::new(
+            crate::DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID,
+            "2h",
+        );
+        view.sent_count = 1;
+        view.total_notification_events = 1;
+        view.evidence_refs.push(event_ref.clone());
+        view.caveats.push(CaveatView {
+            id: "notification_pressure.partial".to_string(),
+            message: "fixture pressure view is partial".to_string(),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::Projection,
+                "desktop.notification_pressure",
+            )),
+        });
+
+        let envelope = view
+            .into_envelope("sinexctl.events.context.desktop.notification_pressure")
+            .with_query_echo(json!({ "mode": "desktop_notification_pressure" }));
+        let value = serde_json::to_value(&envelope)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(
+            value["payload"]["schema_version"],
+            DESKTOP_NOTIFICATION_PRESSURE_SCHEMA_VERSION
+        );
+        assert_eq!(
+            value["payload"]["derivation_ref"],
+            crate::DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID
+        );
+        assert_eq!(
+            value["payload"]["output_kind"],
+            "notification_pressure_projection"
+        );
+        assert_eq!(
+            value["payload"]["output_id"],
+            "desktop.notification_pressure"
+        );
+        assert_eq!(value["payload"]["evidence_refs"][0]["id"], event_ref.id);
+        assert_eq!(value["caveats"][0]["id"], "notification_pressure.partial");
         Ok(())
     }
 
