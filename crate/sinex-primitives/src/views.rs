@@ -711,16 +711,42 @@ pub struct EventCardListView {
     pub schema_version: String,
     pub count: usize,
     pub cards: Vec<EventCardView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_estimate: Option<i64>,
 }
 
 impl EventCardListView {
     #[must_use]
     pub fn from_query_events(events: &[QueryResultEvent]) -> Self {
+        Self::from_query_events_with_metadata(events, None, None)
+    }
+
+    #[must_use]
+    pub fn from_query_events_with_metadata(
+        events: &[QueryResultEvent],
+        next_cursor: Option<Cursor>,
+        total_estimate: Option<i64>,
+    ) -> Self {
         Self {
             schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
             count: events.len(),
             cards: events.iter().map(EventCardView::from_query_event).collect(),
+            next_cursor,
+            total_estimate,
         }
+    }
+
+    #[must_use]
+    pub fn with_query_metadata(
+        mut self,
+        next_cursor: Option<Cursor>,
+        total_estimate: Option<i64>,
+    ) -> Self {
+        self.next_cursor = next_cursor;
+        self.total_estimate = total_estimate;
+        self
     }
 }
 
@@ -1364,6 +1390,8 @@ mod tests {
                 schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
                 count: 0,
                 cards: Vec::new(),
+                next_cursor: None,
+                total_estimate: None,
             },
         )
         .with_query_echo(json!({ "since": "1h", "limit": 20 }));
