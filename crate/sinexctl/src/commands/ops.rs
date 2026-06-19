@@ -2,6 +2,7 @@ use clap::{Subcommand, ValueEnum};
 use serde_json::Value;
 use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::ops::{Operation as OpsOperation, OpsStartResponse};
+use sinex_primitives::rpc::sources::{SourceCoverageEntry, SourcesCoverageRequest};
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, DebtKind,
     DebtListView, DebtOwnerView, DebtRowView, DebtStage, OperationJobListView, OperationView,
@@ -177,6 +178,9 @@ EXAMPLES:
     # List operator-visible debt rows
     sinexctl ops debt list
 
+    # Include source coverage gaps as capture debt rows
+    sinexctl ops debt list --include-capture
+
     # Render debt rows as JSON
     sinexctl ops debt list --format json
 ")]
@@ -184,6 +188,9 @@ pub enum DebtCommands {
     /// List debt rows from currently wired providers
     #[command(alias = "ls")]
     List {
+        /// Include capture debt rows derived from the source coverage view.
+        #[arg(long)]
+        include_capture: bool,
         /// Include derivations invalidated by the selected trigger as projection debt.
         #[arg(long, value_enum)]
         projection_trigger: Option<DebtProjectionTrigger>,
@@ -363,15 +370,25 @@ impl JobsCommands {
 impl DebtCommands {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
-            Self::List { projection_trigger } => {
+            Self::List {
+                include_capture,
+                projection_trigger,
+            } => {
                 let dlq = client.dlq_list().await?;
                 let mut rows = debt_rows_from_dlq(&dlq);
+                if *include_capture {
+                    let coverage = client.sources_coverage(SourcesCoverageRequest {}).await?;
+                    rows.extend(debt_rows_from_source_coverage(&coverage.sources));
+                }
                 if let Some(trigger) = projection_trigger {
                     rows.extend(debt_rows_from_derivation_trigger(
                         trigger.into_invalidation_trigger(),
                     ));
                 }
                 let mut providers = vec!["raw_ingest_dlq"];
+                if *include_capture {
+                    providers.push("source_coverage");
+                }
                 if projection_trigger.is_some() {
                     providers.push("derivation_specs");
                 }
@@ -448,6 +465,97 @@ pub(crate) fn debt_rows_from_dlq(stats: &DlqListResponse) -> Vec<DebtRowView> {
                 .with_rpc_method("dlq.peek"),
         ],
     }]
+}
+
+pub(crate) fn debt_rows_from_source_coverage(sources: &[SourceCoverageEntry]) -> Vec<DebtRowView> {
+    sources
+        .iter()
+        .flat_map(debt_rows_for_source_coverage)
+        .collect()
+}
+
+fn debt_rows_for_source_coverage(source: &SourceCoverageEntry) -> Vec<DebtRowView> {
+    let material_count = source.material_count.unwrap_or_default();
+    let event_count = source.event_count.unwrap_or_default();
+
+    if material_count > 0 && event_count == 0 {
+        vec![capture_debt_row(
+            source,
+            "material-without-events",
+            DebtStage::MaterialReady,
+            format!(
+                "source `{}` has {} `{}` material record(s) but no admitted events",
+                source.source_identifier, material_count, source.material_kind
+            ),
+        )]
+    } else if event_count > 0 && material_count == 0 {
+        vec![capture_debt_row(
+            source,
+            "events-without-material",
+            DebtStage::Capturing,
+            format!(
+                "source `{}` has {} admitted event(s) but no registered `{}` material",
+                source.source_identifier, event_count, source.material_kind
+            ),
+        )]
+    } else {
+        Vec::new()
+    }
+}
+
+fn capture_debt_row(
+    source: &SourceCoverageEntry,
+    id_segment: &str,
+    stage: DebtStage,
+    summary: String,
+) -> DebtRowView {
+    let actions = vec![
+        ActionAvailability::read(
+            "source.coverage.inspect",
+            "Inspect",
+            ActionAvailabilityState::Enabled,
+        )
+        .with_command_hint("sinexctl sources coverage")
+        .with_rpc_method("sources.coverage"),
+    ];
+
+    DebtRowView {
+        id: format!(
+            "debt:capture:{}:{}:{id_segment}",
+            debt_id_segment(&source.source_identifier),
+            debt_id_segment(&source.material_kind),
+        ),
+        kind: DebtKind::Capture,
+        stage,
+        summary,
+        refs: vec![
+            SinexObjectRef::new(SinexObjectKind::RpcMethod, "sources.coverage"),
+            SinexObjectRef::new(SinexObjectKind::Command, "sources coverage"),
+        ],
+        owner: Some(DebtOwnerView {
+            package_ref: Some(source.source_identifier.clone()),
+            mode_ref: None,
+            policy_ref: None,
+            operation_ref: None,
+        }),
+        age_secs: None,
+        freshness: None,
+        caveats: Vec::new(),
+        actions,
+    }
+}
+
+fn debt_id_segment(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn debt_rows_from_derivation_trigger(trigger: InvalidationTrigger) -> Vec<DebtRowView> {
@@ -766,6 +874,20 @@ mod tests {
         }
     }
 
+    fn fixture_source_coverage(
+        material_count: Option<i64>,
+        event_count: Option<i64>,
+    ) -> SourceCoverageEntry {
+        SourceCoverageEntry {
+            source_identifier: "terminal.shell-history".to_string(),
+            material_kind: "shell_history".to_string(),
+            earliest_ts: None,
+            latest_ts: None,
+            event_count,
+            material_count,
+        }
+    }
+
     #[sinex_test]
     async fn debt_rows_from_dlq_reports_only_pending_admission_debt() -> xtask::TestResult<()> {
         assert!(debt_rows_from_dlq(&fixture_dlq(0)).is_empty());
@@ -781,6 +903,61 @@ mod tests {
             Some("sinexctl ops dlq peek")
         );
         assert_eq!(row.caveats[0].id, "raw_ingest_dlq.warning");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn debt_rows_from_source_coverage_reports_material_without_events(
+    ) -> xtask::TestResult<()> {
+        let rows = debt_rows_from_source_coverage(&[fixture_source_coverage(
+            Some(12),
+            Some(0),
+        )]);
+
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.kind, DebtKind::Capture);
+        assert_eq!(row.stage, DebtStage::MaterialReady);
+        assert_eq!(
+            row.owner
+                .as_ref()
+                .and_then(|owner| owner.package_ref.as_deref()),
+            Some("terminal.shell-history")
+        );
+        assert_eq!(row.refs[0].kind, SinexObjectKind::RpcMethod);
+        assert_eq!(row.refs[0].id, "sources.coverage");
+        assert!(
+            row.actions
+                .iter()
+                .any(|action| action.command_hint.as_deref() == Some("sinexctl sources coverage"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn debt_rows_from_source_coverage_reports_events_without_material(
+    ) -> xtask::TestResult<()> {
+        let rows = debt_rows_from_source_coverage(&[fixture_source_coverage(
+            Some(0),
+            Some(7),
+        )]);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, DebtKind::Capture);
+        assert_eq!(rows[0].stage, DebtStage::Capturing);
+        assert!(rows[0].summary.contains("no registered"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn debt_rows_from_source_coverage_omits_ready_active_sources(
+    ) -> xtask::TestResult<()> {
+        let rows = debt_rows_from_source_coverage(&[fixture_source_coverage(
+            Some(2),
+            Some(2),
+        )]);
+
+        assert!(rows.is_empty());
         Ok(())
     }
 

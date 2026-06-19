@@ -654,7 +654,7 @@ fn finalize_mode(
         "coverage_and_debt_views",
         RequirementStatus::Missing,
         mode_state == PackageModeState::Accepted,
-        "SourceCoverage exists; CaptureDebt/AdmissionDebt/ProjectionDebt refs from #1901 are not wired into package modes yet".to_string(),
+        "SourceCoverage exists; unified DebtListView provider refs are not declared per package mode yet".to_string(),
     );
     diagnostics.require(
         "operations",

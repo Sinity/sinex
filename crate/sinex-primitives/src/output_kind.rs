@@ -118,6 +118,12 @@ pub const OUTPUT_KIND_DECLARATIONS: &[OutputKindDeclaration] = &[
         owner: "sinex-primitives::views",
         rationale: "delivery envelope for operator-visible read results",
     },
+    OutputKindDeclaration {
+        output_id: "views.debt_list",
+        kind: OutputKind::EphemeralView,
+        owner: "sinex-primitives::views::DebtListView",
+        rationale: "operator debt read model for capture, admission, and projection gaps",
+    },
 ];
 
 #[must_use]
