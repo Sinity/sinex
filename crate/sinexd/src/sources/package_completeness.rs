@@ -22,7 +22,7 @@ use crate::sources::privacy_coverage::render_privacy_coverage_matrix;
 use crate::sources::source_factory::registered_source_factory_ids;
 
 /// Bumped when the report JSON shape changes.
-pub const PACKAGE_COMPLETENESS_SCHEMA_VERSION: u32 = 1;
+pub const PACKAGE_COMPLETENESS_SCHEMA_VERSION: u32 = 2;
 
 /// Repo-relative path for a future committed report artifact, if the project
 /// chooses to check it in. The first slice exposes rendering + tests; it does
@@ -83,6 +83,8 @@ pub struct PackageCompletenessMode {
     pub event_pairs: Vec<EventPairReport>,
     pub event_contract_refs: Vec<String>,
     pub admission_policy_refs: Vec<String>,
+    pub coverage_debt_refs: Vec<String>,
+    pub operation_refs: Vec<String>,
     pub sources: ModeSourceRefs,
     pub requirements: Vec<RequirementDiagnostic>,
     pub missing: Vec<String>,
@@ -147,6 +149,7 @@ pub struct RuntimeBindingRef {
     pub output_event_type: String,
     pub privacy_context: Value,
     pub resource_profile: Value,
+    pub capabilities: Vec<String>,
     pub resource_limits: Value,
     pub resource_budget: Value,
     pub proposed: bool,
@@ -403,6 +406,8 @@ fn finalize_mode(
         .map(|contract| contract.id.to_string())
         .collect::<Vec<_>>();
     let admission_policy_refs = admission_policy_refs_for_event_contracts(&package_event_contracts);
+    let coverage_debt_refs = capability_refs(binding, &["coverage:", "debt:"]);
+    let operation_refs = capability_refs(binding, &["operation:"]);
     let event_pairs = event_pair_reports(contract, payload_pairs, &package_event_contracts);
 
     diagnostics.require(
@@ -652,15 +657,38 @@ fn finalize_mode(
     );
     diagnostics.require(
         "coverage_and_debt_views",
-        RequirementStatus::Missing,
-        mode_state == PackageModeState::Accepted,
-        "SourceCoverage exists; unified DebtListView provider refs are not declared per package mode yet".to_string(),
+        if has_capability_ref(&coverage_debt_refs, "coverage:")
+            && has_capability_ref(&coverage_debt_refs, "debt:")
+        {
+            RequirementStatus::Present
+        } else {
+            RequirementStatus::Missing
+        },
+        mode_state == PackageModeState::Accepted
+            && (!has_capability_ref(&coverage_debt_refs, "coverage:")
+                || !has_capability_ref(&coverage_debt_refs, "debt:")),
+        if coverage_debt_refs.is_empty() {
+            "SourceCoverage exists; unified DebtListView provider refs are not declared per package mode yet".to_string()
+        } else {
+            format!(
+                "coverage/debt refs: {}",
+                coverage_debt_refs.join(", ")
+            )
+        },
     );
     diagnostics.require(
         "operations",
-        RequirementStatus::Missing,
-        mode_state == PackageModeState::Accepted,
-        "OperationView/action refs from #1691 are not declared per package mode yet".to_string(),
+        if operation_refs.is_empty() {
+            RequirementStatus::Missing
+        } else {
+            RequirementStatus::Present
+        },
+        mode_state == PackageModeState::Accepted && operation_refs.is_empty(),
+        if operation_refs.is_empty() {
+            "OperationView/action refs from #1691 are not declared per package mode yet".to_string()
+        } else {
+            format!("operation refs: {}", operation_refs.join(", "))
+        },
     );
     diagnostics.require(
         "deployment_catalog_projection",
@@ -702,6 +730,8 @@ fn finalize_mode(
         event_pairs,
         event_contract_refs,
         admission_policy_refs,
+        coverage_debt_refs,
+        operation_refs,
         sources: ModeSourceRefs {
             source_contract: source_contract_ref(contract),
             runtime_binding: binding.map(runtime_binding_ref),
@@ -981,6 +1011,11 @@ fn runtime_binding_ref(binding: &SourceRuntimeBinding) -> RuntimeBindingRef {
         output_event_type: binding.output_event_type.to_string(),
         privacy_context: to_json_value(binding.privacy_context),
         resource_profile: to_json_value(binding.resource_profile),
+        capabilities: binding
+            .capabilities
+            .iter()
+            .map(|capability| (*capability).to_string())
+            .collect(),
         resource_limits: to_json_value(binding.resource_profile.limits()),
         resource_budget: to_json_value(binding.resource_budget()),
         proposed: binding.proposed,
@@ -1013,6 +1048,22 @@ fn parser_manifest_ref(
             .collect(),
         field_privacy_metadata_count: record.field_privacy_metadata.len(),
     }
+}
+
+fn capability_refs(binding: Option<&SourceRuntimeBinding>, prefixes: &[&str]) -> Vec<String> {
+    let mut refs = binding
+        .into_iter()
+        .flat_map(|binding| binding.capabilities.iter().copied())
+        .filter(|capability| prefixes.iter().any(|prefix| capability.starts_with(prefix)))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    refs.sort();
+    refs.dedup();
+    refs
+}
+
+fn has_capability_ref(refs: &[String], prefix: &str) -> bool {
+    refs.iter().any(|capability| capability.starts_with(prefix))
 }
 
 fn acquisition_kind(binding: Option<&SourceRuntimeBinding>) -> &'static str {

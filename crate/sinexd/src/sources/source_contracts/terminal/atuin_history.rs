@@ -1,6 +1,7 @@
 //! `terminal.atuin-history` — Atuin `SQLite` history source.
 //!
-//! Pilot for `#[derive(SourceDefinition)]` (#1727, SNX-41). One annotated
+//! Package-mode source definition for `#[derive(SourceDefinition)]` (#1727).
+//! One annotated
 //! struct ([`AtuinHistoryRecord`]) replaces the four hand-wired, string-cross-
 //! referenced registration sites a source author used to maintain:
 //!

@@ -117,6 +117,8 @@ inventory::collect!(EventContract);
 /// Existing terminal-history event contract used as the first registry entry.
 pub const SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID: EventContractId =
     "event-contract:shell.history/command.imported@v1";
+pub const SHELL_KITTY_COMMAND_EXECUTED_CONTRACT_ID: EventContractId =
+    "event-contract:shell.kitty/command.executed@v1";
 
 const SHELL_HISTORY_PACKAGES: &[&str] = &[
     "terminal.bash-history",
@@ -126,6 +128,10 @@ const SHELL_HISTORY_PACKAGES: &[&str] = &[
 ];
 const SHELL_HISTORY_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
     &[OccurrenceIdentity::Anchor, OccurrenceIdentity::Natural];
+const SHELL_KITTY_PACKAGES: &[&str] = &["terminal.kitty-osc-live"];
+const SHELL_KITTY_SOURCE_OCCURRENCES: &[OccurrenceIdentity] = &[OccurrenceIdentity::Uuid5From(
+    "(terminal_session, sequence, command, cwd, ts)",
+)];
 
 inventory::submit! {
     EventContract {
@@ -148,6 +154,27 @@ inventory::submit! {
     }
 }
 
+inventory::submit! {
+    EventContract {
+        id: SHELL_KITTY_COMMAND_EXECUTED_CONTRACT_ID,
+        event_source: "shell.kitty",
+        event_type: "command.executed",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "shell.kitty",
+            event_type: "command.executed",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::SourceDeclared,
+        source_occurrences: SHELL_KITTY_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicOrMaterial,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.terminal-live.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: SHELL_KITTY_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
 pub fn event_contracts() -> impl Iterator<Item = &'static EventContract> {
     inventory::iter::<EventContract>()
 }
@@ -163,4 +190,36 @@ pub fn find_event_contract_for_pair(
     event_type: &EventType,
 ) -> Option<&'static EventContract> {
     event_contracts().find(|contract| contract.matches_pair(source, event_type))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::admission_policy::{STANDARD_EVENT_ADMISSION_POLICY_ID, admission_policies};
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn kitty_command_contract_is_package_and_policy_addressable() -> TestResult<()> {
+        let Some(contract) = find_event_contract(SHELL_KITTY_COMMAND_EXECUTED_CONTRACT_ID) else {
+            panic!("missing Kitty command EventContract");
+        };
+
+        assert_eq!(contract.event_source, "shell.kitty");
+        assert_eq!(contract.event_type, "command.executed");
+        assert!(contract.package_refs.contains(&"terminal.kitty-osc-live"));
+        assert_eq!(
+            contract.admission_policy_ref,
+            Some(STANDARD_EVENT_ADMISSION_POLICY_ID)
+        );
+
+        let accepted_by_standard = admission_policies().any(|policy| {
+            policy.id == STANDARD_EVENT_ADMISSION_POLICY_ID
+                && policy
+                    .accepted_event_contracts
+                    .contains(&SHELL_KITTY_COMMAND_EXECUTED_CONTRACT_ID)
+        });
+        assert!(accepted_by_standard);
+
+        Ok(())
+    }
 }

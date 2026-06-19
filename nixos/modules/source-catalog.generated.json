@@ -4562,6 +4562,94 @@
     },
     {
       "contract": {
+        "id": "terminal.kitty-osc-live",
+        "namespace": "terminal",
+        "event_types": [
+          [
+            "shell.kitty",
+            "command.executed"
+          ]
+        ],
+        "privacy_tier": "sensitive",
+        "horizons": [
+          "continuous"
+        ],
+        "retention": {
+          "kind": "forever"
+        },
+        "occurrence_identity": {
+          "kind": "uuid5_from",
+          "key": "(terminal_session, sequence, command, cwd, ts)"
+        },
+        "access_scope": {
+          "scope": "runtime_bridge",
+          "surface": "kitty_osc"
+        }
+      },
+      "binding": {
+        "subject": "source:terminal.kitty-osc-live",
+        "id": "terminal.kitty-osc-live",
+        "domain": "terminal",
+        "implementation": "live-capture",
+        "adapter": "UnixSocketStreamAdapter",
+        "output_event_type": "command.executed",
+        "privacy_context": "command",
+        "resource_profile": "live_watcher",
+        "capabilities": [
+          "coverage:source-coverage",
+          "debt:unified-debt-view",
+          "operation:terminal.activity.check",
+          "operation:terminal.activity.reconnect",
+          "operation:terminal.activity.pause",
+          "operation:terminal.activity.resume",
+          "operation:terminal.activity.drain",
+          "operation:terminal.activity.inspect"
+        ],
+        "source_id": "terminal.kitty-osc-live",
+        "proposed": false,
+        "runner_pack": "live",
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "runtime_shape": "continuous",
+        "build_impact": {
+          "crate_impact": "0",
+          "binary_impact": "0",
+          "nix_output_impact": "0",
+          "derivation_impact": "0",
+          "sqlx_validation_impact": "0",
+          "dedicated_build_rationale": null
+        }
+      },
+      "resource_limits": {
+        "memory_max_mib": 128,
+        "cpu_weight": 80
+      },
+      "resource_budget": {
+        "work_class": "capture_live",
+        "steady_memory_mib": 64,
+        "burst_memory_mib": 128,
+        "cpu_weight": 80,
+        "max_input_bytes_per_sec": 1048576,
+        "max_input_events_per_sec": 1000,
+        "max_pending_material_bytes": 8388608,
+        "max_pending_candidates": 1000,
+        "max_unacked_transport_messages": 256,
+        "batch_size": 128,
+        "flush_interval_ms": 250,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 67108864,
+        "expected_wal_write_bytes_per_min": 67108864,
+        "pressure_actions": [
+          "throttle",
+          "pause",
+          "drain",
+          "inspect"
+        ]
+      }
+    },
+    {
+      "contract": {
         "id": "terminal.monitor",
         "namespace": "terminal",
         "event_types": [
