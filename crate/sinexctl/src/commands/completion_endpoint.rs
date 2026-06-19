@@ -11,6 +11,8 @@ use crate::client::GatewayClient;
 use crate::fmt::format_yaml;
 use crate::model::OutputFormat;
 
+const COMPLETION_SCHEMA_KEY_PRIVACY: &str = "schema-key-only; payload values not sampled";
+
 /// Structured, read-only completion endpoint for shell and picker frontends.
 #[derive(Debug, Args)]
 pub struct CompletionEndpointCommand {
@@ -383,6 +385,7 @@ fn payload_key_candidates(
                 120,
             )
             .source(source)
+            .privacy(COMPLETION_SCHEMA_KEY_PRIVACY)
             .preview(format!(
                 "sinexctl events query source:{source} type:{event_type} payload.{key}:"
             ))
@@ -644,6 +647,42 @@ mod tests {
                 .iter()
                 .any(|candidate| candidate.value.starts_with("payload."))
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn payload_key_completion_exposes_schema_keys_not_values() -> TestResult<()> {
+        let response =
+            response("sinexctl events source:wm.hyprland type:window.focused payload.window_t")
+                .await;
+        let candidate = response
+            .candidates
+            .iter()
+            .find(|candidate| candidate.value == "payload.window_title")
+            .expect("window title schema key should be completable");
+
+        assert_eq!(candidate.kind, "payload-key");
+        assert_eq!(candidate.privacy, COMPLETION_SCHEMA_KEY_PRIVACY);
+        assert!(
+            candidate
+                .preview
+                .as_deref()
+                .is_some_and(|preview| preview.ends_with("payload.window_title:")),
+            "payload-key preview should stop at the field selector, before any value"
+        );
+
+        let rendered = serde_json::to_string(&response)?;
+        for leaked_value in [
+            "Test Window",
+            "Project X Planning",
+            "https://example.test/private?token=abc",
+            "hunter2",
+        ] {
+            assert!(
+                !rendered.to_lowercase().contains(&leaked_value.to_lowercase()),
+                "completion response leaked value-like material `{leaked_value}`"
+            );
+        }
         Ok(())
     }
 
