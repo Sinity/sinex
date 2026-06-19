@@ -1018,11 +1018,10 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "ops dlq peek" => &[methods::DLQ_PEEK],
         "ops dlq requeue" => &[methods::DLQ_REQUEUE],
         "ops dlq purge" => &[methods::DLQ_PURGE],
+        "events query" | "events recent" | "events errors" | "events timeline" => {
+            &[methods::EVENTS_CARDS]
+        }
         "events context"
-        | "events query"
-        | "events recent"
-        | "events errors"
-        | "events timeline"
         | "metrics report today"
         | "metrics report yesterday"
         | "metrics report calendar" => &[methods::EVENTS_QUERY],
