@@ -97,6 +97,8 @@ inventory::submit! {
             crate::event_contracts::BROWSER_PAGE_VISITED_CONTRACT_ID,
             crate::event_contracts::EMAIL_MESSAGE_RECEIVED_CONTRACT_ID,
             crate::event_contracts::EMAIL_MESSAGE_SENT_CONTRACT_ID,
+            crate::event_contracts::MEDIA_AUDIO_TRANSCRIPT_SEGMENT_CONTRACT_ID,
+            crate::event_contracts::MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID,
         ],
         schema_validation: SchemaValidationBehavior::AllowPayloadInventoryLookup,
         occurrence: OccurrenceAdmissionBehavior::AllowSourceContractIdentity,

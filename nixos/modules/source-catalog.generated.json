@@ -2351,46 +2351,53 @@
     },
     {
       "contract": {
-        "id": "media.audio",
+        "id": "media.audio-transcript",
         "namespace": "media",
         "event_types": [
           [
             "media.audio",
-            "media.audio.transcription"
+            "media.audio.transcript_segment_observed"
           ]
         ],
         "privacy_tier": "sensitive",
         "horizons": [
-          "continuous"
+          "historical"
         ],
         "retention": {
           "kind": "forever"
         },
         "occurrence_identity": {
           "kind": "uuid5_from",
-          "key": "(device_id, audio_chunk_hash)"
+          "key": "(material_id, segment_index, start_ms, end_ms)"
         },
         "access_scope": {
           "scope": "staged_export"
         }
       },
       "binding": {
-        "subject": "source:media.audio",
-        "id": "media.audio",
+        "subject": "source:media.audio-transcript",
+        "id": "media.audio-transcript",
         "domain": "media",
-        "implementation": "proposed",
-        "adapter": "AppendOnlyFileAdapter",
-        "output_event_type": "media.audio.transcription",
+        "implementation": "staged-parser",
+        "adapter": "FileContentDropAdapter",
+        "output_event_type": "media.audio.transcript_segment_observed",
         "privacy_context": "document",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
-        "source_id": "media.audio",
-        "proposed": true,
+        "resource_profile": "bounded_file",
+        "capabilities": [
+          "coverage:source-coverage",
+          "debt:unified-debt-view",
+          "operation:media.audio-transcript.check",
+          "operation:media.audio-transcript.import",
+          "operation:media.audio-transcript.inspect",
+          "operation:media.audio-transcript.replay"
+        ],
+        "source_id": "media.audio-transcript",
+        "proposed": false,
         "runner_pack": "staged",
         "checkpoint_family": {
           "kind": "append_stream"
         },
-        "runtime_shape": "continuous",
+        "runtime_shape": "scheduled",
         "build_impact": {
           "crate_impact": "0",
           "binary_impact": "0",
@@ -2401,74 +2408,80 @@
         }
       },
       "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
+        "memory_max_mib": 256,
+        "cpu_weight": 100
       },
       "resource_budget": {
-        "work_class": "capture_live",
-        "steady_memory_mib": 64,
-        "burst_memory_mib": 128,
-        "cpu_weight": 80,
-        "max_input_bytes_per_sec": 1048576,
-        "max_input_events_per_sec": 1000,
-        "max_pending_material_bytes": 8388608,
-        "max_pending_candidates": 1000,
-        "max_unacked_transport_messages": 256,
-        "batch_size": 128,
-        "flush_interval_ms": 250,
-        "checkpoint_interval_ms": 1000,
-        "expected_disk_write_bytes_per_min": 67108864,
-        "expected_wal_write_bytes_per_min": 67108864,
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
         "pressure_actions": [
           "throttle",
-          "pause",
-          "drain",
+          "defer",
           "inspect"
         ]
       }
     },
     {
       "contract": {
-        "id": "media.screen",
+        "id": "media.screen-ocr",
         "namespace": "media",
         "event_types": [
           [
             "media.screen",
-            "media.screen.ocr"
+            "media.screen.ocr_segment_observed"
           ]
         ],
         "privacy_tier": "sensitive",
         "horizons": [
-          "continuous"
+          "historical"
         ],
         "retention": {
           "kind": "forever"
         },
         "occurrence_identity": {
           "kind": "uuid5_from",
-          "key": "(display_id, capture_hash)"
+          "key": "(material_id, segment_index, bbox)"
         },
         "access_scope": {
           "scope": "staged_export"
         }
       },
       "binding": {
-        "subject": "source:media.screen",
-        "id": "media.screen",
+        "subject": "source:media.screen-ocr",
+        "id": "media.screen-ocr",
         "domain": "media",
-        "implementation": "proposed",
-        "adapter": "AppendOnlyFileAdapter",
-        "output_event_type": "media.screen.ocr",
+        "implementation": "staged-parser",
+        "adapter": "FileContentDropAdapter",
+        "output_event_type": "media.screen.ocr_segment_observed",
         "privacy_context": "document",
-        "resource_profile": "live_watcher",
-        "capabilities": [],
-        "source_id": "media.screen",
-        "proposed": true,
+        "resource_profile": "bounded_file",
+        "capabilities": [
+          "coverage:source-coverage",
+          "debt:unified-debt-view",
+          "operation:media.screen-ocr.check",
+          "operation:media.screen-ocr.import",
+          "operation:media.screen-ocr.inspect",
+          "operation:media.screen-ocr.replay"
+        ],
+        "source_id": "media.screen-ocr",
+        "proposed": false,
         "runner_pack": "staged",
         "checkpoint_family": {
           "kind": "append_stream"
         },
-        "runtime_shape": "continuous",
+        "runtime_shape": "scheduled",
         "build_impact": {
           "crate_impact": "0",
           "binary_impact": "0",
@@ -2479,28 +2492,27 @@
         }
       },
       "resource_limits": {
-        "memory_max_mib": 128,
-        "cpu_weight": 80
+        "memory_max_mib": 256,
+        "cpu_weight": 100
       },
       "resource_budget": {
-        "work_class": "capture_live",
-        "steady_memory_mib": 64,
-        "burst_memory_mib": 128,
-        "cpu_weight": 80,
-        "max_input_bytes_per_sec": 1048576,
-        "max_input_events_per_sec": 1000,
-        "max_pending_material_bytes": 8388608,
-        "max_pending_candidates": 1000,
-        "max_unacked_transport_messages": 256,
-        "batch_size": 128,
-        "flush_interval_ms": 250,
-        "checkpoint_interval_ms": 1000,
-        "expected_disk_write_bytes_per_min": 67108864,
-        "expected_wal_write_bytes_per_min": 67108864,
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
         "pressure_actions": [
           "throttle",
-          "pause",
-          "drain",
+          "defer",
           "inspect"
         ]
       }
