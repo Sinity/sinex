@@ -1360,16 +1360,15 @@ impl StateRepository<'_> {
                 nm.version as "version!",
                 nm.description,
                 nr.status as "manifest_status?",
-                COALESCE(
-                    (nr.id IS NOT NULL
-                        AND nr.status = 'running'
-                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
-                    OR
-                    (nr.id IS NULL
-                        AND nr.status = 'active'
-                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)),
-                    false
-                ) as "live!",
+                CASE
+                    WHEN health.status IS NOT NULL THEN health.status IN ('healthy', 'degraded')
+                    ELSE COALESCE(
+                        nr.id IS NOT NULL
+                            AND nr.status = 'running'
+                            AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8),
+                        false
+                    )
+                END as "live!",
                 nr.service_name,
                 nr.instance_id,
                 nr.id as "module_run_id: uuid::Uuid",
@@ -1411,6 +1410,15 @@ impl StateRepository<'_> {
                          nr.started_at DESC
                 LIMIT 1
             ) nr ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    ch.status
+                FROM sinex_telemetry.current_health ch
+                WHERE ch.source = 'sinex'
+                  AND ch.component = nm.name::text
+                ORDER BY ch.last_update DESC
+                LIMIT 1
+            ) health ON true
             LEFT JOIN LATERAL (
                 SELECT
                     FLOOR((e.payload->>'value')::float8)::bigint
@@ -1527,16 +1535,15 @@ impl StateRepository<'_> {
                 nm.version as "version!",
                 nm.description,
                 nr.status as "manifest_status?",
-                COALESCE(
-                    (nr.id IS NOT NULL
-                        AND nr.status = 'running'
-                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
-                    OR
-                    (nr.id IS NULL
-                        AND nr.status = 'active'
-                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)),
-                    false
-                ) as "live!",
+                CASE
+                    WHEN health.status IS NOT NULL THEN health.status IN ('healthy', 'degraded')
+                    ELSE COALESCE(
+                        nr.id IS NOT NULL
+                            AND nr.status = 'running'
+                            AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8),
+                        false
+                    )
+                END as "live!",
                 nr.service_name,
                 nr.instance_id,
                 nr.id as "module_run_id: uuid::Uuid",
@@ -1544,8 +1551,8 @@ impl StateRepository<'_> {
                 nr.status as run_status,
                 nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
                 nr.last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
-                health.current_status as "current_health?: sinex_primitives::domain::HealthStatus",
-                health.changed_at
+                health.status as "current_health?: sinex_primitives::domain::HealthStatus",
+                health.last_update
                     as "health_changed_at?: sinex_primitives::temporal::Timestamp",
                 health.reason as "health_reason?",
                 COALESCE(outputs.recent_output_count, 0)::bigint as "recent_output_count!",
@@ -1568,14 +1575,13 @@ impl StateRepository<'_> {
             ) nr ON true
             LEFT JOIN LATERAL (
                 SELECT
-                    e.payload->>'current_status' AS current_status,
-                    e.ts_coided AS changed_at,
-                    e.payload->>'reason' AS reason
-                FROM core.events e
-                WHERE e.source = 'sinex'
-                  AND e.event_type = 'health.status'
-                  AND e.payload->>'component' = nm.name::text
-                ORDER BY e.id DESC
+                    ch.status,
+                    ch.last_update,
+                    ch.reason
+                FROM sinex_telemetry.current_health ch
+                WHERE ch.source = 'sinex'
+                  AND ch.component = nm.name::text
+                ORDER BY ch.last_update DESC
                 LIMIT 1
             ) health ON true
             LEFT JOIN LATERAL (
