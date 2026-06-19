@@ -56,7 +56,7 @@ Follow-up issue needed:
   and telemetry. The current release gate only proves the privacy catalog loads.
 - #1735 must keep command catalog, help, completion, ViewEnvelope, API, and TUI
   DTO checks tied to generated-surface or focused Rust tests.
-- #1569 still needs replay/archive crash-window and invalidation recovery tests.
+- #1974 owns replay/archive crash-window and invalidation recovery tests.
 
 Blocked by named human decision:
 

@@ -335,20 +335,11 @@ impl ReplayExecutionEngine {
             "Archived replay cascade, dispatching scan to source"
         );
 
-        // This DB commit -> NATS publish boundary is intentionally handled as a
-        // replay saga, not a transactional outbox. Issue #554 closed with that
-        // design decision: if the process survives a publish failure, restore
-        // the cascade and emit compensating invalidations; if the process dies
-        // in the narrow post-commit window, surface the ERROR and rely on the
-        // replay integrity checks/operator recovery rather than reintroducing
-        // the retired outbox machinery.
-        //
-        // Known race (#751 F1): if the process crashes after the DB archive
-        // commits but before publish_scope_invalidations completes, archived
-        // rows stay in audit.archived_events but no invalidation signals reach
-        // downstream automata. That is stale recomputation state, not a live
-        // lineage orphan; durable ProjectionDebt/OperationView reporting is the
-        // follow-up lane for surfacing it after the DerivationSpec work lands.
+        // The archive transaction records scope invalidations as pending in
+        // operation metadata before committing archived rows. NATS publication
+        // remains outside the DB transaction; a crash in that boundary leaves a
+        // durable recovery marker that ops/debt views can surface instead of a
+        // silent stale-projection gap.
 
         // Publish scope invalidation signals for archived derived events
         if !scope_metadata.is_empty()
@@ -376,6 +367,20 @@ impl ReplayExecutionEngine {
                         .with_source(invalidation_error),
                     )
                     .await;
+        }
+        if !scope_metadata.is_empty()
+            && let Err(record_error) = self
+                .replay
+                .record_scope_invalidations_published(operation_id)
+                .await
+        {
+            warn!(
+                operation_id = %operation_id,
+                archived_count,
+                scope_buckets = scope_metadata.len(),
+                error = %record_error,
+                "Published replay scope invalidations but failed to clear the durable pending marker; recovery/debt views will continue reporting it"
+            );
         }
 
         checkpoint.total_events = material_roots.len() as u64;
