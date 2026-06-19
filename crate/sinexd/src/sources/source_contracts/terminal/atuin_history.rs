@@ -74,12 +74,14 @@ pub struct AtuinHistoryRecord {
 
     /// Command start time, unix nanoseconds.
     #[source(column_name = "timestamp")]
+    #[required]
     #[timestamp(format = "unix_seconds_nanos", fallback = "material_timing")]
     #[validate(timestamp_nanos)]
     pub timestamp: i64,
 
     /// Executed command line.
     #[source(column_name = "command")]
+    #[required]
     #[privacy(context = "Command")]
     #[privacy(sensitivity = "free_text, credential_bearing")]
     pub command_string: String,

@@ -1,16 +1,19 @@
 //! Required input-key declarations for imperative JSON array export parsers.
 
-use sinexd::runtime::parser::{MaterialParser, SourceRecordFingerprint};
-use sinex_primitives::{
-    parser::SourceId,
-    rpc::sources::{CaveatSeverity, caveat_codes},
+#[path = "required_input_keys_support.rs"]
+mod required_input_keys_support;
+
+use required_input_keys_support::{
+    assert_required_input_keys, assert_required_key_blocks_readiness,
 };
+use sinex_primitives::parser::SourceId;
+use sinexd::runtime::parser::SourceRecordFingerprint;
 use sinexd::sources::source_contracts::music::SpotifyHistoryParser;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn spotify_parser_declares_required_array_element_keys() -> TestResult<()> {
-    assert_eq!(SpotifyHistoryParser.required_input_keys(), vec!["/[]/ts"]);
+    assert_required_input_keys(SpotifyHistoryParser, &["/[]/ts"]);
     Ok(())
 }
 
@@ -29,20 +32,12 @@ async fn spotify_required_array_field_removal_blocks_readiness() -> TestResult<(
             "spotify_track_uri": "spotify:track:1"
         }
     ]));
-    let mut drift = SourceRecordFingerprint::diff(
+    let drift = SourceRecordFingerprint::diff(
         SourceId::from_static("spotify-extended-history"),
         &before,
         &after,
     )
     .expect("removing ts should produce JSON array shape drift");
-    drift.required_input_keys = SpotifyHistoryParser.required_input_keys();
-
-    let caveats = drift.readiness_caveats();
-
-    assert!(caveats.iter().any(|caveat| {
-        caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
-            && caveat.severity == CaveatSeverity::Blocking
-            && caveat.message.contains("/[]/ts")
-    }));
+    assert_required_key_blocks_readiness(drift, SpotifyHistoryParser, "/[]/ts");
     Ok(())
 }
