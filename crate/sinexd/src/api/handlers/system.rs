@@ -180,11 +180,13 @@ mod tests {
                 rejected_count: 2,
                 late_confirmation_count: 5,
                 approximate_payload_bytes: 4096,
+                active_payload_bytes: 1024,
+                timed_out_retained_payload_bytes: 3072,
                 approximate_payload_bytes_by_kind: std::collections::BTreeMap::from([(
                     "system.journald:journald.entry.written".to_string(),
                     4096,
                 )]),
-                detail: "confirmation buffers: observed=1, pending=3, timed_out_retained=1"
+                detail: "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072"
                     .to_string(),
             },
             replay: ReplayControlStatus {
@@ -226,7 +228,9 @@ mod tests {
         );
         assert_eq!(
             response.components.confirmation_buffer.detail.as_deref(),
-            Some("confirmation buffers: observed=1, pending=3, timed_out_retained=1")
+            Some(
+                "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072"
+            )
         );
         assert!(response.components.replay_control.enabled);
         assert_eq!(

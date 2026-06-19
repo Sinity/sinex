@@ -58,6 +58,8 @@ pub struct ConfirmationBufferSnapshot {
     pub retained_payload_bytes: usize,
     pub max_payload_bytes: usize,
     pub approximate_payload_bytes: usize,
+    pub active_payload_bytes: usize,
+    pub timed_out_retained_payload_bytes: usize,
     pub approximate_payload_bytes_by_kind: BTreeMap<String, usize>,
 }
 
@@ -668,10 +670,15 @@ impl ConfirmationBuffer {
 
         let mut approximate_payload_bytes_by_kind = BTreeMap::new();
         let mut approximate_payload_bytes = 0;
+        let mut active_payload_bytes = 0;
+        let mut timed_out_retained_payload_bytes = 0;
         let mut timed_out_retained_count = 0;
         for (source, event_type, payload_bytes, timed_out) in rows {
             if timed_out {
                 timed_out_retained_count += 1;
+                timed_out_retained_payload_bytes += payload_bytes;
+            } else {
+                active_payload_bytes += payload_bytes;
             }
             approximate_payload_bytes += payload_bytes;
             let key = format!("{source}:{event_type}");
@@ -686,6 +693,8 @@ impl ConfirmationBuffer {
             retained_payload_bytes,
             max_payload_bytes: self.max_payload_bytes,
             approximate_payload_bytes,
+            active_payload_bytes,
+            timed_out_retained_payload_bytes,
             approximate_payload_bytes_by_kind,
         }
     }
@@ -1221,6 +1230,11 @@ mod tests {
         assert_eq!(snapshot.rejected_count, 1);
         assert_eq!(snapshot.late_confirmation_count, 0);
         assert!(snapshot.approximate_payload_bytes > 0);
+        assert_eq!(snapshot.active_payload_bytes, 0);
+        assert_eq!(
+            snapshot.timed_out_retained_payload_bytes,
+            snapshot.approximate_payload_bytes
+        );
         assert_eq!(
             snapshot.retained_payload_bytes,
             snapshot.approximate_payload_bytes
@@ -1235,6 +1249,61 @@ mod tests {
             snapshot
                 .approximate_payload_bytes_by_kind
                 .contains_key("sinexd.event_engine:batch.stats")
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn snapshot_splits_active_and_timed_out_retained_payload_bytes() -> TestResult<()> {
+        let buffer = ConfirmationBuffer::with_capacity_and_grace(
+            Duration::from_secs(60),
+            2,
+            Duration::from_secs(60),
+        );
+        let old = Timestamp::from_unix_timestamp(1).expect("timestamp in range");
+        let current = Timestamp::now();
+        let timed_out_payload = json!({ "MESSAGE": "delayed confirmation retained in grace" });
+        let active_payload = json!({ "MESSAGE": "fresh provisional event" });
+        let timed_out_bytes = payload_bytes(&timed_out_payload)?;
+        let active_bytes = payload_bytes(&active_payload)?;
+
+        assert!(
+            buffer
+                .add_provisional(provisional(
+                    "system.journald",
+                    "journald.entry.written",
+                    old,
+                    timed_out_payload,
+                ))
+                .await
+        );
+        assert!(
+            buffer
+                .add_provisional(provisional(
+                    "sinexd.event_engine",
+                    "batch.stats",
+                    current,
+                    active_payload,
+                ))
+                .await
+        );
+
+        let timed_out = buffer.check_timeouts().await;
+        assert_eq!(timed_out.len(), 1);
+
+        let snapshot = buffer.snapshot().await;
+        assert_eq!(snapshot.pending_count, 2);
+        assert_eq!(snapshot.timed_out_retained_count, 1);
+        assert_eq!(snapshot.active_payload_bytes, active_bytes);
+        assert_eq!(snapshot.timed_out_retained_payload_bytes, timed_out_bytes);
+        assert_eq!(
+            snapshot.approximate_payload_bytes,
+            active_bytes + timed_out_bytes
+        );
+        assert_eq!(
+            snapshot.retained_payload_bytes,
+            snapshot.approximate_payload_bytes
         );
 
         Ok(())
@@ -1337,6 +1406,11 @@ mod tests {
         assert_eq!(retained.timed_out_retained_count, CAPACITY);
         assert_eq!(retained.rejected_count, OVERFLOW_ATTEMPTS as u64);
         assert!(retained.approximate_payload_bytes > 0);
+        assert_eq!(retained.active_payload_bytes, 0);
+        assert_eq!(
+            retained.timed_out_retained_payload_bytes,
+            retained.approximate_payload_bytes
+        );
         assert_eq!(
             retained.retained_payload_bytes,
             retained.approximate_payload_bytes
@@ -1357,6 +1431,8 @@ mod tests {
         assert_eq!(drained.retained_payload_bytes, 0);
         assert_eq!(drained.max_payload_bytes, buffer.max_payload_bytes());
         assert_eq!(drained.approximate_payload_bytes, 0);
+        assert_eq!(drained.active_payload_bytes, 0);
+        assert_eq!(drained.timed_out_retained_payload_bytes, 0);
         assert!(drained.approximate_payload_bytes_by_kind.is_empty());
         assert_eq!(drained.rejected_count, OVERFLOW_ATTEMPTS as u64);
 
