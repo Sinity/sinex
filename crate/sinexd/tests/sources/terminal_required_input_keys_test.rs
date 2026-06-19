@@ -15,8 +15,11 @@ use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn terminal_sqlite_parsers_declare_required_input_keys() -> TestResult<()> {
-    assert_required_input_keys(AtuinHistoryRecord::default(), &["command", "timestamp"]);
-    assert_required_input_keys(FishHistoryRecord::default(), &["command"]);
+    assert_required_input_keys(
+        AtuinHistoryRecord::default(),
+        &["history.command", "history.timestamp"],
+    );
+    assert_required_input_keys(FishHistoryRecord::default(), &["fish_history.command"]);
     Ok(())
 }
 
@@ -46,6 +49,6 @@ async fn atuin_required_schema_removal_blocks_readiness() -> TestResult<()> {
         &after,
     )
     .expect("removing command should produce schema drift");
-    assert_required_key_blocks_readiness(drift, AtuinHistoryRecord::default(), "command");
+    assert_required_key_blocks_readiness(drift, AtuinHistoryRecord::default(), "history.command");
     Ok(())
 }

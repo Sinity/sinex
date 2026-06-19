@@ -1306,20 +1306,9 @@ fn removed_required_input_keys(
 ) -> Vec<String> {
     required_input_keys
         .iter()
-        .filter(|required| {
-            removed_keys
-                .iter()
-                .any(|removed| removed_key_matches_required(removed, required))
-        })
+        .filter(|required| removed_keys.iter().any(|removed| removed == *required))
         .cloned()
         .collect()
-}
-
-fn removed_key_matches_required(removed: &str, required: &str) -> bool {
-    removed == required
-        || removed
-            .rsplit_once('.')
-            .is_some_and(|(_, field)| field == required)
 }
 
 fn summarize_field_names(fields: &[String]) -> String {
