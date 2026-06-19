@@ -1,0 +1,90 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "segment_index": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "text": {
+      "type": "string"
+    },
+    "bbox": {
+      "items": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "confidence": {
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "display_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "window_title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_file": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "raw_material_id": {
+      "type": "string"
+    },
+    "engine": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "producer_run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "timestamp_quality": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "observed_at": {
+      "$ref": "#/$defs/DateTime"
+    }
+  },
+  "required": [
+    "segment_index",
+    "text",
+    "raw_material_id",
+    "observed_at"
+  ],
+  "title": "ScreenOcrSegmentObservedPayload",
+  "type": "object",
+  "x-sinex-event-type": "media.screen.ocr_segment_observed",
+  "x-sinex-source": "media.screen",
+  "x-sinex-version": "1.0.0"
+}

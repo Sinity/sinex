@@ -1,0 +1,49 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "capture_session_id": {
+      "type": "string"
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ended_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "final_state": {
+      "type": "string"
+    },
+    "policy_posture": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "capture_session_id",
+    "ended_at",
+    "final_state",
+    "policy_posture"
+  ],
+  "title": "MediaAudioCaptureSessionEndedPayload",
+  "type": "object",
+  "x-sinex-event-type": "media.audio.capture_session_ended",
+  "x-sinex-source": "media.audio",
+  "x-sinex-version": "1.0.0"
+}

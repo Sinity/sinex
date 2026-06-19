@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "raw_material_id": {
+      "type": "string"
+    },
+    "display_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "window_title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "region": {
+      "items": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "width_px": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "height_px": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "capture_session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_file": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "policy_posture": {
+      "type": "string"
+    },
+    "observed_at": {
+      "$ref": "#/$defs/DateTime"
+    }
+  },
+  "required": [
+    "raw_material_id",
+    "width_px",
+    "height_px",
+    "policy_posture",
+    "observed_at"
+  ],
+  "title": "ScreenScreenshotObservedPayload",
+  "type": "object",
+  "x-sinex-event-type": "media.screen.screenshot_observed",
+  "x-sinex-source": "media.screen",
+  "x-sinex-version": "1.0.0"
+}

@@ -86,6 +86,12 @@ pub const DESKTOP_PROJECT_CONTEXT_DERIVATION_ID: DerivationSpecId =
     "derivation:desktop.project_context@v1";
 pub const DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID: DerivationSpecId =
     "derivation:desktop.notification_pressure@v1";
+pub const MEDIA_AUDIO_TRANSCRIPT_ARTIFACT_DERIVATION_ID: DerivationSpecId =
+    "derivation:media.audio.transcript_artifact@v1";
+pub const MEDIA_SCREEN_OCR_ARTIFACT_DERIVATION_ID: DerivationSpecId =
+    "derivation:media.screen.ocr_artifact@v1";
+pub const MEDIA_TEXT_INDEX_PROJECTION_DERIVATION_ID: DerivationSpecId =
+    "derivation:media.text_index_projection@v1";
 
 pub const TASK_CURRENT_OBJECTS_DERIVATION: DerivationSpec = DerivationSpec {
     id: TASK_CURRENT_OBJECTS_DERIVATION_ID,
@@ -205,12 +211,98 @@ pub const DESKTOP_NOTIFICATION_PRESSURE_DERIVATION: DerivationSpec = DerivationS
     ],
 };
 
+pub const MEDIA_AUDIO_TRANSCRIPT_ARTIFACT_DERIVATION: DerivationSpec = DerivationSpec {
+    id: MEDIA_AUDIO_TRANSCRIPT_ARTIFACT_DERIVATION_ID,
+    input_scope: DerivationInputScope::EventTypes {
+        domain_id: "media.audio",
+        event_types: &[
+            "media.audio.transcript_segment_observed",
+            "media.audio.transcription_run_observed",
+        ],
+    },
+    output_id: "media.audio.transcript_artifact",
+    output_kind: OutputKind::Artifact,
+    freshness_policy: FreshnessPolicy::RebuildOnInputChange,
+    invalidates_on: &[
+        InvalidationTrigger::Replay,
+        InvalidationTrigger::Archive,
+        InvalidationTrigger::Redaction,
+        InvalidationTrigger::SourceMaterialChange,
+        InvalidationTrigger::ParserSemanticsChange,
+        InvalidationTrigger::DisclosurePolicyChange,
+    ],
+    rebuild_resource_policy_ref: Some("resource-policy:media.audio.transcript-artifact.rebuild"),
+    disclosure_policy_ref: Some("operator.media.audio-transcript.default"),
+    operation_hooks: &[
+        DerivationOperationHook::Rebuild,
+        DerivationOperationHook::Explain,
+        DerivationOperationHook::Redact,
+    ],
+};
+
+pub const MEDIA_SCREEN_OCR_ARTIFACT_DERIVATION: DerivationSpec = DerivationSpec {
+    id: MEDIA_SCREEN_OCR_ARTIFACT_DERIVATION_ID,
+    input_scope: DerivationInputScope::EventTypes {
+        domain_id: "media.screen",
+        event_types: &[
+            "media.screen.ocr_segment_observed",
+            "media.screen.ocr_run_observed",
+        ],
+    },
+    output_id: "media.screen.ocr_artifact",
+    output_kind: OutputKind::Artifact,
+    freshness_policy: FreshnessPolicy::RebuildOnInputChange,
+    invalidates_on: &[
+        InvalidationTrigger::Replay,
+        InvalidationTrigger::Archive,
+        InvalidationTrigger::Redaction,
+        InvalidationTrigger::SourceMaterialChange,
+        InvalidationTrigger::ParserSemanticsChange,
+        InvalidationTrigger::DisclosurePolicyChange,
+    ],
+    rebuild_resource_policy_ref: Some("resource-policy:media.screen.ocr-artifact.rebuild"),
+    disclosure_policy_ref: Some("operator.media.screen-ocr.default"),
+    operation_hooks: &[
+        DerivationOperationHook::Rebuild,
+        DerivationOperationHook::Explain,
+        DerivationOperationHook::Redact,
+    ],
+};
+
+pub const MEDIA_TEXT_INDEX_PROJECTION_DERIVATION: DerivationSpec = DerivationSpec {
+    id: MEDIA_TEXT_INDEX_PROJECTION_DERIVATION_ID,
+    input_scope: DerivationInputScope::QueryScope {
+        scope: "media.text_index.inputs",
+    },
+    output_id: "media.text_index_projection",
+    output_kind: OutputKind::ProjectionRow,
+    freshness_policy: FreshnessPolicy::RebuildOnInputChange,
+    invalidates_on: &[
+        InvalidationTrigger::Replay,
+        InvalidationTrigger::Archive,
+        InvalidationTrigger::Redaction,
+        InvalidationTrigger::SourceMaterialChange,
+        InvalidationTrigger::ParserSemanticsChange,
+        InvalidationTrigger::DisclosurePolicyChange,
+    ],
+    rebuild_resource_policy_ref: Some("resource-policy:media.text-index.projection-rebuild"),
+    disclosure_policy_ref: Some("operator.media.text-index.default"),
+    operation_hooks: &[
+        DerivationOperationHook::Rebuild,
+        DerivationOperationHook::Explain,
+        DerivationOperationHook::Redact,
+    ],
+};
+
 pub const DERIVATION_SPECS: &[DerivationSpec] = &[
     TASK_CURRENT_OBJECTS_DERIVATION,
     DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION,
     DESKTOP_FOCUS_SESSION_DERIVATION,
     DESKTOP_PROJECT_CONTEXT_DERIVATION,
     DESKTOP_NOTIFICATION_PRESSURE_DERIVATION,
+    MEDIA_AUDIO_TRANSCRIPT_ARTIFACT_DERIVATION,
+    MEDIA_SCREEN_OCR_ARTIFACT_DERIVATION,
+    MEDIA_TEXT_INDEX_PROJECTION_DERIVATION,
 ];
 
 pub fn derivation_specs() -> impl Iterator<Item = &'static DerivationSpec> {
