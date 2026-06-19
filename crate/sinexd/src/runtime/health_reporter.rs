@@ -1,7 +1,8 @@
 //! Standardized health reporting for runtime modules.
 //!
 //! Provides uniform health tracking that automatically monitors success/error rates
-//! and emits health.status events via `SelfObserver` when status changes.
+//! and emits health.status events via `SelfObserver` when status changes or when
+//! the event-derived liveness view needs a freshness refresh.
 
 use crate::runtime::error_helpers::unix_timestamp_secs_with_warning;
 use crate::runtime::self_observation::SelfObserver;
@@ -250,6 +251,12 @@ pub struct HealthThresholds {
     /// no-op).
     #[sinex_config(env = "SINEX_HEALTH_EMIT_STALL_SECS", default_expr = "600_u64")]
     pub emit_stall_seconds: u64,
+    /// Maximum seconds between emitted `health.status` observations for an unchanged
+    /// component. Runtime liveness views derive freshness from these append-only
+    /// events, so steady-state healthy modules must still refresh before
+    /// `sinex_telemetry.current_health` ages out.
+    #[sinex_config(env = "SINEX_HEALTH_REFRESH_SECONDS", default_expr = "900_u64")]
+    pub refresh_seconds: u64,
 }
 
 impl Default for HealthThresholds {
@@ -259,6 +266,7 @@ impl Default for HealthThresholds {
             error_rate_failed: 0.20,   // 20%
             window_seconds: 300,       // 5 minutes
             emit_stall_seconds: 600,   // 10 minutes — conservative; some sources legitimately quiet
+            refresh_seconds: 900,      // 15 minutes — comfortably inside current_health's 1h window
         }
     }
 }
@@ -301,6 +309,13 @@ impl HealthThresholds {
             .with_context("window_seconds", self.window_seconds.to_string()));
         }
 
+        if self.refresh_seconds == 0 {
+            return Err(SinexError::configuration(
+                "health refresh interval must be greater than zero".to_string(),
+            )
+            .with_context("refresh_seconds", self.refresh_seconds.to_string()));
+        }
+
         Ok(self)
     }
 
@@ -317,13 +332,15 @@ pub type LivenessProbe = Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>
 
 /// Standardized health reporter for runtime modules.
 ///
-/// Tracks events/errors and automatically emits health.status events
-/// when the component's health status changes.
+/// Tracks events/errors and automatically emits health.status observations
+/// when the component's health status changes or needs a freshness refresh.
 pub struct HealthReporter {
     component_name: String,
     observer: Arc<SelfObserver>,
     metrics: Arc<HealthMetrics>,
     last_status: Arc<RwLock<HealthStatus>>,
+    has_emitted_status: Arc<AtomicBool>,
+    last_status_emit_secs: Arc<AtomicU64>,
     thresholds: HealthThresholds,
     clock: Arc<dyn HealthClock>,
     /// Optional async probe that verifies module dependencies are reachable.
@@ -341,6 +358,10 @@ impl std::fmt::Debug for HealthReporter {
             .field("component_name", &self.component_name)
             .field("has_liveness_probe", &self.liveness_probe.is_some())
             .field("liveness_ok", &self.liveness_ok.load(Ordering::Relaxed))
+            .field(
+                "has_emitted_status",
+                &self.has_emitted_status.load(Ordering::Relaxed),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -374,6 +395,8 @@ impl HealthReporter {
             observer,
             metrics: Arc::new(HealthMetrics::with_clock(Arc::clone(&clock))),
             last_status: Arc::new(RwLock::new(HealthStatus::Healthy)),
+            has_emitted_status: Arc::new(AtomicBool::new(false)),
+            last_status_emit_secs: Arc::new(AtomicU64::new(0)),
             thresholds,
             clock,
             liveness_probe: None,
@@ -536,7 +559,57 @@ impl HealthReporter {
         *guard = status;
     }
 
-    /// Check current health and emit status event if changed
+    fn status_emit_reason(
+        &self,
+        old_status: HealthStatus,
+        new_status: HealthStatus,
+        now_secs: u64,
+    ) -> Option<String> {
+        if !self.has_emitted_status.load(Ordering::Relaxed) {
+            return Some(format!(
+                "Initial health.status observation for {}: status {}",
+                self.component_name, new_status
+            ));
+        }
+
+        if new_status != old_status {
+            let error_rate = self.metrics.error_rate(self.thresholds.window_seconds);
+            let stall_note = match self.metrics.seconds_since_last_emit() {
+                Some(elapsed) if self.emit_stalled() => {
+                    format!(", emit-stalled: last emit {elapsed}s ago")
+                }
+                None if self.emit_stalled() => {
+                    format!(
+                        ", emit-stalled: never emitted (uptime {}s)",
+                        self.metrics.uptime_secs()
+                    )
+                }
+                _ => String::new(),
+            };
+            return Some(format!(
+                "Status changed from {} to {} (error rate: {:.2}%, events: {}, errors: {}{})",
+                old_status,
+                new_status,
+                error_rate * 100.0,
+                self.metrics.events_processed.load(Ordering::Relaxed),
+                self.metrics.errors.load(Ordering::Relaxed),
+                stall_note,
+            ));
+        }
+
+        let last_emit = self.last_status_emit_secs.load(Ordering::Relaxed);
+        if now_secs.saturating_sub(last_emit) >= self.thresholds.refresh_seconds {
+            return Some(format!(
+                "Refreshed unchanged health.status for {} after {}s",
+                self.component_name,
+                now_secs.saturating_sub(last_emit)
+            ));
+        }
+
+        None
+    }
+
+    /// Check current health and emit status evidence when changed or stale.
     ///
     /// Returns the current status after checking.
     pub async fn check_and_emit(&self) -> Result<HealthStatus> {
@@ -548,38 +621,16 @@ impl HealthReporter {
         }
 
         let new_status = self.calculate_status();
+        let now_secs = self.clock.now().as_secs();
 
         // Read current status and determine if emission is needed.
         // Guard must be dropped before the await to keep the future Send.
         let (should_emit, old_status, reason) = {
             let old_status = self.read_last_status();
-
-            if new_status == old_status {
-                (false, old_status, String::new())
-            } else {
-                let error_rate = self.metrics.error_rate(self.thresholds.window_seconds);
-                let stall_note = match self.metrics.seconds_since_last_emit() {
-                    Some(elapsed) if self.emit_stalled() => {
-                        format!(", emit-stalled: last emit {elapsed}s ago")
-                    }
-                    None if self.emit_stalled() => {
-                        format!(
-                            ", emit-stalled: never emitted (uptime {}s)",
-                            self.metrics.uptime_secs()
-                        )
-                    }
-                    _ => String::new(),
-                };
-                let reason = format!(
-                    "Status changed from {} to {} (error rate: {:.2}%, events: {}, errors: {}{})",
-                    old_status,
-                    new_status,
-                    error_rate * 100.0,
-                    self.metrics.events_processed.load(Ordering::Relaxed),
-                    self.metrics.errors.load(Ordering::Relaxed),
-                    stall_note,
-                );
+            if let Some(reason) = self.status_emit_reason(old_status, new_status, now_secs) {
                 (true, old_status, reason)
+            } else {
+                (false, old_status, String::new())
             }
             // guard dropped here
         };
@@ -592,6 +643,9 @@ impl HealthReporter {
 
             // Update stored status after successful emission
             self.write_last_status(new_status);
+            self.has_emitted_status.store(true, Ordering::Relaxed);
+            self.last_status_emit_secs
+                .store(now_secs, Ordering::Relaxed);
         }
 
         Ok(new_status)
@@ -601,5 +655,86 @@ impl HealthReporter {
     #[must_use]
     pub fn metrics(&self) -> &Arc<HealthMetrics> {
         &self.metrics
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicU64;
+
+    #[derive(Debug)]
+    struct ManualHealthClock {
+        now_secs: AtomicU64,
+    }
+
+    impl ManualHealthClock {
+        fn new(now_secs: u64) -> Self {
+            Self {
+                now_secs: AtomicU64::new(now_secs),
+            }
+        }
+
+        fn set(&self, now_secs: u64) {
+            self.now_secs.store(now_secs, Ordering::Relaxed);
+        }
+    }
+
+    impl HealthClock for ManualHealthClock {
+        fn now(&self) -> Duration {
+            Duration::from_secs(self.now_secs.load(Ordering::Relaxed))
+        }
+    }
+
+    fn reporter_with_clock(clock: Arc<ManualHealthClock>) -> HealthReporter {
+        HealthReporter::new_with_clock(
+            "runtime-health-test".to_string(),
+            Arc::new(SelfObserver::disabled()),
+            HealthThresholds {
+                error_rate_degraded: 0.05,
+                error_rate_failed: 0.20,
+                window_seconds: 60,
+                emit_stall_seconds: 0,
+                refresh_seconds: 10,
+            },
+            clock,
+        )
+    }
+
+    #[tokio::test]
+    async fn first_health_check_emits_initial_status_evidence() -> Result<()> {
+        let clock = Arc::new(ManualHealthClock::new(1));
+        let reporter = reporter_with_clock(clock);
+
+        assert!(!reporter.has_emitted_status.load(Ordering::Relaxed));
+        assert_eq!(reporter.check_and_emit().await?, HealthStatus::Healthy);
+
+        assert!(reporter.has_emitted_status.load(Ordering::Relaxed));
+        assert_eq!(reporter.last_status_emit_secs.load(Ordering::Relaxed), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unchanged_health_refreshes_after_configured_interval() -> Result<()> {
+        let clock = Arc::new(ManualHealthClock::new(1));
+        let reporter = reporter_with_clock(Arc::clone(&clock));
+
+        reporter.check_and_emit().await?;
+        clock.set(5);
+        reporter.check_and_emit().await?;
+        assert_eq!(
+            reporter.last_status_emit_secs.load(Ordering::Relaxed),
+            1,
+            "unchanged health should not emit before the refresh interval"
+        );
+
+        clock.set(11);
+        reporter.check_and_emit().await?;
+        assert_eq!(
+            reporter.last_status_emit_secs.load(Ordering::Relaxed),
+            11,
+            "unchanged health must refresh before event-derived liveness ages out"
+        );
+        Ok(())
     }
 }

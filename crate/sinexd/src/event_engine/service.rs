@@ -416,7 +416,7 @@ impl IngestService {
                     Some(row.id)
                 }
                 Err(e) => {
-                    warn!(%e, "Failed to register event_engine manifest; heartbeat persistence disabled");
+                    warn!(%e, "Failed to register event_engine manifest; run lifecycle status persistence disabled");
                     None
                 }
             };
@@ -444,12 +444,6 @@ impl IngestService {
                 ServiceName::new("sinexd"),
                 sinex_primitives::Seconds::from_secs(60),
             );
-            let emitter = if let Some(module_run_id) = module_run_id {
-                emitter.with_module_run_id(module_run_id)
-            } else {
-                emitter
-            };
-            let emitter = emitter.with_db_pool(pool.clone());
             self.heartbeat_counter_handle = Some(emitter.get_counter_handle());
 
             let shutdown_flag = self.shutdown_flag.clone();
@@ -479,7 +473,7 @@ impl IngestService {
                             }
                         } else {
                             warn!(
-                                "Skipping event_engine shutdown liveness update because no module run was registered"
+                                "Skipping event_engine shutdown lifecycle update because no module run was registered"
                             );
                         }
                     }

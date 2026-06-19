@@ -13,7 +13,7 @@ use sinex_primitives::domain::{HealthStatus, ServiceName};
 use sinex_primitives::env as shared_env;
 use sinex_primitives::events::payloads::process::{ProcessDegradedPayload, ProcessFailedPayload};
 use sinex_primitives::utils::CoordinationPrimitive;
-use sinex_primitives::{Id, Seconds, Uuid};
+use sinex_primitives::Seconds;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -119,9 +119,6 @@ pub struct HeartbeatEmitter {
     last_emitted_status: Arc<parking_lot::Mutex<HealthStatus>>,
     /// Sliding window for error tracking (last 5 minutes).
     error_window: Arc<parking_lot::Mutex<Vec<Instant>>>,
-    module_run_id: Option<Uuid>,
-    /// Counter for rate-limiting persistence failure warn! logs (every 100th).
-    persistence_warn_count: Arc<AtomicU64>,
     /// Whether the one-per-run baseline heartbeat record has been written to the log sink.
     logged_first_beat: Arc<AtomicBool>,
     /// Monotonic beat counter used to drive the periodic liveness summary cadence.
@@ -130,12 +127,6 @@ pub struct HeartbeatEmitter {
     /// Set at construction from `SINEX_HEARTBEAT_SUMMARY_EVERY`; overridable via
     /// [`HeartbeatEmitter::with_summary_every`] for tests.
     summary_every: u64,
-    /// Optional database pool for persisting heartbeat status to `core.runs`.
-    ///
-    /// Persistence requires a concrete `module_run_id`; manifest identity is
-    /// inventory/provenance, not runtime liveness.
-    #[cfg(feature = "db")]
-    db_pool: Option<sinex_db::DbPool>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -170,13 +161,9 @@ impl HeartbeatEmitter {
             log_sink: Arc::new(StdoutHeartbeatSink),
             last_emitted_status: Arc::new(parking_lot::Mutex::new(HealthStatus::Healthy)),
             error_window: Arc::new(parking_lot::Mutex::new(Vec::new())),
-            module_run_id: None,
-            persistence_warn_count: Arc::new(AtomicU64::new(0)),
             logged_first_beat: Arc::new(AtomicBool::new(false)),
             beat_count: Arc::new(AtomicU64::new(0)),
             summary_every: get_summary_every(),
-            #[cfg(feature = "db")]
-            db_pool: None,
         }
     }
 
@@ -192,12 +179,6 @@ impl HeartbeatEmitter {
         self
     }
 
-    #[must_use]
-    pub fn with_module_run_id(mut self, module_run_id: Uuid) -> Self {
-        self.module_run_id = Some(module_run_id);
-        self
-    }
-
     /// Override the periodic-summary cadence (every N beats; 0 disables summaries).
     ///
     /// In production this is set via `SINEX_HEARTBEAT_SUMMARY_EVERY` (default 30).
@@ -205,18 +186,6 @@ impl HeartbeatEmitter {
     #[must_use]
     pub fn with_summary_every(mut self, n: u64) -> Self {
         self.summary_every = n;
-        self
-    }
-
-    /// Configure a database pool for persisting heartbeat status.
-    ///
-    /// When set with a `module_run_id`, each heartbeat emission refreshes
-    /// `last_heartbeat_at` on that concrete run. Without a run id, heartbeat
-    /// persistence is skipped so manifest rows cannot become liveness evidence.
-    #[cfg(feature = "db")]
-    #[must_use]
-    pub fn with_db_pool(mut self, pool: sinex_db::DbPool) -> Self {
-        self.db_pool = Some(pool);
         self
     }
 
@@ -228,19 +197,6 @@ impl HeartbeatEmitter {
             interval_seconds,
         )
         .with_version(runtime.version().to_string());
-
-        let emitter = if let Some(module_run_id) = runtime.module_run_id() {
-            emitter.with_module_run_id(module_run_id)
-        } else {
-            emitter
-        };
-
-        #[cfg(feature = "db")]
-        let emitter = if let Some(pool) = runtime.handles().db_pool().cloned() {
-            emitter.with_db_pool(pool)
-        } else {
-            emitter
-        };
 
         emitter
     }
@@ -452,61 +408,6 @@ impl HeartbeatEmitter {
             });
 
             self.log_sink.emit(&log_entry);
-        }
-
-        // Persist heartbeat to database if pool is configured
-        #[cfg(feature = "db")]
-        if let Some(ref pool) = self.db_pool {
-            let warn_skipped = self.persistence_warn_count.fetch_add(1, Ordering::Relaxed);
-            let log_persistence_warn = warn_skipped.is_multiple_of(100);
-
-            use sinex_db::DbPoolExt;
-            if self.module_run_id.is_none() && log_persistence_warn {
-                warn!(
-                    service = %metrics.service_name,
-                    skipped = warn_skipped,
-                    "Heartbeat persistence is configured without a module run id; database heartbeat updates are disabled (rate-limited)"
-                );
-            }
-
-            if let Some(module_run_id) = self.module_run_id {
-                let typed_module_run_id =
-                    Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(module_run_id);
-                match pool
-                    .state()
-                    .update_module_run_heartbeat(typed_module_run_id)
-                    .await
-                {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        self.record_error(&format!(
-                            "Heartbeat did not persist because the module run row is missing for {module_run_id}"
-                        ));
-                        if log_persistence_warn {
-                            warn!(
-                                service = %metrics.service_name,
-                                module_run_id = %module_run_id,
-                                skipped = warn_skipped,
-                                "Heartbeat did not persist because the module run row is missing (rate-limited)"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        self.record_error(&format!(
-                            "Failed to persist module run heartbeat to database: {e}"
-                        ));
-                        if log_persistence_warn {
-                            warn!(
-                                service = %metrics.service_name,
-                                module_run_id = %module_run_id,
-                                error = %e,
-                                skipped = warn_skipped,
-                                "Failed to persist module run heartbeat to database (rate-limited)"
-                            );
-                        }
-                    }
-                }
-            }
         }
 
         // Periodic liveness summary (#1726).
