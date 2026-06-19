@@ -310,6 +310,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "ops jobs show",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
+    m.insert(
+        "ops debt list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Privacy ─────────────────────────────────────────────────────────────
     m.insert(
@@ -397,6 +401,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert(
         "sources show",
         FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "show",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("resolves one public Sinex object ref through existing read surfaces"),
     );
     m.insert(
         "sources coverage",
@@ -824,7 +833,7 @@ const fn rpc_role_rank(role: RpcRole) -> u8 {
 fn family_for_path(path: &str) -> CommandFamily {
     let root = path.split_once(' ').map_or(path, |(root, _)| root);
     match root {
-        "events" => CommandFamily::Query,
+        "events" | "show" => CommandFamily::Query,
         "runtime" | "replay" | "dlq" | "ops" | "lifecycle" | "privacy" => CommandFamily::Operate,
         "sources" => CommandFamily::Sources,
         "record" | "tasks" | "semantic" | "docs" => CommandFamily::Domain,
@@ -1037,6 +1046,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "ops start" => &[methods::OPS_START],
         "ops list" | "ops jobs list" => &[methods::OPS_LIST],
         "ops get" | "ops jobs show" => &[methods::OPS_GET],
+        "ops debt list" => &[methods::DLQ_LIST, methods::SOURCES_STATUS_VIEW],
         "ops cancel" => &[methods::OPS_CANCEL],
         "privacy private-mode status" => &[methods::PRIVACY_PRIVATE_MODE_STATUS],
         "privacy private-mode enable" => &[methods::PRIVACY_PRIVATE_MODE_ENABLE],
@@ -1063,6 +1073,11 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "sources cockpit" => &[],
         "sources list" => &[methods::SOURCES_LIST],
         "sources show" => &[methods::SOURCES_SHOW],
+        "show" => &[
+            methods::SOURCES_SHOW,
+            methods::SOURCES_STATUS_VIEW,
+            methods::OPS_GET,
+        ],
         "sources coverage" => &[methods::SOURCES_COVERAGE],
         "sources annotate" => &[methods::SOURCES_ANNOTATE],
         "sources archive" => &[methods::SOURCES_ARCHIVE],
