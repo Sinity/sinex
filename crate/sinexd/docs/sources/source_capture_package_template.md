@@ -20,6 +20,17 @@ Use it together with:
 - [`package_completeness_gate.md`](package_completeness_gate.md) — the #1792
   executable report and strict-gate surface.
 
+Generate the first reviewed Rust draft for a package/mode directly from the
+compiled completeness report:
+
+```bash
+sinexd export-source-skeleton --package-id terminal.atuin-history --mode-id terminal.atuin-history
+```
+
+The emitted file is a review starting point. It deliberately contains a
+package-specific `compile_error!` until parser, disclosure, fixtures,
+coverage/debt, operations, and deployment fields are completed.
+
 > **Authoring surface.** Prefer the Rust-native derives over hand-wiring the
 > registration sites:
 >
