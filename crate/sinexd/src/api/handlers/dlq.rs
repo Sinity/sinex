@@ -11,6 +11,10 @@ use crate::api::service_container::ServiceContainer;
 use crate::event_engine::policy::{DisclosureContext, PolicyEngine};
 use crate::runtime::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
 use serde_json::Value as JsonValue;
+use serde_json::json;
+use sinex_db::DbPoolExt;
+use sinex_db::repositories::Operation;
+use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::validation::normalize_unicode;
 use sinex_primitives::{Result, SinexError};
 use tracing::warn;
@@ -100,6 +104,32 @@ fn dlq_pressure_signal(
         recommended_action: recommended_action.to_string(),
         reason: reason.to_string(),
     }
+}
+
+async fn log_dlq_operation(
+    services: &ServiceContainer,
+    operation_type: &'static str,
+    actor: &str,
+    scope: JsonValue,
+    result_status: OperationStatus,
+    result_message: String,
+    preview_summary: JsonValue,
+) -> Result<String> {
+    let record = services
+        .pool()
+        .state()
+        .log_operation(Operation {
+            id: None,
+            operation_type: operation_type.to_string(),
+            operator: actor.to_string(),
+            scope: Some(scope),
+            result_status,
+            result_message: Some(result_message),
+            preview_summary: Some(preview_summary),
+            duration_ms: None,
+        })
+        .await?;
+    Ok(record.id.to_uuid().to_string())
 }
 
 fn truncate_preview(payload: &str, max_chars: usize) -> String {
@@ -309,44 +339,103 @@ pub async fn handle_dlq_requeue(
     let config = DlqRetryConfig::default();
     let handler = DlqRetryHandler::new(nats_client.clone(), env.clone(), config);
 
-    let requeued_count = if let Some(ref event_id) = requeue_params.event_id {
+    let actor = auth.actor_id().to_string();
+    let mut operation_scope = json!({
+        "surface": "raw_ingest_dlq",
+        "action": "requeue",
+    });
+
+    let requeue_result = if let Some(ref event_id) = requeue_params.event_id {
         // Requeue specific event
+        operation_scope["selector"] = json!("event_id");
+        operation_scope["event_id"] = json!(event_id);
         info!(
-            actor = %auth.actor_id(),
+            actor = %actor,
             event_id = %event_id,
             "DLQ requeue operation initiated"
         );
-        handler.retry_by_id(event_id).await.map_err(|error| {
-            SinexError::service("Failed to requeue event")
-                .with_context("event_id", event_id)
-                .with_source(error)
-        })?;
-        1usize
+        handler
+            .retry_by_id(event_id)
+            .await
+            .map_err(|error| {
+                SinexError::service("Failed to requeue event")
+                    .with_context("event_id", event_id)
+                    .with_source(error)
+            })
+            .map(|()| 1usize)
     } else if requeue_params.all {
         // Requeue all events
+        operation_scope["selector"] = json!("all");
         info!(
-            actor = %auth.actor_id(),
+            actor = %actor,
             "DLQ requeue all operation initiated"
         );
-        let result = handler.retry_all().await.map_err(|error| {
-            SinexError::service("Failed to requeue all DLQ messages").with_source(error)
-        })?;
-        if result.permanently_failed > 0 {
-            warn!(
-                permanently_failed = result.permanently_failed,
-                "Some DLQ messages exceeded max retries and were permanently discarded"
-            );
-        }
-        result.retried
+        handler
+            .retry_all()
+            .await
+            .map_err(|error| {
+                SinexError::service("Failed to requeue all DLQ messages").with_source(error)
+            })
+            .map(|result| {
+                operation_scope["permanently_failed"] = json!(result.permanently_failed);
+                if result.permanently_failed > 0 {
+                    warn!(
+                        permanently_failed = result.permanently_failed,
+                        "Some DLQ messages exceeded max retries and were permanently discarded"
+                    );
+                }
+                result.retried
+            })
     } else {
         return Err(SinexError::validation(
             "Must specify either 'event_id' or 'all: true'",
         ));
     };
 
+    let (requeued_count, operation_id) = match requeue_result {
+        Ok(requeued_count) => {
+            operation_scope["requeued_count"] = json!(requeued_count);
+            let operation_id = log_dlq_operation(
+                services,
+                "dlq.requeue",
+                &actor,
+                operation_scope.clone(),
+                OperationStatus::Success,
+                format!("requeued {requeued_count} raw-ingest DLQ message(s)"),
+                json!({
+                    "surface": "raw_ingest_dlq",
+                    "action": "requeue",
+                    "requeued_count": requeued_count,
+                    "selector": operation_scope.get("selector").cloned().unwrap_or(JsonValue::Null),
+                }),
+            )
+            .await?;
+            (requeued_count, operation_id)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            let _ = log_dlq_operation(
+                services,
+                "dlq.requeue",
+                &actor,
+                operation_scope,
+                OperationStatus::Failed,
+                message.clone(),
+                json!({
+                    "surface": "raw_ingest_dlq",
+                    "action": "requeue",
+                    "error": message,
+                }),
+            )
+            .await;
+            return Err(error);
+        }
+    };
+
     let response = DlqRequeueResponse {
         status: "success".to_string(),
         requeued_count: requeued_count as u64,
+        operation_id,
     };
     Ok(response)
 }
@@ -391,21 +480,64 @@ pub async fn handle_dlq_purge(
         .map_err(|error| SinexError::service("Failed to get stream info").with_source(error))?;
     let messages_before = info.state.messages;
 
+    let actor = auth.actor_id().to_string();
+    let operation_scope = json!({
+        "surface": "raw_ingest_dlq",
+        "action": "purge",
+        "stream": dlq_stream_name,
+        "messages_before": messages_before,
+        "confirm": true,
+    });
+
     info!(
-        actor = %auth.actor_id(),
+        actor = %actor,
         messages_to_purge = messages_before,
         "DLQ purge operation initiated"
     );
 
     // Purge the stream
-    stream
+    if let Err(error) = stream
         .purge()
         .await
-        .map_err(|error| SinexError::service("Failed to purge DLQ stream").with_source(error))?;
+        .map_err(|error| SinexError::service("Failed to purge DLQ stream").with_source(error))
+    {
+        let message = error.to_string();
+        let _ = log_dlq_operation(
+            services,
+            "dlq.purge",
+            &actor,
+            operation_scope,
+            OperationStatus::Failed,
+            message.clone(),
+            json!({
+                "surface": "raw_ingest_dlq",
+                "action": "purge",
+                "error": message,
+            }),
+        )
+        .await;
+        return Err(error);
+    }
+
+    let operation_id = log_dlq_operation(
+        services,
+        "dlq.purge",
+        &actor,
+        operation_scope,
+        OperationStatus::Success,
+        format!("purged {messages_before} raw-ingest DLQ message(s)"),
+        json!({
+            "surface": "raw_ingest_dlq",
+            "action": "purge",
+            "purged_count": messages_before,
+        }),
+    )
+    .await?;
 
     let response = DlqPurgeResponse {
         status: "success".to_string(),
         purged_count: messages_before,
+        operation_id,
     };
     Ok(response)
 }

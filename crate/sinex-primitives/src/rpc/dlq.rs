@@ -143,6 +143,7 @@ pub struct DlqRequeueRequest {
 pub struct DlqRequeueResponse {
     pub status: String,
     pub requeued_count: u64,
+    pub operation_id: String,
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -169,4 +170,5 @@ pub struct DlqPurgeRequest {
 pub struct DlqPurgeResponse {
     pub status: String,
     pub purged_count: u64,
+    pub operation_id: String,
 }

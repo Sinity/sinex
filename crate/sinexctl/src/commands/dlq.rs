@@ -96,8 +96,8 @@ impl DlqCommands {
                 .await?;
 
                 println!(
-                    "{}: {} messages requeued",
-                    response.status, response.requeued_count
+                    "{}: {} messages requeued (operation {})",
+                    response.status, response.requeued_count, response.operation_id
                 );
             }
             Self::Purge { confirm } => {
@@ -146,8 +146,8 @@ impl DlqCommands {
                 .await?;
 
                 println!(
-                    "{}: {} messages purged",
-                    response.status, response.purged_count
+                    "{}: {} messages purged (operation {})",
+                    response.status, response.purged_count, response.operation_id
                 );
             }
         }
