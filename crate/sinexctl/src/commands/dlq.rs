@@ -170,6 +170,14 @@ fn format_dlq_stats_table(stats: &DlqListResponse) -> String {
     output.push_str(&format!("  Last sequence: {}\n", stats.last_seq));
     output.push_str(&format!("  Pressure: {}\n", stats.pressure_level));
     output.push_str(&format!(
+        "  Runtime action: {}\n",
+        stats.resource_pressure.runtime_action
+    ));
+    output.push_str(&format!(
+        "  Retry batch size: {}\n",
+        stats.resource_pressure.retry_batch_size
+    ));
+    output.push_str(&format!(
         "  Pending sequence span: {}\n",
         stats.pending_sequence_span
     ));
@@ -212,4 +220,37 @@ fn format_dlq_messages_table(messages: &[DlqMessagePeek]) -> String {
         }
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_primitives::rpc::dlq::DlqPressureSignal;
+
+    #[test]
+    fn dlq_stats_table_renders_structured_pressure_signal() {
+        let rendered = format_dlq_stats_table(&DlqListResponse {
+            total_messages: 11,
+            total_bytes: 4096,
+            first_seq: 1,
+            last_seq: 11,
+            pressure_level: "critical".to_string(),
+            resource_pressure: DlqPressureSignal {
+                pressure_level: "critical".to_string(),
+                runtime_action: "throttle".to_string(),
+                pending_messages: 11,
+                pending_bytes: 4096,
+                retry_batch_size: 10,
+                recommended_action: "ops dlq peek".to_string(),
+                reason: "inspect failures before running paced requeue or purge".to_string(),
+            },
+            pending_sequence_span: 11,
+            recommended_action: "ops dlq peek".to_string(),
+            action_reason: "inspect failures before running paced requeue or purge".to_string(),
+        });
+
+        assert!(rendered.contains("Pressure: critical"));
+        assert!(rendered.contains("Runtime action: throttle"));
+        assert!(rendered.contains("Retry batch size: 10"));
+    }
 }
