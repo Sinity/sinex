@@ -101,10 +101,10 @@ use sinex_primitives::rpc::{
         RUNTIME_LIST_METHOD, RUNTIME_RESUME_METHOD, RUNTIME_SET_HORIZON_METHOD,
     },
     runtime::{
-        RuntimeDrainRequest, RuntimeHealthRequest, RuntimeHealthResponse, RuntimeListActiveRequest,
-        RuntimeListActiveResponse, RuntimeListRequest, RuntimeListResponse, RuntimeResumeRequest,
-        RuntimeResumeResponse, RuntimeSetHorizonRequest, RuntimeSetHorizonResponse,
-        RuntimeDrainResponse,
+        RuntimeDrainRequest, RuntimeDrainResponse, RuntimeHealthRequest, RuntimeHealthResponse,
+        RuntimeListActiveRequest, RuntimeListActiveResponse, RuntimeListRequest,
+        RuntimeListResponse, RuntimeResumeRequest, RuntimeResumeResponse, RuntimeSetHorizonRequest,
+        RuntimeSetHorizonResponse,
     },
     semantic::{
         SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
