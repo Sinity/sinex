@@ -8,13 +8,15 @@ use sinex_primitives::query::QueryResultEvent;
 use sinex_primitives::query::{EventQuery, SortDirection, TimeRange};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
-    ContextSourceView, ContextSummaryView, EventCardListView, EventCardView, ViewEnvelope,
+    ActionAvailability, ActionAvailabilityState, CaveatView, ContextSourceView, ContextSummaryView,
+    DesktopContextInputEvidence, DesktopContextInputState, DesktopContextView, EventCardListView,
+    EventCardView, PrivacyStateKind, SinexObjectKind, SinexObjectRef, ViewEnvelope,
 };
 use std::collections::HashMap;
 
 use crate::client::GatewayClient;
 use crate::fmt::format_duration_age;
-use crate::fmt::render_envelope;
+use crate::fmt::{render_envelope, render_finite_envelope};
 use crate::model::OutputFormat;
 
 /// Show activity context for session resumption ("what was I doing?")
@@ -38,6 +40,10 @@ pub struct ContextCommand {
     /// Number of events to fetch (increase for busy systems)
     #[arg(long, default_value = "200")]
     limit: i32,
+
+    /// Render the desktop.context current-view contract over recent evidence
+    #[arg(long)]
+    desktop: bool,
 }
 
 impl ContextCommand {
@@ -59,6 +65,13 @@ impl ContextCommand {
         let event_cards = client.event_cards(query).await?;
 
         let sources = grouped_context_sources(&event_cards.cards);
+        if self.desktop {
+            let output =
+                render_desktop_context_output(&event_cards, &sources, &self.since, format)?;
+            println!("{output}");
+            return Ok(());
+        }
+
         if let Some(output) =
             render_context_machine_output(&event_cards, &sources, &self.since, format)?
         {
@@ -167,6 +180,231 @@ fn render_context_machine_output(
         OutputFormat::Ndjson | OutputFormat::Dot => Err(color_eyre::eyre::eyre!(
             "events context is a finite view; use json, yaml, or table"
         )),
+    }
+}
+
+fn render_desktop_context_output(
+    event_cards: &EventCardListView,
+    sources: &[(String, &EventCardView)],
+    since: &str,
+    format: OutputFormat,
+) -> Result<String> {
+    if matches!(format, OutputFormat::Ndjson | OutputFormat::Dot) {
+        return Err(color_eyre::eyre::eyre!(
+            "desktop context is a finite view; use json, yaml, or table"
+        ));
+    }
+
+    let view = build_desktop_context_view(event_cards, sources, since);
+    if matches!(format, OutputFormat::Json | OutputFormat::Yaml) {
+        let envelope = view
+            .clone()
+            .into_envelope("sinexctl.events.context.desktop")
+            .with_query_echo(json!({
+                "since": since,
+                "limit": event_cards.count,
+                "mode": "desktop_context"
+            }));
+        return render_finite_envelope(&envelope, format)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("desktop context output expected"));
+    }
+
+    Ok(render_desktop_context_table(&view, since))
+}
+
+fn build_desktop_context_view(
+    _event_cards: &EventCardListView,
+    sources: &[(String, &EventCardView)],
+    since: &str,
+) -> DesktopContextView {
+    let mut inputs = Vec::new();
+    for family in ["desktop", "terminal", "browser", "notification"] {
+        inputs.push(desktop_context_input_for_family(family, sources));
+    }
+
+    let mut view = DesktopContextView::current(
+        sinex_primitives::DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID,
+        inputs,
+    )
+    .with_caveat(
+        "context.derived_view",
+        "desktop context is derived from admitted observations and does not create canonical context events",
+        Some(SinexObjectRef::new(
+            SinexObjectKind::Projection,
+            "desktop.context.current_view",
+        )),
+    );
+
+    if let Some((_, card)) = sources
+        .iter()
+        .find(|(_, card)| is_active_window_evidence(card))
+    {
+        view.active_window_ref = Some(card.ref_.clone());
+    }
+
+    if view
+        .inputs
+        .iter()
+        .any(|input| input.state == DesktopContextInputState::Missing)
+    {
+        view = view.with_caveat(
+            "context.inputs_missing",
+            format!(
+                "one or more desktop-context input families have no events in the last {since}"
+            ),
+            None,
+        );
+    }
+
+    view
+}
+
+fn desktop_context_input_for_family(
+    family: &str,
+    sources: &[(String, &EventCardView)],
+) -> DesktopContextInputEvidence {
+    let matching: Vec<_> = sources
+        .iter()
+        .filter(|(_, card)| desktop_context_family(card) == family)
+        .collect();
+
+    if matching.is_empty() {
+        let coverage_ref = SinexObjectRef::new(
+            SinexObjectKind::Projection,
+            format!("source-coverage:{family}"),
+        )
+        .with_label(format!("{family} coverage"));
+        return DesktopContextInputEvidence {
+            family: family.to_string(),
+            state: DesktopContextInputState::Missing,
+            refs: vec![coverage_ref.clone()],
+            caveats: vec![CaveatView {
+                id: format!("input.{family}.missing"),
+                message: format!("{family} input has no recent admitted evidence"),
+                ref_: Some(coverage_ref),
+            }],
+            actions: vec![
+                ActionAvailability::read(
+                    format!("sources.{family}.check"),
+                    format!("Check {family}"),
+                    ActionAvailabilityState::Enabled,
+                )
+                .with_command_hint(format!("sinexctl sources readiness --family {family}")),
+            ],
+        };
+    }
+
+    let refs = matching.iter().map(|(_, card)| card.ref_.clone()).collect();
+    let caveats = matching
+        .iter()
+        .flat_map(|(_, card)| card.caveats.clone())
+        .collect::<Vec<_>>();
+    let state = if matching.iter().any(|(_, card)| {
+        card.privacy_state.state != PrivacyStateKind::RawVisible
+            || card
+                .caveats
+                .iter()
+                .any(|caveat| caveat.id.contains("redact") || caveat.id.contains("disclosure"))
+    }) {
+        DesktopContextInputState::Redacted
+    } else {
+        DesktopContextInputState::Included
+    };
+
+    DesktopContextInputEvidence {
+        family: family.to_string(),
+        state,
+        refs,
+        caveats,
+        actions: Vec::new(),
+    }
+}
+
+fn render_desktop_context_table(view: &DesktopContextView, since: &str) -> String {
+    let mut lines = vec![
+        format!("Desktop context (last {since})"),
+        "input family        state      refs  caveats".to_string(),
+        "────────────────────────────────────────────".to_string(),
+    ];
+    for input in &view.inputs {
+        lines.push(format!(
+            "{:<19} {:<10} {:>4}  {:>7}",
+            input.family,
+            serde_json::to_value(input.state)
+                .ok()
+                .and_then(|value| value.as_str().map(ToOwned::to_owned))
+                .unwrap_or_else(|| "unknown".to_string()),
+            input.refs.len(),
+            input.caveats.len(),
+        ));
+    }
+    if !view.caveats.is_empty() {
+        lines.push(String::new());
+        lines.push("caveats".to_string());
+        for caveat in &view.caveats {
+            lines.push(format!("- {}: {}", caveat.id, caveat.message));
+        }
+    }
+    lines.join("\n")
+}
+
+fn desktop_context_family(card: &EventCardView) -> String {
+    if is_notification_evidence(card) {
+        return "notification".to_string();
+    }
+    if is_browser_evidence(card) {
+        return "browser".to_string();
+    }
+    if is_terminal_evidence(card) {
+        return "terminal".to_string();
+    }
+    if is_desktop_evidence(card) {
+        return "desktop".to_string();
+    }
+    display_source(card.source.raw.as_str())
+}
+
+fn is_notification_evidence(card: &EventCardView) -> bool {
+    match card.source.raw.as_str() {
+        "desktop.notification" | "desktop.notification.action" | "desktop.notification.closed" => {
+            true
+        }
+        "dbus" => card.event_type.starts_with("notification."),
+        _ => false,
+    }
+}
+
+fn is_browser_evidence(card: &EventCardView) -> bool {
+    match card.source.raw.as_str() {
+        "webhistory" => true,
+        source if source.starts_with("browser.") => true,
+        "activitywatch" => card.event_type.starts_with("browser."),
+        _ => false,
+    }
+}
+
+fn is_terminal_evidence(card: &EventCardView) -> bool {
+    let source = card.source.raw.as_str();
+    source.starts_with("shell.") || source.starts_with("terminal.")
+}
+
+fn is_desktop_evidence(card: &EventCardView) -> bool {
+    match card.source.raw.as_str() {
+        "wm.hyprland" | "wm.unhandled" | "desktop" => true,
+        "activitywatch" => !card.event_type.starts_with("browser."),
+        _ => false,
+    }
+}
+
+fn is_active_window_evidence(card: &EventCardView) -> bool {
+    match card.source.raw.as_str() {
+        "wm.hyprland" | "desktop" => {
+            matches!(card.event_type.as_str(), "window.focused" | "window.active")
+        }
+        "activitywatch" => {
+            matches!(card.event_type.as_str(), "window.active" | "app.window.active")
+        }
+        _ => false,
     }
 }
 
@@ -309,6 +547,128 @@ mod tests {
         let result =
             render_context_machine_output(&event_cards, &sources, "2h", OutputFormat::Ndjson);
         assert!(result.is_err(), "context must remain a finite view");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_context_json_uses_typed_view_with_missing_inputs()
+    -> xtask::sandbox::TestResult<()> {
+        let mut terminal_card = context_event("shell.atuin", "command.executed");
+        terminal_card.caveats.push(CaveatView {
+            id: "policy.disclosure_applied".to_string(),
+            message: "terminal command hidden by fixture disclosure policy".to_string(),
+            ref_: None,
+        });
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: 2,
+            cards: vec![
+                context_event("wm.hyprland", "window.focused"),
+                terminal_card,
+            ],
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output =
+            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json)?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+        assert_eq!(value["source_surface"], "sinexctl.events.context.desktop");
+        assert_eq!(value["payload"]["output_kind"], "current_view");
+        assert_eq!(
+            value["payload"]["derivation_ref"],
+            sinex_primitives::DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID
+        );
+
+        let inputs = value["payload"]["inputs"]
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("desktop inputs must be an array"))?;
+        assert!(
+            inputs
+                .iter()
+                .any(|input| input["family"] == "desktop" && input["state"] == "included")
+        );
+        assert!(
+            inputs
+                .iter()
+                .any(|input| input["family"] == "terminal" && input["state"] == "redacted")
+        );
+        assert!(
+            inputs
+                .iter()
+                .any(|input| input["family"] == "browser" && input["state"] == "missing")
+        );
+        assert!(
+            inputs
+                .iter()
+                .any(|input| input["family"] == "notification" && input["state"] == "missing")
+        );
+        assert!(
+            inputs.iter().any(
+                |input| input["actions"].as_array().is_some_and(|actions| actions
+                    .iter()
+                    .any(|action| action["id"] == "sources.browser.check"))
+            ),
+            "missing browser evidence should surface an operator action"
+        );
+        assert!(value["caveats"].as_array().is_some_and(|caveats| {
+            caveats
+                .iter()
+                .any(|caveat| caveat["id"] == "context.inputs_missing")
+        }));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_context_classifies_activitywatch_browser_events()
+    -> xtask::sandbox::TestResult<()> {
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: 2,
+            cards: vec![
+                context_event("activitywatch", "browser.tab.active"),
+                context_event("wm.hyprland", "workspace.switched"),
+            ],
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output =
+            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json)?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+        let inputs = value["payload"]["inputs"]
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("desktop inputs must be an array"))?;
+
+        assert!(
+            inputs
+                .iter()
+                .any(|input| input["family"] == "browser" && input["state"] == "included"),
+            "ActivityWatch browser observations should satisfy the browser input family"
+        );
+        assert!(
+            value["payload"]["active_window_ref"].is_null(),
+            "workspace events are desktop evidence but not active-window evidence"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_context_output_rejects_streaming_formats() -> xtask::sandbox::TestResult<()> {
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: 0,
+            cards: Vec::new(),
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let result =
+            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Ndjson);
+
+        assert!(result.is_err(), "desktop context must remain a finite view");
         Ok(())
     }
 }
