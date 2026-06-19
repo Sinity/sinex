@@ -237,7 +237,7 @@ fn build_desktop_context_view(
 
     if let Some((_, card)) = sources
         .iter()
-        .find(|(source, _)| display_source(source) == "desktop")
+        .find(|(_, card)| is_active_window_evidence(card))
     {
         view.active_window_ref = Some(card.ref_.clone());
     }
@@ -349,15 +349,62 @@ fn render_desktop_context_table(view: &DesktopContextView, since: &str) -> Strin
 }
 
 fn desktop_context_family(card: &EventCardView) -> String {
+    if is_notification_evidence(card) {
+        return "notification".to_string();
+    }
+    if is_browser_evidence(card) {
+        return "browser".to_string();
+    }
+    if is_terminal_evidence(card) {
+        return "terminal".to_string();
+    }
+    if is_desktop_evidence(card) {
+        return "desktop".to_string();
+    }
+    display_source(card.source.raw.as_str())
+}
+
+fn is_notification_evidence(card: &EventCardView) -> bool {
     match card.source.raw.as_str() {
-        "wm.hyprland" | "wm.unhandled" | "desktop" | "activitywatch" => "desktop".to_string(),
         "desktop.notification" | "desktop.notification.action" | "desktop.notification.closed" => {
-            "notification".to_string()
+            true
         }
-        s if s.starts_with("shell.") || s.starts_with("terminal.") => "terminal".to_string(),
-        s if s.starts_with("browser.") || s == "webhistory" => "browser".to_string(),
-        "dbus" if card.event_type.starts_with("notification.") => "notification".to_string(),
-        source => display_source(source),
+        "dbus" => card.event_type.starts_with("notification."),
+        _ => false,
+    }
+}
+
+fn is_browser_evidence(card: &EventCardView) -> bool {
+    match card.source.raw.as_str() {
+        "webhistory" => true,
+        source if source.starts_with("browser.") => true,
+        "activitywatch" => card.event_type.starts_with("browser."),
+        _ => false,
+    }
+}
+
+fn is_terminal_evidence(card: &EventCardView) -> bool {
+    let source = card.source.raw.as_str();
+    source.starts_with("shell.") || source.starts_with("terminal.")
+}
+
+fn is_desktop_evidence(card: &EventCardView) -> bool {
+    match card.source.raw.as_str() {
+        "wm.hyprland" | "wm.unhandled" | "desktop" => true,
+        "activitywatch" => !card.event_type.starts_with("browser."),
+        _ => false,
+    }
+}
+
+fn is_active_window_evidence(card: &EventCardView) -> bool {
+    match card.source.raw.as_str() {
+        "wm.hyprland" | "desktop" => {
+            matches!(card.event_type.as_str(), "window.focused" | "window.active")
+        }
+        "activitywatch" => {
+            matches!(card.event_type.as_str(), "window.active" | "app.window.active")
+        }
+        _ => false,
     }
 }
 
@@ -571,6 +618,40 @@ mod tests {
                 .iter()
                 .any(|caveat| caveat["id"] == "context.inputs_missing")
         }));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_context_classifies_activitywatch_browser_events()
+    -> xtask::sandbox::TestResult<()> {
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: 2,
+            cards: vec![
+                context_event("activitywatch", "browser.tab.active"),
+                context_event("wm.hyprland", "workspace.switched"),
+            ],
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output =
+            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json)?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+        let inputs = value["payload"]["inputs"]
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("desktop inputs must be an array"))?;
+
+        assert!(
+            inputs
+                .iter()
+                .any(|input| input["family"] == "browser" && input["state"] == "included"),
+            "ActivityWatch browser observations should satisfy the browser input family"
+        );
+        assert!(
+            value["payload"]["active_window_ref"].is_null(),
+            "workspace events are desktop evidence but not active-window evidence"
+        );
         Ok(())
     }
 
