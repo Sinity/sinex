@@ -57,14 +57,15 @@ async fn nodes_drain_publishes_command(ctx: TestContext) -> TestResult<()> {
         reason: Some("maintenance".to_string()),
     };
 
-    let result =
-        handle_runtime_drain(&harness.client, &harness.env, request, &admin_auth()).await?;
+    let result = handle_runtime_drain(&harness.services, request, &admin_auth()).await?;
     assert_eq!(result.status, OperationStatus::Pending);
     assert_eq!(result.module_name.as_str(), "test-source-123");
+    assert!(!result.operation_id.is_empty());
     let payload = expect_single_control_message(&mut sub, &subject).await?;
     assert_eq!(payload["action"], "drain");
-    assert_eq!(payload["source_name"], "test-source-123");
+    assert_eq!(payload["module_name"], "test-source-123");
     assert_eq!(payload["reason"], "maintenance");
+    assert_eq!(payload["operation_id"], result.operation_id);
     assert!(payload["timestamp"].as_str().is_some());
 
     Ok(())
@@ -82,13 +83,14 @@ async fn nodes_resume_publishes_command(ctx: TestContext) -> TestResult<()> {
         module_name: "test-source-456".into(),
     };
 
-    let result =
-        handle_runtime_resume(&harness.client, &harness.env, request, &admin_auth()).await?;
+    let result = handle_runtime_resume(&harness.services, request, &admin_auth()).await?;
     assert_eq!(result.status, OperationStatus::Pending);
     assert_eq!(result.module_name.as_str(), "test-source-456");
+    assert!(!result.operation_id.is_empty());
     let payload = expect_single_control_message(&mut sub, &subject).await?;
     assert_eq!(payload["action"], "resume");
-    assert_eq!(payload["source_name"], "test-source-456");
+    assert_eq!(payload["module_name"], "test-source-456");
+    assert_eq!(payload["operation_id"], result.operation_id);
     assert!(payload.get("reason").is_none());
     assert!(payload["timestamp"].as_str().is_some());
 
@@ -109,15 +111,16 @@ async fn nodes_set_horizon_publishes_command(ctx: TestContext) -> TestResult<()>
         horizon,
     };
 
-    let result =
-        handle_runtime_set_horizon(&harness.client, &harness.env, request, &admin_auth()).await?;
+    let result = handle_runtime_set_horizon(&harness.services, request, &admin_auth()).await?;
     assert_eq!(result.status, OperationStatus::Pending);
     assert_eq!(result.module_name.as_str(), "test-source-789");
     assert_eq!(result.horizon, horizon);
+    assert!(!result.operation_id.is_empty());
     let payload = expect_single_control_message(&mut sub, &subject).await?;
     assert_eq!(payload["action"], "set_horizon");
-    assert_eq!(payload["source_name"], "test-source-789");
+    assert_eq!(payload["module_name"], "test-source-789");
     assert_eq!(payload["horizon"], "2024-01-15T10:00:00Z");
+    assert_eq!(payload["operation_id"], result.operation_id);
     assert!(payload["timestamp"].as_str().is_some());
 
     Ok(())
