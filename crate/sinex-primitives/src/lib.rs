@@ -33,6 +33,7 @@ pub mod primitives;
 pub mod privacy;
 pub mod public_ref;
 pub mod query;
+pub mod query_units;
 pub mod relations;
 pub mod rpc;
 pub mod runtime_target;
@@ -160,6 +161,11 @@ pub use query::{
     LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PathOp, PayloadFilter,
     QueryResultEvent, SortDirection, SourceMaterialLinkInfo, SourceStatsEntry, SubscriptionFilter,
     TimeBucketEntry, TimeRange, TimeSeriesOrder,
+};
+pub use query_units::{
+    QueryFieldDescriptor, QueryFieldType, QueryOperator, QueryPagination, QuerySortDescriptor,
+    QueryUnitDescriptor, QueryUnitId, QueryValue, SinexQuery, SinexQueryPredicate, SinexQuerySort,
+    parse_sinex_query, query_unit_descriptor, query_unit_descriptors,
 };
 pub use runtime_target::{
     RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeStatusWarning,

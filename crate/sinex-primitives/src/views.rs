@@ -56,6 +56,7 @@ pub enum SinexObjectKind {
     Artifact,
     QueryRun,
     AdmissionOutcome,
+    DebtRow,
     Proposal,
     Judgment,
     ExternalRef,
@@ -68,6 +69,7 @@ pub enum SinexObjectKind {
     PrivacySession,
     Caveat,
     RpcMethod,
+    RuntimeModule,
     Command,
 }
 

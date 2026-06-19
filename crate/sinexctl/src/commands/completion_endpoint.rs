@@ -4,6 +4,7 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_primitives::events::schema_registry::{PayloadInfo, get_all_payloads};
+use sinex_primitives::query_units::{QueryUnitId, query_unit_descriptor, query_unit_descriptors};
 use sinex_primitives::views::SourceCoverageListView;
 
 use crate::Result;
@@ -257,6 +258,8 @@ fn build_candidates(
         )
     } else if command_context(line, cursor).as_deref() == Some("ops dlq") {
         ops_dlq_candidates(active, replace_start, replace_end)
+    } else if command_context(line, cursor).as_deref() == Some("query") {
+        query_unit_candidates(line, cursor, active, replace_start, replace_end)
     } else {
         grammar_candidates(active, replace_start, replace_end)
     };
@@ -399,6 +402,10 @@ fn grammar_candidates(
     replace_end: usize,
 ) -> Vec<CompletionCandidate> {
     const ROOTS: &[(&str, &str)] = &[
+        (
+            "query",
+            "shared query units over events, sources, debt, ops, and runtime",
+        ),
         ("events", "event query, inspect, trace, watch, and annotate"),
         ("sources", "source material inventory and readiness"),
         ("show", "resolve and inspect one public Sinex object ref"),
@@ -440,6 +447,131 @@ fn grammar_candidates(
                 replace_start,
                 replace_end,
                 score,
+            )
+        })
+        .collect()
+}
+
+fn query_unit_candidates(
+    line: &str,
+    cursor: usize,
+    active: &str,
+    replace_start: usize,
+    replace_end: usize,
+) -> Vec<CompletionCandidate> {
+    let cursor = cursor.min(line.len());
+    let expression = line[..cursor]
+        .strip_prefix("sinexctl query")
+        .unwrap_or(&line[..cursor])
+        .trim();
+    let tokens = expression
+        .split_whitespace()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if tokens.len() <= 1 {
+        return query_unit_descriptors()
+            .iter()
+            .filter(|descriptor| descriptor.unit.as_str().starts_with(active))
+            .map(|descriptor| {
+                CompletionCandidate::new(
+                    descriptor.unit.as_str(),
+                    "query-unit",
+                    "Query units",
+                    format!(
+                        "{} fields, backed by {}",
+                        descriptor.fields.len(),
+                        descriptor.backing_rpc_methods.join(", ")
+                    ),
+                    replace_start,
+                    replace_end,
+                    100,
+                )
+                .preview(format!("sinexctl query '{} where '", descriptor.unit))
+            })
+            .collect();
+    }
+
+    let Ok(unit) = tokens[0].parse::<QueryUnitId>() else {
+        return Vec::new();
+    };
+    let descriptor = query_unit_descriptor(unit);
+    let lower = active.to_ascii_lowercase();
+    let last = tokens.last().map(String::as_str).unwrap_or_default();
+
+    if lower.ends_with(" where") || lower.ends_with(" and") || lower.ends_with(" or") {
+        return descriptor
+            .fields
+            .iter()
+            .map(|field| {
+                CompletionCandidate::new(
+                    field.name,
+                    "query-field",
+                    "Query fields",
+                    format!("{:?} field", field.field_type),
+                    replace_start,
+                    replace_end,
+                    95,
+                )
+            })
+            .collect();
+    }
+
+    if let Some(field) = descriptor.fields.iter().find(|field| field.name == last) {
+        return field
+            .operators
+            .iter()
+            .map(|operator| {
+                CompletionCandidate::new(
+                    operator.as_str(),
+                    "query-operator",
+                    "Query operators",
+                    format!("operator for {}", field.name),
+                    replace_start,
+                    replace_end,
+                    90,
+                )
+            })
+            .collect();
+    }
+
+    if let Some(field_name) = tokens.get(tokens.len().saturating_sub(3))
+        && let Some(field) = descriptor
+            .fields
+            .iter()
+            .find(|field| field.name == field_name)
+        && !field.enum_values.is_empty()
+    {
+        return field
+            .enum_values
+            .iter()
+            .filter(|value| value.starts_with(last))
+            .map(|value| {
+                CompletionCandidate::new(
+                    *value,
+                    "query-enum",
+                    "Query enum values",
+                    format!("{} value", field.name),
+                    replace_start,
+                    replace_end,
+                    88,
+                )
+            })
+            .collect();
+    }
+
+    descriptor
+        .fields
+        .iter()
+        .filter(|field| field.name.starts_with(last))
+        .map(|field| {
+            CompletionCandidate::new(
+                field.name,
+                "query-field",
+                "Query fields",
+                format!("{:?} field", field.field_type),
+                replace_start,
+                replace_end,
+                85,
             )
         })
         .collect()
@@ -493,6 +625,8 @@ fn command_context(line: &str, cursor: usize) -> Option<String> {
         tokens.pop();
     }
     match tokens.as_slice() {
+        [root, query, ..] if root == "sinexctl" && query == "query" => Some("query".to_string()),
+        [query, ..] if query == "query" => Some("query".to_string()),
         [root, ops, dlq, ..] if root == "sinexctl" && ops == "ops" && dlq == "dlq" => {
             Some("ops dlq".to_string())
         }
@@ -698,14 +832,36 @@ mod tests {
             .map(|candidate| candidate.value.as_str())
             .collect();
         for root in [
-            "events", "sources", "show", "runtime", "metrics", "ops", "privacy", "tasks", "record",
-            "docs", "semantic", "tui", "config",
+            "query", "events", "sources", "show", "runtime", "metrics", "ops", "privacy", "tasks",
+            "record", "docs", "semantic", "tui", "config",
         ] {
             assert!(
                 values.contains(root),
                 "canonical root `{root}` must be suggested: {response:#?}"
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn query_completion_is_descriptor_driven() -> TestResult<()> {
+        let unit_response = response("sinexctl query source-").await;
+        assert!(
+            unit_response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.value == "source-drivers"),
+            "query unit completions must come from descriptor registry: {unit_response:#?}"
+        );
+
+        let field_response = response("sinexctl query events where s").await;
+        assert!(
+            field_response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.value == "source"),
+            "query field completions must come from descriptor registry: {field_response:#?}"
+        );
         Ok(())
     }
 

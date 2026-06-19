@@ -1963,6 +1963,7 @@ fn object_kind_label(kind: &SinexObjectKind) -> &'static str {
         SinexObjectKind::Artifact => "artifact",
         SinexObjectKind::QueryRun => "query-run",
         SinexObjectKind::AdmissionOutcome => "admission-outcome",
+        SinexObjectKind::DebtRow => "debt-row",
         SinexObjectKind::Proposal => "proposal",
         SinexObjectKind::Judgment => "judgment",
         SinexObjectKind::ExternalRef => "external-ref",
@@ -1975,6 +1976,7 @@ fn object_kind_label(kind: &SinexObjectKind) -> &'static str {
         SinexObjectKind::PrivacySession => "privacy-session",
         SinexObjectKind::Caveat => "caveat",
         SinexObjectKind::RpcMethod => "rpc-method",
+        SinexObjectKind::RuntimeModule => "runtime-module",
         SinexObjectKind::Command => "command",
     }
 }
