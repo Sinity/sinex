@@ -78,6 +78,12 @@ impl DerivationSpec {
 
 pub const TASK_CURRENT_OBJECTS_DERIVATION_ID: DerivationSpecId =
     "derivation:tasks.current/domain.current_objects@v1";
+pub const DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID: DerivationSpecId =
+    "derivation:desktop.context.current_view@v1";
+pub const DESKTOP_FOCUS_SESSION_DERIVATION_ID: DerivationSpecId =
+    "derivation:desktop.focus_session@v1";
+pub const DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID: DerivationSpecId =
+    "derivation:desktop.notification_pressure@v1";
 
 pub const TASK_CURRENT_OBJECTS_DERIVATION: DerivationSpec = DerivationSpec {
     id: TASK_CURRENT_OBJECTS_DERIVATION_ID,
@@ -103,7 +109,83 @@ pub const TASK_CURRENT_OBJECTS_DERIVATION: DerivationSpec = DerivationSpec {
     ],
 };
 
-pub const DERIVATION_SPECS: &[DerivationSpec] = &[TASK_CURRENT_OBJECTS_DERIVATION];
+pub const DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION: DerivationSpec = DerivationSpec {
+    id: DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID,
+    input_scope: DerivationInputScope::QueryScope {
+        scope: "desktop.context.current_view.inputs",
+    },
+    output_id: "desktop.context.current_view",
+    output_kind: OutputKind::EphemeralView,
+    freshness_policy: FreshnessPolicy::RefreshOnRead,
+    invalidates_on: &[
+        InvalidationTrigger::Replay,
+        InvalidationTrigger::Redaction,
+        InvalidationTrigger::DisclosurePolicyChange,
+        InvalidationTrigger::ParserSemanticsChange,
+    ],
+    rebuild_resource_policy_ref: Some("resource-policy:desktop.context.current-view"),
+    disclosure_policy_ref: Some("disclosure-policy:desktop.context.view"),
+    operation_hooks: &[
+        DerivationOperationHook::Refresh,
+        DerivationOperationHook::Explain,
+    ],
+};
+
+pub const DESKTOP_FOCUS_SESSION_DERIVATION: DerivationSpec = DerivationSpec {
+    id: DESKTOP_FOCUS_SESSION_DERIVATION_ID,
+    input_scope: DerivationInputScope::QueryScope {
+        scope: "desktop.focus_session.inputs",
+    },
+    output_id: "desktop.focus_session",
+    output_kind: OutputKind::ProjectionRow,
+    freshness_policy: FreshnessPolicy::RebuildOnInputChange,
+    invalidates_on: &[
+        InvalidationTrigger::Replay,
+        InvalidationTrigger::Archive,
+        InvalidationTrigger::Redaction,
+        InvalidationTrigger::ParserSemanticsChange,
+        InvalidationTrigger::DisclosurePolicyChange,
+    ],
+    rebuild_resource_policy_ref: Some("resource-policy:desktop.context.projection-rebuild"),
+    disclosure_policy_ref: Some("disclosure-policy:desktop.context.projection"),
+    operation_hooks: &[
+        DerivationOperationHook::Rebuild,
+        DerivationOperationHook::Explain,
+    ],
+};
+
+pub const DESKTOP_NOTIFICATION_PRESSURE_DERIVATION: DerivationSpec = DerivationSpec {
+    id: DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID,
+    input_scope: DerivationInputScope::EventTypes {
+        domain_id: "desktop.notification",
+        event_types: &[
+            "notification.sent",
+            "notification.action_invoked",
+            "notification.closed",
+        ],
+    },
+    output_id: "desktop.notification_pressure",
+    output_kind: OutputKind::ProjectionRow,
+    freshness_policy: FreshnessPolicy::RebuildOnInputChange,
+    invalidates_on: &[
+        InvalidationTrigger::Replay,
+        InvalidationTrigger::Redaction,
+        InvalidationTrigger::DisclosurePolicyChange,
+    ],
+    rebuild_resource_policy_ref: Some("resource-policy:desktop.context.projection-rebuild"),
+    disclosure_policy_ref: Some("disclosure-policy:desktop.notification-pressure"),
+    operation_hooks: &[
+        DerivationOperationHook::Rebuild,
+        DerivationOperationHook::Explain,
+    ],
+};
+
+pub const DERIVATION_SPECS: &[DerivationSpec] = &[
+    TASK_CURRENT_OBJECTS_DERIVATION,
+    DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION,
+    DESKTOP_FOCUS_SESSION_DERIVATION,
+    DESKTOP_NOTIFICATION_PRESSURE_DERIVATION,
+];
 
 pub fn derivation_specs() -> impl Iterator<Item = &'static DerivationSpec> {
     DERIVATION_SPECS.iter()

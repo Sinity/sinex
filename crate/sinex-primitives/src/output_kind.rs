@@ -124,6 +124,24 @@ pub const OUTPUT_KIND_DECLARATIONS: &[OutputKindDeclaration] = &[
         owner: "sinex-primitives::views::DebtListView",
         rationale: "operator debt read model for capture, admission, and projection gaps",
     },
+    OutputKindDeclaration {
+        output_id: "desktop.context.current_view",
+        kind: OutputKind::EphemeralView,
+        owner: "sinex-primitives::views::DesktopContextView",
+        rationale: "finite read model assembled from admitted observations with caveats and evidence refs",
+    },
+    OutputKindDeclaration {
+        output_id: "desktop.focus_session",
+        kind: OutputKind::ProjectionRow,
+        owner: "sinex desktop context derivations",
+        rationale: "rebuildable focus-session state computed from admitted desktop/browser/terminal observations",
+    },
+    OutputKindDeclaration {
+        output_id: "desktop.notification_pressure",
+        kind: OutputKind::ProjectionRow,
+        owner: "sinex desktop context derivations",
+        rationale: "rebuildable notification-pressure state computed from notification observations",
+    },
 ];
 
 #[must_use]
