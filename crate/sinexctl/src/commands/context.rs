@@ -9,8 +9,9 @@ use sinex_primitives::query::{EventQuery, SortDirection, TimeRange};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, CaveatView, ContextSourceView, ContextSummaryView,
-    DesktopContextInputEvidence, DesktopContextInputState, DesktopContextView, EventCardListView,
-    EventCardView, PrivacyStateKind, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+    DesktopContextCandidateView, DesktopContextInputEvidence, DesktopContextInputState,
+    DesktopContextView, EventCardListView, EventCardView, PrivacyStateKind, SinexObjectKind,
+    SinexObjectRef, ViewEnvelope,
 };
 use std::collections::HashMap;
 
@@ -242,6 +243,18 @@ fn build_desktop_context_view(
         view.active_window_ref = Some(card.ref_.clone());
     }
 
+    view.candidates = desktop_context_candidates(sources);
+    if !view.candidates.is_empty() {
+        view = view.with_caveat(
+            "context.candidates_ranked_view",
+            "desktop context candidates are ranked view output; durable labels require Proposal/Judgment finalization",
+            Some(SinexObjectRef::new(
+                SinexObjectKind::Projection,
+                "desktop.context.current_view",
+            )),
+        );
+    }
+
     if view
         .inputs
         .iter()
@@ -257,6 +270,46 @@ fn build_desktop_context_view(
     }
 
     view
+}
+
+fn desktop_context_candidates(
+    sources: &[(String, &EventCardView)],
+) -> Vec<DesktopContextCandidateView> {
+    let mut candidates = Vec::new();
+
+    if let Some((_, card)) = sources
+        .iter()
+        .find(|(_, card)| is_active_window_evidence(card))
+    {
+        candidates.push(DesktopContextCandidateView {
+            label: format!("active window: {}", truncate(&card.summary, 80)),
+            confidence: 0.72,
+            evidence_refs: vec![card.ref_.clone()],
+            proposal_ref: None,
+        });
+    }
+
+    let activity_refs = sources
+        .iter()
+        .filter(|(_, card)| {
+            is_active_window_evidence(card)
+                || is_terminal_evidence(card)
+                || is_browser_evidence(card)
+        })
+        .map(|(_, card)| card.ref_.clone())
+        .take(6)
+        .collect::<Vec<_>>();
+
+    if activity_refs.len() >= 2 {
+        candidates.push(DesktopContextCandidateView {
+            label: format!("current activity from {} evidence refs", activity_refs.len()),
+            confidence: (0.55 + (activity_refs.len() as f32 * 0.05)).min(0.85),
+            evidence_refs: activity_refs,
+            proposal_ref: None,
+        });
+    }
+
+    candidates
 }
 
 fn desktop_context_input_for_family(
@@ -343,6 +396,18 @@ fn render_desktop_context_table(view: &DesktopContextView, since: &str) -> Strin
         lines.push("caveats".to_string());
         for caveat in &view.caveats {
             lines.push(format!("- {}: {}", caveat.id, caveat.message));
+        }
+    }
+    if !view.candidates.is_empty() {
+        lines.push(String::new());
+        lines.push("candidates".to_string());
+        for candidate in &view.candidates {
+            lines.push(format!(
+                "- {:.0}% {} ({} refs)",
+                candidate.confidence * 100.0,
+                candidate.label,
+                candidate.evidence_refs.len()
+            ));
         }
     }
     lines.join("\n")
@@ -652,6 +717,81 @@ mod tests {
             value["payload"]["active_window_ref"].is_null(),
             "workspace events are desktop evidence but not active-window evidence"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_context_candidates_are_evidence_backed_view_output()
+    -> xtask::sandbox::TestResult<()> {
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: 3,
+            cards: vec![
+                context_event("wm.hyprland", "window.focused"),
+                context_event("shell.atuin", "command.executed"),
+                context_event("activitywatch", "browser.tab.active"),
+            ],
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output =
+            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Json)?;
+        let value: serde_json::Value = serde_json::from_str(&output)?;
+
+        let candidates = value["payload"]["candidates"]
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("desktop candidates must be an array"))?;
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate["label"]
+                    .as_str()
+                    .is_some_and(|label| label.starts_with("active window:"))
+                    && candidate["evidence_refs"]
+                        .as_array()
+                        .is_some_and(|refs| refs.len() == 1)
+                    && candidate["proposal_ref"].is_null()),
+            "active-window candidate should be evidence-backed view output: {candidates:?}"
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate["label"] == "current activity from 3 evidence refs"
+                    && candidate["evidence_refs"]
+                        .as_array()
+                        .is_some_and(|refs| refs.len() == 3)
+                    && candidate["proposal_ref"].is_null()),
+            "multi-signal activity candidate should cite each evidence ref without claiming authority: {candidates:?}"
+        );
+        assert!(value["caveats"].as_array().is_some_and(|caveats| {
+            caveats
+                .iter()
+                .any(|caveat| caveat["id"] == "context.candidates_ranked_view")
+        }));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_context_table_shows_candidate_evidence_counts()
+    -> xtask::sandbox::TestResult<()> {
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: 2,
+            cards: vec![
+                context_event("wm.hyprland", "window.focused"),
+                context_event("shell.atuin", "command.executed"),
+            ],
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output =
+            render_desktop_context_output(&event_cards, &sources, "2h", OutputFormat::Table)?;
+
+        assert!(output.contains("candidates"));
+        assert!(output.contains("active window: context fixture (1 refs)"));
+        assert!(output.contains("current activity from 2 evidence refs (2 refs)"));
         Ok(())
     }
 
