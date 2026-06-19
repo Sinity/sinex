@@ -46,8 +46,9 @@
       "surface": "completion_scripts",
       "behavior": "formatless_static_command_metadata",
       "evidence": [
-        "crate/sinexctl/src/commands/completions.rs::completion_dynamic_vocab_omits_sensitive_fixture_material",
-        "crate/sinexctl/src/commands/completions.rs::zsh_postprocessor_injects_dynamic_source_and_event_type_lists"
+        "crate/sinexctl/src/commands/completion_endpoint.rs::payload_key_completion_exposes_schema_keys_not_values",
+        "crate/sinexctl/src/commands/completion_endpoint.rs::source_completion_uses_inventory_without_gateway",
+        "crate/sinexctl/src/commands/completion_endpoint.rs::event_type_completion_is_narrowed_by_source"
       ],
       "caveats": [
         "completion dynamic vocab is restricted to source and event-type identifiers from payload inventory"
@@ -5330,6 +5331,109 @@
         "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": []
+    },
+    {
+      "source_id": "terminal.kitty-osc-live",
+      "source_contract": {
+        "access_scope": {
+          "scope": "runtime_bridge",
+          "surface": "kitty_osc"
+        },
+        "event_types": [
+          [
+            "shell.kitty",
+            "command.executed"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "terminal.kitty-osc-live",
+        "namespace": "terminal",
+        "occurrence_identity": {
+          "key": "(terminal_session, sequence, command, cwd, ts)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "UnixSocketStreamAdapter",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [
+          "coverage:source-coverage",
+          "debt:unified-debt-view",
+          "operation:terminal.activity.check",
+          "operation:terminal.activity.reconnect",
+          "operation:terminal.activity.pause",
+          "operation:terminal.activity.resume",
+          "operation:terminal.activity.drain",
+          "operation:terminal.activity.inspect"
+        ],
+        "checkpoint_family": {
+          "kind": "live_observation"
+        },
+        "domain": "terminal",
+        "id": "terminal.kitty-osc-live",
+        "implementation": "live-capture",
+        "output_event_type": "command.executed",
+        "privacy_context": "command",
+        "proposed": false,
+        "resource_profile": "live_watcher",
+        "runner_pack": "live",
+        "runtime_shape": "continuous",
+        "source_id": "terminal.kitty-osc-live",
+        "subject": "source:terminal.kitty-osc-live"
+      },
+      "parser_manifest": {
+        "parser_id": "kitty-osc-live",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "unix_socket"
+        ],
+        "source_id": "terminal.kitty-osc-live",
+        "declared_event_types": [
+          [
+            "shell.kitty",
+            "command.executed"
+          ]
+        ],
+        "privacy_contexts": [
+          "command"
+        ],
+        "description": "Parses Kitty OSC command frames into command.executed events."
+      },
+      "source_material_class": {
+        "access_scope": {
+          "scope": "runtime_bridge",
+          "surface": "kitty_osc"
+        },
+        "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
+        "privacy_export": "metadata_only_export_source_level_only",
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
+      },
+      "caveats": [
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
+      ]
     },
     {
       "source_id": "terminal.monitor",
