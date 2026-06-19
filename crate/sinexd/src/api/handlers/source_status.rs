@@ -7,18 +7,18 @@ use sinex_primitives::rpc::source_status::{
     SourceStatus, SourcesStatusRequest, SourcesStatusResponse, SourcesStatusViewRequest,
 };
 use sinex_primitives::source_contracts::{
-    BudgetPressureAction, ResourceBudgetSpec, ResourceProfile, SourceContract,
+    AccessScope, BudgetPressureAction, ResourceBudgetSpec, ResourceProfile, SourceContract,
     SourceRuntimeBinding, WorkClass, all_source_contracts, source_runtime_bindings,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
-    ActionAvailability, ActionAvailabilityState, CaveatView, CoverageGapView,
-    SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView,
-    SourcePrivacyPosture, SourceResourceBudgetView, ViewEnvelope,
+    ActionAvailability, ActionAvailabilityState, CaveatView, CoverageGapView, SinexObjectKind,
+    SinexObjectRef, SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness,
+    SourceCoverageView, SourcePrivacyPosture, SourceResourceBudgetView, ViewEnvelope,
 };
 use sqlx::FromRow;
 use sqlx::PgPool;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
 use time::OffsetDateTime;
 
@@ -219,6 +219,13 @@ fn source_coverage_view(
                 .to_string(),
         });
     }
+    if matches!(contract.access_scope, AccessScope::RuntimeBridge { .. })
+        && has_live_binding
+        && !has_material
+        && !has_events
+    {
+        caveats.push(runtime_bridge_unobserved_caveat(contract));
+    }
     let pressure = source_confirmation_pressure(contract, confirmation_buffer);
     if let Some(pressure) = &pressure {
         caveats.push(CaveatView {
@@ -281,7 +288,24 @@ fn source_coverage_view(
             proposed: live_binding_count == 0 && proposed_binding_count > 0,
         },
         resource_budget,
-        actions: source_actions(contract.id, pressure.is_some()),
+        actions: source_actions(contract.id, bindings, pressure.is_some()),
+    }
+}
+
+fn runtime_bridge_unobserved_caveat(contract: &SourceContract) -> CaveatView {
+    let surface = match contract.access_scope {
+        AccessScope::RuntimeBridge { surface } => surface,
+        _ => "runtime_bridge",
+    };
+    CaveatView {
+        id: "source.runtime_bridge.unobserved".to_string(),
+        message: format!(
+            "runtime bridge `{surface}` is declared, but no material or admitted events have been observed for this source"
+        ),
+        ref_: Some(SinexObjectRef::new(
+            SinexObjectKind::SourceDriver,
+            contract.id.to_string(),
+        )),
     }
 }
 
@@ -390,7 +414,11 @@ fn max_timestamp(
     }
 }
 
-fn source_actions(source_id: &str, has_pressure: bool) -> Vec<ActionAvailability> {
+fn source_actions(
+    source_id: &str,
+    bindings: &[&SourceRuntimeBinding],
+    has_pressure: bool,
+) -> Vec<ActionAvailability> {
     let mut actions = vec![
         ActionAvailability::read(
             "sources.readiness",
@@ -418,7 +446,53 @@ fn source_actions(source_id: &str, has_pressure: bool) -> Vec<ActionAvailability
             .with_rpc_method("system.health"),
         );
     }
+    let mut seen = actions
+        .iter()
+        .map(|action| action.id.clone())
+        .collect::<BTreeSet<_>>();
+    for binding in bindings {
+        for capability in binding.capabilities {
+            let Some(operation) = capability.strip_prefix("operation:") else {
+                continue;
+            };
+            if seen.insert(operation.to_string()) {
+                actions.push(operation_capability_action(operation, source_id));
+            }
+        }
+    }
     actions
+}
+
+fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvailability {
+    let (label, command_hint) = match operation.rsplit('.').next().unwrap_or(operation) {
+        "check" => ("Check Bridge", Some("sinexctl sources status")),
+        "inspect" => (
+            "Inspect Bridge",
+            Some("sinexctl sources status --format json"),
+        ),
+        "drain" => ("Drain Bridge", None),
+        "flush" => ("Flush Bridge", None),
+        "reconnect" => ("Reconnect Bridge", None),
+        "pause" => ("Pause Bridge", None),
+        "resume" => ("Resume Bridge", None),
+        _ => ("Package Operation", None),
+    };
+    let mut action = ActionAvailability::read(
+        operation,
+        label,
+        if command_hint.is_some() {
+            ActionAvailabilityState::Enabled
+        } else {
+            ActionAvailabilityState::Unavailable
+        },
+    )
+    .with_reason(format!(
+        "package declares `{operation}` for source `{source_id}`"
+    ));
+    if let Some(command_hint) = command_hint {
+        action = action.with_command_hint(command_hint);
+    }
+    action
 }
 
 #[cfg(test)]
@@ -537,6 +611,97 @@ mod tests {
             view.caveats
                 .iter()
                 .any(|caveat| caveat.id == "source.material.match.v0_exact_id")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_bridge_coverage_surfaces_unobserved_bridge_and_declared_actions()
+    -> xtask::TestResult<()> {
+        static BRIDGE_CAPABILITIES: &[&str] = &[
+            "coverage:source-coverage",
+            "operation:terminal.activity.check",
+            "operation:terminal.activity.reconnect",
+            "operation:terminal.activity.inspect",
+        ];
+        static BRIDGE_CONTRACT: SourceContract = SourceContract {
+            id: "terminal.kitty-osc-live",
+            namespace: "terminal",
+            event_types: &[("shell.kitty", "command.executed")],
+            privacy_tier: PrivacyTier::Sensitive,
+            horizons: &[Horizon::Continuous],
+            retention: RetentionPolicy::Forever,
+            occurrence_identity: OccurrenceIdentity::Anchor,
+            access_scope: AccessScope::RuntimeBridge {
+                surface: "kitty_osc",
+            },
+        };
+        let bridge_binding = SourceRuntimeBinding::builder(
+            SubjectRef::from_static("source:terminal.kitty-osc-live"),
+            "terminal.kitty-osc-live",
+            "terminal",
+        )
+        .implementation("live-capture")
+        .adapter("UnixSocketStreamAdapter")
+        .output_event_type("command.executed")
+        .privacy_context(ProcessingContext::Command)
+        .resource_profile(ResourceProfile::LiveWatcher)
+        .capabilities(BRIDGE_CAPABILITIES)
+        .source_id("terminal.kitty-osc-live")
+        .runner_pack(RunnerPack::Live)
+        .checkpoint_family(CheckpointFamily::LiveObservation)
+        .runtime_shape(RuntimeShape::Continuous)
+        .build_impact(SourceBuildImpact::ZERO)
+        .build();
+
+        let view = source_coverage_view(
+            &BRIDGE_CONTRACT,
+            &[&bridge_binding],
+            &HashMap::new(),
+            &HashMap::new(),
+            &healthy_confirmation_buffer(),
+        );
+
+        let caveat = view
+            .caveats
+            .iter()
+            .find(|caveat| caveat.id == "source.runtime_bridge.unobserved")
+            .ok_or_else(|| color_eyre::eyre::eyre!("bridge caveat expected"))?;
+        assert!(
+            caveat.message.contains("kitty_osc"),
+            "runtime bridge caveat should name the unobserved bridge surface"
+        );
+        assert_eq!(
+            caveat
+                .ref_
+                .as_ref()
+                .map(|ref_| (&ref_.kind, ref_.id.as_str())),
+            Some((&SinexObjectKind::SourceDriver, "terminal.kitty-osc-live"))
+        );
+
+        let check = view
+            .actions
+            .iter()
+            .find(|action| action.id == "terminal.activity.check")
+            .ok_or_else(|| color_eyre::eyre::eyre!("check action expected"))?;
+        assert_eq!(check.state, ActionAvailabilityState::Enabled);
+        assert_eq!(
+            check.command_hint.as_deref(),
+            Some("sinexctl sources status")
+        );
+
+        let reconnect = view
+            .actions
+            .iter()
+            .find(|action| action.id == "terminal.activity.reconnect")
+            .ok_or_else(|| color_eyre::eyre::eyre!("reconnect action expected"))?;
+        assert_eq!(reconnect.state, ActionAvailabilityState::Unavailable);
+        assert!(
+            reconnect
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("terminal.kitty-osc-live")),
+            "declared operation refs should stay source-addressable even before actuator wiring"
         );
         Ok(())
     }
