@@ -1420,7 +1420,11 @@ async fn mcp_dlq_peek_call_uses_gateway_fixture() -> TestResult<()> {
         true
     );
     assert_eq!(
-        response["payload"]["result"]["messages"][0]["privacy_caveats"][0],
+        response["payload"]["result"]["messages"][0]["privacy_caveats"][0]["id"],
+        "policy.disclosure_applied"
+    );
+    assert_eq!(
+        response["payload"]["result"]["messages"][0]["privacy_caveats"][0]["ref"]["id"],
         "secret_redacted"
     );
     assert_eq!(response["privacy_state"]["state"], "redacted");
@@ -2581,7 +2585,19 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "original_subject": "sinex.events.raw.fixture",
                             "payload_preview": "[REDACTED]",
                             "payload_redacted": true,
-                            "privacy_caveats": ["secret_redacted"]
+                            "privacy_caveats": [
+                                {
+                                    "id": "policy.disclosure_applied",
+                                    "message": "operator privacy policy changed content for dlq disclosure; raw stored data was not silently removed",
+                                    "ref": {
+                                        "kind": "policy",
+                                        "id": "secret_redacted",
+                                        "label": "privacy policy",
+                                        "command_hint": "sinexctl privacy policy list",
+                                        "rpc_method": "privacy.policy.list"
+                                    }
+                                }
+                            ]
                         }
                     ]
                 }),
