@@ -9,6 +9,7 @@ use crate::api::sse_bus::{
     SseErrorPayload, SseEventPayload, SseGapPayload, SseHeartbeatPayload, SseMessage,
     SubscriptionBus,
 };
+use crate::event_engine::policy::{DisclosureCaveat, DisclosureContext, PolicyEngine};
 use axum::extract::{Query, State};
 use axum::http::header::HeaderName;
 use axum::http::{HeaderMap, StatusCode};
@@ -20,6 +21,7 @@ use sinex_primitives::constants::services::HEARTBEAT_INTERVAL;
 use sinex_primitives::events::Event;
 use sinex_primitives::query::SubscriptionFilter;
 use sinex_primitives::validation::validate_json;
+use sinex_primitives::views::{CaveatView, SinexObjectKind, SinexObjectRef};
 use sinex_primitives::{Id, JsonValue};
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -177,7 +179,7 @@ pub(crate) async fn handle_sse_stream(
     };
 
     // ── Register ──
-    let Some((sub_id, rx)) = bus.register(filter, resume_from) else {
+    let Some((sub_id, rx)) = bus.register(filter.clone(), resume_from) else {
         log_access_audit(
             "sse",
             "events.stream",
@@ -224,10 +226,19 @@ pub(crate) async fn handle_sse_stream(
 
     // Convert to SSE events
     let bus_for_cleanup = Arc::clone(&bus);
-    let event_stream = merged.map(move |item| {
-        let MergedItem::Msg(msg) = item;
-        Ok::<_, Infallible>(format_sse_message(msg))
-    });
+    let privacy_policy = Arc::clone(state.services.privacy_policy());
+    let stream_filter = filter.clone();
+    let event_stream = merged.then(move |item| {
+        let privacy_policy = Arc::clone(&privacy_policy);
+        let stream_filter = stream_filter.clone();
+        async move {
+            let MergedItem::Msg(msg) = item;
+            format_sse_message(msg, &privacy_policy, &stream_filter)
+                .await
+                .map(Ok::<_, Infallible>)
+        }
+    })
+    .filter_map(|item| item);
 
     // Wrap in a stream that unregisters on drop
     let cleanup_stream = CleanupStream {
@@ -263,20 +274,35 @@ fn parse_last_event_id(headers: &HeaderMap) -> Result<Option<Id<Event<JsonValue>
 }
 
 /// Format an [`SseMessage`] into an axum SSE event.
-fn format_sse_message(msg: SseMessage) -> SseEvent {
+async fn format_sse_message(
+    msg: SseMessage,
+    policy: &PolicyEngine,
+    filter: &SubscriptionFilter,
+) -> Option<SseEvent> {
     match msg {
         SseMessage::Event { seq, event } => {
-            match serialize_sse_payload("event", &SseEventPayload { event: &event }) {
+            let Some((disclosed_event, privacy_caveats)) =
+                disclose_and_match_sse_event(&event, policy, filter).await
+            else {
+                return None;
+            };
+            match serialize_sse_payload(
+                "event",
+                &SseEventPayload {
+                    event: &disclosed_event,
+                    privacy_caveats: &privacy_caveats,
+                },
+            ) {
                 Ok(data) => {
                     let mut frame = SseEvent::default().event("event").data(data);
-                    if let Some(event_id) = event.id {
+                    if let Some(event_id) = disclosed_event.id {
                         frame = frame.id(event_id.to_string());
                     } else {
                         frame = frame.id(seq.to_string());
                     }
-                    frame
+                    Some(frame)
                 }
-                Err(error) => format_sse_error_event(error),
+                Err(error) => Some(format_sse_error_event(error)),
             }
         }
         SseMessage::Gap {
@@ -289,22 +315,54 @@ fn format_sse_message(msg: SseMessage) -> SseEvent {
                 to_seq,
                 dropped,
             };
-            match serialize_sse_payload("gap", &payload) {
+            Some(match serialize_sse_payload("gap", &payload) {
                 Ok(data) => SseEvent::default().event("gap").data(data),
                 Err(error) => format_sse_error_event(error),
-            }
+            })
         }
         SseMessage::Heartbeat { ts } => {
             let payload = SseHeartbeatPayload { ts };
-            match serialize_sse_payload("heartbeat", &payload) {
+            Some(match serialize_sse_payload("heartbeat", &payload) {
                 Ok(data) => SseEvent::default().event("heartbeat").data(data),
                 Err(error) => format_sse_error_event(error),
-            }
+            })
         }
         SseMessage::Error { code, message } => {
-            format_sse_error_event(SseErrorPayload { code, message })
+            Some(format_sse_error_event(SseErrorPayload { code, message }))
         }
     }
+}
+
+async fn disclose_and_match_sse_event(
+    event: &Event<JsonValue>,
+    policy: &PolicyEngine,
+    filter: &SubscriptionFilter,
+) -> Option<(Event<JsonValue>, Vec<CaveatView>)> {
+    let decision = policy
+        .disclose_event_payload(event, DisclosureContext::View)
+        .await;
+    let mut disclosed_event = event.clone();
+    disclosed_event.payload = decision.value.clone();
+    if !filter.matches(&disclosed_event) {
+        return None;
+    }
+    Some((disclosed_event, disclosure_caveats(&decision.caveats)))
+}
+
+fn disclosure_caveats(caveats: &[DisclosureCaveat]) -> Vec<CaveatView> {
+    caveats
+        .iter()
+        .map(|caveat| CaveatView {
+            id: caveat.code.clone(),
+            message: caveat.message.clone(),
+            ref_: Some(
+                SinexObjectRef::new(SinexObjectKind::Policy, caveat.policy_ref.clone())
+                    .with_label("privacy policy")
+                    .with_command_hint("sinexctl privacy policy list")
+                    .with_rpc_method("privacy.policy.list"),
+            ),
+        })
+        .collect()
 }
 
 fn format_sse_error_event(payload: SseErrorPayload) -> SseEvent {
@@ -362,7 +420,7 @@ struct CleanupStream<S> {
 
 impl<S> futures::Stream for CleanupStream<S>
 where
-    S: futures::Stream + Unpin,
+    S: futures::Stream,
 {
     type Item = S::Item;
 
@@ -379,11 +437,17 @@ impl<S> Drop for CleanupStream<S> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LAST_EVENT_ID_HEADER, parse_last_event_id, serialize_sse_payload};
+    use super::{
+        LAST_EVENT_ID_HEADER, disclose_and_match_sse_event, parse_last_event_id,
+        serialize_sse_payload,
+    };
+    use crate::event_engine::policy::PolicyEngine;
     use axum::http::{HeaderMap, HeaderValue};
     use serde::Serialize;
-    use sinex_primitives::events::Event;
-    use sinex_primitives::{Id, JsonValue, SinexError, Uuid};
+    use sinex_db::DbPoolExt;
+    use sinex_primitives::events::{DynamicPayload, Event, SourceMaterial};
+    use sinex_primitives::query::{PayloadFilter, SubscriptionFilter};
+    use sinex_primitives::{EventSource, EventType, Id, JsonValue, SinexError, Uuid};
     use xtask::sandbox::sinex_test;
 
     struct FailingSerialize;
@@ -432,6 +496,74 @@ mod tests {
 
         let error = parse_last_event_id(&headers).expect_err("sequence ids must be rejected");
         assert!(error.contains("persisted event UUID"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn payload_subscription_matches_disclosed_event_not_raw_secret(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "sse-view-secret",
+                "test view disclosure policy for SSE payload filters",
+                "regex",
+                r"sse_secret_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<SSE_SECRET>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule("sse-view-secret", None, None, Some("/secret"), 0)
+            .await?;
+
+        let policy = PolicyEngine::load(ctx.pool().clone()).await?;
+        let event = DynamicPayload::new(
+            EventSource::from_static("sse-test"),
+            EventType::from_static("sse.event"),
+            serde_json::json!({
+                "secret": "sse_secret_alpha",
+                "public": "visible"
+            }),
+        )
+        .from_material(Id::<SourceMaterial>::from_uuid(Uuid::now_v7()))
+        .build()?;
+
+        let raw_value_filter = SubscriptionFilter {
+            payload: Some(PayloadFilter::Contains {
+                value: serde_json::json!({"secret": "sse_secret_alpha"}),
+            }),
+            ..Default::default()
+        };
+        assert!(
+            disclose_and_match_sse_event(&event, &policy, &raw_value_filter)
+                .await
+                .is_none(),
+            "SSE payload filters must not match redacted raw values"
+        );
+
+        let disclosed_value_filter = SubscriptionFilter {
+            payload: Some(PayloadFilter::Contains {
+                value: serde_json::json!({"secret": "<SSE_SECRET>"}),
+            }),
+            ..Default::default()
+        };
+        let Some((disclosed_event, caveats)) =
+            disclose_and_match_sse_event(&event, &policy, &disclosed_value_filter).await
+        else {
+            panic!("disclosed replacement value should be matchable");
+        };
+        assert_eq!(disclosed_event.payload["secret"], "<SSE_SECRET>");
+        assert!(
+            caveats
+                .iter()
+                .any(|caveat| caveat.id == "policy.disclosure_applied"),
+            "SSE clients must see that policy changed the emitted payload"
+        );
         Ok(())
     }
 }

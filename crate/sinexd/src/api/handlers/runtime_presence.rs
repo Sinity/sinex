@@ -27,8 +27,8 @@ fn parse_runtime_heartbeat_source(value: &str) -> Result<RuntimeHeartbeatSource>
 
 /// List live runtime module presence.
 ///
-/// Returns active run rows when available and falls back to manifest-only
-/// heartbeats for services that do not yet register runs.
+/// Returns concrete active run rows. Manifest-only heartbeat rows are not
+/// treated as runtime liveness evidence.
 pub async fn handle_runtime_list_active(
     pool: &PgPool,
     request: RuntimeListActiveRequest,

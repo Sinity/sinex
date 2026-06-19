@@ -112,10 +112,13 @@ pub use deployment_readiness::{
     DocumentDeploymentSurface, TerminalDeploymentSurface, TerminalHistorySource,
 };
 pub use derivations::{
-    DERIVATION_SPECS, DerivationInputScope, DerivationOperationHook, DerivationSpec,
-    DerivationSpecId, FreshnessPolicy, InvalidationTrigger, TASK_CURRENT_OBJECTS_DERIVATION,
-    TASK_CURRENT_OBJECTS_DERIVATION_ID, affected_derivations, derivation_specs,
-    derivations_for_output, find_derivation_spec,
+    DERIVATION_SPECS, DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION,
+    DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID, DESKTOP_FOCUS_SESSION_DERIVATION,
+    DESKTOP_FOCUS_SESSION_DERIVATION_ID, DESKTOP_NOTIFICATION_PRESSURE_DERIVATION,
+    DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID, DerivationInputScope, DerivationOperationHook,
+    DerivationSpec, DerivationSpecId, FreshnessPolicy, InvalidationTrigger,
+    TASK_CURRENT_OBJECTS_DERIVATION, TASK_CURRENT_OBJECTS_DERIVATION_ID, affected_derivations,
+    derivation_specs, derivations_for_output, find_derivation_spec,
 };
 pub use domain::{
     ControlSubject, EventName, EventSource, EventType, HostName, MaterialStatus, OperationKind,

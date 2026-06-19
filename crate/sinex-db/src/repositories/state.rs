@@ -1197,8 +1197,10 @@ impl StateRepository<'_> {
         Ok(result.rows_affected() > 0)
     }
 
-    /// List live module presence, preferring concrete run rows and falling back
-    /// to manifest heartbeats for services that do not yet register runs.
+    /// List live module presence from concrete runtime run rows.
+    ///
+    /// `core.runs` is still used here for execution identity and attribution,
+    /// but manifest-only rows are no longer accepted as liveness evidence.
     pub async fn list_live_runtime_presence(
         &self,
         stale_after: Duration,
@@ -1254,32 +1256,6 @@ impl StateRepository<'_> {
                     started_at,
                     heartbeat_source
                 FROM active_runs
-
-                UNION ALL
-
-                SELECT
-                    nm.name::text,
-                    nm.manifest_type::text as module_kind,
-                    nm.version,
-                    nm.description,
-                    NULL::text as service_name,
-                    NULL::text as instance_id,
-                    NULL::uuid as module_run_id,
-                    NULL::text as host,
-                    nr.status,
-                    nr.last_heartbeat_at,
-                    NULL::timestamptz as started_at,
-                    'manifest'::text as heartbeat_source
-                FROM core.runs nr
-                JOIN core.manifests nm ON nm.id = nr.manifest_id
-                WHERE nr.status = 'active'
-                  AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM active_runs ar
-                      WHERE ar.name = nm.name::text
-                        AND ar.version = nm.version
-                  )
             ) live_modules
             "#,
             stale_secs
@@ -1320,22 +1296,6 @@ impl StateRepository<'_> {
                   AND nr.last_heartbeat_at >= $1
                 GROUP BY nm.name
             ),
-            manifest_only_live AS (
-                SELECT
-                    nm.name,
-                    MAX(nr.last_heartbeat_at) AS latest_heartbeat_at
-                FROM core.runs nr
-                JOIN core.manifests nm ON nm.id = nr.manifest_id
-                WHERE nr.status = 'active'
-                  AND nr.last_heartbeat_at IS NOT NULL
-                  AND nr.last_heartbeat_at >= $1
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM active_runs ar
-                      WHERE ar.name = nm.name
-                  )
-                GROUP BY nm.name
-            ),
             module_inventory AS (
                 SELECT DISTINCT name
                 FROM core.manifests
@@ -1350,11 +1310,10 @@ impl StateRepository<'_> {
                 SELECT
                     ni.name,
                     COALESCE(ar.active_run_count, 0) AS active_run_count,
-                    COALESCE(ar.latest_heartbeat_at, mol.latest_heartbeat_at) AS latest_heartbeat_at,
-                    (ar.name IS NOT NULL OR mol.name IS NOT NULL) AS has_live_instance
+                    ar.latest_heartbeat_at,
+                    (ar.name IS NOT NULL) AS has_live_instance
                 FROM module_inventory ni
                 LEFT JOIN active_runs ar ON ar.name = ni.name
-                LEFT JOIN manifest_only_live mol ON mol.name = ni.name
             )
             SELECT
                 COUNT(*) FILTER (WHERE has_live_instance) as "active_count!",
@@ -1401,16 +1360,15 @@ impl StateRepository<'_> {
                 nm.version as "version!",
                 nm.description,
                 nr.status as "manifest_status?",
-                COALESCE(
-                    (nr.id IS NOT NULL
-                        AND nr.status = 'running'
-                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
-                    OR
-                    (nr.id IS NULL
-                        AND nr.status = 'active'
-                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)),
-                    false
-                ) as "live!",
+                CASE
+                    WHEN health.status IS NOT NULL THEN health.status IN ('healthy', 'degraded')
+                    ELSE COALESCE(
+                        nr.id IS NOT NULL
+                            AND nr.status = 'running'
+                            AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8),
+                        false
+                    )
+                END as "live!",
                 nr.service_name,
                 nr.instance_id,
                 nr.id as "module_run_id: uuid::Uuid",
@@ -1452,6 +1410,15 @@ impl StateRepository<'_> {
                          nr.started_at DESC
                 LIMIT 1
             ) nr ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    ch.status
+                FROM sinex_telemetry.current_health ch
+                WHERE ch.source = 'sinex'
+                  AND ch.component = nm.name::text
+                ORDER BY ch.last_update DESC
+                LIMIT 1
+            ) health ON true
             LEFT JOIN LATERAL (
                 SELECT
                     FLOOR((e.payload->>'value')::float8)::bigint
@@ -1568,16 +1535,15 @@ impl StateRepository<'_> {
                 nm.version as "version!",
                 nm.description,
                 nr.status as "manifest_status?",
-                COALESCE(
-                    (nr.id IS NOT NULL
-                        AND nr.status = 'running'
-                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
-                    OR
-                    (nr.id IS NULL
-                        AND nr.status = 'active'
-                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)),
-                    false
-                ) as "live!",
+                CASE
+                    WHEN health.status IS NOT NULL THEN health.status IN ('healthy', 'degraded')
+                    ELSE COALESCE(
+                        nr.id IS NOT NULL
+                            AND nr.status = 'running'
+                            AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8),
+                        false
+                    )
+                END as "live!",
                 nr.service_name,
                 nr.instance_id,
                 nr.id as "module_run_id: uuid::Uuid",
@@ -1585,8 +1551,8 @@ impl StateRepository<'_> {
                 nr.status as run_status,
                 nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
                 nr.last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
-                health.current_status as "current_health?: sinex_primitives::domain::HealthStatus",
-                health.changed_at
+                health.status as "current_health?: sinex_primitives::domain::HealthStatus",
+                health.last_update
                     as "health_changed_at?: sinex_primitives::temporal::Timestamp",
                 health.reason as "health_reason?",
                 COALESCE(outputs.recent_output_count, 0)::bigint as "recent_output_count!",
@@ -1609,14 +1575,13 @@ impl StateRepository<'_> {
             ) nr ON true
             LEFT JOIN LATERAL (
                 SELECT
-                    e.payload->>'current_status' AS current_status,
-                    e.ts_coided AS changed_at,
-                    e.payload->>'reason' AS reason
-                FROM core.events e
-                WHERE e.source = 'sinex'
-                  AND e.event_type = 'health.status'
-                  AND e.payload->>'component' = nm.name::text
-                ORDER BY e.id DESC
+                    ch.status,
+                    ch.last_update,
+                    ch.reason
+                FROM sinex_telemetry.current_health ch
+                WHERE ch.source = 'sinex'
+                  AND ch.component = nm.name::text
+                ORDER BY ch.last_update DESC
                 LIMIT 1
             ) health ON true
             LEFT JOIN LATERAL (
