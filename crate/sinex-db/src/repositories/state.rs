@@ -1197,8 +1197,10 @@ impl StateRepository<'_> {
         Ok(result.rows_affected() > 0)
     }
 
-    /// List live module presence, preferring concrete run rows and falling back
-    /// to manifest heartbeats for services that do not yet register runs.
+    /// List live module presence from concrete runtime run rows.
+    ///
+    /// `core.runs` is still used here for execution identity and attribution,
+    /// but manifest-only rows are no longer accepted as liveness evidence.
     pub async fn list_live_runtime_presence(
         &self,
         stale_after: Duration,
@@ -1254,32 +1256,6 @@ impl StateRepository<'_> {
                     started_at,
                     heartbeat_source
                 FROM active_runs
-
-                UNION ALL
-
-                SELECT
-                    nm.name::text,
-                    nm.manifest_type::text as module_kind,
-                    nm.version,
-                    nm.description,
-                    NULL::text as service_name,
-                    NULL::text as instance_id,
-                    NULL::uuid as module_run_id,
-                    NULL::text as host,
-                    nr.status,
-                    nr.last_heartbeat_at,
-                    NULL::timestamptz as started_at,
-                    'manifest'::text as heartbeat_source
-                FROM core.runs nr
-                JOIN core.manifests nm ON nm.id = nr.manifest_id
-                WHERE nr.status = 'active'
-                  AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM active_runs ar
-                      WHERE ar.name = nm.name::text
-                        AND ar.version = nm.version
-                  )
             ) live_modules
             "#,
             stale_secs
@@ -1320,22 +1296,6 @@ impl StateRepository<'_> {
                   AND nr.last_heartbeat_at >= $1
                 GROUP BY nm.name
             ),
-            manifest_only_live AS (
-                SELECT
-                    nm.name,
-                    MAX(nr.last_heartbeat_at) AS latest_heartbeat_at
-                FROM core.runs nr
-                JOIN core.manifests nm ON nm.id = nr.manifest_id
-                WHERE nr.status = 'active'
-                  AND nr.last_heartbeat_at IS NOT NULL
-                  AND nr.last_heartbeat_at >= $1
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM active_runs ar
-                      WHERE ar.name = nm.name
-                  )
-                GROUP BY nm.name
-            ),
             module_inventory AS (
                 SELECT DISTINCT name
                 FROM core.manifests
@@ -1350,11 +1310,10 @@ impl StateRepository<'_> {
                 SELECT
                     ni.name,
                     COALESCE(ar.active_run_count, 0) AS active_run_count,
-                    COALESCE(ar.latest_heartbeat_at, mol.latest_heartbeat_at) AS latest_heartbeat_at,
-                    (ar.name IS NOT NULL OR mol.name IS NOT NULL) AS has_live_instance
+                    ar.latest_heartbeat_at,
+                    (ar.name IS NOT NULL) AS has_live_instance
                 FROM module_inventory ni
                 LEFT JOIN active_runs ar ON ar.name = ni.name
-                LEFT JOIN manifest_only_live mol ON mol.name = ni.name
             )
             SELECT
                 COUNT(*) FILTER (WHERE has_live_instance) as "active_count!",
