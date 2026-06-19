@@ -492,7 +492,7 @@ impl SubscriptionBus {
                                 warn!(
                                     error = %error,
                                     payload_len = msg.payload.len(),
-                                    payload_preview = %Self::payload_preview(&msg.payload),
+                                    payload_fingerprint = %Self::payload_fingerprint(&msg.payload),
                                     "Ignoring malformed SSE confirmation payload"
                                 );
                             }
@@ -532,14 +532,9 @@ impl SubscriptionBus {
         })
     }
 
-    fn payload_preview(payload: &[u8]) -> String {
-        const MAX_PREVIEW_CHARS: usize = 160;
-        let preview = String::from_utf8_lossy(payload);
-        let mut truncated = preview.chars().take(MAX_PREVIEW_CHARS).collect::<String>();
-        if preview.chars().count() > MAX_PREVIEW_CHARS {
-            truncated.push('…');
-        }
-        truncated
+    fn payload_fingerprint(payload: &[u8]) -> String {
+        let hash = blake3::hash(payload).to_hex();
+        format!("len={} blake3={}", payload.len(), &hash[..16])
     }
 
     fn index_events_by_id(events: Vec<Event<JsonValue>>) -> IndexedEvents {
@@ -751,10 +746,14 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn payload_preview_truncates_long_payloads() -> TestResult<()> {
-        let preview = SubscriptionBus::payload_preview(&[b'a'; 200]);
-        assert!(preview.ends_with('…'));
-        assert_eq!(preview.chars().count(), 161);
+    async fn payload_fingerprint_does_not_disclose_raw_log_bytes() -> TestResult<()> {
+        let payload = b"malformed-confirmation-secret";
+        let fingerprint = SubscriptionBus::payload_fingerprint(payload);
+
+        assert!(fingerprint.contains("len=29"));
+        assert!(fingerprint.contains("blake3="));
+        assert!(!fingerprint.contains("malformed"));
+        assert!(!fingerprint.contains("secret"));
         Ok(())
     }
 
