@@ -19,7 +19,7 @@ use sinex_db::advisory_lock::AdvisoryLock;
 use sinex_db::repositories::EventPayloadSchema;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::{ModuleKind, ModuleName, ServiceName};
+use sinex_primitives::domain::{ModuleKind, ModuleName, ModuleState, ServiceName};
 use sinex_primitives::environment as sinex_environment;
 use sinex_primitives::nats::create_or_open_kv_store;
 use sinex_primitives::transport;
@@ -50,18 +50,13 @@ fn trigger_shutdown(shutdown_flag: &Arc<AtomicBool>, shutdown_notify: &Arc<tokio
     }
 }
 
-fn log_module_manifest_write_failure(
-    operation: &'static str,
-    module_name: &ModuleName,
-    error: &SinexError,
+fn trigger_failed_shutdown(
+    shutdown_flag: &Arc<AtomicBool>,
+    shutdown_notify: &Arc<tokio::sync::Notify>,
+    runtime_failure_flag: &Arc<AtomicBool>,
 ) {
-    warn!(
-        operation,
-        module = %module_name,
-        version = env!("CARGO_PKG_VERSION"),
-        error = %error,
-        "Failed to persist event_engine module manifest state"
-    );
+    runtime_failure_flag.store(true, Ordering::Release);
+    trigger_shutdown(shutdown_flag, shutdown_notify);
 }
 
 async fn await_ready_signal(
@@ -140,6 +135,7 @@ pub struct IngestService {
     observer: Arc<SelfObserver>,
     shutdown_flag: Arc<AtomicBool>,
     shutdown_notify: Arc<tokio::sync::Notify>,
+    runtime_failure_flag: Arc<AtomicBool>,
     task_handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Heartbeat counter handle — set during `start()`, passed to `JetStreamConsumer`
     heartbeat_counter_handle: Option<crate::runtime::heartbeat::HeartbeatCounterHandle>,
@@ -161,6 +157,7 @@ impl Clone for IngestService {
             observer: self.observer.clone(),
             shutdown_flag: self.shutdown_flag.clone(),
             shutdown_notify: self.shutdown_notify.clone(),
+            runtime_failure_flag: self.runtime_failure_flag.clone(),
             task_handles: self.task_handles.clone(),
             heartbeat_counter_handle: self.heartbeat_counter_handle.clone(),
         }
@@ -205,6 +202,7 @@ impl IngestService {
             observer: Arc::new(observer),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(tokio::sync::Notify::new()),
+            runtime_failure_flag: Arc::new(AtomicBool::new(false)),
             task_handles: Arc::new(Mutex::new(Vec::new())),
             heartbeat_counter_handle: None,
         };
@@ -422,17 +420,22 @@ impl IngestService {
                     None
                 }
             };
-            match pool
+            let module_run_id = match pool
                 .state()
                 .start_run(manifest_id, "sinexd", "default", &host, None, None)
                 .await
             {
                 Ok(run) => {
                     info!(run_id = %run.id, "Started event_engine run");
-                    self.observer.set_module_run_id(run.id.to_uuid());
+                    let run_id = run.id.to_uuid();
+                    self.observer.set_module_run_id(run_id);
+                    Some(run_id)
                 }
-                Err(e) => warn!(%e, "Failed to start event_engine run"),
-            }
+                Err(e) => {
+                    warn!(%e, "Failed to start event_engine run");
+                    None
+                }
+            };
 
             // Emit health-aware heartbeats on a fixed cadence.
             // Tracks error window for Healthy/Degraded/Failed status determination.
@@ -440,25 +443,44 @@ impl IngestService {
             let emitter = HeartbeatEmitter::new(
                 ServiceName::new("sinexd"),
                 sinex_primitives::Seconds::from_secs(60),
-            )
-            .with_module_name(ModuleName::new("sinexd"))
-            .with_db_pool(pool.clone());
+            );
+            let emitter = if let Some(module_run_id) = module_run_id {
+                emitter.with_module_run_id(module_run_id)
+            } else {
+                emitter
+            };
+            let emitter = emitter.with_db_pool(pool.clone());
             self.heartbeat_counter_handle = Some(emitter.get_counter_handle());
 
             let shutdown_flag = self.shutdown_flag.clone();
             let shutdown_notify = self.shutdown_notify.clone();
+            let runtime_failure_flag = self.runtime_failure_flag.clone();
             let heartbeat_pool = pool.clone();
             let handle = tokio::spawn(async move {
                 tokio::select! {
                     () = emitter.start_periodic_heartbeat(None) => {}
                     () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
-                        let module_name = ModuleName::new("sinexd");
-                        if let Err(error) = heartbeat_pool
-                            .state()
-                            .mark_module_inactive_for_version(&module_name, env!("CARGO_PKG_VERSION"))
-                            .await
-                        {
-                            log_module_manifest_write_failure("mark_module_inactive", &module_name, &error);
+                        if let Some(module_run_id) = module_run_id {
+                            let module_run_id =
+                                Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(module_run_id);
+                            let shutdown_state =
+                                Self::module_run_shutdown_state(&runtime_failure_flag);
+                            if let Err(error) = heartbeat_pool
+                                .state()
+                                .update_module_run_status(module_run_id, shutdown_state)
+                                .await
+                            {
+                                warn!(
+                                    module_run_id = %module_run_id,
+                                    state = %shutdown_state,
+                                    error = %error,
+                                    "Failed to persist event_engine module run shutdown state"
+                                );
+                            }
+                        } else {
+                            warn!(
+                                "Skipping event_engine shutdown liveness update because no module run was registered"
+                            );
                         }
                     }
                 }
@@ -530,7 +552,11 @@ impl IngestService {
             error = %startup_error,
             "Critical event_engine component failed during startup"
         );
-        trigger_shutdown(&self.shutdown_flag, &self.shutdown_notify);
+        trigger_failed_shutdown(
+            &self.shutdown_flag,
+            &self.shutdown_notify,
+            &self.runtime_failure_flag,
+        );
 
         let mut startup_error = match self.monitor_runtime(js_handle, ma_handle).await {
             Ok(()) => startup_error,
@@ -567,6 +593,7 @@ impl IngestService {
     ) -> EventEngineResult<()> {
         let shutdown_flag = self.shutdown_flag.clone();
         let shutdown_notify = self.shutdown_notify.clone();
+        let runtime_failure_flag = self.runtime_failure_flag.clone();
         // `critical_tasks` is the JoinSet of wrapper futures used for completion
         // reporting. `abort_handles` is a parallel list of `AbortHandle`s for the
         // same underlying tasks; on timeout we call `.abort()` on each directly
@@ -591,10 +618,20 @@ impl IngestService {
             maybe_task = critical_tasks.join_next(), if !critical_tasks.is_empty() => {
                 match maybe_task {
                     Some(Ok((name, result))) => {
-                        Self::handle_task_result(name, result, &shutdown_flag, &shutdown_notify)
+                        Self::handle_task_result(
+                            name,
+                            result,
+                            &shutdown_flag,
+                            &shutdown_notify,
+                            &runtime_failure_flag,
+                        )
                     }
                     Some(Err(err)) => {
-                        trigger_shutdown(&shutdown_flag, &shutdown_notify);
+                        trigger_failed_shutdown(
+                            &shutdown_flag,
+                            &shutdown_notify,
+                            &runtime_failure_flag,
+                        );
                         Err(SinexError::service(format!("Critical task monitor panicked: {err}")))
                     }
                     None => Ok(()),
@@ -635,6 +672,14 @@ impl IngestService {
             let abort_handle = handle.abort_handle();
             abort_handles.push((name, abort_handle));
             tasks.spawn(async move { (name, handle.await) });
+        }
+    }
+
+    fn module_run_shutdown_state(runtime_failure_flag: &Arc<AtomicBool>) -> ModuleState {
+        if runtime_failure_flag.load(Ordering::Acquire) {
+            ModuleState::Failed
+        } else {
+            ModuleState::Stopped
         }
     }
 
@@ -722,10 +767,23 @@ impl IngestService {
         result: Result<EventEngineResult<()>, tokio::task::JoinError>,
         shutdown_flag: &Arc<AtomicBool>,
         shutdown_notify: &Arc<tokio::sync::Notify>,
+        runtime_failure_flag: &Arc<AtomicBool>,
     ) -> EventEngineResult<()> {
         match result {
-            Ok(res) => Self::handle_join_success(name, res, shutdown_flag, shutdown_notify),
-            Err(e) => Self::handle_join_error(name, &e, shutdown_flag, shutdown_notify),
+            Ok(res) => Self::handle_join_success(
+                name,
+                res,
+                shutdown_flag,
+                shutdown_notify,
+                runtime_failure_flag,
+            ),
+            Err(e) => Self::handle_join_error(
+                name,
+                &e,
+                shutdown_flag,
+                shutdown_notify,
+                runtime_failure_flag,
+            ),
         }
     }
 
@@ -734,6 +792,7 @@ impl IngestService {
         result: EventEngineResult<()>,
         shutdown_flag: &Arc<AtomicBool>,
         shutdown_notify: &Arc<tokio::sync::Notify>,
+        runtime_failure_flag: &Arc<AtomicBool>,
     ) -> EventEngineResult<()> {
         match result {
             Ok(()) if shutdown_flag.load(Ordering::Acquire) => {
@@ -747,7 +806,7 @@ impl IngestService {
                     component = name,
                     "{name} exited unexpectedly without error"
                 );
-                trigger_shutdown(shutdown_flag, shutdown_notify);
+                trigger_failed_shutdown(shutdown_flag, shutdown_notify, runtime_failure_flag);
                 Err(SinexError::service(format!("{name} exited unexpectedly")))
             }
             Err(e) => {
@@ -758,7 +817,7 @@ impl IngestService {
                     error = %e,
                     "{name} failed"
                 );
-                trigger_shutdown(shutdown_flag, shutdown_notify);
+                trigger_failed_shutdown(shutdown_flag, shutdown_notify, runtime_failure_flag);
                 Err(e)
             }
         }
@@ -769,6 +828,7 @@ impl IngestService {
         err: &tokio::task::JoinError,
         shutdown_flag: &Arc<AtomicBool>,
         shutdown_notify: &Arc<tokio::sync::Notify>,
+        runtime_failure_flag: &Arc<AtomicBool>,
     ) -> EventEngineResult<()> {
         error!(
             target: "sinex_metrics",
@@ -777,7 +837,7 @@ impl IngestService {
             error = ?err,
             "{name} panicked"
         );
-        trigger_shutdown(shutdown_flag, shutdown_notify);
+        trigger_failed_shutdown(shutdown_flag, shutdown_notify, runtime_failure_flag);
         Err(SinexError::service(format!("{name} panicked: {err}")))
     }
 
@@ -1482,6 +1542,7 @@ mod tests {
             observer: Arc::new(SelfObserver::disabled()),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(tokio::sync::Notify::new()),
+            runtime_failure_flag: Arc::new(AtomicBool::new(false)),
             task_handles: Arc::new(Mutex::new(Vec::new())),
             heartbeat_counter_handle: None,
         }
@@ -1608,9 +1669,11 @@ mod tests {
             Err(SinexError::service("boom")),
             &service.shutdown_flag,
             &service.shutdown_notify,
+            &service.runtime_failure_flag,
         )
         .expect_err("task failure should bubble up");
         assert!(error.to_string().contains("boom"));
+        assert!(service.runtime_failure_flag.load(Ordering::Acquire));
 
         tokio::time::timeout(
             Duration::from_millis(10),
@@ -1634,9 +1697,11 @@ mod tests {
             Ok(()),
             &service.shutdown_flag,
             &service.shutdown_notify,
+            &service.runtime_failure_flag,
         )
         .expect_err("unexpected exit should bubble up");
         assert!(error.to_string().contains("exited unexpectedly"));
+        assert!(service.runtime_failure_flag.load(Ordering::Acquire));
 
         tokio::time::timeout(
             Duration::from_millis(10),
@@ -1657,6 +1722,7 @@ mod tests {
         let service = test_service();
         trigger_shutdown(&service.shutdown_flag, &service.shutdown_notify);
         trigger_shutdown(&service.shutdown_flag, &service.shutdown_notify);
+        assert!(!service.runtime_failure_flag.load(Ordering::Acquire));
 
         tokio::time::timeout(
             Duration::from_millis(10),
@@ -1668,6 +1734,27 @@ mod tests {
         .await
         .expect("late shutdown waiters should observe an already-triggered shutdown");
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn module_run_shutdown_state_tracks_failure_cause() -> xtask::sandbox::TestResult<()> {
+        let service = test_service();
+        assert_eq!(
+            IngestService::module_run_shutdown_state(&service.runtime_failure_flag),
+            ModuleState::Stopped
+        );
+
+        trigger_failed_shutdown(
+            &service.shutdown_flag,
+            &service.shutdown_notify,
+            &service.runtime_failure_flag,
+        );
+
+        assert_eq!(
+            IngestService::module_run_shutdown_state(&service.runtime_failure_flag),
+            ModuleState::Failed
+        );
         Ok(())
     }
 
@@ -1946,12 +2033,4 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn log_module_manifest_write_failure_accepts_processing_errors()
-    -> xtask::sandbox::TestResult<()> {
-        let module_name = ModuleName::new("sinexd");
-        let error = SinexError::processing("module manifest update exploded");
-        log_module_manifest_write_failure("mark_module_inactive", &module_name, &error);
-        Ok(())
-    }
 }

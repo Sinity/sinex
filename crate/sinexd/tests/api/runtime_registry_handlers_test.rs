@@ -36,9 +36,8 @@ fn find_module_in_list<'a>(
 }
 
 #[sinex_test]
-async fn list_active_uses_manifest_fallback_without_run(ctx: TestContext) -> TestResult<()> {
+async fn list_active_requires_concrete_runtime_run(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
-    let module_name = ModuleName::new("manifest-only-module");
 
     register_test_module(
         pool,
@@ -47,21 +46,13 @@ async fn list_active_uses_manifest_fallback_without_run(ctx: TestContext) -> Tes
         "1.0.0-test",
     )
     .await?;
-    assert!(
-        pool.state()
-            .update_module_heartbeat_for_version(&module_name, "1.0.0-test")
-            .await?
-    );
 
     let list_result = handle_runtime_list_active(pool, RuntimeListActiveRequest::default()).await?;
     let list_result = serde_json::to_value(&list_result)?;
-    let module = find_module_in_list(&list_result, "manifest-only-module", None)
-        .expect("manifest-backed module should appear in active list");
-
-    assert_eq!(module["heartbeat_source"].as_str(), Some("manifest"));
-    assert_eq!(module["status"].as_str(), Some("active"));
-    assert!(module["module_run_id"].is_null());
-    assert!(module["service_name"].is_null());
+    assert!(
+        find_module_in_list(&list_result, "manifest-only-module", None).is_none(),
+        "manifest registration is inventory, not active runtime presence"
+    );
 
     Ok(())
 }
@@ -164,7 +155,6 @@ async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResul
 #[sinex_test]
 async fn health_counts_unique_modules_and_concrete_runs(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
-    let manifest_only = ModuleName::new("manifest-health-module");
     let run_manifest =
         register_test_module(pool, "run-health-module", ModuleKind::Source, "1.0.0-test").await?;
     register_test_module(
@@ -192,16 +182,11 @@ async fn health_counts_unique_modules_and_concrete_runs(ctx: TestContext) -> Tes
             None,
         )
         .await?;
-    assert!(
-        pool.state()
-            .update_module_heartbeat_for_version(&manifest_only, "1.0.0-test")
-            .await?
-    );
 
     let health_result = handle_runtime_health(pool, RuntimeHealthRequest::default()).await?;
     assert_eq!(health_result.unique_modules, 3);
-    assert_eq!(health_result.active_count, 2);
-    assert_eq!(health_result.inactive_count, 1);
+    assert_eq!(health_result.active_count, 1);
+    assert_eq!(health_result.inactive_count, 2);
     assert_eq!(health_result.active_run_count, 1);
 
     Ok(())
