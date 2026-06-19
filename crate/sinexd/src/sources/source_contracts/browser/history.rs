@@ -163,6 +163,7 @@ pub struct BrowserHistoryParserConfig {}
     access_scope = AccessScope::TargetHome {
         path: "browser_history"
     },
+    capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:browser.web.check, operation:browser.web.reconnect, operation:browser.web.pause, operation:browser.web.resume, operation:browser.web.drain, operation:browser.web.inspect",
     privacy_context = ProcessingContext::Metadata,
     resource_profile = ResourceProfile::BoundedStream,
     runner_pack = RunnerPack::SinexdSource,
