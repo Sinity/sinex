@@ -3,11 +3,13 @@ use clap::Args;
 use color_eyre::Result;
 use console::style;
 use serde_json::json;
-use sinex_primitives::query::{
-    EventQuery, EventQueryResult, QueryResultEvent, SortDirection, TimeRange,
-};
+#[cfg(test)]
+use sinex_primitives::query::QueryResultEvent;
+use sinex_primitives::query::{EventQuery, SortDirection, TimeRange};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::views::{ContextSourceView, ContextSummaryView, EventCardView, ViewEnvelope};
+use sinex_primitives::views::{
+    ContextSourceView, ContextSummaryView, EventCardListView, EventCardView, ViewEnvelope,
+};
 use std::collections::HashMap;
 
 use crate::client::GatewayClient;
@@ -54,19 +56,17 @@ impl ContextCommand {
             ..Default::default()
         };
 
-        let events = match client.query_events(query).await? {
-            EventQueryResult::Events { events, .. } => events,
-            _ => vec![],
-        };
+        let event_cards = client.event_cards(query).await?;
 
-        let sources = grouped_context_sources(&events);
-        if let Some(output) = render_context_machine_output(&events, &sources, &self.since, format)?
+        let sources = grouped_context_sources(&event_cards.cards);
+        if let Some(output) =
+            render_context_machine_output(&event_cards, &sources, &self.since, format)?
         {
             println!("{output}");
             return Ok(());
         }
 
-        if events.is_empty() {
+        if event_cards.cards.is_empty() {
             println!(
                 "{} No activity found in the last {}",
                 style("○").dim(),
@@ -92,14 +92,14 @@ impl ContextCommand {
             .unwrap_or(10);
         let label_width = max_source_len.max(8);
 
-        for (source_key, result_event) in &sources {
+        for (source_key, card) in &sources {
             let label = display_source(source_key);
-            let age = result_event
-                .event
-                .ts_orig
+            let age = card
+                .timestamp
+                .original
                 .map_or_else(|| "?".to_string(), |ts| format_age(now - ts));
 
-            let detail = build_detail(result_event);
+            let detail = truncate(&card.summary, 55);
 
             println!(
                 "  {:<label_width$}  {}  {}",
@@ -113,7 +113,7 @@ impl ContextCommand {
         println!("{}", style("─".repeat(60)).dim());
         println!(
             "  {} events across {} sources in last {}",
-            style(events.len()).bold(),
+            style(event_cards.count).bold(),
             style(sources.len()).bold(),
             self.since,
         );
@@ -122,25 +122,25 @@ impl ContextCommand {
     }
 }
 
-fn grouped_context_sources(events: &[QueryResultEvent]) -> Vec<(String, &QueryResultEvent)> {
-    let mut by_source: HashMap<String, &QueryResultEvent> = HashMap::new();
-    for result_event in events {
-        let key = result_event.event.source.as_str().to_string();
-        by_source.entry(key).or_insert(result_event);
+fn grouped_context_sources(cards: &[EventCardView]) -> Vec<(String, &EventCardView)> {
+    let mut by_source: HashMap<String, &EventCardView> = HashMap::new();
+    for card in cards {
+        let key = card.source.raw.clone();
+        by_source.entry(key).or_insert(card);
     }
 
     let mut sources: Vec<_> = by_source.into_iter().collect();
     sources.sort_by(|a, b| {
-        let ts_a = a.1.event.ts_orig.unwrap_or(Timestamp::UNIX_EPOCH);
-        let ts_b = b.1.event.ts_orig.unwrap_or(Timestamp::UNIX_EPOCH);
+        let ts_a = a.1.timestamp.original.unwrap_or(Timestamp::UNIX_EPOCH);
+        let ts_b = b.1.timestamp.original.unwrap_or(Timestamp::UNIX_EPOCH);
         ts_b.inner().cmp(&ts_a.inner())
     });
     sources
 }
 
 fn render_context_machine_output(
-    events: &[QueryResultEvent],
-    sources: &[(String, &QueryResultEvent)],
+    event_cards: &EventCardListView,
+    sources: &[(String, &EventCardView)],
     since: &str,
     format: OutputFormat,
 ) -> Result<Option<String>> {
@@ -152,13 +152,13 @@ fn render_context_machine_output(
                 .map(|(source, result_event)| ContextSourceView {
                     source: source.clone(),
                     label: display_source(source),
-                    latest_ts: result_event.event.ts_orig,
-                    latest_event: EventCardView::from_query_event(result_event),
+                    latest_ts: result_event.timestamp.original,
+                    latest_event: (*result_event).clone(),
                 })
                 .collect();
             let envelope = ViewEnvelope::new(
                 "sinexctl.context",
-                ContextSummaryView::new(since, events.len(), source_views),
+                ContextSummaryView::new(since, event_cards.count, source_views),
             )
             .with_query_echo(json!({ "since": since }));
 
@@ -205,51 +205,6 @@ fn display_source(source: &str) -> String {
     s.to_string()
 }
 
-/// Build a one-line activity description from the event, preferring a snippet
-/// then falling back to well-known payload fields.
-fn build_detail(result_event: &sinex_primitives::query::QueryResultEvent) -> String {
-    // If the server produced a snippet, use it (already truncated server-side or here)
-    if let Some(snippet) = &result_event.snippet
-        && !snippet.is_empty()
-    {
-        return truncate(snippet, 55);
-    }
-
-    // Fallback: extract meaningful fields from the payload
-    let payload = &result_event.event.payload;
-    if let Some(obj) = payload.as_object() {
-        // Priority order of fields to use as the summary
-        for key in &[
-            "command_string",
-            "window_title",
-            "unit_name",
-            "process_name",
-            "command",
-            "path",
-            "title",
-            "app_name",
-            "unit",
-            "message",
-            "url",
-            "name",
-        ] {
-            if let Some(val) = obj.get(*key).and_then(|v| v.as_str()) {
-                let event_type = result_event.event.event_type.as_str();
-                let label = short_event_type(event_type);
-                return truncate(&format!("{label} {val}"), 55);
-            }
-        }
-    }
-
-    // Final fallback: just the event type
-    truncate(result_event.event.event_type.as_str(), 55)
-}
-
-/// Reduce "file.created" → "created", "shell.command" → "command", etc.
-fn short_event_type(event_type: &str) -> &str {
-    event_type.rsplit('.').next().unwrap_or(event_type)
-}
-
 /// Format a Duration into a compact "`XmYs` ago" / "Xs ago" / "Xh ago" string.
 fn format_age(d: time::Duration) -> String {
     format_duration_age(d)
@@ -274,11 +229,14 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use sinex_primitives::testing::event_fixture;
-    use sinex_primitives::views::{CONTEXT_SUMMARY_SCHEMA_VERSION, VIEW_ENVELOPE_SCHEMA_VERSION};
+    use sinex_primitives::views::{
+        CONTEXT_SUMMARY_SCHEMA_VERSION, CaveatView, EVENT_CARD_LIST_SCHEMA_VERSION,
+        VIEW_ENVELOPE_SCHEMA_VERSION,
+    };
     use xtask::sandbox::prelude::sinex_test;
 
-    fn context_event(source: &'static str, event_type: &'static str) -> QueryResultEvent {
-        QueryResultEvent {
+    fn context_event(source: &'static str, event_type: &'static str) -> EventCardView {
+        EventCardView::from_query_event(&QueryResultEvent {
             event: event_fixture(
                 sinex_primitives::EventSource::from_static(source),
                 sinex_primitives::EventType::from_static(event_type),
@@ -286,18 +244,28 @@ mod tests {
             ),
             relevance_score: None,
             snippet: Some("context fixture".to_string()),
-        }
+        })
     }
 
     #[sinex_test]
     async fn context_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
-        let events = vec![
-            context_event("shell.atuin", "command.executed"),
-            context_event("wm.hyprland", "window.focused"),
-        ];
-        let sources = grouped_context_sources(&events);
-        let output = render_context_machine_output(&events, &sources, "2h", OutputFormat::Json)?
-            .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+        let mut shell_card = context_event("shell.atuin", "command.executed");
+        shell_card.caveats.push(CaveatView {
+            id: "policy.disclosure_applied".to_string(),
+            message: "payload field redacted by fixture policy".to_string(),
+            ref_: None,
+        });
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: 2,
+            cards: vec![shell_card, context_event("wm.hyprland", "window.focused")],
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let output =
+            render_context_machine_output(&event_cards, &sources, "2h", OutputFormat::Json)?
+                .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
         let value: serde_json::Value = serde_json::from_str(&output)?;
 
         assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
@@ -314,14 +282,32 @@ mod tests {
             value["payload"]["sources"][0]["latest_event"]["summary"],
             "context fixture"
         );
+        let source_views = value["payload"]["sources"]
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("context sources must be an array"))?;
+        assert!(
+            source_views
+                .iter()
+                .filter_map(|source| source["latest_event"]["caveats"].as_array())
+                .flatten()
+                .any(|caveat| caveat["id"] == "policy.disclosure_applied"),
+            "context cards must preserve disclosure caveats: {source_views:?}"
+        );
         Ok(())
     }
 
     #[sinex_test]
     async fn context_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<()> {
-        let events = vec![context_event("shell.atuin", "command.executed")];
-        let sources = grouped_context_sources(&events);
-        let result = render_context_machine_output(&events, &sources, "2h", OutputFormat::Ndjson);
+        let event_cards = EventCardListView {
+            schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+            count: 1,
+            cards: vec![context_event("shell.atuin", "command.executed")],
+            next_cursor: None,
+            total_estimate: None,
+        };
+        let sources = grouped_context_sources(&event_cards.cards);
+        let result =
+            render_context_machine_output(&event_cards, &sources, "2h", OutputFormat::Ndjson);
         assert!(result.is_err(), "context must remain a finite view");
         Ok(())
     }

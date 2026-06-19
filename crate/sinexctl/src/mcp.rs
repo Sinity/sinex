@@ -2764,14 +2764,12 @@ async fn context_pack(client: &GatewayClient, arguments: Value) -> Result<Value>
     }
     query.validate()?;
 
-    let events_result = client.query_events(query).await?;
-    let mut result = serde_json::to_value(&events_result)?;
-    redact_raw_samples(&mut result);
+    let event_cards = client.event_cards(query).await?;
 
     let now = sinex_primitives::Timestamp::now();
     let pack = json!({
         "project_path": args.project_path,
-        "events": result,
+        "events": event_cards,
         "generated_at": now.to_string(),
     });
 
