@@ -1,6 +1,6 @@
 //! Email capture source — `email.mailbox` (#1469).
 //!
-//! The accepted staged mode covers RFC822/`.eml`, Maildir entries, and MBOX
+//! The accepted staged modes cover RFC822/`.eml`, Maildir entries, and MBOX
 //! message slices. Live Gmail/IMAP modes stay represented by issue scope, not
 //! by this parser.
 
@@ -54,6 +54,28 @@ pub struct EmailMailboxParserConfig;
     runner_pack = RunnerPack::Staged,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::Scheduled,
+    binding(
+        subject = "source:email.mailbox.maildir-staged",
+        event_type = "email.message.received",
+        implementation = "staged-maildir-parser",
+        adapter = "FileContentDropAdapter",
+        resource_profile = ResourceProfile::BoundedFile,
+        runner_pack = RunnerPack::Staged,
+        checkpoint_family = CheckpointFamily::AppendStream,
+        runtime_shape = RuntimeShape::Scheduled,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.sync, operation:email.mailbox.inspect, operation:email.mailbox.replay"
+    ),
+    binding(
+        subject = "source:email.mailbox.mbox-staged",
+        event_type = "email.message.received",
+        implementation = "staged-mbox-parser",
+        adapter = "FileContentDropAdapter",
+        resource_profile = ResourceProfile::BoundedFile,
+        runner_pack = RunnerPack::Staged,
+        checkpoint_family = CheckpointFamily::AppendStream,
+        runtime_shape = RuntimeShape::Scheduled,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.sync, operation:email.mailbox.inspect, operation:email.mailbox.replay"
+    ),
     binding(
         subject = "source:email.mailbox.sent",
         event_type = "email.message.sent",
