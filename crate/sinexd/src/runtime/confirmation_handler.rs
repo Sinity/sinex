@@ -735,9 +735,16 @@ impl ConfirmationBuffer {
         {
             pressure_level = ConfirmationBufferPressureLevel::Warning;
         }
+        let snapshot_rejection_reason = if pending_count >= self.max_capacity {
+            Some(ConfirmationBufferRejectionReason::EventCapacity)
+        } else if retained_payload_bytes >= self.max_payload_bytes {
+            Some(ConfirmationBufferRejectionReason::PayloadBytes)
+        } else {
+            None
+        };
         let pressure = ConfirmationBufferInsertDecision {
-            accepted: true,
-            rejection_reason: None,
+            accepted: snapshot_rejection_reason.is_none(),
+            rejection_reason: snapshot_rejection_reason,
             pressure_level,
             pending_count,
             max_capacity: self.max_capacity,
@@ -1051,6 +1058,12 @@ mod tests {
         );
         assert_eq!(buffer.retained_payload_bytes(), max_payload_bytes);
         assert_eq!(buffer.rejected_count(), 1);
+        let saturated_snapshot = buffer.snapshot().await;
+        assert_eq!(
+            saturated_snapshot.pressure_level,
+            ConfirmationBufferPressureLevel::Critical
+        );
+        assert_eq!(saturated_snapshot.runtime_action, "throttle");
 
         let confirmed = buffer.confirm(at_limit.event_id).await.ok_or_else(|| {
             color_eyre::eyre::eyre!("expected at-limit event to remain confirmable")
@@ -1104,6 +1117,12 @@ mod tests {
         );
         assert_eq!(rejected.rejected_redelivery_delay_ms(), Some(500));
         assert_eq!(rejected.runtime_action(), "throttle");
+        let saturated_snapshot = buffer.snapshot().await;
+        assert_eq!(
+            saturated_snapshot.pressure_level,
+            ConfirmationBufferPressureLevel::Critical
+        );
+        assert_eq!(saturated_snapshot.runtime_action, "throttle");
         Ok(())
     }
 
