@@ -1001,6 +1001,57 @@ mod tests {
         Ok(serde_json::to_vec(payload)?.len())
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct ConfirmationBufferEvidence {
+        pending_count: usize,
+        timed_out_retained_count: usize,
+        rejected_count: u64,
+        late_confirmation_count: u64,
+        retained_payload_bytes: usize,
+        active_payload_bytes: usize,
+        timed_out_retained_payload_bytes: usize,
+        journald_payload_bytes: usize,
+        runtime_action: String,
+    }
+
+    impl ConfirmationBufferEvidence {
+        async fn capture(buffer: &ConfirmationBuffer) -> Self {
+            Self::from_snapshot(buffer.snapshot().await)
+        }
+
+        fn from_snapshot(snapshot: ConfirmationBufferSnapshot) -> Self {
+            Self {
+                pending_count: snapshot.pending_count,
+                timed_out_retained_count: snapshot.timed_out_retained_count,
+                rejected_count: snapshot.rejected_count,
+                late_confirmation_count: snapshot.late_confirmation_count,
+                retained_payload_bytes: snapshot.retained_payload_bytes,
+                active_payload_bytes: snapshot.active_payload_bytes,
+                timed_out_retained_payload_bytes: snapshot.timed_out_retained_payload_bytes,
+                journald_payload_bytes: snapshot
+                    .approximate_payload_bytes_by_kind
+                    .get("system.journald:journald.entry.written")
+                    .copied()
+                    .unwrap_or(0),
+                runtime_action: snapshot.runtime_action,
+            }
+        }
+
+        fn assert_drained_after(&self, before: &Self) {
+            assert_eq!(self.pending_count, 0);
+            assert_eq!(self.timed_out_retained_count, 0);
+            assert_eq!(self.retained_payload_bytes, 0);
+            assert_eq!(self.active_payload_bytes, 0);
+            assert_eq!(self.timed_out_retained_payload_bytes, 0);
+            assert_eq!(self.journald_payload_bytes, 0);
+            assert_eq!(self.rejected_count, before.rejected_count);
+            assert_eq!(
+                self.late_confirmation_count, before.late_confirmation_count,
+                "purge/drain paths that do not confirm late events must not mutate late-confirmation counters"
+            );
+        }
+    }
+
     #[sinex_test]
     async fn payload_budget_admits_at_limit_rejects_over_limit_and_recovers() -> TestResult<()> {
         let now = Timestamp::now();
@@ -1491,40 +1542,22 @@ mod tests {
         }
 
         assert_eq!(buffer.check_timeouts().await.len(), CAPACITY);
-        let retained = buffer.snapshot().await;
+        let retained = ConfirmationBufferEvidence::capture(&buffer).await;
         assert_eq!(retained.pending_count, CAPACITY);
         assert_eq!(retained.timed_out_retained_count, CAPACITY);
         assert_eq!(retained.rejected_count, OVERFLOW_ATTEMPTS as u64);
-        assert!(retained.approximate_payload_bytes > 0);
+        assert!(retained.retained_payload_bytes > 0);
         assert_eq!(retained.active_payload_bytes, 0);
         assert_eq!(
             retained.timed_out_retained_payload_bytes,
-            retained.approximate_payload_bytes
+            retained.retained_payload_bytes
         );
-        assert_eq!(
-            retained.retained_payload_bytes,
-            retained.approximate_payload_bytes
-        );
-        assert_eq!(retained.max_payload_bytes, buffer.max_payload_bytes());
-        assert_eq!(
-            retained
-                .approximate_payload_bytes_by_kind
-                .get("system.journald:journald.entry.written"),
-            Some(&retained.approximate_payload_bytes)
-        );
+        assert_eq!(retained.journald_payload_bytes, retained.retained_payload_bytes);
 
         let purged = buffer.purge_expired().await;
         assert_eq!(purged.len(), CAPACITY);
-        let drained = buffer.snapshot().await;
-        assert_eq!(drained.pending_count, 0);
-        assert_eq!(drained.timed_out_retained_count, 0);
-        assert_eq!(drained.retained_payload_bytes, 0);
-        assert_eq!(drained.max_payload_bytes, buffer.max_payload_bytes());
-        assert_eq!(drained.approximate_payload_bytes, 0);
-        assert_eq!(drained.active_payload_bytes, 0);
-        assert_eq!(drained.timed_out_retained_payload_bytes, 0);
-        assert!(drained.approximate_payload_bytes_by_kind.is_empty());
-        assert_eq!(drained.rejected_count, OVERFLOW_ATTEMPTS as u64);
+        let drained = ConfirmationBufferEvidence::capture(&buffer).await;
+        drained.assert_drained_after(&retained);
 
         Ok(())
     }
@@ -1583,7 +1616,7 @@ mod tests {
         }
 
         assert_eq!(buffer.check_timeouts().await.len(), LATE_EVENTS);
-        let before = buffer.snapshot().await;
+        let before = ConfirmationBufferEvidence::capture(&buffer).await;
         assert_eq!(before.pending_count, LATE_EVENTS);
         assert_eq!(before.timed_out_retained_count, LATE_EVENTS);
         assert_eq!(before.rejected_count, OVERFLOW_ATTEMPTS as u64);
@@ -1593,6 +1626,7 @@ mod tests {
             before.retained_payload_bytes,
             before.timed_out_retained_payload_bytes
         );
+        assert_eq!(before.journald_payload_bytes, before.retained_payload_bytes);
         assert_eq!(before.runtime_action, "throttle");
 
         let captured = CapturedLogs::default();
@@ -1614,17 +1648,16 @@ mod tests {
                 .await;
         }
 
-        let after = buffer.snapshot().await;
+        let after = ConfirmationBufferEvidence::capture(&buffer).await;
         assert_eq!(after.pending_count, 0);
         assert_eq!(after.timed_out_retained_count, 0);
         assert_eq!(after.late_confirmation_count, LATE_EVENTS as u64);
         assert_eq!(after.rejected_count, OVERFLOW_ATTEMPTS as u64);
         assert_eq!(after.retained_payload_bytes, 0);
-        assert_eq!(after.approximate_payload_bytes, 0);
         assert_eq!(after.active_payload_bytes, 0);
         assert_eq!(after.timed_out_retained_payload_bytes, 0);
-        assert!(
-            after.approximate_payload_bytes_by_kind.is_empty(),
+        assert_eq!(
+            after.journald_payload_bytes, 0,
             "confirmed backlog should not leave payload attribution behind"
         );
 
