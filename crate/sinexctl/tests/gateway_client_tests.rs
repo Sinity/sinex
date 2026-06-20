@@ -78,10 +78,11 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
                 connected: false,
                 latency_ms: None,
                 detail: Some("confirmation buffers not registered".to_string()),
-                attributes: std::collections::BTreeMap::from([(
-                    "memory_owner".to_string(),
-                    "not_observed".to_string(),
-                )]),
+                attributes: std::collections::BTreeMap::from([
+                    ("memory_owner".to_string(), "not_observed".to_string()),
+                    ("pressure_level".to_string(), "unknown".to_string()),
+                    ("runtime_action".to_string(), "none".to_string()),
+                ]),
             },
             replay_control: ReplayControlHealth {
                 status: HealthStatus::Healthy,

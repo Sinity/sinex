@@ -60,6 +60,8 @@ pub struct ConfirmationBufferHealth {
     pub status: GatewayHealthStatus,
     pub connected: bool,
     pub memory_owner: ConfirmationBufferMemoryOwner,
+    pub pressure_level: String,
+    pub runtime_action: String,
     pub observed_buffers: usize,
     pub pending_count: usize,
     pub timed_out_retained_count: usize,
@@ -511,6 +513,8 @@ impl ServiceContainer {
                 status: GatewayHealthStatus::Unknown,
                 connected: false,
                 memory_owner: ConfirmationBufferMemoryOwner::NotObserved,
+                pressure_level: "unknown".to_string(),
+                runtime_action: "none".to_string(),
                 observed_buffers: 0,
                 pending_count: 0,
                 timed_out_retained_count: 0,
@@ -532,6 +536,8 @@ impl ServiceContainer {
         let mut active_payload_bytes = 0usize;
         let mut timed_out_retained_payload_bytes = 0usize;
         let mut approximate_payload_bytes_by_kind = BTreeMap::new();
+        let mut pressure_level = crate::runtime::ConfirmationBufferPressureLevel::Nominal;
+        let mut runtime_action = "admit";
 
         for snapshot in &snapshots {
             pending_count += snapshot.pending_count;
@@ -541,6 +547,14 @@ impl ServiceContainer {
             approximate_payload_bytes += snapshot.approximate_payload_bytes;
             active_payload_bytes += snapshot.active_payload_bytes;
             timed_out_retained_payload_bytes += snapshot.timed_out_retained_payload_bytes;
+            pressure_level =
+                strongest_confirmation_pressure(pressure_level, snapshot.pressure_level);
+            if snapshot.runtime_action == "throttle" {
+                runtime_action = "throttle";
+            } else if runtime_action == "admit" && snapshot.runtime_action == "admit_with_pressure"
+            {
+                runtime_action = "admit_with_pressure";
+            }
             for (kind, bytes) in &snapshot.approximate_payload_bytes_by_kind {
                 *approximate_payload_bytes_by_kind
                     .entry(kind.clone())
@@ -568,12 +582,14 @@ impl ServiceContainer {
             .map(|(kind, bytes)| format!(", top_kind={kind} ({bytes} bytes)"))
             .unwrap_or_default();
         let detail = format!(
-            "confirmation buffers: observed={}, pending={}, timed_out_retained={}, rejected={}, late_confirmations={}, approximate_payload_bytes={}, active_payload_bytes={}, timed_out_retained_payload_bytes={}, memory_owner={}{}",
+            "confirmation buffers: observed={}, pending={}, timed_out_retained={}, rejected={}, late_confirmations={}, pressure_level={}, runtime_action={}, approximate_payload_bytes={}, active_payload_bytes={}, timed_out_retained_payload_bytes={}, memory_owner={}{}",
             snapshots.len(),
             pending_count,
             timed_out_retained_count,
             rejected_count,
             late_confirmation_count,
+            pressure_level.as_str(),
+            runtime_action,
             approximate_payload_bytes,
             active_payload_bytes,
             timed_out_retained_payload_bytes,
@@ -585,6 +601,8 @@ impl ServiceContainer {
             status,
             connected: true,
             memory_owner,
+            pressure_level: pressure_level.as_str().to_string(),
+            runtime_action: runtime_action.to_string(),
             observed_buffers: snapshots.len(),
             pending_count,
             timed_out_retained_count,
@@ -712,6 +730,18 @@ fn confirmation_buffer_memory_owner(
         ConfirmationBufferMemoryOwner::CountersOnly
     } else {
         ConfirmationBufferMemoryOwner::None
+    }
+}
+
+fn strongest_confirmation_pressure(
+    current: crate::runtime::ConfirmationBufferPressureLevel,
+    candidate: crate::runtime::ConfirmationBufferPressureLevel,
+) -> crate::runtime::ConfirmationBufferPressureLevel {
+    use crate::runtime::ConfirmationBufferPressureLevel::{Critical, Nominal, Warning};
+    match (current, candidate) {
+        (Critical, _) | (_, Critical) => Critical,
+        (Warning, _) | (_, Warning) => Warning,
+        (Nominal, Nominal) => Nominal,
     }
 }
 

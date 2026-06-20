@@ -401,12 +401,14 @@ impl JetStreamEventConsumer {
                     event_id = %event.event_id,
                     pressure_level = ?decision.pressure_level,
                     rejection_reason = ?decision.rejection_reason,
+                    runtime_action = decision.runtime_action(),
                     pending_count = decision.pending_count,
                     max_capacity = decision.max_capacity,
                     retained_payload_bytes = decision.retained_payload_bytes,
                     max_payload_bytes = decision.max_payload_bytes,
                     attempted_payload_bytes = decision.attempted_payload_bytes,
                     projected_payload_bytes = decision.projected_payload_bytes,
+                    redelivery_delay_ms = decision.rejected_redelivery_delay_ms(),
                     "Confirmation buffer rejected provisional event; NAKing with resource-pressure backoff"
                 );
                 let nak_delay = decision.rejected_redelivery_delay();
