@@ -729,29 +729,54 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
             Some("replay.create"),
             ActionSideEffect::Write,
         ),
-        "delete-material" => ("Delete Material", None, None, ActionSideEffect::Destructive),
-        "run-model" => ("Run Local Model", None, None, ActionSideEffect::Admin),
-        "run-ocr" => ("Run OCR", None, None, ActionSideEffect::Admin),
+        "delete-material" => (
+            "Delete Material",
+            media_operation_command_hint(operation, source_id),
+            media_operation_rpc_method(operation, source_id),
+            ActionSideEffect::Destructive,
+        ),
+        "run-model" => (
+            "Run Local Model",
+            media_operation_command_hint(operation, source_id),
+            media_operation_rpc_method(operation, source_id),
+            ActionSideEffect::Admin,
+        ),
+        "run-ocr" => (
+            "Run OCR",
+            media_operation_command_hint(operation, source_id),
+            media_operation_rpc_method(operation, source_id),
+            ActionSideEffect::Admin,
+        ),
         "retry" => (
             "Retry Package Operation",
-            None,
-            None,
+            media_operation_command_hint(operation, source_id),
+            media_operation_rpc_method(operation, source_id),
             ActionSideEffect::Write,
         ),
-        "rebuild-artifact" => ("Rebuild Artifact", None, None, ActionSideEffect::Write),
+        "rebuild-artifact" => (
+            "Rebuild Artifact",
+            media_operation_command_hint(operation, source_id),
+            media_operation_rpc_method(operation, source_id),
+            ActionSideEffect::Write,
+        ),
         "enable-session" => (
             "Enable Capture Session",
-            None,
-            None,
+            media_operation_command_hint(operation, source_id),
+            media_operation_rpc_method(operation, source_id),
             ActionSideEffect::Admin,
         ),
         "disable-session" => (
             "Disable Capture Session",
-            None,
-            None,
+            media_operation_command_hint(operation, source_id),
+            media_operation_rpc_method(operation, source_id),
             ActionSideEffect::Admin,
         ),
-        "capture-region" => ("Capture Region", None, None, ActionSideEffect::Admin),
+        "capture-region" => (
+            "Capture Region",
+            media_operation_command_hint(operation, source_id),
+            media_operation_rpc_method(operation, source_id),
+            ActionSideEffect::Admin,
+        ),
         _ => ("Package Operation", None, None, ActionSideEffect::Read),
     };
     let state = if command_hint.is_some() {
@@ -788,6 +813,41 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
         action = action.with_rpc_method(rpc_method);
     }
     action
+}
+
+fn media_operation_command_hint(operation: &str, source_id: &str) -> Option<String> {
+    let mode_id = match operation {
+        "media.audio-transcript.run-model"
+        | "media.audio-transcript.retry"
+        | "media.audio-transcript.rebuild-artifact" => {
+            "source:media.audio-transcript.local-model-batch"
+        }
+        "media.audio-transcript.enable-session"
+        | "media.audio-transcript.disable-session"
+        | "media.audio-transcript.pause"
+        | "media.audio-transcript.resume" => "source:media.audio-transcript.live-session",
+        "media.audio-transcript.delete-material" => {
+            "source:media.audio-transcript.audio-bundle-staged"
+        }
+        "media.screen-ocr.run-ocr"
+        | "media.screen-ocr.retry"
+        | "media.screen-ocr.rebuild-artifact" => "source:media.screen-ocr.local-model-batch",
+        "media.screen-ocr.capture-region" => "source:media.screen-ocr.on-demand-region",
+        "media.screen-ocr.enable-session"
+        | "media.screen-ocr.disable-session"
+        | "media.screen-ocr.pause"
+        | "media.screen-ocr.resume" => "source:media.screen-ocr.live-session",
+        "media.screen-ocr.delete-material" => "source:media.screen-ocr.screenshot-ocr-staged",
+        _ => return None,
+    };
+
+    Some(format!(
+        "sinexctl ops start {operation} --scope '{{\"source_id\":\"{source_id}\",\"mode_id\":\"{mode_id}\"}}' --format json"
+    ))
+}
+
+fn media_operation_rpc_method(operation: &str, source_id: &str) -> Option<&'static str> {
+    media_operation_command_hint(operation, source_id).map(|_| "ops.start")
 }
 
 fn source_runtime_module(source_id: &str) -> Option<&'static str> {
@@ -1136,13 +1196,14 @@ mod tests {
             .iter()
             .find(|action| action.id == "media.audio-transcript.run-model")
             .ok_or_else(|| color_eyre::eyre::eyre!("model action expected"))?;
-        assert_eq!(run_model.state, ActionAvailabilityState::Unavailable);
+        assert_eq!(run_model.state, ActionAvailabilityState::Enabled);
         assert_eq!(run_model.side_effect, ActionSideEffect::Admin);
-        assert!(
-            run_model
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("no operator actuator command is wired yet"))
+        assert_eq!(run_model.rpc_method.as_deref(), Some("ops.start"));
+        assert_eq!(
+            run_model.command_hint.as_deref(),
+            Some(
+                "sinexctl ops start media.audio-transcript.run-model --scope '{\"source_id\":\"media.audio-transcript\",\"mode_id\":\"source:media.audio-transcript.local-model-batch\"}' --format json"
+            )
         );
 
         let delete = view
@@ -1150,9 +1211,16 @@ mod tests {
             .iter()
             .find(|action| action.id == "media.audio-transcript.delete-material")
             .ok_or_else(|| color_eyre::eyre::eyre!("delete material action expected"))?;
-        assert_eq!(delete.state, ActionAvailabilityState::Unavailable);
+        assert_eq!(delete.state, ActionAvailabilityState::Enabled);
         assert_eq!(delete.side_effect, ActionSideEffect::Destructive);
         assert!(delete.requires_confirmation);
+        assert_eq!(delete.rpc_method.as_deref(), Some("ops.start"));
+        assert_eq!(
+            delete.command_hint.as_deref(),
+            Some(
+                "sinexctl ops start media.audio-transcript.delete-material --scope '{\"source_id\":\"media.audio-transcript\",\"mode_id\":\"source:media.audio-transcript.audio-bundle-staged\"}' --format json"
+            )
+        );
 
         let screen_contract = all_source_contracts()
             .find(|contract| contract.id == "media.screen-ocr")
@@ -1187,6 +1255,35 @@ mod tests {
         );
         assert_eq!(import_screenshots.side_effect, ActionSideEffect::Write);
         assert_eq!(import_screenshots.state, ActionAvailabilityState::Enabled);
+
+        let run_ocr = screen_view
+            .actions
+            .iter()
+            .find(|action| action.id == "media.screen-ocr.run-ocr")
+            .ok_or_else(|| color_eyre::eyre::eyre!("run OCR action expected"))?;
+        assert_eq!(run_ocr.state, ActionAvailabilityState::Enabled);
+        assert_eq!(run_ocr.rpc_method.as_deref(), Some("ops.start"));
+        assert_eq!(
+            run_ocr.command_hint.as_deref(),
+            Some(
+                "sinexctl ops start media.screen-ocr.run-ocr --scope '{\"source_id\":\"media.screen-ocr\",\"mode_id\":\"source:media.screen-ocr.local-model-batch\"}' --format json"
+            )
+        );
+
+        let capture_region = screen_view
+            .actions
+            .iter()
+            .find(|action| action.id == "media.screen-ocr.capture-region")
+            .ok_or_else(|| color_eyre::eyre::eyre!("capture-region action expected"))?;
+        assert_eq!(capture_region.state, ActionAvailabilityState::Enabled);
+        assert_eq!(capture_region.side_effect, ActionSideEffect::Admin);
+        assert_eq!(capture_region.rpc_method.as_deref(), Some("ops.start"));
+        assert_eq!(
+            capture_region.command_hint.as_deref(),
+            Some(
+                "sinexctl ops start media.screen-ocr.capture-region --scope '{\"source_id\":\"media.screen-ocr\",\"mode_id\":\"source:media.screen-ocr.on-demand-region\"}' --format json"
+            )
+        );
 
         Ok(())
     }
