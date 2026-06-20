@@ -465,16 +465,31 @@ fn source_actions(
 
 fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvailability {
     let (label, command_hint) = match operation.rsplit('.').next().unwrap_or(operation) {
-        "check" => ("Check Bridge", Some("sinexctl sources status")),
+        "check" => (
+            "Check Bridge",
+            Some(format!("sinexctl sources status {source_id} --format json")),
+        ),
         "inspect" => (
             "Inspect Bridge",
-            Some("sinexctl sources status --format json"),
+            Some(format!("sinexctl sources status {source_id} --format json")),
         ),
-        "drain" => ("Drain Bridge", None),
+        "drain" => (
+            "Drain Bridge",
+            source_runtime_module(source_id)
+                .map(|module| format!("sinexctl runtime drain {module} --reason source-coverage")),
+        ),
         "flush" => ("Flush Bridge", None),
         "reconnect" => ("Reconnect Bridge", None),
-        "pause" => ("Pause Bridge", None),
-        "resume" => ("Resume Bridge", None),
+        "pause" => (
+            "Pause Bridge",
+            source_runtime_module(source_id)
+                .map(|module| format!("sinexctl runtime drain {module} --reason source-paused")),
+        ),
+        "resume" => (
+            "Resume Bridge",
+            source_runtime_module(source_id)
+                .map(|module| format!("sinexctl runtime resume {module}")),
+        ),
         _ => ("Package Operation", None),
     };
     let state = if command_hint.is_some() {
@@ -494,6 +509,13 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
         action = action.with_command_hint(command_hint);
     }
     action
+}
+
+fn source_runtime_module(source_id: &str) -> Option<&'static str> {
+    match source_id {
+        "terminal.kitty-osc-live" => Some("terminal-source"),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -691,7 +713,40 @@ mod tests {
         assert_eq!(check.state, ActionAvailabilityState::Enabled);
         assert_eq!(
             check.command_hint.as_deref(),
-            Some("sinexctl sources status")
+            Some("sinexctl sources status terminal.kitty-osc-live --format json")
+        );
+
+        let pause = view
+            .actions
+            .iter()
+            .find(|action| action.id == "terminal.activity.pause")
+            .ok_or_else(|| color_eyre::eyre::eyre!("pause action expected"))?;
+        assert_eq!(pause.state, ActionAvailabilityState::Enabled);
+        assert_eq!(
+            pause.command_hint.as_deref(),
+            Some("sinexctl runtime drain terminal-source --reason source-paused")
+        );
+
+        let resume = view
+            .actions
+            .iter()
+            .find(|action| action.id == "terminal.activity.resume")
+            .ok_or_else(|| color_eyre::eyre::eyre!("resume action expected"))?;
+        assert_eq!(resume.state, ActionAvailabilityState::Enabled);
+        assert_eq!(
+            resume.command_hint.as_deref(),
+            Some("sinexctl runtime resume terminal-source")
+        );
+
+        let drain = view
+            .actions
+            .iter()
+            .find(|action| action.id == "terminal.activity.drain")
+            .ok_or_else(|| color_eyre::eyre::eyre!("drain action expected"))?;
+        assert_eq!(drain.state, ActionAvailabilityState::Enabled);
+        assert_eq!(
+            drain.command_hint.as_deref(),
+            Some("sinexctl runtime drain terminal-source --reason source-coverage")
         );
 
         let reconnect = view
@@ -707,18 +762,6 @@ mod tests {
                 .is_some_and(|reason| reason.contains("no operator actuator command")),
             "declared operation refs should explain missing actuator wiring"
         );
-        for operation in [
-            "terminal.activity.pause",
-            "terminal.activity.resume",
-            "terminal.activity.drain",
-        ] {
-            assert!(
-                view.actions.iter().any(|action| {
-                    action.id == operation && action.state == ActionAvailabilityState::Unavailable
-                }),
-                "declared {operation} action should remain visible even before actuator wiring"
-            );
-        }
         Ok(())
     }
 
