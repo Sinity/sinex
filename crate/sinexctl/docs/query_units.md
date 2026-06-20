@@ -37,8 +37,10 @@ Grammar:
 
 Operators are declared by each query-unit descriptor. Unsupported units,
 fields, operators, enum values, and value types fail before an RPC is issued.
-For event queries, predicates that cannot lower to the existing `EventQuery`
-request fail instead of widening to an unconstrained event scan.
+Event queries currently expose the executable `EventQuery` filter fields:
+`source`, `event_type`, `host`, `scope_key`, and `equivalence_key`, each with
+exact-match predicates. Contract/schema/time predicates should not appear in
+docs or completions until they have an executable lowering path.
 
 `json` and `yaml` return the full `ViewEnvelope<SinexQueryResultListView>`.
 `ndjson` emits one `SinexQueryResultRow` per line. `table` prints a compact

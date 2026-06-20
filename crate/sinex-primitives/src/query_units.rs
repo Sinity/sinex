@@ -449,6 +449,7 @@ fn validate_value(field: &QueryFieldDescriptor, value: &QueryValue) -> Result<()
     }
 }
 
+const EXACT: &[QueryOperator] = &[QueryOperator::Eq];
 const EQ: &[QueryOperator] = &[QueryOperator::Eq, QueryOperator::NotEq];
 const TEXT: &[QueryOperator] = &[
     QueryOperator::Eq,
@@ -469,49 +470,31 @@ const EVENT_FIELDS: &[QueryFieldDescriptor] = &[
     QueryFieldDescriptor {
         name: "source",
         field_type: QueryFieldType::Text,
-        operators: TEXT,
+        operators: EXACT,
         enum_values: &[],
     },
     QueryFieldDescriptor {
         name: "event_type",
         field_type: QueryFieldType::Text,
-        operators: TEXT,
-        enum_values: &[],
-    },
-    QueryFieldDescriptor {
-        name: "event_contract_id",
-        field_type: QueryFieldType::Text,
-        operators: EQ,
-        enum_values: &[],
-    },
-    QueryFieldDescriptor {
-        name: "payload_schema_id",
-        field_type: QueryFieldType::Text,
-        operators: EQ,
+        operators: EXACT,
         enum_values: &[],
     },
     QueryFieldDescriptor {
         name: "host",
         field_type: QueryFieldType::Text,
-        operators: TEXT,
-        enum_values: &[],
-    },
-    QueryFieldDescriptor {
-        name: "ts_orig",
-        field_type: QueryFieldType::Timestamp,
-        operators: ORDERED,
+        operators: EXACT,
         enum_values: &[],
     },
     QueryFieldDescriptor {
         name: "scope_key",
         field_type: QueryFieldType::Text,
-        operators: EQ,
+        operators: EXACT,
         enum_values: &[],
     },
     QueryFieldDescriptor {
         name: "equivalence_key",
         field_type: QueryFieldType::Text,
-        operators: EQ,
+        operators: EXACT,
         enum_values: &[],
     },
 ];
@@ -1004,7 +987,26 @@ mod tests {
 
         let rendered = error.to_string();
         assert!(rendered.contains("source_id"));
-        assert!(rendered.contains("event_contract_id"));
+        assert!(rendered.contains("source, event_type, host, scope_key, equivalence_key"));
+        assert!(!rendered.contains("event_contract_id"));
+    }
+
+    #[test]
+    fn event_descriptor_exposes_only_currently_lowerable_fields_and_operators() {
+        let descriptor = query_unit_descriptor(QueryUnitId::Events);
+        let fields = descriptor
+            .fields
+            .iter()
+            .map(|field| field.name)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            fields,
+            vec!["source", "event_type", "host", "scope_key", "equivalence_key"]
+        );
+        for field in descriptor.fields {
+            assert_eq!(field.operators, &[QueryOperator::Eq]);
+        }
     }
 
     #[test]
