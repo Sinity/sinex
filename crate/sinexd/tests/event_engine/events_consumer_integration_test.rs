@@ -229,6 +229,8 @@ async fn start_consumer_with_hooks(
         hooks.delivery_counter.clone(),
         hooks.route_db_errors_to_dlq,
         hooks.confirmation_failures.clone(),
+        hooks.source_material_ready_dlq_threshold,
+        hooks.source_material_ready_retry_delay,
     );
     let handle = spawn_consumer_and_wait_ready(ctx, &js, &topology, consumer).await?;
 
