@@ -699,13 +699,19 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
         ),
         "import-bundle" => (
             "Import Audio Bundle",
-            Some("sinexctl sources stage <path> --format json".to_string()),
+            Some(
+                "sinexctl sources stage <path> --binding source:media.audio-transcript.audio-bundle-staged --format json"
+                    .to_string(),
+            ),
             Some("sources.stage"),
             ActionSideEffect::Write,
         ),
         "import-screenshots" => (
             "Import Screenshot Bundle",
-            Some("sinexctl sources stage <path> --format json".to_string()),
+            Some(
+                "sinexctl sources stage <path> --binding source:media.screen-ocr.screenshot-ocr-staged --format json"
+                    .to_string(),
+            ),
             Some("sources.stage"),
             ActionSideEffect::Write,
         ),
@@ -1095,7 +1101,9 @@ mod tests {
             .ok_or_else(|| color_eyre::eyre::eyre!("audio bundle import action expected"))?;
         assert_eq!(
             import_bundle.command_hint.as_deref(),
-            Some("sinexctl sources stage <path> --format json")
+            Some(
+                "sinexctl sources stage <path> --binding source:media.audio-transcript.audio-bundle-staged --format json"
+            )
         );
         assert_eq!(import_bundle.rpc_method.as_deref(), Some("sources.stage"));
         assert_eq!(import_bundle.side_effect, ActionSideEffect::Write);
@@ -1169,17 +1177,16 @@ mod tests {
             .ok_or_else(|| color_eyre::eyre::eyre!("screenshot import action expected"))?;
         assert_eq!(
             import_screenshots.command_hint.as_deref(),
-            Some("sinexctl sources stage <path> --format json")
+            Some(
+                "sinexctl sources stage <path> --binding source:media.screen-ocr.screenshot-ocr-staged --format json"
+            )
         );
         assert_eq!(
             import_screenshots.rpc_method.as_deref(),
             Some("sources.stage")
         );
         assert_eq!(import_screenshots.side_effect, ActionSideEffect::Write);
-        assert_eq!(
-            import_screenshots.state,
-            ActionAvailabilityState::Enabled
-        );
+        assert_eq!(import_screenshots.state, ActionAvailabilityState::Enabled);
 
         Ok(())
     }

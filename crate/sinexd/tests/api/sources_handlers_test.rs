@@ -37,7 +37,7 @@ async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext)
             timing_info_type: Some(SourceMaterialTimingInfoType::Intrinsic),
             reason: Some("continuous atuin history".to_string()),
             tags: vec!["shell".to_string(), "history".to_string()],
-            binding_name: None,
+            binding_name: Some("source:terminal.activity.atuin-sqlite-live".to_string()),
             with_bytes: true,
         },
         &auth,
@@ -58,6 +58,14 @@ async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext)
             .as_ref()
             .and_then(|annotations| annotations.reason.as_deref()),
         Some("continuous atuin history")
+    );
+    assert_eq!(
+        stage
+            .contract
+            .origin
+            .as_ref()
+            .and_then(|origin| origin.binding_id.as_deref()),
+        Some("source:terminal.activity.atuin-sqlite-live")
     );
 
     let material_id = uuid::Uuid::parse_str(&stage.material_id)?;
@@ -96,6 +104,13 @@ async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext)
         .as_ref()
         .expect("sources.show should surface contract metadata");
     assert_eq!(contract.format, SourceMaterialFormat::Sqlite);
+    assert_eq!(
+        contract
+            .origin
+            .as_ref()
+            .and_then(|origin| origin.binding_id.as_deref()),
+        Some("source:terminal.activity.atuin-sqlite-live")
+    );
     assert_eq!(
         contract
             .statistics
