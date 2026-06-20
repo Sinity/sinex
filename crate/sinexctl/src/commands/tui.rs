@@ -1916,7 +1916,7 @@ fn event_copy_actions(
 
     actions.push(EventCopyAction::disabled(
         "context pack",
-        "target-only; tracked by #1095",
+        "target-only; no TUI context-pack action is wired",
     ));
     actions
 }

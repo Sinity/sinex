@@ -2,7 +2,8 @@
 //!
 //! NOTE: metadata only. No generic spec-driven reducer runtime consumes
 //! `DomainProjectionSpec` yet; concrete reducers (e.g. `reduce_task_event`) are
-//! invoked directly. A spec-driven reducer engine is tracked by #1120.
+//! invoked directly. #1963 tracks cleanup of stale architecture ownership
+//! markers when this vocabulary grows beyond metadata.
 
 use schemars::JsonSchema;
 use serde::Serialize;
