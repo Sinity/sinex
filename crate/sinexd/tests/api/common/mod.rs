@@ -3,10 +3,11 @@
 use async_nats::{Client, jetstream};
 use color_eyre::eyre::bail;
 use futures::StreamExt;
-use serde_json::json;
+use serde_json::{Value, json};
 use sinex_db::{DbPool, repositories::DbPoolExt};
 use sinex_primitives::{
     DynamicPayload, Id, environment, environment::SinexEnvironment, temporal,
+    rpc::methods,
 };
 use sinexd::api::{auth::Role, rpc_server::RpcAuthContext};
 use sinexd::api::{config::GatewayConfig, rpc_server, service_container::ServiceContainer};
@@ -433,5 +434,98 @@ impl LiveGateway {
         });
 
         Ok(self.client.post(self.rpc_url()).json(&body).send().await?)
+    }
+
+    pub fn replay_operation_id(response: &Value) -> TestResult<String> {
+        response["operation"]["operation_id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| color_eyre::eyre::eyre!("operation_id missing from replay response"))
+    }
+
+    pub async fn create_replay_operation(&self, params: Value) -> TestResult<Value> {
+        self.rpc(methods::REPLAY_CREATE_OPERATION, params).await
+    }
+
+    pub async fn preview_replay_operation(&self, operation_id: &str) -> TestResult<Value> {
+        self.rpc(
+            methods::REPLAY_PREVIEW_OPERATION,
+            json!({ "operation_id": operation_id }),
+        )
+        .await
+    }
+
+    pub async fn approve_replay_operation(
+        &self,
+        operation_id: &str,
+        approver: &str,
+    ) -> TestResult<Value> {
+        self.rpc(
+            methods::REPLAY_APPROVE_OPERATION,
+            json!({ "operation_id": operation_id, "approver": approver }),
+        )
+        .await
+    }
+
+    pub async fn execute_replay_operation(
+        &self,
+        operation_id: &str,
+        executor: &str,
+    ) -> TestResult<Value> {
+        self.rpc(
+            methods::REPLAY_EXECUTE_OPERATION,
+            json!({ "operation_id": operation_id, "executor": executor }),
+        )
+        .await
+    }
+
+    pub async fn submit_replay_operation(&self, operation_id: &str) -> TestResult<Value> {
+        self.rpc(
+            methods::REPLAY_SUBMIT_OPERATION,
+            json!({ "operation_id": operation_id }),
+        )
+        .await
+    }
+
+    pub async fn cancel_replay_operation(
+        &self,
+        operation_id: &str,
+        reason: &str,
+    ) -> TestResult<Value> {
+        self.rpc(
+            methods::REPLAY_CANCEL_OPERATION,
+            json!({ "operation_id": operation_id, "reason": reason }),
+        )
+        .await
+    }
+
+    pub async fn replay_operation_status(&self, operation_id: &str) -> TestResult<Value> {
+        self.rpc(
+            methods::REPLAY_OPERATION_STATUS,
+            json!({ "operation_id": operation_id }),
+        )
+        .await
+    }
+
+    pub async fn list_replay_operations(&self) -> TestResult<Value> {
+        self.rpc(methods::REPLAY_LIST_OPERATIONS, json!({})).await
+    }
+
+    pub async fn wait_for_replay_completed(
+        &self,
+        operation_id: &str,
+        attempts: usize,
+        interval: Duration,
+    ) -> TestResult<Value> {
+        let mut last_status = json!(null);
+        for _ in 0..attempts {
+            last_status = self.replay_operation_status(operation_id).await?;
+            match last_status["operation"]["state"].as_str() {
+                Some("Completed") => return Ok(last_status),
+                Some("Failed") => bail!("Replay operation {operation_id} failed: {last_status}"),
+                _ => tokio::time::sleep(interval).await,
+            }
+        }
+        bail!("Replay operation {operation_id} did not complete in time: {last_status}")
     }
 }
