@@ -88,7 +88,7 @@ pub use journalctl_stream::{
     records_from_journal_lines,
 };
 pub use unix_socket_stream::{
-    UnixSocketStreamAdapter, UnixSocketStreamConfig, UnixSocketStreamCursor,
+    UnixSocketStreamAdapter, UnixSocketStreamConfig, UnixSocketStreamCursor, UnixSocketStreamMode,
 };
 
 pub use adapter_schemas::{AdapterSchema, all_adapter_schemas};

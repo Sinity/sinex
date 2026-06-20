@@ -183,29 +183,29 @@ mod tests {
         use sinex_primitives::temporal::Timestamp;
         use sinexd::runtime::parser::{
             InputShapeAdapter, MaterialParser, UnixSocketStreamAdapter, UnixSocketStreamConfig,
+            UnixSocketStreamMode,
         };
         use sinexd::sources::source_contracts::terminal::kitty_osc::KittyOscParser;
+        use tokio::io::AsyncWriteExt;
+        use tokio::time::{Duration, timeout};
 
-        let fixture = crate::fixtures::unix_socket::build(fixture_data)
-            .await
-            .map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
-        let socket_path = match &fixture.binding {
-            crate::fixtures::FixtureBinding::UnixSocketPath(path) => path.clone(),
-            other => {
-                return Err(color_eyre::eyre::eyre!(
-                    "unix socket fixture returned unexpected binding: {other:?}"
-                ));
-            }
-        };
+        let temp = tempfile::TempDir::new()?;
+        let socket_path = temp.path().join("kitty-osc.sock");
 
         let material_id = Id::<SourceMaterial>::from_uuid(Uuid::now_v7());
         let adapter = UnixSocketStreamAdapter;
         let config = UnixSocketStreamConfig {
-            socket_path: camino::Utf8PathBuf::from_path_buf(socket_path)
+            socket_path: camino::Utf8PathBuf::from_path_buf(socket_path.clone())
                 .map_err(|path| color_eyre::eyre::eyre!("non-UTF8 socket path: {path:?}"))?,
+            mode: UnixSocketStreamMode::Listen,
             reconnect_on_eof: false,
         };
         let mut stream = adapter.open(material_id, &config, None).await?;
+
+        let mut producer = tokio::net::UnixStream::connect(&socket_path).await?;
+        producer.write_all(fixture_data).await?;
+        drop(producer);
+
         let source_id = SourceId::from_static("terminal.kitty-osc-live");
         let make_ctx = |record: &sinex_primitives::parser::SourceRecord| -> ParserContext {
             ParserContext {
@@ -221,9 +221,15 @@ mod tests {
 
         let mut parser = KittyOscParser;
         let mut events = Vec::new();
+        let expected_records = fixture_data
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .count();
 
-        while let Some(record) = stream.next().await {
-            let record = record?;
+        for _ in 0..expected_records {
+            let record = timeout(Duration::from_secs(1), stream.next())
+                .await?
+                .ok_or_else(|| color_eyre::eyre::eyre!("Kitty OSC receiver stream ended"))??;
             events.extend(
                 parser
                     .parse_record(record.clone(), &make_ctx(&record))
@@ -260,6 +266,24 @@ mod tests {
             "OSC sequence should participate in occurrence identity"
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_kitty_osc_live_socket_adapter_surfaces_malformed_frame() -> TestResult<()> {
+        let error = match parse_kitty_osc_socket_fixture(b"{not-json}\n").await {
+            Ok(_) => {
+                return Err(color_eyre::eyre::eyre!(
+                    "malformed Kitty OSC frame was accepted"
+                ));
+            }
+            Err(error) => error,
+        };
+
+        assert!(
+            error.to_string().contains("kitty OSC JSON frame"),
+            "malformed frame should remain attributable to Kitty OSC parsing: {error}"
+        );
         Ok(())
     }
 
