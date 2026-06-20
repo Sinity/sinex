@@ -292,23 +292,23 @@ fn non_claims() -> Vec<ReleaseNonClaim> {
     vec![
         ReleaseNonClaim {
             area: "capture packages",
-            non_claim: "browser, Kitty OSC, desktop context, audio/OCR, and live email packages are not claimed complete until their package-specific issues close",
-            owner: "#847/#1033/#1035/#1043/#1469",
+            non_claim: "browser WebExtension, media audio/OCR, and email sync packages are not claimed complete until their package-specific issues close",
+            owner: "#847/#1043/#1469",
         },
         ReleaseNonClaim {
-            area: "source identity",
-            non_claim: "source_id demotion is not claimed complete until the audit/split map lands",
-            owner: "#1881",
+            area: "package completeness",
+            non_claim: "accepted package modes are not claimed fully complete where the package-completeness gate still reports blocking requirements",
+            owner: "#1963",
         },
         ReleaseNonClaim {
-            area: "runtime memory",
-            non_claim: "live sinexd memory behavior under journald confirmation feedback remains under active investigation",
-            owner: "#1886",
+            area: "runtime pressure",
+            non_claim: "resource-pressure behavior is claimed only for paths with code-owned budget, pressure, coverage, or operation evidence",
+            owner: "#1963/#1043",
         },
         ReleaseNonClaim {
             area: "privacy enforcement",
-            non_claim: "static privacy coverage is not a claim of complete field/view/export/log/completion enforcement",
-            owner: "#1693",
+            non_claim: "package-level disclosure metadata is not a claim that every destination surface has package-specific evidence",
+            owner: "#1963/#1043",
         },
     ]
 }
