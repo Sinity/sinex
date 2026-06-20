@@ -67,8 +67,7 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
 
     // ── Step 1: Plan via HTTP RPC ───────────────────────────────────
     let plan_result = gw
-        .rpc(
-            methods::REPLAY_CREATE_OPERATION,
+        .create_replay_operation(
             json!({
                 "scope": {
                     "module_name": "test-source",
@@ -81,10 +80,7 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
         )
         .await?;
 
-    let op_id = plan_result["operation"]["operation_id"]
-        .as_str()
-        .ok_or_else(|| color_eyre::eyre::eyre!("operation_id missing from plan response"))?
-        .to_string();
+    let op_id = LiveGateway::replay_operation_id(&plan_result)?;
     assert_eq!(
         plan_result["operation"]["state"].as_str(),
         Some("Planning"),
@@ -97,12 +93,7 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
     );
 
     // ── Step 2: Preview via HTTP RPC ────────────────────────────────
-    let preview_result = gw
-        .rpc(
-            methods::REPLAY_PREVIEW_OPERATION,
-            json!({ "operation_id": op_id }),
-        )
-        .await?;
+    let preview_result = gw.preview_replay_operation(&op_id).await?;
 
     assert_eq!(
         preview_result["operation"]["state"].as_str(),
@@ -120,12 +111,7 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
     );
 
     // ── Step 3: Submit via HTTP RPC (atomic approve+execute) ────────
-    let submit_result = gw
-        .rpc(
-            methods::REPLAY_SUBMIT_OPERATION,
-            json!({ "operation_id": op_id }),
-        )
-        .await?;
+    let submit_result = gw.submit_replay_operation(&op_id).await?;
     assert_eq!(
         submit_result["operation"]["state"].as_str(),
         Some("Completed")
@@ -142,19 +128,9 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
     );
 
     // ── Step 4: Poll status until completion ────────────────────────
-    let mut status = json!(null);
-    for _ in 0..60 {
-        status = gw
-            .rpc(
-                methods::REPLAY_OPERATION_STATUS,
-                json!({ "operation_id": op_id }),
-            )
-            .await?;
-        if status["operation"]["state"].as_str() == Some("Completed") {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    let status = gw
+        .wait_for_replay_completed(&op_id, 60, Duration::from_millis(100))
+        .await?;
     assert_eq!(
         status["operation"]["state"].as_str(),
         Some("Completed"),
@@ -166,7 +142,7 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
     );
 
     // ── Step 5: List operations ─────────────────────────────────────
-    let list_result = gw.rpc(methods::REPLAY_LIST_OPERATIONS, json!({})).await?;
+    let list_result = gw.list_replay_operations().await?;
     let ops = list_result["operations"]
         .as_array()
         .ok_or_else(|| color_eyre::eyre::eyre!("operations array missing from list response"))?;
@@ -215,8 +191,7 @@ async fn replay_cancel_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<(
 
     // Plan
     let plan_result = gw
-        .rpc(
-            methods::REPLAY_CREATE_OPERATION,
+        .create_replay_operation(
             json!({
                 "scope": {
                     "module_name": "test-source",
@@ -226,28 +201,14 @@ async fn replay_cancel_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<(
             }),
         )
         .await?;
-    let op_id = plan_result["operation"]["operation_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let op_id = LiveGateway::replay_operation_id(&plan_result)?;
 
     // Preview
-    gw.rpc(
-        methods::REPLAY_PREVIEW_OPERATION,
-        json!({ "operation_id": op_id }),
-    )
-    .await?;
+    gw.preview_replay_operation(&op_id).await?;
 
     // Cancel with reason
     let cancel_result = gw
-        .rpc(
-            methods::REPLAY_CANCEL_OPERATION,
-            json!({
-                "operation_id": op_id,
-                "canceller": "admin:test-user",
-                "reason": "Testing cancel over HTTP RPC"
-            }),
-        )
+        .cancel_replay_operation(&op_id, "Testing cancel over HTTP RPC")
         .await?;
     assert_eq!(
         cancel_result["cancelled"].as_bool(),
@@ -256,12 +217,7 @@ async fn replay_cancel_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<(
     );
 
     // Verify via status
-    let status = gw
-        .rpc(
-            methods::REPLAY_OPERATION_STATUS,
-            json!({ "operation_id": op_id }),
-        )
-        .await?;
+    let status = gw.replay_operation_status(&op_id).await?;
     assert_eq!(
         status["operation"]["state"].as_str(),
         Some("Cancelled"),
