@@ -47,6 +47,11 @@ pub struct TestHooks {
     pub confirmation_failures: Option<Arc<AtomicUsize>>,
     /// Whether to route database errors to DLQ instead of retrying
     pub route_db_errors_to_dlq: bool,
+    /// Override source-material readiness retries for tests that need to exhaust
+    /// the retry budget quickly.
+    pub source_material_ready_dlq_threshold: Option<i64>,
+    /// Override the source-material readiness NAK delay for tests.
+    pub source_material_ready_retry_delay: Option<Duration>,
     /// Whether to enable event validation
     pub validate: bool,
 }
@@ -207,6 +212,18 @@ impl TestHooksBuilder {
         self
     }
 
+    /// Override the source-material readiness retry budget and delay.
+    #[must_use]
+    pub fn source_material_ready_retry_budget(
+        mut self,
+        dlq_threshold: i64,
+        retry_delay: Duration,
+    ) -> Self {
+        self.hooks.source_material_ready_dlq_threshold = Some(dlq_threshold.max(1));
+        self.hooks.source_material_ready_retry_delay = Some(retry_delay);
+        self
+    }
+
     /// Simulate confirmation publish failures.
     ///
     /// The first N confirmation attempts will fail before succeeding.
@@ -274,6 +291,8 @@ mod tests {
         assert_eq!(hooks.processing_delay, Some(Duration::from_millis(100)));
         assert!(hooks.confirmation_failures.is_some());
         assert!(hooks.route_db_errors_to_dlq);
+        assert_eq!(hooks.source_material_ready_dlq_threshold, None);
+        assert_eq!(hooks.source_material_ready_retry_delay, None);
         assert!(hooks.validate);
 
         // Counters should be linked to hooks
@@ -305,6 +324,20 @@ mod tests {
             .unwrap()
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(counters.delivery_count(), 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_hooks_builder_source_material_retry_budget() -> ::xtask::sandbox::TestResult<()> {
+        let (hooks, _) = TestHooks::builder()
+            .source_material_ready_retry_budget(2, Duration::from_millis(50))
+            .build();
+
+        assert_eq!(hooks.source_material_ready_dlq_threshold, Some(2));
+        assert_eq!(
+            hooks.source_material_ready_retry_delay,
+            Some(Duration::from_millis(50))
+        );
         Ok(())
     }
 }
