@@ -2,9 +2,9 @@
 //!
 //! The implemented parsers consume transcript/OCR text material and staged
 //! bundle manifests that anchor raw recording/screenshot observations.
-//! Additional proposed bindings keep the full media package shape visible to
-//! package-completeness, coverage, and deployment inventory without claiming
-//! that the corresponding live/model runner is executable today.
+//! Proposed bindings keep local model, on-demand, and live media modes visible
+//! to package-completeness, coverage, and deployment inventory without claiming
+//! that the corresponding runner is executable today.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -52,8 +52,7 @@ use sinex_primitives::source_contracts::{
         runner_pack = RunnerPack::Staged,
         checkpoint_family = CheckpointFamily::AppendStream,
         runtime_shape = RuntimeShape::Scheduled,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.import-bundle, operation:media.audio-transcript.inspect, operation:media.audio-transcript.delete-material, operation:media.audio-transcript.export",
-        proposed = true
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.import-bundle, operation:media.audio-transcript.inspect, operation:media.audio-transcript.delete-material, operation:media.audio-transcript.export"
     ),
     binding(
         subject = "source:media.audio-transcript.local-model-batch",
@@ -123,8 +122,7 @@ pub struct MediaAudioTranscriptParser;
         runner_pack = RunnerPack::Staged,
         checkpoint_family = CheckpointFamily::AppendStream,
         runtime_shape = RuntimeShape::Scheduled,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.import-screenshots, operation:media.screen-ocr.inspect, operation:media.screen-ocr.delete-material, operation:media.screen-ocr.export",
-        proposed = true
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.import-screenshots, operation:media.screen-ocr.inspect, operation:media.screen-ocr.delete-material, operation:media.screen-ocr.export"
     ),
     binding(
         subject = "source:media.screen-ocr.local-model-batch",
@@ -1517,10 +1515,16 @@ mod tests {
         };
 
         assert!(!binding("source:media.audio-transcript").proposed);
+        assert!(
+            !binding("source:media.audio-transcript.audio-bundle-staged").proposed,
+            "staged audio bundle parser is implemented and should be an accepted package mode"
+        );
         assert_eq!(
             binding("source:media.audio-transcript.local-model-batch").runtime_shape,
             RuntimeShape::OnDemand
         );
+        assert!(binding("source:media.audio-transcript.local-model-batch").proposed);
+        assert!(binding("source:media.audio-transcript.on-demand-session").proposed);
         assert_eq!(
             binding("source:media.audio-transcript.live-session").runner_pack,
             RunnerPack::Live
@@ -1533,10 +1537,16 @@ mod tests {
         );
 
         assert!(!binding("source:media.screen-ocr").proposed);
+        assert!(
+            !binding("source:media.screen-ocr.screenshot-ocr-staged").proposed,
+            "staged screenshot/OCR bundle parser is implemented and should be an accepted package mode"
+        );
         assert_eq!(
             binding("source:media.screen-ocr.on-demand-region").runtime_shape,
             RuntimeShape::OnDemand
         );
+        assert!(binding("source:media.screen-ocr.local-model-batch").proposed);
+        assert!(binding("source:media.screen-ocr.on-demand-region").proposed);
         assert_eq!(
             binding("source:media.screen-ocr.live-session").runner_pack,
             RunnerPack::Live
