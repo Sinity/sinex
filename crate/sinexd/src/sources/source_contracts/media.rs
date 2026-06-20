@@ -174,6 +174,7 @@ struct TranscriptSegment {
     language: Option<String>,
     confidence: Option<f64>,
     model_id: Option<String>,
+    producer_run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -189,6 +190,8 @@ struct OcrSegment {
     window_title: Option<String>,
     #[serde(default)]
     engine: Option<String>,
+    #[serde(default)]
+    producer_run_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -216,14 +219,40 @@ struct ScreenshotObservation {
 }
 
 #[derive(Debug, Clone)]
+struct AudioTranscriptionRun {
+    producer_run_id: String,
+    model_id: String,
+    model_version: Option<String>,
+    input_material_ids: Option<Vec<String>>,
+    output_refs: Option<Vec<String>>,
+    duration_ms: Option<u64>,
+    resource_posture: Option<String>,
+    failure_class: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ScreenOcrRun {
+    producer_run_id: String,
+    engine_id: String,
+    engine_version: Option<String>,
+    input_material_ids: Option<Vec<String>>,
+    output_refs: Option<Vec<String>>,
+    duration_ms: Option<u64>,
+    resource_posture: Option<String>,
+    failure_class: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 struct AudioTranscriptMaterial {
     recording: Option<AudioRecording>,
+    transcription_run: Option<AudioTranscriptionRun>,
     segments: Vec<TranscriptSegment>,
 }
 
 #[derive(Debug, Clone)]
 struct ScreenOcrMaterial {
     screenshot: Option<ScreenshotObservation>,
+    ocr_run: Option<ScreenOcrRun>,
     segments: Vec<OcrSegment>,
 }
 
@@ -237,10 +266,20 @@ impl MaterialParser for MediaAudioTranscriptParser {
             parser_version: "1.0.0".into(),
             accepted_input_shapes: vec![InputShapeKind::FileDrop],
             source_id: SourceId::from_static("media.audio-transcript"),
-            declared_event_types: vec![(
-                EventSource::from_static("media.audio"),
-                EventType::from_static("media.audio.transcript_segment_observed"),
-            )],
+            declared_event_types: vec![
+                (
+                    EventSource::from_static("media.audio"),
+                    EventType::from_static("media.audio.recording_observed"),
+                ),
+                (
+                    EventSource::from_static("media.audio"),
+                    EventType::from_static("media.audio.transcript_segment_observed"),
+                ),
+                (
+                    EventSource::from_static("media.audio"),
+                    EventType::from_static("media.audio.transcription_run_observed"),
+                ),
+            ],
             privacy_contexts: vec![ProcessingContext::Document],
             sensitivity_hints: vec![
                 SensitivityHint::FreeText,
@@ -257,14 +296,24 @@ impl MaterialParser for MediaAudioTranscriptParser {
     ) -> ParserResult<Vec<ParsedEventIntent>> {
         let text = std::str::from_utf8(&record.bytes)
             .map_err(|e| ParserError::Parse(format!("transcript material is not UTF-8: {e}")))?;
-        let material = parse_audio_transcript_material(text)?;
+        let mut material = parse_audio_transcript_material(text)?;
+        if let Some(run) = material.transcription_run.as_ref() {
+            apply_audio_run_defaults(run, &mut material.segments);
+        }
+        let AudioTranscriptMaterial {
+            recording,
+            transcription_run,
+            segments,
+        } = material;
         let mut intents = Vec::new();
-        if let Some(recording) = material.recording {
+        if let Some(recording) = recording {
             intents.push(audio_recording_intent(recording, &record, ctx));
         }
+        if let Some(run) = transcription_run {
+            intents.push(audio_transcription_run_intent(run, &record, ctx));
+        }
         intents.extend(
-            material
-                .segments
+            segments
                 .into_iter()
                 .enumerate()
                 .map(|(index, segment)| transcript_intent(index, segment, &record, ctx)),
@@ -287,10 +336,20 @@ impl MaterialParser for MediaScreenOcrParser {
             parser_version: "1.0.0".into(),
             accepted_input_shapes: vec![InputShapeKind::FileDrop],
             source_id: SourceId::from_static("media.screen-ocr"),
-            declared_event_types: vec![(
-                EventSource::from_static("media.screen"),
-                EventType::from_static("media.screen.ocr_segment_observed"),
-            )],
+            declared_event_types: vec![
+                (
+                    EventSource::from_static("media.screen"),
+                    EventType::from_static("media.screen.screenshot_observed"),
+                ),
+                (
+                    EventSource::from_static("media.screen"),
+                    EventType::from_static("media.screen.ocr_segment_observed"),
+                ),
+                (
+                    EventSource::from_static("media.screen"),
+                    EventType::from_static("media.screen.ocr_run_observed"),
+                ),
+            ],
             privacy_contexts: vec![ProcessingContext::Document],
             sensitivity_hints: vec![
                 SensitivityHint::FreeText,
@@ -309,14 +368,24 @@ impl MaterialParser for MediaScreenOcrParser {
     ) -> ParserResult<Vec<ParsedEventIntent>> {
         let text = std::str::from_utf8(&record.bytes)
             .map_err(|e| ParserError::Parse(format!("OCR material is not UTF-8: {e}")))?;
-        let material = parse_screen_ocr_material(text)?;
+        let mut material = parse_screen_ocr_material(text)?;
+        if let Some(run) = material.ocr_run.as_ref() {
+            apply_ocr_run_defaults(run, &mut material.segments);
+        }
+        let ScreenOcrMaterial {
+            screenshot,
+            ocr_run,
+            segments,
+        } = material;
         let mut intents = Vec::new();
-        if let Some(screenshot) = material.screenshot {
+        if let Some(screenshot) = screenshot {
             intents.push(screenshot_intent(screenshot, &record, ctx));
         }
+        if let Some(run) = ocr_run {
+            intents.push(screen_ocr_run_intent(run, &record, ctx));
+        }
         intents.extend(
-            material
-                .segments
+            segments
                 .into_iter()
                 .enumerate()
                 .map(|(index, segment)| ocr_intent(index, segment, &record, ctx)),
@@ -334,6 +403,7 @@ fn parse_audio_transcript_material(text: &str) -> ParserResult<AudioTranscriptMa
         return match value {
             Value::Array(values) => Ok(AudioTranscriptMaterial {
                 recording: None,
+                transcription_run: None,
                 segments: values
                     .into_iter()
                     .map(parse_transcript_json_segment)
@@ -344,6 +414,12 @@ fn parse_audio_transcript_material(text: &str) -> ParserResult<AudioTranscriptMa
                     .remove("recording")
                     .map(parse_audio_recording)
                     .transpose()?;
+                let transcription_run = remove_first_field(
+                    &mut object,
+                    &["transcription_run", "transcription", "model_run"],
+                )
+                .map(parse_audio_transcription_run)
+                .transpose()?;
                 let segments = match object.remove("segments") {
                     Some(Value::Array(values)) => values
                         .into_iter()
@@ -354,16 +430,17 @@ fn parse_audio_transcript_material(text: &str) -> ParserResult<AudioTranscriptMa
                             "media transcript manifest segments field must be an array".into(),
                         ));
                     }
-                    None if recording.is_some() => Vec::new(),
+                    None if recording.is_some() || transcription_run.is_some() => Vec::new(),
                     None => {
                         return Err(ParserError::Parse(
-                            "media transcript JSON object must contain recording or segments[]"
+                            "media transcript JSON object must contain recording, transcription_run, or segments[]"
                                 .into(),
                         ));
                     }
                 };
                 Ok(AudioTranscriptMaterial {
                     recording,
+                    transcription_run,
                     segments,
                 })
             }
@@ -386,11 +463,13 @@ fn parse_audio_transcript_material(text: &str) -> ParserResult<AudioTranscriptMa
                 language: None,
                 confidence: None,
                 model_id: None,
+                producer_run_id: None,
             })
             .collect()
     };
     Ok(AudioTranscriptMaterial {
         recording: None,
+        transcription_run: None,
         segments,
     })
 }
@@ -416,7 +495,49 @@ fn parse_transcript_json_segment(value: Value) -> ParserResult<TranscriptSegment
         model_id: string_field(&object, "model_id")?
             .or(string_field(&object, "model")?)
             .or(string_field(&object, "model_name")?),
+        producer_run_id: string_field(&object, "producer_run_id")?
+            .or(string_field(&object, "run_id")?),
     })
+}
+
+fn parse_audio_transcription_run(value: Value) -> ParserResult<AudioTranscriptionRun> {
+    let Value::Object(object) = value else {
+        return Err(ParserError::Parse(
+            "audio transcription_run manifest entry must be an object".into(),
+        ));
+    };
+    Ok(AudioTranscriptionRun {
+        producer_run_id: required_any_string_field(&object, &["producer_run_id", "run_id"])?,
+        model_id: required_any_string_field(&object, &["model_id", "model", "model_name"])?,
+        model_version: any_string_field(&object, &["model_version", "version"])?,
+        input_material_ids: any_string_array_field(&object, &["input_material_ids", "inputs"])?,
+        output_refs: any_string_array_field(&object, &["output_refs", "outputs"])?,
+        duration_ms: u64_field(&object, "duration_ms")?,
+        resource_posture: string_field(&object, "resource_posture")?,
+        failure_class: string_field(&object, "failure_class")?,
+    })
+}
+
+fn parse_screen_ocr_run(value: Value) -> ParserResult<ScreenOcrRun> {
+    let Value::Object(object) = value else {
+        return Err(ParserError::Parse(
+            "screen OCR ocr_run manifest entry must be an object".into(),
+        ));
+    };
+    Ok(ScreenOcrRun {
+        producer_run_id: required_any_string_field(&object, &["producer_run_id", "run_id"])?,
+        engine_id: required_any_string_field(&object, &["engine_id", "engine", "model_id"])?,
+        engine_version: any_string_field(&object, &["engine_version", "version"])?,
+        input_material_ids: any_string_array_field(&object, &["input_material_ids", "inputs"])?,
+        output_refs: any_string_array_field(&object, &["output_refs", "outputs"])?,
+        duration_ms: u64_field(&object, "duration_ms")?,
+        resource_posture: string_field(&object, "resource_posture")?,
+        failure_class: string_field(&object, "failure_class")?,
+    })
+}
+
+fn remove_first_field(object: &mut Map<String, Value>, keys: &[&str]) -> Option<Value> {
+    keys.iter().find_map(|key| object.remove(*key))
 }
 
 fn string_field(object: &Map<String, Value>, key: &str) -> ParserResult<Option<String>> {
@@ -427,6 +548,55 @@ fn string_field(object: &Map<String, Value>, key: &str) -> ParserResult<Option<S
             "transcript segment field {key:?} must be a string"
         ))),
     }
+}
+
+fn any_string_field(object: &Map<String, Value>, keys: &[&str]) -> ParserResult<Option<String>> {
+    for key in keys {
+        if let Some(value) = string_field(object, key)? {
+            return Ok(Some(value));
+        }
+    }
+    Ok(None)
+}
+
+fn required_any_string_field(object: &Map<String, Value>, keys: &[&str]) -> ParserResult<String> {
+    any_string_field(object, keys)?.ok_or_else(|| {
+        ParserError::Parse(format!(
+            "media manifest missing one of required string fields: {}",
+            keys.join(", ")
+        ))
+    })
+}
+
+fn string_array_field(object: &Map<String, Value>, key: &str) -> ParserResult<Option<Vec<String>>> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| match value {
+                Value::String(value) => Ok(value.clone()),
+                _ => Err(ParserError::Parse(format!(
+                    "media manifest field {key:?} array entries must be strings"
+                ))),
+            })
+            .collect::<ParserResult<Vec<_>>>()
+            .map(Some),
+        Some(_) => Err(ParserError::Parse(format!(
+            "media manifest field {key:?} must be an array"
+        ))),
+    }
+}
+
+fn any_string_array_field(
+    object: &Map<String, Value>,
+    keys: &[&str],
+) -> ParserResult<Option<Vec<String>>> {
+    for key in keys {
+        if let Some(value) = string_array_field(object, key)? {
+            return Ok(Some(value));
+        }
+    }
+    Ok(None)
 }
 
 fn number_field(object: &Map<String, Value>, key: &str) -> ParserResult<Option<f64>> {
@@ -573,6 +743,7 @@ fn parse_timed_text_segments(text: &str) -> ParserResult<Vec<TranscriptSegment>>
             language: None,
             confidence: None,
             model_id: None,
+            producer_run_id: None,
         });
     }
 
@@ -635,6 +806,7 @@ fn parse_screen_ocr_material(text: &str) -> ParserResult<ScreenOcrMaterial> {
         return match value {
             Value::Array(values) => Ok(ScreenOcrMaterial {
                 screenshot: None,
+                ocr_run: None,
                 segments: values
                     .into_iter()
                     .map(parse_ocr_json_segment)
@@ -644,6 +816,9 @@ fn parse_screen_ocr_material(text: &str) -> ParserResult<ScreenOcrMaterial> {
                 let screenshot = object
                     .remove("screenshot")
                     .map(parse_screenshot)
+                    .transpose()?;
+                let ocr_run = remove_first_field(&mut object, &["ocr_run", "ocr", "model_run"])
+                    .map(parse_screen_ocr_run)
                     .transpose()?;
                 let segments = match object.remove("segments") {
                     Some(Value::Array(values)) => values
@@ -655,15 +830,17 @@ fn parse_screen_ocr_material(text: &str) -> ParserResult<ScreenOcrMaterial> {
                             "screen OCR manifest segments field must be an array".into(),
                         ));
                     }
-                    None if screenshot.is_some() => Vec::new(),
+                    None if screenshot.is_some() || ocr_run.is_some() => Vec::new(),
                     None => {
                         return Err(ParserError::Parse(
-                            "screen OCR JSON object must contain screenshot or segments[]".into(),
+                            "screen OCR JSON object must contain screenshot, ocr_run, or segments[]"
+                                .into(),
                         ));
                     }
                 };
                 Ok(ScreenOcrMaterial {
                     screenshot,
+                    ocr_run,
                     segments,
                 })
             }
@@ -676,12 +853,14 @@ fn parse_screen_ocr_material(text: &str) -> ParserResult<ScreenOcrMaterial> {
     if looks_like_tesseract_tsv(text) {
         return Ok(ScreenOcrMaterial {
             screenshot: None,
+            ocr_run: None,
             segments: parse_tesseract_tsv_segments(text)?,
         });
     }
 
     Ok(ScreenOcrMaterial {
         screenshot: None,
+        ocr_run: None,
         segments: nonempty_lines(text)
             .into_iter()
             .map(|text| OcrSegment {
@@ -691,6 +870,7 @@ fn parse_screen_ocr_material(text: &str) -> ParserResult<ScreenOcrMaterial> {
                 display_id: None,
                 window_title: None,
                 engine: None,
+                producer_run_id: None,
             })
             .collect(),
     })
@@ -822,6 +1002,7 @@ fn parse_tesseract_tsv_segments(text: &str) -> ParserResult<Vec<OcrSegment>> {
             display_id: None,
             window_title: None,
             engine: Some("tesseract-tsv".to_string()),
+            producer_run_id: None,
         });
     }
 
@@ -829,6 +1010,28 @@ fn parse_tesseract_tsv_segments(text: &str) -> ParserResult<Vec<OcrSegment>> {
         return Err(ParserError::Parse("OCR TSV contained no text rows".into()));
     }
     Ok(segments)
+}
+
+fn apply_audio_run_defaults(run: &AudioTranscriptionRun, segments: &mut [TranscriptSegment]) {
+    for segment in segments {
+        if segment.producer_run_id.is_none() {
+            segment.producer_run_id = Some(run.producer_run_id.clone());
+        }
+        if segment.model_id.is_none() {
+            segment.model_id = Some(run.model_id.clone());
+        }
+    }
+}
+
+fn apply_ocr_run_defaults(run: &ScreenOcrRun, segments: &mut [OcrSegment]) {
+    for segment in segments {
+        if segment.producer_run_id.is_none() {
+            segment.producer_run_id = Some(run.producer_run_id.clone());
+        }
+        if segment.engine.is_none() {
+            segment.engine = Some(run.engine_id.clone());
+        }
+    }
 }
 
 fn parse_json_value(text: &str) -> ParserResult<Option<Value>> {
@@ -904,6 +1107,63 @@ fn audio_recording_intent(
         .build()
 }
 
+fn audio_transcription_run_intent(
+    run: AudioTranscriptionRun,
+    record: &SourceRecord,
+    ctx: &ParserContext,
+) -> ParsedEventIntent {
+    let observed_at = ctx.acquisition_time;
+    let timing = record
+        .source_ts_hint
+        .clone()
+        .unwrap_or(TimingEvidence::StagedAtFallback);
+    let producer_run_id = run.producer_run_id;
+    let model_id = run.model_id;
+    let input_material_ids = run
+        .input_material_ids
+        .filter(|values| !values.is_empty())
+        .unwrap_or_else(|| vec![record.material_id.to_string()]);
+    let occurrence_inputs = input_material_ids.join(",");
+    let payload = json!({
+        "producer_run_id": producer_run_id.clone(),
+        "model_id": model_id.clone(),
+        "model_version": run.model_version,
+        "input_material_ids": input_material_ids,
+        "output_refs": run.output_refs.unwrap_or_default(),
+        "duration_ms": run.duration_ms,
+        "resource_posture": run.resource_posture.unwrap_or_else(|| "operator_controlled".to_string()),
+        "failure_class": run.failure_class,
+        "observed_at": observed_at,
+    });
+    let occurrence_key = OccurrenceKey {
+        source_id: SourceId::from_static("media.audio-transcript"),
+        fields: vec![
+            ("producer_run_id".into(), producer_run_id),
+            ("model_id".into(), model_id),
+            ("input_material_ids".into(), occurrence_inputs),
+        ],
+    };
+
+    ParsedEventIntent::builder()
+        .source_id(ctx.source_id.clone())
+        .parser_id(ParserId::from_static("media-audio-transcript-staged"))
+        .parser_version("1.0.0")
+        .event_source(EventSource::from_static("media.audio"))
+        .event_type(EventType::from_static(
+            "media.audio.transcription_run_observed",
+        ))
+        .payload(payload)
+        .ts_orig(observed_at)
+        .timing(timing)
+        .anchor(MaterialAnchor::ByteRange {
+            start: 0,
+            len: record.bytes.len() as u64,
+        })
+        .occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Document)
+        .build()
+}
+
 fn screenshot_intent(
     screenshot: ScreenshotObservation,
     record: &SourceRecord,
@@ -967,6 +1227,61 @@ fn screenshot_intent(
         .build()
 }
 
+fn screen_ocr_run_intent(
+    run: ScreenOcrRun,
+    record: &SourceRecord,
+    ctx: &ParserContext,
+) -> ParsedEventIntent {
+    let observed_at = ctx.acquisition_time;
+    let timing = record
+        .source_ts_hint
+        .clone()
+        .unwrap_or(TimingEvidence::StagedAtFallback);
+    let producer_run_id = run.producer_run_id;
+    let engine_id = run.engine_id;
+    let input_material_ids = run
+        .input_material_ids
+        .filter(|values| !values.is_empty())
+        .unwrap_or_else(|| vec![record.material_id.to_string()]);
+    let occurrence_inputs = input_material_ids.join(",");
+    let payload = json!({
+        "producer_run_id": producer_run_id.clone(),
+        "engine_id": engine_id.clone(),
+        "engine_version": run.engine_version,
+        "input_material_ids": input_material_ids,
+        "output_refs": run.output_refs.unwrap_or_default(),
+        "duration_ms": run.duration_ms,
+        "resource_posture": run.resource_posture.unwrap_or_else(|| "operator_controlled".to_string()),
+        "failure_class": run.failure_class,
+        "observed_at": observed_at,
+    });
+    let occurrence_key = OccurrenceKey {
+        source_id: SourceId::from_static("media.screen-ocr"),
+        fields: vec![
+            ("producer_run_id".into(), producer_run_id),
+            ("engine_id".into(), engine_id),
+            ("input_material_ids".into(), occurrence_inputs),
+        ],
+    };
+
+    ParsedEventIntent::builder()
+        .source_id(ctx.source_id.clone())
+        .parser_id(ParserId::from_static("media-screen-ocr-staged"))
+        .parser_version("1.0.0")
+        .event_source(EventSource::from_static("media.screen"))
+        .event_type(EventType::from_static("media.screen.ocr_run_observed"))
+        .payload(payload)
+        .ts_orig(observed_at)
+        .timing(timing)
+        .anchor(MaterialAnchor::ByteRange {
+            start: 0,
+            len: record.bytes.len() as u64,
+        })
+        .occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Document)
+        .build()
+}
+
 fn transcript_intent(
     index: usize,
     segment: TranscriptSegment,
@@ -991,6 +1306,8 @@ fn transcript_intent(
         "source_file": source_file,
         "raw_material_id": material_id,
         "model_id": segment.model_id,
+        "producer_run_id": segment.producer_run_id,
+        "timestamp_quality": null,
         "observed_at": observed_at,
     });
     let occurrence_key = OccurrenceKey {
@@ -1066,6 +1383,8 @@ fn ocr_intent(
         "source_file": source_file,
         "raw_material_id": material_id,
         "engine": segment.engine,
+        "producer_run_id": segment.producer_run_id,
+        "timestamp_quality": null,
         "observed_at": observed_at,
     });
     let occurrence_key = OccurrenceKey {
@@ -1369,6 +1688,58 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn audio_manifest_emits_transcription_run_and_propagates_segment_provenance()
+    -> TestResult<()> {
+        let mut parser = MediaAudioTranscriptParser;
+        let record = record_for(
+            br#"{
+              "recording": {
+                "format": "flac",
+                "duration_ms": 4100
+              },
+              "transcription_run": {
+                "producer_run_id": "transcribe-run-a",
+                "model_id": "whisper-large-v3",
+                "model_version": "2026-06",
+                "input_material_ids": ["raw-audio-a"],
+                "output_refs": ["artifact:media.audio.transcript/run-a"],
+                "duration_ms": 980,
+                "resource_posture": "bounded-local-worker"
+              },
+              "segments": [
+                {"text":"run-backed segment","start_ms":0,"end_ms":4100}
+              ]
+            }"#,
+            "audio/session-a/manifest.json",
+        );
+
+        let intents = parser
+            .parse_record(record, &test_ctx("media.audio-transcript"))
+            .await?;
+
+        assert_eq!(intents.len(), 3);
+        assert_eq!(
+            intents[1].event_type.as_str(),
+            "media.audio.transcription_run_observed"
+        );
+        assert_eq!(intents[1].payload["producer_run_id"], "transcribe-run-a");
+        assert_eq!(intents[1].payload["model_id"], "whisper-large-v3");
+        assert_eq!(intents[1].payload["input_material_ids"][0], "raw-audio-a");
+        assert_eq!(
+            intents[1].payload["resource_posture"],
+            "bounded-local-worker"
+        );
+        assert!(intents[1].occurrence_key.is_some());
+        assert_eq!(
+            intents[2].event_type.as_str(),
+            "media.audio.transcript_segment_observed"
+        );
+        assert_eq!(intents[2].payload["producer_run_id"], "transcribe-run-a");
+        assert_eq!(intents[2].payload["model_id"], "whisper-large-v3");
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn ocr_json_segments_emit_bbox_observations() -> TestResult<()> {
         let mut parser = MediaScreenOcrParser;
         let record = record_for(
@@ -1436,6 +1807,59 @@ mod tests {
             "media.screen.ocr_segment_observed"
         );
         assert_eq!(intents[1].payload["text"], "visible code");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn screen_manifest_emits_ocr_run_and_propagates_segment_provenance() -> TestResult<()> {
+        let mut parser = MediaScreenOcrParser;
+        let record = record_for(
+            br#"{
+              "screenshot": {
+                "display_id": "DP-2",
+                "region": [0, 0, 800, 600],
+                "width": 800,
+                "height": 600
+              },
+              "ocr_run": {
+                "producer_run_id": "ocr-run-a",
+                "engine_id": "tesseract",
+                "engine_version": "5.5",
+                "input_material_ids": ["raw-screen-a"],
+                "output_refs": ["artifact:media.screen.ocr/run-a"],
+                "duration_ms": 330,
+                "resource_posture": "bounded-local-worker"
+              },
+              "segments": [
+                {"text":"run-backed OCR","bbox":[4,8,160,24],"confidence":0.95}
+              ]
+            }"#,
+            "screens/session-a/manifest.json",
+        );
+
+        let intents = parser
+            .parse_record(record, &test_ctx("media.screen-ocr"))
+            .await?;
+
+        assert_eq!(intents.len(), 3);
+        assert_eq!(
+            intents[1].event_type.as_str(),
+            "media.screen.ocr_run_observed"
+        );
+        assert_eq!(intents[1].payload["producer_run_id"], "ocr-run-a");
+        assert_eq!(intents[1].payload["engine_id"], "tesseract");
+        assert_eq!(intents[1].payload["input_material_ids"][0], "raw-screen-a");
+        assert_eq!(
+            intents[1].payload["resource_posture"],
+            "bounded-local-worker"
+        );
+        assert!(intents[1].occurrence_key.is_some());
+        assert_eq!(
+            intents[2].event_type.as_str(),
+            "media.screen.ocr_segment_observed"
+        );
+        assert_eq!(intents[2].payload["producer_run_id"], "ocr-run-a");
+        assert_eq!(intents[2].payload["engine"], "tesseract");
         Ok(())
     }
 
