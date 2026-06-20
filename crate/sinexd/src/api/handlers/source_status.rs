@@ -789,6 +789,7 @@ mod tests {
             timed_out_retained_count: 0,
             rejected_count: 0,
             late_confirmation_count: 0,
+            retained_payload_bytes: 0,
             approximate_payload_bytes: 0,
             active_payload_bytes: 0,
             timed_out_retained_payload_bytes: 0,
