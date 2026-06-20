@@ -12,7 +12,9 @@ use sinex_primitives::{
     domain::{EventSource, EventType},
     events::{
         EventPayload,
-        payloads::email::{EmailMessageReceivedPayload, EmailMessageSentPayload},
+        payloads::email::{
+            EmailAttachmentObservedPayload, EmailMessageReceivedPayload, EmailMessageSentPayload,
+        },
     },
     parser::{
         InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -37,7 +39,7 @@ pub struct EmailMailboxParserConfig;
     namespace = "email",
     event_source = "email",
     event_type = "email.message.received",
-    event_types = "email.message.sent",
+    event_types = "email.message.sent, email.attachment.observed",
     adapter = "FileContentDropAdapter",
     implementation = "staged-parser",
     privacy_tier = PrivacyTier::Sensitive,
@@ -78,6 +80,10 @@ impl MaterialParser for EmailMailboxParser {
                     EventSource::from_static("email"),
                     EventType::from_static("email.message.sent"),
                 ),
+                (
+                    EventSource::from_static("email"),
+                    EventType::from_static("email.attachment.observed"),
+                ),
             ],
             privacy_contexts: vec![ProcessingContext::Document, ProcessingContext::Metadata],
             sensitivity_hints: vec![
@@ -112,23 +118,24 @@ impl MaterialParser for EmailMailboxParser {
         let raw_material_id = record.material_id.to_uuid().to_string();
         let occurrence_key =
             occurrence_key(parsed.message_id.as_deref(), &material, &raw_material_id);
+        let attachment_occurrence_prefix = material_fallback_identity(&material, &raw_material_id);
 
         let (event_type, payload) = match event_kind {
             EmailEventKind::Received => {
                 let payload = EmailMessageReceivedPayload {
-                    message_id: parsed.message_id,
+                    message_id: parsed.message_id.clone(),
                     date: parsed.date,
-                    from: parsed.from,
-                    to: parsed.to,
-                    cc: parsed.cc,
-                    bcc: parsed.bcc,
-                    subject: parsed.subject,
-                    in_reply_to: parsed.in_reply_to,
-                    references: parsed.references,
-                    list_id: parsed.list_id,
+                    from: parsed.from.clone(),
+                    to: parsed.to.clone(),
+                    cc: parsed.cc.clone(),
+                    bcc: parsed.bcc.clone(),
+                    subject: parsed.subject.clone(),
+                    in_reply_to: parsed.in_reply_to.clone(),
+                    references: parsed.references.clone(),
+                    list_id: parsed.list_id.clone(),
                     folder: material.folder.clone(),
-                    source_file,
-                    raw_material_id,
+                    source_file: source_file.clone(),
+                    raw_material_id: raw_material_id.clone(),
                     mailbox_format: material.mailbox_format.as_str().to_string(),
                     maildir_subdir: material.maildir_subdir.clone(),
                     maildir_flags: material.maildir_flags.clone(),
@@ -151,19 +158,19 @@ impl MaterialParser for EmailMailboxParser {
             }
             EmailEventKind::Sent => {
                 let payload = EmailMessageSentPayload {
-                    message_id: parsed.message_id,
+                    message_id: parsed.message_id.clone(),
                     date: parsed.date,
-                    from: parsed.from,
-                    to: parsed.to,
-                    cc: parsed.cc,
-                    bcc: parsed.bcc,
-                    subject: parsed.subject,
-                    in_reply_to: parsed.in_reply_to,
-                    references: parsed.references,
-                    list_id: parsed.list_id,
+                    from: parsed.from.clone(),
+                    to: parsed.to.clone(),
+                    cc: parsed.cc.clone(),
+                    bcc: parsed.bcc.clone(),
+                    subject: parsed.subject.clone(),
+                    in_reply_to: parsed.in_reply_to.clone(),
+                    references: parsed.references.clone(),
+                    list_id: parsed.list_id.clone(),
                     folder: material.folder.clone(),
-                    source_file,
-                    raw_material_id,
+                    source_file: source_file.clone(),
+                    raw_material_id: raw_material_id.clone(),
                     mailbox_format: material.mailbox_format.as_str().to_string(),
                     maildir_subdir: material.maildir_subdir.clone(),
                     maildir_flags: material.maildir_flags.clone(),
@@ -186,7 +193,7 @@ impl MaterialParser for EmailMailboxParser {
             }
         };
 
-        Ok(vec![
+        let mut intents = vec![
             ParsedEventIntent::builder()
                 .source_id(SourceId::from_static("email.mailbox"))
                 .parser_id(ParserId::from_static("email-mailbox-rfc822"))
@@ -195,12 +202,56 @@ impl MaterialParser for EmailMailboxParser {
                 .event_type(event_type)
                 .payload(payload)
                 .ts_orig(ts_orig)
-                .timing(timing)
-                .anchor(record.anchor)
+                .timing(timing.clone())
+                .anchor(record.anchor.clone())
                 .occurrence_key(occurrence_key)
                 .privacy_context(ProcessingContext::Document)
                 .build(),
-        ])
+        ];
+
+        for (index, attachment) in parsed.attachments.iter().enumerate() {
+            let attachment_index = u32::try_from(index).unwrap_or(u32::MAX);
+            let payload = EmailAttachmentObservedPayload {
+                message_id: parsed.message_id.clone(),
+                folder: material.folder.clone(),
+                source_file: source_file.clone(),
+                raw_material_id: raw_material_id.clone(),
+                mailbox_format: material.mailbox_format.as_str().to_string(),
+                attachment_index,
+                disposition: attachment.disposition.clone(),
+                filename: attachment.filename.clone(),
+                content_type: attachment.content_type.clone(),
+                content_id: attachment.content_id.clone(),
+                material_policy_ref: "operator.email-mailbox.attachment-deferred".to_string(),
+            };
+            let payload = serde_json::to_value(&payload).map_err(|error| {
+                ParserError::Parse(format!(
+                    "failed to serialize EmailAttachmentObservedPayload: {error}"
+                ))
+            })?;
+            intents.push(
+                ParsedEventIntent::builder()
+                    .source_id(SourceId::from_static("email.mailbox"))
+                    .parser_id(ParserId::from_static("email-mailbox-rfc822"))
+                    .parser_version("1.0.0")
+                    .event_source(EventSource::from_static("email"))
+                    .event_type(EventType::from_static("email.attachment.observed"))
+                    .payload(payload)
+                    .ts_orig(ts_orig)
+                    .timing(timing.clone())
+                    .anchor(record.anchor.clone())
+                    .occurrence_key(attachment_occurrence_key(
+                        parsed.message_id.as_deref(),
+                        &attachment_occurrence_prefix,
+                        attachment,
+                        attachment_index,
+                    ))
+                    .privacy_context(ProcessingContext::Document)
+                    .build(),
+            );
+        }
+
+        Ok(intents)
     }
 }
 
@@ -410,6 +461,15 @@ struct ParsedEmail {
     list_id: Option<String>,
     body_bytes: u64,
     attachment_count: u32,
+    attachments: Vec<ParsedEmailAttachment>,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedEmailAttachment {
+    disposition: String,
+    filename: Option<String>,
+    content_type: Option<String>,
+    content_id: Option<String>,
 }
 
 fn parse_rfc822(record: &SourceRecord) -> ParserResult<ParsedEmail> {
@@ -419,6 +479,7 @@ fn parse_rfc822(record: &SourceRecord) -> ParserResult<ParsedEmail> {
     let (headers, body) = split_headers_body(text);
     let headers = parse_headers(headers);
 
+    let attachments = attachment_headers(text);
     Ok(ParsedEmail {
         message_id: header(&headers, "message-id").and_then(message_id_token),
         date: header(&headers, "date").and_then(parse_rfc822_date),
@@ -431,7 +492,8 @@ fn parse_rfc822(record: &SourceRecord) -> ParserResult<ParsedEmail> {
         references: header(&headers, "references").map_or_else(Vec::new, references_list),
         list_id: header(&headers, "list-id").map(str::to_string),
         body_bytes: body.as_bytes().len() as u64,
-        attachment_count: attachment_count(text),
+        attachment_count: attachments.len().try_into().unwrap_or(u32::MAX),
+        attachments,
     })
 }
 
@@ -521,15 +583,66 @@ fn parse_rfc822_date(value: &str) -> Option<Timestamp> {
     Timestamp::from_unix_timestamp_nanos(parsed.unix_timestamp_nanos())
 }
 
-fn attachment_count(text: &str) -> u32 {
-    text.lines()
-        .filter(|line| {
-            let lower = line.to_ascii_lowercase();
-            lower.starts_with("content-disposition:") && lower.contains("attachment")
-        })
-        .count()
-        .try_into()
-        .unwrap_or(u32::MAX)
+fn attachment_headers(text: &str) -> Vec<ParsedEmailAttachment> {
+    let mut attachments = Vec::new();
+    let mut current_content_type: Option<String> = None;
+    let mut current_content_id: Option<String> = None;
+
+    for line in text.lines() {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name.trim().to_ascii_lowercase();
+        let value = value.trim();
+        match name.as_str() {
+            "content-type" => {
+                current_content_type = Some(value.to_string());
+            }
+            "content-id" => {
+                current_content_id = message_id_token(value);
+            }
+            "content-disposition" => {
+                if !value.to_ascii_lowercase().contains("attachment") {
+                    continue;
+                }
+                attachments.push(ParsedEmailAttachment {
+                    disposition: disposition_token(value).unwrap_or("attachment").to_string(),
+                    filename: disposition_parameter(value, "filename")
+                        .or_else(|| disposition_parameter(value, "filename*")),
+                    content_type: current_content_type.clone(),
+                    content_id: current_content_id.clone(),
+                });
+                current_content_type = None;
+                current_content_id = None;
+            }
+            _ => {}
+        }
+    }
+
+    attachments
+}
+
+fn disposition_token(value: &str) -> Option<&str> {
+    value
+        .split(';')
+        .next()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+}
+
+fn disposition_parameter(value: &str, key: &str) -> Option<String> {
+    value.split(';').skip(1).find_map(|part| {
+        let (name, raw_value) = part.trim().split_once('=')?;
+        if !name.trim().eq_ignore_ascii_case(key) {
+            return None;
+        }
+        let value = raw_value.trim().trim_matches('"');
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
+    })
 }
 
 fn folder_from_path(path: Option<&Utf8PathBuf>) -> Option<String> {
@@ -602,6 +715,32 @@ fn occurrence_key(
     OccurrenceKey {
         source_id: SourceId::from_static("email.mailbox"),
         fields,
+    }
+}
+
+fn attachment_occurrence_key(
+    message_id: Option<&str>,
+    fallback_message_identity: &str,
+    attachment: &ParsedEmailAttachment,
+    attachment_index: u32,
+) -> OccurrenceKey {
+    OccurrenceKey {
+        source_id: SourceId::from_static("email.mailbox"),
+        fields: vec![
+            (
+                "message_id_or_material".to_string(),
+                message_id.unwrap_or(fallback_message_identity).to_string(),
+            ),
+            ("attachment_index".to_string(), attachment_index.to_string()),
+            (
+                "filename".to_string(),
+                attachment.filename.as_deref().unwrap_or("").to_string(),
+            ),
+            (
+                "content_id".to_string(),
+                attachment.content_id.as_deref().unwrap_or("").to_string(),
+            ),
+        ],
     }
 }
 
@@ -727,6 +866,51 @@ mod tests {
         assert_eq!(intents[0].event_type.as_str(), "email.message.sent");
         assert_eq!(intents[0].payload["message_id"], "sent-1@example.com");
         assert_eq!(intents[0].payload["folder"], "Sent");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn attachment_headers_emit_attachment_observation_without_fetching_bytes()
+    -> TestResult<()> {
+        let mut parser = EmailMailboxParser;
+        let record = record_for(
+            b"Message-ID: <attach-1@example.com>\n\
+From: Alice <alice@example.com>\n\
+To: Bob <bob@example.com>\n\
+Subject: Attachment\n\
+Content-Type: application/pdf; name=\"report.pdf\"\n\
+Content-ID: <part-1@example.com>\n\
+Content-Disposition: attachment; filename=\"report.pdf\"\n\
+\n\
+binary bytes are not decoded by this staged envelope parser\n",
+            "inbox/with-attachment.eml",
+        );
+
+        let intents = parser.parse_record(record, &test_ctx()).await?;
+
+        assert_eq!(intents.len(), 2);
+        assert_eq!(intents[0].event_type.as_str(), "email.message.received");
+        assert_eq!(intents[0].payload["attachment_count"], 1);
+        assert_eq!(intents[1].event_type.as_str(), "email.attachment.observed");
+        assert_eq!(intents[1].payload["message_id"], "attach-1@example.com");
+        assert_eq!(intents[1].payload["filename"], "report.pdf");
+        assert_eq!(
+            intents[1].payload["content_type"],
+            "application/pdf; name=\"report.pdf\""
+        );
+        assert_eq!(intents[1].payload["content_id"], "part-1@example.com");
+        assert_eq!(
+            intents[1].payload["material_policy_ref"],
+            "operator.email-mailbox.attachment-deferred"
+        );
+        assert_eq!(
+            occurrence_field(&intents[1], "message_id_or_material"),
+            Some("attach-1@example.com")
+        );
+        assert_eq!(
+            occurrence_field(&intents[1], "filename"),
+            Some("report.pdf")
+        );
         Ok(())
     }
 
