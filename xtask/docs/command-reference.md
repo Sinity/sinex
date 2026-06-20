@@ -345,6 +345,14 @@ Start the infrastructure
 
 Stop the infrastructure
 
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--all-checkouts` | no | no | Stop/clean every checkout-local dev-state root under /var/cache/sinex/$USER |
+| `--stale-only` | no | no | Only remove stale/malformed lock and PID files; do not stop live processes |
+| `--dry-run` | no | no | Print planned actions without stopping processes or removing files |
+
 
 ### `xtask infra status`
 

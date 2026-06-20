@@ -108,10 +108,16 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 examples: &[
                     "xtask infra start",
                     "xtask infra status",
+                    "xtask infra status --all-checkouts",
                     "xtask infra stop",
+                    "xtask infra stop --all-checkouts --stale-only",
+                    "xtask infra stop --all-checkouts --dry-run",
                 ],
                 notes: &[
                     "`xtask infra status`, `xtask run list`, and help/listing commands are read-only probes; the devshell wrapper must not start checkout-local Postgres, NATS, or sinexd for them.",
+                    "`xtask infra stop` is not read-only, but it is bootstrap-free: stopping/cleanup must not start SQLx Postgres first.",
+                    "`xtask infra stop --all-checkouts --stale-only` removes stale checkout-local locks and PID files without stopping live processes.",
+                    "`xtask infra stop --all-checkouts` stops only checkout-local processes whose /proc command line proves ownership of the matching dev-state root.",
                     "Commands that compile or execute SQLx-backed code still bootstrap the checkout-local Postgres schema through the xtask wrapper.",
                 ],
             },
