@@ -7,10 +7,10 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Context, Result};
 use sqlx::PgPool;
 
-use crate::runner::TestRunner;
+use crate::runner::{TestOutcome, TestRunner};
 
 pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
     println!("\n── Smoke tests ────────────────────────────────");
@@ -123,21 +123,43 @@ fn test_service_active(runner: &mut TestRunner, service: &str) {
 async fn test_filesystem_pipeline(runner: &mut TestRunner, pool: &PgPool) {
     let name = "filesystem events captured to DB within 30s";
 
-    let before = event_count(pool).await;
+    let Some(before) = observed_event_count(runner, name, pool).await else {
+        return;
+    };
     let watched = "/var/lib/sinex/watched";
-    let _ = std::fs::create_dir_all(watched);
+    if let Err(error) = std::fs::create_dir_all(watched)
+        .with_context(|| format!("failed to create watched directory {watched}"))
+    {
+        runner.record(
+            name,
+            TestOutcome::EvidenceMissing,
+            &format!("filesystem fixture setup failed: {error:#}"),
+        );
+        return;
+    }
 
     for i in 0..5_u32 {
-        let _ = std::fs::write(
+        if let Err(error) = std::fs::write(
             format!("{watched}/smoke-test-{i}.txt"),
             format!("smoke test {i}"),
-        );
+        )
+        .with_context(|| format!("failed to write smoke-test-{i}.txt"))
+        {
+            runner.record(
+                name,
+                TestOutcome::EvidenceMissing,
+                &format!("filesystem fixture write failed: {error:#}"),
+            );
+            return;
+        }
     }
 
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let after = event_count(pool).await;
+        let Some(after) = observed_event_count(runner, name, pool).await else {
+            return;
+        };
         if after > before {
             runner.pass(name);
             return;
@@ -155,17 +177,30 @@ async fn test_filesystem_pipeline(runner: &mut TestRunner, pool: &PgPool) {
 async fn test_batch_capture(runner: &mut TestRunner, pool: &PgPool) {
     let name = "batch capture: 20 files → event count increases";
 
-    let before = event_count(pool).await;
+    let Some(before) = observed_event_count(runner, name, pool).await else {
+        return;
+    };
     let watched = "/var/lib/sinex/watched";
 
     for i in 0..20_u32 {
-        let _ = std::fs::write(format!("{watched}/batch-{i}.txt"), format!("batch {i}"));
+        if let Err(error) = std::fs::write(format!("{watched}/batch-{i}.txt"), format!("batch {i}"))
+            .with_context(|| format!("failed to write batch-{i}.txt"))
+        {
+            runner.record(
+                name,
+                TestOutcome::EvidenceMissing,
+                &format!("batch fixture write failed: {error:#}"),
+            );
+            return;
+        }
     }
 
     let deadline = Instant::now() + Duration::from_secs(40);
     loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let after = event_count(pool).await;
+        let Some(after) = observed_event_count(runner, name, pool).await else {
+            return;
+        };
         if after > before {
             runner.pass(name);
             return;
@@ -215,19 +250,32 @@ async fn test_service_restart(runner: &mut TestRunner, pool: &PgPool) {
     }
 
     // Create files after restart and verify pipeline still flows
-    let before = event_count(pool).await;
+    let Some(before) = observed_event_count(runner, name, pool).await else {
+        return;
+    };
     let watched = "/var/lib/sinex/watched";
     for i in 0..5_u32 {
-        let _ = std::fs::write(
+        if let Err(error) = std::fs::write(
             format!("{watched}/post-restart-{i}.txt"),
             format!("post-restart {i}"),
-        );
+        )
+        .with_context(|| format!("failed to write post-restart-{i}.txt"))
+        {
+            runner.record(
+                name,
+                TestOutcome::EvidenceMissing,
+                &format!("post-restart fixture write failed: {error:#}"),
+            );
+            return;
+        }
     }
 
     let drain_deadline = Instant::now() + Duration::from_secs(30);
     loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let after = event_count(pool).await;
+        let Some(after) = observed_event_count(runner, name, pool).await else {
+            return;
+        };
         if after > before {
             runner.pass(name);
             return;
@@ -260,10 +308,23 @@ async fn test_db_queryable(runner: &mut TestRunner, pool: &PgPool) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-async fn event_count(pool: &PgPool) -> i64 {
+async fn event_count(pool: &PgPool) -> Result<i64> {
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
         .fetch_one(pool)
         .await
-        .ok()
-        .unwrap_or(0)
+        .context("failed to count core.events rows")
+}
+
+async fn observed_event_count(runner: &mut TestRunner, name: &str, pool: &PgPool) -> Option<i64> {
+    match event_count(pool).await {
+        Ok(count) => Some(count),
+        Err(error) => {
+            runner.record(
+                name,
+                TestOutcome::EvidenceMissing,
+                &format!("event count query failed: {error:#}"),
+            );
+            None
+        }
+    }
 }

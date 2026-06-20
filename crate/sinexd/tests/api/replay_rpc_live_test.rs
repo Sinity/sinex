@@ -13,7 +13,9 @@ use std::time::Duration;
 use xtask::sandbox::{EnvGuard, sinex_test};
 
 mod common;
-use common::{FakeReplayScanSource, LiveGateway, spawn_fake_replay_scan_source};
+use common::{
+    FakeReplayScanSource, LiveGateway, await_fake_replay_scan_source, spawn_fake_replay_scan_source,
+};
 
 const RPC_TOKEN: &str = "live-rpc-test-token:admin";
 
@@ -53,12 +55,7 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
         ctx.pool.clone(),
         nats.clone(),
         env,
-        FakeReplayScanSource::from_replay_command(
-            "test-source",
-            "test-source",
-            "file.created",
-            1,
-        ),
+        FakeReplayScanSource::from_replay_command("test-source", "test-source", "file.created", 1),
     )
     .await?;
 
@@ -67,17 +64,15 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
 
     // ── Step 1: Plan via HTTP RPC ───────────────────────────────────
     let plan_result = gw
-        .create_replay_operation(
-            json!({
-                "scope": {
-                    "module_name": "test-source",
-                    "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
-                    "material_filter": [material_id.as_uuid().to_string()],
-                    "filters": { "event_types": ["file.created"] }
-                },
-                "actor": "admin:test-user"
-            }),
-        )
+        .create_replay_operation(json!({
+            "scope": {
+                "source_name": "test-source",
+                "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
+                "material_filter": [material_id.as_uuid().to_string()],
+                "filters": { "event_types": ["file.created"] }
+            },
+            "actor": "admin:test-user"
+        }))
         .await?;
 
     let op_id = LiveGateway::replay_operation_id(&plan_result)?;
@@ -171,7 +166,7 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
         "target event should be in audit.archived_events"
     );
 
-    scan_handle.await?;
+    await_fake_replay_scan_source(scan_handle, "HTTP RPC lifecycle").await?;
     Ok(())
 }
 
@@ -191,15 +186,13 @@ async fn replay_cancel_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<(
 
     // Plan
     let plan_result = gw
-        .create_replay_operation(
-            json!({
-                "scope": {
-                    "module_name": "test-source",
-                    "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
-                },
-                "actor": "admin:test-user"
-            }),
-        )
+        .create_replay_operation(json!({
+            "scope": {
+                "source_name": "test-source",
+                "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
+            },
+            "actor": "admin:test-user"
+        }))
         .await?;
     let op_id = LiveGateway::replay_operation_id(&plan_result)?;
 
