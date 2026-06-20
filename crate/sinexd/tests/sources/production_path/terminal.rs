@@ -175,6 +175,12 @@ mod tests {
     async fn parse_kitty_osc_socket_fixture(
         fixture_data: &[u8],
     ) -> TestResult<Vec<sinex_primitives::parser::ParsedEventIntent>> {
+        parse_kitty_osc_socket_chunks(&[fixture_data]).await
+    }
+
+    async fn parse_kitty_osc_socket_chunks(
+        fixture_chunks: &[&[u8]],
+    ) -> TestResult<Vec<sinex_primitives::parser::ParsedEventIntent>> {
         use futures::StreamExt;
         use sinex_primitives::Uuid;
         use sinex_primitives::events::SourceMaterial;
@@ -202,10 +208,6 @@ mod tests {
         };
         let mut stream = adapter.open(material_id, &config, None).await?;
 
-        let mut producer = tokio::net::UnixStream::connect(&socket_path).await?;
-        producer.write_all(fixture_data).await?;
-        drop(producer);
-
         let source_id = SourceId::from_static("terminal.kitty-osc-live");
         let make_ctx = |record: &sinex_primitives::parser::SourceRecord| -> ParserContext {
             ParserContext {
@@ -221,23 +223,42 @@ mod tests {
 
         let mut parser = KittyOscParser;
         let mut events = Vec::new();
-        let expected_records = fixture_data
-            .split(|byte| *byte == b'\n')
-            .filter(|line| !line.is_empty())
-            .count();
 
-        for _ in 0..expected_records {
-            let record = timeout(Duration::from_secs(1), stream.next())
-                .await?
-                .ok_or_else(|| color_eyre::eyre::eyre!("Kitty OSC receiver stream ended"))??;
-            events.extend(
-                parser
-                    .parse_record(record.clone(), &make_ctx(&record))
-                    .await?,
-            );
+        for fixture_data in fixture_chunks {
+            let expected_records = fixture_data
+                .split(|byte| *byte == b'\n')
+                .filter(|line| !line.is_empty())
+                .count();
+            let mut producer = tokio::net::UnixStream::connect(&socket_path).await?;
+            producer.write_all(fixture_data).await?;
+            drop(producer);
+
+            for _ in 0..expected_records {
+                let record = timeout(Duration::from_secs(1), stream.next())
+                    .await?
+                    .ok_or_else(|| color_eyre::eyre::eyre!("Kitty OSC receiver stream ended"))??;
+                events.extend(
+                    parser
+                        .parse_record(record.clone(), &make_ctx(&record))
+                        .await?,
+                );
+            }
         }
 
         Ok(events)
+    }
+
+    fn occurrence_field<'a>(
+        event: &'a sinex_primitives::parser::ParsedEventIntent,
+        name: &str,
+    ) -> Option<&'a str> {
+        event
+            .occurrence_key
+            .as_ref()?
+            .fields
+            .iter()
+            .find(|(field, _)| field == name)
+            .map(|(_, value)| value.as_str())
     }
 
     #[sinex_test]
@@ -266,6 +287,48 @@ mod tests {
             "OSC sequence should participate in occurrence identity"
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_kitty_osc_live_socket_adapter_accepts_terminal_restart() -> TestResult<()> {
+        let first =
+            br#"{"sequence":1,"command":"pwd","cwd":"/realm/project/sinex","kitty_window_id":"window-1","kitty_tab_id":"tab-1","timestamp_ns":1700000000000000000}
+"#;
+        let second =
+            br#"{"sequence":2,"command":"git status","cwd":"/realm/project/sinex","kitty_window_id":"window-1","kitty_tab_id":"tab-1","timestamp_ns":1700000001000000000}
+"#;
+        let events = parse_kitty_osc_socket_chunks(&[&first[..], &second[..]]).await?;
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].payload["command"], "pwd");
+        assert_eq!(events[1].payload["command"], "git status");
+        assert_eq!(
+            occurrence_field(&events[0], "sequence_or_frame"),
+            Some("sequence:1")
+        );
+        assert_eq!(
+            occurrence_field(&events[1], "sequence_or_frame"),
+            Some("sequence:2")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_kitty_osc_live_duplicate_sequence_keeps_occurrence_identity() -> TestResult<()>
+    {
+        let frame =
+            br#"{"sequence":42,"command":"git status","cwd":"/realm/project/sinex","exit_status":0,"execution_time_ms":12,"shell_type":"zsh","kitty_window_id":"window-1","kitty_tab_id":"tab-1","timestamp_ns":1700000000000000000}
+"#;
+        let events = parse_kitty_osc_socket_chunks(&[&frame[..], &frame[..]]).await?;
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].payload, events[1].payload);
+        assert_eq!(
+            events[0].occurrence_key.as_ref(),
+            events[1].occurrence_key.as_ref(),
+            "duplicate Kitty OSC frames should keep one deterministic occurrence identity for admission dedupe"
+        );
         Ok(())
     }
 
