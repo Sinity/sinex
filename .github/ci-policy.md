@@ -21,6 +21,11 @@ workspace passes are phase-boundary checks, not a tax on every small PR.
   command-reference --check`, `xtask docs schema-bundle --check`, or
   `xtask docs check` when the PR changes command/schema/docs-generation
   surfaces.
+- **Impact explain/audit evidence when scope is disputed** — Record
+  `xtask impact explain --json` when the selected focused test set is part of
+  the review argument. Run `xtask impact audit --sample-skips N` for
+  phase-boundary verification-policy changes, impact-planner changes, or
+  false-close audits where skipped test coverage is itself under review.
 - **`xtask schema strict-diff` only when schema/contracts changed** — Live
   schema drift belongs to schema or payload-contract PRs, not ordinary test or
   runtime refactors.
@@ -84,6 +89,7 @@ workspace passes are phase-boundary checks, not a tax on every small PR.
 | `docs (check)` | Local before merge when generated surfaces may drift | ~30 sec |
 | `schema (contract drift)` | Local before merge when schema/payload contracts change | ~1 min |
 | `schema (bootstrap)` | Local for schema changes; manual workflow if requested | ~2 min |
+| `impact audit` | Local for impact-planner or verification-policy changes | sample-size dependent |
 | `test (heavy)` | Local/manual for heavy-risk surfaces | ~15-30 min |
 | `test (vm smoke)` | Local/manual for NixOS/deployment changes | ~5-10 min |
 | `test (vm integration)` | Local/manual for restart/replay/cascade changes | ~15-30 min |
