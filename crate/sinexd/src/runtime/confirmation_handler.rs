@@ -1533,9 +1533,10 @@ mod tests {
     async fn delayed_confirmation_feedback_logs_are_sparse_and_journald_suppressed()
     -> TestResult<()> {
         const LATE_EVENTS: usize = 20;
+        const OVERFLOW_ATTEMPTS: usize = 8;
         let buffer = ConfirmationBuffer::with_capacity_and_grace(
             Duration::from_millis(0),
-            64,
+            LATE_EVENTS,
             Duration::from_secs(60),
         );
         let old = Timestamp::from_unix_timestamp(1).expect("timestamp in range");
@@ -1560,11 +1561,39 @@ mod tests {
             }));
             assert!(buffer.add_provisional(event).await);
         }
+        for index in 0..OVERFLOW_ATTEMPTS {
+            let rejected = buffer
+                .add_provisional_with_pressure(provisional(
+                    "system.journald",
+                    "journald.entry.written",
+                    old,
+                    json!({
+                        "MESSAGE": format!("overflow feedback candidate {index}"),
+                        "_SYSTEMD_UNIT": "sinexd.service"
+                    }),
+                ))
+                .await;
+            assert!(!rejected.accepted);
+            assert_eq!(
+                rejected.rejection_reason,
+                Some(ConfirmationBufferRejectionReason::EventCapacity)
+            );
+            assert_eq!(rejected.runtime_action(), "throttle");
+            assert_eq!(rejected.rejected_redelivery_delay_ms(), Some(500));
+        }
 
         assert_eq!(buffer.check_timeouts().await.len(), LATE_EVENTS);
         let before = buffer.snapshot().await;
         assert_eq!(before.pending_count, LATE_EVENTS);
         assert_eq!(before.timed_out_retained_count, LATE_EVENTS);
+        assert_eq!(before.rejected_count, OVERFLOW_ATTEMPTS as u64);
+        assert_eq!(before.active_payload_bytes, 0);
+        assert!(before.timed_out_retained_payload_bytes > 0);
+        assert_eq!(
+            before.retained_payload_bytes,
+            before.timed_out_retained_payload_bytes
+        );
+        assert_eq!(before.runtime_action, "throttle");
 
         let captured = CapturedLogs::default();
         let subscriber = tracing_subscriber::fmt()
@@ -1589,6 +1618,15 @@ mod tests {
         assert_eq!(after.pending_count, 0);
         assert_eq!(after.timed_out_retained_count, 0);
         assert_eq!(after.late_confirmation_count, LATE_EVENTS as u64);
+        assert_eq!(after.rejected_count, OVERFLOW_ATTEMPTS as u64);
+        assert_eq!(after.retained_payload_bytes, 0);
+        assert_eq!(after.approximate_payload_bytes, 0);
+        assert_eq!(after.active_payload_bytes, 0);
+        assert_eq!(after.timed_out_retained_payload_bytes, 0);
+        assert!(
+            after.approximate_payload_bytes_by_kind.is_empty(),
+            "confirmed backlog should not leave payload attribution behind"
+        );
 
         let log_output = captured.output();
         let feedback_lines = log_output
