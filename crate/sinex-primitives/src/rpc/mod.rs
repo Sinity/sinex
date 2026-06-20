@@ -279,6 +279,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         sources::SOURCES_COVERAGE_METHOD.info(),
         sources::SOURCES_DRIFT_LIST_METHOD.info(),
         sources::SOURCES_LIST_METHOD.info(),
+        sources::SOURCES_PACKAGE_COMPLETENESS_METHOD.info(),
         sources::SOURCES_PRESETS_LIST_METHOD.info(),
         sources::SOURCES_READINESS_GET_METHOD.info(),
         sources::SOURCES_READINESS_LIST_METHOD.info(),
