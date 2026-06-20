@@ -32,13 +32,7 @@ mod tests {
     // document.staging
     // -------------------------------------------------------------------------
 
-    #[sinex_test]
-    async fn document_staging_obligations() -> TestResult<()> {
-        crate::run_production_path_case(DOCUMENT_STAGING_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
+    crate::production_path_case_test!(document_staging_obligations, DOCUMENT_STAGING_CASE);
 
     #[sinex_test]
     async fn docs_library_index_directory_entry_obligations() -> TestResult<()> {

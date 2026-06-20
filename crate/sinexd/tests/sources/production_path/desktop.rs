@@ -69,41 +69,18 @@ mod tests {
         &["clipboard.copied"],
     );
 
-    // -------------------------------------------------------------------------
-    // desktop.activitywatch — window.active
-    // -------------------------------------------------------------------------
-
-    #[sinex_test]
-    async fn desktop_activitywatch_window_obligations() -> TestResult<()> {
-        crate::run_production_path_case(ACTIVITYWATCH_WINDOW_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
-
-    // -------------------------------------------------------------------------
-    // desktop.activitywatch — afk.changed
-    // -------------------------------------------------------------------------
-
-    #[sinex_test]
-    async fn desktop_activitywatch_afk_obligations() -> TestResult<()> {
-        crate::run_production_path_case(ACTIVITYWATCH_AFK_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
-
-    // -------------------------------------------------------------------------
-    // desktop.activitywatch — browser.tab.active
-    // -------------------------------------------------------------------------
-
-    #[sinex_test]
-    async fn desktop_activitywatch_web_obligations() -> TestResult<()> {
-        crate::run_production_path_case(ACTIVITYWATCH_WEB_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
+    crate::production_path_case_test!(
+        desktop_activitywatch_window_obligations,
+        ACTIVITYWATCH_WINDOW_CASE
+    );
+    crate::production_path_case_test!(
+        desktop_activitywatch_afk_obligations,
+        ACTIVITYWATCH_AFK_CASE
+    );
+    crate::production_path_case_test!(
+        desktop_activitywatch_web_obligations,
+        ACTIVITYWATCH_WEB_CASE
+    );
 
     #[sinex_test]
     async fn desktop_activitywatch_titles_are_not_parser_redacted() -> TestResult<()> {
@@ -150,17 +127,7 @@ mod tests {
         Ok(())
     }
 
-    // -------------------------------------------------------------------------
-    // desktop.clipboard
-    // -------------------------------------------------------------------------
-
-    #[sinex_test]
-    async fn desktop_clipboard_obligations() -> TestResult<()> {
-        crate::run_production_path_case(CLIPBOARD_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
+    crate::production_path_case_test!(desktop_clipboard_obligations, CLIPBOARD_CASE);
 
     // -------------------------------------------------------------------------
     // desktop.window-manager
