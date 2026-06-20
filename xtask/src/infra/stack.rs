@@ -317,6 +317,55 @@ pub struct AllCheckoutsTotals {
     pub state_bytes: u64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AllCheckoutsCleanup {
+    pub base_dir: PathBuf,
+    pub dry_run: bool,
+    pub stale_only: bool,
+    pub checkouts: Vec<CheckoutCleanup>,
+    pub totals: CleanupTotals,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CheckoutCleanup {
+    pub cache_root: PathBuf,
+    pub dev_state_dir: PathBuf,
+    pub checkout_path: Option<PathBuf>,
+    pub actions: Vec<CleanupAction>,
+    pub skipped: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CleanupAction {
+    pub action: CleanupActionKind,
+    pub target: PathBuf,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupActionKind {
+    StopPostgres,
+    StopNats,
+    RemoveStalePostgresPid,
+    RemoveMalformedPostgresPid,
+    RemoveStaleNatsPid,
+    RemoveMalformedNatsPid,
+    RemoveStaleLock,
+    RemoveMalformedLock,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct CleanupTotals {
+    pub checkouts: usize,
+    pub actions: usize,
+    pub skipped: usize,
+    pub stopped_postgres: usize,
+    pub stopped_nats: usize,
+    pub removed_files: usize,
+}
+
 #[derive(Debug)]
 pub struct DirectorySizeProbe {
     pub bytes: u64,
@@ -417,6 +466,133 @@ impl AllCheckoutsStatus {
             totals,
             issues: Vec::new(),
         }
+    }
+}
+
+impl AllCheckoutsCleanup {
+    pub fn run(
+        base_dir: PathBuf,
+        roots: Vec<CheckoutInventoryRoot>,
+        dry_run: bool,
+        stale_only: bool,
+    ) -> Result<Self> {
+        let mut checkouts = Vec::new();
+        let mut warnings = Vec::new();
+        let mut totals = CleanupTotals {
+            checkouts: roots.len(),
+            ..CleanupTotals::default()
+        };
+
+        for root in roots {
+            let cleanup = CheckoutCleanup::run(root, dry_run, stale_only)?;
+            totals.actions += cleanup.actions.len();
+            totals.skipped += cleanup.skipped.len();
+            for action in &cleanup.actions {
+                match action.action {
+                    CleanupActionKind::StopPostgres => totals.stopped_postgres += 1,
+                    CleanupActionKind::StopNats => totals.stopped_nats += 1,
+                    CleanupActionKind::RemoveStalePostgresPid
+                    | CleanupActionKind::RemoveMalformedPostgresPid
+                    | CleanupActionKind::RemoveStaleNatsPid
+                    | CleanupActionKind::RemoveMalformedNatsPid
+                    | CleanupActionKind::RemoveStaleLock
+                    | CleanupActionKind::RemoveMalformedLock => totals.removed_files += 1,
+                }
+            }
+            warnings.extend(cleanup.skipped.iter().cloned());
+            checkouts.push(cleanup);
+        }
+
+        checkouts.sort_by(|left, right| left.cache_root.cmp(&right.cache_root));
+        Ok(Self {
+            base_dir,
+            dry_run,
+            stale_only,
+            checkouts,
+            totals,
+            warnings,
+        })
+    }
+}
+
+impl CheckoutCleanup {
+    fn run(root: CheckoutInventoryRoot, dry_run: bool, stale_only: bool) -> Result<Self> {
+        let config = StackConfig::from_inventory_root(&root);
+        let status = CheckoutInfraStatus::gather(root.clone());
+        let mut actions = Vec::new();
+        let mut skipped = Vec::new();
+
+        cleanup_lock(
+            &config.state_dir.join(".lock"),
+            &root.lock,
+            dry_run,
+            &mut actions,
+        )?;
+        cleanup_pid_file(
+            &config.pg_pid_file(),
+            status.postgres.pid_state,
+            CleanupActionKind::RemoveStalePostgresPid,
+            CleanupActionKind::RemoveMalformedPostgresPid,
+            dry_run,
+            &mut actions,
+        )?;
+        cleanup_pid_file(
+            &config.nats_pid_file(),
+            status.nats.pid_state,
+            CleanupActionKind::RemoveStaleNatsPid,
+            CleanupActionKind::RemoveMalformedNatsPid,
+            dry_run,
+            &mut actions,
+        )?;
+
+        if !stale_only {
+            if let Some(pid) = status.postgres.pid
+                && status.postgres.pid_state == ServicePidState::Running
+            {
+                if postgres_pid_is_dev_owned(pid, &config.pg_data()) {
+                    if !dry_run {
+                        pg_stop(&config, false)?;
+                    }
+                    actions.push(CleanupAction {
+                        action: CleanupActionKind::StopPostgres,
+                        target: config.pg_data(),
+                        dry_run,
+                    });
+                } else {
+                    skipped.push(format!(
+                        "skipped postgres pid {pid}: /proc cmdline does not prove ownership of {}",
+                        config.pg_data().display()
+                    ));
+                }
+            }
+            if let Some(pid) = status.nats.pid
+                && status.nats.pid_state == ServicePidState::Running
+            {
+                if nats_pid_is_dev_owned(pid, &config.nats_config()) {
+                    if !dry_run {
+                        nats_stop(&config, false)?;
+                    }
+                    actions.push(CleanupAction {
+                        action: CleanupActionKind::StopNats,
+                        target: config.nats_config(),
+                        dry_run,
+                    });
+                } else {
+                    skipped.push(format!(
+                        "skipped nats pid {pid}: /proc cmdline does not prove ownership of {}",
+                        config.nats_config().display()
+                    ));
+                }
+            }
+        }
+
+        Ok(Self {
+            cache_root: status.cache_root,
+            dev_state_dir: status.dev_state_dir,
+            checkout_path: status.checkout_path,
+            actions,
+            skipped,
+        })
     }
 }
 
@@ -1085,6 +1261,92 @@ fn remediation_for_checkout(
     commands
 }
 
+fn cleanup_lock(
+    path: &Path,
+    lock: &LockInspection,
+    dry_run: bool,
+    actions: &mut Vec<CleanupAction>,
+) -> Result<()> {
+    let action = match lock {
+        LockInspection::Missing | LockInspection::Live(_) => return Ok(()),
+        LockInspection::Stale(_) => CleanupActionKind::RemoveStaleLock,
+        LockInspection::Malformed(_) => CleanupActionKind::RemoveMalformedLock,
+    };
+    remove_file_if_present(path, "checkout lock", dry_run)?;
+    actions.push(CleanupAction {
+        action,
+        target: path.to_path_buf(),
+        dry_run,
+    });
+    Ok(())
+}
+
+fn cleanup_pid_file(
+    path: &Path,
+    state: ServicePidState,
+    stale_action: CleanupActionKind,
+    malformed_action: CleanupActionKind,
+    dry_run: bool,
+    actions: &mut Vec<CleanupAction>,
+) -> Result<()> {
+    let action = match state {
+        ServicePidState::Missing | ServicePidState::Running => return Ok(()),
+        ServicePidState::Stale => stale_action,
+        ServicePidState::Malformed => malformed_action,
+    };
+    remove_file_if_present(path, "pid file", dry_run)?;
+    actions.push(CleanupAction {
+        action,
+        target: path.to_path_buf(),
+        dry_run,
+    });
+    Ok(())
+}
+
+fn remove_file_if_present(path: &Path, label: &str, dry_run: bool) -> Result<()> {
+    if dry_run || !path.exists() {
+        return Ok(());
+    }
+    fs::remove_file(path).wrap_err_with(|| format!("failed to remove {label} {}", path.display()))
+}
+
+fn postgres_pid_is_dev_owned(pid: u32, data_dir: &Path) -> bool {
+    let args = proc_cmdline_args(pid);
+    args.iter().any(|arg| arg.ends_with("postgres"))
+        && args.iter().any(|arg| Path::new(arg) == data_dir)
+}
+
+fn nats_pid_is_dev_owned(pid: u32, config_path: &Path) -> bool {
+    let args = proc_cmdline_args(pid);
+    args.iter().any(|arg| arg.ends_with("nats-server"))
+        && args.iter().any(|arg| Path::new(arg) == config_path)
+}
+
+fn proc_cmdline_args(pid: u32) -> Vec<String> {
+    let path = PathBuf::from(format!("/proc/{pid}/cmdline"));
+    proc_cmdline_args_from_path(&path)
+}
+
+fn proc_cmdline_args_from_path(path: &Path) -> Vec<String> {
+    let Ok(mut file) = fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut bytes = Vec::new();
+    if file.read_to_end(&mut bytes).is_err() {
+        return Vec::new();
+    }
+    parse_cmdline_bytes(&bytes)
+}
+
+fn parse_cmdline_bytes(bytes: &[u8]) -> Vec<String> {
+    bytes
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| std::str::from_utf8(part).ok())
+        .map(str::to_string)
+        .collect()
+}
+
 #[must_use]
 pub fn dir_size(path: &Path) -> DirectorySizeProbe {
     if !path.exists() {
@@ -1209,13 +1471,14 @@ pub fn list_snapshots(dir: &Path) -> SnapshotListProbe {
 mod tests {
     use super::StackConfig;
     use super::{
-        AllCheckoutsStatus, GIT_REPOSITORY_ENV_KEYS, collect_snapshot_names, dir_size,
-        discover_nats_port, git_subprocess, list_snapshots, parse_proc_stat_ppid,
-        probe_annex_available, require_successful_command, service_pid_state,
-        sync_event_payload_schemas_for_database_url,
+        AllCheckoutsCleanup, AllCheckoutsStatus, CleanupActionKind, GIT_REPOSITORY_ENV_KEYS,
+        collect_snapshot_names, dir_size, discover_nats_port, git_subprocess, list_snapshots,
+        parse_cmdline_bytes, parse_proc_stat_ppid, probe_annex_available,
+        require_successful_command, service_pid_state, sync_event_payload_schemas_for_database_url,
     };
-    use crate::infra::state::{CheckoutInventoryRoot, LockInspection};
+    use crate::infra::state::{CheckoutInventoryRoot, LockInfo, LockInspection};
     use crate::sandbox::prelude::*;
+    use sinex_primitives::temporal::Timestamp;
     use std::ffi::OsString;
     use std::fs;
     use std::os::unix::process::ExitStatusExt;
@@ -1293,6 +1556,90 @@ port = 4310
         );
         assert!(!status.checkouts[0].remediation.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn all_checkouts_cleanup_removes_stale_lock_and_pid_files() -> Result<()> {
+        let base = tempfile::tempdir()?;
+        let checkout = tempfile::tempdir()?;
+        let cache_root = base.path().join("hash123");
+        let dev_state = cache_root.join("dev-state");
+        let pg_pid = dev_state.join("data/postgres/postmaster.pid");
+        let nats_pid = dev_state.join("run/nats.pid");
+        let lock_file = dev_state.join(".lock");
+        fs::create_dir_all(pg_pid.parent().unwrap())?;
+        fs::create_dir_all(nats_pid.parent().unwrap())?;
+        fs::write(&pg_pid, "999999999\n")?;
+        fs::write(&nats_pid, "999999998\n")?;
+        fs::write(&lock_file, "{}")?;
+
+        let cleanup = AllCheckoutsCleanup::run(
+            base.path().to_path_buf(),
+            vec![CheckoutInventoryRoot {
+                cache_root,
+                dev_state_dir: dev_state,
+                checkout_path: Some(checkout.path().to_path_buf()),
+                lock: LockInspection::Stale(LockInfo {
+                    pid: 999_999_997,
+                    checkout_path: checkout.path().to_path_buf(),
+                    acquired_at: Timestamp::now(),
+                    description: Some("test stale lock".to_string()),
+                }),
+            }],
+            false,
+            true,
+        )?;
+
+        assert!(!pg_pid.exists());
+        assert!(!nats_pid.exists());
+        assert!(!lock_file.exists());
+        assert_eq!(cleanup.totals.removed_files, 3);
+        assert!(
+            cleanup.checkouts[0]
+                .actions
+                .iter()
+                .any(|action| action.action == CleanupActionKind::RemoveStaleLock)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn all_checkouts_cleanup_dry_run_leaves_stale_files() -> Result<()> {
+        let base = tempfile::tempdir()?;
+        let cache_root = base.path().join("hash123");
+        let dev_state = cache_root.join("dev-state");
+        let nats_pid = dev_state.join("run/nats.pid");
+        fs::create_dir_all(nats_pid.parent().unwrap())?;
+        fs::write(&nats_pid, "999999998\n")?;
+
+        let cleanup = AllCheckoutsCleanup::run(
+            base.path().to_path_buf(),
+            vec![CheckoutInventoryRoot {
+                cache_root,
+                dev_state_dir: dev_state,
+                checkout_path: None,
+                lock: LockInspection::Missing,
+            }],
+            true,
+            true,
+        )?;
+
+        assert!(nats_pid.exists());
+        assert_eq!(cleanup.totals.removed_files, 1);
+        assert!(cleanup.checkouts[0].actions[0].dry_run);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_cmdline_bytes_ignores_empty_nul_segments() {
+        assert_eq!(
+            parse_cmdline_bytes(b"postgres\0-D\0/tmp/dev-state/data/postgres\0\0"),
+            vec![
+                "postgres".to_string(),
+                "-D".to_string(),
+                "/tmp/dev-state/data/postgres".to_string()
+            ]
+        );
     }
 
     #[test]

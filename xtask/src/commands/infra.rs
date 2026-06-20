@@ -27,7 +27,17 @@ pub enum InfraSubcommand {
         processes: Vec<String>,
     },
     /// Stop the infrastructure
-    Stop,
+    Stop {
+        /// Stop/clean every checkout-local dev-state root under /var/cache/sinex/$USER
+        #[arg(long)]
+        all_checkouts: bool,
+        /// Only remove stale/malformed lock and PID files; do not stop live processes
+        #[arg(long)]
+        stale_only: bool,
+        /// Print planned actions without stopping processes or removing files
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Show infrastructure status
     Status {
         /// Watch mode
@@ -100,9 +110,13 @@ impl XtaskCommand for InfraCommand {
                 let config = StackConfig::for_current_checkout()?;
                 execute_start(&config, *all, processes, ctx)
             }
-            InfraSubcommand::Stop => {
+            InfraSubcommand::Stop {
+                all_checkouts,
+                stale_only,
+                dry_run,
+            } => {
                 let config = StackConfig::for_current_checkout()?;
-                execute_stop(&config, ctx)
+                execute_stop(&config, *all_checkouts, *stale_only, *dry_run, ctx)
             }
             InfraSubcommand::Status {
                 watch,
@@ -358,8 +372,24 @@ fn execute_flake_stage(
     Ok(command_result)
 }
 
-fn execute_stop(config: &StackConfig, ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_stop(
+    config: &StackConfig,
+    all_checkouts: bool,
+    stale_only: bool,
+    dry_run: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
     ctx.heading("infra stop");
+
+    if all_checkouts {
+        return execute_all_checkouts_stop(stale_only, dry_run, ctx);
+    }
+    if stale_only {
+        bail!("infra stop --stale-only requires --all-checkouts");
+    }
+    if dry_run {
+        bail!("infra stop --dry-run requires --all-checkouts");
+    }
 
     stack::nats_stop(config, ctx.is_human())?;
     stack::pg_stop(config, ctx.is_human())?;
@@ -367,6 +397,72 @@ fn execute_stop(config: &StackConfig, ctx: &CommandContext) -> Result<CommandRes
     let checkout_state = CheckoutState::for_current_checkout()?;
     checkout_state.release_lock()?;
     Ok(CommandResult::success().with_message("Infra stopped"))
+}
+
+fn execute_all_checkouts_stop(
+    stale_only: bool,
+    dry_run: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let base_dir = CheckoutState::default_inventory_base_dir();
+    let roots = CheckoutState::inventory_roots_under(&base_dir)?;
+    let cleanup = stack::AllCheckoutsCleanup::run(base_dir, roots, dry_run, stale_only)?;
+
+    if ctx.is_human() {
+        println!("sinex-dev infra cleanup: all checkouts");
+        println!("────────────────────────────────────────");
+        println!(
+            "Checkouts: {}  actions: {}  skipped: {}",
+            cleanup.totals.checkouts, cleanup.totals.actions, cleanup.totals.skipped
+        );
+        println!(
+            "Stopped:   postgres={} nats={}",
+            cleanup.totals.stopped_postgres, cleanup.totals.stopped_nats
+        );
+        println!(
+            "Removed:   files={}{}{}",
+            cleanup.totals.removed_files,
+            if cleanup.stale_only {
+                " (stale-only)"
+            } else {
+                ""
+            },
+            if cleanup.dry_run { " (dry-run)" } else { "" }
+        );
+        for checkout in &cleanup.checkouts {
+            if checkout.actions.is_empty() && checkout.skipped.is_empty() {
+                continue;
+            }
+            println!();
+            println!("{}", checkout.cache_root.display());
+            if let Some(path) = &checkout.checkout_path {
+                println!("  checkout: {}", path.display());
+            }
+            for action in &checkout.actions {
+                println!(
+                    "  action:   {:?} {}{}",
+                    action.action,
+                    action.target.display(),
+                    if action.dry_run { " (dry-run)" } else { "" }
+                );
+            }
+            for skipped in &checkout.skipped {
+                println!("  skipped:  {skipped}");
+            }
+        }
+    }
+
+    let mut result = CommandResult::success()
+        .with_message(if dry_run {
+            "All-checkout infra cleanup dry-run complete"
+        } else {
+            "All-checkout infra cleanup complete"
+        })
+        .with_data(serde_json::to_value(&cleanup)?);
+    for warning in &cleanup.warnings {
+        result = result.with_warning(warning.clone());
+    }
+    Ok(result)
 }
 
 async fn execute_status(
