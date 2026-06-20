@@ -6,6 +6,7 @@
 //! - `terminal.zsh-history`    (`AppendOnlyFileAdapter` + `ZshHistoryParser`)
 //! - `terminal.text-history`   (`AppendOnlyFileAdapter` + `TextHistoryParser`)
 //! - `terminal.fish-history`   (`SqliteRowAdapter` + `FishHistoryParser`)
+//! - `terminal.kitty-osc-live` (`UnixSocketStreamAdapter` + `KittyOscParser`)
 //!
 //! SQLite-backed fixtures (atuin, fish) pass pre-serialised JSON rows
 //! as fixture bytes, matching what `SqliteRowAdapter` would produce.
@@ -39,6 +40,9 @@ mod tests {
 
     /// A plain text history line (catch-all parser).
     const TEXT_FIXTURE: &[u8] = b"make build\n";
+
+    /// A line-framed Kitty OSC JSON command observation.
+    const KITTY_OSC_FIXTURE: &[u8] = br#"{"sequence":42,"command":"git status","cwd":"/realm/project/sinex","exit_status":0,"execution_time_ms":12,"shell_type":"zsh","kitty_window_id":"window-1","kitty_tab_id":"tab-1","timestamp_ns":1700000000000000000}"#;
 
     const ATUIN_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
         "terminal.atuin-history",
@@ -157,6 +161,105 @@ mod tests {
         crate::run_production_path_case(FISH_CASE)
             .await
             .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // terminal.kitty-osc-live
+    //
+    // This mode is a live Unix-socket source. Drive the socket adapter and
+    // parser together so the evidence exercises the runtime input shape rather
+    // than only the byte-dispatch parser helper.
+    // -------------------------------------------------------------------------
+
+    async fn parse_kitty_osc_socket_fixture(
+        fixture_data: &[u8],
+    ) -> TestResult<Vec<sinex_primitives::parser::ParsedEventIntent>> {
+        use futures::StreamExt;
+        use sinex_primitives::Uuid;
+        use sinex_primitives::events::SourceMaterial;
+        use sinex_primitives::ids::Id;
+        use sinex_primitives::parser::{ParserContext, SourceId};
+        use sinex_primitives::temporal::Timestamp;
+        use sinexd::runtime::parser::{
+            InputShapeAdapter, MaterialParser, UnixSocketStreamAdapter, UnixSocketStreamConfig,
+        };
+        use sinexd::sources::source_contracts::terminal::kitty_osc::KittyOscParser;
+
+        let fixture = crate::fixtures::unix_socket::build(fixture_data)
+            .await
+            .map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
+        let socket_path = match &fixture.binding {
+            crate::fixtures::FixtureBinding::UnixSocketPath(path) => path.clone(),
+            other => {
+                return Err(color_eyre::eyre::eyre!(
+                    "unix socket fixture returned unexpected binding: {other:?}"
+                ));
+            }
+        };
+
+        let material_id = Id::<SourceMaterial>::from_uuid(Uuid::now_v7());
+        let adapter = UnixSocketStreamAdapter;
+        let config = UnixSocketStreamConfig {
+            socket_path: camino::Utf8PathBuf::from_path_buf(socket_path)
+                .map_err(|path| color_eyre::eyre::eyre!("non-UTF8 socket path: {path:?}"))?,
+            reconnect_on_eof: false,
+        };
+        let mut stream = adapter.open(material_id, &config, None).await?;
+        let source_id = SourceId::from_static("terminal.kitty-osc-live");
+        let make_ctx = |record: &sinex_primitives::parser::SourceRecord| -> ParserContext {
+            ParserContext {
+                source_id: source_id.clone(),
+                source_material_id: material_id,
+                record_anchor: record.anchor.clone(),
+                operation_id: Uuid::now_v7(),
+                job_id: Uuid::now_v7(),
+                host: "fixture-host".to_string(),
+                acquisition_time: Timestamp::now(),
+            }
+        };
+
+        let mut parser = KittyOscParser;
+        let mut events = Vec::new();
+
+        while let Some(record) = stream.next().await {
+            let record = record?;
+            events.extend(
+                parser
+                    .parse_record(record.clone(), &make_ctx(&record))
+                    .await?,
+            );
+        }
+
+        Ok(events)
+    }
+
+    #[sinex_test]
+    async fn terminal_kitty_osc_live_socket_adapter_parses_command_frame() -> TestResult<()> {
+        let events = parse_kitty_osc_socket_fixture(KITTY_OSC_FIXTURE).await?;
+
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.source_id.as_str(), "terminal.kitty-osc-live");
+        assert_eq!(event.event_source.as_str(), "shell.kitty");
+        assert_eq!(event.event_type.as_str(), "command.executed");
+        assert_eq!(event.payload["command"], "git status");
+        assert_eq!(event.payload["working_directory"], "/realm/project/sinex");
+        assert_eq!(event.payload["kitty_window_id"], "window-1");
+        assert_eq!(event.payload["kitty_tab_id"], "tab-1");
+
+        let occurrence = event
+            .occurrence_key
+            .as_ref()
+            .expect("Kitty OSC live events carry occurrence identity");
+        assert!(
+            occurrence
+                .fields
+                .iter()
+                .any(|(field, value)| field == "sequence_or_frame" && value == "sequence:42"),
+            "OSC sequence should participate in occurrence identity"
+        );
+
         Ok(())
     }
 
