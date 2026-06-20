@@ -4,12 +4,17 @@
 //! and asserts no data loss or duplication.
 
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use color_eyre::eyre::Result;
 use sqlx::PgPool;
 
 use crate::runner::TestRunner;
+
+use super::chaos_support::{
+    SINEXD_SERVICE, event_count, wait_for_event_count_increase, wait_for_service_active,
+    write_watched_files,
+};
 
 pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
     println!("\n── Chaos: Process Restart tests ────────────────────────────────");
@@ -28,16 +33,7 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
 async fn test_baseline_events_captured(runner: &mut TestRunner, pool: &PgPool) {
     let name = "chaos-process-restart: baseline events captured";
 
-    let watched = "/var/lib/sinex/watched";
-    let _ = std::fs::create_dir_all(watched);
-
-    // Generate 10 pre-restart files
-    for i in 0..10_u32 {
-        let _ = std::fs::write(
-            format!("{watched}/restart-baseline-{i}.txt"),
-            format!("baseline {i}"),
-        );
-    }
+    write_watched_files("restart-baseline", 10, "baseline");
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -52,15 +48,7 @@ async fn test_baseline_events_captured(runner: &mut TestRunner, pool: &PgPool) {
 async fn test_event_engine_restarts_after_sigkill(runner: &mut TestRunner, _pool: &PgPool) {
     let name = "chaos-process-restart: event_engine restarts after SIGKILL";
 
-    let watched = "/var/lib/sinex/watched";
-
-    // Generate 30 "during" files before kill
-    for i in 0..30_u32 {
-        let _ = std::fs::write(
-            format!("{watched}/restart-during-{i}.txt"),
-            format!("during {i}"),
-        );
-    }
+    write_watched_files("restart-during", 30, "during");
 
     // Get the PID of sinexd
     let pid_output = Command::new("systemctl")
@@ -78,27 +66,21 @@ async fn test_event_engine_restarts_after_sigkill(runner: &mut TestRunner, _pool
         let _ = Command::new("kill").args(["-9", &pid]).status();
     }
 
-    // Wait for systemd to restart it (up to 30s)
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        let active = Command::new("systemctl")
-            .args(["is-active", "--quiet", "sinexd"])
-            .status()
-            .is_ok_and(|s| s.success());
-        if active {
-            runner.pass(name);
-            // Wait for checkpoint replay
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            return;
-        }
-        if Instant::now() >= deadline {
-            runner.fail(
-                name,
-                "event_engine did not restart within 30s after SIGKILL",
-            );
-            return;
-        }
+    if wait_for_service_active(
+        SINEXD_SERVICE,
+        Duration::from_secs(30),
+        Duration::from_secs(1),
+    )
+    .await
+    {
+        runner.pass(name);
+        // Wait for checkpoint replay.
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    } else {
+        runner.fail(
+            name,
+            "event_engine did not restart within 30s after SIGKILL",
+        );
     }
 }
 
@@ -162,40 +144,20 @@ async fn test_pipeline_flows_after_recovery(runner: &mut TestRunner, pool: &PgPo
     let name = "chaos-process-restart: pipeline flows after recovery";
 
     let before = event_count(pool).await;
-    let watched = "/var/lib/sinex/watched";
+    write_watched_files("restart-post", 10, "post");
 
-    // Generate post-recovery files
-    for i in 0..10_u32 {
-        let _ = std::fs::write(
-            format!("{watched}/restart-post-{i}.txt"),
-            format!("post {i}"),
-        );
+    match wait_for_event_count_increase(
+        pool,
+        before,
+        Duration::from_secs(30),
+        Duration::from_secs(2),
+    )
+    .await
+    {
+        Some(_) => runner.pass(name),
+        None => runner.fail(
+            name,
+            &format!("pipeline stalled after recovery (before={before})"),
+        ),
     }
-
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        let after = event_count(pool).await;
-        if after > before {
-            runner.pass(name);
-            return;
-        }
-        if Instant::now() >= deadline {
-            runner.fail(
-                name,
-                &format!("pipeline stalled after recovery (before={before}, after={after})"),
-            );
-            return;
-        }
-    }
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async fn event_count(pool: &PgPool) -> i64 {
-    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
-        .fetch_one(pool)
-        .await
-        .ok()
-        .unwrap_or(0)
 }
