@@ -7,4 +7,4 @@ error[E0308]: mismatched types
    |                         expected due to this
    |
    = note: expected struct `Id<ReplayCheckpoint>`
-              found struct `Id<Event>`
+              found struct `Id<sinex_primitives::Event>`

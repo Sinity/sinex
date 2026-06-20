@@ -24,6 +24,7 @@ integration tests, schema strict-diff, or generated-surface checks can own.
 | Command reference drift | docs generated-surface command | `xtask docs command-reference --check` | Owns the checked-in command reference against the live clap tree. |
 | Payload schema bundle drift | docs generated-surface command | `xtask docs schema-bundle --check` | Owns the checked-in payload schema bundle against the Rust registry. |
 | Phase and perf manifests | `xtask verify plan` and `xtask verify perf` | `xtask verify plan --check`; `xtask verify perf ...` | Orchestration and artifact emission only. Product/resource invariants should move to ordinary tests or explicit perf contracts when possible. |
+| Trybuild compile-fail runners | owning crate trybuild fixtures | `xtask test --debug --heavy -p <package> -E 'test(<runner>)'` | Keep individual fixtures and stderr files. Use the debug profile for edited runner/fixture verification so cold trybuild nodes run serially instead of timing out under parallel nextest execution. |
 
 ## Simplification Landed
 
@@ -90,6 +91,12 @@ xtask docs command-reference --check
 xtask docs schema-bundle --check
 xtask schema strict-diff
 xtask release-readiness --target rc-local --base-ref origin/master --run-required-checks
+```
+
+Use the heavy debug profile for edited trybuild runners or stderr fixtures:
+
+```bash
+xtask test --debug --heavy -p sinex-primitives -E 'test(source_contract_compile_failures)'
 ```
 
 Use broad gates only after the focused owner tests are green:
