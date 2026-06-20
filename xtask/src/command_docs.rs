@@ -110,7 +110,10 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                     "xtask infra status",
                     "xtask infra stop",
                 ],
-                notes: &[],
+                notes: &[
+                    "`xtask infra status`, `xtask run list`, and help/listing commands are read-only probes; the devshell wrapper must not start checkout-local Postgres, NATS, or sinexd for them.",
+                    "Commands that compile or execute SQLx-backed code still bootstrap the checkout-local Postgres schema through the xtask wrapper.",
+                ],
             },
             GuideEntry {
                 path: "infra flake-stage",

@@ -7,8 +7,10 @@ use sinex_db::repositories::schema_management::{SchemaManagementRepository, Sche
 use sinex_db::schema::apply::SHARED_ACCESS_ROLES;
 use sinex_primitives::events::schema_registry::generate_schema_bundle;
 use sqlx::postgres::PgPoolOptions;
+use std::collections::HashMap;
 use std::fs;
 use std::future::Future;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -16,7 +18,7 @@ use crate::infra::services::nats::{NatsConfig as SharedNatsConfig, NatsManager};
 use crate::infra::services::postgres::{
     PostgresConfig as SharedPgConfig, PostgresDurabilityMode, PostgresManager,
 };
-use crate::infra::state::CheckoutState;
+use crate::infra::state::{CheckoutInventoryRoot, CheckoutState, LockInspection};
 
 /// Stack configuration, uses per-checkout state
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,13 +59,32 @@ impl StackConfig {
     /// Create config from a `CheckoutState`
     #[must_use]
     pub fn from_checkout_state(state: &CheckoutState) -> Self {
+        Self::from_state_dir(
+            state.state_dir().to_path_buf(),
+            state.checkout_root(),
+            Some(Self::nats_port_for_checkout(state.checkout_root())),
+        )
+    }
+
+    /// Create config for a discovered dev-state root without mutating it.
+    #[must_use]
+    pub fn from_inventory_root(root: &CheckoutInventoryRoot) -> Self {
+        let checkout = root.checkout_path.as_deref().unwrap_or(&root.cache_root);
+        Self::from_state_dir(
+            root.dev_state_dir.clone(),
+            checkout,
+            discover_nats_port(&root.dev_state_dir),
+        )
+    }
+
+    fn from_state_dir(state_dir: PathBuf, checkout_root: &Path, nats_port: Option<u16>) -> Self {
         // Use fixed ports - no conflicts between checkouts because each has isolated
         // Unix socket directory. TCP is disabled (listen_addresses='') so port is
         // only used in socket filename (.s.PGSQL.5432)
-        let nats_port = Self::nats_port_for_checkout(state.checkout_root());
+        let nats_port = nats_port.unwrap_or_else(|| Self::nats_port_for_checkout(checkout_root));
 
         Self {
-            state_dir: state.state_dir().to_path_buf(),
+            state_dir,
             postgres: PostgresConfig {
                 port: 5432, // PostgreSQL default - only used in Unix socket filename (TCP disabled)
                 database: "sinex_dev".to_string(),
@@ -203,7 +224,19 @@ pub struct StackStatus {
 pub struct ServiceStatus {
     pub running: bool,
     pub pid: Option<u32>,
+    pub pid_state: ServicePidState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rss_bytes: Option<u64>,
     pub port: u16,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServicePidState {
+    Missing,
+    Running,
+    Stale,
+    Malformed,
 }
 
 #[derive(Debug, Serialize)]
@@ -217,6 +250,71 @@ pub struct DataSizes {
     pub postgres_bytes: u64,
     pub nats_bytes: u64,
     pub annex_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AllCheckoutsStatus {
+    pub base_dir: PathBuf,
+    pub checkouts: Vec<CheckoutInfraStatus>,
+    pub totals: AllCheckoutsTotals,
+    pub issues: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CheckoutInfraStatus {
+    pub cache_root: PathBuf,
+    pub dev_state_dir: PathBuf,
+    pub checkout_path: Option<PathBuf>,
+    pub checkout_path_exists: Option<bool>,
+    pub lock: LockStatus,
+    pub initialized: bool,
+    pub postgres: ServiceStatus,
+    pub nats: ServiceStatus,
+    pub sinexd: RuntimeProcessStatus,
+    pub data_sizes: DataSizes,
+    pub logs_bytes: u64,
+    pub total_state_bytes: u64,
+    pub data_size_issues: Vec<String>,
+    pub remediation: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LockStatus {
+    pub present: bool,
+    pub state: LockState,
+    pub pid: Option<u32>,
+    pub checkout_path: Option<PathBuf>,
+    pub description: Option<String>,
+    pub issue: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LockState {
+    Missing,
+    Live,
+    Stale,
+    Malformed,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RuntimeProcessStatus {
+    pub running: bool,
+    pub pids: Vec<u32>,
+    pub rss_bytes: u64,
+    pub issue: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AllCheckoutsTotals {
+    pub checkout_count: usize,
+    pub running_postgres: usize,
+    pub stale_postgres_pid_files: usize,
+    pub running_nats: usize,
+    pub stale_nats_pid_files: usize,
+    pub running_sinexd: usize,
+    pub rss_bytes: u64,
+    pub state_bytes: u64,
 }
 
 #[derive(Debug)]
@@ -237,12 +335,16 @@ impl StackStatus {
         let postgres = ServiceStatus {
             running: pg_mgr.is_running(),
             pid: pg_mgr.read_pid(),
+            pid_state: service_pid_state(&config.pg_pid_file()),
+            rss_bytes: service_rss_bytes(&config.pg_pid_file(), true),
             port: config.postgres.port,
         };
 
         let nats = ServiceStatus {
             running: nats_mgr.is_running(),
             pid: nats_mgr.read_pid(),
+            pid_state: service_pid_state(&config.nats_pid_file()),
+            rss_bytes: service_rss_bytes(&config.nats_pid_file(), false),
             port: config.nats.port,
         };
 
@@ -275,6 +377,109 @@ impl StackStatus {
             data_size_issues,
             snapshots: snapshots.snapshots,
             snapshot_issue: snapshots.issue,
+        }
+    }
+}
+
+impl AllCheckoutsStatus {
+    #[must_use]
+    pub fn gather(base_dir: PathBuf, roots: Vec<CheckoutInventoryRoot>) -> Self {
+        let mut checkouts: Vec<_> = roots.into_iter().map(CheckoutInfraStatus::gather).collect();
+        checkouts.sort_by(|left, right| left.cache_root.cmp(&right.cache_root));
+
+        let totals = AllCheckoutsTotals {
+            checkout_count: checkouts.len(),
+            running_postgres: checkouts.iter().filter(|c| c.postgres.running).count(),
+            stale_postgres_pid_files: checkouts
+                .iter()
+                .filter(|c| c.postgres.pid_state == ServicePidState::Stale)
+                .count(),
+            running_nats: checkouts.iter().filter(|c| c.nats.running).count(),
+            stale_nats_pid_files: checkouts
+                .iter()
+                .filter(|c| c.nats.pid_state == ServicePidState::Stale)
+                .count(),
+            running_sinexd: checkouts.iter().filter(|c| c.sinexd.running).count(),
+            rss_bytes: checkouts
+                .iter()
+                .map(|c| {
+                    c.postgres.rss_bytes.unwrap_or(0)
+                        + c.nats.rss_bytes.unwrap_or(0)
+                        + c.sinexd.rss_bytes
+                })
+                .sum(),
+            state_bytes: checkouts.iter().map(|c| c.total_state_bytes).sum(),
+        };
+
+        Self {
+            base_dir,
+            checkouts,
+            totals,
+            issues: Vec::new(),
+        }
+    }
+}
+
+impl CheckoutInfraStatus {
+    #[must_use]
+    pub fn gather(root: CheckoutInventoryRoot) -> Self {
+        let config = StackConfig::from_inventory_root(&root);
+        let initialized =
+            config.state_dir.exists() && (config.pg_data().exists() || config.nats_data().exists());
+
+        let postgres = ServiceStatus {
+            running: service_pid_state(&config.pg_pid_file()) == ServicePidState::Running,
+            pid: read_pid_file(&config.pg_pid_file()).ok().flatten(),
+            pid_state: service_pid_state(&config.pg_pid_file()),
+            rss_bytes: service_rss_bytes(&config.pg_pid_file(), true),
+            port: config.postgres.port,
+        };
+        let nats = ServiceStatus {
+            running: service_pid_state(&config.nats_pid_file()) == ServicePidState::Running,
+            pid: read_pid_file(&config.nats_pid_file()).ok().flatten(),
+            pid_state: service_pid_state(&config.nats_pid_file()),
+            rss_bytes: service_rss_bytes(&config.nats_pid_file(), false),
+            port: config.nats.port,
+        };
+
+        let postgres_size = dir_size(&config.pg_data());
+        let nats_size = dir_size(&config.nats_data());
+        let annex_size = dir_size(&config.annex_data());
+        let logs_size = dir_size(&config.logs_dir());
+        let state_size = dir_size(&config.state_dir);
+        let data_size_issues = [
+            postgres_size.issue,
+            nats_size.issue,
+            annex_size.issue,
+            logs_size.issue,
+            state_size.issue,
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        let remediation = remediation_for_checkout(&root, &postgres, &nats);
+        let sinexd = inspect_sinexd_processes(root.checkout_path.as_deref());
+
+        Self {
+            cache_root: root.cache_root,
+            dev_state_dir: root.dev_state_dir,
+            checkout_path_exists: root.checkout_path.as_ref().map(|path| path.exists()),
+            checkout_path: root.checkout_path,
+            lock: lock_status(root.lock),
+            initialized,
+            postgres,
+            nats,
+            sinexd,
+            data_sizes: DataSizes {
+                postgres_bytes: postgres_size.bytes,
+                nats_bytes: nats_size.bytes,
+                annex_bytes: annex_size.bytes,
+            },
+            logs_bytes: logs_size.bytes,
+            total_state_bytes: state_size.bytes,
+            data_size_issues,
+            remediation,
         }
     }
 }
@@ -624,6 +829,262 @@ pub fn nats_stop(config: &StackConfig, verbose: bool) -> Result<()> {
 // Utility Functions (Local copies to avoid import cycles / shared utils)
 // ─────────────────────────────────────────────────────────────────────────────
 
+fn discover_nats_port(dev_state_dir: &Path) -> Option<u16> {
+    let config = dev_state_dir.join("config/nats/nats.conf");
+    let contents = fs::read_to_string(config).ok()?;
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        let value = line.strip_prefix("port")?.trim_start();
+        let value = value.strip_prefix('=')?.trim();
+        value.parse().ok()
+    })
+}
+
+fn read_pid_file(path: &Path) -> Result<Option<u32>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents = fs::read_to_string(path)
+        .wrap_err_with(|| format!("failed to read pid file {}", path.display()))?;
+    let Some(line) = contents
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    else {
+        bail!("pid file {} is empty", path.display());
+    };
+    let pid = line
+        .parse::<u32>()
+        .wrap_err_with(|| format!("failed to parse pid from {}", path.display()))?;
+    Ok(Some(pid))
+}
+
+fn service_pid_state(path: &Path) -> ServicePidState {
+    match read_pid_file(path) {
+        Ok(Some(pid)) if pid_is_alive(pid) => ServicePidState::Running,
+        Ok(Some(_)) => ServicePidState::Stale,
+        Ok(None) => ServicePidState::Missing,
+        Err(_) => ServicePidState::Malformed,
+    }
+}
+
+fn service_rss_bytes(path: &Path, include_children: bool) -> Option<u64> {
+    let pid = read_pid_file(path).ok().flatten()?;
+    if !pid_is_alive(pid) {
+        return None;
+    }
+    Some(if include_children {
+        process_tree_rss_bytes(pid)
+    } else {
+        process_rss_bytes(pid).unwrap_or(0)
+    })
+}
+
+fn pid_is_alive(pid: u32) -> bool {
+    unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+fn process_rss_bytes(pid: u32) -> Option<u64> {
+    let status = fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    status.lines().find_map(|line| {
+        let value = line.strip_prefix("VmRSS:")?.trim();
+        let kib = value.split_whitespace().next()?.parse::<u64>().ok()?;
+        Some(kib * 1024)
+    })
+}
+
+fn process_tree_rss_bytes(root_pid: u32) -> u64 {
+    let children = proc_parent_map();
+    let mut stack = vec![root_pid];
+    let mut rss = 0;
+    while let Some(pid) = stack.pop() {
+        rss += process_rss_bytes(pid).unwrap_or(0);
+        for child in children
+            .iter()
+            .filter_map(|(candidate, parent)| (*parent == pid).then_some(*candidate))
+        {
+            stack.push(child);
+        }
+    }
+    rss
+}
+
+fn proc_parent_map() -> HashMap<u32, u32> {
+    let mut parents = HashMap::new();
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return parents;
+    };
+    for entry in entries.flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else {
+            continue;
+        };
+        if let Some(ppid) = parse_proc_stat_ppid(&stat) {
+            parents.insert(pid, ppid);
+        }
+    }
+    parents
+}
+
+fn parse_proc_stat_ppid(stat: &str) -> Option<u32> {
+    let close = stat.rfind(") ")?;
+    let after = &stat[close + 2..];
+    let mut fields = after.split_whitespace();
+    let _state = fields.next()?;
+    fields.next()?.parse().ok()
+}
+
+fn inspect_sinexd_processes(checkout_path: Option<&Path>) -> RuntimeProcessStatus {
+    let Some(checkout_path) = checkout_path else {
+        return RuntimeProcessStatus {
+            running: false,
+            pids: Vec::new(),
+            rss_bytes: 0,
+            issue: Some("checkout path unknown; cannot classify dev-local sinexd".to_string()),
+        };
+    };
+
+    let mut pids = Vec::new();
+    let mut issues = Vec::new();
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return RuntimeProcessStatus {
+            running: false,
+            pids,
+            rss_bytes: 0,
+            issue: Some("failed to read /proc while inspecting sinexd".to_string()),
+        };
+    };
+
+    for entry in entries.flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let proc_dir = entry.path();
+        if !proc_cmdline_contains(&proc_dir.join("cmdline"), "sinexd") {
+            continue;
+        }
+        match fs::read_link(proc_dir.join("cwd")) {
+            Ok(cwd) if cwd.starts_with(checkout_path) => pids.push(pid),
+            Ok(_) => {}
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                issues.push(format!("failed to read cwd for pid {pid}: {error}"));
+            }
+            Err(_) => {}
+        }
+    }
+
+    pids.sort_unstable();
+    let rss_bytes = pids
+        .iter()
+        .map(|pid| process_rss_bytes(*pid).unwrap_or(0))
+        .sum();
+
+    RuntimeProcessStatus {
+        running: !pids.is_empty(),
+        pids,
+        rss_bytes,
+        issue: if issues.is_empty() {
+            None
+        } else {
+            Some(issues.join("; "))
+        },
+    }
+}
+
+fn proc_cmdline_contains(path: &Path, needle: &str) -> bool {
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut bytes = Vec::new();
+    if file.read_to_end(&mut bytes).is_err() {
+        return false;
+    }
+    bytes
+        .split(|byte| *byte == 0)
+        .filter_map(|part| std::str::from_utf8(part).ok())
+        .any(|part| Path::new(part).file_name().and_then(|name| name.to_str()) == Some(needle))
+}
+
+fn lock_status(lock: LockInspection) -> LockStatus {
+    match lock {
+        LockInspection::Missing => LockStatus {
+            present: false,
+            state: LockState::Missing,
+            pid: None,
+            checkout_path: None,
+            description: None,
+            issue: None,
+        },
+        LockInspection::Live(info) => LockStatus {
+            present: true,
+            state: LockState::Live,
+            pid: Some(info.pid),
+            checkout_path: Some(info.checkout_path),
+            description: info.description,
+            issue: None,
+        },
+        LockInspection::Stale(info) => LockStatus {
+            present: true,
+            state: LockState::Stale,
+            pid: Some(info.pid),
+            checkout_path: Some(info.checkout_path),
+            description: info.description,
+            issue: Some(format!("lock pid {} is not running", info.pid)),
+        },
+        LockInspection::Malformed(issue) => LockStatus {
+            present: true,
+            state: LockState::Malformed,
+            pid: None,
+            checkout_path: None,
+            description: None,
+            issue: Some(issue),
+        },
+    }
+}
+
+fn remediation_for_checkout(
+    root: &CheckoutInventoryRoot,
+    postgres: &ServiceStatus,
+    nats: &ServiceStatus,
+) -> Vec<String> {
+    let mut commands = Vec::new();
+    if root
+        .checkout_path
+        .as_ref()
+        .is_some_and(|path| path.exists())
+    {
+        if postgres.running || nats.running {
+            if let Some(path) = &root.checkout_path {
+                commands.push(format!("cd {} && xtask infra stop", path.display()));
+            }
+        }
+    }
+    if matches!(
+        postgres.pid_state,
+        ServicePidState::Stale | ServicePidState::Malformed
+    ) {
+        commands.push(format!(
+            "rm {}",
+            root.dev_state_dir
+                .join("data/postgres/postmaster.pid")
+                .display()
+        ));
+    }
+    if matches!(
+        nats.pid_state,
+        ServicePidState::Stale | ServicePidState::Malformed
+    ) {
+        commands.push(format!(
+            "rm {}",
+            root.dev_state_dir.join("run/nats.pid").display()
+        ));
+    }
+    commands
+}
+
 #[must_use]
 pub fn dir_size(path: &Path) -> DirectorySizeProbe {
     if !path.exists() {
@@ -748,10 +1209,12 @@ pub fn list_snapshots(dir: &Path) -> SnapshotListProbe {
 mod tests {
     use super::StackConfig;
     use super::{
-        GIT_REPOSITORY_ENV_KEYS, collect_snapshot_names, dir_size, git_subprocess, list_snapshots,
-        probe_annex_available, require_successful_command,
+        AllCheckoutsStatus, GIT_REPOSITORY_ENV_KEYS, collect_snapshot_names, dir_size,
+        discover_nats_port, git_subprocess, list_snapshots, parse_proc_stat_ppid,
+        probe_annex_available, require_successful_command, service_pid_state,
         sync_event_payload_schemas_for_database_url,
     };
+    use crate::infra::state::{CheckoutInventoryRoot, LockInspection};
     use crate::sandbox::prelude::*;
     use std::ffi::OsString;
     use std::fs;
@@ -763,6 +1226,81 @@ mod tests {
         let checkout = Path::new("/realm/project/sinex");
         assert_eq!(StackConfig::port_offset_for_checkout(checkout), 86);
         assert_eq!(StackConfig::nats_port_for_checkout(checkout), 4308);
+    }
+
+    #[test]
+    fn discover_nats_port_reads_generated_config() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let config_dir = temp.path().join("config/nats");
+        fs::create_dir_all(&config_dir)?;
+        fs::write(
+            config_dir.join("nats.conf"),
+            r#"
+host = "127.0.0.1"
+port = 4310
+"#,
+        )?;
+
+        assert_eq!(discover_nats_port(temp.path()), Some(4310));
+        Ok(())
+    }
+
+    #[test]
+    fn service_pid_state_classifies_stale_pid_files() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let pid_file = temp.path().join("service.pid");
+        fs::write(&pid_file, "999999999\n")?;
+
+        assert_eq!(service_pid_state(&pid_file), super::ServicePidState::Stale);
+        Ok(())
+    }
+
+    #[test]
+    fn all_checkouts_status_totals_stale_pid_files_and_sizes() -> Result<()> {
+        let base = tempfile::tempdir()?;
+        let cache_root = base.path().join("hash123");
+        let dev_state = cache_root.join("dev-state");
+        fs::create_dir_all(dev_state.join("data/postgres"))?;
+        fs::create_dir_all(dev_state.join("run"))?;
+        fs::write(
+            dev_state.join("data/postgres/postmaster.pid"),
+            "999999999\n",
+        )?;
+        fs::write(dev_state.join("run/nats.pid"), "999999998\n")?;
+        fs::write(dev_state.join("run/example.log"), "hello")?;
+
+        let status = AllCheckoutsStatus::gather(
+            base.path().to_path_buf(),
+            vec![CheckoutInventoryRoot {
+                cache_root,
+                dev_state_dir: dev_state,
+                checkout_path: None,
+                lock: LockInspection::Missing,
+            }],
+        );
+
+        assert_eq!(status.totals.checkout_count, 1);
+        assert_eq!(status.totals.stale_postgres_pid_files, 1);
+        assert_eq!(status.totals.stale_nats_pid_files, 1);
+        assert!(status.totals.state_bytes >= 5);
+        assert_eq!(
+            status.checkouts[0].postgres.pid_state,
+            super::ServicePidState::Stale
+        );
+        assert_eq!(
+            status.checkouts[0].nats.pid_state,
+            super::ServicePidState::Stale
+        );
+        assert!(!status.checkouts[0].remediation.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn parse_proc_stat_ppid_handles_comm_with_spaces() {
+        assert_eq!(
+            parse_proc_stat_ppid("123 (postgres: checkpointer) S 42 1 1 0"),
+            Some(42)
+        );
     }
 
     #[test]
