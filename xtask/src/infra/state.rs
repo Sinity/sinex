@@ -23,6 +23,22 @@ pub struct LockInfo {
     pub description: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CheckoutInventoryRoot {
+    pub cache_root: PathBuf,
+    pub dev_state_dir: PathBuf,
+    pub checkout_path: Option<PathBuf>,
+    pub lock: LockInspection,
+}
+
+#[derive(Debug, Clone)]
+pub enum LockInspection {
+    Missing,
+    Live(LockInfo),
+    Stale(LockInfo),
+    Malformed(String),
+}
+
 impl LockInfo {
     /// Create a new lock info for the current process
     #[must_use]
@@ -285,6 +301,74 @@ impl CheckoutState {
 
         Ok(())
     }
+
+    /// Discover every current-user dev-state root under a cache base directory.
+    ///
+    /// This is read-only: it classifies locks and paths without removing stale
+    /// files or starting/stopping services.
+    pub fn inventory_roots_under(base_dir: &Path) -> Result<Vec<CheckoutInventoryRoot>> {
+        if !base_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut roots = Vec::new();
+        for entry in fs::read_dir(base_dir)
+            .wrap_err_with(|| format!("failed to read dev cache base {}", base_dir.display()))?
+        {
+            let entry = entry.wrap_err_with(|| {
+                format!("failed to read dev cache entry in {}", base_dir.display())
+            })?;
+            let cache_root = entry.path();
+            if !cache_root.is_dir() {
+                continue;
+            }
+            let dev_state_dir = cache_root.join("dev-state");
+            if !dev_state_dir.is_dir() {
+                continue;
+            }
+
+            let lock = inspect_lock_file(&dev_state_dir.join(Self::LOCK_FILE_NAME));
+            let checkout_path = match &lock {
+                LockInspection::Live(info) | LockInspection::Stale(info) => {
+                    Some(info.checkout_path.clone())
+                }
+                LockInspection::Missing | LockInspection::Malformed(_) => None,
+            };
+
+            roots.push(CheckoutInventoryRoot {
+                cache_root,
+                dev_state_dir,
+                checkout_path,
+                lock,
+            });
+        }
+
+        Ok(roots)
+    }
+
+    pub fn default_inventory_base_dir() -> PathBuf {
+        let user = std::env::var("USER").unwrap_or_else(|_| "sinity".to_string());
+        PathBuf::from("/var/cache/sinex").join(user)
+    }
+}
+
+fn inspect_lock_file(lock_file: &Path) -> LockInspection {
+    let Ok(content) = fs::read_to_string(lock_file) else {
+        return if lock_file.exists() {
+            LockInspection::Malformed(format!("failed to read {}", lock_file.display()))
+        } else {
+            LockInspection::Missing
+        };
+    };
+
+    match serde_json::from_str::<LockInfo>(&content) {
+        Ok(lock) if lock.is_alive() => LockInspection::Live(lock),
+        Ok(lock) => LockInspection::Stale(lock),
+        Err(error) => LockInspection::Malformed(format!(
+            "failed to parse lock file {}: {error}",
+            lock_file.display()
+        )),
+    }
 }
 
 /// RAII guard that releases the lock when dropped
@@ -378,6 +462,43 @@ mod tests {
 
         let error = state.release_lock().unwrap_err();
         assert!(format!("{error:#}").contains("Failed to parse lock file during release"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn inventory_roots_under_maps_dev_state_locks_without_cleanup() -> TestResult<()> {
+        let base = tempfile::tempdir()?;
+        let checkout = tempfile::tempdir()?;
+        let dev_state = base.path().join("hash123/dev-state");
+        fs::create_dir_all(&dev_state)?;
+        let lock = LockInfo::current(checkout.path().to_path_buf(), Some("infra".to_string()));
+        fs::write(
+            dev_state.join(".lock"),
+            serde_json::to_string_pretty(&lock)?,
+        )?;
+
+        let roots = CheckoutState::inventory_roots_under(base.path())?;
+
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].dev_state_dir, dev_state);
+        assert_eq!(roots[0].checkout_path.as_deref(), Some(checkout.path()));
+        assert!(matches!(roots[0].lock, LockInspection::Live(_)));
+        assert!(roots[0].dev_state_dir.join(".lock").exists());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn inventory_roots_under_reports_malformed_locks() -> TestResult<()> {
+        let base = tempfile::tempdir()?;
+        let dev_state = base.path().join("hash123/dev-state");
+        fs::create_dir_all(&dev_state)?;
+        fs::write(dev_state.join(".lock"), "not json")?;
+
+        let roots = CheckoutState::inventory_roots_under(base.path())?;
+
+        assert_eq!(roots.len(), 1);
+        assert!(roots[0].checkout_path.is_none());
+        assert!(matches!(roots[0].lock, LockInspection::Malformed(_)));
         Ok(())
     }
 }
