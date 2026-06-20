@@ -674,16 +674,31 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
             ActionSideEffect::Admin,
         ),
         "pause" => (
-            "Pause Bridge",
-            module.map(|module| format!("sinexctl runtime drain {module} --reason source-paused")),
-            module.map(|_| "runtime.drain"),
+            package_operation_label(operation, "Pause Package Mode").unwrap_or("Pause Bridge"),
+            package_operation_command_hint(operation, source_id).or_else(|| {
+                module.map(|module| format!("sinexctl runtime drain {module} --reason source-paused"))
+            }),
+            package_operation_rpc_method(operation, source_id).or_else(|| module.map(|_| "runtime.drain")),
             ActionSideEffect::Admin,
         ),
         "resume" => (
-            "Resume Bridge",
-            module.map(|module| format!("sinexctl runtime resume {module}")),
-            module.map(|_| "runtime.resume"),
+            package_operation_label(operation, "Resume Package Mode").unwrap_or("Resume Bridge"),
+            package_operation_command_hint(operation, source_id)
+                .or_else(|| module.map(|module| format!("sinexctl runtime resume {module}"))),
+            package_operation_rpc_method(operation, source_id).or_else(|| module.map(|_| "runtime.resume")),
             ActionSideEffect::Admin,
+        ),
+        "authorize" => (
+            "Authorize Mailbox",
+            package_operation_command_hint(operation, source_id),
+            package_operation_rpc_method(operation, source_id),
+            ActionSideEffect::Admin,
+        ),
+        "sync" => (
+            "Sync Mailbox",
+            package_operation_command_hint(operation, source_id),
+            package_operation_rpc_method(operation, source_id),
+            ActionSideEffect::Write,
         ),
         "import-transcript" => (
             "Import Transcript",
@@ -731,50 +746,50 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
         ),
         "delete-material" => (
             "Delete Material",
-            media_operation_command_hint(operation, source_id),
-            media_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id),
+            package_operation_rpc_method(operation, source_id),
             ActionSideEffect::Destructive,
         ),
         "run-model" => (
             "Run Local Model",
-            media_operation_command_hint(operation, source_id),
-            media_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id),
+            package_operation_rpc_method(operation, source_id),
             ActionSideEffect::Admin,
         ),
         "run-ocr" => (
             "Run OCR",
-            media_operation_command_hint(operation, source_id),
-            media_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id),
+            package_operation_rpc_method(operation, source_id),
             ActionSideEffect::Admin,
         ),
         "retry" => (
             "Retry Package Operation",
-            media_operation_command_hint(operation, source_id),
-            media_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id),
+            package_operation_rpc_method(operation, source_id),
             ActionSideEffect::Write,
         ),
         "rebuild-artifact" => (
             "Rebuild Artifact",
-            media_operation_command_hint(operation, source_id),
-            media_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id),
+            package_operation_rpc_method(operation, source_id),
             ActionSideEffect::Write,
         ),
         "enable-session" => (
             "Enable Capture Session",
-            media_operation_command_hint(operation, source_id),
-            media_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id),
+            package_operation_rpc_method(operation, source_id),
             ActionSideEffect::Admin,
         ),
         "disable-session" => (
             "Disable Capture Session",
-            media_operation_command_hint(operation, source_id),
-            media_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id),
+            package_operation_rpc_method(operation, source_id),
             ActionSideEffect::Admin,
         ),
         "capture-region" => (
             "Capture Region",
-            media_operation_command_hint(operation, source_id),
-            media_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id),
+            package_operation_rpc_method(operation, source_id),
             ActionSideEffect::Admin,
         ),
         _ => ("Package Operation", None, None, ActionSideEffect::Read),
@@ -815,7 +830,15 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
     action
 }
 
-fn media_operation_command_hint(operation: &str, source_id: &str) -> Option<String> {
+fn package_operation_command_hint(operation: &str, source_id: &str) -> Option<String> {
+    let mode_id = package_operation_mode_hint(operation)?;
+
+    Some(format!(
+        "sinexctl ops start {operation} --scope '{{\"source_id\":\"{source_id}\",\"mode_id\":\"{mode_id}\"}}' --format json"
+    ))
+}
+
+fn package_operation_mode_hint(operation: &str) -> Option<&'static str> {
     let mode_id = match operation {
         "media.audio-transcript.run-model"
         | "media.audio-transcript.retry"
@@ -838,16 +861,21 @@ fn media_operation_command_hint(operation: &str, source_id: &str) -> Option<Stri
         | "media.screen-ocr.pause"
         | "media.screen-ocr.resume" => "source:media.screen-ocr.live-session",
         "media.screen-ocr.delete-material" => "source:media.screen-ocr.screenshot-ocr-staged",
+        "email.mailbox.authorize" | "email.mailbox.pause" | "email.mailbox.resume" => {
+            "<provider-mode-id>"
+        }
+        "email.mailbox.sync" => "<email-mode-id>",
         _ => return None,
     };
-
-    Some(format!(
-        "sinexctl ops start {operation} --scope '{{\"source_id\":\"{source_id}\",\"mode_id\":\"{mode_id}\"}}' --format json"
-    ))
+    Some(mode_id)
 }
 
-fn media_operation_rpc_method(operation: &str, source_id: &str) -> Option<&'static str> {
-    media_operation_command_hint(operation, source_id).map(|_| "ops.start")
+fn package_operation_rpc_method(operation: &str, source_id: &str) -> Option<&'static str> {
+    package_operation_command_hint(operation, source_id).map(|_| "ops.start")
+}
+
+fn package_operation_label<'a>(operation: &str, label: &'a str) -> Option<&'a str> {
+    package_operation_mode_hint(operation).map(|_| label)
 }
 
 fn source_runtime_module(source_id: &str) -> Option<&'static str> {
@@ -1206,6 +1234,21 @@ mod tests {
             )
         );
 
+        let pause = view
+            .actions
+            .iter()
+            .find(|action| action.id == "media.audio-transcript.pause")
+            .ok_or_else(|| color_eyre::eyre::eyre!("media pause action expected"))?;
+        assert_eq!(pause.state, ActionAvailabilityState::Enabled);
+        assert_eq!(pause.side_effect, ActionSideEffect::Admin);
+        assert_eq!(pause.rpc_method.as_deref(), Some("ops.start"));
+        assert_eq!(
+            pause.command_hint.as_deref(),
+            Some(
+                "sinexctl ops start media.audio-transcript.pause --scope '{\"source_id\":\"media.audio-transcript\",\"mode_id\":\"source:media.audio-transcript.live-session\"}' --format json"
+            )
+        );
+
         let delete = view
             .actions
             .iter()
@@ -1284,6 +1327,79 @@ mod tests {
                 "sinexctl ops start media.screen-ocr.capture-region --scope '{\"source_id\":\"media.screen-ocr\",\"mode_id\":\"source:media.screen-ocr.on-demand-region\"}' --format json"
             )
         );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn email_package_operations_surface_operator_actions() -> xtask::TestResult<()> {
+        let contract = all_source_contracts()
+            .find(|contract| contract.id == "email.mailbox")
+            .ok_or_else(|| color_eyre::eyre::eyre!("email mailbox contract expected"))?;
+        let bindings = source_runtime_bindings()
+            .filter(|binding| binding.source_id == "email.mailbox")
+            .collect::<Vec<_>>();
+
+        let view = source_coverage_view(
+            contract,
+            &bindings,
+            &HashMap::new(),
+            &HashMap::new(),
+            &healthy_confirmation_buffer(),
+            &HashMap::new(),
+            Timestamp::now(),
+        );
+
+        let authorize = view
+            .actions
+            .iter()
+            .find(|action| action.id == "email.mailbox.authorize")
+            .ok_or_else(|| color_eyre::eyre::eyre!("email authorize action expected"))?;
+        assert_eq!(authorize.state, ActionAvailabilityState::Enabled);
+        assert_eq!(authorize.side_effect, ActionSideEffect::Admin);
+        assert_eq!(authorize.rpc_method.as_deref(), Some("ops.start"));
+        assert_eq!(
+            authorize.command_hint.as_deref(),
+            Some(
+                "sinexctl ops start email.mailbox.authorize --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"<provider-mode-id>\"}' --format json"
+            )
+        );
+
+        let sync = view
+            .actions
+            .iter()
+            .find(|action| action.id == "email.mailbox.sync")
+            .ok_or_else(|| color_eyre::eyre::eyre!("email sync action expected"))?;
+        assert_eq!(sync.state, ActionAvailabilityState::Enabled);
+        assert_eq!(sync.side_effect, ActionSideEffect::Write);
+        assert_eq!(sync.rpc_method.as_deref(), Some("ops.start"));
+        assert_eq!(
+            sync.command_hint.as_deref(),
+            Some(
+                "sinexctl ops start email.mailbox.sync --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"<email-mode-id>\"}' --format json"
+            )
+        );
+
+        let pause = view
+            .actions
+            .iter()
+            .find(|action| action.id == "email.mailbox.pause")
+            .ok_or_else(|| color_eyre::eyre::eyre!("email pause action expected"))?;
+        assert_eq!(pause.state, ActionAvailabilityState::Enabled);
+        assert_eq!(pause.side_effect, ActionSideEffect::Admin);
+        assert_eq!(pause.rpc_method.as_deref(), Some("ops.start"));
+
+        let check = view
+            .actions
+            .iter()
+            .find(|action| action.id == "email.mailbox.check")
+            .ok_or_else(|| color_eyre::eyre::eyre!("email check action expected"))?;
+        assert_eq!(check.state, ActionAvailabilityState::Enabled);
+        assert_eq!(
+            check.command_hint.as_deref(),
+            Some("sinexctl sources status email.mailbox --format json")
+        );
+        assert_eq!(check.side_effect, ActionSideEffect::Read);
 
         Ok(())
     }

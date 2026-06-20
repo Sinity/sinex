@@ -48,8 +48,8 @@ pub async fn handle_ops_start(
 
     let record = if request.operation_type == PROJECTION_REBUILD_OPERATION_TYPE {
         start_projection_rebuild_operation(pool, actor, scope_jsonb).await?
-    } else if media_operation_spec(&request.operation_type).is_some() {
-        start_media_operation(pool, actor, &request.operation_type, scope_jsonb).await?
+    } else if package_operation_spec(&request.operation_type).is_some() {
+        start_package_operation(pool, actor, &request.operation_type, scope_jsonb).await?
     } else {
         pool.state()
             .start_operation(&request.operation_type, actor, scope_jsonb)
@@ -71,136 +71,259 @@ pub async fn handle_ops_start(
 }
 
 #[derive(Debug, Clone, Copy)]
-struct MediaOperationSpec {
+struct PackageOperationSpec {
     operation_type: &'static str,
     source_id: &'static str,
-    mode_id: &'static str,
+    default_mode_id: Option<&'static str>,
+    accepted_mode_ids: &'static [&'static str],
     action: &'static str,
+    surface: &'static str,
+    executor_message: &'static str,
 }
 
-const MEDIA_OPERATION_EXECUTOR_STATE: &str = "awaiting_runtime_executor";
+const PACKAGE_OPERATION_EXECUTOR_STATE: &str = "awaiting_runtime_executor";
+const EMAIL_STAGED_MODE_IDS: &[&str] = &[
+    "source:email.mailbox.maildir-staged",
+    "source:email.mailbox.mbox-staged",
+];
+const EMAIL_PROVIDER_MODE_IDS: &[&str] = &[
+    "source:email.mailbox.gmail-api-scheduled-sync",
+    "source:email.mailbox.imap-scheduled-sync",
+    "source:email.mailbox.imap-idle-live",
+];
+const EMAIL_SYNC_MODE_IDS: &[&str] = &[
+    "source:email.mailbox.maildir-staged",
+    "source:email.mailbox.mbox-staged",
+    "source:email.mailbox.gmail-api-scheduled-sync",
+    "source:email.mailbox.imap-scheduled-sync",
+];
 
-const MEDIA_OPERATION_SPECS: &[MediaOperationSpec] = &[
-    MediaOperationSpec {
+const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
+    PackageOperationSpec {
         operation_type: "media.audio-transcript.run-model",
         source_id: "media.audio-transcript",
-        mode_id: "source:media.audio-transcript.local-model-batch",
+        default_mode_id: Some("source:media.audio-transcript.local-model-batch"),
+        accepted_mode_ids: &["source:media.audio-transcript.local-model-batch"],
         action: "run_model",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.audio-transcript.retry",
         source_id: "media.audio-transcript",
-        mode_id: "source:media.audio-transcript.local-model-batch",
+        default_mode_id: Some("source:media.audio-transcript.local-model-batch"),
+        accepted_mode_ids: &["source:media.audio-transcript.local-model-batch"],
         action: "retry",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.audio-transcript.rebuild-artifact",
         source_id: "media.audio-transcript",
-        mode_id: "source:media.audio-transcript.local-model-batch",
+        default_mode_id: Some("source:media.audio-transcript.local-model-batch"),
+        accepted_mode_ids: &["source:media.audio-transcript.local-model-batch"],
         action: "rebuild_artifact",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.audio-transcript.enable-session",
         source_id: "media.audio-transcript",
-        mode_id: "source:media.audio-transcript.live-session",
+        default_mode_id: Some("source:media.audio-transcript.live-session"),
+        accepted_mode_ids: &["source:media.audio-transcript.live-session"],
         action: "enable_session",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.audio-transcript.disable-session",
         source_id: "media.audio-transcript",
-        mode_id: "source:media.audio-transcript.live-session",
+        default_mode_id: Some("source:media.audio-transcript.live-session"),
+        accepted_mode_ids: &["source:media.audio-transcript.live-session"],
         action: "disable_session",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.audio-transcript.pause",
         source_id: "media.audio-transcript",
-        mode_id: "source:media.audio-transcript.live-session",
+        default_mode_id: Some("source:media.audio-transcript.live-session"),
+        accepted_mode_ids: &["source:media.audio-transcript.live-session"],
         action: "pause",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.audio-transcript.resume",
         source_id: "media.audio-transcript",
-        mode_id: "source:media.audio-transcript.live-session",
+        default_mode_id: Some("source:media.audio-transcript.live-session"),
+        accepted_mode_ids: &["source:media.audio-transcript.live-session"],
         action: "resume",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.audio-transcript.delete-material",
         source_id: "media.audio-transcript",
-        mode_id: "source:media.audio-transcript.audio-bundle-staged",
+        default_mode_id: Some("source:media.audio-transcript.audio-bundle-staged"),
+        accepted_mode_ids: &["source:media.audio-transcript.audio-bundle-staged"],
         action: "delete_material",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.screen-ocr.run-ocr",
         source_id: "media.screen-ocr",
-        mode_id: "source:media.screen-ocr.local-model-batch",
+        default_mode_id: Some("source:media.screen-ocr.local-model-batch"),
+        accepted_mode_ids: &["source:media.screen-ocr.local-model-batch"],
         action: "run_ocr",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.screen-ocr.retry",
         source_id: "media.screen-ocr",
-        mode_id: "source:media.screen-ocr.local-model-batch",
+        default_mode_id: Some("source:media.screen-ocr.local-model-batch"),
+        accepted_mode_ids: &["source:media.screen-ocr.local-model-batch"],
         action: "retry",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.screen-ocr.rebuild-artifact",
         source_id: "media.screen-ocr",
-        mode_id: "source:media.screen-ocr.local-model-batch",
+        default_mode_id: Some("source:media.screen-ocr.local-model-batch"),
+        accepted_mode_ids: &["source:media.screen-ocr.local-model-batch"],
         action: "rebuild_artifact",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.screen-ocr.capture-region",
         source_id: "media.screen-ocr",
-        mode_id: "source:media.screen-ocr.on-demand-region",
+        default_mode_id: Some("source:media.screen-ocr.on-demand-region"),
+        accepted_mode_ids: &["source:media.screen-ocr.on-demand-region"],
         action: "capture_region",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.screen-ocr.enable-session",
         source_id: "media.screen-ocr",
-        mode_id: "source:media.screen-ocr.live-session",
+        default_mode_id: Some("source:media.screen-ocr.live-session"),
+        accepted_mode_ids: &["source:media.screen-ocr.live-session"],
         action: "enable_session",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.screen-ocr.disable-session",
         source_id: "media.screen-ocr",
-        mode_id: "source:media.screen-ocr.live-session",
+        default_mode_id: Some("source:media.screen-ocr.live-session"),
+        accepted_mode_ids: &["source:media.screen-ocr.live-session"],
         action: "disable_session",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.screen-ocr.pause",
         source_id: "media.screen-ocr",
-        mode_id: "source:media.screen-ocr.live-session",
+        default_mode_id: Some("source:media.screen-ocr.live-session"),
+        accepted_mode_ids: &["source:media.screen-ocr.live-session"],
         action: "pause",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.screen-ocr.resume",
         source_id: "media.screen-ocr",
-        mode_id: "source:media.screen-ocr.live-session",
+        default_mode_id: Some("source:media.screen-ocr.live-session"),
+        accepted_mode_ids: &["source:media.screen-ocr.live-session"],
         action: "resume",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
     },
-    MediaOperationSpec {
+    PackageOperationSpec {
         operation_type: "media.screen-ocr.delete-material",
         source_id: "media.screen-ocr",
-        mode_id: "source:media.screen-ocr.screenshot-ocr-staged",
+        default_mode_id: Some("source:media.screen-ocr.screenshot-ocr-staged"),
+        accepted_mode_ids: &["source:media.screen-ocr.screenshot-ocr-staged"],
         action: "delete_material",
+        surface: "media_capture",
+        executor_message: "media operation recorded; runtime executor is not yet attached",
+    },
+    PackageOperationSpec {
+        operation_type: "email.mailbox.authorize",
+        source_id: "email.mailbox",
+        default_mode_id: None,
+        accepted_mode_ids: EMAIL_PROVIDER_MODE_IDS,
+        action: "authorize",
+        surface: "email_capture",
+        executor_message: "email operation recorded; provider executor is not yet attached",
+    },
+    PackageOperationSpec {
+        operation_type: "email.mailbox.sync",
+        source_id: "email.mailbox",
+        default_mode_id: None,
+        accepted_mode_ids: EMAIL_SYNC_MODE_IDS,
+        action: "sync",
+        surface: "email_capture",
+        executor_message: "email operation recorded; provider or staged executor is not yet attached",
+    },
+    PackageOperationSpec {
+        operation_type: "email.mailbox.pause",
+        source_id: "email.mailbox",
+        default_mode_id: None,
+        accepted_mode_ids: EMAIL_PROVIDER_MODE_IDS,
+        action: "pause",
+        surface: "email_capture",
+        executor_message: "email operation recorded; provider executor is not yet attached",
+    },
+    PackageOperationSpec {
+        operation_type: "email.mailbox.resume",
+        source_id: "email.mailbox",
+        default_mode_id: None,
+        accepted_mode_ids: EMAIL_PROVIDER_MODE_IDS,
+        action: "resume",
+        surface: "email_capture",
+        executor_message: "email operation recorded; provider executor is not yet attached",
+    },
+    PackageOperationSpec {
+        operation_type: "email.mailbox.inspect",
+        source_id: "email.mailbox",
+        default_mode_id: None,
+        accepted_mode_ids: EMAIL_PROVIDER_MODE_IDS,
+        action: "inspect",
+        surface: "email_capture",
+        executor_message: "email operation recorded; provider executor is not yet attached",
+    },
+    PackageOperationSpec {
+        operation_type: "email.mailbox.replay",
+        source_id: "email.mailbox",
+        default_mode_id: None,
+        accepted_mode_ids: EMAIL_STAGED_MODE_IDS,
+        action: "replay",
+        surface: "email_capture",
+        executor_message: "email operation recorded; staged replay executor is not yet attached",
     },
 ];
 
-fn media_operation_spec(operation_type: &str) -> Option<MediaOperationSpec> {
-    MEDIA_OPERATION_SPECS
+fn package_operation_spec(operation_type: &str) -> Option<PackageOperationSpec> {
+    PACKAGE_OPERATION_SPECS
         .iter()
         .copied()
         .find(|spec| spec.operation_type == operation_type)
 }
 
-async fn start_media_operation(
+async fn start_package_operation(
     pool: &PgPool,
     actor: &str,
     operation_type: &str,
     scope: serde_json::Value,
 ) -> Result<sinex_db::repositories::OperationRecord> {
-    let spec = media_operation_spec(operation_type).ok_or_else(|| {
+    let spec = package_operation_spec(operation_type).ok_or_else(|| {
         SinexError::validation(format!(
-            "unsupported media operation type: {operation_type}"
+            "unsupported package operation type: {operation_type}"
         ))
         .with_operation("ops.start")
     })?;
@@ -209,7 +332,7 @@ async fn start_media_operation(
         serde_json::Value::Object(scope) => scope,
         _ => {
             return Err(
-                SinexError::validation("media operation scope must be a JSON object")
+                SinexError::validation("package operation scope must be a JSON object")
                     .with_operation("ops.start"),
             );
         }
@@ -219,40 +342,52 @@ async fn start_media_operation(
         && source_id != spec.source_id
     {
         return Err(SinexError::validation(format!(
-            "media operation {operation_type} requires source_id {}",
+            "package operation {operation_type} requires source_id {}",
             spec.source_id
         ))
         .with_operation("ops.start")
         .with_context("source_id", source_id.to_string()));
     }
-    if let Some(mode_id) = scope.get("mode_id").and_then(serde_json::Value::as_str)
-        && mode_id != spec.mode_id
-    {
-        return Err(SinexError::validation(format!(
-            "media operation {operation_type} requires mode_id {}",
-            spec.mode_id
-        ))
-        .with_operation("ops.start")
-        .with_context("mode_id", mode_id.to_string()));
-    }
 
-    scope.insert("surface".to_string(), serde_json::json!("media_capture"));
+    let mode_id = match scope.get("mode_id").and_then(serde_json::Value::as_str) {
+        Some(mode_id) if spec.accepted_mode_ids.contains(&mode_id) => mode_id.to_string(),
+        Some(mode_id) => {
+            return Err(SinexError::validation(format!(
+                "package operation {operation_type} requires one of these mode_id values: {}",
+                spec.accepted_mode_ids.join(", ")
+            ))
+            .with_operation("ops.start")
+            .with_context("mode_id", mode_id.to_string()));
+        }
+        None => spec
+            .default_mode_id
+            .ok_or_else(|| {
+                SinexError::validation(format!(
+                    "package operation {operation_type} requires mode_id; accepted values: {}",
+                    spec.accepted_mode_ids.join(", ")
+                ))
+                .with_operation("ops.start")
+            })?
+            .to_string(),
+    };
+
+    scope.insert("surface".to_string(), serde_json::json!(spec.surface));
     scope.insert("source_id".to_string(), serde_json::json!(spec.source_id));
-    scope.insert("mode_id".to_string(), serde_json::json!(spec.mode_id));
+    scope.insert("mode_id".to_string(), serde_json::json!(&mode_id));
     scope.insert("action".to_string(), serde_json::json!(spec.action));
     scope.insert(
         "executor_state".to_string(),
-        serde_json::json!(MEDIA_OPERATION_EXECUTOR_STATE),
+        serde_json::json!(PACKAGE_OPERATION_EXECUTOR_STATE),
     );
 
     let preview_summary = serde_json::json!({
-        "surface": "media_capture",
+        "surface": spec.surface,
         "operation_type": operation_type,
         "source_id": spec.source_id,
-        "mode_id": spec.mode_id,
+        "mode_id": mode_id,
         "action": spec.action,
-        "executor_state": MEDIA_OPERATION_EXECUTOR_STATE,
-        "message": "media operation recorded; runtime executor is not yet attached",
+        "executor_state": PACKAGE_OPERATION_EXECUTOR_STATE,
+        "message": spec.executor_message,
     });
 
     pool.state()
@@ -261,12 +396,8 @@ async fn start_media_operation(
             operation_type: operation_type.to_string(),
             operator: actor.to_string(),
             scope: Some(serde_json::Value::Object(scope)),
-            // `operations_log.result_status` is the coarse operation lifecycle
-            // status. The media executor is not attached yet, so the operation
-            // remains running while the structured scope/preview carry the
-            // precise executor state.
             result_status: sinex_primitives::domain::OperationStatus::Running,
-            result_message: Some("media operation recorded; runtime executor pending".to_string()),
+            result_message: Some(format!("{}; executor pending", spec.surface)),
             preview_summary: Some(preview_summary),
             duration_ms: None,
         })
@@ -460,7 +591,7 @@ mod tests {
         assert_eq!(response.operation.result_status, OperationStatus::Running);
         assert_eq!(
             response.operation.result_message.as_deref(),
-            Some("media operation recorded; runtime executor pending")
+            Some("media_capture; executor pending")
         );
         let scope = response
             .operation
@@ -471,13 +602,13 @@ mod tests {
         assert_eq!(scope["source_id"], "media.screen-ocr");
         assert_eq!(scope["mode_id"], "source:media.screen-ocr.on-demand-region");
         assert_eq!(scope["action"], "capture_region");
-        assert_eq!(scope["executor_state"], MEDIA_OPERATION_EXECUTOR_STATE);
+        assert_eq!(scope["executor_state"], PACKAGE_OPERATION_EXECUTOR_STATE);
         let preview = response
             .operation
             .preview_summary
             .as_ref()
             .expect("media operation preview should be recorded");
-        assert_eq!(preview["executor_state"], MEDIA_OPERATION_EXECUTOR_STATE);
+        assert_eq!(preview["executor_state"], PACKAGE_OPERATION_EXECUTOR_STATE);
         assert_eq!(preview["operation_type"], "media.screen-ocr.capture-region");
 
         let operation_id = response.operation.id.parse::<Id<DbOperation>>()?;
@@ -514,6 +645,86 @@ mod tests {
             error
                 .to_string()
                 .contains("source:media.audio-transcript.local-model-batch")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ops_start_records_email_sync_for_provider_mode(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let response = handle_ops_start(
+            ctx.pool(),
+            OpsStartRequest {
+                operation_type: "email.mailbox.sync".to_string(),
+                scope: Some(serde_json::json!({
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
+                    "account_ref": "operator-mailbox:primary",
+                    "reason": "operator-requested"
+                })),
+            },
+            &RpcAuthContext::system(),
+        )
+        .await?;
+
+        assert_eq!(response.operation.operation_type, "email.mailbox.sync");
+        assert_eq!(response.operation.result_status, OperationStatus::Running);
+        assert_eq!(
+            response.operation.result_message.as_deref(),
+            Some("email_capture; executor pending")
+        );
+        let scope = response
+            .operation
+            .scope
+            .as_ref()
+            .expect("email operation scope should be recorded");
+        assert_eq!(scope["surface"], "email_capture");
+        assert_eq!(scope["source_id"], "email.mailbox");
+        assert_eq!(
+            scope["mode_id"],
+            "source:email.mailbox.gmail-api-scheduled-sync"
+        );
+        assert_eq!(scope["action"], "sync");
+        assert_eq!(scope["account_ref"], "operator-mailbox:primary");
+
+        let preview = response
+            .operation
+            .preview_summary
+            .as_ref()
+            .expect("email operation preview should be recorded");
+        assert_eq!(preview["surface"], "email_capture");
+        assert_eq!(preview["operation_type"], "email.mailbox.sync");
+        assert_eq!(
+            preview["mode_id"],
+            "source:email.mailbox.gmail-api-scheduled-sync"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ops_start_rejects_email_operation_without_mode(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let error = handle_ops_start(
+            ctx.pool(),
+            OpsStartRequest {
+                operation_type: "email.mailbox.authorize".to_string(),
+                scope: Some(serde_json::json!({
+                    "source_id": "email.mailbox",
+                    "account_ref": "operator-mailbox:primary"
+                })),
+            },
+            &RpcAuthContext::system(),
+        )
+        .await
+        .expect_err("email provider operation should require a package mode");
+
+        assert!(error.to_string().contains("requires mode_id"));
+        assert!(
+            error
+                .to_string()
+                .contains("source:email.mailbox.gmail-api-scheduled-sync")
         );
         Ok(())
     }
