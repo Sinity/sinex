@@ -2,6 +2,7 @@ use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
 use sinex_db::repositories::state::PROJECTION_REBUILD_OPERATION_TYPE;
 use sinex_primitives::Id;
+use sinex_primitives::InvalidationTrigger;
 use sinex_primitives::SinexError;
 use sqlx::PgPool;
 
@@ -188,6 +189,161 @@ impl EmailProviderRuntimeMode {
             Self::ImapScheduledSync => "debt:email.mailbox.imap.provider_runtime",
             Self::ImapIdleLive => "debt:email.mailbox.imap.idle_runtime",
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MediaCapturePackage {
+    AudioTranscript,
+    ScreenOcr,
+}
+
+impl MediaCapturePackage {
+    fn from_source_id(source_id: &str) -> Option<Self> {
+        match source_id {
+            "media.audio-transcript" => Some(Self::AudioTranscript),
+            "media.screen-ocr" => Some(Self::ScreenOcr),
+            _ => None,
+        }
+    }
+
+    const fn material_class(self) -> MediaMaterialClass {
+        match self {
+            Self::AudioTranscript => MediaMaterialClass::AudioRecordingOrTranscript,
+            Self::ScreenOcr => MediaMaterialClass::ScreenshotOrOcr,
+        }
+    }
+
+    const fn disclosure_destinations(self) -> &'static [MediaDisclosureDestination] {
+        match self {
+            Self::AudioTranscript => &[
+                MediaDisclosureDestination::RawMaterial,
+                MediaDisclosureDestination::TranscriptText,
+                MediaDisclosureDestination::ModelOutput,
+                MediaDisclosureDestination::Dlq,
+                MediaDisclosureDestination::Export,
+                MediaDisclosureDestination::Telemetry,
+            ],
+            Self::ScreenOcr => &[
+                MediaDisclosureDestination::RawMaterial,
+                MediaDisclosureDestination::OcrText,
+                MediaDisclosureDestination::WindowMetadata,
+                MediaDisclosureDestination::ModelOutput,
+                MediaDisclosureDestination::Dlq,
+                MediaDisclosureDestination::Export,
+                MediaDisclosureDestination::Telemetry,
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MediaMaterialClass {
+    AudioRecordingOrTranscript,
+    ScreenshotOrOcr,
+}
+
+impl MediaMaterialClass {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::AudioRecordingOrTranscript => "audio_recording_or_transcript",
+            Self::ScreenshotOrOcr => "screenshot_or_ocr",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MediaDisclosureDestination {
+    RawMaterial,
+    TranscriptText,
+    OcrText,
+    WindowMetadata,
+    ModelOutput,
+    Dlq,
+    Export,
+    Telemetry,
+}
+
+impl MediaDisclosureDestination {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::RawMaterial => "raw_material",
+            Self::TranscriptText => "transcript_text",
+            Self::OcrText => "ocr_text",
+            Self::WindowMetadata => "window_metadata",
+            Self::ModelOutput => "model_output",
+            Self::Dlq => "dlq",
+            Self::Export => "export",
+            Self::Telemetry => "telemetry",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MediaOperationAction {
+    DeleteMaterial,
+    ModelRun,
+    Retry,
+    RebuildArtifact,
+    CaptureSessionControl,
+    CaptureRegion,
+}
+
+impl MediaOperationAction {
+    fn from_spec_action(action: &str) -> Option<Self> {
+        match action {
+            "delete_material" => Some(Self::DeleteMaterial),
+            "run_model" | "run_ocr" => Some(Self::ModelRun),
+            "retry" => Some(Self::Retry),
+            "rebuild_artifact" => Some(Self::RebuildArtifact),
+            "enable_session" | "disable_session" | "pause" | "resume" => {
+                Some(Self::CaptureSessionControl)
+            }
+            "capture_region" => Some(Self::CaptureRegion),
+            _ => None,
+        }
+    }
+
+    const fn lifecycle_requirement(self) -> &'static str {
+        match self {
+            Self::DeleteMaterial => "delete_redact_replay",
+            Self::ModelRun | Self::Retry => "model_output",
+            Self::RebuildArtifact => "artifact_rebuild",
+            Self::CaptureSessionControl | Self::CaptureRegion => "capture_session",
+        }
+    }
+
+    const fn invalidation_triggers(self) -> &'static [InvalidationTrigger] {
+        match self {
+            Self::DeleteMaterial => &[
+                InvalidationTrigger::Redaction,
+                InvalidationTrigger::SourceMaterialChange,
+            ],
+            Self::ModelRun | Self::Retry => &[
+                InvalidationTrigger::ParserSemanticsChange,
+                InvalidationTrigger::DisclosurePolicyChange,
+            ],
+            Self::RebuildArtifact => &[
+                InvalidationTrigger::Redaction,
+                InvalidationTrigger::SourceMaterialChange,
+                InvalidationTrigger::Replay,
+                InvalidationTrigger::Archive,
+                InvalidationTrigger::ParserSemanticsChange,
+                InvalidationTrigger::DisclosurePolicyChange,
+            ],
+            Self::CaptureSessionControl | Self::CaptureRegion => &[
+                InvalidationTrigger::SourceMaterialChange,
+                InvalidationTrigger::DisclosurePolicyChange,
+            ],
+        }
+    }
+
+    const fn producer_run_required(self) -> bool {
+        matches!(self, Self::ModelRun | Self::Retry)
+    }
+
+    const fn raw_material_policy_required(self) -> bool {
+        !matches!(self, Self::RebuildArtifact)
     }
 }
 
@@ -473,6 +629,10 @@ async fn start_package_operation(
         serde_json::json!(PACKAGE_OPERATION_EXECUTOR_STATE),
     );
     scope.remove("provider_runtime");
+    let operation_metadata = media_operation_metadata(&spec, &mode_id);
+    if let Some(metadata) = operation_metadata.clone() {
+        scope.insert("operation_metadata".to_string(), metadata);
+    }
 
     let mut preview_summary = serde_json::json!({
         "surface": spec.surface,
@@ -490,6 +650,12 @@ async fn start_package_operation(
             .as_object_mut()
             .expect("package operation preview is an object")
             .insert("provider_runtime".to_string(), provider_runtime);
+    }
+    if let Some(metadata) = operation_metadata {
+        preview_summary
+            .as_object_mut()
+            .expect("package operation preview is an object")
+            .insert("operation_metadata".to_string(), metadata);
     }
 
     pool.state()
@@ -548,6 +714,41 @@ fn email_provider_mode_metadata_value(metadata: EmailProviderModeMetadata) -> se
         "debt_ref": metadata.mode.debt_ref(),
         "caveats": metadata.caveats,
     })
+}
+
+fn media_operation_metadata(
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+) -> Option<serde_json::Value> {
+    if spec.surface != "media_capture" {
+        return None;
+    }
+
+    let package = MediaCapturePackage::from_source_id(spec.source_id)?;
+    let action = MediaOperationAction::from_spec_action(spec.action)?;
+    let material_class = package.material_class().as_str();
+    let disclosure_destinations = package
+        .disclosure_destinations()
+        .iter()
+        .map(|destination| destination.as_str())
+        .collect::<Vec<_>>();
+
+    Some(serde_json::json!({
+        "capability_issue": 1043,
+        "mode_id": mode_id,
+        "material_class": material_class,
+        "producer_run_required": action.producer_run_required(),
+        "raw_material_policy_required": action.raw_material_policy_required(),
+        "material_lifecycle_requirement": action.lifecycle_requirement(),
+        "disclosure_destinations": disclosure_destinations,
+        "invalidation_triggers": action.invalidation_triggers(),
+        "executor_contract": {
+            "state": PACKAGE_OPERATION_EXECUTOR_STATE,
+            "bounded_worker_required": action.producer_run_required(),
+            "operator_visible_lifecycle_required": action.raw_material_policy_required(),
+            "attached_executor": false
+        }
+    }))
 }
 
 async fn start_projection_rebuild_operation(
@@ -766,6 +967,51 @@ mod tests {
             .expect("media operation should be persisted");
         assert_eq!(persisted.operation_type, "media.screen-ocr.capture-region");
         assert_eq!(persisted.result_status, OperationStatus::Running);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ops_start_records_media_rebuild_invalidation_triggers(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let response = handle_ops_start(
+            ctx.pool(),
+            OpsStartRequest {
+                operation_type: "media.screen-ocr.rebuild-artifact".to_string(),
+                scope: Some(serde_json::json!({
+                    "source_id": "media.screen-ocr",
+                    "mode_id": "source:media.screen-ocr.local-model-batch",
+                    "artifact_ref": "artifact:media.screen-ocr:example"
+                })),
+            },
+            &RpcAuthContext::system(),
+        )
+        .await?;
+
+        let scope = response
+            .operation
+            .scope
+            .as_ref()
+            .expect("media rebuild operation scope should be recorded");
+        let operation_metadata = scope
+            .get("operation_metadata")
+            .expect("media rebuild should record operation metadata");
+        let triggers = operation_metadata["invalidation_triggers"]
+            .as_array()
+            .expect("invalidation triggers should be an array");
+        for expected in [
+            "redaction",
+            "source_material_change",
+            "replay",
+            "archive",
+            "parser_semantics_change",
+            "disclosure_policy_change",
+        ] {
+            assert!(
+                triggers.iter().any(|trigger| trigger == expected),
+                "media rebuild trigger {expected} should be present"
+            );
+        }
         Ok(())
     }
 
