@@ -60,3 +60,19 @@ pub struct EmailMessageSentPayload {
     pub body_bytes: u64,
     pub attachment_count: u32,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "email", event_type = "email.attachment.observed")]
+pub struct EmailAttachmentObservedPayload {
+    pub message_id: Option<String>,
+    pub folder: Option<String>,
+    pub source_file: String,
+    pub raw_material_id: String,
+    pub mailbox_format: String,
+    pub attachment_index: u32,
+    pub disposition: String,
+    pub filename: Option<String>,
+    pub content_type: Option<String>,
+    pub content_id: Option<String>,
+    pub material_policy_ref: String,
+}

@@ -124,6 +124,8 @@ pub const BROWSER_PAGE_VISITED_CONTRACT_ID: EventContractId =
 pub const EMAIL_MESSAGE_RECEIVED_CONTRACT_ID: EventContractId =
     "event-contract:email/message.received@v1";
 pub const EMAIL_MESSAGE_SENT_CONTRACT_ID: EventContractId = "event-contract:email/message.sent@v1";
+pub const EMAIL_ATTACHMENT_OBSERVED_CONTRACT_ID: EventContractId =
+    "event-contract:email/attachment.observed@v1";
 pub const MEDIA_AUDIO_RECORDING_OBSERVED_CONTRACT_ID: EventContractId =
     "event-contract:media.audio/recording.observed@v1";
 pub const MEDIA_AUDIO_CAPTURE_SESSION_STARTED_CONTRACT_ID: EventContractId =
@@ -160,6 +162,10 @@ const BROWSER_HISTORY_SOURCE_OCCURRENCES: &[OccurrenceIdentity] = &[OccurrenceId
 const EMAIL_MAILBOX_PACKAGES: &[&str] = &["email.mailbox"];
 const EMAIL_MAILBOX_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
     &[OccurrenceIdentity::Uuid5From("(message_id, folder)")];
+const EMAIL_ATTACHMENT_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
+    &[OccurrenceIdentity::Uuid5From(
+        "(message_occurrence, attachment_index, filename, content_id)",
+    )];
 const MEDIA_AUDIO_TRANSCRIPT_PACKAGES: &[&str] = &["media.audio-transcript"];
 const MEDIA_SCREEN_OCR_PACKAGES: &[&str] = &["media.screen-ocr"];
 
@@ -308,6 +314,27 @@ inventory::submit! {
         },
         occurrence: EventOccurrenceContract::SourceDeclared,
         source_occurrences: EMAIL_MAILBOX_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicOrMaterial,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.email-mailbox.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: EMAIL_MAILBOX_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
+inventory::submit! {
+    EventContract {
+        id: EMAIL_ATTACHMENT_OBSERVED_CONTRACT_ID,
+        event_source: "email",
+        event_type: "email.attachment.observed",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "email",
+            event_type: "email.attachment.observed",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::SourceDeclared,
+        source_occurrences: EMAIL_ATTACHMENT_SOURCE_OCCURRENCES,
         temporal: EventTemporalContract::IntrinsicOrMaterial,
         provenance: EventProvenanceRequirement::Material,
         disclosure_policy_ref: Some("operator.email-mailbox.default"),
@@ -575,6 +602,7 @@ mod tests {
         for id in [
             EMAIL_MESSAGE_RECEIVED_CONTRACT_ID,
             EMAIL_MESSAGE_SENT_CONTRACT_ID,
+            EMAIL_ATTACHMENT_OBSERVED_CONTRACT_ID,
         ] {
             let Some(contract) = find_event_contract(id) else {
                 panic!("missing email EventContract {id}");
