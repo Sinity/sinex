@@ -1254,6 +1254,14 @@
           [
             "email",
             "email.message.sent"
+          ],
+          [
+            "email",
+            "email.attachment.observed"
+          ],
+          [
+            "email",
+            "email.thread.observed"
           ]
         ],
         "privacy_tier": "sensitive",
@@ -1323,6 +1331,70 @@
             "operation:email.mailbox.sync",
             "operation:email.mailbox.pause",
             "operation:email.mailbox.resume",
+            "operation:email.mailbox.inspect",
+            "operation:email.mailbox.replay"
+          ],
+          "source_id": "email.mailbox",
+          "proposed": false,
+          "runner_pack": "staged",
+          "checkpoint_family": {
+            "kind": "append_stream"
+          },
+          "runtime_shape": "scheduled",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        },
+        {
+          "subject": "source:email.mailbox.maildir-staged",
+          "id": "email.mailbox",
+          "domain": "email",
+          "implementation": "staged-maildir-parser",
+          "adapter": "FileContentDropAdapter",
+          "output_event_type": "email.message.received",
+          "privacy_context": "document",
+          "resource_profile": "bounded_file",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:email.mailbox.sync",
+            "operation:email.mailbox.inspect",
+            "operation:email.mailbox.replay"
+          ],
+          "source_id": "email.mailbox",
+          "proposed": false,
+          "runner_pack": "staged",
+          "checkpoint_family": {
+            "kind": "append_stream"
+          },
+          "runtime_shape": "scheduled",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        },
+        {
+          "subject": "source:email.mailbox.mbox-staged",
+          "id": "email.mailbox",
+          "domain": "email",
+          "implementation": "staged-mbox-parser",
+          "adapter": "FileContentDropAdapter",
+          "output_event_type": "email.message.received",
+          "privacy_context": "document",
+          "resource_profile": "bounded_file",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:email.mailbox.sync",
             "operation:email.mailbox.inspect",
             "operation:email.mailbox.replay"
           ],
@@ -2357,6 +2429,22 @@
           [
             "media.audio",
             "media.audio.transcript_segment_observed"
+          ],
+          [
+            "media.audio",
+            "media.audio.recording_observed"
+          ],
+          [
+            "media.audio",
+            "media.audio.capture_session_started"
+          ],
+          [
+            "media.audio",
+            "media.audio.capture_session_ended"
+          ],
+          [
+            "media.audio",
+            "media.audio.transcription_run_observed"
           ]
         ],
         "privacy_tier": "sensitive",
@@ -2387,9 +2475,10 @@
           "coverage:source-coverage",
           "debt:unified-debt-view",
           "operation:media.audio-transcript.check",
-          "operation:media.audio-transcript.import",
+          "operation:media.audio-transcript.import-transcript",
           "operation:media.audio-transcript.inspect",
-          "operation:media.audio-transcript.replay"
+          "operation:media.audio-transcript.replay",
+          "operation:media.audio-transcript.export"
         ],
         "source_id": "media.audio-transcript",
         "proposed": false,
@@ -2407,6 +2496,177 @@
           "dedicated_build_rationale": null
         }
       },
+      "runtime_bindings": [
+        {
+          "subject": "source:media.audio-transcript",
+          "id": "media.audio-transcript",
+          "domain": "media",
+          "implementation": "staged-parser",
+          "adapter": "FileContentDropAdapter",
+          "output_event_type": "media.audio.transcript_segment_observed",
+          "privacy_context": "document",
+          "resource_profile": "bounded_file",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:media.audio-transcript.check",
+            "operation:media.audio-transcript.import-transcript",
+            "operation:media.audio-transcript.inspect",
+            "operation:media.audio-transcript.replay",
+            "operation:media.audio-transcript.export"
+          ],
+          "source_id": "media.audio-transcript",
+          "proposed": false,
+          "runner_pack": "staged",
+          "checkpoint_family": {
+            "kind": "append_stream"
+          },
+          "runtime_shape": "scheduled",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        },
+        {
+          "subject": "source:media.audio-transcript.audio-bundle-staged",
+          "id": "media.audio-transcript",
+          "domain": "media",
+          "implementation": "staged-audio-bundle",
+          "adapter": "FileContentDropAdapter",
+          "output_event_type": "media.audio.recording_observed",
+          "privacy_context": "document",
+          "resource_profile": "oneshot",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:media.audio-transcript.import-bundle",
+            "operation:media.audio-transcript.inspect",
+            "operation:media.audio-transcript.delete-material",
+            "operation:media.audio-transcript.export"
+          ],
+          "source_id": "media.audio-transcript",
+          "proposed": false,
+          "runner_pack": "staged",
+          "checkpoint_family": {
+            "kind": "append_stream"
+          },
+          "runtime_shape": "scheduled",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        },
+        {
+          "subject": "source:media.audio-transcript.live-session",
+          "id": "media.audio-transcript",
+          "domain": "media",
+          "implementation": "live-capture",
+          "adapter": "AudioSessionCaptureAdapter",
+          "output_event_type": "media.audio.capture_session_ended",
+          "privacy_context": "document",
+          "resource_profile": "live_watcher",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:media.audio-transcript.enable-session",
+            "operation:media.audio-transcript.disable-session",
+            "operation:media.audio-transcript.pause",
+            "operation:media.audio-transcript.resume",
+            "operation:media.audio-transcript.retry",
+            "operation:media.audio-transcript.inspect"
+          ],
+          "source_id": "media.audio-transcript",
+          "proposed": true,
+          "runner_pack": "live",
+          "checkpoint_family": {
+            "kind": "live_observation"
+          },
+          "runtime_shape": "continuous",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        },
+        {
+          "subject": "source:media.audio-transcript.local-model-batch",
+          "id": "media.audio-transcript",
+          "domain": "media",
+          "implementation": "local-transcription-worker",
+          "adapter": "LocalProcessWorker",
+          "output_event_type": "media.audio.transcription_run_observed",
+          "privacy_context": "document",
+          "resource_profile": "oneshot",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:media.audio-transcript.run-model",
+            "operation:media.audio-transcript.retry",
+            "operation:media.audio-transcript.rebuild-artifact",
+            "operation:media.audio-transcript.inspect"
+          ],
+          "source_id": "media.audio-transcript",
+          "proposed": true,
+          "runner_pack": "sinexd_source",
+          "checkpoint_family": {
+            "kind": "append_stream"
+          },
+          "runtime_shape": "on_demand",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        },
+        {
+          "subject": "source:media.audio-transcript.on-demand-session",
+          "id": "media.audio-transcript",
+          "domain": "media",
+          "implementation": "live-capture",
+          "adapter": "AudioSessionCaptureAdapter",
+          "output_event_type": "media.audio.capture_session_started",
+          "privacy_context": "document",
+          "resource_profile": "live_watcher",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:media.audio-transcript.enable-session",
+            "operation:media.audio-transcript.disable-session",
+            "operation:media.audio-transcript.pause",
+            "operation:media.audio-transcript.resume",
+            "operation:media.audio-transcript.inspect"
+          ],
+          "source_id": "media.audio-transcript",
+          "proposed": true,
+          "runner_pack": "live",
+          "checkpoint_family": {
+            "kind": "live_observation"
+          },
+          "runtime_shape": "on_demand",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        }
+      ],
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100
@@ -2441,6 +2701,14 @@
           [
             "media.screen",
             "media.screen.ocr_segment_observed"
+          ],
+          [
+            "media.screen",
+            "media.screen.screenshot_observed"
+          ],
+          [
+            "media.screen",
+            "media.screen.ocr_run_observed"
           ]
         ],
         "privacy_tier": "sensitive",
@@ -2471,9 +2739,10 @@
           "coverage:source-coverage",
           "debt:unified-debt-view",
           "operation:media.screen-ocr.check",
-          "operation:media.screen-ocr.import",
+          "operation:media.screen-ocr.import-ocr",
           "operation:media.screen-ocr.inspect",
-          "operation:media.screen-ocr.replay"
+          "operation:media.screen-ocr.replay",
+          "operation:media.screen-ocr.export"
         ],
         "source_id": "media.screen-ocr",
         "proposed": false,
@@ -2491,6 +2760,176 @@
           "dedicated_build_rationale": null
         }
       },
+      "runtime_bindings": [
+        {
+          "subject": "source:media.screen-ocr",
+          "id": "media.screen-ocr",
+          "domain": "media",
+          "implementation": "staged-parser",
+          "adapter": "FileContentDropAdapter",
+          "output_event_type": "media.screen.ocr_segment_observed",
+          "privacy_context": "document",
+          "resource_profile": "bounded_file",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:media.screen-ocr.check",
+            "operation:media.screen-ocr.import-ocr",
+            "operation:media.screen-ocr.inspect",
+            "operation:media.screen-ocr.replay",
+            "operation:media.screen-ocr.export"
+          ],
+          "source_id": "media.screen-ocr",
+          "proposed": false,
+          "runner_pack": "staged",
+          "checkpoint_family": {
+            "kind": "append_stream"
+          },
+          "runtime_shape": "scheduled",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        },
+        {
+          "subject": "source:media.screen-ocr.live-session",
+          "id": "media.screen-ocr",
+          "domain": "media",
+          "implementation": "live-capture",
+          "adapter": "ScreenRegionCaptureAdapter",
+          "output_event_type": "media.screen.ocr_segment_observed",
+          "privacy_context": "document",
+          "resource_profile": "live_watcher",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:media.screen-ocr.enable-session",
+            "operation:media.screen-ocr.disable-session",
+            "operation:media.screen-ocr.pause",
+            "operation:media.screen-ocr.resume",
+            "operation:media.screen-ocr.retry",
+            "operation:media.screen-ocr.inspect"
+          ],
+          "source_id": "media.screen-ocr",
+          "proposed": true,
+          "runner_pack": "live",
+          "checkpoint_family": {
+            "kind": "live_observation"
+          },
+          "runtime_shape": "continuous",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        },
+        {
+          "subject": "source:media.screen-ocr.local-model-batch",
+          "id": "media.screen-ocr",
+          "domain": "media",
+          "implementation": "local-ocr-worker",
+          "adapter": "LocalProcessWorker",
+          "output_event_type": "media.screen.ocr_run_observed",
+          "privacy_context": "document",
+          "resource_profile": "oneshot",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:media.screen-ocr.run-ocr",
+            "operation:media.screen-ocr.retry",
+            "operation:media.screen-ocr.rebuild-artifact",
+            "operation:media.screen-ocr.inspect"
+          ],
+          "source_id": "media.screen-ocr",
+          "proposed": true,
+          "runner_pack": "sinexd_source",
+          "checkpoint_family": {
+            "kind": "append_stream"
+          },
+          "runtime_shape": "on_demand",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        },
+        {
+          "subject": "source:media.screen-ocr.on-demand-region",
+          "id": "media.screen-ocr",
+          "domain": "media",
+          "implementation": "live-capture",
+          "adapter": "ScreenRegionCaptureAdapter",
+          "output_event_type": "media.screen.screenshot_observed",
+          "privacy_context": "document",
+          "resource_profile": "live_watcher",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:media.screen-ocr.capture-region",
+            "operation:media.screen-ocr.pause",
+            "operation:media.screen-ocr.resume",
+            "operation:media.screen-ocr.inspect"
+          ],
+          "source_id": "media.screen-ocr",
+          "proposed": true,
+          "runner_pack": "live",
+          "checkpoint_family": {
+            "kind": "live_observation"
+          },
+          "runtime_shape": "on_demand",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        },
+        {
+          "subject": "source:media.screen-ocr.screenshot-ocr-staged",
+          "id": "media.screen-ocr",
+          "domain": "media",
+          "implementation": "staged-screenshot-bundle",
+          "adapter": "FileContentDropAdapter",
+          "output_event_type": "media.screen.screenshot_observed",
+          "privacy_context": "document",
+          "resource_profile": "oneshot",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:media.screen-ocr.import-screenshots",
+            "operation:media.screen-ocr.inspect",
+            "operation:media.screen-ocr.delete-material",
+            "operation:media.screen-ocr.export"
+          ],
+          "source_id": "media.screen-ocr",
+          "proposed": false,
+          "runner_pack": "staged",
+          "checkpoint_family": {
+            "kind": "append_stream"
+          },
+          "runtime_shape": "scheduled",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          }
+        }
+      ],
       "resource_limits": {
         "memory_max_mib": 256,
         "cpu_weight": 100

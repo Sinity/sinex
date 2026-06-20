@@ -344,7 +344,8 @@ async fn source_meta_media_staged_sources_register_parser_and_factory() -> TestR
 }
 
 #[sinex_test]
-async fn source_meta_email_source_registers_rfc822_binding_and_sent_proposal() -> TestResult<()> {
+async fn source_meta_email_source_registers_staged_mailbox_modes_and_sent_proposal(
+) -> TestResult<()> {
     use sinex_primitives::source_contracts::{all_source_contracts, source_runtime_bindings};
 
     let source_id = sui("email.mailbox");
@@ -385,11 +386,16 @@ async fn source_meta_email_source_registers_rfc822_binding_and_sent_proposal() -
         .collect();
     assert_eq!(
         bindings.len(),
-        2,
-        "email mailbox must register received and sent runtime bindings"
+        4,
+        "email mailbox must register RFC822, Maildir, MBOX, and sent runtime bindings"
     );
     for (subject, event_type) in [
         ("source:email.mailbox", "email.message.received"),
+        (
+            "source:email.mailbox.maildir-staged",
+            "email.message.received",
+        ),
+        ("source:email.mailbox.mbox-staged", "email.message.received"),
         ("source:email.mailbox.sent", "email.message.sent"),
     ] {
         assert!(
@@ -399,12 +405,18 @@ async fn source_meta_email_source_registers_rfc822_binding_and_sent_proposal() -
             "email mailbox must register binding {subject} -> {event_type}"
         );
     }
-    assert!(
-        bindings.iter().any(|binding| {
-            binding.subject.as_str() == "source:email.mailbox" && !binding.proposed
-        }),
-        "email received staged mode must be an accepted runnable binding"
-    );
+    for subject in [
+        "source:email.mailbox",
+        "source:email.mailbox.maildir-staged",
+        "source:email.mailbox.mbox-staged",
+    ] {
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.subject.as_str() == subject && !binding.proposed),
+            "email staged mode {subject} must be an accepted runnable binding"
+        );
+    }
     assert!(
         bindings.iter().any(|binding| {
             binding.subject.as_str() == "source:email.mailbox.sent" && binding.proposed
@@ -841,40 +853,46 @@ async fn package_completeness_report_consumes_coverage_debt_and_operation_refs()
         "browser operation refs should satisfy the package completeness requirement"
     );
 
-    let email = report
-        .packages
-        .get("email.mailbox")
-        .and_then(|package| package.modes.get("email.mailbox"))
-        .expect("email.mailbox package/mode row");
-    assert!(
-        email
-            .coverage_debt_refs
-            .contains(&"coverage:source-coverage".to_string()),
-        "email staged mode must declare the coverage provider consumed by the package gate"
-    );
-    assert!(
-        email
-            .coverage_debt_refs
-            .contains(&"debt:unified-debt-view".to_string()),
-        "email staged mode must declare the unified debt provider consumed by the package gate"
-    );
-    assert!(
-        email
-            .operation_refs
-            .contains(&"operation:email.mailbox.check".to_string()),
-        "email staged mode must declare operator action refs consumed by the package gate"
-    );
-    assert!(
-        !email
-            .missing
-            .iter()
-            .any(|field| field == "coverage_and_debt_views"),
-        "email coverage/debt refs should satisfy the package completeness requirement"
-    );
-    assert!(
-        !email.missing.iter().any(|field| field == "operations"),
-        "email operation refs should satisfy the package completeness requirement"
-    );
+    for mode_id in [
+        "email.mailbox",
+        "email.mailbox.maildir-staged",
+        "email.mailbox.mbox-staged",
+    ] {
+        let email = report
+            .packages
+            .get("email.mailbox")
+            .and_then(|package| package.modes.get(mode_id))
+            .expect("email.mailbox package/mode row");
+        assert!(
+            email
+                .coverage_debt_refs
+                .contains(&"coverage:source-coverage".to_string()),
+            "email staged mode must declare the coverage provider consumed by the package gate"
+        );
+        assert!(
+            email
+                .coverage_debt_refs
+                .contains(&"debt:unified-debt-view".to_string()),
+            "email staged mode must declare the unified debt provider consumed by the package gate"
+        );
+        assert!(
+            email
+                .operation_refs
+                .contains(&"operation:email.mailbox.sync".to_string()),
+            "email staged mode must declare operator action refs consumed by the package gate"
+        );
+        assert!(
+            !email
+                .missing
+                .iter()
+                .any(|field| field == "coverage_and_debt_views"),
+            "email coverage/debt refs should satisfy the package completeness requirement"
+        );
+        assert!(
+            !email.missing.iter().any(|field| field == "operations"),
+            "email operation refs should satisfy the package completeness requirement"
+        );
+    }
 
     for (package_id, mode_id, operation_ref) in [
         (
@@ -952,18 +970,29 @@ async fn package_completeness_report_distinguishes_proposed_and_manual_modes() -
         "received-mail staged mode must be listed"
     );
     assert!(
+        email.modes.contains_key("email.mailbox.maildir-staged"),
+        "Maildir staged mode must be listed separately"
+    );
+    assert!(
+        email.modes.contains_key("email.mailbox.mbox-staged"),
+        "MBOX staged mode must be listed separately"
+    );
+    assert!(
         email.modes.contains_key("email.mailbox.sent"),
         "sent-mail proposed multi-binding mode must be listed separately"
     );
-    let received = email
-        .modes
-        .get("email.mailbox")
-        .expect("received staged mode");
-    assert_eq!(received.mode_state, PackageModeState::Accepted);
-    assert!(
-        received.missing.is_empty(),
-        "accepted email staged mode should satisfy the package gate"
-    );
+    for mode_id in [
+        "email.mailbox",
+        "email.mailbox.maildir-staged",
+        "email.mailbox.mbox-staged",
+    ] {
+        let mode = email.modes.get(mode_id).expect("email staged mode");
+        assert_eq!(mode.mode_state, PackageModeState::Accepted);
+        assert!(
+            mode.missing.is_empty(),
+            "accepted email staged mode {mode_id} should satisfy the package gate"
+        );
+    }
     let sent = email
         .modes
         .get("email.mailbox.sent")
