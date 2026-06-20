@@ -5,8 +5,6 @@
 
 #[cfg(test)]
 mod tests {
-    use xtask::sandbox::prelude::*;
-
     /// Qutebrowser `SQLite` row serialised as JSON.
     ///
     /// Fields match what `SqliteRowAdapter` produces from the `History` table:
@@ -49,27 +47,13 @@ mod tests {
         &["page.visited"],
     );
 
-    #[sinex_test]
-    async fn browser_history_qutebrowser_initial_ingestion() -> TestResult<()> {
-        crate::run_production_path_case(QUTEBROWSER_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn browser_history_chromium_initial_ingestion() -> TestResult<()> {
-        crate::run_production_path_case(CHROMIUM_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn browser_history_jsonl_dump_initial_ingestion() -> TestResult<()> {
-        crate::run_production_path_case(JSONL_DUMP_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
+    crate::production_path_case_test!(
+        browser_history_qutebrowser_initial_ingestion,
+        QUTEBROWSER_CASE
+    );
+    crate::production_path_case_test!(browser_history_chromium_initial_ingestion, CHROMIUM_CASE);
+    crate::production_path_case_test!(
+        browser_history_jsonl_dump_initial_ingestion,
+        JSONL_DUMP_CASE
+    );
 }
