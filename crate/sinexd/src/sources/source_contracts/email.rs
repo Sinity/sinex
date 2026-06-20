@@ -1,7 +1,8 @@
 //! Email capture source — `email.mailbox` (#1469).
 //!
-//! The first runnable mode is staged RFC822/`.eml` material. Live Gmail/IMAP
-//! modes stay represented by issue scope, not by this parser.
+//! The accepted staged mode covers RFC822/`.eml`, Maildir entries, and MBOX
+//! message slices. Live Gmail/IMAP modes stay represented by issue scope, not
+//! by this parser.
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
@@ -107,15 +108,10 @@ impl MaterialParser for EmailMailboxParser {
             .as_ref()
             .map(ToString::to_string)
             .unwrap_or_default();
-        let folder = folder_from_record(&record);
+        let material = EmailMaterialIdentity::from_record(&record);
         let raw_material_id = record.material_id.to_uuid().to_string();
-        let occurrence_key = occurrence_key(
-            parsed.message_id.as_deref(),
-            folder.as_deref(),
-            &source_file,
-            &record.anchor,
-            &raw_material_id,
-        );
+        let occurrence_key =
+            occurrence_key(parsed.message_id.as_deref(), &material, &raw_material_id);
 
         let (event_type, payload) = match event_kind {
             EmailEventKind::Received => {
@@ -130,9 +126,16 @@ impl MaterialParser for EmailMailboxParser {
                     in_reply_to: parsed.in_reply_to,
                     references: parsed.references,
                     list_id: parsed.list_id,
-                    folder,
+                    folder: material.folder.clone(),
                     source_file,
                     raw_material_id,
+                    mailbox_format: material.mailbox_format.as_str().to_string(),
+                    maildir_subdir: material.maildir_subdir.clone(),
+                    maildir_flags: material.maildir_flags.clone(),
+                    maildir_stable_filename: material.maildir_stable_filename.clone(),
+                    mbox_file: material.mbox_file.clone(),
+                    mbox_byte_start: material.mbox_byte_start,
+                    mbox_byte_end: material.mbox_byte_end,
                     size_bytes: record.bytes.len() as u64,
                     body_bytes: parsed.body_bytes,
                     attachment_count: parsed.attachment_count,
@@ -158,9 +161,16 @@ impl MaterialParser for EmailMailboxParser {
                     in_reply_to: parsed.in_reply_to,
                     references: parsed.references,
                     list_id: parsed.list_id,
-                    folder,
+                    folder: material.folder.clone(),
                     source_file,
                     raw_material_id,
+                    mailbox_format: material.mailbox_format.as_str().to_string(),
+                    maildir_subdir: material.maildir_subdir.clone(),
+                    maildir_flags: material.maildir_flags.clone(),
+                    maildir_stable_filename: material.maildir_stable_filename.clone(),
+                    mbox_file: material.mbox_file.clone(),
+                    mbox_byte_start: material.mbox_byte_start,
+                    mbox_byte_end: material.mbox_byte_end,
                     size_bytes: record.bytes.len() as u64,
                     body_bytes: parsed.body_bytes,
                     attachment_count: parsed.attachment_count,
@@ -192,6 +202,170 @@ impl MaterialParser for EmailMailboxParser {
                 .build(),
         ])
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmailMailboxFormat {
+    Rfc822Drop,
+    Maildir,
+    Mbox,
+}
+
+impl EmailMailboxFormat {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Rfc822Drop => "rfc822-drop-staged",
+            Self::Maildir => "maildir-staged",
+            Self::Mbox => "mbox-staged",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EmailMaterialIdentity {
+    mailbox_format: EmailMailboxFormat,
+    folder: Option<String>,
+    source_file: String,
+    material_anchor: String,
+    maildir_subdir: Option<String>,
+    maildir_flags: Vec<String>,
+    maildir_stable_filename: Option<String>,
+    mbox_file: Option<String>,
+    mbox_byte_start: Option<u64>,
+    mbox_byte_end: Option<u64>,
+}
+
+impl EmailMaterialIdentity {
+    fn from_record(record: &SourceRecord) -> Self {
+        let source_file = record
+            .logical_path
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        let material_anchor = format!("{:?}", record.anchor);
+        let metadata_folder = record
+            .metadata
+            .get("folder")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+
+        if let Some(maildir) = MaildirPathIdentity::from_record(record) {
+            return Self {
+                mailbox_format: EmailMailboxFormat::Maildir,
+                folder: metadata_folder.or(maildir.folder),
+                source_file,
+                material_anchor,
+                maildir_subdir: Some(maildir.subdir),
+                maildir_flags: maildir.flags,
+                maildir_stable_filename: maildir.stable_filename,
+                mbox_file: None,
+                mbox_byte_start: None,
+                mbox_byte_end: None,
+            };
+        }
+
+        if is_mbox_record(record) {
+            let (mbox_byte_start, mbox_byte_end) = match record.anchor {
+                MaterialAnchor::ByteRange { start, len } => (Some(start), Some(start + len)),
+                _ => (None, None),
+            };
+            return Self {
+                mailbox_format: EmailMailboxFormat::Mbox,
+                folder: metadata_folder.or_else(|| folder_from_path(record.logical_path.as_ref())),
+                source_file: source_file.clone(),
+                material_anchor,
+                maildir_subdir: None,
+                maildir_flags: Vec::new(),
+                maildir_stable_filename: None,
+                mbox_file: if source_file.is_empty() {
+                    None
+                } else {
+                    Some(source_file)
+                },
+                mbox_byte_start,
+                mbox_byte_end,
+            };
+        }
+
+        Self {
+            mailbox_format: EmailMailboxFormat::Rfc822Drop,
+            folder: metadata_folder.or_else(|| folder_from_path(record.logical_path.as_ref())),
+            source_file,
+            material_anchor,
+            maildir_subdir: None,
+            maildir_flags: Vec::new(),
+            maildir_stable_filename: None,
+            mbox_file: None,
+            mbox_byte_start: None,
+            mbox_byte_end: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct MaildirPathIdentity {
+    folder: Option<String>,
+    subdir: String,
+    stable_filename: Option<String>,
+    flags: Vec<String>,
+}
+
+impl MaildirPathIdentity {
+    fn from_record(record: &SourceRecord) -> Option<Self> {
+        let path = record.logical_path.as_ref()?;
+        let parts: Vec<&str> = path
+            .as_str()
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect();
+        let subdir_index = parts
+            .iter()
+            .position(|part| matches!(*part, "cur" | "new" | "tmp"))?;
+        let subdir = parts[subdir_index].to_string();
+        let file_name = parts.get(subdir_index + 1).copied();
+        let stable_filename = file_name.map(stable_maildir_name);
+        let folder = if subdir_index == 0 {
+            None
+        } else {
+            Some(parts[..subdir_index].join("/"))
+        };
+        let flags = file_name.map(maildir_flags).unwrap_or_default();
+        Some(Self {
+            folder,
+            subdir,
+            stable_filename,
+            flags,
+        })
+    }
+}
+
+fn stable_maildir_name(name: &str) -> String {
+    name.split_once(":2,")
+        .map_or(name, |(stable, _)| stable)
+        .to_string()
+}
+
+fn maildir_flags(name: &str) -> Vec<String> {
+    let Some((_, flags)) = name.split_once(":2,") else {
+        return Vec::new();
+    };
+    flags.chars().map(|flag| flag.to_string()).collect()
+}
+
+fn is_mbox_record(record: &SourceRecord) -> bool {
+    if record
+        .metadata
+        .get("mailbox_format")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|format| format.eq_ignore_ascii_case("mbox"))
+    {
+        return true;
+    }
+    record
+        .logical_path
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .is_some_and(|name| name.ends_with(".mbox") || name == "mbox")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,15 +532,6 @@ fn attachment_count(text: &str) -> u32 {
         .unwrap_or(u32::MAX)
 }
 
-fn folder_from_record(record: &SourceRecord) -> Option<String> {
-    record
-        .metadata
-        .get("folder")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .or_else(|| folder_from_path(record.logical_path.as_ref()))
-}
-
 fn folder_from_path(path: Option<&Utf8PathBuf>) -> Option<String> {
     let path = path?;
     path.parent()
@@ -377,23 +542,94 @@ fn folder_from_path(path: Option<&Utf8PathBuf>) -> Option<String> {
 
 fn occurrence_key(
     message_id: Option<&str>,
-    folder: Option<&str>,
-    source_file: &str,
-    anchor: &MaterialAnchor,
+    material: &EmailMaterialIdentity,
     raw_material_id: &str,
 ) -> OccurrenceKey {
+    let fallback_identity = material_fallback_identity(material, raw_material_id);
     let mut fields = vec![
         (
             "message_id_or_material".to_string(),
-            message_id.unwrap_or(raw_material_id).to_string(),
+            message_id.unwrap_or(&fallback_identity).to_string(),
         ),
-        ("folder".to_string(), folder.unwrap_or("").to_string()),
-        ("source_file".to_string(), source_file.to_string()),
+        (
+            "mailbox_format".to_string(),
+            material.mailbox_format.as_str().to_string(),
+        ),
+        (
+            "folder".to_string(),
+            material.folder.as_deref().unwrap_or("").to_string(),
+        ),
     ];
-    fields.push(("material_anchor".to_string(), format!("{anchor:?}")));
+    match material.mailbox_format {
+        EmailMailboxFormat::Maildir => {
+            fields.push((
+                "maildir_stable_filename".to_string(),
+                material
+                    .maildir_stable_filename
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_string(),
+            ));
+        }
+        EmailMailboxFormat::Mbox => {
+            fields.push((
+                "mbox_file".to_string(),
+                material.mbox_file.as_deref().unwrap_or("").to_string(),
+            ));
+            fields.push((
+                "mbox_byte_start".to_string(),
+                material
+                    .mbox_byte_start
+                    .map(|start| start.to_string())
+                    .unwrap_or_default(),
+            ));
+            fields.push((
+                "mbox_byte_end".to_string(),
+                material
+                    .mbox_byte_end
+                    .map(|end| end.to_string())
+                    .unwrap_or_default(),
+            ));
+        }
+        EmailMailboxFormat::Rfc822Drop => {
+            fields.push(("source_file".to_string(), material.source_file.clone()));
+        }
+    }
+    fields.push((
+        "material_anchor".to_string(),
+        material.material_anchor.clone(),
+    ));
     OccurrenceKey {
         source_id: SourceId::from_static("email.mailbox"),
         fields,
+    }
+}
+
+fn material_fallback_identity(material: &EmailMaterialIdentity, raw_material_id: &str) -> String {
+    match material.mailbox_format {
+        EmailMailboxFormat::Maildir => material
+            .maildir_stable_filename
+            .clone()
+            .unwrap_or_else(|| raw_material_id.to_string()),
+        EmailMailboxFormat::Mbox => {
+            let file = material.mbox_file.as_deref().unwrap_or("");
+            let start = material
+                .mbox_byte_start
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            let end = material
+                .mbox_byte_end
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            format!("{file}:{start}:{end}")
+        }
+        EmailMailboxFormat::Rfc822Drop => {
+            if material.source_file.is_empty() {
+                raw_material_id.to_string()
+            } else {
+                material.source_file.clone()
+            }
+        }
     }
 }
 
@@ -429,6 +665,32 @@ mod tests {
         }
     }
 
+    fn record_with_anchor(
+        bytes: &[u8],
+        logical_path: &str,
+        anchor: MaterialAnchor,
+        metadata: serde_json::Value,
+    ) -> SourceRecord {
+        SourceRecord {
+            material_id: Id::new(),
+            anchor,
+            bytes: bytes.to_vec(),
+            logical_path: Some(Utf8PathBuf::from(logical_path)),
+            source_ts_hint: None,
+            metadata,
+        }
+    }
+
+    fn occurrence_field<'a>(intent: &'a ParsedEventIntent, name: &str) -> Option<&'a str> {
+        intent
+            .occurrence_key
+            .as_ref()?
+            .fields
+            .iter()
+            .find(|(field, _)| field == name)
+            .map(|(_, value)| value.as_str())
+    }
+
     #[sinex_test]
     async fn parses_received_rfc822_envelope_without_redacting_fields() -> TestResult<()> {
         let mut parser = EmailMailboxParser;
@@ -446,6 +708,7 @@ mod tests {
         assert_eq!(intents[0].payload["bcc"][0], "Secret <secret@example.com>");
         assert_eq!(intents[0].payload["references"][1], "parent@example.com");
         assert_eq!(intents[0].payload["folder"], "inbox");
+        assert_eq!(intents[0].payload["mailbox_format"], "rfc822-drop-staged");
         assert!(intents[0].occurrence_key.is_some());
         Ok(())
     }
@@ -478,6 +741,130 @@ mod tests {
             .expect_err("invalid UTF-8 should be rejected");
 
         assert!(err.to_string().contains("not UTF-8"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn maildir_entry_preserves_folder_flags_and_move_identity() -> TestResult<()> {
+        let mut parser = EmailMailboxParser;
+        let bytes = b"Message-ID: <move-1@example.com>\nFrom: Alice <alice@example.com>\nTo: Bob <bob@example.com>\nSubject: Maildir move\n\nBody.\n";
+        let new_record = record_for(bytes, "Maildir/INBOX/new/1710000000.M1P1.host");
+        let cur_record = record_for(bytes, "Maildir/INBOX/cur/1710000000.M1P1.host:2,RS");
+
+        let new_intent = parser
+            .parse_record(new_record, &test_ctx())
+            .await?
+            .remove(0);
+        let cur_intent = parser
+            .parse_record(cur_record, &test_ctx())
+            .await?
+            .remove(0);
+
+        assert_eq!(cur_intent.payload["mailbox_format"], "maildir-staged");
+        assert_eq!(cur_intent.payload["folder"], "Maildir/INBOX");
+        assert_eq!(cur_intent.payload["maildir_subdir"], "cur");
+        assert_eq!(cur_intent.payload["maildir_flags"][0], "R");
+        assert_eq!(cur_intent.payload["maildir_flags"][1], "S");
+        assert_eq!(
+            cur_intent.payload["maildir_stable_filename"],
+            "1710000000.M1P1.host"
+        );
+        assert_eq!(
+            occurrence_field(&new_intent, "maildir_stable_filename"),
+            occurrence_field(&cur_intent, "maildir_stable_filename"),
+            "Maildir cur/new moves should keep the stable filename identity"
+        );
+        assert_eq!(
+            occurrence_field(&new_intent, "folder"),
+            occurrence_field(&cur_intent, "folder"),
+            "Maildir cur/new moves within one folder should keep occurrence folder identity"
+        );
+        assert_eq!(
+            occurrence_field(&new_intent, "message_id_or_material"),
+            occurrence_field(&cur_intent, "message_id_or_material"),
+            "Maildir cur/new moves should not mint a new message occurrence"
+        );
+        assert!(
+            occurrence_field(&cur_intent, "source_file").is_none(),
+            "Maildir occurrence identity should not depend on cur/new source path"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn mbox_slice_exposes_byte_range_identity() -> TestResult<()> {
+        let mut parser = EmailMailboxParser;
+        let record = record_with_anchor(
+            b"Message-ID: <mbox-1@example.com>\nDate: Tue, 14 Jan 2025 12:00:00 +0000\nFrom: Alice <alice@example.com>\nTo: Bob <bob@example.com>\nSubject: MBOX slice\n\nBody.\n",
+            "exports/inbox.mbox",
+            MaterialAnchor::ByteRange { start: 1024, len: 162 },
+            serde_json::json!({"mailbox_format": "mbox", "folder": "archive/inbox"}),
+        );
+
+        let intent = parser.parse_record(record, &test_ctx()).await?.remove(0);
+
+        assert_eq!(intent.payload["mailbox_format"], "mbox-staged");
+        assert_eq!(intent.payload["folder"], "archive/inbox");
+        assert_eq!(intent.payload["mbox_file"], "exports/inbox.mbox");
+        assert_eq!(intent.payload["mbox_byte_start"], 1024);
+        assert_eq!(intent.payload["mbox_byte_end"], 1186);
+        assert_eq!(
+            occurrence_field(&intent, "mbox_file"),
+            Some("exports/inbox.mbox")
+        );
+        assert_eq!(occurrence_field(&intent, "mbox_byte_start"), Some("1024"));
+        assert_eq!(occurrence_field(&intent, "mbox_byte_end"), Some("1186"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn missing_message_id_falls_back_to_material_identity() -> TestResult<()> {
+        let mut parser = EmailMailboxParser;
+        let first = record_for(
+            b"From: Alice <alice@example.com>\nTo: Bob <bob@example.com>\nSubject: No id\n\nBody.\n",
+            "Maildir/INBOX/cur/1710000001.M2P1.host:2,S",
+        );
+        let second = record_for(
+            b"From: Alice <alice@example.com>\nTo: Bob <bob@example.com>\nSubject: No id\n\nBody.\n",
+            "Maildir/INBOX/cur/1710000002.M3P1.host:2,S",
+        );
+
+        let first_intent = parser.parse_record(first, &test_ctx()).await?.remove(0);
+        let second_intent = parser.parse_record(second, &test_ctx()).await?.remove(0);
+
+        assert!(
+            first_intent.payload["message_id"].is_null(),
+            "fixture should exercise missing Message-ID fallback"
+        );
+        assert_ne!(
+            occurrence_field(&first_intent, "message_id_or_material"),
+            occurrence_field(&second_intent, "message_id_or_material"),
+            "missing Message-ID fallback should remain material-specific"
+        );
+        assert_ne!(
+            occurrence_field(&first_intent, "maildir_stable_filename"),
+            occurrence_field(&second_intent, "maildir_stable_filename"),
+            "Maildir stable filenames should distinguish no-Message-ID messages"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn missing_message_id_maildir_replay_keeps_occurrence_identity() -> TestResult<()> {
+        let mut parser = EmailMailboxParser;
+        let bytes =
+            b"From: Alice <alice@example.com>\nTo: Bob <bob@example.com>\nSubject: Replay\n\nBody.\n";
+        let first = record_for(bytes, "Maildir/INBOX/cur/1710000004.M4P1.host:2,S");
+        let replay = record_for(bytes, "Maildir/INBOX/cur/1710000004.M4P1.host:2,S");
+
+        let first_intent = parser.parse_record(first, &test_ctx()).await?.remove(0);
+        let replay_intent = parser.parse_record(replay, &test_ctx()).await?.remove(0);
+
+        assert_eq!(
+            occurrence_field(&first_intent, "message_id_or_material"),
+            occurrence_field(&replay_intent, "message_id_or_material"),
+            "replaying the same no-Message-ID Maildir entry should not depend on raw material UUID"
+        );
         Ok(())
     }
 }
