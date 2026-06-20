@@ -15,6 +15,7 @@ use sinex_primitives::rpc::{
     RpcMethod,
     audit::AUDIT_GET_METHOD,
     automata::AUTOMATA_STATUS_METHOD,
+    browser::BROWSER_CAPTURE_BATCH_METHOD,
     content::{CONTENT_RETRIEVE_BLOB_METHOD, CONTENT_STORE_BLOB_METHOD},
     coordination::{
         COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
@@ -561,33 +562,33 @@ pub fn list_all_methods() -> Vec<(String, crate::api::auth::Role)> {
 
 fn build_registry_impl() -> RpcRegistry {
     use crate::api::handlers::{
-        handle_audit_get, handle_automata_status, handle_coordination_get_leader,
-        handle_coordination_instance_health, handle_coordination_list_instances,
-        handle_create_entities, handle_create_note, handle_curation_finalize,
-        handle_curation_list_duplicate_candidates, handle_curation_list_proposals,
-        handle_curation_record_duplicate_judgment, handle_curation_record_judgment,
-        handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue,
-        handle_documents_get, handle_documents_get_chunks, handle_documents_get_chunks_redacted,
-        handle_documents_search, handle_events_annotate, handle_events_cards,
-        handle_events_lineage, handle_events_query, handle_events_relation_evidence,
-        handle_health_effect_record, handle_health_intake_record, handle_hyprland_workspace_switch,
-        handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
-        handle_link_entities, handle_llm_budget_report, handle_llm_prompts_list,
-        handle_llm_route_explain, handle_ops_cancel, handle_ops_get, handle_ops_list,
-        handle_ops_start, handle_privacy_policy_backend_add, handle_privacy_policy_dictionary_add,
-        handle_privacy_policy_field_bind, handle_privacy_policy_field_unbind,
-        handle_privacy_policy_list, handle_privacy_policy_rule_add,
-        handle_privacy_policy_rule_remove, handle_privacy_policy_rule_set_enabled,
-        handle_privacy_policy_scope_bind, handle_privacy_policy_seed_builtin,
-        handle_private_mode_disable_service, handle_private_mode_enable_service,
-        handle_private_mode_status_service, handle_replay_approve_operation,
-        handle_replay_cancel_operation, handle_replay_create_operation,
-        handle_replay_execute_operation, handle_replay_list_operations,
-        handle_replay_operation_status, handle_replay_preview_operation,
-        handle_replay_submit_operation, handle_retrieve_blob, handle_runtime_drain,
-        handle_runtime_health, handle_runtime_list, handle_runtime_list_active,
-        handle_runtime_resume, handle_runtime_set_horizon, handle_semantic_epoch_create,
-        handle_semantic_epoch_list, handle_semantic_lane_create,
+        handle_audit_get, handle_automata_status, handle_browser_capture_batch,
+        handle_coordination_get_leader, handle_coordination_instance_health,
+        handle_coordination_list_instances, handle_create_entities, handle_create_note,
+        handle_curation_finalize, handle_curation_list_duplicate_candidates,
+        handle_curation_list_proposals, handle_curation_record_duplicate_judgment,
+        handle_curation_record_judgment, handle_dlq_list, handle_dlq_peek, handle_dlq_purge,
+        handle_dlq_requeue, handle_documents_get, handle_documents_get_chunks,
+        handle_documents_get_chunks_redacted, handle_documents_search, handle_events_annotate,
+        handle_events_cards, handle_events_lineage, handle_events_query,
+        handle_events_relation_evidence, handle_health_effect_record, handle_health_intake_record,
+        handle_hyprland_workspace_switch, handle_lifecycle_archive, handle_lifecycle_restore,
+        handle_lifecycle_status, handle_link_entities, handle_llm_budget_report,
+        handle_llm_prompts_list, handle_llm_route_explain, handle_ops_cancel, handle_ops_get,
+        handle_ops_list, handle_ops_start, handle_privacy_policy_backend_add,
+        handle_privacy_policy_dictionary_add, handle_privacy_policy_field_bind,
+        handle_privacy_policy_field_unbind, handle_privacy_policy_list,
+        handle_privacy_policy_rule_add, handle_privacy_policy_rule_remove,
+        handle_privacy_policy_rule_set_enabled, handle_privacy_policy_scope_bind,
+        handle_privacy_policy_seed_builtin, handle_private_mode_disable_service,
+        handle_private_mode_enable_service, handle_private_mode_status_service,
+        handle_replay_approve_operation, handle_replay_cancel_operation,
+        handle_replay_create_operation, handle_replay_execute_operation,
+        handle_replay_list_operations, handle_replay_operation_status,
+        handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
+        handle_runtime_drain, handle_runtime_health, handle_runtime_list,
+        handle_runtime_list_active, handle_runtime_resume, handle_runtime_set_horizon,
+        handle_semantic_epoch_create, handle_semantic_epoch_list, handle_semantic_lane_create,
         handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_diffs_list,
         handle_semantic_lane_discard, handle_semantic_lane_outputs_list,
         handle_semantic_lane_outputs_seed_canonical_graph,
@@ -896,6 +897,11 @@ fn build_registry_impl() -> RpcRegistry {
         // Content methods (Write)
         .service_auth_typed_rpc(CONTENT_STORE_BLOB_METHOD, boxed!(handle_store_blob, 3))
         .service_typed_rpc(CONTENT_RETRIEVE_BLOB_METHOD, boxed!(handle_retrieve_blob))
+        // Browser WebExtension/native-host capture (Write)
+        .service_auth_typed_rpc(
+            BROWSER_CAPTURE_BATCH_METHOD,
+            boxed!(handle_browser_capture_batch, 3),
+        )
         // Source material staging (Write — registers new materials, uses services)
         .service_auth_typed_rpc(SOURCES_STAGE_METHOD, boxed!(handle_sources_stage, 3))
         // Source binding management (Write)

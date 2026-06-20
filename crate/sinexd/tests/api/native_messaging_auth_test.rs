@@ -2,6 +2,10 @@ use std::{collections::VecDeque, sync::Arc};
 
 use serde_json::json;
 use sinex_primitives::Result;
+use sinex_primitives::event_contracts::{
+    BROWSER_NAVIGATION_OBSERVED_CONTRACT_ID, BROWSER_TAB_ACTIVATED_CONTRACT_ID,
+};
+use sinex_primitives::rpc::methods;
 use sinexd::api::{
     ServiceContainer,
     native_messaging::{
@@ -62,6 +66,14 @@ fn response_type(response: &NativeResponse) -> Result<String> {
         .and_then(|value| value.as_str())
         .unwrap_or("unknown")
         .to_string())
+}
+
+fn response_result(response: &NativeResponse) -> Result<serde_json::Value> {
+    let response_value = serde_json::to_value(response)?;
+    Ok(response_value
+        .get("result")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null))
 }
 
 async fn run_native_case(
@@ -291,6 +303,146 @@ async fn native_messaging_auth_and_config_matrix(ctx: TestContext) -> Result<()>
         response_error_message(&response)?.contains("SINEX_NATIVE_MESSAGING_EXTENSION_ROLES"),
         "native messaging should surface invalid extension-role config"
     );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn browser_capture_batch_is_capability_gated_and_acknowledged(
+    ctx: TestContext,
+) -> Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_url = ctx.nats_url().unwrap().clone();
+    let db_url = ctx.database_url().to_string();
+    let services = ServiceContainer::from_database_url(db_url).await?;
+
+    let request = serde_json::from_value(json!({
+        "type": "rpc",
+        "method": methods::BROWSER_CAPTURE_BATCH,
+        "params": {
+            "profile_id": "qutebrowser:default",
+            "producer_instance_id": "native-host:test",
+            "batch_id": "browser-batch-1",
+            "sequence_start": 41,
+            "observations": [
+                {
+                    "kind": "navigation",
+                    "observed_at": "2026-06-20T01:00:00Z",
+                    "url": "https://example.test/a",
+                    "title": "Example",
+                    "tab_id": 7,
+                    "window_id": 1,
+                    "transition": "link"
+                },
+                {
+                    "kind": "tab_activated",
+                    "observed_at": "2026-06-20T01:00:01Z",
+                    "tab_id": 7,
+                    "window_id": 1,
+                    "url": "https://example.test/a"
+                }
+            ]
+        },
+        "id": "browser-cap-denied",
+        "extension_id": "chrome-extension://trusted-sinex",
+    }))?;
+
+    let response = run_native_case(
+        services.clone(),
+        &nats_url,
+        |env| {
+            env.set(
+                "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
+                "chrome-extension://trusted-sinex",
+            );
+            set_default_capabilities(env);
+        },
+        request,
+    )
+    .await?;
+    assert_eq!(
+        response_type(&response)?,
+        "error",
+        "browser capture must not bypass native capability allowlists"
+    );
+    assert!(
+        response_error_message(&response)?.contains(methods::BROWSER_CAPTURE_BATCH),
+        "capability denial should name the disallowed browser capture method"
+    );
+
+    let request = serde_json::from_value(json!({
+        "type": "rpc",
+        "method": methods::BROWSER_CAPTURE_BATCH,
+        "params": {
+            "profile_id": "qutebrowser:default",
+            "producer_instance_id": "native-host:test",
+            "batch_id": "browser-batch-1",
+            "sequence_start": 41,
+            "observations": [
+                {
+                    "kind": "navigation",
+                    "observed_at": "2026-06-20T01:00:00Z",
+                    "url": "https://example.test/a",
+                    "title": "Example",
+                    "tab_id": 7,
+                    "window_id": 1,
+                    "transition": "link"
+                },
+                {
+                    "kind": "tab_activated",
+                    "observed_at": "2026-06-20T01:00:01Z",
+                    "tab_id": 7,
+                    "window_id": 1,
+                    "url": "https://example.test/a"
+                }
+            ]
+        },
+        "id": "browser-cap-ok",
+        "extension_id": "chrome-extension://trusted-sinex",
+    }))?;
+
+    let response = run_native_case(
+        services,
+        &nats_url,
+        |env| {
+            env.set(
+                "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
+                "chrome-extension://trusted-sinex",
+            );
+            env.set(
+                "SINEX_NATIVE_MESSAGING_CAPABILITIES",
+                r#"{"chrome-extension://trusted-sinex":{"allowed_methods":["browser.capture_batch"],"rate_limit_per_minute":null}}"#,
+            );
+            env.set(
+                "SINEX_NATIVE_MESSAGING_EXTENSION_ROLES",
+                r#"{"chrome-extension://trusted-sinex":"write"}"#,
+            );
+        },
+        request,
+    )
+    .await?;
+    assert_eq!(
+        response_type(&response)?,
+        "response",
+        "browser capture should accept trusted extension with method capability and write role"
+    );
+
+    let result = response_result(&response)?;
+    assert_eq!(result["accepted_count"], 2);
+    assert_eq!(result["first_sequence"], 41);
+    assert_eq!(result["last_accepted_sequence"], 42);
+    assert_eq!(
+        result["actor_id"],
+        "extension:chrome-extension://trusted-sinex"
+    );
+    let contracts = result["event_contract_ids"]
+        .as_array()
+        .expect("event_contract_ids should be an array")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>();
+    assert!(contracts.contains(&BROWSER_NAVIGATION_OBSERVED_CONTRACT_ID));
+    assert!(contracts.contains(&BROWSER_TAB_ACTIVATED_CONTRACT_ID));
 
     Ok(())
 }
