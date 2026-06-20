@@ -183,6 +183,8 @@ pub struct EvidenceBundleView {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub seeds: Vec<EvidenceBundleSeedView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub target_refs: Vec<SinexObjectRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resolved_objects: Vec<ResolvedObjectView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_coverage: Vec<SourceCoverageView>,
@@ -203,6 +205,8 @@ pub struct EvidenceBundleView {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub caveats: Vec<CaveatView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disclosure_caveats: Vec<CaveatView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ActionAvailability>,
 }
 
@@ -215,6 +219,7 @@ impl EvidenceBundleView {
             source_surface: source_surface.into(),
             target_context: None,
             seeds: Vec::new(),
+            target_refs: Vec::new(),
             resolved_objects: Vec::new(),
             source_coverage: Vec::new(),
             debt_rows: Vec::new(),
@@ -225,6 +230,7 @@ impl EvidenceBundleView {
             diagnostic_excerpts: Vec::new(),
             omitted_sections: Vec::new(),
             caveats: Vec::new(),
+            disclosure_caveats: Vec::new(),
             actions: Vec::new(),
         }
     }
@@ -238,6 +244,7 @@ impl EvidenceBundleView {
     #[must_use]
     pub fn section_count(&self) -> usize {
         [
+            !self.target_refs.is_empty(),
             !self.resolved_objects.is_empty(),
             !self.source_coverage.is_empty(),
             !self.debt_rows.is_empty(),
@@ -274,9 +281,11 @@ mod tests {
         let schema_text = serde_json::to_string(&schema).expect("schema renders as JSON text");
 
         for field in [
+            "target_refs",
             "diagnostic_excerpts",
             "omitted_sections",
             "caveats",
+            "disclosure_caveats",
             "actions",
             "package_completeness",
         ] {

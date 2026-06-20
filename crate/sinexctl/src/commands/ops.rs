@@ -645,29 +645,93 @@ fn omitted_evidence_section(
 }
 
 fn attach_evidence_bundle_context(bundle: &mut EvidenceBundleView) {
+    let mut target_refs = Vec::new();
     let mut caveats = Vec::new();
     let mut actions = Vec::new();
 
+    for seed in &bundle.seeds {
+        push_unique_ref_opt(&mut target_refs, seed.ref_.clone());
+    }
     for resolved in &bundle.resolved_objects {
+        push_unique_ref(&mut target_refs, resolved.ref_.clone());
         push_unique_actions(&mut actions, resolved.actions.iter().cloned());
     }
     for source in &bundle.source_coverage {
+        push_unique_ref(
+            &mut target_refs,
+            SinexObjectRef::new(SinexObjectKind::SourceDriver, source.source_id.clone()),
+        );
         push_unique_caveats(&mut caveats, source.caveats.iter().cloned());
         push_unique_actions(&mut actions, source.actions.iter().cloned());
     }
     for debt in &bundle.debt_rows {
+        push_unique_refs(&mut target_refs, debt.refs.iter().cloned());
+        if let Some(owner) = &debt.owner {
+            push_unique_ref_opt(&mut target_refs, owner.operation_ref.clone());
+        }
         push_unique_caveats(&mut caveats, debt.caveats.iter().cloned());
         push_unique_actions(&mut actions, debt.actions.iter().cloned());
     }
     for operation in &bundle.operations {
+        push_unique_ref(
+            &mut target_refs,
+            SinexObjectRef::new(SinexObjectKind::Operation, operation.id.clone()),
+        );
         push_unique_actions(&mut actions, operation.actions.iter().cloned());
     }
     for omission in &bundle.omitted_sections {
+        push_unique_refs(
+            &mut target_refs,
+            omission
+                .caveats
+                .iter()
+                .filter_map(|caveat| caveat.ref_.clone()),
+        );
         push_unique_caveats(&mut caveats, omission.caveats.iter().cloned());
     }
 
+    let disclosure_caveats = caveats
+        .iter()
+        .filter(|caveat| is_disclosure_caveat(caveat))
+        .cloned()
+        .collect();
+
+    bundle.target_refs = target_refs;
     bundle.caveats = caveats;
+    bundle.disclosure_caveats = disclosure_caveats;
     bundle.actions = actions;
+}
+
+fn push_unique_ref(target: &mut Vec<SinexObjectRef>, ref_: SinexObjectRef) {
+    if !target.contains(&ref_) {
+        target.push(ref_);
+    }
+}
+
+fn push_unique_ref_opt(target: &mut Vec<SinexObjectRef>, ref_: Option<SinexObjectRef>) {
+    if let Some(ref_) = ref_ {
+        push_unique_ref(target, ref_);
+    }
+}
+
+fn push_unique_refs(
+    target: &mut Vec<SinexObjectRef>,
+    refs: impl IntoIterator<Item = SinexObjectRef>,
+) {
+    for ref_ in refs {
+        push_unique_ref(target, ref_);
+    }
+}
+
+fn is_disclosure_caveat(caveat: &CaveatView) -> bool {
+    let id = caveat.id.as_str();
+    let message = caveat.message.as_str();
+    [id, message].iter().any(|value| {
+        value.contains("disclosure")
+            || value.contains("privacy")
+            || value.contains("redact")
+            || value.contains("hidden")
+    })
 }
 
 fn push_unique_caveats(
@@ -1434,6 +1498,7 @@ fn format_evidence_bundle_table(view: &EvidenceBundleView) -> String {
     output.push_str(&format!("  Generated:        {}\n", view.generated_at));
     output.push_str(&format!("  Source surface:   {}\n", view.source_surface));
     output.push_str(&format!("  Seeds:            {}\n", view.seeds.len()));
+    output.push_str(&format!("  Target refs:      {}\n", view.target_refs.len()));
     output.push_str(&format!("  Included sections: {}\n", view.section_count()));
     output.push_str(&format!(
         "  Evidence rows:    {}\n",
@@ -1456,6 +1521,10 @@ fn format_evidence_bundle_table(view: &EvidenceBundleView) -> String {
         view.diagnostic_excerpts.len()
     ));
     output.push_str(&format!("  Caveats:          {}\n", view.caveats.len()));
+    output.push_str(&format!(
+        "  Disclosure caveats: {}\n",
+        view.disclosure_caveats.len()
+    ));
     output.push_str(&format!("  Actions:          {}\n", view.actions.len()));
     if let Some(artifact) = view.saved_artifact.as_ref() {
         output.push_str(&format!("  Saved artifact:   {}\n", artifact.ref_));
@@ -1727,6 +1796,7 @@ mod tests {
         assert!(table.contains("Evidence Bundle"));
         assert!(table.contains("sinex.evidence-bundle/v2"));
         assert!(table.contains("Seeds:            1"));
+        assert!(table.contains("Target refs:      0"));
         assert!(table.contains("Included sections: 6"));
         assert!(table.contains("Evidence rows:"));
         assert!(table.contains("Runtime health:   included"));
@@ -1735,6 +1805,7 @@ mod tests {
         assert!(view.diagnostic_excerpts.len() <= EVIDENCE_BUNDLE_MAX_DIAGNOSTIC_EXCERPTS);
         assert!(table.contains("Diagnostic excerpts:"));
         assert!(table.contains("Caveats:          0"));
+        assert!(table.contains("Disclosure caveats: 0"));
         assert!(table.contains("Actions:          0"));
         assert!(table.contains("Diagnostics:"));
         assert!(table.contains("derivation"));
@@ -1781,7 +1852,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn evidence_bundle_preserves_underlying_caveats_and_actions() -> xtask::TestResult<()> {
+    async fn evidence_bundle_preserves_underlying_targets_caveats_and_actions()
+    -> xtask::TestResult<()> {
         let mut view = EvidenceBundleView::new("sinexctl.ops.evidence.compile");
         let source_ref =
             SinexObjectRef::new(SinexObjectKind::SourceDriver, "terminal.kitty-osc-live");
@@ -1804,9 +1876,10 @@ mod tests {
             0,
             0,
         );
+        source.source_id = "terminal.kitty-osc-live".to_string();
         source.caveats.push(CaveatView {
-            id: "source.runtime_bridge.unobserved".to_string(),
-            message: "runtime bridge has no observed material".to_string(),
+            id: "policy.disclosure_applied".to_string(),
+            message: "terminal command text is hidden by view disclosure policy".to_string(),
             ref_: Some(source_ref.clone()),
         });
         source.actions.push(source_action.clone());
@@ -1823,7 +1896,7 @@ mod tests {
             caveats: vec![CaveatView {
                 id: "capture.runtime_unobserved".to_string(),
                 message: "capture debt keeps the source caveat visible".to_string(),
-                ref_: Some(source_ref),
+                ref_: Some(source_ref.clone()),
             }],
             actions: vec![debt_action.clone()],
         });
@@ -1833,15 +1906,27 @@ mod tests {
         attach_evidence_bundle_context(&mut view);
 
         assert!(
+            view.target_refs.contains(&source_ref),
+            "bundle target refs should identify source/debt target refs"
+        );
+        assert!(
+            view.target_refs
+                .iter()
+                .any(|ref_| ref_.to_string() == "operation:op-1"),
+            "bundle target refs should identify operation rows"
+        );
+        assert!(
             view.caveats
                 .iter()
-                .any(|caveat| caveat.id == "source.runtime_bridge.unobserved")
+                .any(|caveat| caveat.id == "policy.disclosure_applied")
         );
         assert!(
             view.caveats
                 .iter()
                 .any(|caveat| caveat.id == "capture.runtime_unobserved")
         );
+        assert_eq!(view.disclosure_caveats.len(), 1);
+        assert_eq!(view.disclosure_caveats[0].id, "policy.disclosure_applied");
         assert!(view.actions.contains(&source_action));
         assert!(view.actions.contains(&debt_action));
         assert!(view.actions.iter().any(|action| action.id == "ops.show"));
@@ -1853,6 +1938,7 @@ mod tests {
         let mut view = EvidenceBundleView::new("sinexctl.ops.evidence.compile");
         view.seeds
             .push(EvidenceBundleSeedView::operation("op-json-shape"));
+        attach_evidence_bundle_context(&mut view);
         view.caveats.push(CaveatView {
             id: "evidence_bundle.test".to_string(),
             message: "test caveat".to_string(),
@@ -1887,6 +1973,8 @@ mod tests {
             "sinex.evidence-bundle/v2"
         );
         assert_eq!(json["payload"]["seeds"][0]["kind"], "operation");
+        assert_eq!(json["payload"]["target_refs"][0]["kind"], "operation");
+        assert_eq!(json["payload"]["target_refs"][0]["id"], "op-json-shape");
         assert_eq!(json["payload"]["caveats"][0]["id"], "evidence_bundle.test");
         assert_eq!(json["payload"]["actions"][0]["id"], "ops.show");
         assert_eq!(
