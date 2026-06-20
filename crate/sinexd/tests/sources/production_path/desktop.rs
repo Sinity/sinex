@@ -196,6 +196,7 @@ mod tests {
         let config = UnixSocketStreamConfig {
             socket_path: camino::Utf8PathBuf::from_path_buf(socket_path)
                 .map_err(|path| color_eyre::eyre::eyre!("non-UTF8 socket path: {path:?}"))?,
+            mode: Default::default(),
             reconnect_on_eof: false,
         };
         let mut stream = adapter.open(material_id, &config, None).await?;
