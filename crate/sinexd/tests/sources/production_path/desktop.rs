@@ -32,6 +32,11 @@ mod tests {
     /// Clipboard text payload — plain UTF-8 content.
     const CLIPBOARD_FIXTURE: &[u8] = b"hello from clipboard";
 
+    /// Hyprland fires v1 (class+title) immediately followed by v2 (address).
+    /// The parser buffers v1 and emits one merged `window.focused` on v2.
+    const HYPRLAND_FOCUSED_FIXTURE: &[u8] =
+        b"activewindow>>kitty,~/project/sinex\nactivewindowv2>>0x1234abcd\n";
+
     const ACTIVITYWATCH_WINDOW_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
         "desktop.activitywatch window.active",
         "desktop.activitywatch",
@@ -161,8 +166,9 @@ mod tests {
     // desktop.window-manager
     // -------------------------------------------------------------------------
 
-    #[sinex_test]
-    async fn desktop_window_manager_unix_socket_adapter_parses_hyprland_frame() -> TestResult<()> {
+    async fn parse_hyprland_socket_fixture(
+        fixture_data: &[u8],
+    ) -> TestResult<Vec<sinex_primitives::parser::ParsedEventIntent>> {
         use futures::StreamExt;
         use sinex_primitives::events::SourceMaterial;
         use sinex_primitives::ids::Id;
@@ -173,13 +179,9 @@ mod tests {
         };
         use sinexd::sources::source_contracts::desktop::window_manager::HyprlandParser;
 
-        // Hyprland fires v1 (class+title) immediately followed by v2 (address).
-        // The parser buffers v1 and emits one merged window.focused on v2.
-        let fixture = crate::fixtures::unix_socket::build(
-            b"activewindow>>kitty,~/project/sinex\nactivewindowv2>>0x1234abcd\n",
-        )
-        .await
-        .map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
+        let fixture = crate::fixtures::unix_socket::build(fixture_data)
+            .await
+            .map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
         let socket_path = match &fixture.binding {
             crate::fixtures::FixtureBinding::UnixSocketPath(path) => path.clone(),
             other => {
@@ -211,24 +213,53 @@ mod tests {
         };
 
         let mut parser = HyprlandParser::default();
+        let mut events = Vec::new();
 
-        // v1 (activewindow): buffered — no events yet.
-        let record_v1 = stream
-            .next()
+        while let Some(record) = stream.next().await {
+            let record = record?;
+            events.extend(
+                parser
+                    .parse_record(record.clone(), &make_ctx(&record))
+                    .await?,
+            );
+        }
+
+        Ok(events)
+    }
+
+    #[sinex_test]
+    async fn desktop_window_manager_obligations() -> TestResult<()> {
+        let events = parse_hyprland_socket_fixture(HYPRLAND_FOCUSED_FIXTURE).await?;
+        let produced_types = events
+            .iter()
+            .map(|event| event.event_type.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(produced_types, vec!["window.focused"]);
+
+        let replay_events = parse_hyprland_socket_fixture(HYPRLAND_FOCUSED_FIXTURE).await?;
+        let replay_types = replay_events
+            .iter()
+            .map(|event| event.event_type.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(replay_types, produced_types);
+
+        crate::obligations::isolation::run(
+            "desktop.window-manager",
+            crate::AdapterKind::UnixSocket,
+            HYPRLAND_FOCUSED_FIXTURE,
+        )
+        .await
+        .map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
+        crate::obligations::privacy::run_metadata_only("desktop.window-manager")
             .await
-            .ok_or_else(|| color_eyre::eyre::eyre!("unix socket fixture emitted no frames"))??;
-        let events_v1 = parser
-            .parse_record(record_v1.clone(), &make_ctx(&record_v1))
-            .await?;
-        assert_eq!(events_v1.len(), 0, "v1 alone should buffer and not emit");
+            .map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
 
-        // v2 (activewindowv2): merges with buffered v1 → one complete window.focused.
-        let record_v2 = stream.next().await.ok_or_else(|| {
-            color_eyre::eyre::eyre!("unix socket fixture did not emit v2 frame")
-        })??;
-        let events = parser
-            .parse_record(record_v2.clone(), &make_ctx(&record_v2))
-            .await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_window_manager_unix_socket_adapter_parses_hyprland_frame() -> TestResult<()> {
+        let events = parse_hyprland_socket_fixture(HYPRLAND_FOCUSED_FIXTURE).await?;
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type.as_str(), "window.focused");
