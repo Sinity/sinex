@@ -477,18 +477,19 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
         "resume" => ("Resume Bridge", None),
         _ => ("Package Operation", None),
     };
-    let mut action = ActionAvailability::read(
-        operation,
-        label,
-        if command_hint.is_some() {
-            ActionAvailabilityState::Enabled
-        } else {
-            ActionAvailabilityState::Unavailable
-        },
-    )
-    .with_reason(format!(
-        "package declares `{operation}` for source `{source_id}`"
-    ));
+    let state = if command_hint.is_some() {
+        ActionAvailabilityState::Enabled
+    } else {
+        ActionAvailabilityState::Unavailable
+    };
+    let reason = if command_hint.is_some() {
+        format!("package declares `{operation}` for source `{source_id}`")
+    } else {
+        format!(
+            "package declares `{operation}` for source `{source_id}`, but no operator actuator command is wired yet"
+        )
+    };
+    let mut action = ActionAvailability::read(operation, label, state).with_reason(reason);
     if let Some(command_hint) = command_hint {
         action = action.with_command_hint(command_hint);
     }
@@ -622,6 +623,9 @@ mod tests {
             "coverage:source-coverage",
             "operation:terminal.activity.check",
             "operation:terminal.activity.reconnect",
+            "operation:terminal.activity.pause",
+            "operation:terminal.activity.resume",
+            "operation:terminal.activity.drain",
             "operation:terminal.activity.inspect",
         ];
         static BRIDGE_CONTRACT: SourceContract = SourceContract {
@@ -700,9 +704,21 @@ mod tests {
             reconnect
                 .reason
                 .as_deref()
-                .is_some_and(|reason| reason.contains("terminal.kitty-osc-live")),
-            "declared operation refs should stay source-addressable even before actuator wiring"
+                .is_some_and(|reason| reason.contains("no operator actuator command")),
+            "declared operation refs should explain missing actuator wiring"
         );
+        for operation in [
+            "terminal.activity.pause",
+            "terminal.activity.resume",
+            "terminal.activity.drain",
+        ] {
+            assert!(
+                view.actions.iter().any(|action| {
+                    action.id == operation && action.state == ActionAvailabilityState::Unavailable
+                }),
+                "declared {operation} action should remain visible even before actuator wiring"
+            );
+        }
         Ok(())
     }
 
