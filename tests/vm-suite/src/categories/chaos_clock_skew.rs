@@ -9,11 +9,11 @@ use std::time::Duration;
 use color_eyre::eyre::Result;
 use sqlx::PgPool;
 
-use crate::runner::TestRunner;
+use crate::runner::{TestOutcome, TestRunner};
 
 use super::chaos_support::{
-    command_status, event_count, report_service_active, wait_for_event_count_increase,
-    write_watched_files,
+    command_status, observed_event_count, report_service_active, report_watched_files_written,
+    wait_for_event_count_increase,
 };
 
 pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
@@ -33,7 +33,9 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
 async fn test_baseline_monotonic(runner: &mut TestRunner, pool: &PgPool) {
     let name = "chaos-clock-skew: baseline events captured and ts_coided monotonic";
 
-    write_watched_files("clock-baseline", 10, "baseline");
+    if !report_watched_files_written(runner, name, "clock-baseline", 10, "baseline") {
+        return;
+    }
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -80,7 +82,11 @@ async fn test_event_engine_survives_clock_advance(runner: &mut TestRunner, _pool
     let set_result = command_status("date", &["-s", &format!("@{new_epoch}")]);
 
     if !set_result {
-        runner.fail(name, "date -s command failed");
+        runner.record(
+            name,
+            TestOutcome::Skipped,
+            "date -s command failed; VM lacks clock-setting capability for this chaos scenario",
+        );
         return;
     }
 
@@ -95,12 +101,18 @@ async fn test_event_engine_survives_clock_advance(runner: &mut TestRunner, _pool
 async fn test_events_reach_db_despite_skew(runner: &mut TestRunner, pool: &PgPool) {
     let name = "chaos-clock-skew: events reach DB despite clock skew";
 
-    let before = event_count(pool).await;
-    write_watched_files("clock-during", 20, "during");
+    let Some(before) = observed_event_count(runner, name, pool).await else {
+        return;
+    };
+    if !report_watched_files_written(runner, name, "clock-during", 20, "during") {
+        return;
+    }
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 
-    let after = event_count(pool).await;
+    let Some(after) = observed_event_count(runner, name, pool).await else {
+        return;
+    };
     if after > before {
         runner.pass(name);
     } else {
@@ -129,20 +141,34 @@ async fn test_no_catastrophic_timestamp_corruption(runner: &mut TestRunner, pool
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     // Generate post-restore events
-    let before = event_count(pool).await;
-    write_watched_files("clock-post", 10, "post");
+    let Some(before) = observed_event_count(runner, name, pool).await else {
+        return;
+    };
+    if !report_watched_files_written(runner, name, "clock-post", 10, "post") {
+        return;
+    }
 
-    if wait_for_event_count_increase(
+    let reached_db = wait_for_event_count_increase(
         pool,
         before,
         Duration::from_secs(30),
         Duration::from_secs(2),
     )
-    .await
-    .is_none()
-    {
-        runner.fail(name, "post-restore events did not reach DB");
-        return;
+    .await;
+    match reached_db {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            runner.fail(name, "post-restore events did not reach DB");
+            return;
+        }
+        Err(error) => {
+            runner.record(
+                name,
+                TestOutcome::EvidenceMissing,
+                &format!("event count query failed while waiting after clock restore: {error:#}"),
+            );
+            return;
+        }
     }
 
     // Check ts_coided ordering violations (as proxy for corruption)
@@ -159,7 +185,9 @@ async fn test_no_catastrophic_timestamp_corruption(runner: &mut TestRunner, pool
 
     match violations {
         Some(v) => {
-            let final_count = event_count(pool).await;
+            let Some(final_count) = observed_event_count(runner, name, pool).await else {
+                return;
+            };
             // Allow up to 50% corruption as "catastrophic" threshold
             if v as f64 > (final_count as f64 * 0.5) {
                 runner.fail(

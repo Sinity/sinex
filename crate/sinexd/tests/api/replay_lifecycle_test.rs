@@ -28,11 +28,14 @@ async fn spawn_fake_scan_source_runtime(
     let (command_tx, command_rx) = tokio::sync::oneshot::channel();
 
     let handle = tokio::spawn(async move {
-        let Some(msg) = sub.next().await else { return };
+        let Some(msg) = sub.next().await else {
+            panic!("fake scan source runtime `{module_name}` ended before receiving scan command");
+        };
 
         let Ok(command) = serde_json::from_slice::<SourceScanCommand>(&msg.payload) else {
-            eprintln!("fake scan source runtime: invalid scan command payload");
-            return;
+            panic!(
+                "fake scan source runtime `{module_name}` received invalid scan command payload"
+            );
         };
         let operation_id = command.operation_id;
         let progress_subject =
@@ -47,9 +50,10 @@ async fn spawn_fake_scan_source_runtime(
                 accepted: true,
                 error: None,
             };
-            if let Ok(bytes) = serde_json::to_vec(&ack) {
-                let _ = nats.publish(reply, bytes.into()).await;
-            }
+            let bytes = serde_json::to_vec(&ack).expect("fake scan source ack should serialize");
+            nats.publish(reply, bytes.into())
+                .await
+                .expect("fake scan source should publish ack reply");
         }
 
         let material_id = command
@@ -60,11 +64,11 @@ async fn spawn_fake_scan_source_runtime(
             .map(|material| material.source_material_id);
 
         let Some(material_id) = material_id else {
-            return;
+            panic!("fake scan source runtime `{module_name}` received no replay material");
         };
 
         for i in 0..events_processed {
-            let Ok(event) = DynamicPayload::new(
+            let event = DynamicPayload::new(
                 source,
                 event_type,
                 serde_json::json!({
@@ -72,16 +76,16 @@ async fn spawn_fake_scan_source_runtime(
                 }),
             )
             .from_material(Id::from_uuid(material_id))
-            .build() else {
-                return;
-            };
+            .build()
+            .expect("fake scan source should build replay output event");
 
             let mut event = event;
             event.created_by_operation_id = Some(operation_id);
 
-            if pool.events().insert(event).await.is_err() {
-                return;
-            }
+            pool.events()
+                .insert(event)
+                .await
+                .expect("fake scan source should insert replay output event");
         }
 
         let report = ScanReport {
@@ -105,12 +109,23 @@ async fn spawn_fake_scan_source_runtime(
             final_report: Some(report),
             error: None,
         };
-        if let Ok(bytes) = serde_json::to_vec(&progress) {
-            let _ = nats.publish(progress_subject, bytes.into()).await;
-        }
+        let bytes =
+            serde_json::to_vec(&progress).expect("fake scan source progress should serialize");
+        nats.publish(progress_subject, bytes.into())
+            .await
+            .expect("fake scan source should publish final progress");
     });
 
     Ok((command_rx, handle))
+}
+
+async fn await_fake_scan_source_runtime(
+    handle: tokio::task::JoinHandle<()>,
+    label: &str,
+) -> TestResult<()> {
+    handle
+        .await
+        .map_err(|error| color_eyre::eyre::eyre!("{label} fake scan runtime failed: {error}"))
 }
 
 #[sinex_test]
@@ -203,7 +218,7 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "module_name": "test-source",
+            "source_name": "test-source",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
             "material_filter": [replay_material.as_uuid().to_string()],
             "filters": { "event_types": ["file.created"] }
@@ -431,9 +446,7 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
         Some(vec!["file.created".to_string()])
     );
 
-    scan_handle
-        .await
-        .map_err(|e| color_eyre::eyre::eyre!("fake scan source runtime task failed: {e}"))?;
+    await_fake_scan_source_runtime(scan_handle, "lifecycle replay").await?;
 
     Ok(())
 }

@@ -23,10 +23,10 @@
 //!    retention).
 //! 6. **Comments / table descriptions**.
 //!
-//! See issue #556. The module ships a first slice covering the highest-value
-//! categories — trigger function bodies and column defaults. The other
-//! categories are wired up as `Unimplemented` stubs so the public surface is
-//! stable and follow-up PRs can fill them in without churning callers.
+//! See issue #556. The module covers trigger function bodies, column defaults,
+//! selected inline checks, selected foreign-key actions, selected TimescaleDB
+//! hypertable settings, and orphan columns. Comment/table-description drift is
+//! deliberately not active yet because comments are not a runtime contract.
 //!
 //! # Caller surface
 //!
@@ -64,12 +64,12 @@ pub enum DriftCategory {
     /// `ADD COLUMN IF NOT EXISTS` is a no-op on existing columns, so default
     /// changes never propagate without explicit DDL — silent drift.
     ColumnDefault,
-    /// Reserved for follow-up: inline column `CHECK` expressions.
+    /// Selected inline column `CHECK` expressions.
     InlineCheckExpr,
-    /// Reserved for follow-up: foreign key `ON DELETE` / `ON UPDATE` actions.
+    /// Selected foreign key `ON DELETE` / `ON UPDATE` actions.
     ForeignKeyAction,
-    /// Reserved for follow-up: `TimescaleDB` hypertable chunk interval,
-    /// compression, retention.
+    /// Selected `TimescaleDB` hypertable settings such as chunk interval and
+    /// retention.
     HypertableSetting,
     /// Reserved for follow-up: comments / table descriptions.
     Comment,
@@ -965,6 +965,15 @@ mod tests {
             format!("{}", DriftCategory::ForeignKeyAction),
             "foreign_key_action"
         );
+        assert_eq!(
+            format!("{}", DriftCategory::InlineCheckExpr),
+            "inline_check_expr"
+        );
+        assert_eq!(
+            format!("{}", DriftCategory::HypertableSetting),
+            "hypertable_setting"
+        );
+        assert_eq!(format!("{}", DriftCategory::Comment), "comment");
         assert_eq!(format!("{}", DriftCategory::OrphanColumn), "orphan_column");
         Ok(())
     }

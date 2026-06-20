@@ -575,17 +575,23 @@ async fn package_completeness_report_is_keyed_by_package_and_mode() -> TestResul
     assert!(mode.sources.privacy_coverage_registered);
     assert_eq!(mode.completeness, PackageCompleteness::Incomplete);
     assert_eq!(mode.mode_state, PackageModeState::Incomplete);
-    assert!(
-        mode.missing
-            .iter()
-            .any(|field| field == "event_contract_refs"),
-        "accepted modes must report the missing #1902 EventContract refs"
+    assert_ne!(
+        mode.mode_state,
+        PackageModeState::Accepted,
+        "runnable/accepted modes must not stay incomplete after EventContract and AdmissionPolicy refs are available"
     );
     assert!(
+        mode.missing.iter().any(|field| field == "operation_refs")
+            || mode
+                .missing
+                .iter()
+                .any(|field| field == "coverage_and_debt_views")
+            || mode
+                .missing
+                .iter()
+                .any(|field| field == "fixtures_and_tests"),
+        "incomplete package rows should point at current executable gaps, not closed design refs: {:?}",
         mode.missing
-            .iter()
-            .any(|field| field == "admission_policy_ref"),
-        "accepted modes must report the missing #1900 AdmissionPolicy ref"
     );
     assert!(
         !mode

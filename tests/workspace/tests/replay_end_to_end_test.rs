@@ -45,12 +45,13 @@ async fn spawn_fake_scan_source_runtime(
 
     let handle = tokio::spawn(async move {
         let Some(msg) = sub.next().await else {
-            return;
+            panic!("fake scan source runtime `{module_name}` ended before receiving scan command");
         };
 
         let Ok(command) = serde_json::from_slice::<SourceScanCommand>(&msg.payload) else {
-            eprintln!("fake scan source runtime: invalid scan command payload");
-            return;
+            panic!(
+                "fake scan source runtime `{module_name}` received invalid scan command payload"
+            );
         };
         let operation_id = command.operation_id;
         let progress_subject =
@@ -67,9 +68,10 @@ async fn spawn_fake_scan_source_runtime(
                 accepted: true,
                 error: None,
             };
-            if let Ok(bytes) = serde_json::to_vec(&ack) {
-                let _ = nats.publish(reply, bytes.into()).await;
-            }
+            let bytes = serde_json::to_vec(&ack).expect("fake scan source ack should serialize");
+            nats.publish(reply, bytes.into())
+                .await
+                .expect("fake scan source should publish ack reply");
         }
 
         if let Some(replay_context) = replay_context.as_ref()
@@ -105,17 +107,15 @@ async fn spawn_fake_scan_source_runtime(
                         event
                     }
                     Err(error) => {
-                        eprintln!(
-                            "fake scan source runtime: failed to build replay output event: {error}"
+                        panic!(
+                            "fake scan source runtime `{module_name}` failed to build replay output event: {error}"
                         );
-                        return;
                     }
                 };
                 if let Err(error) = pool.events().insert(event).await {
-                    eprintln!(
-                        "fake scan source runtime: failed to insert replay output event: {error}"
+                    panic!(
+                        "fake scan source runtime `{module_name}` failed to insert replay output event: {error}"
                     );
-                    return;
                 }
             }
         }
@@ -138,12 +138,23 @@ async fn spawn_fake_scan_source_runtime(
             final_report: Some(report),
             error: None,
         };
-        if let Ok(bytes) = serde_json::to_vec(&progress) {
-            let _ = nats.publish(progress_subject, bytes.into()).await;
-        }
+        let bytes =
+            serde_json::to_vec(&progress).expect("fake scan source progress should serialize");
+        nats.publish(progress_subject, bytes.into())
+            .await
+            .expect("fake scan source should publish final progress");
     });
 
     Ok((command_rx, handle))
+}
+
+async fn await_fake_scan_source_runtime(
+    handle: tokio::task::JoinHandle<()>,
+    label: &str,
+) -> TestResult<()> {
+    handle
+        .await
+        .map_err(|error| color_eyre::eyre::eyre!("{label} fake scan runtime failed: {error}"))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -232,7 +243,7 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
         methods::REPLAY_CREATE_OPERATION,
         json!({
             "scope": {
-                "module_name": "test-source",
+                "source_name": "test-source",
                 "time_window": [
                     scope_start.format_rfc3339(),
                     scope_end.format_rfc3339()
@@ -467,9 +478,7 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
         "replay context should carry the event type filter"
     );
 
-    scan_handle
-        .await
-        .map_err(|e| color_eyre::eyre::eyre!("fake scan source runtime task panicked: {e}"))?;
+    await_fake_scan_source_runtime(scan_handle, "workspace replay").await?;
 
     // ── Cleanup ───────────────────────────────────────────────────────────
     stack.shutdown().await?;

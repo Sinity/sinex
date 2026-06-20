@@ -186,9 +186,6 @@ async fn content_store_logs_operation(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn retrieve_nonexistent_key_returns_service_error(ctx: TestContext) -> TestResult<()> {
-    if which::which("git-annex").is_err() {
-        return Ok(());
-    }
     let (service, _tmp) = content_service_fixture(&ctx).await?;
 
     let result = service.retrieve_content("SHA256E-s0--nonexistent").await;
@@ -206,9 +203,6 @@ async fn retrieve_nonexistent_key_returns_service_error(ctx: TestContext) -> Tes
 
 #[sinex_test]
 async fn verify_nonexistent_key_returns_service_error(ctx: TestContext) -> TestResult<()> {
-    if which::which("git-annex").is_err() {
-        return Ok(());
-    }
     let (service, _tmp) = content_service_fixture(&ctx).await?;
 
     let result = service.verify_content("SHA256E-s0--nonexistent").await;
@@ -226,9 +220,6 @@ async fn verify_nonexistent_key_returns_service_error(ctx: TestContext) -> TestR
 
 #[sinex_test]
 async fn metadata_nonexistent_key_returns_service_error(ctx: TestContext) -> TestResult<()> {
-    if which::which("git-annex").is_err() {
-        return Ok(());
-    }
     let (service, _tmp) = content_service_fixture(&ctx).await?;
 
     let result = service
