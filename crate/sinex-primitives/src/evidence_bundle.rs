@@ -13,8 +13,8 @@ use crate::views::{
     ActionAvailability, CaveatView, DebtRowView, OperationView, SinexObjectRef, SourceCoverageView,
 };
 
-pub const EVIDENCE_BUNDLE_SCHEMA_VERSION: &str = "sinex.evidence-bundle/v1";
-pub const EVIDENCE_BUNDLE_SPEC_SCHEMA_VERSION: &str = "sinex.evidence-bundle-spec/v1";
+pub const EVIDENCE_BUNDLE_SCHEMA_VERSION: &str = "sinex.evidence-bundle/v2";
+pub const EVIDENCE_BUNDLE_SPEC_SCHEMA_VERSION: &str = "sinex.evidence-bundle-spec/v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -23,7 +23,6 @@ pub enum EvidenceBundleSeedKind {
     DebtQuery,
     Operation,
     SourceDriver,
-    OperatorNote,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -76,15 +75,6 @@ impl EvidenceBundleSeedView {
                 crate::views::SinexObjectKind::SourceDriver,
                 source_id,
             )),
-        }
-    }
-
-    #[must_use]
-    pub fn operator_note(note: impl Into<String>) -> Self {
-        Self {
-            kind: EvidenceBundleSeedKind::OperatorNote,
-            value: note.into(),
-            ref_: None,
         }
     }
 }
