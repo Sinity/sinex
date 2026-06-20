@@ -193,7 +193,8 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
     if binding.is_some_and(|binding| binding.proposed) {
         writeln!(out, "        proposed = true,").map_err(|_| SourceSkeletonError::Render)?;
     }
-    writeln!(out, "        factory = \"none\"").map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        factory = \"{}\"", factory_mode(mode))
+        .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out, "    )]").map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out, "    pub struct {type_name}SourceMeta;")
         .map_err(|_| SourceSkeletonError::Render)?;
@@ -290,6 +291,25 @@ fn blocking_requirements(
     requirements
         .iter()
         .filter(|requirement| requirement.blocking)
+}
+
+fn factory_mode(mode: &PackageCompletenessMode) -> &'static str {
+    match mode.manual_reason {
+        Some("parser_only_dispatch_no_source_factory") => "parser",
+        Some(_) => "none",
+        None => {
+            if mode
+                .sources
+                .runtime_binding
+                .as_ref()
+                .is_some_and(|binding| binding.proposed)
+            {
+                "none"
+            } else {
+                "adapter_parser"
+            }
+        }
+    }
 }
 
 fn comma_list(values: &[String]) -> String {
@@ -506,6 +526,7 @@ mod tests {
         assert!(rendered.contains("occurrence_identity = OccurrenceIdentity::"));
         assert!(rendered.contains("privacy_context = ProcessingContext::"));
         assert!(rendered.contains("runtime_shape = RuntimeShape::"));
+        assert!(rendered.contains("factory = \"adapter_parser\""));
     }
 
     #[test]
@@ -523,6 +544,15 @@ mod tests {
         assert!(rendered.contains("runtime_shape = RuntimeShape::Continuous"));
         assert!(rendered.contains("capabilities = \"coverage:source-coverage, debt:unified-debt-view, operation:terminal.activity.check"));
         assert!(rendered.contains("operation:terminal.activity.inspect"));
+        assert!(rendered.contains("factory = \"adapter_parser\""));
+    }
+
+    #[test]
+    fn skeleton_preserves_parser_only_manual_factory_modes() {
+        let rendered = render_source_skeleton("weechat.message", "weechat.message").unwrap();
+
+        assert!(rendered.contains("factory = \"parser\""));
+        assert!(rendered.contains("SourceRuntimeBinding:"));
     }
 
     #[test]
