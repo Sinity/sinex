@@ -12,13 +12,12 @@ use sinex_primitives::rpc::content::StoreBlobRequest;
 use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::ops::{Operation as OpsOperation, OpsStartResponse};
 use sinex_primitives::rpc::runtime::RuntimeHealthResponse;
-use sinex_primitives::rpc::sources::{
-    SourceCoverageEntry, SourcePackageCompletenessPackageView, SourcesCoverageRequest,
-};
+use sinex_primitives::rpc::sources::{SourceCoverageEntry, SourcePackageCompletenessPackageView};
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, DebtKind,
     DebtListView, DebtOwnerView, DebtRowView, DebtStage, OperationJobListView, OperationView,
-    SinexObjectKind, SinexObjectRef, ViewEnvelope,
+    SinexObjectKind, SinexObjectRef, SourceCoverageContinuity, SourceCoverageReadiness,
+    SourceCoverageView, ViewEnvelope,
 };
 use sinex_primitives::{DerivationSpec, InvalidationTrigger, affected_derivations};
 
@@ -606,10 +605,12 @@ async fn compile_evidence_bundle(
                 .extend(debt_rows_from_dlq(&client.dlq_list().await?));
         }
         if spec.include_capture {
-            let coverage = client.sources_coverage(SourcesCoverageRequest {}).await?;
+            let coverage = client.sources_status_view().await?;
             bundle
                 .debt_rows
-                .extend(debt_rows_from_source_coverage(&coverage.sources));
+                .extend(debt_rows_from_source_status_coverage(
+                    &coverage.payload.sources,
+                ));
         }
         if let Some(trigger) = spec
             .projection_trigger
@@ -757,8 +758,10 @@ impl DebtCommands {
                 let dlq = client.dlq_list().await?;
                 let mut rows = debt_rows_from_dlq(&dlq);
                 if *include_capture {
-                    let coverage = client.sources_coverage(SourcesCoverageRequest {}).await?;
-                    rows.extend(debt_rows_from_source_coverage(&coverage.sources));
+                    let coverage = client.sources_status_view().await?;
+                    rows.extend(debt_rows_from_source_status_coverage(
+                        &coverage.payload.sources,
+                    ));
                 }
                 if let Some(trigger) = projection_trigger {
                     rows.extend(debt_rows_from_derivation_trigger(
@@ -860,6 +863,126 @@ pub(crate) fn debt_rows_from_source_coverage(sources: &[SourceCoverageEntry]) ->
         .iter()
         .flat_map(debt_rows_for_source_coverage)
         .collect()
+}
+
+pub(crate) fn debt_rows_from_source_status_coverage(
+    sources: &[SourceCoverageView],
+) -> Vec<DebtRowView> {
+    sources
+        .iter()
+        .flat_map(debt_rows_for_source_status_coverage)
+        .collect()
+}
+
+fn debt_rows_for_source_status_coverage(source: &SourceCoverageView) -> Vec<DebtRowView> {
+    if matches!(
+        source.readiness,
+        SourceCoverageReadiness::Ready | SourceCoverageReadiness::Proposed
+    ) && matches!(source.continuity, SourceCoverageContinuity::Active)
+    {
+        return Vec::new();
+    }
+
+    let (id_segment, stage, summary) = if source.material_count > 0 && source.event_count == 0 {
+        (
+            "material-without-events",
+            DebtStage::MaterialReady,
+            format!(
+                "source `{}` has {} material record(s) but no admitted events",
+                source.source_id, source.material_count
+            ),
+        )
+    } else if source.event_count > 0 && source.material_count == 0 {
+        (
+            "events-without-material",
+            DebtStage::Capturing,
+            format!(
+                "source `{}` has {} admitted event(s) but no registered material",
+                source.source_id, source.event_count
+            ),
+        )
+    } else if source
+        .caveats
+        .iter()
+        .any(|caveat| caveat.id == "source.runtime_bridge.unobserved")
+    {
+        (
+            "runtime-bridge-unobserved",
+            DebtStage::Capturing,
+            format!(
+                "runtime bridge source `{}` is declared but has no observed material or admitted events",
+                source.source_id
+            ),
+        )
+    } else if !source.gaps.is_empty() || !source.caveats.is_empty() {
+        (
+            "coverage-caveat",
+            DebtStage::Capturing,
+            format!(
+                "source `{}` reports {} coverage gap(s) and {} caveat(s)",
+                source.source_id,
+                source.gaps.len(),
+                source.caveats.len()
+            ),
+        )
+    } else {
+        return Vec::new();
+    };
+
+    vec![capture_debt_row_from_status(
+        source, id_segment, stage, summary,
+    )]
+}
+
+fn capture_debt_row_from_status(
+    source: &SourceCoverageView,
+    id_segment: &str,
+    stage: DebtStage,
+    summary: String,
+) -> DebtRowView {
+    let mut refs = vec![
+        SinexObjectRef::new(SinexObjectKind::RpcMethod, "sources.status.view"),
+        SinexObjectRef::new(SinexObjectKind::Command, "sources status"),
+        SinexObjectRef::new(SinexObjectKind::SourceDriver, source.source_id.clone()),
+    ];
+    refs.extend(
+        source
+            .caveats
+            .iter()
+            .filter_map(|caveat| caveat.ref_.clone()),
+    );
+
+    let mut actions = vec![
+        ActionAvailability::read(
+            "source.status.inspect",
+            "Inspect",
+            ActionAvailabilityState::Enabled,
+        )
+        .with_command_hint("sinexctl sources status --format json")
+        .with_rpc_method("sources.status.view"),
+    ];
+    actions.extend(source.actions.iter().cloned());
+
+    DebtRowView {
+        id: format!(
+            "debt:capture:{}:{id_segment}",
+            debt_id_segment(&source.source_id),
+        ),
+        kind: DebtKind::Capture,
+        stage,
+        summary,
+        refs,
+        owner: Some(DebtOwnerView {
+            package_ref: Some(source.source_id.clone()),
+            mode_ref: Some(source.source_id.clone()),
+            policy_ref: None,
+            operation_ref: None,
+        }),
+        age_secs: None,
+        freshness: None,
+        caveats: source.caveats.clone(),
+        actions,
+    }
 }
 
 fn debt_rows_for_source_coverage(source: &SourceCoverageEntry) -> Vec<DebtRowView> {
@@ -1605,6 +1728,37 @@ mod tests {
         }
     }
 
+    fn fixture_source_status_coverage(
+        readiness: SourceCoverageReadiness,
+        continuity: SourceCoverageContinuity,
+        material_count: i64,
+        event_count: i64,
+    ) -> SourceCoverageView {
+        SourceCoverageView {
+            source_id: "terminal.kitty-osc-live".to_string(),
+            namespace: "terminal".to_string(),
+            event_types: vec!["shell.kitty/command.executed".to_string()],
+            readiness,
+            continuity,
+            last_material_at: None,
+            last_event_at: None,
+            material_count,
+            event_count,
+            binding_count: 1,
+            live_binding_count: 1,
+            proposed_binding_count: 0,
+            gaps: Vec::new(),
+            caveats: Vec::new(),
+            privacy: sinex_primitives::views::SourcePrivacyPosture {
+                tier: "sensitive".to_string(),
+                context: "command".to_string(),
+                proposed: false,
+            },
+            resource_budget: None,
+            actions: Vec::new(),
+        }
+    }
+
     #[sinex_test]
     async fn debt_rows_from_dlq_reports_only_pending_admission_debt() -> xtask::TestResult<()> {
         assert!(debt_rows_from_dlq(&fixture_dlq(0)).is_empty());
@@ -1665,6 +1819,91 @@ mod tests {
         let rows = debt_rows_from_source_coverage(&[fixture_source_coverage(Some(2), Some(2))]);
 
         assert!(rows.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn debt_rows_from_source_status_reports_unobserved_runtime_bridge()
+    -> xtask::TestResult<()> {
+        let mut source = fixture_source_status_coverage(
+            SourceCoverageReadiness::MissingMaterial,
+            SourceCoverageContinuity::Gapped,
+            0,
+            0,
+        );
+        source
+            .caveats
+            .push(CaveatView {
+                id: "source.runtime_bridge.unobserved".to_string(),
+                message: "runtime bridge `kitty_osc` is declared, but no material or admitted events have been observed for this source".to_string(),
+                ref_: Some(SinexObjectRef::new(
+                    SinexObjectKind::SourceDriver,
+                    "terminal.kitty-osc-live",
+                )),
+            });
+        source.actions.push(
+            ActionAvailability::read(
+                "terminal.activity.reconnect",
+                "Reconnect Bridge",
+                ActionAvailabilityState::Unavailable,
+            )
+            .with_reason("package declares `terminal.activity.reconnect` for source `terminal.kitty-osc-live`"),
+        );
+
+        let rows = debt_rows_from_source_status_coverage(&[source]);
+
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(
+            row.id,
+            "debt:capture:terminal.kitty-osc-live:runtime-bridge-unobserved"
+        );
+        assert_eq!(row.kind, DebtKind::Capture);
+        assert_eq!(row.stage, DebtStage::Capturing);
+        assert!(
+            row.summary
+                .contains("runtime bridge source `terminal.kitty-osc-live`"),
+            "capture debt should name the live package mode"
+        );
+        assert!(
+            row.caveats
+                .iter()
+                .any(|caveat| caveat.id == "source.runtime_bridge.unobserved"),
+            "status caveats must carry into the debt row"
+        );
+        assert!(
+            row.refs.iter().any(|ref_| {
+                ref_.kind == SinexObjectKind::SourceDriver && ref_.id == "terminal.kitty-osc-live"
+            }),
+            "debt row should remain addressable by source-driver ref"
+        );
+        assert!(
+            row.actions.iter().any(|action| {
+                action.id == "source.status.inspect"
+                    && action.command_hint.as_deref()
+                        == Some("sinexctl sources status --format json")
+            }),
+            "debt row should point operators back to the status surface"
+        );
+        assert!(
+            row.actions
+                .iter()
+                .any(|action| action.id == "terminal.activity.reconnect"),
+            "declared package operation actions should carry into capture debt"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn debt_rows_from_source_status_omits_ready_active_sources() -> xtask::TestResult<()> {
+        let source = fixture_source_status_coverage(
+            SourceCoverageReadiness::Ready,
+            SourceCoverageContinuity::Active,
+            1,
+            1,
+        );
+
+        assert!(debt_rows_from_source_status_coverage(&[source]).is_empty());
         Ok(())
     }
 
