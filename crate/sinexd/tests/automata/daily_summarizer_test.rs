@@ -4,7 +4,9 @@ use sinex_primitives::temporal::{Duration, Timestamp};
 use sinexd::automata::daily::{DailySummarizer, DailySummaryState};
 use xtask::sandbox::prelude::*;
 
-use super::summarizer_support::{process_windowed_input, summary_context};
+use super::summarizer_support::{
+    process_windowed_input, summary_context, utc_day_start, utc_hour_start,
+};
 
 fn hourly_payload(
     hour_start: Timestamp,
@@ -99,21 +101,7 @@ async fn day_boundary_closes_summary_and_seeds_next_day() -> TestResult<()> {
     .await?
     .expect("new UTC day should close the prior day");
 
-    assert_eq!(
-        output.payload.day_start,
-        Timestamp::from(
-            first_hour
-                .inner()
-                .replace_hour(0)
-                .unwrap()
-                .replace_minute(0)
-                .unwrap()
-                .replace_second(0)
-                .unwrap()
-                .replace_nanosecond(0)
-                .unwrap()
-        )
-    );
+    assert_eq!(output.payload.day_start, utc_day_start(first_hour));
     assert_eq!(
         output.payload.day_end,
         output.payload.day_start + Duration::days(1)
@@ -134,16 +122,7 @@ async fn daily_summary_aggregates_hourly_rollups() -> TestResult<()> {
     let mut state = DailySummaryState::default();
 
     let day_start = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
-    let first_hour = Timestamp::from(
-        day_start
-            .inner()
-            .replace_minute(0)
-            .unwrap()
-            .replace_second(0)
-            .unwrap()
-            .replace_nanosecond(0)
-            .unwrap(),
-    );
+    let first_hour = utc_hour_start(day_start);
     let second_hour = first_hour + Duration::hours(1);
     let next_day_hour = first_hour + Duration::days(1);
 

@@ -38,3 +38,31 @@ where
         Ok(None)
     }
 }
+
+pub fn utc_hour_start(timestamp: Timestamp) -> Timestamp {
+    Timestamp::from(
+        timestamp
+            .inner()
+            .replace_minute(0)
+            .expect("valid UTC hour minute")
+            .replace_second(0)
+            .expect("valid UTC hour second")
+            .replace_nanosecond(0)
+            .expect("valid UTC hour nanosecond"),
+    )
+}
+
+pub fn utc_day_start(timestamp: Timestamp) -> Timestamp {
+    Timestamp::from(
+        timestamp
+            .inner()
+            .replace_hour(0)
+            .expect("valid UTC day hour")
+            .replace_minute(0)
+            .expect("valid UTC day minute")
+            .replace_second(0)
+            .expect("valid UTC day second")
+            .replace_nanosecond(0)
+            .expect("valid UTC day nanosecond"),
+    )
+}
