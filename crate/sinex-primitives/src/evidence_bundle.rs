@@ -7,12 +7,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::public_ref::ResolvedObjectView;
+use crate::rpc::sources::SourcePackageCompletenessPackageView;
 use crate::temporal::Timestamp;
 use crate::views::{
     ActionAvailability, CaveatView, DebtRowView, OperationView, SinexObjectRef, SourceCoverageView,
 };
 
 pub const EVIDENCE_BUNDLE_SCHEMA_VERSION: &str = "sinex.evidence-bundle/v1";
+pub const EVIDENCE_BUNDLE_SPEC_SCHEMA_VERSION: &str = "sinex.evidence-bundle-spec/v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -107,6 +109,71 @@ impl EvidenceBundleOmissionView {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EvidenceBundleSpec {
+    pub schema_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_context: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seeds: Vec<EvidenceBundleSeedView>,
+    #[serde(default)]
+    pub include_debt: bool,
+    #[serde(default)]
+    pub include_capture: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection_trigger: Option<String>,
+    #[serde(default)]
+    pub include_runtime_health: bool,
+    #[serde(default)]
+    pub include_package_completeness: bool,
+    #[serde(default)]
+    pub save_artifact: bool,
+}
+
+impl EvidenceBundleSpec {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            schema_version: EVIDENCE_BUNDLE_SPEC_SCHEMA_VERSION.to_string(),
+            target_context: None,
+            seeds: Vec::new(),
+            include_debt: false,
+            include_capture: false,
+            projection_trigger: None,
+            include_runtime_health: false,
+            include_package_completeness: false,
+            save_artifact: false,
+        }
+    }
+}
+
+impl Default for EvidenceBundleSpec {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EvidenceBundleRuntimeHealthView {
+    pub stale_after_secs: u64,
+    pub active_count: i64,
+    pub inactive_count: i64,
+    pub unique_modules: i64,
+    pub active_run_count: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oldest_heartbeat: Option<Timestamp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EvidenceBundleSavedArtifactView {
+    #[serde(rename = "ref")]
+    pub ref_: SinexObjectRef,
+    pub content_key: String,
+    pub content_type: String,
+    pub size: u64,
+    pub blake3_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceBundleView {
     pub schema_version: String,
     pub generated_at: Timestamp,
@@ -123,6 +190,12 @@ pub struct EvidenceBundleView {
     pub debt_rows: Vec<DebtRowView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub operations: Vec<OperationView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_health: Option<EvidenceBundleRuntimeHealthView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub package_completeness: Vec<SourcePackageCompletenessPackageView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_artifact: Option<EvidenceBundleSavedArtifactView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub omitted_sections: Vec<EvidenceBundleOmissionView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -144,6 +217,9 @@ impl EvidenceBundleView {
             source_coverage: Vec::new(),
             debt_rows: Vec::new(),
             operations: Vec::new(),
+            runtime_health: None,
+            package_completeness: Vec::new(),
+            saved_artifact: None,
             omitted_sections: Vec::new(),
             caveats: Vec::new(),
             actions: Vec::new(),
@@ -163,6 +239,8 @@ impl EvidenceBundleView {
             !self.source_coverage.is_empty(),
             !self.debt_rows.is_empty(),
             !self.operations.is_empty(),
+            self.runtime_health.is_some(),
+            !self.package_completeness.is_empty(),
         ]
         .into_iter()
         .filter(|included| *included)
@@ -175,5 +253,7 @@ impl EvidenceBundleView {
             + self.source_coverage.len()
             + self.debt_rows.len()
             + self.operations.len()
+            + usize::from(self.runtime_health.is_some())
+            + self.package_completeness.len()
     }
 }
