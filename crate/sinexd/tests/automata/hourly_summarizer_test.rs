@@ -1,29 +1,13 @@
 use sinex_primitives::activity::ActivitySourceKind;
-use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{
-    ActivityHourlySummaryPayload, ActivityWindowCloseReason, ActivityWindowSummaryPayload,
+    ActivityWindowCloseReason, ActivityWindowSummaryPayload,
 };
-use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::hourly::{HourlySummarizer, HourlySummaryState};
-use sinexd::runtime::automaton::{AutomatonContext, DerivedOutput};
-use sinexd::runtime::{AutomatonLogicError, Windowed};
+use sinexd::runtime::Windowed;
 use xtask::sandbox::prelude::*;
 
-fn make_context(ts_orig: Timestamp) -> AutomatonContext {
-    let event_id: Id<Event<JsonValue>> = Id::new();
-    AutomatonContext {
-        trigger_event_id: event_id,
-        source: ActivityWindowSummaryPayload::SOURCE,
-        event_type: ActivityWindowSummaryPayload::EVENT_TYPE,
-        ts_orig: Some(ts_orig),
-        ts_coided: event_id.timestamp(),
-        processing_mode: ProcessingMode::Live,
-        trigger_kind: TriggerKind::NewEvent,
-        created_by_operation_id: None,
-    }
-}
+use super::summarizer_support::{process_windowed_input, summary_context};
 
 fn window_payload(
     window_start: Timestamp,
@@ -52,18 +36,8 @@ fn window_payload(
     }
 }
 
-async fn process(
-    summarizer: &mut HourlySummarizer,
-    state: &mut HourlySummaryState,
-    payload: ActivityWindowSummaryPayload,
-    context: &AutomatonContext,
-) -> Result<Option<DerivedOutput<ActivityHourlySummaryPayload>>, AutomatonLogicError> {
-    summarizer.accumulate(state, payload, context).await?;
-    if summarizer.window_complete(state) {
-        summarizer.emit(state, context).await
-    } else {
-        Ok(None)
-    }
+fn make_context(ts_orig: Timestamp) -> sinexd::runtime::automaton::AutomatonContext {
+    summary_context::<ActivityWindowSummaryPayload>(ts_orig)
 }
 
 #[sinex_test]
@@ -80,7 +54,7 @@ async fn hour_boundary_closes_summary_and_seeds_next_hour() -> TestResult<()> {
     let second_ctx = make_context(second_end);
 
     assert!(
-        process(
+        process_windowed_input(
             &mut summarizer,
             &mut state,
             window_payload(
@@ -98,7 +72,7 @@ async fn hour_boundary_closes_summary_and_seeds_next_hour() -> TestResult<()> {
         .is_none()
     );
 
-    let output = process(
+    let output = process_windowed_input(
         &mut summarizer,
         &mut state,
         window_payload(
@@ -159,7 +133,7 @@ async fn hourly_summary_aggregates_focus_time_and_top_sources() -> TestResult<()
     let third_ctx = make_context(third_end);
 
     assert!(
-        process(
+        process_windowed_input(
             &mut summarizer,
             &mut state,
             window_payload(
@@ -180,7 +154,7 @@ async fn hourly_summary_aggregates_focus_time_and_top_sources() -> TestResult<()
         .is_none()
     );
     assert!(
-        process(
+        process_windowed_input(
             &mut summarizer,
             &mut state,
             window_payload(
@@ -198,7 +172,7 @@ async fn hourly_summary_aggregates_focus_time_and_top_sources() -> TestResult<()
         .is_none()
     );
 
-    let output = process(
+    let output = process_windowed_input(
         &mut summarizer,
         &mut state,
         window_payload(
