@@ -5,8 +5,6 @@
 
 #[cfg(test)]
 mod tests {
-    use xtask::sandbox::prelude::*;
-
     const RAINDROP_CSV: &[u8] = b"\
 id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
 100,Page Alpha,,Short note on alpha,https://example.com/alpha,Folder A,\"rust,async\",2026-01-01T09:00:00.000Z,https://cdn.example.com/a.jpg,,false
@@ -86,35 +84,8 @@ id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
         &["message.sent"],
     );
 
-    #[sinex_test]
-    async fn raindrop_bookmarks_obligations() -> TestResult<()> {
-        crate::run_production_path_case(RAINDROP_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn spotify_extended_history_obligations() -> TestResult<()> {
-        crate::run_production_path_case(SPOTIFY_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn hledger_journal_obligations() -> TestResult<()> {
-        crate::run_production_path_case(HLEDGER_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn facebook_messenger_thread_obligations() -> TestResult<()> {
-        crate::run_production_path_case(MESSENGER_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
+    crate::production_path_case_test!(raindrop_bookmarks_obligations, RAINDROP_CASE);
+    crate::production_path_case_test!(spotify_extended_history_obligations, SPOTIFY_CASE);
+    crate::production_path_case_test!(hledger_journal_obligations, HLEDGER_CASE);
+    crate::production_path_case_test!(facebook_messenger_thread_obligations, MESSENGER_CASE);
 }

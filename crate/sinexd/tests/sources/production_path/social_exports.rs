@@ -5,8 +5,6 @@
 
 #[cfg(test)]
 mod tests {
-    use xtask::sandbox::prelude::*;
-
     const REDDIT_COMMENT_CSV: &[u8] = b"\
 id,permalink,date,ip,subreddit,gildings,link,parent,body,media
 ck1fsao,https://www.reddit.com/r/Futurology/comments/2em2io/ck1fsao/,2014-08-27 00:59:46 UTC,,Futurology,0,https://www.reddit.com/r/Futurology/comments/2em2io/,ck1bai1,\"Great comment body.\",
@@ -55,35 +53,8 @@ id,permalink,date,ip,subreddit,gildings,title,url,body
         &["social.entry_comment.posted"],
     );
 
-    #[sinex_test]
-    async fn reddit_gdpr_comments_obligations() -> TestResult<()> {
-        crate::run_production_path_case(REDDIT_COMMENTS_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn reddit_gdpr_posts_obligations() -> TestResult<()> {
-        crate::run_production_path_case(REDDIT_POSTS_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn wykop_entries_obligations() -> TestResult<()> {
-        crate::run_production_path_case(WYKOP_ENTRIES_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn wykop_entry_comments_obligations() -> TestResult<()> {
-        crate::run_production_path_case(WYKOP_COMMENTS_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
+    crate::production_path_case_test!(reddit_gdpr_comments_obligations, REDDIT_COMMENTS_CASE);
+    crate::production_path_case_test!(reddit_gdpr_posts_obligations, REDDIT_POSTS_CASE);
+    crate::production_path_case_test!(wykop_entries_obligations, WYKOP_ENTRIES_CASE);
+    crate::production_path_case_test!(wykop_entry_comments_obligations, WYKOP_COMMENTS_CASE);
 }
