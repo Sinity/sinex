@@ -30,6 +30,9 @@ sinexd export-source-skeleton --package-id terminal.atuin-history --mode-id term
 The emitted file is a review starting point. It deliberately contains a
 package-specific `compile_error!` until parser, disclosure, fixtures,
 coverage/debt, operations, and deployment fields are completed.
+Its `factory = "..."` attribute is rendered from the package-completeness row:
+ordinary runnable modes target adapter+parser factory wiring, parser-only modes
+target parser dispatch, and external/proposed modes remain metadata-only.
 
 > **Authoring surface.** Prefer the Rust-native derives over hand-wiring the
 > registration sites:
