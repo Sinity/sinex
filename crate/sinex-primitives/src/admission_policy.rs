@@ -101,6 +101,7 @@ inventory::submit! {
             crate::event_contracts::EMAIL_MESSAGE_RECEIVED_CONTRACT_ID,
             crate::event_contracts::EMAIL_MESSAGE_SENT_CONTRACT_ID,
             crate::event_contracts::EMAIL_ATTACHMENT_OBSERVED_CONTRACT_ID,
+            crate::event_contracts::EMAIL_THREAD_OBSERVED_CONTRACT_ID,
             crate::event_contracts::MEDIA_AUDIO_RECORDING_OBSERVED_CONTRACT_ID,
             crate::event_contracts::MEDIA_AUDIO_CAPTURE_SESSION_STARTED_CONTRACT_ID,
             crate::event_contracts::MEDIA_AUDIO_CAPTURE_SESSION_ENDED_CONTRACT_ID,
