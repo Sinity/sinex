@@ -527,9 +527,13 @@ async fn compile_evidence_bundle(
             {
                 bundle.source_coverage.push(source.clone());
             } else {
-                bundle.omitted_sections.push(EvidenceBundleOmissionView::new(
+                bundle.omitted_sections.push(omitted_evidence_section(
                     format!("source_coverage:{source_id}"),
                     "source-driver seed was requested but the source coverage view had no matching row",
+                    Some(SinexObjectRef::new(
+                        SinexObjectKind::SourceDriver,
+                        source_id.clone(),
+                    )),
                 ));
             }
         }
@@ -557,9 +561,13 @@ async fn compile_evidence_bundle(
                     .collect::<Vec<_>>();
 
                 if matching.is_empty() {
-                    bundle.omitted_sections.push(EvidenceBundleOmissionView::new(
+                    bundle.omitted_sections.push(omitted_evidence_section(
                         format!("package_completeness:{source_id}"),
                         "source-driver seed was requested but package completeness had no matching package or mode row",
+                        Some(SinexObjectRef::new(
+                            SinexObjectKind::SourceDriver,
+                            source_id.clone(),
+                        )),
                     ));
                 } else {
                     bundle.package_completeness.extend(matching);
@@ -606,16 +614,82 @@ async fn compile_evidence_bundle(
         }
     }
 
-    attach_bounded_diagnostic_excerpts(&mut bundle);
-
     if bundle.evidence_row_count() == 0 {
-        bundle.omitted_sections.push(EvidenceBundleOmissionView::new(
+        bundle.omitted_sections.push(omitted_evidence_section(
             "evidence_rows",
             "no requested seed produced evidence rows through the currently wired read surfaces",
+            None,
         ));
     }
 
+    attach_evidence_bundle_context(&mut bundle);
+    attach_bounded_diagnostic_excerpts(&mut bundle);
+
     Ok(bundle)
+}
+
+fn omitted_evidence_section(
+    section: impl Into<String>,
+    reason: impl Into<String>,
+    ref_: Option<SinexObjectRef>,
+) -> EvidenceBundleOmissionView {
+    let section = section.into();
+    let reason = reason.into();
+    let mut omission = EvidenceBundleOmissionView::new(section.clone(), reason.clone());
+    omission.caveats.push(CaveatView {
+        id: "evidence_bundle.section_unavailable".to_string(),
+        message: reason,
+        ref_,
+    });
+    omission
+}
+
+fn attach_evidence_bundle_context(bundle: &mut EvidenceBundleView) {
+    let mut caveats = Vec::new();
+    let mut actions = Vec::new();
+
+    for resolved in &bundle.resolved_objects {
+        push_unique_actions(&mut actions, resolved.actions.iter().cloned());
+    }
+    for source in &bundle.source_coverage {
+        push_unique_caveats(&mut caveats, source.caveats.iter().cloned());
+        push_unique_actions(&mut actions, source.actions.iter().cloned());
+    }
+    for debt in &bundle.debt_rows {
+        push_unique_caveats(&mut caveats, debt.caveats.iter().cloned());
+        push_unique_actions(&mut actions, debt.actions.iter().cloned());
+    }
+    for operation in &bundle.operations {
+        push_unique_actions(&mut actions, operation.actions.iter().cloned());
+    }
+    for omission in &bundle.omitted_sections {
+        push_unique_caveats(&mut caveats, omission.caveats.iter().cloned());
+    }
+
+    bundle.caveats = caveats;
+    bundle.actions = actions;
+}
+
+fn push_unique_caveats(
+    target: &mut Vec<CaveatView>,
+    caveats: impl IntoIterator<Item = CaveatView>,
+) {
+    for caveat in caveats {
+        if !target.contains(&caveat) {
+            target.push(caveat);
+        }
+    }
+}
+
+fn push_unique_actions(
+    target: &mut Vec<ActionAvailability>,
+    actions: impl IntoIterator<Item = ActionAvailability>,
+) {
+    for action in actions {
+        if !target.contains(&action) {
+            target.push(action);
+        }
+    }
 }
 
 const EVIDENCE_BUNDLE_MAX_DIAGNOSTIC_EXCERPTS: usize = 8;
@@ -1381,6 +1455,8 @@ fn format_evidence_bundle_table(view: &EvidenceBundleView) -> String {
         "  Diagnostic excerpts: {}\n",
         view.diagnostic_excerpts.len()
     ));
+    output.push_str(&format!("  Caveats:          {}\n", view.caveats.len()));
+    output.push_str(&format!("  Actions:          {}\n", view.actions.len()));
     if let Some(artifact) = view.saved_artifact.as_ref() {
         output.push_str(&format!("  Saved artifact:   {}\n", artifact.ref_));
     }
@@ -1656,12 +1732,10 @@ mod tests {
         assert!(table.contains("Runtime health:   included"));
         assert!(table.contains("Package rows:     1"));
         assert!(!view.diagnostic_excerpts.is_empty());
-        assert!(
-            view.diagnostic_excerpts
-                .len()
-                <= EVIDENCE_BUNDLE_MAX_DIAGNOSTIC_EXCERPTS
-        );
+        assert!(view.diagnostic_excerpts.len() <= EVIDENCE_BUNDLE_MAX_DIAGNOSTIC_EXCERPTS);
         assert!(table.contains("Diagnostic excerpts:"));
+        assert!(table.contains("Caveats:          0"));
+        assert!(table.contains("Actions:          0"));
         assert!(table.contains("Diagnostics:"));
         assert!(table.contains("derivation"));
         assert!(table.contains("Saved artifact:   artifact:SINEXBLAKE3-test"));
@@ -1696,9 +1770,175 @@ mod tests {
         assert_eq!(excerpt.excerpt.chars().count(), excerpt.max_chars);
         assert!(excerpt.truncated);
         assert_eq!(
-            excerpt.source_ref.as_ref().map(ToString::to_string).as_deref(),
+            excerpt
+                .source_ref
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
             Some("projection:p1")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn evidence_bundle_preserves_underlying_caveats_and_actions() -> xtask::TestResult<()> {
+        let mut view = EvidenceBundleView::new("sinexctl.ops.evidence.compile");
+        let source_ref =
+            SinexObjectRef::new(SinexObjectKind::SourceDriver, "terminal.kitty-osc-live");
+        let source_action = ActionAvailability::read(
+            "source.status.inspect",
+            "Inspect Source Status",
+            ActionAvailabilityState::Enabled,
+        )
+        .with_command_hint("sinexctl sources status --format json");
+        let debt_action = ActionAvailability::read(
+            "debt.inspect",
+            "Inspect Debt",
+            ActionAvailabilityState::Enabled,
+        )
+        .with_command_hint("sinexctl ops debt list --format json");
+
+        let mut source = fixture_source_status_coverage(
+            SourceCoverageReadiness::MissingMaterial,
+            SourceCoverageContinuity::Gapped,
+            0,
+            0,
+        );
+        source.caveats.push(CaveatView {
+            id: "source.runtime_bridge.unobserved".to_string(),
+            message: "runtime bridge has no observed material".to_string(),
+            ref_: Some(source_ref.clone()),
+        });
+        source.actions.push(source_action.clone());
+        view.source_coverage.push(source);
+        view.debt_rows.push(DebtRowView {
+            id: "debt:capture:terminal.kitty-osc-live".to_string(),
+            kind: DebtKind::Capture,
+            stage: DebtStage::Capturing,
+            summary: "runtime bridge is unobserved".to_string(),
+            refs: vec![source_ref.clone()],
+            owner: None,
+            age_secs: None,
+            freshness: None,
+            caveats: vec![CaveatView {
+                id: "capture.runtime_unobserved".to_string(),
+                message: "capture debt keeps the source caveat visible".to_string(),
+                ref_: Some(source_ref),
+            }],
+            actions: vec![debt_action.clone()],
+        });
+        view.operations
+            .push(operation_to_view(&fixture_operation("op-1", "replay")));
+
+        attach_evidence_bundle_context(&mut view);
+
+        assert!(
+            view.caveats
+                .iter()
+                .any(|caveat| caveat.id == "source.runtime_bridge.unobserved")
+        );
+        assert!(
+            view.caveats
+                .iter()
+                .any(|caveat| caveat.id == "capture.runtime_unobserved")
+        );
+        assert!(view.actions.contains(&source_action));
+        assert!(view.actions.contains(&debt_action));
+        assert!(view.actions.iter().any(|action| action.id == "ops.show"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn evidence_bundle_view_has_stable_json_fields() -> xtask::TestResult<()> {
+        let mut view = EvidenceBundleView::new("sinexctl.ops.evidence.compile");
+        view.seeds
+            .push(EvidenceBundleSeedView::operation("op-json-shape"));
+        view.caveats.push(CaveatView {
+            id: "evidence_bundle.test".to_string(),
+            message: "test caveat".to_string(),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::Operation,
+                "op-json-shape",
+            )),
+        });
+        view.actions.push(ActionAvailability::read(
+            "ops.show",
+            "Show",
+            ActionAvailabilityState::Enabled,
+        ));
+        view.diagnostic_excerpts
+            .push(EvidenceBundleDiagnosticExcerptView {
+                section: "debt_rows".to_string(),
+                source_ref: Some(SinexObjectRef::new(
+                    SinexObjectKind::Operation,
+                    "op-json-shape",
+                )),
+                excerpt: "bounded diagnostic".to_string(),
+                max_chars: EVIDENCE_BUNDLE_MAX_DIAGNOSTIC_EXCERPT_CHARS,
+                truncated: false,
+            });
+
+        let envelope = ViewEnvelope::new("sinexctl.ops.evidence.compile", view);
+        let json = serde_json::to_value(&envelope)?;
+
+        assert_eq!(json["source_surface"], "sinexctl.ops.evidence.compile");
+        assert_eq!(
+            json["payload"]["schema_version"],
+            "sinex.evidence-bundle/v2"
+        );
+        assert_eq!(json["payload"]["seeds"][0]["kind"], "operation");
+        assert_eq!(json["payload"]["caveats"][0]["id"], "evidence_bundle.test");
+        assert_eq!(json["payload"]["actions"][0]["id"], "ops.show");
+        assert_eq!(
+            json["payload"]["diagnostic_excerpts"][0]["source_ref"]["kind"],
+            "operation"
+        );
+        assert_eq!(
+            json["payload"]["diagnostic_excerpts"][0]["source_ref"]["id"],
+            "op-json-shape"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn evidence_bundle_omissions_carry_target_caveats_and_diagnostics()
+    -> xtask::TestResult<()> {
+        let mut view = EvidenceBundleView::new("sinexctl.ops.evidence.compile");
+        view.omitted_sections.push(omitted_evidence_section(
+            "source_coverage:terminal.unknown-live",
+            "source-driver seed was requested but no matching source coverage row exists",
+            Some(SinexObjectRef::new(
+                SinexObjectKind::SourceDriver,
+                "terminal.unknown-live",
+            )),
+        ));
+
+        attach_evidence_bundle_context(&mut view);
+        attach_bounded_diagnostic_excerpts(&mut view);
+
+        let omission = view
+            .omitted_sections
+            .first()
+            .ok_or_else(|| color_eyre::eyre::eyre!("omission expected"))?;
+        let caveat = omission
+            .caveats
+            .first()
+            .ok_or_else(|| color_eyre::eyre::eyre!("omission caveat expected"))?;
+        assert_eq!(caveat.id, "evidence_bundle.section_unavailable");
+        assert_eq!(
+            caveat.ref_.as_ref().map(ToString::to_string).as_deref(),
+            Some("source-driver:terminal.unknown-live")
+        );
+        assert!(view.caveats.contains(caveat));
+        assert!(view.diagnostic_excerpts.iter().any(|excerpt| {
+            excerpt.section == "omitted_sections"
+                && excerpt
+                    .source_ref
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .as_deref()
+                    == Some("source-driver:terminal.unknown-live")
+        }));
         Ok(())
     }
 
@@ -1714,6 +1954,24 @@ mod tests {
         assert!(capability.supports(OutputFormat::Yaml));
         assert!(!capability.supports(OutputFormat::Ndjson));
         assert!(!capability.streaming);
+
+        let catalog = crate::model::format_registry::command_catalog();
+        let entry = catalog
+            .iter()
+            .find(|entry| entry.path == "ops evidence compile")
+            .expect("ops evidence compile must have a command catalog entry");
+        for method in [
+            "ops.get",
+            "dlq.list",
+            "runtime.health",
+            "sources.package_completeness",
+            "sources.status.view",
+        ] {
+            assert!(
+                entry.backing_rpc_methods.contains(&method),
+                "ops evidence compile should advertise backing RPC `{method}`"
+            );
+        }
         Ok(())
     }
 
