@@ -685,6 +685,67 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
             module.map(|_| "runtime.resume"),
             ActionSideEffect::Admin,
         ),
+        "import-transcript" => (
+            "Import Transcript",
+            Some("sinexctl sources stage <path> --format json".to_string()),
+            Some("sources.stage"),
+            ActionSideEffect::Write,
+        ),
+        "import-ocr" => (
+            "Import OCR",
+            Some("sinexctl sources stage <path> --format json".to_string()),
+            Some("sources.stage"),
+            ActionSideEffect::Write,
+        ),
+        "import-bundle" => (
+            "Import Audio Bundle",
+            Some("sinexctl sources stage <path> --format json".to_string()),
+            Some("sources.stage"),
+            ActionSideEffect::Write,
+        ),
+        "import-screenshots" => (
+            "Import Screenshot Bundle",
+            Some("sinexctl sources stage <path> --format json".to_string()),
+            Some("sources.stage"),
+            ActionSideEffect::Write,
+        ),
+        "export" => (
+            "Export Source Events",
+            Some(format!(
+                "sinexctl privacy export --source {source_id} --output <file>"
+            )),
+            None,
+            ActionSideEffect::Read,
+        ),
+        "replay" => (
+            "Replay Source",
+            Some(format!("sinexctl ops replay plan --source {source_id}")),
+            Some("replay.create"),
+            ActionSideEffect::Write,
+        ),
+        "delete-material" => ("Delete Material", None, None, ActionSideEffect::Destructive),
+        "run-model" => ("Run Local Model", None, None, ActionSideEffect::Admin),
+        "run-ocr" => ("Run OCR", None, None, ActionSideEffect::Admin),
+        "retry" => (
+            "Retry Package Operation",
+            None,
+            None,
+            ActionSideEffect::Write,
+        ),
+        "rebuild-artifact" => ("Rebuild Artifact", None, None, ActionSideEffect::Write),
+        "enable-session" => (
+            "Enable Capture Session",
+            None,
+            None,
+            ActionSideEffect::Admin,
+        ),
+        "disable-session" => (
+            "Disable Capture Session",
+            None,
+            None,
+            ActionSideEffect::Admin,
+        ),
+        "capture-region" => ("Capture Region", None, None, ActionSideEffect::Admin),
         _ => ("Package Operation", None, None, ActionSideEffect::Read),
     };
     let state = if command_hint.is_some() {
@@ -989,6 +1050,89 @@ mod tests {
             reconnect.command_hint.as_deref(),
             Some("sinexctl runtime resume terminal-source")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn media_package_operations_surface_operator_actions() -> xtask::TestResult<()> {
+        let contract = all_source_contracts()
+            .find(|contract| contract.id == "media.audio-transcript")
+            .ok_or_else(|| color_eyre::eyre::eyre!("media audio contract expected"))?;
+        let bindings = source_runtime_bindings()
+            .filter(|binding| binding.source_id == "media.audio-transcript")
+            .collect::<Vec<_>>();
+
+        let view = source_coverage_view(
+            contract,
+            &bindings,
+            &HashMap::new(),
+            &HashMap::new(),
+            &healthy_confirmation_buffer(),
+            &HashMap::new(),
+            Timestamp::now(),
+        );
+
+        let import_transcript = view
+            .actions
+            .iter()
+            .find(|action| action.id == "media.audio-transcript.import-transcript")
+            .ok_or_else(|| color_eyre::eyre::eyre!("transcript import action expected"))?;
+        assert_eq!(
+            import_transcript.command_hint.as_deref(),
+            Some("sinexctl sources stage <path> --format json")
+        );
+        assert_eq!(
+            import_transcript.rpc_method.as_deref(),
+            Some("sources.stage")
+        );
+        assert_eq!(import_transcript.side_effect, ActionSideEffect::Write);
+        assert_eq!(import_transcript.state, ActionAvailabilityState::Enabled);
+
+        let replay = view
+            .actions
+            .iter()
+            .find(|action| action.id == "media.audio-transcript.replay")
+            .ok_or_else(|| color_eyre::eyre::eyre!("replay action expected"))?;
+        assert_eq!(
+            replay.command_hint.as_deref(),
+            Some("sinexctl ops replay plan --source media.audio-transcript")
+        );
+        assert_eq!(replay.rpc_method.as_deref(), Some("replay.create"));
+        assert_eq!(replay.side_effect, ActionSideEffect::Write);
+
+        let export = view
+            .actions
+            .iter()
+            .find(|action| action.id == "media.audio-transcript.export")
+            .ok_or_else(|| color_eyre::eyre::eyre!("export action expected"))?;
+        assert_eq!(
+            export.command_hint.as_deref(),
+            Some("sinexctl privacy export --source media.audio-transcript --output <file>")
+        );
+
+        let run_model = view
+            .actions
+            .iter()
+            .find(|action| action.id == "media.audio-transcript.run-model")
+            .ok_or_else(|| color_eyre::eyre::eyre!("model action expected"))?;
+        assert_eq!(run_model.state, ActionAvailabilityState::Unavailable);
+        assert_eq!(run_model.side_effect, ActionSideEffect::Admin);
+        assert!(
+            run_model
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("no operator actuator command is wired yet"))
+        );
+
+        let delete = view
+            .actions
+            .iter()
+            .find(|action| action.id == "media.audio-transcript.delete-material")
+            .ok_or_else(|| color_eyre::eyre::eyre!("delete material action expected"))?;
+        assert_eq!(delete.state, ActionAvailabilityState::Unavailable);
+        assert_eq!(delete.side_effect, ActionSideEffect::Destructive);
+        assert!(delete.requires_confirmation);
+
         Ok(())
     }
 
