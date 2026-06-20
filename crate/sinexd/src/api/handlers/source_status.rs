@@ -4,7 +4,8 @@ use crate::api::service_container::{ConfirmationBufferHealth, ServiceContainer};
 use sinex_db::DbPoolExt;
 use sinex_primitives::SinexError;
 use sinex_primitives::rpc::source_status::{
-    SourceStatus, SourcesStatusRequest, SourcesStatusResponse, SourcesStatusViewRequest,
+    EmitStallThresholds, EmitStallVerdict, SourceStatus, SourcesStatusRequest,
+    SourcesStatusResponse, SourcesStatusViewRequest,
 };
 use sinex_primitives::source_contracts::{
     AccessScope, BudgetPressureAction, ResourceBudgetSpec, ResourceProfile, SourceContract,
@@ -93,6 +94,18 @@ pub async fn handle_sources_status_view(
 ) -> Result<ViewEnvelope<SourceCoverageListView>> {
     let pool = services.pool();
     let confirmation_buffer = services.probe_confirmation_buffer_pressure().await;
+    let now = Timestamp::now();
+    let status_defaults = SourcesStatusRequest::default();
+    let source_status_rows = pool
+        .state()
+        .list_sources_status(
+            Duration::from_secs(status_defaults.stale_after_secs),
+            Duration::from_secs(status_defaults.recent_window_secs),
+        )
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to compute source runtime status").with_std_error(&error)
+        })?;
     let event_rows = sqlx::query_as!(
         SourceEventAggregateRow,
         r#"
@@ -136,6 +149,7 @@ pub async fn handle_sources_status_view(
         .into_iter()
         .map(|row| (row.source_identifier.clone(), row))
         .collect();
+    let runtime_observations = source_runtime_observations(source_status_rows);
 
     let bindings: Vec<&'static SourceRuntimeBinding> = source_runtime_bindings().collect();
     let mut contracts: Vec<&'static SourceContract> = all_source_contracts().collect();
@@ -154,6 +168,8 @@ pub async fn handle_sources_status_view(
             &event_aggregates,
             &material_aggregates,
             &confirmation_buffer,
+            &runtime_observations,
+            now,
         ));
     }
 
@@ -169,6 +185,8 @@ fn source_coverage_view(
     event_aggregates: &HashMap<(String, String), SourceEventAggregateRow>,
     material_aggregates: &HashMap<String, SourceMaterialAggregateRow>,
     confirmation_buffer: &ConfirmationBufferHealth,
+    runtime_observations: &HashMap<String, SourceStatus>,
+    now: Timestamp,
 ) -> SourceCoverageView {
     let mut event_count = 0i64;
     let mut last_event_at = None;
@@ -225,7 +243,29 @@ fn source_coverage_view(
         && !has_material
         && !has_events
     {
-        caveats.push(runtime_bridge_unobserved_caveat(contract));
+        if let Some(observation) = runtime_observation_for_source(contract.id, runtime_observations)
+        {
+            if !observation.live {
+                gaps.push(CoverageGapView {
+                    kind: "runtime_bridge_disconnected".to_string(),
+                    message: runtime_bridge_status_message(contract, observation),
+                });
+            }
+            let verdict = observation.classify_emit_stall(EmitStallThresholds::default(), now);
+            if matches!(verdict, EmitStallVerdict::Stalled) {
+                gaps.push(CoverageGapView {
+                    kind: "runtime_bridge_stalled".to_string(),
+                    message: runtime_bridge_stall_message(contract, observation),
+                });
+            }
+            caveats.extend(runtime_bridge_observation_caveats(
+                contract,
+                observation,
+                verdict,
+            ));
+        } else {
+            caveats.push(runtime_bridge_unobserved_caveat(contract));
+        }
     }
     let pressure = source_confirmation_pressure(contract, confirmation_buffer);
     if let Some(pressure) = &pressure {
@@ -308,6 +348,140 @@ fn runtime_bridge_unobserved_caveat(contract: &SourceContract) -> CaveatView {
             contract.id.to_string(),
         )),
     }
+}
+
+fn source_runtime_observations(
+    rows: Vec<sinex_db::repositories::state::SourcesStatusRow>,
+) -> HashMap<String, SourceStatus> {
+    rows.into_iter()
+        .map(|row| {
+            let status = SourceStatus {
+                module_name: row.module_name,
+                version: row.version,
+                description: row.description,
+                manifest_status: row.manifest_status.unwrap_or_default(),
+                live: row.live,
+                service_name: row.service_name,
+                instance_id: row.instance_id,
+                module_run_id: row.module_run_id,
+                host: row.host,
+                run_status: row.run_status,
+                started_at: row.started_at,
+                last_heartbeat_at: row.last_heartbeat_at,
+                current_health: row.current_health,
+                health_changed_at: row.health_changed_at,
+                health_reason: row.health_reason,
+                recent_output_count: row.recent_output_count,
+                last_output_at: row.last_output_at,
+            };
+            (status.module_name.to_string(), status)
+        })
+        .collect()
+}
+
+fn runtime_observation_for_source<'a>(
+    source_id: &str,
+    observations: &'a HashMap<String, SourceStatus>,
+) -> Option<&'a SourceStatus> {
+    source_runtime_module(source_id)
+        .and_then(|module| observations.get(module))
+        .or_else(|| observations.get(source_id))
+}
+
+fn runtime_bridge_observation_caveats(
+    contract: &SourceContract,
+    observation: &SourceStatus,
+    verdict: EmitStallVerdict,
+) -> Vec<CaveatView> {
+    let mut caveats = vec![CaveatView {
+        id: "source.runtime_bridge.observed".to_string(),
+        message: runtime_bridge_status_message(contract, observation),
+        ref_: runtime_bridge_ref(contract),
+    }];
+
+    if observation.current_health.is_some() || observation.health_reason.is_some() {
+        caveats.push(CaveatView {
+            id: "source.runtime_bridge.health".to_string(),
+            message: runtime_bridge_health_message(contract, observation),
+            ref_: runtime_bridge_ref(contract),
+        });
+    }
+
+    if matches!(verdict, EmitStallVerdict::Stalled) {
+        caveats.push(CaveatView {
+            id: "source.runtime_bridge.stalled".to_string(),
+            message: runtime_bridge_stall_message(contract, observation),
+            ref_: runtime_bridge_ref(contract),
+        });
+    }
+
+    if !observation.live {
+        caveats.push(CaveatView {
+            id: "source.runtime_bridge.disconnected".to_string(),
+            message: runtime_bridge_status_message(contract, observation),
+            ref_: runtime_bridge_ref(contract),
+        });
+    }
+
+    caveats
+}
+
+fn runtime_bridge_ref(contract: &SourceContract) -> Option<SinexObjectRef> {
+    Some(SinexObjectRef::new(
+        SinexObjectKind::SourceDriver,
+        contract.id.to_string(),
+    ))
+}
+
+fn runtime_bridge_surface(contract: &SourceContract) -> &'static str {
+    match contract.access_scope {
+        AccessScope::RuntimeBridge { surface } => surface,
+        _ => "runtime_bridge",
+    }
+}
+
+fn runtime_bridge_status_message(contract: &SourceContract, observation: &SourceStatus) -> String {
+    let surface = runtime_bridge_surface(contract);
+    let connection = if observation.live {
+        "connected"
+    } else {
+        "disconnected"
+    };
+    format!(
+        "runtime bridge `{surface}` is {connection} through module `{}`; last heartbeat {}; last output {}; recent output count {}",
+        observation.module_name,
+        optional_timestamp(observation.last_heartbeat_at),
+        optional_timestamp(observation.last_output_at),
+        observation.recent_output_count
+    )
+}
+
+fn runtime_bridge_health_message(contract: &SourceContract, observation: &SourceStatus) -> String {
+    let surface = runtime_bridge_surface(contract);
+    let health = observation
+        .current_health
+        .map_or_else(|| "unknown".to_string(), |status| status.to_string());
+    let reason = observation
+        .health_reason
+        .as_deref()
+        .unwrap_or("no health reason recorded");
+    format!(
+        "runtime bridge `{surface}` health is {health}; {reason}; health changed {}",
+        optional_timestamp(observation.health_changed_at)
+    )
+}
+
+fn runtime_bridge_stall_message(contract: &SourceContract, observation: &SourceStatus) -> String {
+    let surface = runtime_bridge_surface(contract);
+    format!(
+        "runtime bridge `{surface}` is heartbeating but has no recent source output; last output {}; recent output count {}",
+        optional_timestamp(observation.last_output_at),
+        observation.recent_output_count
+    )
+}
+
+fn optional_timestamp(timestamp: Option<Timestamp>) -> String {
+    timestamp.map_or_else(|| "unknown".to_string(), |timestamp| timestamp.to_string())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -561,7 +735,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use sinex_primitives::domain::HealthStatus;
+    use sinex_primitives::domain::{HealthStatus, ModuleName};
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::source_contracts::{
         AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
@@ -628,6 +802,8 @@ mod tests {
             &events,
             &materials,
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
+            Timestamp::now(),
         );
 
         assert_eq!(view.readiness, SourceCoverageReadiness::Ready);
@@ -663,6 +839,8 @@ mod tests {
             &events,
             &materials,
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
+            Timestamp::now(),
         );
 
         assert_eq!(view.readiness, SourceCoverageReadiness::MissingMaterial);
@@ -724,6 +902,8 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
+            Timestamp::now(),
         );
 
         let caveat = view
@@ -813,6 +993,159 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn runtime_bridge_coverage_uses_runtime_observation_for_last_seen()
+    -> xtask::TestResult<()> {
+        let now = Timestamp::now();
+        let bridge_binding = terminal_bridge_binding();
+        let mut observations = HashMap::new();
+        observations.insert(
+            "terminal-source".to_string(),
+            terminal_bridge_status(now).with_recent_output(now - time::Duration::seconds(30), 7),
+        );
+
+        let view = source_coverage_view(
+            &terminal_bridge_contract(),
+            &[&bridge_binding],
+            &HashMap::new(),
+            &HashMap::new(),
+            &healthy_confirmation_buffer(),
+            &observations,
+            now,
+        );
+
+        assert!(
+            !view
+                .caveats
+                .iter()
+                .any(|caveat| caveat.id == "source.runtime_bridge.unobserved"),
+            "observed runtime state should replace the static unobserved bridge caveat"
+        );
+        let observed = view
+            .caveats
+            .iter()
+            .find(|caveat| caveat.id == "source.runtime_bridge.observed")
+            .ok_or_else(|| color_eyre::eyre::eyre!("observed runtime caveat expected"))?;
+        assert!(observed.message.contains("connected"));
+        assert!(observed.message.contains("terminal-source"));
+        assert!(observed.message.contains("last heartbeat"));
+        assert!(observed.message.contains("last output"));
+        assert!(observed.message.contains("recent output count 7"));
+        assert!(
+            view.gaps
+                .iter()
+                .all(|gap| gap.kind != "runtime_bridge_disconnected")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_bridge_coverage_surfaces_disconnected_runtime_observation()
+    -> xtask::TestResult<()> {
+        let now = Timestamp::now();
+        let bridge_binding = terminal_bridge_binding();
+        let mut status = terminal_bridge_status(now);
+        status.live = false;
+        status.current_health = Some(HealthStatus::Unhealthy);
+        status.health_reason = Some("runtime module disconnected".to_string());
+        let mut observations = HashMap::new();
+        observations.insert("terminal-source".to_string(), status);
+
+        let view = source_coverage_view(
+            &terminal_bridge_contract(),
+            &[&bridge_binding],
+            &HashMap::new(),
+            &HashMap::new(),
+            &healthy_confirmation_buffer(),
+            &observations,
+            now,
+        );
+
+        assert!(
+            view.gaps
+                .iter()
+                .any(|gap| gap.kind == "runtime_bridge_disconnected"),
+            "disconnected runtime observations should become source coverage gaps"
+        );
+        let caveat = view
+            .caveats
+            .iter()
+            .find(|caveat| caveat.id == "source.runtime_bridge.disconnected")
+            .ok_or_else(|| color_eyre::eyre::eyre!("disconnected caveat expected"))?;
+        assert!(caveat.message.contains("disconnected"));
+        assert!(caveat.message.contains("last heartbeat"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_bridge_coverage_surfaces_malformed_frame_health_reason()
+    -> xtask::TestResult<()> {
+        let now = Timestamp::now();
+        let bridge_binding = terminal_bridge_binding();
+        let mut status = terminal_bridge_status(now);
+        status.current_health = Some(HealthStatus::Degraded);
+        status.health_reason = Some("malformed Kitty OSC frame rejected".to_string());
+        let mut observations = HashMap::new();
+        observations.insert("terminal-source".to_string(), status);
+
+        let view = source_coverage_view(
+            &terminal_bridge_contract(),
+            &[&bridge_binding],
+            &HashMap::new(),
+            &HashMap::new(),
+            &healthy_confirmation_buffer(),
+            &observations,
+            now,
+        );
+
+        let caveat = view
+            .caveats
+            .iter()
+            .find(|caveat| caveat.id == "source.runtime_bridge.health")
+            .ok_or_else(|| color_eyre::eyre::eyre!("runtime health caveat expected"))?;
+        assert!(caveat.message.contains("degraded"));
+        assert!(
+            caveat
+                .message
+                .contains("malformed Kitty OSC frame rejected")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_bridge_coverage_surfaces_heartbeat_without_output_as_stalled()
+    -> xtask::TestResult<()> {
+        let now = Timestamp::now();
+        let bridge_binding = terminal_bridge_binding();
+        let mut observations = HashMap::new();
+        observations.insert("terminal-source".to_string(), terminal_bridge_status(now));
+
+        let view = source_coverage_view(
+            &terminal_bridge_contract(),
+            &[&bridge_binding],
+            &HashMap::new(),
+            &HashMap::new(),
+            &healthy_confirmation_buffer(),
+            &observations,
+            now,
+        );
+
+        assert!(
+            view.gaps
+                .iter()
+                .any(|gap| gap.kind == "runtime_bridge_stalled"),
+            "heartbeating bridge with no recent output should become coverage debt"
+        );
+        let caveat = view
+            .caveats
+            .iter()
+            .find(|caveat| caveat.id == "source.runtime_bridge.stalled")
+            .ok_or_else(|| color_eyre::eyre::eyre!("stalled caveat expected"))?;
+        assert!(caveat.message.contains("heartbeating"));
+        assert!(caveat.message.contains("no recent source output"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn source_coverage_view_surfaces_attributed_confirmation_pressure()
     -> xtask::TestResult<()> {
         let mut confirmation_buffer = healthy_confirmation_buffer();
@@ -829,6 +1162,8 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &confirmation_buffer,
+            &HashMap::new(),
+            Timestamp::now(),
         );
 
         let caveat = view
@@ -864,6 +1199,8 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &confirmation_buffer,
+            &HashMap::new(),
+            Timestamp::now(),
         );
 
         assert!(
@@ -901,6 +1238,88 @@ mod tests {
             timed_out_retained_payload_bytes: 0,
             approximate_payload_bytes_by_kind: BTreeMap::new(),
             detail: "confirmation buffers nominal".to_string(),
+        }
+    }
+
+    fn terminal_bridge_contract() -> SourceContract {
+        SourceContract {
+            id: "terminal.kitty-osc-live",
+            namespace: "terminal",
+            event_types: &[("shell.kitty", "command.executed")],
+            privacy_tier: PrivacyTier::Sensitive,
+            horizons: &[Horizon::Continuous],
+            retention: RetentionPolicy::Forever,
+            occurrence_identity: OccurrenceIdentity::Anchor,
+            access_scope: AccessScope::RuntimeBridge {
+                surface: "kitty_osc",
+            },
+        }
+    }
+
+    fn terminal_bridge_binding() -> SourceRuntimeBinding {
+        static BRIDGE_CAPABILITIES: &[&str] = &[
+            "coverage:source-coverage",
+            "operation:terminal.activity.check",
+            "operation:terminal.activity.reconnect",
+            "operation:terminal.activity.pause",
+            "operation:terminal.activity.resume",
+            "operation:terminal.activity.drain",
+            "operation:terminal.activity.inspect",
+        ];
+        SourceRuntimeBinding::builder(
+            SubjectRef::from_static("source:terminal.kitty-osc-live"),
+            "terminal.kitty-osc-live",
+            "terminal",
+        )
+        .implementation("live-capture")
+        .adapter("UnixSocketStreamAdapter")
+        .output_event_type("command.executed")
+        .privacy_context(ProcessingContext::Command)
+        .resource_profile(ResourceProfile::LiveWatcher)
+        .capabilities(BRIDGE_CAPABILITIES)
+        .source_id("terminal.kitty-osc-live")
+        .runner_pack(RunnerPack::Live)
+        .checkpoint_family(CheckpointFamily::LiveObservation)
+        .runtime_shape(RuntimeShape::Continuous)
+        .build_impact(SourceBuildImpact::ZERO)
+        .build()
+    }
+
+    trait SourceStatusTestExt {
+        fn with_recent_output(self, last_output_at: Timestamp, recent_output_count: i64) -> Self;
+    }
+
+    impl SourceStatusTestExt for SourceStatus {
+        fn with_recent_output(
+            mut self,
+            last_output_at: Timestamp,
+            recent_output_count: i64,
+        ) -> Self {
+            self.last_output_at = Some(last_output_at);
+            self.recent_output_count = recent_output_count;
+            self
+        }
+    }
+
+    fn terminal_bridge_status(now: Timestamp) -> SourceStatus {
+        SourceStatus {
+            module_name: ModuleName::new("terminal-source"),
+            version: "1.0.0".to_string(),
+            description: Some("Kitty OSC live terminal bridge".to_string()),
+            manifest_status: "running".to_string(),
+            live: true,
+            service_name: Some("sinexd".to_string()),
+            instance_id: Some("fixture-instance".to_string()),
+            module_run_id: None,
+            host: Some("fixture-host".to_string()),
+            run_status: Some("running".to_string()),
+            started_at: Some(now - time::Duration::seconds(3600)),
+            last_heartbeat_at: Some(now - time::Duration::seconds(5)),
+            current_health: Some(HealthStatus::Healthy),
+            health_changed_at: Some(now - time::Duration::seconds(5)),
+            health_reason: Some("bridge connected".to_string()),
+            recent_output_count: 0,
+            last_output_at: None,
         }
     }
 }
