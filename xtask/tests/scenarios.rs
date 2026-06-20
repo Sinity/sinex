@@ -195,12 +195,10 @@ async fn test_event_engine_log_format_json() -> ::xtask::sandbox::TestResult<()>
     let binary_path = target_dir.join(profile).join("sinexd");
 
     if !binary_path.exists() {
-        // Skip gracefully if binary has not been built yet
-        eprintln!(
-            "Skipping D11.6: sinexd not found at {}",
+        return Err(color_eyre::eyre::eyre!(
+            "D11.6 requires a built sinexd binary at {}; build the binary or do not claim JSON-log verification",
             binary_path.display()
-        );
-        return Ok(());
+        ));
     }
 
     // Spawn with piped stderr and json log format
@@ -250,14 +248,11 @@ async fn test_event_engine_log_format_json() -> ::xtask::sandbox::TestResult<()>
         .map_err(|_| color_eyre::eyre::eyre!("stderr reader thread panicked"))??;
     let lines: Vec<&str> = stderr_lines.iter().map(String::as_str).collect();
 
-    // Binary may not emit ANY logs if it errors out immediately (e.g., no DATABASE_URL)
-    // In that case we skip rather than fail — the binary correctly emits JSON for
-    // the lines it does produce, which is what we're testing.
     if lines.is_empty() {
-        eprintln!(
-            "D11.6: no log lines captured (binary may have exited immediately) — skipping assertions"
-        );
-        return Ok(());
+        return Err(color_eyre::eyre::eyre!(
+            "D11.6 captured no stderr log lines from {}; JSON-log behavior was not exercised",
+            binary_path.display()
+        ));
     }
 
     // Every non-empty line must be a valid JSON object

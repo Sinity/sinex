@@ -11,7 +11,9 @@ use std::time::Duration;
 use xtask::sandbox::{EnvGuard, prelude::*};
 
 mod common;
-use common::{FakeReplayScanSource, LiveGateway, spawn_fake_replay_scan_source};
+use common::{
+    FakeReplayScanSource, LiveGateway, await_fake_replay_scan_source, spawn_fake_replay_scan_source,
+};
 
 const RPC_TOKEN: &str = "determinism-test-token:admin";
 
@@ -107,7 +109,7 @@ async fn material_replay_archives_preserve_content(ctx: TestContext) -> TestResu
         &[*material_id.as_uuid()],
     )
     .await?;
-    scan_handle.await?;
+    await_fake_replay_scan_source(scan_handle, "archive-preservation replay").await?;
 
     // Verify archived events preserve payload content
     for (i, original_id) in seeded_ids.iter().enumerate() {
@@ -180,7 +182,7 @@ async fn double_replay_idempotent(ctx: TestContext) -> TestResult<()> {
         &[*material_id.as_uuid()],
     )
     .await?;
-    scan1.await?;
+    await_fake_replay_scan_source(scan1, "first idempotence replay").await?;
 
     // Count events + archives after first replay
     let live_after_1: i64 =
@@ -215,7 +217,7 @@ async fn double_replay_idempotent(ctx: TestContext) -> TestResult<()> {
         &[*material_id.as_uuid()],
     )
     .await?;
-    scan2.await?;
+    await_fake_replay_scan_source(scan2, "second idempotence replay").await?;
 
     let live_after_2: i64 =
         sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE source = 'dbl-source'")

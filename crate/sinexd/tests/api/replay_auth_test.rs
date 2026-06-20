@@ -45,7 +45,7 @@ fn test_scope_params() -> serde_json::Value {
     let scope_end = ts + time::Duration::seconds(10);
     json!({
         "scope": {
-            "module_name": "auth-test-source",
+            "source_name": "auth-test-source",
             "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
         },
         "actor": "test:auth-tester"

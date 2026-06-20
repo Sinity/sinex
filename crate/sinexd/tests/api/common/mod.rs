@@ -6,8 +6,7 @@ use futures::StreamExt;
 use serde_json::{Value, json};
 use sinex_db::{DbPool, repositories::DbPoolExt};
 use sinex_primitives::{
-    DynamicPayload, Id, environment, environment::SinexEnvironment, temporal,
-    rpc::methods,
+    DynamicPayload, Id, environment, environment::SinexEnvironment, rpc::methods, temporal,
 };
 use sinexd::api::{auth::Role, rpc_server::RpcAuthContext};
 use sinexd::api::{config::GatewayConfig, rpc_server, service_container::ServiceContainer};
@@ -192,9 +191,11 @@ pub async fn spawn_fake_replay_scan_source(
     nats.flush().await?;
 
     let handle = tokio::spawn(async move {
-        let Some(msg) = sub.next().await else { return };
+        let Some(msg) = sub.next().await else {
+            panic!("fake replay scan source `{module_name}` ended before receiving scan command");
+        };
         let Ok(command) = serde_json::from_slice::<SourceScanCommand>(&msg.payload) else {
-            return;
+            panic!("fake replay scan source `{module_name}` received invalid scan command payload");
         };
         let operation_id = command.operation_id;
         let progress_subject =
@@ -207,9 +208,11 @@ pub async fn spawn_fake_replay_scan_source(
                 accepted: true,
                 error: None,
             };
-            if let Ok(bytes) = serde_json::to_vec(&ack) {
-                let _ = nats.publish(reply, bytes.into()).await;
-            }
+            let bytes =
+                serde_json::to_vec(&ack).expect("fake replay scan source ack should serialize");
+            nats.publish(reply, bytes.into())
+                .await
+                .expect("fake replay scan source should publish ack reply");
         }
 
         let material_id = material_id.or_else(|| {
@@ -222,26 +225,28 @@ pub async fn spawn_fake_replay_scan_source(
         });
 
         let Some(material_id) = material_id else {
-            return;
+            panic!(
+                "fake replay scan source `{module_name}` had no material id from fixture or replay command"
+            );
         };
 
         for i in 0..events_processed {
-            let Ok(event) = DynamicPayload::new(
+            let event = DynamicPayload::new(
                 source,
                 event_type,
                 json!({ "path": format!("/tmp/{module_name}-replay-{operation_id}-{i}.txt") }),
             )
             .from_material(Id::from_uuid(material_id))
-            .build() else {
-                return;
-            };
+            .build()
+            .expect("fake replay scan source should build replay output event");
 
             let mut event = event;
             event.created_by_operation_id = Some(operation_id);
 
-            if pool.events().insert(event).await.is_err() {
-                return;
-            }
+            pool.events()
+                .insert(event)
+                .await
+                .expect("fake replay scan source should insert replay output event");
         }
 
         let progress = SourceScanProgress {
@@ -261,12 +266,23 @@ pub async fn spawn_fake_replay_scan_source(
             }),
             error: None,
         };
-        if let Ok(bytes) = serde_json::to_vec(&progress) {
-            let _ = nats.publish(progress_subject, bytes.into()).await;
-        }
+        let bytes = serde_json::to_vec(&progress)
+            .expect("fake replay scan source progress should serialize");
+        nats.publish(progress_subject, bytes.into())
+            .await
+            .expect("fake replay scan source should publish final progress");
     });
 
     Ok(handle)
+}
+
+pub async fn await_fake_replay_scan_source(
+    handle: tokio::task::JoinHandle<()>,
+    label: &str,
+) -> TestResult<()> {
+    handle
+        .await
+        .map_err(|error| color_eyre::eyre::eyre!("{label} fake replay runtime failed: {error}"))
 }
 
 /// In-process gateway with full RPC server (TLS) and a `reqwest`-based client.
