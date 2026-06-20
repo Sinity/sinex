@@ -6,18 +6,24 @@ deliberately invoked with `workflow_dispatch`.
 
 ## Required Local Checks Per PR Type
 
-All PRs must pass the following before merge:
+Sinex's default PR gate is intentionally affected and impact-shaped. Broader
+workspace passes are phase-boundary checks, not a tax on every small PR.
 
 ### Every PR
 
-- **`xtask check --full`** — Compile + lint (clippy, rustfmt, forbidden patterns,
-  AST-grep structural rules).
-- **`xtask test`** — Default affected-package nextest loop for ordinary local
-  iteration. Use the workspace gate below when the PR needs CI-parity breadth.
-- **`xtask docs check`** — Generated docs drift detection (CLAUDE.md transclusions,
-  schema bundle, command reference).
-- **`xtask schema strict-diff`** — Live schema drift check against the
-  checkout-local dev stack.
+- **`xtask check --changed-strict origin/master --allow-contended-host`** —
+  Required for Rust/API changes. This is the pre-push drift guard and records
+  the changed-file to affected-package result.
+- **Focused `xtask test ...` evidence** — Required when behavior changes. Use
+  exact filters or affected-package tests that exercise the changed surface, and
+  record the command in the PR body.
+- **Generated-surface checks only when touched** — Run `xtask docs
+  command-reference --check`, `xtask docs schema-bundle --check`, or
+  `xtask docs check` when the PR changes command/schema/docs-generation
+  surfaces.
+- **`xtask schema strict-diff` only when schema/contracts changed** — Live
+  schema drift belongs to schema or payload-contract PRs, not ordinary test or
+  runtime refactors.
 
 ### Broad / Phase-Boundary Gate
 
@@ -59,6 +65,11 @@ All PRs must pass the following before merge:
   touch COPY protocol, batch insert routing, CAS store/lookup, or JetStream
   consumer logic. Heavy tests use larger datasets and stress resource limits.
   Not run in the default CI gate due to runtime and memory constraints.
+- **Trybuild compile-fail tests**: Run with `xtask test --debug --heavy -p
+  <package> -E '<filter>'` when a PR edits trybuild runners or stderr fixtures.
+  The debug profile serializes the selected compiler tests and avoids the
+  default nextest timeout failure that happens when several cold trybuild nodes
+  compile the same dependency graph concurrently.
 - **Chaos / VM integration tests** (`xtask test vm --category integration`):
   Run manually before merging PRs that touch deployment topology, service
   restart behavior, or replay/cascade logic. Requires a working NixOS VM
