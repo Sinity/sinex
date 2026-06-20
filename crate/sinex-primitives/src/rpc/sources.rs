@@ -135,6 +135,17 @@ pub const SOURCES_COVERAGE_METHOD: RpcMethod<SourcesCoverageRequest, SourcesCove
         RpcMutability::ReadOnly,
     );
 
+pub const SOURCES_PACKAGE_COMPLETENESS_METHOD: RpcMethod<
+    SourcesPackageCompletenessRequest,
+    SourcesPackageCompletenessResponse,
+> = RpcMethod::new(
+    methods::SOURCES_PACKAGE_COMPLETENESS,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
 pub const SOURCES_CONTINUITY_METHOD: RpcMethod<
     SourcesContinuityRequest,
     SourcesContinuityResponse,
@@ -553,6 +564,67 @@ pub struct SourceCoverageEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcesCoverageResponse {
     pub sources: Vec<SourceCoverageEntry>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// sources.package_completeness
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `sources.package_completeness` (no required params)
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SourcesPackageCompletenessRequest {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SourcesPackageCompletenessSummaryView {
+    pub package_count: usize,
+    pub mode_count: usize,
+    pub accepted_mode_count: usize,
+    pub proposed_mode_count: usize,
+    pub manual_mode_count: usize,
+    pub incomplete_mode_count: usize,
+    pub blocking_missing_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SourcePackageCompletenessPackageView {
+    pub package_id: String,
+    pub family: String,
+    pub display_namespace: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modes: Vec<SourcePackageCompletenessModeView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SourcePackageCompletenessModeView {
+    pub mode_id: String,
+    pub package_id: String,
+    pub mode_state: String,
+    pub completeness: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    pub acquisition_kind: String,
+    pub operator_enablement: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub event_contract_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admission_policy_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub coverage_debt_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operation_refs: Vec<String>,
+}
+
+/// Response: `sources.package_completeness`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SourcesPackageCompletenessResponse {
+    pub schema_version: u32,
+    pub summary: SourcesPackageCompletenessSummaryView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub packages: Vec<SourcePackageCompletenessPackageView>,
 }
 
 // ─────────────────────────────────────────────────────────────
