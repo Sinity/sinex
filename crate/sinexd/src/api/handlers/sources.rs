@@ -140,16 +140,7 @@ pub async fn handle_sources_stage(
     let timing = req
         .timing_info_type
         .unwrap_or(SourceMaterialTimingInfoType::Intrinsic);
-    let mut contract = SourceMaterialMetadataContract::new(format, timing);
-    contract.origin = Some(SourceOrigin {
-        source_uri: Some(canonical.clone()),
-        ..SourceOrigin::default()
-    });
-    contract.annotations = Some(SourceAnnotations {
-        reason: req.reason.clone(),
-        tags: req.tags.clone(),
-        ..SourceAnnotations::default()
-    });
+    let mut contract = stage_material_contract(&canonical, format, timing, &req);
 
     // ── Byte-backed staging via ContentStoreManager ─────────────
     let (blob_id, checksum_blake3) = if req.with_bytes && material_class.allows_byte_storage() {
@@ -241,6 +232,26 @@ pub async fn handle_sources_stage(
     };
 
     Ok(response)
+}
+
+fn stage_material_contract(
+    canonical: &str,
+    format: SourceMaterialFormat,
+    timing: SourceMaterialTimingInfoType,
+    req: &SourcesStageRequest,
+) -> SourceMaterialMetadataContract {
+    let mut contract = SourceMaterialMetadataContract::new(format, timing);
+    contract.origin = Some(SourceOrigin {
+        source_uri: Some(canonical.to_string()),
+        binding_id: req.binding_name.clone(),
+        ..SourceOrigin::default()
+    });
+    contract.annotations = Some(SourceAnnotations {
+        reason: req.reason.clone(),
+        tags: req.tags.clone(),
+        ..SourceAnnotations::default()
+    });
+    contract
 }
 
 // ── sources.list ───────────────────────────────────────────────
@@ -1616,6 +1627,50 @@ mod tests {
             caveats: Vec::new(),
             evidence: serde_json::Value::Null,
         }
+    }
+
+    #[sinex_test]
+    async fn stage_material_contract_records_package_mode_binding()
+    -> xtask::sandbox::TestResult<()> {
+        let request = SourcesStageRequest {
+            file_path: "/realm/data/captures/screenshot/session.json".to_string(),
+            format: Some(SourceMaterialFormat::Json),
+            timing_info_type: Some(SourceMaterialTimingInfoType::Intrinsic),
+            reason: Some("operator import".to_string()),
+            tags: vec!["media".to_string()],
+            binding_name: Some("source:media.screen-ocr.screenshot-ocr-staged".to_string()),
+            with_bytes: true,
+        };
+
+        let contract = stage_material_contract(
+            "/realm/data/captures/screenshot/session.json",
+            SourceMaterialFormat::Json,
+            SourceMaterialTimingInfoType::Intrinsic,
+            &request,
+        );
+
+        let origin = contract
+            .origin
+            .as_ref()
+            .ok_or_else(|| color_eyre::eyre::eyre!("origin expected"))?;
+        assert_eq!(
+            origin.source_uri.as_deref(),
+            Some("/realm/data/captures/screenshot/session.json")
+        );
+        assert_eq!(
+            origin.binding_id.as_deref(),
+            Some("source:media.screen-ocr.screenshot-ocr-staged")
+        );
+        assert_eq!(contract.format, SourceMaterialFormat::Json);
+        assert_eq!(contract.timing, SourceMaterialTimingInfoType::Intrinsic);
+        assert_eq!(
+            contract
+                .annotations
+                .as_ref()
+                .and_then(|annotations| annotations.reason.as_deref()),
+            Some("operator import")
+        );
+        Ok(())
     }
 
     #[sinex_test]
