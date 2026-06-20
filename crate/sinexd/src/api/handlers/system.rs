@@ -93,6 +93,20 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
                         "runtime_action".to_string(),
                         confirmation_buffer.runtime_action,
                     ),
+                    (
+                        "retained_payload_bytes".to_string(),
+                        confirmation_buffer.retained_payload_bytes.to_string(),
+                    ),
+                    (
+                        "active_payload_bytes".to_string(),
+                        confirmation_buffer.active_payload_bytes.to_string(),
+                    ),
+                    (
+                        "timed_out_retained_payload_bytes".to_string(),
+                        confirmation_buffer
+                            .timed_out_retained_payload_bytes
+                            .to_string(),
+                    ),
                 ]),
             },
             replay_control: ReplayControlHealth {
@@ -202,6 +216,7 @@ mod tests {
                 timed_out_retained_count: 1,
                 rejected_count: 2,
                 late_confirmation_count: 5,
+                retained_payload_bytes: 4096,
                 approximate_payload_bytes: 4096,
                 active_payload_bytes: 1024,
                 timed_out_retained_payload_bytes: 3072,
@@ -209,7 +224,7 @@ mod tests {
                     "system.journald:journald.entry.written".to_string(),
                     4096,
                 )]),
-                detail: "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, pressure_level=critical, runtime_action=admit_with_pressure, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072, memory_owner=timed_out_grace_payloads"
+                detail: "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, pressure_level=critical, runtime_action=admit_with_pressure, retained_payload_bytes=4096, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072, memory_owner=timed_out_grace_payloads"
                     .to_string(),
             },
             replay: ReplayControlStatus {
@@ -252,7 +267,7 @@ mod tests {
         assert_eq!(
             response.components.confirmation_buffer.detail.as_deref(),
             Some(
-                "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, pressure_level=critical, runtime_action=admit_with_pressure, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072, memory_owner=timed_out_grace_payloads"
+                "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, pressure_level=critical, runtime_action=admit_with_pressure, retained_payload_bytes=4096, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072, memory_owner=timed_out_grace_payloads"
             )
         );
         assert_eq!(
@@ -281,6 +296,33 @@ mod tests {
                 .get("runtime_action")
                 .map(String::as_str),
             Some("admit_with_pressure")
+        );
+        assert_eq!(
+            response
+                .components
+                .confirmation_buffer
+                .attributes
+                .get("retained_payload_bytes")
+                .map(String::as_str),
+            Some("4096")
+        );
+        assert_eq!(
+            response
+                .components
+                .confirmation_buffer
+                .attributes
+                .get("active_payload_bytes")
+                .map(String::as_str),
+            Some("1024")
+        );
+        assert_eq!(
+            response
+                .components
+                .confirmation_buffer
+                .attributes
+                .get("timed_out_retained_payload_bytes")
+                .map(String::as_str),
+            Some("3072")
         );
         assert!(response.components.replay_control.enabled);
         assert_eq!(
