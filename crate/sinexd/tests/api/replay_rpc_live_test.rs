@@ -5,113 +5,17 @@
 //! operations work through the actual HTTP API that sinexctl and other
 //! clients use.
 
-use futures::StreamExt;
 use serde_json::json;
-use sinex_db::{DbPool, repositories::DbPoolExt};
+use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::rpc::methods;
-use sinex_primitives::{DynamicPayload, Id, temporal::Timestamp};
-use sinexd::runtime::{
-    Checkpoint, ScanReport, SourceScanAck, SourceScanCommand, SourceScanProgress,
-};
-use std::collections::HashMap;
+use sinex_primitives::{DynamicPayload, temporal::Timestamp};
 use std::time::Duration;
-use xtask::sandbox::{EnvGuard, prelude::*, sinex_test};
+use xtask::sandbox::{EnvGuard, sinex_test};
 
 mod common;
-use common::LiveGateway;
+use common::{FakeReplayScanSource, LiveGateway, spawn_fake_replay_scan_source};
 
 const RPC_TOKEN: &str = "live-rpc-test-token:admin";
-
-/// Spawn a fake scan source runtime on NATS that accepts the scan command and reports success.
-async fn spawn_fake_scan_source_runtime(
-    pool: DbPool,
-    nats: async_nats::Client,
-    env: sinex_primitives::environment::SinexEnvironment,
-    module_name: &str,
-    source: &'static str,
-    event_type: &'static str,
-    events_processed: u64,
-) -> TestResult<tokio::task::JoinHandle<()>> {
-    let module_name = module_name.to_string();
-    let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
-    let mut sub = nats.subscribe(subject).await?;
-
-    let handle = tokio::spawn(async move {
-        let Some(msg) = sub.next().await else { return };
-
-        let Ok(command) = serde_json::from_slice::<SourceScanCommand>(&msg.payload) else {
-            return;
-        };
-        let operation_id = command.operation_id;
-        let progress_subject =
-            env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
-
-        if let Some(reply) = msg.reply {
-            let ack = SourceScanAck {
-                operation_id,
-                module_name: module_name.clone(),
-                accepted: true,
-                error: None,
-            };
-            if let Ok(bytes) = serde_json::to_vec(&ack) {
-                let _ = nats.publish(reply, bytes.into()).await;
-            }
-        }
-
-        let material_id = command
-            .args
-            .replay
-            .as_ref()
-            .and_then(|replay| replay.materials.first())
-            .map(|material| material.source_material_id);
-
-        let Some(material_id) = material_id else {
-            return;
-        };
-
-        for i in 0..events_processed {
-            let Ok(event) = DynamicPayload::new(
-                source,
-                event_type,
-                json!({ "path": format!("/tmp/{module_name}-replay-{operation_id}-{i}.txt") }),
-            )
-            .from_material(Id::from_uuid(material_id))
-            .build() else {
-                return;
-            };
-
-            let mut event = event;
-            event.created_by_operation_id = Some(operation_id);
-
-            if pool.events().insert(event).await.is_err() {
-                return;
-            }
-        }
-
-        let progress = SourceScanProgress {
-            operation_id,
-            module_name: module_name.clone(),
-            events_processed,
-            events_emitted: events_processed,
-            final_report: Some(ScanReport {
-                events_processed,
-                duration: Duration::from_millis(5),
-                final_checkpoint: Checkpoint::None,
-                time_range: None,
-                runtime_stats: HashMap::from([("events_emitted".into(), events_processed)]),
-                successful_targets: vec![module_name.clone()],
-                failed_targets: Vec::new(),
-                warnings: Vec::new(),
-            }),
-            error: None,
-        };
-        if let Ok(bytes) = serde_json::to_vec(&progress) {
-            let _ = nats.publish(progress_subject, bytes.into()).await;
-        }
-    });
-
-    Ok(handle)
-}
 
 /// Full replay lifecycle over HTTP JSON-RPC: plan → preview → approve → execute → status → list.
 ///
@@ -145,14 +49,16 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
     // message races where the second server's error reply may beat the first.
     let nats = ctx.nats_client();
     let env = sinex_primitives::environment::environment();
-    let scan_handle = spawn_fake_scan_source_runtime(
+    let scan_handle = spawn_fake_replay_scan_source(
         ctx.pool.clone(),
         nats.clone(),
         env,
-        "test-source",
-        "test-source",
-        "file.created",
-        1,
+        FakeReplayScanSource::from_replay_command(
+            "test-source",
+            "test-source",
+            "file.created",
+            1,
+        ),
     )
     .await?;
 
