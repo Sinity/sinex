@@ -32,11 +32,42 @@ mod tests {
     /// Clipboard text payload — plain UTF-8 content.
     const CLIPBOARD_FIXTURE: &[u8] = b"hello from clipboard";
 
-    /// Hyprland IPC line for `activewindow` — `TYPE>>class,title` format.
-    // Hyprland fires a v1+v2 pair for every focus change; the parser merges
-    // them into one window.focused event. The fixture must include both lines.
+    /// Hyprland fires v1 (class+title) immediately followed by v2 (address).
+    /// The parser buffers v1 and emits one merged `window.focused` on v2.
     const HYPRLAND_FOCUSED_FIXTURE: &[u8] =
         b"activewindow>>kitty,~/project/sinex\nactivewindowv2>>0x1234abcd\n";
+
+    const ACTIVITYWATCH_WINDOW_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "desktop.activitywatch window.active",
+        "desktop.activitywatch",
+        crate::AdapterKind::SqliteRow,
+        AW_WINDOW_FIXTURE,
+        &["window.active"],
+    );
+
+    const ACTIVITYWATCH_AFK_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "desktop.activitywatch afk.changed",
+        "desktop.activitywatch",
+        crate::AdapterKind::SqliteRow,
+        AW_AFW_FIXTURE,
+        &["afk.changed"],
+    );
+
+    const ACTIVITYWATCH_WEB_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "desktop.activitywatch browser.tab.active",
+        "desktop.activitywatch",
+        crate::AdapterKind::SqliteRow,
+        AW_WEB_FIXTURE,
+        &["browser.tab.active"],
+    );
+
+    const CLIPBOARD_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "desktop.clipboard",
+        "desktop.clipboard",
+        crate::AdapterKind::Clipboard,
+        CLIPBOARD_FIXTURE,
+        &["clipboard.copied"],
+    );
 
     // -------------------------------------------------------------------------
     // desktop.activitywatch — window.active
@@ -44,18 +75,9 @@ mod tests {
 
     #[sinex_test]
     async fn desktop_activitywatch_window_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "desktop.activitywatch",
-            crate::AdapterKind::SqliteRow,
-            AW_WINDOW_FIXTURE,
-            &["window.active"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "desktop.activitywatch (window.active) obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(ACTIVITYWATCH_WINDOW_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
@@ -65,18 +87,9 @@ mod tests {
 
     #[sinex_test]
     async fn desktop_activitywatch_afk_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "desktop.activitywatch",
-            crate::AdapterKind::SqliteRow,
-            AW_AFW_FIXTURE,
-            &["afk.changed"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "desktop.activitywatch (afk.changed) obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(ACTIVITYWATCH_AFK_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
@@ -86,18 +99,9 @@ mod tests {
 
     #[sinex_test]
     async fn desktop_activitywatch_web_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "desktop.activitywatch",
-            crate::AdapterKind::SqliteRow,
-            AW_WEB_FIXTURE,
-            &["browser.tab.active"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "desktop.activitywatch (browser.tab.active) obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(ACTIVITYWATCH_WEB_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
@@ -152,18 +156,9 @@ mod tests {
 
     #[sinex_test]
     async fn desktop_clipboard_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "desktop.clipboard",
-            crate::AdapterKind::Clipboard,
-            CLIPBOARD_FIXTURE,
-            &["clipboard.copied"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "desktop.clipboard obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(CLIPBOARD_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
@@ -171,25 +166,9 @@ mod tests {
     // desktop.window-manager
     // -------------------------------------------------------------------------
 
-    #[sinex_test]
-    async fn desktop_window_manager_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "desktop.window-manager",
-            crate::AdapterKind::UnixSocket,
-            HYPRLAND_FOCUSED_FIXTURE,
-            &["window.focused"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "desktop.window-manager obligations failed: {failures:#?}"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn desktop_window_manager_unix_socket_adapter_parses_hyprland_frame() -> TestResult<()> {
+    async fn parse_hyprland_socket_fixture(
+        fixture_data: &[u8],
+    ) -> TestResult<Vec<sinex_primitives::parser::ParsedEventIntent>> {
         use futures::StreamExt;
         use sinex_primitives::events::SourceMaterial;
         use sinex_primitives::ids::Id;
@@ -200,13 +179,9 @@ mod tests {
         };
         use sinexd::sources::source_contracts::desktop::window_manager::HyprlandParser;
 
-        // Hyprland fires v1 (class+title) immediately followed by v2 (address).
-        // The parser buffers v1 and emits one merged window.focused on v2.
-        let fixture = crate::fixtures::unix_socket::build(
-            b"activewindow>>kitty,~/project/sinex\nactivewindowv2>>0x1234abcd\n",
-        )
-        .await
-        .map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
+        let fixture = crate::fixtures::unix_socket::build(fixture_data)
+            .await
+            .map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
         let socket_path = match &fixture.binding {
             crate::fixtures::FixtureBinding::UnixSocketPath(path) => path.clone(),
             other => {
@@ -238,24 +213,53 @@ mod tests {
         };
 
         let mut parser = HyprlandParser::default();
+        let mut events = Vec::new();
 
-        // v1 (activewindow): buffered — no events yet.
-        let record_v1 = stream
-            .next()
+        while let Some(record) = stream.next().await {
+            let record = record?;
+            events.extend(
+                parser
+                    .parse_record(record.clone(), &make_ctx(&record))
+                    .await?,
+            );
+        }
+
+        Ok(events)
+    }
+
+    #[sinex_test]
+    async fn desktop_window_manager_obligations() -> TestResult<()> {
+        let events = parse_hyprland_socket_fixture(HYPRLAND_FOCUSED_FIXTURE).await?;
+        let produced_types = events
+            .iter()
+            .map(|event| event.event_type.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(produced_types, vec!["window.focused"]);
+
+        let replay_events = parse_hyprland_socket_fixture(HYPRLAND_FOCUSED_FIXTURE).await?;
+        let replay_types = replay_events
+            .iter()
+            .map(|event| event.event_type.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(replay_types, produced_types);
+
+        crate::obligations::isolation::run(
+            "desktop.window-manager",
+            crate::AdapterKind::UnixSocket,
+            HYPRLAND_FOCUSED_FIXTURE,
+        )
+        .await
+        .map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
+        crate::obligations::privacy::run_metadata_only("desktop.window-manager")
             .await
-            .ok_or_else(|| color_eyre::eyre::eyre!("unix socket fixture emitted no frames"))??;
-        let events_v1 = parser
-            .parse_record(record_v1.clone(), &make_ctx(&record_v1))
-            .await?;
-        assert_eq!(events_v1.len(), 0, "v1 alone should buffer and not emit");
+            .map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
 
-        // v2 (activewindowv2): merges with buffered v1 → one complete window.focused.
-        let record_v2 = stream.next().await.ok_or_else(|| {
-            color_eyre::eyre::eyre!("unix socket fixture did not emit v2 frame")
-        })??;
-        let events = parser
-            .parse_record(record_v2.clone(), &make_ctx(&record_v2))
-            .await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_window_manager_unix_socket_adapter_parses_hyprland_frame() -> TestResult<()> {
+        let events = parse_hyprland_socket_fixture(HYPRLAND_FOCUSED_FIXTURE).await?;
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type.as_str(), "window.focused");

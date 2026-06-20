@@ -14,6 +14,9 @@ pub mod static_file;
 pub mod unix_socket;
 
 use std::path::PathBuf;
+use std::{fmt, io::Write};
+
+use tempfile::NamedTempFile;
 
 /// The binding parameters produced by a fixture — passed to the obligation
 /// layer so it can configure the source invocation.
@@ -60,4 +63,33 @@ impl FixtureHandle {
     pub fn in_memory(binding: FixtureBinding) -> Self {
         Self::new(binding, vec![])
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FileFixtureKind {
+    AppendOnly,
+    Static,
+}
+
+impl fmt::Display for FileFixtureKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AppendOnly => f.write_str("append-only"),
+            Self::Static => f.write_str("static"),
+        }
+    }
+}
+
+pub fn build_file_fixture(kind: FileFixtureKind, data: &[u8]) -> Result<FixtureHandle, String> {
+    let mut file =
+        NamedTempFile::new().map_err(|e| format!("failed to create {kind} fixture file: {e}"))?;
+    file.write_all(data)
+        .map_err(|e| format!("failed to write {kind} fixture data: {e}"))?;
+    file.flush()
+        .map_err(|e| format!("failed to flush {kind} fixture data: {e}"))?;
+    let path = file.path().to_owned();
+    Ok(FixtureHandle::with_resource(
+        FixtureBinding::FilePath(path),
+        file,
+    ))
 }

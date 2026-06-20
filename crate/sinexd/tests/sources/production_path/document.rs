@@ -20,24 +20,23 @@ mod tests {
     /// (`text/plain`) so MIME detection produces consistent output.
     const DOCUMENT_STAGING_FIXTURE: &[u8] = b"/etc/hostname";
 
+    const DOCUMENT_STAGING_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "document.staging",
+        "document.staging",
+        crate::AdapterKind::FileDrop,
+        DOCUMENT_STAGING_FIXTURE,
+        &["document.ingested"],
+    );
+
     // -------------------------------------------------------------------------
     // document.staging
     // -------------------------------------------------------------------------
 
     #[sinex_test]
     async fn document_staging_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "document.staging",
-            crate::AdapterKind::FileDrop,
-            DOCUMENT_STAGING_FIXTURE,
-            &["document.ingested"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "document.staging obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(DOCUMENT_STAGING_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 

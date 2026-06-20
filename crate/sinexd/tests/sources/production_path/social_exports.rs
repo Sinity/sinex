@@ -23,71 +23,67 @@ id,permalink,date,ip,subreddit,gildings,title,url,body
     const WYKOP_COMMENTS_JSONL: &[u8] = br#"{"platform":"wykop","kind":"entry_comment","username":"Sinity","page":1,"comment_id":279391731,"comment_created_at":"2025-02-16 08:21:58","comment_content":"Nice entry","comment_photo_url":null,"comment_rating":2,"entry_id":80205363,"entry_url":"https://wykop.pl/wpis/80205363/x"}
 "#;
 
+    const REDDIT_COMMENTS_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "reddit-gdpr-comments",
+        "reddit-gdpr-comments",
+        crate::AdapterKind::StaticFile,
+        REDDIT_COMMENT_CSV,
+        &["social.comment.posted"],
+    );
+
+    const REDDIT_POSTS_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "reddit-gdpr-posts",
+        "reddit-gdpr-posts",
+        crate::AdapterKind::StaticFile,
+        REDDIT_POST_CSV,
+        &["social.post.created"],
+    );
+
+    const WYKOP_ENTRIES_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "wykop-entries",
+        "wykop-entries",
+        crate::AdapterKind::StaticFile,
+        WYKOP_ENTRIES_JSONL,
+        &["social.entry.created"],
+    );
+
+    const WYKOP_COMMENTS_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "wykop-entry-comments",
+        "wykop-entry-comments",
+        crate::AdapterKind::StaticFile,
+        WYKOP_COMMENTS_JSONL,
+        &["social.entry_comment.posted"],
+    );
+
     #[sinex_test]
     async fn reddit_gdpr_comments_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "reddit-gdpr-comments",
-            crate::AdapterKind::StaticFile,
-            REDDIT_COMMENT_CSV,
-            &["social.comment.posted"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "reddit-gdpr-comments obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(REDDIT_COMMENTS_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
     #[sinex_test]
     async fn reddit_gdpr_posts_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "reddit-gdpr-posts",
-            crate::AdapterKind::StaticFile,
-            REDDIT_POST_CSV,
-            &["social.post.created"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "reddit-gdpr-posts obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(REDDIT_POSTS_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
     #[sinex_test]
     async fn wykop_entries_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "wykop-entries",
-            crate::AdapterKind::StaticFile,
-            WYKOP_ENTRIES_JSONL,
-            &["social.entry.created"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "wykop-entries obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(WYKOP_ENTRIES_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
     #[sinex_test]
     async fn wykop_entry_comments_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "wykop-entry-comments",
-            crate::AdapterKind::StaticFile,
-            WYKOP_COMMENTS_JSONL,
-            &["social.entry_comment.posted"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "wykop-entry-comments obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(WYKOP_COMMENTS_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 }
