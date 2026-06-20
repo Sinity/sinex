@@ -13,5 +13,4 @@ error[E0599]: no method named `build` found for struct `SourceRuntimeBindingBuil
    | |_____|
    |
    |
-   = note: the method was found for
-           - `SourceRuntimeBindingBuilder<HasOutput, HasPrivacy, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact>`
+   = note: the method was found for `SourceRuntimeBindingBuilder<HasOutput, HasPrivacy, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact>`
