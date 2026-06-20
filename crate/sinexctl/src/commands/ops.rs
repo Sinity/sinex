@@ -14,10 +14,10 @@ use sinex_primitives::rpc::ops::{Operation as OpsOperation, OpsStartResponse};
 use sinex_primitives::rpc::runtime::RuntimeHealthResponse;
 use sinex_primitives::rpc::sources::{SourceCoverageEntry, SourcePackageCompletenessPackageView};
 use sinex_primitives::views::{
-    ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, DebtKind,
-    DebtListView, DebtOwnerView, DebtRowView, DebtStage, OperationJobListView, OperationView,
-    SinexObjectKind, SinexObjectRef, SourceCoverageContinuity, SourceCoverageReadiness,
-    SourceCoverageView, ViewEnvelope,
+    ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, CoverageGapView,
+    DebtKind, DebtListView, DebtOwnerView, DebtRowView, DebtStage, OperationJobListView,
+    OperationView, SinexObjectKind, SinexObjectRef, SourceCoverageContinuity,
+    SourceCoverageReadiness, SourceCoverageView, ViewEnvelope,
 };
 use sinex_primitives::{DerivationSpec, InvalidationTrigger, affected_derivations};
 
@@ -1906,6 +1906,86 @@ mod tests {
             reconnect.command_hint.as_deref(),
             Some("sinexctl runtime resume terminal-source")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn debt_rows_from_source_status_carry_media_package_actions() -> xtask::TestResult<()> {
+        let mut source = fixture_source_status_coverage(
+            SourceCoverageReadiness::MissingMaterial,
+            SourceCoverageContinuity::Gapped,
+            0,
+            0,
+        );
+        source.source_id = "media.audio-transcript".to_string();
+        source.namespace = "media".to_string();
+        source.gaps.push(CoverageGapView {
+            kind: "missing_material".to_string(),
+            message: "no source material is directly registered under this source id".to_string(),
+        });
+        source.actions.extend([
+            ActionAvailability {
+                id: "media.audio-transcript.import-transcript".to_string(),
+                label: "Import Transcript".to_string(),
+                state: ActionAvailabilityState::Enabled,
+                reason: Some(
+                    "package declares `media.audio-transcript.import-transcript` for source `media.audio-transcript`"
+                        .to_string(),
+                ),
+                command_hint: Some("sinexctl sources stage <path> --format json".to_string()),
+                rpc_method: Some("sources.stage".to_string()),
+                side_effect: ActionSideEffect::Write,
+                requires_confirmation: false,
+                dry_run_available: false,
+                audit_output_ref: None,
+            },
+            ActionAvailability {
+                id: "media.audio-transcript.run-model".to_string(),
+                label: "Run Local Model".to_string(),
+                state: ActionAvailabilityState::Unavailable,
+                reason: Some(
+                    "package declares `media.audio-transcript.run-model` for source `media.audio-transcript`, but no operator actuator command is wired yet"
+                        .to_string(),
+                ),
+                command_hint: None,
+                rpc_method: None,
+                side_effect: ActionSideEffect::Admin,
+                requires_confirmation: true,
+                dry_run_available: false,
+                audit_output_ref: None,
+            },
+        ]);
+
+        let rows = debt_rows_from_source_status_coverage(&[source]);
+
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(
+            row.owner
+                .as_ref()
+                .and_then(|owner| owner.package_ref.as_deref()),
+            Some("media.audio-transcript")
+        );
+        let import = row
+            .actions
+            .iter()
+            .find(|action| action.id == "media.audio-transcript.import-transcript")
+            .ok_or_else(|| color_eyre::eyre::eyre!("media import action expected"))?;
+        assert_eq!(import.state, ActionAvailabilityState::Enabled);
+        assert_eq!(
+            import.command_hint.as_deref(),
+            Some("sinexctl sources stage <path> --format json")
+        );
+        assert_eq!(import.rpc_method.as_deref(), Some("sources.stage"));
+
+        let run_model = row
+            .actions
+            .iter()
+            .find(|action| action.id == "media.audio-transcript.run-model")
+            .ok_or_else(|| color_eyre::eyre::eyre!("media run-model action expected"))?;
+        assert_eq!(run_model.state, ActionAvailabilityState::Unavailable);
+        assert_eq!(run_model.side_effect, ActionSideEffect::Admin);
+        assert!(run_model.requires_confirmation);
         Ok(())
     }
 
