@@ -44,7 +44,44 @@ pub enum AdapterKind {
 /// parser-contract coverage. Shared obligations that do not inspect parser
 /// output, such as drain-controller state transitions, belong in one shared
 /// test instead of being repeated for every source fixture.
-pub const ALL_OBLIGATIONS: &[&str] = &["initial_ingestion", "replay", "isolation", "privacy"];
+pub const ALL_OBLIGATIONS: &[ProductionPathObligation] = &[
+    ProductionPathObligation::InitialIngestion,
+    ProductionPathObligation::Replay,
+    ProductionPathObligation::Isolation,
+    ProductionPathObligation::Privacy,
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductionPathObligation {
+    InitialIngestion,
+    Replay,
+    Drain,
+    Isolation,
+    Privacy,
+}
+
+impl ProductionPathObligation {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InitialIngestion => "initial_ingestion",
+            Self::Replay => "replay",
+            Self::Drain => "drain",
+            Self::Isolation => "isolation",
+            Self::Privacy => "privacy",
+        }
+    }
+
+    #[must_use]
+    pub const fn can_reuse_initial_ingestion(self) -> bool {
+        matches!(self, Self::Privacy)
+    }
+
+    #[must_use]
+    pub const fn marks_initial_ingestion_verified(self) -> bool {
+        matches!(self, Self::InitialIngestion)
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct ProductionPathCase {
@@ -53,7 +90,7 @@ pub struct ProductionPathCase {
     pub adapter_kind: AdapterKind,
     pub fixture_data: &'static [u8],
     pub expected_event_types: &'static [&'static str],
-    pub obligation_names: &'static [&'static str],
+    pub obligations: &'static [ProductionPathObligation],
 }
 
 impl ProductionPathCase {
@@ -71,8 +108,17 @@ impl ProductionPathCase {
             adapter_kind,
             fixture_data,
             expected_event_types,
-            obligation_names: ALL_OBLIGATIONS,
+            obligations: ALL_OBLIGATIONS,
         }
+    }
+
+    #[must_use]
+    pub const fn with_obligations(
+        mut self,
+        obligations: &'static [ProductionPathObligation],
+    ) -> Self {
+        self.obligations = obligations;
+        self
     }
 }
 
@@ -82,7 +128,7 @@ pub async fn run_production_path_case(case: ProductionPathCase) -> Result<(), St
         case.adapter_kind,
         case.fixture_data,
         case.expected_event_types,
-        case.obligation_names,
+        case.obligations,
     )
     .await;
 
@@ -124,12 +170,12 @@ pub async fn _run_case(
     adapter_kind: AdapterKind,
     fixture_data: &[u8],
     expected_event_types: &[&str],
-    obligation_names: &[&str],
+    obligations: &[ProductionPathObligation],
 ) -> Vec<String> {
     let mut failures = Vec::new();
     let mut initial_ingestion_verified = false;
-    for &obligation in obligation_names {
-        let result = if obligation == "privacy" && initial_ingestion_verified {
+    for &obligation in obligations {
+        let result = if obligation.can_reuse_initial_ingestion() && initial_ingestion_verified {
             obligations::privacy::run_metadata_only(source_id).await
         } else {
             _run_obligation(
@@ -142,8 +188,11 @@ pub async fn _run_case(
             .await
         };
         if let Err(e) = result {
-            failures.push(format!("[{source_id}] obligation '{obligation}': {e}"));
-        } else if obligation == "initial_ingestion" {
+            failures.push(format!(
+                "[{source_id}] obligation '{}': {e}",
+                obligation.as_str()
+            ));
+        } else if obligation.marks_initial_ingestion_verified() {
             initial_ingestion_verified = true;
         }
     }
@@ -158,14 +207,14 @@ pub async fn _run_case_with_logical_path(
     fixture_data: &[u8],
     logical_path: &str,
     expected_event_types: &[&str],
-    obligation_names: &[&str],
+    obligations: &[ProductionPathObligation],
 ) -> Vec<String> {
     _run_case_with_record_fixture(
         source_id,
         adapter_kind,
         RecordFixtureSpec::byte_range(fixture_data, Some(logical_path)),
         expected_event_types,
-        obligation_names,
+        obligations,
     )
     .await
 }
@@ -179,7 +228,7 @@ pub async fn _run_case_with_directory_entry(
     directory_entry_path: &str,
     content_hash: Option<&str>,
     expected_event_types: &[&str],
-    obligation_names: &[&str],
+    obligations: &[ProductionPathObligation],
 ) -> Vec<String> {
     use camino::Utf8PathBuf;
     use sinex_primitives::parser::MaterialAnchor;
@@ -199,7 +248,7 @@ pub async fn _run_case_with_directory_entry(
             input_label: "directory entry fixture data",
         },
         expected_event_types,
-        obligation_names,
+        obligations,
     )
     .await
 }
@@ -231,12 +280,12 @@ async fn _run_case_with_record_fixture(
     adapter_kind: AdapterKind,
     fixture: RecordFixtureSpec<'_>,
     expected_event_types: &[&str],
-    obligation_names: &[&str],
+    obligations: &[ProductionPathObligation],
 ) -> Vec<String> {
     let mut failures = Vec::new();
     let mut initial_ingestion_verified = false;
-    for &obligation in obligation_names {
-        let result = if obligation == "privacy" && initial_ingestion_verified {
+    for &obligation in obligations {
+        let result = if obligation.can_reuse_initial_ingestion() && initial_ingestion_verified {
             obligations::privacy::run_metadata_only(source_id).await
         } else {
             _run_record_fixture_obligation(
@@ -249,8 +298,11 @@ async fn _run_case_with_record_fixture(
             .await
         };
         if let Err(e) = result {
-            failures.push(format!("[{source_id}] obligation '{obligation}': {e}"));
-        } else if obligation == "initial_ingestion" {
+            failures.push(format!(
+                "[{source_id}] obligation '{}': {e}",
+                obligation.as_str()
+            ));
+        } else if obligation.marks_initial_ingestion_verified() {
             initial_ingestion_verified = true;
         }
     }
@@ -258,14 +310,14 @@ async fn _run_case_with_record_fixture(
 }
 
 async fn _run_obligation(
-    obligation: &str,
+    obligation: ProductionPathObligation,
     source_id: &str,
     adapter_kind: AdapterKind,
     fixture_data: &[u8],
     expected_event_types: &[&str],
 ) -> Result<(), String> {
     match obligation {
-        "initial_ingestion" => {
+        ProductionPathObligation::InitialIngestion => {
             obligations::initial_ingestion::run(
                 source_id,
                 adapter_kind,
@@ -274,42 +326,46 @@ async fn _run_obligation(
             )
             .await
         }
-        "replay" => {
+        ProductionPathObligation::Replay => {
             obligations::replay::run(source_id, adapter_kind, fixture_data, expected_event_types)
                 .await
         }
-        "drain" => obligations::drain::run(source_id, adapter_kind, fixture_data).await,
-        "isolation" => obligations::isolation::run(source_id, adapter_kind, fixture_data).await,
-        "privacy" => {
+        ProductionPathObligation::Drain => {
+            obligations::drain::run(source_id, adapter_kind, fixture_data).await
+        }
+        ProductionPathObligation::Isolation => {
+            obligations::isolation::run(source_id, adapter_kind, fixture_data).await
+        }
+        ProductionPathObligation::Privacy => {
             obligations::privacy::run(source_id, adapter_kind, fixture_data, expected_event_types)
                 .await
         }
-        unknown => Err(format!(
-            "unknown obligation '{unknown}'; valid: initial_ingestion, replay, drain, isolation, privacy"
-        )),
     }
 }
 
 async fn _run_record_fixture_obligation(
-    obligation: &str,
+    obligation: ProductionPathObligation,
     source_id: &str,
     adapter_kind: AdapterKind,
     fixture: RecordFixtureSpec<'_>,
     expected_event_types: &[&str],
 ) -> Result<(), String> {
     match obligation {
-        "initial_ingestion" => {
+        ProductionPathObligation::InitialIngestion => {
             run_record_fixture_initial_ingestion(source_id, fixture, expected_event_types).await
         }
-        "replay" => run_record_fixture_replay(source_id, fixture, expected_event_types).await,
-        "drain" => obligations::drain::run(source_id, adapter_kind, fixture.fixture_data).await,
-        "isolation" => {
+        ProductionPathObligation::Replay => {
+            run_record_fixture_replay(source_id, fixture, expected_event_types).await
+        }
+        ProductionPathObligation::Drain => {
+            obligations::drain::run(source_id, adapter_kind, fixture.fixture_data).await
+        }
+        ProductionPathObligation::Isolation => {
             obligations::isolation::run(source_id, adapter_kind, fixture.fixture_data).await
         }
-        "privacy" => run_record_fixture_privacy(source_id, fixture, expected_event_types).await,
-        unknown => Err(format!(
-            "unknown obligation '{unknown}'; valid: initial_ingestion, replay, drain, isolation, privacy"
-        )),
+        ProductionPathObligation::Privacy => {
+            run_record_fixture_privacy(source_id, fixture, expected_event_types).await
+        }
     }
 }
 
