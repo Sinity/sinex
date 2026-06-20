@@ -154,6 +154,7 @@ impl MaterialParser for KittyOscParser {
         match kitty_osc_socket_path() {
             Some(socket_path) => serde_json::json!({
                 "socket_path": socket_path,
+                "mode": "listen",
                 "reconnect_on_eof": true,
             }),
             None => serde_json::json!({}),
@@ -431,6 +432,7 @@ mod tests {
         let config = <KittyOscParser as MaterialParser>::baseline_adapter_config();
 
         assert_eq!(config["socket_path"], "/run/user/1000/sinex/custom.sock");
+        assert_eq!(config["mode"], "listen");
         assert_eq!(config["reconnect_on_eof"], true);
         Ok(())
     }
@@ -446,7 +448,30 @@ mod tests {
         let config = <KittyOscParser as MaterialParser>::baseline_adapter_config();
 
         assert_eq!(config["socket_path"], "/run/user/1000/sinex/kitty-osc.sock");
+        assert_eq!(config["mode"], "listen");
         assert_eq!(config["reconnect_on_eof"], true);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn kitty_osc_baseline_config_deserializes_as_listener_mode() -> TestResult<()> {
+        use crate::runtime::parser::{UnixSocketStreamConfig, UnixSocketStreamMode};
+
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        let _env = EnvGuard::clear();
+        unsafe {
+            std::env::set_var("SINEX_KITTY_OSC_SOCKET", "/run/user/1000/sinex/kitty.sock");
+        }
+
+        let config = <KittyOscParser as MaterialParser>::baseline_adapter_config();
+        let config: UnixSocketStreamConfig = serde_json::from_value(config)?;
+
+        assert_eq!(config.mode, UnixSocketStreamMode::Listen);
+        assert_eq!(
+            config.socket_path.as_str(),
+            "/run/user/1000/sinex/kitty.sock"
+        );
+        assert!(config.reconnect_on_eof);
         Ok(())
     }
 

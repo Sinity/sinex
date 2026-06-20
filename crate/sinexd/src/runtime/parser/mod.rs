@@ -105,6 +105,7 @@ pub use adapters::{
     UnixSocketStreamAdapter,
     UnixSocketStreamConfig,
     UnixSocketStreamCursor,
+    UnixSocketStreamMode,
     all_adapter_schemas,
     chained_classify_record,
     choose_file_drop_watch_plan,
