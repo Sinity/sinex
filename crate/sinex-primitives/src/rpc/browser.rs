@@ -107,5 +107,7 @@ pub struct BrowserCaptureBatchResponse {
     pub profile_id: String,
     pub producer_instance_id: String,
     pub actor_id: String,
+    pub material_id: String,
+    pub event_ids: Vec<String>,
     pub event_contract_ids: Vec<String>,
 }

@@ -1,10 +1,12 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use serde_json::json;
+use sinex_db::DbPoolExt;
 use sinex_primitives::Result;
 use sinex_primitives::event_contracts::{
     BROWSER_NAVIGATION_OBSERVED_CONTRACT_ID, BROWSER_TAB_ACTIVATED_CONTRACT_ID,
 };
+use sinex_primitives::events::Provenance;
 use sinex_primitives::rpc::methods;
 use sinexd::api::{
     ServiceContainer,
@@ -277,7 +279,7 @@ async fn native_messaging_auth_and_config_matrix(ctx: TestContext) -> Result<()>
     );
 
     let response = run_native_case(
-        services,
+        services.clone(),
         &nats_url,
         |env| {
             env.set(
@@ -402,7 +404,7 @@ async fn browser_capture_batch_is_capability_gated_and_acknowledged(
     }))?;
 
     let response = run_native_case(
-        services,
+        services.clone(),
         &nats_url,
         |env| {
             env.set(
@@ -435,6 +437,22 @@ async fn browser_capture_batch_is_capability_gated_and_acknowledged(
         result["actor_id"],
         "extension:chrome-extension://trusted-sinex"
     );
+    assert_eq!(
+        result["material_id"].as_str().is_some(),
+        true,
+        "browser capture response should name the source material batch"
+    );
+    let event_ids = result["event_ids"]
+        .as_array()
+        .expect("event_ids should be an array")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        event_ids.len(),
+        2,
+        "browser capture should persist one event per observation"
+    );
     let contracts = result["event_contract_ids"]
         .as_array()
         .expect("event_contract_ids should be an array")
@@ -443,6 +461,36 @@ async fn browser_capture_batch_is_capability_gated_and_acknowledged(
         .collect::<Vec<_>>();
     assert!(contracts.contains(&BROWSER_NAVIGATION_OBSERVED_CONTRACT_ID));
     assert!(contracts.contains(&BROWSER_TAB_ACTIVATED_CONTRACT_ID));
+
+    let events = services
+        .pool()
+        .events()
+        .get_by_source(
+            &sinex_primitives::domain::EventSource::from_static("browser"),
+            sinex_primitives::Pagination::new(Some(10), Some(0)),
+        )
+        .await?;
+    let persisted_batch_events = events
+        .iter()
+        .filter(|event| {
+            event
+                .payload
+                .get("batch_id")
+                .and_then(serde_json::Value::as_str)
+                == Some("browser-batch-1")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        persisted_batch_events.len(),
+        2,
+        "native browser capture should create queryable browser events"
+    );
+    assert!(
+        persisted_batch_events
+            .iter()
+            .all(|event| matches!(&event.provenance, Provenance::Material { id, .. } if id.to_string() == result["material_id"])),
+        "browser events should be backed by the native-message batch material"
+    );
 
     Ok(())
 }
