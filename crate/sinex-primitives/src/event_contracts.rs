@@ -134,6 +134,10 @@ pub const EMAIL_ATTACHMENT_OBSERVED_CONTRACT_ID: EventContractId =
     "event-contract:email/attachment.observed@v1";
 pub const EMAIL_THREAD_OBSERVED_CONTRACT_ID: EventContractId =
     "event-contract:email/thread.observed@v1";
+pub const EMAIL_SYNC_CURSOR_OBSERVED_CONTRACT_ID: EventContractId =
+    "event-contract:email/sync_cursor.observed@v1";
+pub const EMAIL_CAPTURE_RUNTIME_OBSERVED_CONTRACT_ID: EventContractId =
+    "event-contract:email/capture_runtime.observed@v1";
 pub const MEDIA_AUDIO_RECORDING_OBSERVED_CONTRACT_ID: EventContractId =
     "event-contract:media.audio/recording.observed@v1";
 pub const MEDIA_AUDIO_CAPTURE_SESSION_STARTED_CONTRACT_ID: EventContractId =
@@ -190,6 +194,14 @@ const EMAIL_ATTACHMENT_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
 const EMAIL_THREAD_SOURCE_OCCURRENCES: &[OccurrenceIdentity] = &[OccurrenceIdentity::Uuid5From(
     "(thread_key, message_id_or_material)",
 )];
+const EMAIL_SYNC_CURSOR_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
+    &[OccurrenceIdentity::Uuid5From(
+        "(provider, account_binding_ref, mailbox_scope, cursor_kind)",
+    )];
+const EMAIL_CAPTURE_RUNTIME_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
+    &[OccurrenceIdentity::Uuid5From(
+        "(provider, account_binding_ref, mode_id, observed_at)",
+    )];
 const MEDIA_AUDIO_TRANSCRIPT_PACKAGES: &[&str] = &["media.audio-transcript"];
 const MEDIA_SCREEN_OCR_PACKAGES: &[&str] = &["media.screen-ocr"];
 
@@ -462,6 +474,57 @@ inventory::submit! {
 
 inventory::submit! {
     EventContract {
+        id: EMAIL_SYNC_CURSOR_OBSERVED_CONTRACT_ID,
+        event_source: "email",
+        event_type: "email.sync_cursor.observed",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "email",
+            event_type: "email.sync_cursor.observed",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::Fields {
+            fields: &[
+                "provider",
+                "account_binding_ref",
+                "mailbox_scope",
+                "cursor_kind",
+            ],
+        },
+        source_occurrences: EMAIL_SYNC_CURSOR_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicRequired,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.email-mailbox.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: EMAIL_MAILBOX_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
+inventory::submit! {
+    EventContract {
+        id: EMAIL_CAPTURE_RUNTIME_OBSERVED_CONTRACT_ID,
+        event_source: "email",
+        event_type: "email.capture_runtime.observed",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "email",
+            event_type: "email.capture_runtime.observed",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::Fields {
+            fields: &["provider", "account_binding_ref", "mode_id", "observed_at"],
+        },
+        source_occurrences: EMAIL_CAPTURE_RUNTIME_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicRequired,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.email-mailbox.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: EMAIL_MAILBOX_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
+inventory::submit! {
+    EventContract {
         id: MEDIA_AUDIO_RECORDING_OBSERVED_CONTRACT_ID,
         event_source: "media.audio",
         event_type: "media.audio.recording_observed",
@@ -720,6 +783,8 @@ mod tests {
             EMAIL_MESSAGE_SENT_CONTRACT_ID,
             EMAIL_ATTACHMENT_OBSERVED_CONTRACT_ID,
             EMAIL_THREAD_OBSERVED_CONTRACT_ID,
+            EMAIL_SYNC_CURSOR_OBSERVED_CONTRACT_ID,
+            EMAIL_CAPTURE_RUNTIME_OBSERVED_CONTRACT_ID,
         ] {
             let Some(contract) = find_event_contract(id) else {
                 panic!("missing email EventContract {id}");
