@@ -9,20 +9,19 @@ sh_datauuid,start_local,end_local,sh_duration_minutes,start_delta_minutes,end_de
 e86b7115-e01d-45ce-98ed-b8c7248b93a3,2024-03-21T10:50:00+01:00,2024-03-21T12:40:00+01:00,110.0,0.0,-49.0,-49.4,6,,,,0,1,0,0,
 ";
 
+    const SLEEP_MERGED_SUMMARY_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "sleep-merged-summary",
+        "sleep-merged-summary",
+        crate::AdapterKind::StaticFile,
+        SLEEP_MERGED_SUMMARY_CSV,
+        &["sleep.session"],
+    );
+
     #[sinex_test]
     async fn sleep_merged_summary_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "sleep-merged-summary",
-            crate::AdapterKind::StaticFile,
-            SLEEP_MERGED_SUMMARY_CSV,
-            &["sleep.session"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "sleep-merged-summary obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(SLEEP_MERGED_SUMMARY_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 }
