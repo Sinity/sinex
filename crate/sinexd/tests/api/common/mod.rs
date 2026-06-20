@@ -4,9 +4,16 @@ use async_nats::{Client, jetstream};
 use color_eyre::eyre::bail;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_primitives::{environment, environment::SinexEnvironment, temporal};
+use sinex_db::{DbPool, repositories::DbPoolExt};
+use sinex_primitives::{
+    DynamicPayload, Id, environment, environment::SinexEnvironment, temporal,
+};
 use sinexd::api::{auth::Role, rpc_server::RpcAuthContext};
 use sinexd::api::{config::GatewayConfig, rpc_server, service_container::ServiceContainer};
+use sinexd::runtime::{
+    Checkpoint, ScanReport, SourceScanAck, SourceScanCommand, SourceScanProgress,
+};
+use std::collections::HashMap;
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
@@ -125,6 +132,140 @@ pub async fn ensure_dlq_stream(
         })
         .await?;
     Ok(stream)
+}
+
+pub struct FakeReplayScanSource {
+    pub module_name: &'static str,
+    pub source: &'static str,
+    pub event_type: &'static str,
+    pub material_id: Option<uuid::Uuid>,
+    pub events_processed: u64,
+}
+
+impl FakeReplayScanSource {
+    pub fn with_material(
+        module_name: &'static str,
+        source: &'static str,
+        event_type: &'static str,
+        material_id: uuid::Uuid,
+        events_processed: u64,
+    ) -> Self {
+        Self {
+            module_name,
+            source,
+            event_type,
+            material_id: Some(material_id),
+            events_processed,
+        }
+    }
+
+    pub fn from_replay_command(
+        module_name: &'static str,
+        source: &'static str,
+        event_type: &'static str,
+        events_processed: u64,
+    ) -> Self {
+        Self {
+            module_name,
+            source,
+            event_type,
+            material_id: None,
+            events_processed,
+        }
+    }
+}
+
+pub async fn spawn_fake_replay_scan_source(
+    pool: DbPool,
+    nats: Client,
+    env: SinexEnvironment,
+    spec: FakeReplayScanSource,
+) -> TestResult<tokio::task::JoinHandle<()>> {
+    let module_name = spec.module_name.to_string();
+    let source = spec.source;
+    let event_type = spec.event_type;
+    let material_id = spec.material_id;
+    let events_processed = spec.events_processed;
+    let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
+    let mut sub = nats.subscribe(subject).await?;
+    nats.flush().await?;
+
+    let handle = tokio::spawn(async move {
+        let Some(msg) = sub.next().await else { return };
+        let Ok(command) = serde_json::from_slice::<SourceScanCommand>(&msg.payload) else {
+            return;
+        };
+        let operation_id = command.operation_id;
+        let progress_subject =
+            env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+
+        if let Some(reply) = msg.reply {
+            let ack = SourceScanAck {
+                operation_id,
+                module_name: module_name.clone(),
+                accepted: true,
+                error: None,
+            };
+            if let Ok(bytes) = serde_json::to_vec(&ack) {
+                let _ = nats.publish(reply, bytes.into()).await;
+            }
+        }
+
+        let material_id = material_id.or_else(|| {
+            command
+                .args
+                .replay
+                .as_ref()
+                .and_then(|replay| replay.materials.first())
+                .map(|material| material.source_material_id)
+        });
+
+        let Some(material_id) = material_id else {
+            return;
+        };
+
+        for i in 0..events_processed {
+            let Ok(event) = DynamicPayload::new(
+                source,
+                event_type,
+                json!({ "path": format!("/tmp/{module_name}-replay-{operation_id}-{i}.txt") }),
+            )
+            .from_material(Id::from_uuid(material_id))
+            .build() else {
+                return;
+            };
+
+            let mut event = event;
+            event.created_by_operation_id = Some(operation_id);
+
+            if pool.events().insert(event).await.is_err() {
+                return;
+            }
+        }
+
+        let progress = SourceScanProgress {
+            operation_id,
+            module_name: module_name.clone(),
+            events_processed,
+            events_emitted: events_processed,
+            final_report: Some(ScanReport {
+                events_processed,
+                duration: Duration::from_millis(5),
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                runtime_stats: HashMap::from([("events_emitted".into(), events_processed)]),
+                successful_targets: vec![module_name.clone()],
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            }),
+            error: None,
+        };
+        if let Ok(bytes) = serde_json::to_vec(&progress) {
+            let _ = nats.publish(progress_subject, bytes.into()).await;
+        }
+    });
+
+    Ok(handle)
 }
 
 /// In-process gateway with full RPC server (TLS) and a `reqwest`-based client.

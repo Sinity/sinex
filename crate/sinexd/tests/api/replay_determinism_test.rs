@@ -4,100 +4,17 @@
 //! - Archived events preserve original content (payload, `ts_orig`)
 //! - Double-replaying the same scope is idempotent (event count stable)
 
-use futures::StreamExt;
 use serde_json::json;
-use sinex_db::{DbPool, repositories::DbPoolExt};
+use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::rpc::methods;
-use sinex_primitives::{DynamicPayload, Id, temporal::Timestamp};
-use sinexd::runtime::{
-    Checkpoint, ScanReport, SourceScanAck, SourceScanCommand, SourceScanProgress,
-};
-use std::collections::HashMap;
+use sinex_primitives::{DynamicPayload, temporal::Timestamp};
 use std::time::Duration;
 use xtask::sandbox::{EnvGuard, prelude::*};
 
 mod common;
-use common::LiveGateway;
+use common::{FakeReplayScanSource, LiveGateway, spawn_fake_replay_scan_source};
 
 const RPC_TOKEN: &str = "determinism-test-token:admin";
-
-async fn spawn_fake_reemitting_scan_source(
-    pool: DbPool,
-    nats: async_nats::Client,
-    env: sinex_primitives::environment::SinexEnvironment,
-    source_name: &str,
-    material_id: uuid::Uuid,
-    events_processed: u64,
-) -> TestResult<tokio::task::JoinHandle<()>> {
-    let source_name = source_name.to_string();
-    let subject = env.nats_subject(&format!("sinex.control.sources.{source_name}.scan"));
-    let mut sub = nats.subscribe(subject).await?;
-    nats.flush().await?;
-
-    let handle = tokio::spawn(async move {
-        let Some(msg) = sub.next().await else { return };
-        let Ok(command) = serde_json::from_slice::<SourceScanCommand>(&msg.payload) else {
-            return;
-        };
-        let operation_id = command.operation_id;
-        let progress_subject =
-            env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
-
-        if let Some(reply) = msg.reply {
-            let ack = SourceScanAck {
-                operation_id,
-                module_name: source_name.clone(),
-                accepted: true,
-                error: None,
-            };
-            if let Ok(bytes) = serde_json::to_vec(&ack) {
-                let _ = nats.publish(reply, bytes.into()).await;
-            }
-        }
-
-        for i in 0..events_processed {
-            let Ok(event) = DynamicPayload::new(
-                source_name.as_str(),
-                "file.created",
-                json!({ "path": format!("/tmp/{source_name}-replay-{operation_id}-{i}.txt") }),
-            )
-            .from_material(Id::from_uuid(material_id))
-            .build() else {
-                return;
-            };
-
-            let mut event = event;
-            event.created_by_operation_id = Some(command.operation_id);
-
-            if pool.events().insert(event).await.is_err() {
-                return;
-            }
-        }
-
-        let progress = SourceScanProgress {
-            operation_id,
-            module_name: source_name.clone(),
-            events_processed,
-            events_emitted: events_processed,
-            final_report: Some(ScanReport {
-                events_processed,
-                duration: Duration::from_millis(5),
-                final_checkpoint: Checkpoint::None,
-                time_range: None,
-                runtime_stats: HashMap::from([("events_emitted".into(), events_processed)]),
-                successful_targets: vec![source_name.clone()],
-                failed_targets: Vec::new(),
-                warnings: Vec::new(),
-            }),
-            error: None,
-        };
-        if let Ok(bytes) = serde_json::to_vec(&progress) {
-            let _ = nats.publish(progress_subject, bytes.into()).await;
-        }
-    });
-
-    Ok(handle)
-}
 
 /// Run a full replay lifecycle and wait for completion.
 async fn run_replay(
@@ -193,13 +110,17 @@ async fn material_replay_archives_preserve_content(ctx: TestContext) -> TestResu
     // Spawn fake scan source runtime
     let nats = ctx.nats_client();
     let env = sinex_primitives::environment::environment();
-    let scan_handle = spawn_fake_reemitting_scan_source(
+    let scan_handle = spawn_fake_replay_scan_source(
         ctx.pool.clone(),
         nats.clone(),
         env,
-        "det-source",
-        *material_id.as_uuid(),
-        3,
+        FakeReplayScanSource::with_material(
+            "det-source",
+            "det-source",
+            "file.created",
+            *material_id.as_uuid(),
+            3,
+        ),
     )
     .await?;
 
@@ -267,13 +188,17 @@ async fn double_replay_idempotent(ctx: TestContext) -> TestResult<()> {
     // First replay
     let nats = ctx.nats_client();
     let env = sinex_primitives::environment::environment();
-    let scan1 = spawn_fake_reemitting_scan_source(
+    let scan1 = spawn_fake_replay_scan_source(
         ctx.pool.clone(),
         nats.clone(),
         env.clone(),
-        "dbl-source",
-        *material_id.as_uuid(),
-        2,
+        FakeReplayScanSource::with_material(
+            "dbl-source",
+            "dbl-source",
+            "file.created",
+            *material_id.as_uuid(),
+            2,
+        ),
     )
     .await?;
     run_replay(
@@ -298,13 +223,17 @@ async fn double_replay_idempotent(ctx: TestContext) -> TestResult<()> {
     .await?;
 
     // Second replay of same scope — need a new fake source runtime since the first was consumed
-    let scan2 = spawn_fake_reemitting_scan_source(
+    let scan2 = spawn_fake_replay_scan_source(
         ctx.pool.clone(),
         nats.clone(),
         env,
-        "dbl-source",
-        *material_id.as_uuid(),
-        live_after_1 as u64,
+        FakeReplayScanSource::with_material(
+            "dbl-source",
+            "dbl-source",
+            "file.created",
+            *material_id.as_uuid(),
+            live_after_1 as u64,
+        ),
     )
     .await?;
     run_replay(
