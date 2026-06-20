@@ -590,14 +590,14 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn event_lowering_rejects_non_lowerable_predicate_without_widening()
+    async fn event_query_rejects_non_executable_descriptor_fields_before_lowering()
     -> xtask::TestResult<()> {
-        let query =
-            parse_sinex_query("events where event_contract_id = terminal.command limit 10")?;
+        let error = parse_sinex_query("events where event_contract_id = terminal.command limit 10")
+            .unwrap_err()
+            .to_string();
 
-        let error = event_query_from_query(&query).unwrap_err().to_string();
-
-        assert!(error.contains("cannot yet lower to EventQuery without widening"));
+        assert!(error.contains("does not support field `event_contract_id`"));
+        assert!(error.contains("source, event_type, host, scope_key, equivalence_key"));
         Ok(())
     }
 }
