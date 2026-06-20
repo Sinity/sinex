@@ -673,11 +673,10 @@ mod coverage_matrix {
             SmokeCoverage::ObligationHarness,
             "production_path/terminal.rs",
         ),
-        blocked_entry(
+        entry(
             "terminal.kitty-osc-live",
             SmokeCoverage::ObligationHarness,
-            "source_contracts/terminal/kitty_osc.rs parser/unit coverage; production-path harness tracked by #1033",
-            "#1033",
+            "production_path/terminal.rs terminal_kitty_osc_live_socket_adapter_parses_command_frame",
         ),
         entry(
             "terminal.monitor",
