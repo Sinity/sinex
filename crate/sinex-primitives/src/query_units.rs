@@ -1002,7 +1002,13 @@ mod tests {
 
         assert_eq!(
             fields,
-            vec!["source", "event_type", "host", "scope_key", "equivalence_key"]
+            vec![
+                "source",
+                "event_type",
+                "host",
+                "scope_key",
+                "equivalence_key"
+            ]
         );
         for field in descriptor.fields {
             assert_eq!(field.operators, &[QueryOperator::Eq]);

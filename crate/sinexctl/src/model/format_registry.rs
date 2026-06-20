@@ -1068,6 +1068,8 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "ops evidence compile" => &[
             methods::OPS_GET,
             methods::DLQ_LIST,
+            methods::RUNTIME_HEALTH,
+            methods::SOURCES_PACKAGE_COMPLETENESS,
             methods::SOURCES_STATUS_VIEW,
             methods::SOURCES_SHOW,
             methods::SOURCES_COVERAGE,
