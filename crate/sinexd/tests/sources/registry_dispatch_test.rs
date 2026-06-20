@@ -344,8 +344,8 @@ async fn source_meta_media_staged_sources_register_parser_and_factory() -> TestR
 }
 
 #[sinex_test]
-async fn source_meta_email_source_registers_staged_mailbox_modes_and_sent_proposal(
-) -> TestResult<()> {
+async fn source_meta_email_source_registers_staged_mailbox_modes_and_sent_proposal()
+-> TestResult<()> {
     use sinex_primitives::source_contracts::{all_source_contracts, source_runtime_bindings};
 
     let source_id = sui("email.mailbox");
@@ -380,14 +380,28 @@ async fn source_meta_email_source_registers_staged_mailbox_modes_and_sent_propos
             .any(|(_, event_type)| *event_type == "email.thread.observed"),
         "email contract must declare thread observations"
     );
+    assert!(
+        contract
+            .event_types
+            .iter()
+            .any(|(_, event_type)| *event_type == "email.sync_cursor.observed"),
+        "email contract must declare provider sync cursor observations"
+    );
+    assert!(
+        contract
+            .event_types
+            .iter()
+            .any(|(_, event_type)| *event_type == "email.capture_runtime.observed"),
+        "email contract must declare provider runtime observations"
+    );
 
     let bindings: Vec<_> = source_runtime_bindings()
         .filter(|binding| binding.source_id == "email.mailbox")
         .collect();
     assert_eq!(
         bindings.len(),
-        4,
-        "email mailbox must register RFC822, Maildir, MBOX, and sent runtime bindings"
+        7,
+        "email mailbox must register staged, sent, Gmail, and IMAP runtime bindings"
     );
     for (subject, event_type) in [
         ("source:email.mailbox", "email.message.received"),
@@ -397,6 +411,18 @@ async fn source_meta_email_source_registers_staged_mailbox_modes_and_sent_propos
         ),
         ("source:email.mailbox.mbox-staged", "email.message.received"),
         ("source:email.mailbox.sent", "email.message.sent"),
+        (
+            "source:email.mailbox.gmail-api-scheduled-sync",
+            "email.sync_cursor.observed",
+        ),
+        (
+            "source:email.mailbox.imap-scheduled-sync",
+            "email.sync_cursor.observed",
+        ),
+        (
+            "source:email.mailbox.imap-idle-live",
+            "email.capture_runtime.observed",
+        ),
     ] {
         assert!(
             bindings.iter().any(|binding| {
@@ -423,6 +449,18 @@ async fn source_meta_email_source_registers_staged_mailbox_modes_and_sent_propos
         }),
         "email sent mode remains proposed until its runtime mode is accepted"
     );
+    for subject in [
+        "source:email.mailbox.gmail-api-scheduled-sync",
+        "source:email.mailbox.imap-scheduled-sync",
+        "source:email.mailbox.imap-idle-live",
+    ] {
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.subject.as_str() == subject && binding.proposed),
+            "email provider mode {subject} remains proposed until the runtime client is executable"
+        );
+    }
     assert!(
         find_source_factory(&source_id).is_some(),
         "accepted email staged mode must register a source factory"
@@ -564,7 +602,8 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
     use sinex_primitives::STANDARD_EVENT_ADMISSION_POLICY_ID;
     use sinex_primitives::event_contracts::{
         BROWSER_PAGE_VISITED_CONTRACT_ID, EMAIL_ATTACHMENT_OBSERVED_CONTRACT_ID,
-        EMAIL_MESSAGE_RECEIVED_CONTRACT_ID, EMAIL_MESSAGE_SENT_CONTRACT_ID,
+        EMAIL_CAPTURE_RUNTIME_OBSERVED_CONTRACT_ID, EMAIL_MESSAGE_RECEIVED_CONTRACT_ID,
+        EMAIL_MESSAGE_SENT_CONTRACT_ID, EMAIL_SYNC_CURSOR_OBSERVED_CONTRACT_ID,
         EMAIL_THREAD_OBSERVED_CONTRACT_ID, MEDIA_AUDIO_CAPTURE_SESSION_ENDED_CONTRACT_ID,
         MEDIA_AUDIO_CAPTURE_SESSION_STARTED_CONTRACT_ID,
         MEDIA_AUDIO_RECORDING_OBSERVED_CONTRACT_ID, MEDIA_AUDIO_TRANSCRIPT_SEGMENT_CONTRACT_ID,
@@ -673,6 +712,18 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
     );
     assert!(
         email
+            .event_contract_refs
+            .contains(&EMAIL_SYNC_CURSOR_OBSERVED_CONTRACT_ID.to_string()),
+        "email package row must expose the sync-cursor EventContract registry row"
+    );
+    assert!(
+        email
+            .event_contract_refs
+            .contains(&EMAIL_CAPTURE_RUNTIME_OBSERVED_CONTRACT_ID.to_string()),
+        "email package row must expose the capture-runtime EventContract registry row"
+    );
+    assert!(
+        email
             .admission_policy_refs
             .contains(&STANDARD_EVENT_ADMISSION_POLICY_ID.to_string()),
         "email staged mode must be accepted by the standard admission policy"
@@ -700,6 +751,24 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
                 && pair.event_contract_ref.as_deref() == Some(EMAIL_THREAD_OBSERVED_CONTRACT_ID)
         }),
         "email thread event pair rows should carry the matching EventContract ref"
+    );
+    assert!(
+        email.event_pairs.iter().any(|pair| {
+            pair.source == "email"
+                && pair.event_type == "email.sync_cursor.observed"
+                && pair.event_contract_ref.as_deref()
+                    == Some(EMAIL_SYNC_CURSOR_OBSERVED_CONTRACT_ID)
+        }),
+        "email sync-cursor event pair rows should carry the matching EventContract ref"
+    );
+    assert!(
+        email.event_pairs.iter().any(|pair| {
+            pair.source == "email"
+                && pair.event_type == "email.capture_runtime.observed"
+                && pair.event_contract_ref.as_deref()
+                    == Some(EMAIL_CAPTURE_RUNTIME_OBSERVED_CONTRACT_ID)
+        }),
+        "email capture-runtime event pair rows should carry the matching EventContract ref"
     );
     assert!(
         email
