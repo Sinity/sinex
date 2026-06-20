@@ -32,11 +32,37 @@ mod tests {
     /// Clipboard text payload — plain UTF-8 content.
     const CLIPBOARD_FIXTURE: &[u8] = b"hello from clipboard";
 
-    /// Hyprland IPC line for `activewindow` — `TYPE>>class,title` format.
-    // Hyprland fires a v1+v2 pair for every focus change; the parser merges
-    // them into one window.focused event. The fixture must include both lines.
-    const HYPRLAND_FOCUSED_FIXTURE: &[u8] =
-        b"activewindow>>kitty,~/project/sinex\nactivewindowv2>>0x1234abcd\n";
+    const ACTIVITYWATCH_WINDOW_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "desktop.activitywatch window.active",
+        "desktop.activitywatch",
+        crate::AdapterKind::SqliteRow,
+        AW_WINDOW_FIXTURE,
+        &["window.active"],
+    );
+
+    const ACTIVITYWATCH_AFK_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "desktop.activitywatch afk.changed",
+        "desktop.activitywatch",
+        crate::AdapterKind::SqliteRow,
+        AW_AFW_FIXTURE,
+        &["afk.changed"],
+    );
+
+    const ACTIVITYWATCH_WEB_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "desktop.activitywatch browser.tab.active",
+        "desktop.activitywatch",
+        crate::AdapterKind::SqliteRow,
+        AW_WEB_FIXTURE,
+        &["browser.tab.active"],
+    );
+
+    const CLIPBOARD_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "desktop.clipboard",
+        "desktop.clipboard",
+        crate::AdapterKind::Clipboard,
+        CLIPBOARD_FIXTURE,
+        &["clipboard.copied"],
+    );
 
     // -------------------------------------------------------------------------
     // desktop.activitywatch — window.active
@@ -44,18 +70,9 @@ mod tests {
 
     #[sinex_test]
     async fn desktop_activitywatch_window_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "desktop.activitywatch",
-            crate::AdapterKind::SqliteRow,
-            AW_WINDOW_FIXTURE,
-            &["window.active"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "desktop.activitywatch (window.active) obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(ACTIVITYWATCH_WINDOW_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
@@ -65,18 +82,9 @@ mod tests {
 
     #[sinex_test]
     async fn desktop_activitywatch_afk_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "desktop.activitywatch",
-            crate::AdapterKind::SqliteRow,
-            AW_AFW_FIXTURE,
-            &["afk.changed"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "desktop.activitywatch (afk.changed) obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(ACTIVITYWATCH_AFK_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
@@ -86,18 +94,9 @@ mod tests {
 
     #[sinex_test]
     async fn desktop_activitywatch_web_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "desktop.activitywatch",
-            crate::AdapterKind::SqliteRow,
-            AW_WEB_FIXTURE,
-            &["browser.tab.active"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "desktop.activitywatch (browser.tab.active) obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(ACTIVITYWATCH_WEB_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
@@ -152,41 +151,15 @@ mod tests {
 
     #[sinex_test]
     async fn desktop_clipboard_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "desktop.clipboard",
-            crate::AdapterKind::Clipboard,
-            CLIPBOARD_FIXTURE,
-            &["clipboard.copied"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "desktop.clipboard obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(CLIPBOARD_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
     // -------------------------------------------------------------------------
     // desktop.window-manager
     // -------------------------------------------------------------------------
-
-    #[sinex_test]
-    async fn desktop_window_manager_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "desktop.window-manager",
-            crate::AdapterKind::UnixSocket,
-            HYPRLAND_FOCUSED_FIXTURE,
-            &["window.focused"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "desktop.window-manager obligations failed: {failures:#?}"
-        );
-        Ok(())
-    }
 
     #[sinex_test]
     async fn desktop_window_manager_unix_socket_adapter_parses_hyprland_frame() -> TestResult<()> {

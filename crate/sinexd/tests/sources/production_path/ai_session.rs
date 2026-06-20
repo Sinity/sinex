@@ -67,37 +67,35 @@ mod tests {
       }
     ]"#;
 
+    const CLAUDE_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "ai-session-claude",
+        "ai-session-claude",
+        crate::AdapterKind::StaticFile,
+        CLAUDE_FIXTURE,
+        &["ai.message"],
+    );
+
+    const CHATGPT_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "ai-session-chatgpt",
+        "ai-session-chatgpt",
+        crate::AdapterKind::StaticFile,
+        CHATGPT_FIXTURE,
+        &["ai.message"],
+    );
+
     #[sinex_test]
     async fn ai_session_claude_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "ai-session-claude",
-            crate::AdapterKind::StaticFile,
-            CLAUDE_FIXTURE,
-            &["ai.message"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "ai-session-claude obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(CLAUDE_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
     #[sinex_test]
     async fn ai_session_chatgpt_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "ai-session-chatgpt",
-            crate::AdapterKind::StaticFile,
-            CHATGPT_FIXTURE,
-            &["ai.message"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "ai-session-chatgpt obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(CHATGPT_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 }

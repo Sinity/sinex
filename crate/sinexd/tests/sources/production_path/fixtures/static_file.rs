@@ -4,10 +4,7 @@
 //! Functionally similar to the append-only file fixture but communicates
 //! intent clearly: the file is consumed once and not expected to grow.
 
-use std::io::Write;
-use tempfile::NamedTempFile;
-
-use super::{FixtureBinding, FixtureHandle};
+use super::{FileFixtureKind, FixtureHandle, build_file_fixture};
 
 /// Build a static file fixture from raw bytes.
 ///
@@ -18,15 +15,5 @@ use super::{FixtureBinding, FixtureHandle};
 ///
 /// Returns an error if the temp file cannot be created or written.
 pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
-    let mut file =
-        NamedTempFile::new().map_err(|e| format!("failed to create static fixture file: {e}"))?;
-    file.write_all(data)
-        .map_err(|e| format!("failed to write static fixture data: {e}"))?;
-    file.flush()
-        .map_err(|e| format!("failed to flush static fixture data: {e}"))?;
-    let path = file.path().to_owned();
-    Ok(FixtureHandle::with_resource(
-        FixtureBinding::FilePath(path),
-        file,
-    ))
+    build_file_fixture(FileFixtureKind::Static, data)
 }

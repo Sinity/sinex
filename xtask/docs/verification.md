@@ -11,6 +11,7 @@ integration tests, schema strict-diff, or generated-surface checks can own.
 | Surface | Behavior owner | Gate or command | Notes |
 | --- | --- | --- | --- |
 | Changed Rust/API surfaces | affected-package resolver plus package checks | `xtask check --changed-strict <base-ref>` | Release readiness runs this as `changed-strict`. |
+| Test-scope decisions | impact planner explain output plus the selected `xtask test` invocation | `xtask impact explain --json`; `xtask test ...` | Record this in PRs when an affected run, exact filter, or full `--impact-mode=off --all` choice is material to the review. The explain output is evidence for the chosen test scope, not a separate proof ledger. |
 | Forbidden architecture drift | `xtask lint-forbidden` plus ast-grep catalog | `xtask check --forbidden` | Keep this to coarse forbidden patterns, structural lint rules, and deployment-boundary scans. Do not add product proof ledgers here. |
 | Dependency duplicate docs | dependency command tests | `xtask test -p xtask -E 'test(test_dependency_hygiene_doc_matches_duplicate_classifier)'` | The duplicate-classification doc check lives with `xtask deps` behavior tests, not `lint-forbidden`. |
 | Closure claims in issues | issue body/comment evidence parser | `xtask verify closure <issue>` | Extracts executable verification commands and acceptance matrices from GitHub issue text. |
@@ -81,6 +82,7 @@ Unsafe due to verification failure:
 Use focused gates before broad ones:
 
 ```bash
+xtask impact explain --json
 xtask test -p xtask -E 'test(test_dependency_hygiene_doc_matches_duplicate_classifier)'
 xtask test -p xtask --lib -E 'test(release_readiness)'
 xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)' --allow-contended-host
@@ -95,4 +97,5 @@ Use broad gates only after the focused owner tests are green:
 ```bash
 xtask check --changed-strict origin/master --allow-contended-host
 xtask check --full --allow-contended-host
+xtask test --impact-mode=off --all
 ```
