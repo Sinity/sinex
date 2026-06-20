@@ -6,8 +6,6 @@
 
 #[cfg(test)]
 mod tests {
-    use xtask::sandbox::prelude::*;
-
     const CLAUDE_FIXTURE: &[u8] = br#"[
       {
         "uuid": "conv-aaa",
@@ -83,19 +81,6 @@ mod tests {
         &["ai.message"],
     );
 
-    #[sinex_test]
-    async fn ai_session_claude_obligations() -> TestResult<()> {
-        crate::run_production_path_case(CLAUDE_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn ai_session_chatgpt_obligations() -> TestResult<()> {
-        crate::run_production_path_case(CHATGPT_CASE)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-        Ok(())
-    }
+    crate::production_path_case_test!(ai_session_claude_obligations, CLAUDE_CASE);
+    crate::production_path_case_test!(ai_session_chatgpt_obligations, CHATGPT_CASE);
 }

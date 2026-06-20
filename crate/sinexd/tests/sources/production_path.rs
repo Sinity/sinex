@@ -96,6 +96,19 @@ pub async fn run_production_path_case(case: ProductionPathCase) -> Result<(), St
     }
 }
 
+#[macro_export]
+macro_rules! production_path_case_test {
+    ($test_name:ident, $case:expr) => {
+        #[xtask::sandbox::sinex_test]
+        async fn $test_name() -> xtask::sandbox::prelude::TestResult<()> {
+            $crate::run_production_path_case($case)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+            Ok(())
+        }
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Internal case runner
 // ---------------------------------------------------------------------------
