@@ -655,17 +655,15 @@ mod coverage_matrix {
             SmokeCoverage::ObligationHarness,
             "production_path/path_sensitive.rs",
         ),
-        blocked_entry(
+        entry(
             "media.audio-transcript",
             SmokeCoverage::ObligationHarness,
-            "source_contracts/media.rs parser/unit coverage; production-path harness tracked by #1043",
-            "#1043",
+            "production_path/media.rs",
         ),
-        blocked_entry(
+        entry(
             "media.screen-ocr",
             SmokeCoverage::ObligationHarness,
-            "source_contracts/media.rs parser/unit coverage; production-path harness tracked by #1043",
-            "#1043",
+            "production_path/media.rs",
         ),
         entry(
             "noop",
@@ -941,6 +939,9 @@ mod fs;
 
 #[path = "production_path/health_exports.rs"]
 mod health_exports;
+
+#[path = "production_path/media.rs"]
+mod media;
 
 #[path = "production_path/path_sensitive.rs"]
 mod path_sensitive;
