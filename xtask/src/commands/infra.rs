@@ -8,7 +8,7 @@ use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::infra::flake_stage::stage_checkout_for_flake;
-use crate::infra::stack::{self, StackConfig, StackStatus};
+use crate::infra::stack::{self, AllCheckoutsStatus, StackConfig, StackStatus};
 use crate::infra::state::CheckoutState;
 
 /// Infra command - manages the isolated development environment.
@@ -33,6 +33,9 @@ pub enum InfraSubcommand {
         /// Watch mode
         #[arg(long, short)]
         watch: bool,
+        /// Show every checkout-local dev-state root under /var/cache/sinex/$USER
+        #[arg(long)]
+        all_checkouts: bool,
     },
     /// View logs
     Logs {
@@ -101,9 +104,12 @@ impl XtaskCommand for InfraCommand {
                 let config = StackConfig::for_current_checkout()?;
                 execute_stop(&config, ctx)
             }
-            InfraSubcommand::Status { watch } => {
+            InfraSubcommand::Status {
+                watch,
+                all_checkouts,
+            } => {
                 let config = StackConfig::for_current_checkout()?;
-                execute_status(&config, *watch, ctx).await
+                execute_status(&config, *watch, *all_checkouts, ctx).await
             }
             InfraSubcommand::Logs {
                 process,
@@ -366,8 +372,16 @@ fn execute_stop(config: &StackConfig, ctx: &CommandContext) -> Result<CommandRes
 async fn execute_status(
     config: &StackConfig,
     watch: bool,
+    all_checkouts: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
+    if all_checkouts {
+        if watch {
+            bail!("infra status --all-checkouts does not support --watch");
+        }
+        return execute_all_checkouts_status(ctx);
+    }
+
     loop {
         if watch {
             print!("\x1B[2J\x1B[H");
@@ -379,22 +393,18 @@ async fn execute_status(
             println!("sinex-dev infra status");
             println!("────────────────────────────────────────");
             println!(
-                "PostgreSQL:  {} (unix socket, port: {})",
-                if status.postgres.running {
-                    "running"
-                } else {
-                    "stopped"
-                },
-                status.postgres.port
+                "PostgreSQL:  {}{} (unix socket, port: {}, rss: {})",
+                format_service_state(&status.postgres),
+                format_pid(status.postgres.pid),
+                status.postgres.port,
+                format_optional_bytes(status.postgres.rss_bytes),
             );
             println!(
-                "NATS:        {} (port: {})",
-                if status.nats.running {
-                    "running"
-                } else {
-                    "stopped"
-                },
-                status.nats.port
+                "NATS:        {}{} (port: {}, rss: {})",
+                format_service_state(&status.nats),
+                format_pid(status.nats.pid),
+                status.nats.port,
+                format_optional_bytes(status.nats.rss_bytes),
             );
             println!(
                 "Git-annex:   {}",
@@ -433,6 +443,133 @@ async fn execute_status(
         }
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
+}
+
+fn execute_all_checkouts_status(ctx: &CommandContext) -> Result<CommandResult> {
+    let base_dir = CheckoutState::default_inventory_base_dir();
+    let roots = CheckoutState::inventory_roots_under(&base_dir)?;
+    let status = AllCheckoutsStatus::gather(base_dir, roots);
+
+    if ctx.is_human() {
+        println!("sinex-dev infra status: all checkouts");
+        println!("────────────────────────────────────────");
+        println!(
+            "Checkouts: {}  RSS: {}  state: {}",
+            status.totals.checkout_count,
+            format_bytes(status.totals.rss_bytes),
+            format_bytes(status.totals.state_bytes)
+        );
+        println!(
+            "Running:   postgres={} nats={} sinexd={}",
+            status.totals.running_postgres,
+            status.totals.running_nats,
+            status.totals.running_sinexd
+        );
+        println!(
+            "Stale PIDs: postgres={} nats={}",
+            status.totals.stale_postgres_pid_files, status.totals.stale_nats_pid_files
+        );
+        for checkout in &status.checkouts {
+            println!();
+            println!("{}", checkout.cache_root.display());
+            println!("  dev-state: {}", checkout.dev_state_dir.display());
+            match &checkout.checkout_path {
+                Some(path) => println!(
+                    "  checkout:  {} ({})",
+                    path.display(),
+                    if checkout.checkout_path_exists == Some(true) {
+                        "exists"
+                    } else {
+                        "missing"
+                    }
+                ),
+                None => println!("  checkout:  unknown"),
+            }
+            println!(
+                "  lock:      {}{}",
+                format_lock_state(checkout.lock.state),
+                checkout
+                    .lock
+                    .pid
+                    .map(|pid| format!(" pid={pid}"))
+                    .unwrap_or_default()
+            );
+            if let Some(issue) = &checkout.lock.issue {
+                println!("             {issue}");
+            }
+            println!(
+                "  postgres:  {}{} rss={}",
+                format_service_state(&checkout.postgres),
+                format_pid(checkout.postgres.pid),
+                format_optional_bytes(checkout.postgres.rss_bytes)
+            );
+            println!(
+                "  nats:      {}{} port={} rss={}",
+                format_service_state(&checkout.nats),
+                format_pid(checkout.nats.pid),
+                checkout.nats.port,
+                format_optional_bytes(checkout.nats.rss_bytes)
+            );
+            println!(
+                "  sinexd:    {} rss={}",
+                if checkout.sinexd.running {
+                    format!("running pids={:?}", checkout.sinexd.pids)
+                } else {
+                    "stopped".to_string()
+                },
+                format_bytes(checkout.sinexd.rss_bytes)
+            );
+            if let Some(issue) = &checkout.sinexd.issue {
+                println!("             {issue}");
+            }
+            println!(
+                "  sizes:     pg={} nats={} annex={} logs={} total={}",
+                format_bytes(checkout.data_sizes.postgres_bytes),
+                format_bytes(checkout.data_sizes.nats_bytes),
+                format_bytes(checkout.data_sizes.annex_bytes),
+                format_bytes(checkout.logs_bytes),
+                format_bytes(checkout.total_state_bytes)
+            );
+            for command in &checkout.remediation {
+                println!("  remedy:    {command}");
+            }
+            for issue in &checkout.data_size_issues {
+                println!("  issue:     {issue}");
+            }
+        }
+    }
+
+    let mut result = CommandResult::success().with_data(serde_json::to_value(&status)?);
+    for issue in &status.issues {
+        result = result.with_warning(issue.clone());
+    }
+    Ok(result)
+}
+
+fn format_service_state(status: &stack::ServiceStatus) -> &'static str {
+    match status.pid_state {
+        stack::ServicePidState::Missing => "stopped",
+        stack::ServicePidState::Running => "running",
+        stack::ServicePidState::Stale => "stale-pid",
+        stack::ServicePidState::Malformed => "malformed-pid",
+    }
+}
+
+fn format_lock_state(state: stack::LockState) -> &'static str {
+    match state {
+        stack::LockState::Missing => "missing",
+        stack::LockState::Live => "live",
+        stack::LockState::Stale => "stale",
+        stack::LockState::Malformed => "malformed",
+    }
+}
+
+fn format_pid(pid: Option<u32>) -> String {
+    pid.map(|pid| format!(" pid={pid}")).unwrap_or_default()
+}
+
+fn format_optional_bytes(bytes: Option<u64>) -> String {
+    bytes.map(format_bytes).unwrap_or_else(|| "-".to_string())
 }
 
 fn format_bytes(bytes: u64) -> String {
