@@ -96,3 +96,37 @@ pub struct EmailThreadObservedPayload {
     pub raw_material_id: String,
     pub mailbox_format: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "email", event_type = "email.sync_cursor.observed")]
+pub struct EmailSyncCursorObservedPayload {
+    pub provider: String,
+    pub account_binding_ref: String,
+    pub mailbox_scope: Option<String>,
+    pub cursor_kind: String,
+    pub cursor_value: Option<String>,
+    pub uidvalidity: Option<String>,
+    pub uid: Option<String>,
+    pub gmail_history_id: Option<String>,
+    pub page_token: Option<String>,
+    pub observed_at: Timestamp,
+    pub continuity_state: String,
+    pub caveats: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "email", event_type = "email.capture_runtime.observed")]
+pub struct EmailCaptureRuntimeObservedPayload {
+    pub provider: String,
+    pub account_binding_ref: String,
+    pub mode_id: String,
+    pub observed_at: Timestamp,
+    pub auth_state: String,
+    pub network_state: String,
+    pub rate_limit_state: Option<String>,
+    pub sync_state: String,
+    pub pending_messages: Option<u32>,
+    pub pending_material_bytes: Option<u64>,
+    pub caveats: Vec<String>,
+    pub actions: Vec<String>,
+}
