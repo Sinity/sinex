@@ -4,12 +4,17 @@
 //! verifies no catastrophic timestamp corruption and hypertable integrity.
 
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use color_eyre::eyre::Result;
 use sqlx::PgPool;
 
 use crate::runner::TestRunner;
+
+use super::chaos_support::{
+    SINEXD_SERVICE, command_status, event_count, service_is_active, wait_for_event_count_increase,
+    write_watched_files,
+};
 
 pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
     println!("\n── Chaos: Clock Skew tests ────────────────────────────────");
@@ -28,16 +33,7 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
 async fn test_baseline_monotonic(runner: &mut TestRunner, pool: &PgPool) {
     let name = "chaos-clock-skew: baseline events captured and ts_coided monotonic";
 
-    let watched = "/var/lib/sinex/watched";
-    let _ = std::fs::create_dir_all(watched);
-
-    // Generate 10 pre-skew files
-    for i in 0..10_u32 {
-        let _ = std::fs::write(
-            format!("{watched}/clock-baseline-{i}.txt"),
-            format!("baseline {i}"),
-        );
-    }
+    write_watched_files("clock-baseline", 10, "baseline");
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -81,10 +77,7 @@ async fn test_event_engine_survives_clock_advance(runner: &mut TestRunner, _pool
 
     // Advance clock by 1 hour (3600 seconds)
     let new_epoch = current_epoch + 3600;
-    let set_result = Command::new("date")
-        .args(["-s", &format!("@{new_epoch}")])
-        .status()
-        .is_ok_and(|s| s.success());
+    let set_result = command_status("date", &["-s", &format!("@{new_epoch}")]);
 
     if !set_result {
         runner.fail(name, "date -s command failed");
@@ -94,19 +87,12 @@ async fn test_event_engine_survives_clock_advance(runner: &mut TestRunner, _pool
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     // Check event_engine still active
-    let active = Command::new("systemctl")
-        .args(["is-active", "--quiet", "sinexd"])
-        .status()
-        .is_ok_and(|s| s.success());
-
-    if active {
+    if service_is_active(SINEXD_SERVICE) {
         runner.pass(name);
     } else {
         runner.fail(name, "event_engine crashed after clock advance");
         // Restore clock before returning
-        let _ = Command::new("date")
-            .args(["-s", &format!("@{current_epoch}")])
-            .status();
+        let _ = command_status("date", &["-s", &format!("@{current_epoch}")]);
     }
 }
 
@@ -114,15 +100,7 @@ async fn test_events_reach_db_despite_skew(runner: &mut TestRunner, pool: &PgPoo
     let name = "chaos-clock-skew: events reach DB despite clock skew";
 
     let before = event_count(pool).await;
-    let watched = "/var/lib/sinex/watched";
-
-    // Generate events during skew
-    for i in 0..20_u32 {
-        let _ = std::fs::write(
-            format!("{watched}/clock-during-{i}.txt"),
-            format!("during {i}"),
-        );
-    }
+    write_watched_files("clock-during", 20, "during");
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -150,30 +128,25 @@ async fn test_no_catastrophic_timestamp_corruption(runner: &mut TestRunner, pool
 
     // Restore to original time (subtract 1 hour)
     let original_epoch = current_epoch - 3600;
-    let _ = Command::new("date")
-        .args(["-s", &format!("@{original_epoch}")])
-        .status();
+    let _ = command_status("date", &["-s", &format!("@{original_epoch}")]);
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     // Generate post-restore events
     let before = event_count(pool).await;
-    let watched = "/var/lib/sinex/watched";
-    for i in 0..10_u32 {
-        let _ = std::fs::write(format!("{watched}/clock-post-{i}.txt"), format!("post {i}"));
-    }
+    write_watched_files("clock-post", 10, "post");
 
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        let after = event_count(pool).await;
-        if after > before {
-            break;
-        }
-        if Instant::now() >= deadline {
-            runner.fail(name, "post-restore events did not reach DB");
-            return;
-        }
+    if wait_for_event_count_increase(
+        pool,
+        before,
+        Duration::from_secs(30),
+        Duration::from_secs(2),
+    )
+    .await
+    .is_none()
+    {
+        runner.fail(name, "post-restore events did not reach DB");
+        return;
     }
 
     // Check ts_coided ordering violations (as proxy for corruption)
@@ -222,14 +195,4 @@ async fn test_hypertable_chunk_structure_intact(runner: &mut TestRunner, pool: &
         Ok(_n) => runner.pass(name), // Any chunks > 0 is good
         Err(e) => runner.fail(name, &format!("chunk query failed: {e}")),
     }
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async fn event_count(pool: &PgPool) -> i64 {
-    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
-        .fetch_one(pool)
-        .await
-        .ok()
-        .unwrap_or(0)
 }
