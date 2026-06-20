@@ -166,6 +166,14 @@ enum Command {
         #[arg(long)]
         output: Option<String>,
 
+        /// Restrict the report to one package id from the completeness map.
+        #[arg(long)]
+        package_id: Option<String>,
+
+        /// Restrict the report to one package-local mode id.
+        #[arg(long)]
+        mode_id: Option<String>,
+
         /// Fail when any accepted mode has blocking missing requirements.
         #[arg(long)]
         strict: bool,
@@ -242,9 +250,12 @@ async fn main() -> color_eyre::Result<()> {
         Command::ExportPrivacyCoverageMatrix { output, check } => {
             export_privacy_coverage_matrix(output, check)
         }
-        Command::ExportPackageCompleteness { output, strict } => {
-            export_package_completeness(output, strict)
-        }
+        Command::ExportPackageCompleteness {
+            output,
+            package_id,
+            mode_id,
+            strict,
+        } => export_package_completeness(output, package_id.as_deref(), mode_id.as_deref(), strict),
         Command::ExportSourceSkeleton {
             package_id,
             mode_id,
@@ -297,10 +308,21 @@ fn export_privacy_coverage_matrix(output: Option<String>, check: bool) -> color_
     Ok(())
 }
 
-fn export_package_completeness(output: Option<String>, strict: bool) -> color_eyre::Result<()> {
-    use sinexd::sources::package_completeness::render_package_completeness_report;
+fn export_package_completeness(
+    output: Option<String>,
+    package_id: Option<&str>,
+    mode_id: Option<&str>,
+    strict: bool,
+) -> color_eyre::Result<()> {
+    use sinexd::sources::package_completeness::{
+        render_filtered_package_completeness_report, render_package_completeness_report,
+    };
 
-    let rendered = render_package_completeness_report()?;
+    let rendered = if package_id.is_some() || mode_id.is_some() {
+        render_filtered_package_completeness_report(package_id, mode_id)?
+    } else {
+        render_package_completeness_report()?
+    };
     let report: serde_json::Value = serde_json::from_str(&rendered)?;
     let blocking_missing = report["summary"]["blocking_missing_count"]
         .as_u64()

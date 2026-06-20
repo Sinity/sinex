@@ -76,7 +76,7 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
     writeln!(out, "use sinex_macros::SourceMeta;").map_err(|_| SourceSkeletonError::Render)?;
     writeln!(
         out,
-        "use sinex_primitives::source_contracts::{{CheckpointFamily, OccurrenceIdentity, ResourceProfile, RunnerPack, RuntimeShape, SourceContract, SourceRuntimeBinding}};"
+        "use sinex_primitives::source_contracts::{{AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile, RetentionPolicy, RunnerPack, RuntimeShape, SourceContract, SourceRuntimeBinding}};"
     )
     .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out).map_err(|_| SourceSkeletonError::Render)?;
@@ -131,6 +131,12 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
             .map_err(|_| SourceSkeletonError::Render)?;
     }
     writeln!(out, "        adapter = \"{adapter}\",").map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        privacy_tier = PrivacyTier::Sensitive,")
+        .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        horizons(Horizon::Continuous),")
+        .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        retention = RetentionPolicy::Forever,")
+        .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out, "        implementation = \"{implementation}\",")
         .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(
@@ -138,6 +144,8 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
         "        occurrence_identity = OccurrenceIdentity::Uuid5From(\"replace-with-object-level-occurrence-key\"),"
     )
     .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        access_scope = AccessScope::Internal,")
+        .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(
         out,
         "        resource_profile = ResourceProfile::BoundedFile,"
@@ -311,7 +319,11 @@ mod tests {
         assert!(rendered.contains("compile_error!"));
         assert!(!rendered.contains("pilot"));
         assert!(rendered.contains("event_source ="));
+        assert!(rendered.contains("privacy_tier = PrivacyTier::Sensitive"));
+        assert!(rendered.contains("horizons(Horizon::Continuous)"));
+        assert!(rendered.contains("retention = RetentionPolicy::Forever"));
         assert!(rendered.contains("occurrence_identity = OccurrenceIdentity::Uuid5From"));
+        assert!(rendered.contains("access_scope = AccessScope::Internal"));
         assert!(rendered.contains("runtime_shape = RuntimeShape::OnDemand"));
     }
 

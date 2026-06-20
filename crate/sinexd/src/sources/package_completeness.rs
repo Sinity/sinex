@@ -7,6 +7,7 @@
 //! privacy coverage matrix.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -89,6 +90,44 @@ pub struct PackageCompletenessMode {
     pub requirements: Vec<RequirementDiagnostic>,
     pub missing: Vec<String>,
     pub caveats: Vec<String>,
+}
+
+#[derive(Debug)]
+pub enum PackageCompletenessFilterError {
+    PackageNotFound(String),
+    ModeRequiresPackage,
+    ModeNotFound { package_id: String, mode_id: String },
+    Serialize(serde_json::Error),
+}
+
+impl fmt::Display for PackageCompletenessFilterError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PackageNotFound(package_id) => {
+                write!(
+                    f,
+                    "package `{package_id}` not found in package completeness report"
+                )
+            }
+            Self::ModeRequiresPackage => write!(
+                f,
+                "package completeness mode filtering requires --package-id because mode ids are package-local"
+            ),
+            Self::ModeNotFound {
+                package_id,
+                mode_id,
+            } => write!(f, "mode `{mode_id}` not found for package `{package_id}`"),
+            Self::Serialize(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for PackageCompletenessFilterError {}
+
+impl From<serde_json::Error> for PackageCompletenessFilterError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Serialize(error)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -207,12 +246,6 @@ pub fn build_package_completeness_report() -> PackageCompletenessReport {
     contracts.sort_by(|a, b| a.id.cmp(b.id));
 
     let mut packages = BTreeMap::new();
-    let mut mode_count = 0usize;
-    let mut accepted_mode_count = 0usize;
-    let mut proposed_mode_count = 0usize;
-    let mut manual_mode_count = 0usize;
-    let mut incomplete_mode_count = 0usize;
-    let mut blocking_missing_count = 0usize;
 
     for contract in contracts {
         let bindings = bindings_by_source
@@ -247,17 +280,6 @@ pub fn build_package_completeness_report() -> PackageCompletenessReport {
 
         let mut mode_map = BTreeMap::new();
         for mode in modes {
-            mode_count += 1;
-            match mode.mode_state {
-                PackageModeState::Accepted => accepted_mode_count += 1,
-                PackageModeState::Proposed => proposed_mode_count += 1,
-                PackageModeState::Manual => manual_mode_count += 1,
-                PackageModeState::Incomplete => {}
-            }
-            if mode.completeness == PackageCompleteness::Incomplete {
-                incomplete_mode_count += 1;
-            }
-            blocking_missing_count += mode.requirements.iter().filter(|r| r.blocking).count();
             mode_map.insert(mode.mode_id.clone(), mode);
         }
 
@@ -284,15 +306,7 @@ pub fn build_package_completeness_report() -> PackageCompletenessReport {
             privacy_coverage_projection: "sinexd::sources::privacy_coverage::render_privacy_coverage_matrix",
             report_authority: "compiled inventories plus generated projections; not a detached proof ledger",
         },
-        summary: PackageCompletenessSummary {
-            package_count: packages.len(),
-            mode_count,
-            accepted_mode_count,
-            proposed_mode_count,
-            manual_mode_count,
-            incomplete_mode_count,
-            blocking_missing_count,
-        },
+        summary: summarize_packages(&packages),
         packages,
     }
 }
@@ -300,6 +314,90 @@ pub fn build_package_completeness_report() -> PackageCompletenessReport {
 /// Render deterministic pretty JSON with a trailing newline.
 pub fn render_package_completeness_report() -> serde_json::Result<String> {
     Ok(serde_json::to_string_pretty(&build_package_completeness_report())? + "\n")
+}
+
+/// Render a package/mode-scoped completeness report for authoring loops.
+///
+/// Mode ids are package-local, so callers must provide `package_id` when they
+/// provide `mode_id`.
+pub fn render_filtered_package_completeness_report(
+    package_id: Option<&str>,
+    mode_id: Option<&str>,
+) -> Result<String, PackageCompletenessFilterError> {
+    let report = filter_package_completeness_report(
+        build_package_completeness_report(),
+        package_id,
+        mode_id,
+    )?;
+    Ok(serde_json::to_string_pretty(&report)? + "\n")
+}
+
+fn filter_package_completeness_report(
+    mut report: PackageCompletenessReport,
+    package_id: Option<&str>,
+    mode_id: Option<&str>,
+) -> Result<PackageCompletenessReport, PackageCompletenessFilterError> {
+    if mode_id.is_some() && package_id.is_none() {
+        return Err(PackageCompletenessFilterError::ModeRequiresPackage);
+    }
+
+    if let Some(package_id) = package_id {
+        let package = report
+            .packages
+            .remove(package_id)
+            .ok_or_else(|| PackageCompletenessFilterError::PackageNotFound(package_id.into()))?;
+        report.packages.clear();
+        report.packages.insert(package_id.into(), package);
+    }
+
+    if let Some(mode_id) = mode_id {
+        let package_id = package_id.expect("mode_id requires package_id");
+        let package = report
+            .packages
+            .get_mut(package_id)
+            .expect("package filter already validated package id");
+        let mode = package.modes.remove(mode_id).ok_or_else(|| {
+            PackageCompletenessFilterError::ModeNotFound {
+                package_id: package_id.into(),
+                mode_id: mode_id.into(),
+            }
+        })?;
+        package.modes.clear();
+        package.modes.insert(mode_id.into(), mode);
+    }
+
+    report.summary = summarize_packages(&report.packages);
+    Ok(report)
+}
+
+fn summarize_packages(
+    packages: &BTreeMap<String, PackageCompletenessPackage>,
+) -> PackageCompletenessSummary {
+    let mut summary = PackageCompletenessSummary {
+        package_count: packages.len(),
+        mode_count: 0,
+        accepted_mode_count: 0,
+        proposed_mode_count: 0,
+        manual_mode_count: 0,
+        incomplete_mode_count: 0,
+        blocking_missing_count: 0,
+    };
+
+    for mode in packages.values().flat_map(|package| package.modes.values()) {
+        summary.mode_count += 1;
+        match mode.mode_state {
+            PackageModeState::Accepted => summary.accepted_mode_count += 1,
+            PackageModeState::Proposed => summary.proposed_mode_count += 1,
+            PackageModeState::Manual => summary.manual_mode_count += 1,
+            PackageModeState::Incomplete => {}
+        }
+        if mode.completeness == PackageCompleteness::Incomplete {
+            summary.incomplete_mode_count += 1;
+        }
+        summary.blocking_missing_count += mode.requirements.iter().filter(|r| r.blocking).count();
+    }
+
+    summary
 }
 
 fn build_unbound_mode(
@@ -1117,5 +1215,54 @@ fn to_json_value<T: Serialize>(value: T) -> Value {
             "error": "package_completeness_metadata_serialization_failed",
             "message": error.to_string(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filtered_report_recomputes_package_summary() {
+        let rendered =
+            render_filtered_package_completeness_report(Some("terminal.kitty-osc-live"), None)
+                .unwrap();
+        let report: Value = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(report["summary"]["package_count"], 1);
+        let packages = report["packages"].as_object().unwrap();
+        assert_eq!(packages.len(), 1);
+        let package = packages.get("terminal.kitty-osc-live").unwrap();
+        let mode_count = package["modes"].as_object().unwrap().len();
+        assert_eq!(report["summary"]["mode_count"], mode_count);
+    }
+
+    #[test]
+    fn filtered_report_recomputes_package_mode_summary() {
+        let rendered = render_filtered_package_completeness_report(
+            Some("terminal.kitty-osc-live"),
+            Some("terminal.kitty-osc-live"),
+        )
+        .unwrap();
+        let report: Value = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(report["summary"]["package_count"], 1);
+        assert_eq!(report["summary"]["mode_count"], 1);
+        let package = &report["packages"]["terminal.kitty-osc-live"];
+        let modes = package["modes"].as_object().unwrap();
+        assert_eq!(modes.len(), 1);
+        assert!(modes.contains_key("terminal.kitty-osc-live"));
+    }
+
+    #[test]
+    fn mode_filter_requires_package_id() {
+        let err =
+            render_filtered_package_completeness_report(None, Some("terminal.kitty-osc-live"))
+                .unwrap_err();
+
+        assert!(matches!(
+            err,
+            PackageCompletenessFilterError::ModeRequiresPackage
+        ));
     }
 }
