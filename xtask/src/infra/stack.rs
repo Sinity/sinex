@@ -348,6 +348,7 @@ pub struct CleanupAction {
 pub enum CleanupActionKind {
     StopPostgres,
     StopNats,
+    StopSinexd,
     RemoveStalePostgresPid,
     RemoveMalformedPostgresPid,
     RemoveStaleNatsPid,
@@ -363,6 +364,7 @@ pub struct CleanupTotals {
     pub skipped: usize,
     pub stopped_postgres: usize,
     pub stopped_nats: usize,
+    pub stopped_sinexd: usize,
     pub removed_files: usize,
 }
 
@@ -491,6 +493,7 @@ impl AllCheckoutsCleanup {
                 match action.action {
                     CleanupActionKind::StopPostgres => totals.stopped_postgres += 1,
                     CleanupActionKind::StopNats => totals.stopped_nats += 1,
+                    CleanupActionKind::StopSinexd => totals.stopped_sinexd += 1,
                     CleanupActionKind::RemoveStalePostgresPid
                     | CleanupActionKind::RemoveMalformedPostgresPid
                     | CleanupActionKind::RemoveStaleNatsPid
@@ -582,6 +585,18 @@ impl CheckoutCleanup {
                         "skipped nats pid {pid}: /proc cmdline does not prove ownership of {}",
                         config.nats_config().display()
                     ));
+                }
+            }
+            for pid in status.sinexd.pids {
+                match stop_dev_sinexd_pid(pid, dry_run) {
+                    Ok(()) => actions.push(CleanupAction {
+                        action: CleanupActionKind::StopSinexd,
+                        target: PathBuf::from(format!("/proc/{pid}")),
+                        dry_run,
+                    }),
+                    Err(error) => skipped.push(format!(
+                        "skipped sinexd pid {pid}: failed to stop dev-local runtime: {error:#}"
+                    )),
                 }
             }
         }
@@ -1322,6 +1337,24 @@ fn nats_pid_is_dev_owned(pid: u32, config_path: &Path) -> bool {
         && args.iter().any(|arg| Path::new(arg) == config_path)
 }
 
+fn stop_dev_sinexd_pid(pid: u32, dry_run: bool) -> Result<()> {
+    if dry_run {
+        return Ok(());
+    }
+    unsafe {
+        if libc::kill(pid as i32, libc::SIGTERM) != 0 {
+            bail!("SIGTERM failed: {}", std::io::Error::last_os_error());
+        }
+    }
+    for _ in 0..50 {
+        if !pid_is_alive(pid) {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    bail!("process did not exit after SIGTERM");
+}
+
 fn proc_cmdline_args(pid: u32) -> Vec<String> {
     let path = PathBuf::from(format!("/proc/{pid}/cmdline"));
     proc_cmdline_args_from_path(&path)
@@ -1474,7 +1507,8 @@ mod tests {
         AllCheckoutsCleanup, AllCheckoutsStatus, CleanupActionKind, GIT_REPOSITORY_ENV_KEYS,
         collect_snapshot_names, dir_size, discover_nats_port, git_subprocess, list_snapshots,
         parse_cmdline_bytes, parse_proc_stat_ppid, probe_annex_available,
-        require_successful_command, service_pid_state, sync_event_payload_schemas_for_database_url,
+        require_successful_command, service_pid_state, stop_dev_sinexd_pid,
+        sync_event_payload_schemas_for_database_url,
     };
     use crate::infra::state::{CheckoutInventoryRoot, LockInfo, LockInspection};
     use crate::sandbox::prelude::*;
@@ -1483,6 +1517,8 @@ mod tests {
     use std::fs;
     use std::os::unix::process::ExitStatusExt;
     use std::path::Path;
+    use std::process::Command as StdCommand;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn nats_port_matches_flake_hash_for_sinex_checkout() {
@@ -1628,6 +1664,74 @@ port = 4310
         assert_eq!(cleanup.totals.removed_files, 1);
         assert!(cleanup.checkouts[0].actions[0].dry_run);
         Ok(())
+    }
+
+    #[test]
+    fn all_checkouts_cleanup_dry_run_reports_dev_local_sinexd() -> Result<()> {
+        let base = tempfile::tempdir()?;
+        let checkout = tempfile::tempdir()?;
+        let cache_root = base.path().join("hash123");
+        let dev_state = cache_root.join("dev-state");
+        fs::create_dir_all(&dev_state)?;
+        let fake_bin = checkout.path().join("sinexd");
+        fs::write(
+            &fake_bin,
+            "#!/usr/bin/env bash\n\
+             sleep 30 &\n\
+             child=$!\n\
+             trap 'kill \"$child\" 2>/dev/null; wait \"$child\" 2>/dev/null; exit 0' TERM INT EXIT\n\
+             wait \"$child\"\n",
+        )?;
+        let mut permissions = fs::metadata(&fake_bin)?.permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_bin, permissions)?;
+
+        let mut child = StdCommand::new(&fake_bin)
+            .current_dir(checkout.path())
+            .spawn()
+            .wrap_err("failed to spawn fake dev-local sinexd")?;
+        let pid = child.id();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            let status = AllCheckoutsStatus::gather(
+                base.path().to_path_buf(),
+                vec![CheckoutInventoryRoot {
+                    cache_root: cache_root.clone(),
+                    dev_state_dir: dev_state.clone(),
+                    checkout_path: Some(checkout.path().to_path_buf()),
+                    lock: LockInspection::Missing,
+                }],
+            );
+            if status.checkouts[0].sinexd.pids.contains(&pid) {
+                let cleanup = AllCheckoutsCleanup::run(
+                    base.path().to_path_buf(),
+                    vec![CheckoutInventoryRoot {
+                        cache_root,
+                        dev_state_dir: dev_state,
+                        checkout_path: Some(checkout.path().to_path_buf()),
+                        lock: LockInspection::Missing,
+                    }],
+                    true,
+                    false,
+                )?;
+                assert_eq!(cleanup.totals.stopped_sinexd, 1);
+                assert!(
+                    cleanup.checkouts[0]
+                        .actions
+                        .iter()
+                        .any(|action| action.action == CleanupActionKind::StopSinexd
+                            && action.dry_run)
+                );
+                stop_dev_sinexd_pid(pid, false).ok();
+                child.wait().ok();
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        stop_dev_sinexd_pid(pid, false).ok();
+        child.wait().ok();
+        bail!("fake dev-local sinexd pid {pid} was not detected");
     }
 
     #[test]

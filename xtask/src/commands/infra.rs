@@ -416,8 +416,10 @@ fn execute_all_checkouts_stop(
             cleanup.totals.checkouts, cleanup.totals.actions, cleanup.totals.skipped
         );
         println!(
-            "Stopped:   postgres={} nats={}",
-            cleanup.totals.stopped_postgres, cleanup.totals.stopped_nats
+            "Stopped:   postgres={} nats={} sinexd={}",
+            cleanup.totals.stopped_postgres,
+            cleanup.totals.stopped_nats,
+            cleanup.totals.stopped_sinexd
         );
         println!(
             "Removed:   files={}{}{}",
