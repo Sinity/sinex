@@ -309,6 +309,30 @@ fn summarize_command_output(output: &std::process::Output) -> String {
     format!("exit status {}", output.status)
 }
 
+const GIT_REPOSITORY_ENV_KEYS: &[&str] = &[
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_NAMESPACE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
+];
+
+fn git_subprocess(program: &str) -> Command {
+    let mut command = Command::new(program);
+    // Git hooks export repository-scoped variables such as GIT_DIR. If xtask
+    // inherits them while initializing the isolated annex store, git ignores
+    // current_dir() and mutates the caller's repository metadata instead.
+    for key in GIT_REPOSITORY_ENV_KEYS {
+        command.env_remove(key);
+    }
+    command
+}
+
 fn probe_annex_available(output: std::io::Result<std::process::Output>) -> Result<bool> {
     match output {
         Ok(output) if output.status.success() => Ok(true),
@@ -345,7 +369,7 @@ pub fn annex_init(config: &StackConfig, verbose: bool) -> Result<()> {
         return Ok(());
     }
 
-    if !probe_annex_available(Command::new("git-annex").arg("version").output())? {
+    if !probe_annex_available(git_subprocess("git-annex").arg("version").output())? {
         if verbose {
             println!("git-annex not found, skipping annex initialization");
         }
@@ -360,7 +384,7 @@ pub fn annex_init(config: &StackConfig, verbose: bool) -> Result<()> {
 
     require_successful_command(
         "git init for annex repository",
-        Command::new("git")
+        git_subprocess("git")
             .args(["init"])
             .current_dir(config.annex_data())
             .stdout(Stdio::null())
@@ -370,7 +394,7 @@ pub fn annex_init(config: &StackConfig, verbose: bool) -> Result<()> {
 
     require_successful_command(
         "git-annex init for annex repository",
-        Command::new("git-annex")
+        git_subprocess("git-annex")
             .args(["init", "sinex-dev-isolated"])
             .current_dir(config.annex_data())
             .stdout(Stdio::null())
@@ -380,7 +404,7 @@ pub fn annex_init(config: &StackConfig, verbose: bool) -> Result<()> {
 
     require_successful_command(
         "git config annex.thin",
-        Command::new("git")
+        git_subprocess("git")
             .args(["config", "annex.thin", "true"])
             .current_dir(config.annex_data())
             .stdout(Stdio::null())
@@ -390,7 +414,7 @@ pub fn annex_init(config: &StackConfig, verbose: bool) -> Result<()> {
 
     require_successful_command(
         "git config annex.backend",
-        Command::new("git")
+        git_subprocess("git")
             .args(["config", "annex.backend", &config.annex.backend])
             .current_dir(config.annex_data())
             .stdout(Stdio::null())
@@ -724,8 +748,9 @@ pub fn list_snapshots(dir: &Path) -> SnapshotListProbe {
 mod tests {
     use super::StackConfig;
     use super::{
-        collect_snapshot_names, dir_size, list_snapshots, probe_annex_available,
-        require_successful_command, sync_event_payload_schemas_for_database_url,
+        GIT_REPOSITORY_ENV_KEYS, collect_snapshot_names, dir_size, git_subprocess, list_snapshots,
+        probe_annex_available, require_successful_command,
+        sync_event_payload_schemas_for_database_url,
     };
     use crate::sandbox::prelude::*;
     use std::ffi::OsString;
@@ -775,6 +800,20 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("permission denied"));
         assert!(message.contains("git init for annex repository"));
+    }
+
+    #[test]
+    fn annex_git_subprocess_clears_hook_repository_environment() {
+        let command = git_subprocess("git");
+        for key in GIT_REPOSITORY_ENV_KEYS {
+            let is_removed = command
+                .get_envs()
+                .any(|(name, value)| name == *key && value.is_none());
+            assert!(
+                is_removed,
+                "{key} must be removed so annex initialization cannot mutate the hook caller repo"
+            );
+        }
     }
 
     #[sinex_test]
