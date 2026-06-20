@@ -12,9 +12,10 @@ use sinex_primitives::source_contracts::{
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
-    ActionAvailability, ActionAvailabilityState, CaveatView, CoverageGapView, SinexObjectKind,
-    SinexObjectRef, SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness,
-    SourceCoverageView, SourcePrivacyPosture, SourceResourceBudgetView, ViewEnvelope,
+    ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, CoverageGapView,
+    SinexObjectKind, SinexObjectRef, SourceCoverageContinuity, SourceCoverageListView,
+    SourceCoverageReadiness, SourceCoverageView, SourcePrivacyPosture, SourceResourceBudgetView,
+    ViewEnvelope,
 };
 use sqlx::FromRow;
 use sqlx::PgPool;
@@ -464,33 +465,53 @@ fn source_actions(
 }
 
 fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvailability {
-    let (label, command_hint) = match operation.rsplit('.').next().unwrap_or(operation) {
+    let module = source_runtime_module(source_id);
+    let (label, command_hint, rpc_method, side_effect) = match operation
+        .rsplit('.')
+        .next()
+        .unwrap_or(operation)
+    {
         "check" => (
             "Check Bridge",
             Some(format!("sinexctl sources status {source_id} --format json")),
+            Some("sources.status.view"),
+            ActionSideEffect::Read,
         ),
         "inspect" => (
             "Inspect Bridge",
-            Some(format!("sinexctl sources status {source_id} --format json")),
+            module
+                .map(|module| format!("sinexctl runtime status {module}"))
+                .or_else(|| Some(format!("sinexctl sources status {source_id} --format json"))),
+            module.map(|_| "runtime.status"),
+            ActionSideEffect::Read,
         ),
         "drain" => (
             "Drain Bridge",
-            source_runtime_module(source_id)
+            module
                 .map(|module| format!("sinexctl runtime drain {module} --reason source-coverage")),
+            module.map(|_| "runtime.drain"),
+            ActionSideEffect::Admin,
         ),
-        "flush" => ("Flush Bridge", None),
-        "reconnect" => ("Reconnect Bridge", None),
+        "flush" => ("Flush Bridge", None, None, ActionSideEffect::Admin),
+        "reconnect" => (
+            "Reconnect Bridge",
+            module.map(|module| format!("sinexctl runtime resume {module}")),
+            module.map(|_| "runtime.resume"),
+            ActionSideEffect::Admin,
+        ),
         "pause" => (
             "Pause Bridge",
-            source_runtime_module(source_id)
-                .map(|module| format!("sinexctl runtime drain {module} --reason source-paused")),
+            module.map(|module| format!("sinexctl runtime drain {module} --reason source-paused")),
+            module.map(|_| "runtime.drain"),
+            ActionSideEffect::Admin,
         ),
         "resume" => (
             "Resume Bridge",
-            source_runtime_module(source_id)
-                .map(|module| format!("sinexctl runtime resume {module}")),
+            module.map(|module| format!("sinexctl runtime resume {module}")),
+            module.map(|_| "runtime.resume"),
+            ActionSideEffect::Admin,
         ),
-        _ => ("Package Operation", None),
+        _ => ("Package Operation", None, None, ActionSideEffect::Read),
     };
     let state = if command_hint.is_some() {
         ActionAvailabilityState::Enabled
@@ -504,9 +525,26 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
             "package declares `{operation}` for source `{source_id}`, but no operator actuator command is wired yet"
         )
     };
-    let mut action = ActionAvailability::read(operation, label, state).with_reason(reason);
+    let mut action = ActionAvailability {
+        id: operation.to_string(),
+        label: label.to_string(),
+        state,
+        reason: Some(reason),
+        command_hint: None,
+        rpc_method: None,
+        side_effect,
+        requires_confirmation: matches!(
+            side_effect,
+            ActionSideEffect::Admin | ActionSideEffect::Destructive
+        ),
+        dry_run_available: false,
+        audit_output_ref: None,
+    };
     if let Some(command_hint) = command_hint {
         action = action.with_command_hint(command_hint);
+    }
+    if let Some(rpc_method) = rpc_method {
+        action = action.with_rpc_method(rpc_method);
     }
     action
 }
@@ -722,6 +760,9 @@ mod tests {
             .find(|action| action.id == "terminal.activity.pause")
             .ok_or_else(|| color_eyre::eyre::eyre!("pause action expected"))?;
         assert_eq!(pause.state, ActionAvailabilityState::Enabled);
+        assert_eq!(pause.side_effect, ActionSideEffect::Admin);
+        assert!(pause.requires_confirmation);
+        assert_eq!(pause.rpc_method.as_deref(), Some("runtime.drain"));
         assert_eq!(
             pause.command_hint.as_deref(),
             Some("sinexctl runtime drain terminal-source --reason source-paused")
@@ -733,6 +774,9 @@ mod tests {
             .find(|action| action.id == "terminal.activity.resume")
             .ok_or_else(|| color_eyre::eyre::eyre!("resume action expected"))?;
         assert_eq!(resume.state, ActionAvailabilityState::Enabled);
+        assert_eq!(resume.side_effect, ActionSideEffect::Admin);
+        assert!(resume.requires_confirmation);
+        assert_eq!(resume.rpc_method.as_deref(), Some("runtime.resume"));
         assert_eq!(
             resume.command_hint.as_deref(),
             Some("sinexctl runtime resume terminal-source")
@@ -744,6 +788,9 @@ mod tests {
             .find(|action| action.id == "terminal.activity.drain")
             .ok_or_else(|| color_eyre::eyre::eyre!("drain action expected"))?;
         assert_eq!(drain.state, ActionAvailabilityState::Enabled);
+        assert_eq!(drain.side_effect, ActionSideEffect::Admin);
+        assert!(drain.requires_confirmation);
+        assert_eq!(drain.rpc_method.as_deref(), Some("runtime.drain"));
         assert_eq!(
             drain.command_hint.as_deref(),
             Some("sinexctl runtime drain terminal-source --reason source-coverage")
@@ -754,13 +801,13 @@ mod tests {
             .iter()
             .find(|action| action.id == "terminal.activity.reconnect")
             .ok_or_else(|| color_eyre::eyre::eyre!("reconnect action expected"))?;
-        assert_eq!(reconnect.state, ActionAvailabilityState::Unavailable);
-        assert!(
-            reconnect
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("no operator actuator command")),
-            "declared operation refs should explain missing actuator wiring"
+        assert_eq!(reconnect.state, ActionAvailabilityState::Enabled);
+        assert_eq!(reconnect.side_effect, ActionSideEffect::Admin);
+        assert!(reconnect.requires_confirmation);
+        assert_eq!(reconnect.rpc_method.as_deref(), Some("runtime.resume"));
+        assert_eq!(
+            reconnect.command_hint.as_deref(),
+            Some("sinexctl runtime resume terminal-source")
         );
         Ok(())
     }
