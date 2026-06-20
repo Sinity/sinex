@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use color_eyre::eyre::{Result, eyre};
 use serde_json::Value;
 
-use crate::runner::TestRunner;
+use crate::runner::{TestOutcome, TestRunner};
 
 /// State dir passed to every xtask invocation, isolated from sinex services.
 const STATE_DIR: &str = "/var/lib/sinex/xtask-concurrency-test";
@@ -200,8 +200,11 @@ fn test_zombie_reaping(runner: &mut TestRunner) {
         .collect();
 
     if orphaned.is_empty() {
-        // Job not in recent list — either completed normally or was cleaned up
-        runner.pass(name); // Not a failure; the job settled
+        runner.record(
+            name,
+            TestOutcome::EvidenceMissing,
+            "job was not present in recent history after SIGKILL attempt; zombie-reaping path was not observed",
+        );
         return;
     }
 
@@ -238,8 +241,11 @@ fn test_pid_reuse_safety(runner: &mut TestRunner) {
         xtask_json(&["jobs", "status", &jid.to_string()]).and_then(|v| v["data"]["pid"].as_u64());
 
     let Some(pid) = recorded_pid else {
-        // Job completed before we could read the PID — skip
-        runner.pass(name);
+        runner.record(
+            name,
+            TestOutcome::EvidenceMissing,
+            "background job completed before a PID was recorded; PID-reuse safety path was not exercised",
+        );
         return;
     };
 

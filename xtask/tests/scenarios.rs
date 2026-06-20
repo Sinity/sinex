@@ -12,6 +12,7 @@ mod support;
 use serde_json::Value;
 use sinex_primitives::prelude::*;
 use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use support::xtask_command;
@@ -191,17 +192,7 @@ async fn test_event_engine_log_format_json() -> ::xtask::sandbox::TestResult<()>
     } else {
         "release"
     };
-    let target_dir = get_target_dir_test(&workspace);
-    let binary_path = target_dir.join(profile).join("sinexd");
-
-    if !binary_path.exists() {
-        // Skip gracefully if binary has not been built yet
-        eprintln!(
-            "Skipping D11.6: sinexd not found at {}",
-            binary_path.display()
-        );
-        return Ok(());
-    }
+    let binary_path = ensure_sinexd_binary(&workspace, profile)?;
 
     // Spawn with piped stderr and json log format
     let mut child = std::process::Command::new(&binary_path)
@@ -250,14 +241,11 @@ async fn test_event_engine_log_format_json() -> ::xtask::sandbox::TestResult<()>
         .map_err(|_| color_eyre::eyre::eyre!("stderr reader thread panicked"))??;
     let lines: Vec<&str> = stderr_lines.iter().map(String::as_str).collect();
 
-    // Binary may not emit ANY logs if it errors out immediately (e.g., no DATABASE_URL)
-    // In that case we skip rather than fail — the binary correctly emits JSON for
-    // the lines it does produce, which is what we're testing.
     if lines.is_empty() {
-        eprintln!(
-            "D11.6: no log lines captured (binary may have exited immediately) — skipping assertions"
-        );
-        return Ok(());
+        return Err(color_eyre::eyre::eyre!(
+            "D11.6 captured no stderr log lines from {}; JSON-log behavior was not exercised",
+            binary_path.display()
+        ));
     }
 
     // Every non-empty line must be a valid JSON object
@@ -308,7 +296,42 @@ async fn test_event_engine_log_format_json() -> ::xtask::sandbox::TestResult<()>
 // Helpers
 // ============================================================================
 
-fn find_workspace_root() -> color_eyre::eyre::Result<std::path::PathBuf> {
+fn ensure_sinexd_binary(workspace: &Path, profile: &str) -> color_eyre::eyre::Result<PathBuf> {
+    let target_dir = get_target_dir_test(workspace);
+    let binary_path = target_dir.join(profile).join("sinexd");
+    if binary_path.exists() {
+        return Ok(binary_path);
+    }
+
+    let mut command = xtask::process::cargo_command();
+    command
+        .current_dir(workspace)
+        .args(["build", "-p", "sinexd", "--bin", "sinexd"]);
+    if profile == "release" {
+        command.arg("--release");
+    }
+
+    let status = command.status().map_err(|error| {
+        color_eyre::eyre::eyre!(
+            "failed to invoke managed cargo build for D11.6 sinexd binary: {error}"
+        )
+    })?;
+    if !status.success() {
+        return Err(color_eyre::eyre::eyre!(
+            "D11.6 could not build sinexd binary with status {status}"
+        ));
+    }
+
+    if !binary_path.exists() {
+        return Err(color_eyre::eyre::eyre!(
+            "managed cargo build completed but D11.6 sinexd binary is missing at {}",
+            binary_path.display()
+        ));
+    }
+    Ok(binary_path)
+}
+
+fn find_workspace_root() -> color_eyre::eyre::Result<PathBuf> {
     let mut current = std::env::current_dir()?;
     loop {
         let cargo_toml = current.join("Cargo.toml");
@@ -326,6 +349,6 @@ fn find_workspace_root() -> color_eyre::eyre::Result<std::path::PathBuf> {
     }
 }
 
-fn get_target_dir_test(workspace_root: &std::path::Path) -> std::path::PathBuf {
+fn get_target_dir_test(workspace_root: &Path) -> PathBuf {
     xtask::workspace_target_dir_for(workspace_root)
 }
