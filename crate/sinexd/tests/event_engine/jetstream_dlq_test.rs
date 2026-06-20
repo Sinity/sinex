@@ -422,6 +422,8 @@ async fn start_consumer_with_hooks_and_batch_config(
         hooks.delivery_counter.clone(),
         hooks.route_db_errors_to_dlq,
         hooks.confirmation_failures.clone(),
+        hooks.source_material_ready_dlq_threshold,
+        hooks.source_material_ready_retry_delay,
     )
     .with_batch_fetch_config(max_messages, fetch_timeout);
     let handle = spawn_consumer_and_wait_ready(ctx, &js, &topology, consumer).await?;
@@ -449,17 +451,14 @@ async fn wait_for_retry_delivery(setup: &ConsumerSetup, counters: &TestCounters)
 /// FK violation errors (source material not yet registered) should retry first,
 /// then route to DLQ once the delivery budget proves the material is orphaned.
 ///
-/// Ignored: terminal DLQ routing only happens after
-/// `SOURCE_MATERIAL_READY_DLQ_THRESHOLD` (30) redeliveries, each delayed by
-/// `FK_VIOLATION_RETRY_DELAY` (5s) — ~150s, longer than any practical test
-/// timeout. Exercising budget exhaustion quickly needs a test-configurable
-/// threshold (consumer test hook); tracked in #1800.
-#[ignore = "needs test-configurable FK retry threshold (30x5s budget = ~150s); #1800"]
 #[sinex_test]
 async fn test_fk_violation_routes_to_dlq_after_retry_budget() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
     let suffix = format!("fk-nak-{}", Uuid::now_v7().to_string().to_lowercase());
-    let (hooks, counters) = TestHooks::builder().count_deliveries().build();
+    let (hooks, counters) = TestHooks::builder()
+        .count_deliveries()
+        .source_material_ready_retry_budget(2, Duration::from_millis(50))
+        .build();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;

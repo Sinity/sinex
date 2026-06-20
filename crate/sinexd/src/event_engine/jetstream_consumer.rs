@@ -143,6 +143,10 @@ pub struct JetStreamConsumer {
     processing_delay: Option<Duration>,
     #[cfg(any(test, feature = "testing"))]
     delivery_observer: Option<Arc<AtomicU64>>,
+    #[cfg(any(test, feature = "testing"))]
+    source_material_ready_dlq_threshold: Option<i64>,
+    #[cfg(any(test, feature = "testing"))]
+    source_material_ready_retry_delay: Option<Duration>,
     stats: ConsumerStats,
     /// Test-only: when true, persistence errors are routed to DLQ instead of NAK'd.
     /// Production always uses the NAK path; this field is initialized to `false` and
@@ -390,10 +394,11 @@ fn source_material_unavailable_error(
     prepared: &PreparedEvent,
     material_id: Option<Uuid>,
     persistence_error: Option<&SinexError>,
+    threshold: i64,
 ) -> String {
     let material = material_id.map_or_else(|| "unknown".to_string(), |id| id.to_string());
     let base = format!(
-        "Source material {material} was not registered after {SOURCE_MATERIAL_READY_DLQ_THRESHOLD} deliveries for event {} (source={}, event_type={})",
+        "Source material {material} was not registered after {threshold} deliveries for event {} (source={}, event_type={})",
         prepared.parsed_id, prepared.event.source, prepared.event.event_type
     );
 
@@ -551,6 +556,10 @@ impl JetStreamConsumer {
             processing_delay: None,
             #[cfg(any(test, feature = "testing"))]
             delivery_observer: None,
+            #[cfg(any(test, feature = "testing"))]
+            source_material_ready_dlq_threshold: None,
+            #[cfg(any(test, feature = "testing"))]
+            source_material_ready_retry_delay: None,
             stats: ConsumerStats::default(),
             route_db_errors_to_dlq: false,
             batch_fetch_max_messages: DEFAULT_BATCH_FETCH_MAX_MESSAGES,
@@ -688,6 +697,8 @@ impl JetStreamConsumer {
         delivery_observer: Option<Arc<AtomicU64>>,
         route_db_errors_to_dlq: bool,
         confirmation_failures_remaining: Option<Arc<AtomicUsize>>,
+        source_material_ready_dlq_threshold: Option<i64>,
+        source_material_ready_retry_delay: Option<Duration>,
     ) -> Self {
         let mut consumer = Self::with_ack_wait(nats_client, pool, validator, topology, ack_wait);
         consumer.admission = consumer
@@ -698,6 +709,8 @@ impl JetStreamConsumer {
         consumer.delivery_observer = delivery_observer;
         consumer.route_db_errors_to_dlq = route_db_errors_to_dlq;
         consumer.confirmation_failures_remaining = confirmation_failures_remaining;
+        consumer.source_material_ready_dlq_threshold = source_material_ready_dlq_threshold;
+        consumer.source_material_ready_retry_delay = source_material_ready_retry_delay;
         consumer
     }
 
@@ -2326,6 +2339,30 @@ impl JetStreamConsumer {
         })
     }
 
+    fn source_material_ready_dlq_threshold(&self) -> i64 {
+        #[cfg(any(test, feature = "testing"))]
+        {
+            self.source_material_ready_dlq_threshold
+                .unwrap_or(SOURCE_MATERIAL_READY_DLQ_THRESHOLD)
+        }
+        #[cfg(not(any(test, feature = "testing")))]
+        {
+            SOURCE_MATERIAL_READY_DLQ_THRESHOLD
+        }
+    }
+
+    fn source_material_ready_retry_delay(&self) -> Duration {
+        #[cfg(any(test, feature = "testing"))]
+        {
+            self.source_material_ready_retry_delay
+                .unwrap_or(FK_VIOLATION_RETRY_DELAY)
+        }
+        #[cfg(not(any(test, feature = "testing")))]
+        {
+            FK_VIOLATION_RETRY_DELAY
+        }
+    }
+
     async fn settle_unready_source_material_event(
         &self,
         prepared: &PreparedEvent,
@@ -2337,21 +2374,27 @@ impl JetStreamConsumer {
         } else {
             Some(self.source_material_delivery_attempt(&prepared.message)?)
         };
+        let retry_threshold = self.source_material_ready_dlq_threshold();
+        let retry_delay = self.source_material_ready_retry_delay();
         let should_dlq = self.route_db_errors_to_dlq
-            || delivery_attempt
-                .is_some_and(|attempt| attempt >= SOURCE_MATERIAL_READY_DLQ_THRESHOLD);
+            || delivery_attempt.is_some_and(|attempt| attempt >= retry_threshold);
 
         if should_dlq {
             warn!(
                 event_id = %prepared.parsed_id,
                 material_id = ?material_id,
                 delivery_attempt = ?delivery_attempt,
-                threshold = SOURCE_MATERIAL_READY_DLQ_THRESHOLD,
+                threshold = retry_threshold,
                 "Source material remained unavailable after retry budget; routing event to DLQ"
             );
             self.route_to_dlq_and_ack(
                 &prepared.message,
-                source_material_unavailable_error(prepared, material_id, persistence_error),
+                source_material_unavailable_error(
+                    prepared,
+                    material_id,
+                    persistence_error,
+                    retry_threshold,
+                ),
             )
             .await?;
             self.stats.events_failed.fetch_add(1, Ordering::Relaxed);
@@ -2363,7 +2406,7 @@ impl JetStreamConsumer {
 
         if let Err(err) = prepared
             .message
-            .ack_with(jetstream::AckKind::Nak(Some(FK_VIOLATION_RETRY_DELAY)))
+            .ack_with(jetstream::AckKind::Nak(Some(retry_delay)))
             .await
         {
             warn!(
