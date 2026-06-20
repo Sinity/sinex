@@ -426,6 +426,11 @@ async fn confirmation_buffer_pressure_degrades_health_with_payload_attribution(
         report.confirmation_buffer.memory_owner,
         ConfirmationBufferMemoryOwner::TimedOutGracePayloads
     );
+    assert_eq!(report.confirmation_buffer.pressure_level, "warning");
+    assert_eq!(
+        report.confirmation_buffer.runtime_action,
+        "admit_with_pressure"
+    );
     assert!(report.confirmation_buffer.observed_buffers >= 1);
     assert!(report.confirmation_buffer.pending_count >= 3);
     assert!(report.confirmation_buffer.timed_out_retained_count >= 3);
@@ -447,6 +452,12 @@ async fn confirmation_buffer_pressure_degrades_health_with_payload_attribution(
             .degradation_reasons
             .iter()
             .any(|reason| reason.contains("memory_owner=timed_out_grace_payloads"))
+    );
+    assert!(
+        report
+            .degradation_reasons
+            .iter()
+            .any(|reason| reason.contains("runtime_action=admit_with_pressure"))
     );
 
     Ok(())

@@ -55,6 +55,8 @@ pub struct ConfirmationBufferSnapshot {
     pub timed_out_retained_count: usize,
     pub rejected_count: u64,
     pub late_confirmation_count: u64,
+    pub pressure_level: ConfirmationBufferPressureLevel,
+    pub runtime_action: String,
     pub retained_payload_bytes: usize,
     pub max_payload_bytes: usize,
     pub approximate_payload_bytes: usize,
@@ -63,11 +65,23 @@ pub struct ConfirmationBufferSnapshot {
     pub approximate_payload_bytes_by_kind: BTreeMap<String, usize>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ConfirmationBufferPressureLevel {
     Nominal,
     Warning,
     Critical,
+}
+
+impl ConfirmationBufferPressureLevel {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Nominal => "nominal",
+            Self::Warning => "warning",
+            Self::Critical => "critical",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +104,23 @@ pub struct ConfirmationBufferInsertDecision {
 }
 
 impl ConfirmationBufferInsertDecision {
+    /// Runtime action represented by this insertion decision.
+    ///
+    /// This intentionally mirrors the package budget action vocabulary without
+    /// introducing a scheduler layer here: callers can log and act on the
+    /// decision already made by the confirmation buffer.
+    #[must_use]
+    pub const fn runtime_action(&self) -> &'static str {
+        if !self.accepted {
+            return "throttle";
+        }
+        match self.pressure_level {
+            ConfirmationBufferPressureLevel::Nominal => "admit",
+            ConfirmationBufferPressureLevel::Warning
+            | ConfirmationBufferPressureLevel::Critical => "admit_with_pressure",
+        }
+    }
+
     /// Redelivery pacing for a rejected provisional message.
     ///
     /// The delay is intentionally finite and deterministic so resource-pressure
@@ -109,6 +140,13 @@ impl ConfirmationBufferInsertDecision {
             }
         };
         Some(delay)
+    }
+
+    /// Redelivery delay in milliseconds for diagnostics and structured logs.
+    #[must_use]
+    pub fn rejected_redelivery_delay_ms(&self) -> Option<u64> {
+        self.rejected_redelivery_delay()
+            .map(|delay| u64::try_from(delay.as_millis()).unwrap_or(u64::MAX))
     }
 }
 
@@ -684,12 +722,38 @@ impl ConfirmationBuffer {
             let key = format!("{source}:{event_type}");
             *approximate_payload_bytes_by_kind.entry(key).or_insert(0) += payload_bytes;
         }
+        let mut pressure_level = self
+            .insert_decision(
+                pending_count,
+                retained_payload_bytes,
+                0,
+                retained_payload_bytes,
+            )
+            .pressure_level;
+        if timed_out_retained_count > 0
+            && pressure_level == ConfirmationBufferPressureLevel::Nominal
+        {
+            pressure_level = ConfirmationBufferPressureLevel::Warning;
+        }
+        let pressure = ConfirmationBufferInsertDecision {
+            accepted: true,
+            rejection_reason: None,
+            pressure_level,
+            pending_count,
+            max_capacity: self.max_capacity,
+            retained_payload_bytes,
+            max_payload_bytes: self.max_payload_bytes,
+            attempted_payload_bytes: 0,
+            projected_payload_bytes: retained_payload_bytes,
+        };
 
         ConfirmationBufferSnapshot {
             pending_count,
             timed_out_retained_count,
             rejected_count: self.rejected_count(),
             late_confirmation_count: self.late_confirmation_count(),
+            pressure_level: pressure.pressure_level,
+            runtime_action: pressure.runtime_action().to_string(),
             retained_payload_bytes,
             max_payload_bytes: self.max_payload_bytes,
             approximate_payload_bytes,
@@ -958,6 +1022,8 @@ mod tests {
         let admitted = buffer.add_provisional_with_pressure(at_limit.clone()).await;
         assert!(admitted.accepted);
         assert_eq!(admitted.rejection_reason, None);
+        assert_eq!(admitted.runtime_action(), "admit_with_pressure");
+        assert_eq!(admitted.rejected_redelivery_delay_ms(), None);
         assert_eq!(
             admitted.pressure_level,
             ConfirmationBufferPressureLevel::Critical
@@ -977,6 +1043,8 @@ mod tests {
             rejected.rejected_redelivery_delay(),
             Some(Duration::from_secs(2))
         );
+        assert_eq!(rejected.rejected_redelivery_delay_ms(), Some(2_000));
+        assert_eq!(rejected.runtime_action(), "throttle");
         assert_eq!(
             rejected.pressure_level,
             ConfirmationBufferPressureLevel::Critical
@@ -1024,6 +1092,7 @@ mod tests {
             ))
             .await;
 
+        assert_eq!(admitted.runtime_action(), "admit_with_pressure");
         assert_eq!(admitted.rejected_redelivery_delay(), None);
         assert_eq!(
             rejected.rejection_reason,
@@ -1033,6 +1102,8 @@ mod tests {
             rejected.rejected_redelivery_delay(),
             Some(Duration::from_millis(500))
         );
+        assert_eq!(rejected.rejected_redelivery_delay_ms(), Some(500));
+        assert_eq!(rejected.runtime_action(), "throttle");
         Ok(())
     }
 

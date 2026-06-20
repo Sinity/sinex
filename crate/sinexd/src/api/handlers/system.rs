@@ -80,10 +80,20 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
                 connected: confirmation_buffer.connected,
                 latency_ms: None,
                 detail: Some(confirmation_buffer.detail),
-                attributes: BTreeMap::from([(
-                    "memory_owner".to_string(),
-                    confirmation_buffer.memory_owner.as_str().to_string(),
-                )]),
+                attributes: BTreeMap::from([
+                    (
+                        "memory_owner".to_string(),
+                        confirmation_buffer.memory_owner.as_str().to_string(),
+                    ),
+                    (
+                        "pressure_level".to_string(),
+                        confirmation_buffer.pressure_level,
+                    ),
+                    (
+                        "runtime_action".to_string(),
+                        confirmation_buffer.runtime_action,
+                    ),
+                ]),
             },
             replay_control: ReplayControlHealth {
                 status: if replay.connected {
@@ -185,6 +195,8 @@ mod tests {
                 connected: true,
                 memory_owner:
                     crate::api::service_container::ConfirmationBufferMemoryOwner::TimedOutGracePayloads,
+                pressure_level: "critical".to_string(),
+                runtime_action: "admit_with_pressure".to_string(),
                 observed_buffers: 1,
                 pending_count: 3,
                 timed_out_retained_count: 1,
@@ -197,7 +209,7 @@ mod tests {
                     "system.journald:journald.entry.written".to_string(),
                     4096,
                 )]),
-                detail: "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072, memory_owner=timed_out_grace_payloads"
+                detail: "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, pressure_level=critical, runtime_action=admit_with_pressure, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072, memory_owner=timed_out_grace_payloads"
                     .to_string(),
             },
             replay: ReplayControlStatus {
@@ -240,7 +252,7 @@ mod tests {
         assert_eq!(
             response.components.confirmation_buffer.detail.as_deref(),
             Some(
-                "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072, memory_owner=timed_out_grace_payloads"
+                "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, pressure_level=critical, runtime_action=admit_with_pressure, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072, memory_owner=timed_out_grace_payloads"
             )
         );
         assert_eq!(
@@ -251,6 +263,24 @@ mod tests {
                 .get("memory_owner")
                 .map(String::as_str),
             Some("timed_out_grace_payloads")
+        );
+        assert_eq!(
+            response
+                .components
+                .confirmation_buffer
+                .attributes
+                .get("pressure_level")
+                .map(String::as_str),
+            Some("critical")
+        );
+        assert_eq!(
+            response
+                .components
+                .confirmation_buffer
+                .attributes
+                .get("runtime_action")
+                .map(String::as_str),
+            Some("admit_with_pressure")
         );
         assert!(response.components.replay_control.enabled);
         assert_eq!(
