@@ -82,21 +82,114 @@ struct PackageOperationSpec {
 }
 
 const PACKAGE_OPERATION_EXECUTOR_STATE: &str = "awaiting_runtime_executor";
-const EMAIL_STAGED_MODE_IDS: &[&str] = &[
-    "source:email.mailbox.maildir-staged",
-    "source:email.mailbox.mbox-staged",
-];
+const EMAIL_MAILDIR_STAGED_MODE_ID: &str = "source:email.mailbox.maildir-staged";
+const EMAIL_MBOX_STAGED_MODE_ID: &str = "source:email.mailbox.mbox-staged";
+const EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID: &str = "source:email.mailbox.gmail-api-scheduled-sync";
+const EMAIL_IMAP_SCHEDULED_SYNC_MODE_ID: &str = "source:email.mailbox.imap-scheduled-sync";
+const EMAIL_IMAP_IDLE_LIVE_MODE_ID: &str = "source:email.mailbox.imap-idle-live";
+const EMAIL_STAGED_MODE_IDS: &[&str] = &[EMAIL_MAILDIR_STAGED_MODE_ID, EMAIL_MBOX_STAGED_MODE_ID];
 const EMAIL_PROVIDER_MODE_IDS: &[&str] = &[
-    "source:email.mailbox.gmail-api-scheduled-sync",
-    "source:email.mailbox.imap-scheduled-sync",
-    "source:email.mailbox.imap-idle-live",
+    EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID,
+    EMAIL_IMAP_SCHEDULED_SYNC_MODE_ID,
+    EMAIL_IMAP_IDLE_LIVE_MODE_ID,
 ];
 const EMAIL_SYNC_MODE_IDS: &[&str] = &[
-    "source:email.mailbox.maildir-staged",
-    "source:email.mailbox.mbox-staged",
-    "source:email.mailbox.gmail-api-scheduled-sync",
-    "source:email.mailbox.imap-scheduled-sync",
+    EMAIL_MAILDIR_STAGED_MODE_ID,
+    EMAIL_MBOX_STAGED_MODE_ID,
+    EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID,
+    EMAIL_IMAP_SCHEDULED_SYNC_MODE_ID,
 ];
+
+#[derive(Debug, Clone, Copy)]
+struct EmailProviderModeMetadata {
+    mode: EmailProviderRuntimeMode,
+    caveats: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmailProviderKind {
+    Gmail,
+    Imap,
+}
+
+impl EmailProviderKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Gmail => "gmail",
+            Self::Imap => "imap",
+        }
+    }
+
+    const fn authorization_state_ref(self) -> &'static str {
+        match self {
+            Self::Gmail => "email.mailbox.provider_authorization.gmail.oauth",
+            Self::Imap => "email.mailbox.provider_authorization.imap.credentials",
+        }
+    }
+
+    const fn sync_cursor_ref(self) -> &'static str {
+        match self {
+            Self::Gmail => "email.sync_cursor.observed:gmail.history_id",
+            Self::Imap => "email.sync_cursor.observed:imap.uidvalidity_uid",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmailProviderRuntimeMode {
+    GmailScheduledSync,
+    ImapScheduledSync,
+    ImapIdleLive,
+}
+
+impl EmailProviderRuntimeMode {
+    fn from_mode_id(mode_id: &str) -> Option<Self> {
+        match mode_id {
+            EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID => Some(Self::GmailScheduledSync),
+            EMAIL_IMAP_SCHEDULED_SYNC_MODE_ID => Some(Self::ImapScheduledSync),
+            EMAIL_IMAP_IDLE_LIVE_MODE_ID => Some(Self::ImapIdleLive),
+            _ => None,
+        }
+    }
+
+    const fn provider(self) -> EmailProviderKind {
+        match self {
+            Self::GmailScheduledSync => EmailProviderKind::Gmail,
+            Self::ImapScheduledSync | Self::ImapIdleLive => EmailProviderKind::Imap,
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::GmailScheduledSync | Self::ImapScheduledSync => "scheduled_sync",
+            Self::ImapIdleLive => "idle_live",
+        }
+    }
+
+    const fn runtime_state_ref(self) -> &'static str {
+        match self {
+            Self::GmailScheduledSync => "email.capture_runtime.observed:gmail.scheduled_sync",
+            Self::ImapScheduledSync => "email.capture_runtime.observed:imap.scheduled_sync",
+            Self::ImapIdleLive => "email.capture_runtime.observed:imap.idle_live",
+        }
+    }
+
+    const fn coverage_ref(self) -> &'static str {
+        match self {
+            Self::GmailScheduledSync => "coverage:email.mailbox.gmail.provider_runtime",
+            Self::ImapScheduledSync => "coverage:email.mailbox.imap.provider_runtime",
+            Self::ImapIdleLive => "coverage:email.mailbox.imap.idle_runtime",
+        }
+    }
+
+    const fn debt_ref(self) -> &'static str {
+        match self {
+            Self::GmailScheduledSync => "debt:email.mailbox.gmail.provider_runtime",
+            Self::ImapScheduledSync => "debt:email.mailbox.imap.provider_runtime",
+            Self::ImapIdleLive => "debt:email.mailbox.imap.idle_runtime",
+        }
+    }
+}
 
 const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
     PackageOperationSpec {
@@ -379,8 +472,9 @@ async fn start_package_operation(
         "executor_state".to_string(),
         serde_json::json!(PACKAGE_OPERATION_EXECUTOR_STATE),
     );
+    scope.remove("provider_runtime");
 
-    let preview_summary = serde_json::json!({
+    let mut preview_summary = serde_json::json!({
         "surface": spec.surface,
         "operation_type": operation_type,
         "source_id": spec.source_id,
@@ -389,6 +483,14 @@ async fn start_package_operation(
         "executor_state": PACKAGE_OPERATION_EXECUTOR_STATE,
         "message": spec.executor_message,
     });
+    if let Some(provider_metadata) = email_provider_mode_metadata(&mode_id) {
+        let provider_runtime = email_provider_mode_metadata_value(provider_metadata);
+        scope.insert("provider_runtime".to_string(), provider_runtime.clone());
+        preview_summary
+            .as_object_mut()
+            .expect("package operation preview is an object")
+            .insert("provider_runtime".to_string(), provider_runtime);
+    }
 
     pool.state()
         .log_operation(DbOperation {
@@ -402,6 +504,50 @@ async fn start_package_operation(
             duration_ms: None,
         })
         .await
+}
+
+fn email_provider_mode_metadata(mode_id: &str) -> Option<EmailProviderModeMetadata> {
+    let mode = EmailProviderRuntimeMode::from_mode_id(mode_id)?;
+    match mode {
+        EmailProviderRuntimeMode::GmailScheduledSync => Some(EmailProviderModeMetadata {
+            mode,
+            caveats: &[
+                "provider executor not attached",
+                "authorization state is declared but not persisted",
+                "sync cursor persistence waits for Gmail history-id runtime",
+            ],
+        }),
+        EmailProviderRuntimeMode::ImapScheduledSync => Some(EmailProviderModeMetadata {
+            mode,
+            caveats: &[
+                "provider executor not attached",
+                "authorization state is declared but not persisted",
+                "sync cursor persistence waits for IMAP UIDVALIDITY/UID runtime",
+            ],
+        }),
+        EmailProviderRuntimeMode::ImapIdleLive => Some(EmailProviderModeMetadata {
+            mode,
+            caveats: &[
+                "provider executor not attached",
+                "authorization state is declared but not persisted",
+                "IDLE reconnect/backoff state waits for runtime implementation",
+            ],
+        }),
+    }
+}
+
+fn email_provider_mode_metadata_value(metadata: EmailProviderModeMetadata) -> serde_json::Value {
+    let provider = metadata.mode.provider();
+    serde_json::json!({
+        "provider": provider.as_str(),
+        "provider_runtime": metadata.mode.as_str(),
+        "authorization_state_ref": provider.authorization_state_ref(),
+        "sync_cursor_ref": provider.sync_cursor_ref(),
+        "runtime_state_ref": metadata.mode.runtime_state_ref(),
+        "coverage_ref": metadata.mode.coverage_ref(),
+        "debt_ref": metadata.mode.debt_ref(),
+        "caveats": metadata.caveats,
+    })
 }
 
 async fn start_projection_rebuild_operation(
@@ -687,6 +833,38 @@ mod tests {
         );
         assert_eq!(scope["action"], "sync");
         assert_eq!(scope["account_ref"], "operator-mailbox:primary");
+        let provider_runtime = &scope["provider_runtime"];
+        assert_eq!(provider_runtime["provider"], "gmail");
+        assert_eq!(provider_runtime["provider_runtime"], "scheduled_sync");
+        assert_eq!(
+            provider_runtime["authorization_state_ref"],
+            "email.mailbox.provider_authorization.gmail.oauth"
+        );
+        assert_eq!(
+            provider_runtime["sync_cursor_ref"],
+            "email.sync_cursor.observed:gmail.history_id"
+        );
+        assert_eq!(
+            provider_runtime["runtime_state_ref"],
+            "email.capture_runtime.observed:gmail.scheduled_sync"
+        );
+        assert_eq!(
+            provider_runtime["coverage_ref"],
+            "coverage:email.mailbox.gmail.provider_runtime"
+        );
+        assert_eq!(
+            provider_runtime["debt_ref"],
+            "debt:email.mailbox.gmail.provider_runtime"
+        );
+        assert!(
+            provider_runtime["caveats"]
+                .as_array()
+                .expect("provider runtime caveats should be an array")
+                .iter()
+                .any(
+                    |caveat| caveat == "sync cursor persistence waits for Gmail history-id runtime"
+                )
+        );
 
         let preview = response
             .operation
@@ -698,6 +876,50 @@ mod tests {
         assert_eq!(
             preview["mode_id"],
             "source:email.mailbox.gmail-api-scheduled-sync"
+        );
+        assert_eq!(preview["provider_runtime"], scope["provider_runtime"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ops_start_strips_provider_runtime_for_staged_email_mode(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let response = handle_ops_start(
+            ctx.pool(),
+            OpsStartRequest {
+                operation_type: "email.mailbox.sync".to_string(),
+                scope: Some(serde_json::json!({
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.maildir-staged",
+                    "provider_runtime": {
+                        "provider": "gmail",
+                        "runtime_state_ref": "email.capture_runtime.observed:gmail.scheduled_sync"
+                    }
+                })),
+            },
+            &RpcAuthContext::system(),
+        )
+        .await?;
+
+        let scope = response
+            .operation
+            .scope
+            .as_ref()
+            .expect("email staged operation scope should be recorded");
+        assert_eq!(scope["mode_id"], "source:email.mailbox.maildir-staged");
+        assert!(
+            scope.get("provider_runtime").is_none(),
+            "staged email operations must not retain provider runtime metadata"
+        );
+        let preview = response
+            .operation
+            .preview_summary
+            .as_ref()
+            .expect("email staged operation preview should be recorded");
+        assert!(
+            preview.get("provider_runtime").is_none(),
+            "staged email previews must not advertise provider runtime metadata"
         );
         Ok(())
     }
