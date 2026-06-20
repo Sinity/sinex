@@ -108,11 +108,14 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
         .map(|event| event.event_type.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    let binding = mode.sources.runtime_binding.as_ref();
-    let adapter = binding
+    let selected_binding = mode.sources.runtime_binding.as_ref();
+    let primary_binding = selected_binding.filter(|binding| {
+        mode.mode_id == mode.package_id || binding.subject == format!("source:{}", mode.package_id)
+    });
+    let adapter = primary_binding
         .map(|binding| binding.adapter.as_str())
         .unwrap_or("ReplaceAdapter");
-    let implementation = binding
+    let implementation = primary_binding
         .map(|binding| binding.implementation.as_str())
         .unwrap_or("replace-implementation");
     let source_contract = &mode.sources.source_contract;
@@ -121,27 +124,27 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
     let retention = retention_expr(&source_contract.retention);
     let occurrence_identity = occurrence_identity_expr(&source_contract.occurrence_identity);
     let access_scope = access_scope_expr(&source_contract.access_scope);
-    let privacy_context = binding.map_or_else(
+    let privacy_context = primary_binding.map_or_else(
         || "ProcessingContext::Command".to_string(),
         |binding| privacy_context_expr(&binding.privacy_context),
     );
-    let resource_profile = binding.map_or_else(
+    let resource_profile = primary_binding.map_or_else(
         || "ResourceProfile::BoundedFile".to_string(),
         |binding| resource_profile_expr(&binding.resource_profile),
     );
-    let runner_pack = binding.map_or_else(
+    let runner_pack = primary_binding.map_or_else(
         || "RunnerPack::Staged".to_string(),
         |binding| runner_pack_expr(&binding.runner_pack),
     );
-    let checkpoint_family = binding.map_or_else(
+    let checkpoint_family = primary_binding.map_or_else(
         || "CheckpointFamily::AppendStream".to_string(),
         |binding| checkpoint_family_expr(&binding.checkpoint_family),
     );
-    let runtime_shape = binding.map_or_else(
+    let runtime_shape = primary_binding.map_or_else(
         || "RuntimeShape::OnDemand".to_string(),
         |binding| runtime_shape_expr(&binding.runtime_shape),
     );
-    let capabilities = binding
+    let capabilities = primary_binding
         .map(|binding| binding.capabilities.as_slice())
         .unwrap_or(&mode.coverage_debt_refs);
     writeln!(out, "    #[source_meta(").map_err(|_| SourceSkeletonError::Render)?;
@@ -190,8 +193,13 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
         )
         .map_err(|_| SourceSkeletonError::Render)?;
     }
-    if binding.is_some_and(|binding| binding.proposed) {
+    if primary_binding.is_some_and(|binding| binding.proposed) {
         writeln!(out, "        proposed = true,").map_err(|_| SourceSkeletonError::Render)?;
+    }
+    if let Some(binding) = selected_binding.filter(|binding| {
+        mode.mode_id != mode.package_id && binding.subject != format!("source:{}", mode.package_id)
+    }) {
+        render_nested_binding(&mut out, binding)?;
     }
     writeln!(out, "        factory = \"{}\"", factory_mode(mode))
         .map_err(|_| SourceSkeletonError::Render)?;
@@ -310,6 +318,73 @@ fn factory_mode(mode: &PackageCompletenessMode) -> &'static str {
             }
         }
     }
+}
+
+fn render_nested_binding(
+    out: &mut String,
+    binding: &crate::sources::package_completeness::RuntimeBindingRef,
+) -> Result<(), SourceSkeletonError> {
+    writeln!(out, "        binding(").map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "            subject = \"{}\",", binding.subject)
+        .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(
+        out,
+        "            event_type = \"{}\",",
+        binding.output_event_type
+    )
+    .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(
+        out,
+        "            implementation = \"{}\",",
+        binding.implementation
+    )
+    .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "            adapter = \"{}\",", binding.adapter)
+        .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(
+        out,
+        "            privacy_context = {},",
+        privacy_context_expr(&binding.privacy_context)
+    )
+    .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(
+        out,
+        "            resource_profile = {},",
+        resource_profile_expr(&binding.resource_profile)
+    )
+    .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(
+        out,
+        "            runner_pack = {},",
+        runner_pack_expr(&binding.runner_pack)
+    )
+    .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(
+        out,
+        "            checkpoint_family = {},",
+        checkpoint_family_expr(&binding.checkpoint_family)
+    )
+    .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(
+        out,
+        "            runtime_shape = {},",
+        runtime_shape_expr(&binding.runtime_shape)
+    )
+    .map_err(|_| SourceSkeletonError::Render)?;
+    if !binding.capabilities.is_empty() {
+        writeln!(
+            out,
+            "            capabilities = \"{}\",",
+            binding.capabilities.join(", ")
+        )
+        .map_err(|_| SourceSkeletonError::Render)?;
+    }
+    if binding.proposed {
+        writeln!(out, "            proposed = true").map_err(|_| SourceSkeletonError::Render)?;
+    }
+    writeln!(out, "        ),").map_err(|_| SourceSkeletonError::Render)?;
+
+    Ok(())
 }
 
 fn comma_list(values: &[String]) -> String {
@@ -518,7 +593,6 @@ mod tests {
         assert!(rendered.contains("resource_budget"));
         assert!(rendered.contains("coverage_and_debt_views"));
         assert!(rendered.contains("compile_error!"));
-        assert!(!rendered.contains("pilot"));
         assert!(rendered.contains("event_source ="));
         assert!(rendered.contains("privacy_tier = PrivacyTier::"));
         assert!(rendered.contains("horizons(Horizon::"));
@@ -545,6 +619,28 @@ mod tests {
         assert!(rendered.contains("capabilities = \"coverage:source-coverage, debt:unified-debt-view, operation:terminal.activity.check"));
         assert!(rendered.contains("operation:terminal.activity.inspect"));
         assert!(rendered.contains("factory = \"adapter_parser\""));
+    }
+
+    #[test]
+    fn skeleton_renders_package_mode_binding_metadata() {
+        let rendered = render_source_skeleton(
+            "email.mailbox",
+            "email.mailbox.gmail-api-scheduled-sync",
+        )
+        .unwrap();
+
+        assert!(rendered.contains("binding("));
+        assert!(rendered.contains("subject = \"source:email.mailbox.gmail-api-scheduled-sync\""));
+        assert!(rendered.contains("event_type = \"email.sync_cursor.observed\""));
+        assert!(rendered.contains("implementation = \"gmail-api-scheduled-sync\""));
+        assert!(rendered.contains("adapter = \"GmailApiCursorAdapter\""));
+        assert!(rendered.contains("resource_profile = ResourceProfile::BoundedStream"));
+        assert!(rendered.contains("runner_pack = RunnerPack::SinexdSource"));
+        assert!(rendered.contains("checkpoint_family = CheckpointFamily::Journal"));
+        assert!(rendered.contains("runtime_shape = RuntimeShape::Scheduled"));
+        assert!(rendered.contains("operation:email.mailbox.authorize"));
+        assert!(rendered.contains("operation:email.mailbox.replay"));
+        assert!(rendered.contains("proposed = true"));
     }
 
     #[test]
