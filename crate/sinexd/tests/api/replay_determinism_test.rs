@@ -6,7 +6,6 @@
 
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
-use sinex_primitives::rpc::methods;
 use sinex_primitives::{DynamicPayload, temporal::Timestamp};
 use std::time::Duration;
 use xtask::sandbox::{EnvGuard, prelude::*};
@@ -25,8 +24,7 @@ async fn run_replay(
     material_ids: &[uuid::Uuid],
 ) -> TestResult<String> {
     let plan_result = gw
-        .rpc(
-            methods::REPLAY_CREATE_OPERATION,
+        .create_replay_operation(
             json!({
                 "scope": {
                     "source_name": source_name,
@@ -38,42 +36,15 @@ async fn run_replay(
         )
         .await?;
 
-    let op_id = plan_result["operation"]["operation_id"]
-        .as_str()
-        .ok_or_else(|| color_eyre::eyre::eyre!("operation_id missing from plan response"))?
-        .to_string();
-
-    gw.rpc(
-        methods::REPLAY_PREVIEW_OPERATION,
-        json!({ "operation_id": op_id }),
-    )
-    .await?;
-    gw.rpc(
-        methods::REPLAY_APPROVE_OPERATION,
-        json!({ "operation_id": op_id, "approver": "admin:superuser" }),
-    )
-    .await?;
-    gw.rpc(
-        methods::REPLAY_EXECUTE_OPERATION,
-        json!({ "operation_id": op_id, "executor": "service:worker-1" }),
-    )
-    .await?;
-
-    // Poll for completion
-    for _ in 0..120 {
-        let status = gw
-            .rpc(
-                methods::REPLAY_OPERATION_STATUS,
-                json!({ "operation_id": op_id }),
-            )
-            .await?;
-        match status["operation"]["state"].as_str() {
-            Some("Completed") => return Ok(op_id),
-            Some("Failed") => bail!("Replay operation {op_id} failed: {status}"),
-            _ => tokio::time::sleep(Duration::from_millis(100)).await,
-        }
-    }
-    bail!("Replay operation {op_id} did not complete in time")
+    let op_id = LiveGateway::replay_operation_id(&plan_result)?;
+    gw.preview_replay_operation(&op_id).await?;
+    gw.approve_replay_operation(&op_id, "admin:superuser")
+        .await?;
+    gw.execute_replay_operation(&op_id, "service:worker-1")
+        .await?;
+    gw.wait_for_replay_completed(&op_id, 120, Duration::from_millis(100))
+        .await?;
+    Ok(op_id)
 }
 
 /// Verify that archived events preserve the original content after replay.
