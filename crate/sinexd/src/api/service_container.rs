@@ -67,6 +67,7 @@ pub struct ConfirmationBufferHealth {
     pub timed_out_retained_count: usize,
     pub rejected_count: u64,
     pub late_confirmation_count: u64,
+    pub retained_payload_bytes: usize,
     pub approximate_payload_bytes: usize,
     pub active_payload_bytes: usize,
     pub timed_out_retained_payload_bytes: usize,
@@ -520,6 +521,7 @@ impl ServiceContainer {
                 timed_out_retained_count: 0,
                 rejected_count: 0,
                 late_confirmation_count: 0,
+                retained_payload_bytes: 0,
                 approximate_payload_bytes: 0,
                 active_payload_bytes: 0,
                 timed_out_retained_payload_bytes: 0,
@@ -532,6 +534,7 @@ impl ServiceContainer {
         let mut timed_out_retained_count = 0usize;
         let mut rejected_count = 0u64;
         let mut late_confirmation_count = 0u64;
+        let mut retained_payload_bytes = 0usize;
         let mut approximate_payload_bytes = 0usize;
         let mut active_payload_bytes = 0usize;
         let mut timed_out_retained_payload_bytes = 0usize;
@@ -544,6 +547,7 @@ impl ServiceContainer {
             timed_out_retained_count += snapshot.timed_out_retained_count;
             rejected_count += snapshot.rejected_count;
             late_confirmation_count += snapshot.late_confirmation_count;
+            retained_payload_bytes += snapshot.retained_payload_bytes;
             approximate_payload_bytes += snapshot.approximate_payload_bytes;
             active_payload_bytes += snapshot.active_payload_bytes;
             timed_out_retained_payload_bytes += snapshot.timed_out_retained_payload_bytes;
@@ -582,7 +586,7 @@ impl ServiceContainer {
             .map(|(kind, bytes)| format!(", top_kind={kind} ({bytes} bytes)"))
             .unwrap_or_default();
         let detail = format!(
-            "confirmation buffers: observed={}, pending={}, timed_out_retained={}, rejected={}, late_confirmations={}, pressure_level={}, runtime_action={}, approximate_payload_bytes={}, active_payload_bytes={}, timed_out_retained_payload_bytes={}, memory_owner={}{}",
+            "confirmation buffers: observed={}, pending={}, timed_out_retained={}, rejected={}, late_confirmations={}, pressure_level={}, runtime_action={}, retained_payload_bytes={}, approximate_payload_bytes={}, active_payload_bytes={}, timed_out_retained_payload_bytes={}, memory_owner={}{}",
             snapshots.len(),
             pending_count,
             timed_out_retained_count,
@@ -590,6 +594,7 @@ impl ServiceContainer {
             late_confirmation_count,
             pressure_level.as_str(),
             runtime_action,
+            retained_payload_bytes,
             approximate_payload_bytes,
             active_payload_bytes,
             timed_out_retained_payload_bytes,
@@ -608,6 +613,7 @@ impl ServiceContainer {
             timed_out_retained_count,
             rejected_count,
             late_confirmation_count,
+            retained_payload_bytes,
             approximate_payload_bytes,
             active_payload_bytes,
             timed_out_retained_payload_bytes,
