@@ -372,6 +372,13 @@ async fn source_meta_email_source_registers_rfc822_binding_and_sent_proposal() -
             .any(|(_, event_type)| *event_type == "email.attachment.observed"),
         "email contract must declare attachment observations"
     );
+    assert!(
+        contract
+            .event_types
+            .iter()
+            .any(|(_, event_type)| *event_type == "email.thread.observed"),
+        "email contract must declare thread observations"
+    );
 
     let bindings: Vec<_> = source_runtime_bindings()
         .filter(|binding| binding.source_id == "email.mailbox")
@@ -546,7 +553,7 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
     use sinex_primitives::event_contracts::{
         BROWSER_PAGE_VISITED_CONTRACT_ID, EMAIL_ATTACHMENT_OBSERVED_CONTRACT_ID,
         EMAIL_MESSAGE_RECEIVED_CONTRACT_ID, EMAIL_MESSAGE_SENT_CONTRACT_ID,
-        MEDIA_AUDIO_CAPTURE_SESSION_ENDED_CONTRACT_ID,
+        EMAIL_THREAD_OBSERVED_CONTRACT_ID, MEDIA_AUDIO_CAPTURE_SESSION_ENDED_CONTRACT_ID,
         MEDIA_AUDIO_CAPTURE_SESSION_STARTED_CONTRACT_ID,
         MEDIA_AUDIO_RECORDING_OBSERVED_CONTRACT_ID, MEDIA_AUDIO_TRANSCRIPT_SEGMENT_CONTRACT_ID,
         MEDIA_AUDIO_TRANSCRIPTION_RUN_OBSERVED_CONTRACT_ID,
@@ -648,6 +655,12 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
     );
     assert!(
         email
+            .event_contract_refs
+            .contains(&EMAIL_THREAD_OBSERVED_CONTRACT_ID.to_string()),
+        "email package row must expose the thread-observed EventContract registry row"
+    );
+    assert!(
+        email
             .admission_policy_refs
             .contains(&STANDARD_EVENT_ADMISSION_POLICY_ID.to_string()),
         "email staged mode must be accepted by the standard admission policy"
@@ -667,6 +680,14 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
                 && pair.event_contract_ref.as_deref() == Some(EMAIL_ATTACHMENT_OBSERVED_CONTRACT_ID)
         }),
         "email attachment event pair rows should carry the matching EventContract ref"
+    );
+    assert!(
+        email.event_pairs.iter().any(|pair| {
+            pair.source == "email"
+                && pair.event_type == "email.thread.observed"
+                && pair.event_contract_ref.as_deref() == Some(EMAIL_THREAD_OBSERVED_CONTRACT_ID)
+        }),
+        "email thread event pair rows should carry the matching EventContract ref"
     );
     assert!(
         email

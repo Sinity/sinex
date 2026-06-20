@@ -76,3 +76,23 @@ pub struct EmailAttachmentObservedPayload {
     pub content_id: Option<String>,
     pub material_policy_ref: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "email", event_type = "email.thread.observed")]
+pub struct EmailThreadObservedPayload {
+    pub thread_key: String,
+    pub thread_root_message_id: Option<String>,
+    pub message_id: Option<String>,
+    pub in_reply_to: Option<String>,
+    pub references: Vec<String>,
+    pub date: Option<Timestamp>,
+    pub subject: Option<String>,
+    pub from: Vec<String>,
+    pub to: Vec<String>,
+    pub cc: Vec<String>,
+    pub bcc: Vec<String>,
+    pub folder: Option<String>,
+    pub source_file: String,
+    pub raw_material_id: String,
+    pub mailbox_format: String,
+}
