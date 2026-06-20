@@ -58,14 +58,21 @@ meaning, drop material, censor fields, or bypass admission/disclosure policy.
 
 ## Closure Residuals Surfaced By The Gate
 
-The gate intentionally keeps accepted-intent modes incomplete until remaining
-mechanisms are code-owned and consumed by package rows:
+The gate intentionally keeps accepted-intent modes incomplete when remaining
+mechanisms are code-owned elsewhere but not yet consumed by package rows:
 
-- `coverage_and_debt_views` -> #1901;
-- `operations` -> #1691;
-- disclosure refs -> #1693 where EventContract refs do not yet carry them;
+- coverage and debt view refs from the unified debt/coverage surfaces;
+- operation refs for package-mode operator actions;
+- disclosure refs where EventContract/package metadata do not yet carry the
+  destination-policy evidence directly;
 - `fixtures_and_tests` per-mode fixture ownership.
 
 Those are executable report fields, not detached checklist items. Follow-up
 issues should add code-owned refs or inventory rows that remove the matching
 blocking entries.
+
+Material lifecycle and transport semantics are currently caveat-producing
+fields: they expose missing typed package-mode policy without making
+`--strict` fail by themselves. They remain architectural cleanup targets, but
+release readiness should describe them as caveats unless the gate is changed to
+make accepted rows block on them.
