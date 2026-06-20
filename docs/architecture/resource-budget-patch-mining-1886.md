@@ -1,9 +1,9 @@
 # Resource Budget Patch Mining (#1886)
 
 The turbo resource-budget patch was useful as behavior guidance, but not as a
-literal public model. Current Sinex already has package-level
-`ResourceBudgetSpec` under `source_contracts`, and #1886 is about making runtime
-pressure visible and bounded without creating a parallel scheduler vocabulary.
+literal public model. Current Sinex has package-level `ResourceBudgetSpec`
+under `source_contracts`; the accepted work is about making runtime pressure
+visible and bounded without creating a parallel scheduler vocabulary.
 
 ## Accepted
 
@@ -22,9 +22,9 @@ pressure visible and bounded without creating a parallel scheduler vocabulary.
   deletion, or admission bypass. Budget pressure may throttle, inspect, defer,
   or surface debt; policy remains owned by admission/privacy/operation paths.
 
-## Remaining
+## Reconciled
 
-The still-open #1886 work is memory-owner evidence: attribute live resident
-memory and queued bytes to concrete runtime owners, then expose those snapshots
-through the operator debt/coverage/operation surfaces without starting the
-runtime by default.
+#1886 closed after the memory-owner evidence and confirmation-pressure work
+landed. Future resource-pressure cleanup should start from fresh evidence and
+attach it to the owning runtime/package-completeness surface instead of
+reopening the stale patch vocabulary here.

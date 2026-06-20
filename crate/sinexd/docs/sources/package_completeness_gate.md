@@ -61,9 +61,12 @@ meaning, drop material, censor fields, or bypass admission/disclosure policy.
 The gate intentionally keeps accepted-intent modes incomplete until remaining
 mechanisms are code-owned and consumed by package rows:
 
-- `coverage_and_debt_views` -> #1901;
-- `operations` -> #1691;
-- disclosure refs -> #1693 where EventContract refs do not yet carry them;
+- coverage and debt view refs from the unified debt/coverage surfaces;
+- operation refs for package-mode operator actions;
+- disclosure refs where EventContract/package metadata do not yet carry the
+  destination-policy evidence directly;
+- material lifecycle and transport semantics where accepted modes still rely on
+  prose caveats instead of typed package-mode fields;
 - `fixtures_and_tests` per-mode fixture ownership.
 
 Those are executable report fields, not detached checklist items. Follow-up

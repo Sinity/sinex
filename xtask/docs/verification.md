@@ -60,16 +60,17 @@ Fixed now:
 - Dependency duplicate-doc drift is no longer part of `lint-forbidden`; it is
   covered by the dependency command test suite.
 
-Follow-up issue needed:
+Current owners:
 
-- #1792 should eventually replace the narrow source-catalog release check with a
-  complete source/package gate once package modes have EventContract,
-  AdmissionPolicy, ResourceBudgetSpec, debt views, operations, fixtures, and
-  generated catalog coverage.
+- Source/package completeness is a live executable gate. Release readiness may
+  keep the narrow source-catalog drift check as a fast seam check, but broader
+  source/capture closure claims should cite `sinexd export-package-completeness`
+  rows and the focused tests for the package mode being changed.
 - Privacy destination enforcement remains owned by focused runtime/CLI tests; do
   not replace those with catalog-load proof.
-- #1735 must keep command catalog, help, completion, ViewEnvelope, API, and TUI
-  DTO checks tied to generated-surface or focused Rust tests.
+- Command catalog, help, completion, ViewEnvelope, API, and TUI DTO checks stay
+  tied to generated-surface or focused Rust tests. Do not maintain a separate
+  command-surface proof ledger.
 - Replay/archive invalidation recovery is covered by the `ops.start`
   projection-rebuild recovery test. Broader replay changes should add focused
   tests at the replay/debt/operation boundary they modify.
@@ -80,9 +81,10 @@ Blocked by named human decision:
 
 Intentionally out of scope:
 
-- Resource-budget and package-completeness gates that depend on the new #1899,
-  #1900, #1901, and #1902 primitives are not invented here. They should land as
-  executable v0 mechanisms before release readiness claims them.
+- Release readiness should not grow bespoke proof commands for resource-budget,
+  package-completeness, admission, event-contract, or debt claims. Those
+  primitives now have code-owned surfaces; release readiness should invoke their
+  executable gates or record them as non-claims.
 
 Unsafe due to verification failure:
 
