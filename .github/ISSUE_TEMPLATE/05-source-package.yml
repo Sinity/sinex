@@ -1,5 +1,5 @@
-name: Source Pilot
-description: Add a new Sinex source as a SourceDefinition/Adapter/Parser/admission pilot.
+name: Source/Capture Package
+description: Add a Sinex source/capture package mode through SourceDefinition or SourceMeta.
 title: "[source] "
 labels:
   - type:feat
@@ -8,18 +8,21 @@ body:
   - type: markdown
     attributes:
       value: |
-        A source is mostly a source definition plus an adapter, a parser, and
-        fixtures — not a bespoke pipeline. Fill every field below. See
-        `crate/sinexd/docs/sources/source_family_pilot_template.md` for the full
-        contract and pilot ordering. Prefer the Rust-native derives —
+        A source/capture mode is a source definition plus an adapter, parser,
+        event/admission contracts, disclosure behavior, resource behavior,
+        coverage, operations, and fixtures — not a bespoke pipeline. Fill every
+        field below. See
+        `crate/sinexd/docs/sources/source_capture_package_template.md` for the
+        full contract. Prefer the Rust-native derives —
         `#[derive(SourceDefinition)]` (fully declarative) or `#[derive(SourceMeta)]`
         (hand-written parser) — over manual `register_source_contract!`. Per-field
-        privacy tier and remaining-source migration are tracked in #1727.
+        disclosure behavior stays operator-controlled; a package-level posture
+        is not final field authority.
   - type: input
     id: source_id
     attributes:
       label: Source family / id
-      description: Stable SourceId.
+      description: Stable package/source id.
       placeholder: terminal.atuin-history
     validations:
       required: true
@@ -27,7 +30,7 @@ body:
     id: occurrence
     attributes:
       label: External occurrence and input materials
-      description: What real-world datapoint this observes, and what source material is registered (file/SQLite/IPC/API) plus its raw-material privacy class.
+      description: What real-world datapoint this observes, and what source material is registered (file/SQLite/IPC/API) plus the material-policy owner.
     validations:
       required: true
   - type: textarea
@@ -48,7 +51,7 @@ body:
     id: privacy
     attributes:
       label: Per-field privacy tier
-      description: Per-field privacy for payload fields, source-material class, parser/admission policy, and view/export rules. NOT a single source-level label.
+      description: Field/material/view/export/log/completion/DLQ behavior under operator-owned policy. NOT a single source-level label.
     validations:
       required: true
   - type: textarea
