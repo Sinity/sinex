@@ -94,8 +94,9 @@ pub use config::{
     AutomatonConfig, EventSourceConfig, MaterialMetadataPolicy, PathClassRule, RuntimeConfig,
 };
 pub use confirmation_handler::{
-    ConfirmationBuffer, ConfirmationBufferSnapshot, ConfirmedEventHandler, EventConfirmation,
-    ProcessingModel, ProvisionalEvent, ProvisionalEventHandler, register_confirmation_buffer,
+    ConfirmationBuffer, ConfirmationBufferPressureLevel, ConfirmationBufferSnapshot,
+    ConfirmedEventHandler, EventConfirmation, ProcessingModel, ProvisionalEvent,
+    ProvisionalEventHandler, register_confirmation_buffer,
     registered_confirmation_buffer_snapshots,
 };
 pub use coordination::{HandoffRequest, InstanceMode, RuntimeCoordination};
