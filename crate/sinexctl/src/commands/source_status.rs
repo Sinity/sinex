@@ -18,20 +18,45 @@ EXAMPLES:
     # Show all source status
     sinexctl sources status
 
+    # Show one source package mode
+    sinexctl sources status terminal.kitty-osc-live
+
     # Emit machine-readable status
-    sinexctl sources status --format json
+    sinexctl sources status terminal.kitty-osc-live --format json
 ")]
-pub struct SourceStatusCommand {}
+pub struct SourceStatusCommand {
+    /// Optional source id or substring to inspect.
+    source: Option<String>,
+}
 
 impl SourceStatusCommand {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let envelope = client.sources_status_view().await?;
+        let envelope =
+            filter_sources_status_envelope(client.sources_status_view().await?, &self.source);
         if print_finite_envelope(&envelope, format)? {
             return Ok(());
         }
         CommandOutput::single(envelope, format_sources_status_table).display(&format)?;
         Ok(())
     }
+}
+
+fn filter_sources_status_envelope(
+    mut envelope: ViewEnvelope<SourceCoverageListView>,
+    source: &Option<String>,
+) -> ViewEnvelope<SourceCoverageListView> {
+    let Some(filter) = source.as_deref().filter(|value| !value.is_empty()) else {
+        return envelope;
+    };
+    envelope.payload.sources = envelope
+        .payload
+        .sources
+        .into_iter()
+        .filter(|source| source.source_id.contains(filter))
+        .collect::<Vec<_>>();
+    envelope.payload.count = envelope.payload.sources.len();
+    envelope.query_echo = Some(serde_json::json!({ "source": filter }));
+    envelope
 }
 
 fn readiness_label(readiness: SourceCoverageReadiness) -> console::StyledObject<&'static str> {
@@ -178,6 +203,13 @@ mod tests {
         }
     }
 
+    fn fixture_source_with_id(source_id: &str) -> SourceCoverageView {
+        SourceCoverageView {
+            source_id: source_id.to_string(),
+            ..fixture_source()
+        }
+    }
+
     #[sinex_test]
     async fn table_renderer_shows_source_coverage_view_fields() -> xtask::TestResult<()> {
         let mut source = fixture_source();
@@ -223,6 +255,57 @@ mod tests {
         assert_eq!(
             value["payload"]["sources"][0]["source_id"],
             "fixture.source"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn status_filter_keeps_matching_source_and_envelope_metadata() -> xtask::TestResult<()> {
+        let mut envelope = ViewEnvelope::new(
+            "sinexctl.sources.status",
+            SourceCoverageListView::new(vec![
+                fixture_source_with_id("terminal.kitty-osc-live"),
+                fixture_source_with_id("browser.history"),
+            ]),
+        )
+        .with_query_echo(serde_json::json!({ "from": "gateway" }));
+        envelope.caveats.push(CaveatView {
+            id: "source.coverage.partial".to_string(),
+            message: "fixture top-level caveat".to_string(),
+            ref_: None,
+        });
+
+        let filtered =
+            filter_sources_status_envelope(envelope, &Some("terminal.kitty-osc-live".to_string()));
+
+        assert_eq!(filtered.source_surface, "sinexctl.sources.status");
+        assert_eq!(filtered.caveats.len(), 1);
+        assert_eq!(filtered.payload.count, 1);
+        assert_eq!(
+            filtered.payload.sources[0].source_id,
+            "terminal.kitty-osc-live"
+        );
+        assert_eq!(
+            filtered.query_echo,
+            Some(serde_json::json!({ "source": "terminal.kitty-osc-live" }))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn status_filter_renders_empty_match_as_finite_view() -> xtask::TestResult<()> {
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.status",
+            SourceCoverageListView::new(vec![fixture_source_with_id("browser.history")]),
+        );
+
+        let filtered = filter_sources_status_envelope(envelope, &Some("terminal".to_string()));
+
+        assert_eq!(filtered.payload.count, 0);
+        assert!(filtered.payload.sources.is_empty());
+        assert_eq!(
+            format_sources_status_table(&filtered),
+            "No sources registered."
         );
         Ok(())
     }
