@@ -121,6 +121,12 @@ pub const SHELL_KITTY_COMMAND_EXECUTED_CONTRACT_ID: EventContractId =
     "event-contract:shell.kitty/command.executed@v1";
 pub const BROWSER_PAGE_VISITED_CONTRACT_ID: EventContractId =
     "event-contract:webhistory/page.visited@v1";
+pub const BROWSER_NAVIGATION_OBSERVED_CONTRACT_ID: EventContractId =
+    "event-contract:browser/navigation.observed@v1";
+pub const BROWSER_TAB_ACTIVATED_CONTRACT_ID: EventContractId =
+    "event-contract:browser/tab.activated@v1";
+pub const BROWSER_DOWNLOAD_OBSERVED_CONTRACT_ID: EventContractId =
+    "event-contract:browser/download.observed@v1";
 pub const EMAIL_MESSAGE_RECEIVED_CONTRACT_ID: EventContractId =
     "event-contract:email/message.received@v1";
 pub const EMAIL_MESSAGE_SENT_CONTRACT_ID: EventContractId = "event-contract:email/message.sent@v1";
@@ -159,6 +165,19 @@ const BROWSER_HISTORY_PACKAGES: &[&str] = &["browser.history"];
 const BROWSER_HISTORY_SOURCE_OCCURRENCES: &[OccurrenceIdentity] = &[OccurrenceIdentity::Uuid5From(
     "(source, browser_profile, visit_id)",
 )];
+const BROWSER_WEBEXTENSION_PACKAGES: &[&str] = &["browser.webextension-live"];
+const BROWSER_NAVIGATION_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
+    &[OccurrenceIdentity::Uuid5From(
+        "(profile_id, tab_id, url, observed_at)",
+    )];
+const BROWSER_TAB_ACTIVATED_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
+    &[OccurrenceIdentity::Uuid5From(
+        "(profile_id, tab_id, window_id, observed_at)",
+    )];
+const BROWSER_DOWNLOAD_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
+    &[OccurrenceIdentity::Uuid5From(
+        "(profile_id, download_id, url, observed_at)",
+    )];
 const EMAIL_MAILBOX_PACKAGES: &[&str] = &["email.mailbox"];
 const EMAIL_MAILBOX_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
     &[OccurrenceIdentity::Uuid5From("(message_id, folder)")];
@@ -277,6 +296,75 @@ inventory::submit! {
         disclosure_policy_ref: Some("operator.browser-history.default"),
         admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
         package_refs: BROWSER_HISTORY_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
+inventory::submit! {
+    EventContract {
+        id: BROWSER_NAVIGATION_OBSERVED_CONTRACT_ID,
+        event_source: "browser",
+        event_type: "navigation.observed",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "browser",
+            event_type: "navigation.observed",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::Fields {
+            fields: &["profile_id", "tab_id", "url", "observed_at"],
+        },
+        source_occurrences: BROWSER_NAVIGATION_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicRequired,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.browser-web.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: BROWSER_WEBEXTENSION_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
+inventory::submit! {
+    EventContract {
+        id: BROWSER_TAB_ACTIVATED_CONTRACT_ID,
+        event_source: "browser",
+        event_type: "tab.activated",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "browser",
+            event_type: "tab.activated",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::Fields {
+            fields: &["profile_id", "tab_id", "window_id", "observed_at"],
+        },
+        source_occurrences: BROWSER_TAB_ACTIVATED_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicRequired,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.browser-web.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: BROWSER_WEBEXTENSION_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
+inventory::submit! {
+    EventContract {
+        id: BROWSER_DOWNLOAD_OBSERVED_CONTRACT_ID,
+        event_source: "browser",
+        event_type: "download.observed",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "browser",
+            event_type: "download.observed",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::Fields {
+            fields: &["profile_id", "download_id", "url", "observed_at"],
+        },
+        source_occurrences: BROWSER_DOWNLOAD_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicRequired,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.browser-web.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: BROWSER_WEBEXTENSION_PACKAGES,
         output_kind: OutputKind::CanonicalEvent,
     }
 }
@@ -620,6 +708,59 @@ mod tests {
                     && policy.accepted_event_contracts.contains(&id)
             });
             assert!(accepted_by_standard, "{id} must be admission-addressable");
+        }
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn browser_live_contracts_are_package_policy_and_payload_addressable() -> TestResult<()> {
+        for (contract_id, event_type) in [
+            (
+                BROWSER_NAVIGATION_OBSERVED_CONTRACT_ID,
+                "navigation.observed",
+            ),
+            (BROWSER_TAB_ACTIVATED_CONTRACT_ID, "tab.activated"),
+            (BROWSER_DOWNLOAD_OBSERVED_CONTRACT_ID, "download.observed"),
+        ] {
+            let Some(contract) = find_event_contract(contract_id) else {
+                panic!("missing browser live EventContract {contract_id}");
+            };
+
+            assert_eq!(contract.event_source, "browser");
+            assert_eq!(contract.event_type, event_type);
+            assert!(contract.package_refs.contains(&"browser.webextension-live"));
+            assert!(contract.is_canonical_event());
+            assert_eq!(
+                contract.admission_policy_ref,
+                Some(STANDARD_EVENT_ADMISSION_POLICY_ID)
+            );
+
+            match contract.payload_schema {
+                PayloadSchemaContract::PayloadInventory {
+                    source,
+                    event_type: schema_event_type,
+                    version,
+                } => {
+                    assert_eq!(source, "browser");
+                    assert_eq!(schema_event_type, event_type);
+                    assert_eq!(version, "1.0.0");
+                }
+                PayloadSchemaContract::ExplicitSchemaId { schema_id } => {
+                    panic!(
+                        "browser live EventContract {contract_id} should use payload inventory, got {schema_id}"
+                    )
+                }
+            }
+
+            let accepted_by_standard = admission_policies().any(|policy| {
+                policy.id == STANDARD_EVENT_ADMISSION_POLICY_ID
+                    && policy.accepted_event_contracts.contains(&contract_id)
+            });
+            assert!(
+                accepted_by_standard,
+                "{contract_id} must be admission-addressable"
+            );
         }
 
         Ok(())

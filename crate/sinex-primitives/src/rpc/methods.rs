@@ -156,6 +156,7 @@ pub const TELEMETRY_THROUGHPUT: &str = "telemetry.throughput";
 pub const EVENTS_ANNOTATE: &str = "events.annotate";
 
 // Sources
+pub const BROWSER_CAPTURE_BATCH: &str = "browser.capture_batch";
 pub const SOURCES_STAGE: &str = "sources.stage";
 pub const SOURCES_LIST: &str = "sources.list";
 pub const SOURCES_SHOW: &str = "sources.show";

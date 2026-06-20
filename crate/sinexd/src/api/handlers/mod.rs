@@ -4,6 +4,7 @@
 
 pub mod audit;
 pub mod automata;
+pub mod browser;
 pub mod content;
 pub mod coordination;
 pub mod curation;
@@ -48,6 +49,7 @@ pub use replay::{
 // Re-export new domain-specific handler functions
 pub use audit::handle_audit_get;
 pub use automata::handle_automata_status;
+pub use browser::handle_browser_capture_batch;
 pub use dlq::{handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue};
 pub use instructions::handle_hyprland_workspace_switch;
 pub use lifecycle::{
