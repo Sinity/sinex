@@ -11,7 +11,7 @@ use sqlx::PgPool;
 use crate::runner::TestRunner;
 
 use super::chaos_support::{
-    SINEXD_SERVICE, command_status, event_count, service_is_active, wait_for_event_count_increase,
+    command_status, event_count, report_event_count_increase, report_service_active,
     write_watched_files,
 };
 
@@ -82,12 +82,7 @@ async fn test_partition_event_engine_survives(runner: &mut TestRunner, _pool: &P
     // Wait for partition to stabilize
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Check event_engine is still active
-    if service_is_active(SINEXD_SERVICE) {
-        runner.pass(name);
-    } else {
-        runner.fail(name, "event_engine crashed during NATS partition injection");
-    }
+    report_service_active(runner, name, "event_engine crashed during NATS partition injection");
 }
 
 async fn test_during_partition_period(runner: &mut TestRunner, pool: &PgPool) {
@@ -99,12 +94,7 @@ async fn test_during_partition_period(runner: &mut TestRunner, pool: &PgPool) {
     // Wait to allow event_engine to process (even if buffered)
     tokio::time::sleep(Duration::from_secs(5)).await;
 
-    // Check event_engine still active during partition
-    if service_is_active(SINEXD_SERVICE) {
-        runner.pass(name);
-    } else {
-        runner.fail(name, "event_engine became inactive during partition period");
-    }
+    report_service_active(runner, name, "event_engine became inactive during partition period");
 }
 
 async fn test_partition_healed_event_engine_active(runner: &mut TestRunner, _pool: &PgPool) {
@@ -118,12 +108,7 @@ async fn test_partition_healed_event_engine_active(runner: &mut TestRunner, _poo
     // Wait for network to stabilize
     tokio::time::sleep(Duration::from_secs(10)).await;
 
-    // Verify event_engine is active
-    if service_is_active(SINEXD_SERVICE) {
-        runner.pass(name);
-    } else {
-        runner.fail(name, "event_engine crashed after partition heal");
-    }
+    report_service_active(runner, name, "event_engine crashed after partition heal");
 }
 
 async fn test_events_reach_db_after_heal(runner: &mut TestRunner, pool: &PgPool) {
@@ -132,18 +117,14 @@ async fn test_events_reach_db_after_heal(runner: &mut TestRunner, pool: &PgPool)
     let before = event_count(pool).await;
     write_watched_files("chaos-post-heal", 10, "post-heal");
 
-    match wait_for_event_count_increase(
+    report_event_count_increase(
+        runner,
+        name,
         pool,
         before,
         Duration::from_secs(30),
         Duration::from_secs(2),
+        |before| format!("no events reached DB after 30s of partition heal (before={before})"),
     )
-    .await
-    {
-        Some(_) => runner.pass(name),
-        None => runner.fail(
-            name,
-            &format!("no events reached DB after 30s of partition heal (before={before})"),
-        ),
-    }
+    .await;
 }
