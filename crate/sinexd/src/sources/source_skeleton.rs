@@ -76,7 +76,7 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
     writeln!(out, "use sinex_macros::SourceMeta;").map_err(|_| SourceSkeletonError::Render)?;
     writeln!(
         out,
-        "use sinex_primitives::source_contracts::{{RunnerPack, SourceContract, SourceRuntimeBinding}};"
+        "use sinex_primitives::source_contracts::{{CheckpointFamily, OccurrenceIdentity, ResourceProfile, RunnerPack, RuntimeShape, SourceContract, SourceRuntimeBinding}};"
     )
     .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out).map_err(|_| SourceSkeletonError::Render)?;
@@ -92,12 +92,68 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
     writeln!(out).map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out, "    #[derive(Debug, Clone, Default, SourceMeta)]")
         .map_err(|_| SourceSkeletonError::Render)?;
+    let primary_event = mode.event_pairs.first();
+    let event_source = primary_event
+        .map(|event| event.source.as_str())
+        .unwrap_or("replace.event.source");
+    let event_type = primary_event
+        .map(|event| event.event_type.as_str())
+        .unwrap_or("replace.event_type");
+    let additional_event_types = mode
+        .event_pairs
+        .iter()
+        .skip(1)
+        .map(|event| event.event_type.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let binding = mode.sources.runtime_binding.as_ref();
+    let adapter = binding
+        .map(|binding| binding.adapter.as_str())
+        .unwrap_or("ReplaceAdapter");
+    let implementation = binding
+        .map(|binding| binding.implementation.as_str())
+        .unwrap_or("replace-implementation");
+    writeln!(out, "    #[source_meta(").map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        id = \"{}\",", mode.package_id)
+        .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(
         out,
-        "    #[source_meta(id = \"{}\", namespace = \"{}\", mode = \"{}\")]",
-        mode.package_id, mode.package_id, mode.mode_id
+        "        namespace = \"{}\",",
+        mode.sources.source_contract.namespace
     )
     .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        event_source = \"{event_source}\",")
+        .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        event_type = \"{event_type}\",")
+        .map_err(|_| SourceSkeletonError::Render)?;
+    if !additional_event_types.is_empty() {
+        writeln!(out, "        event_types = \"{additional_event_types}\",")
+            .map_err(|_| SourceSkeletonError::Render)?;
+    }
+    writeln!(out, "        adapter = \"{adapter}\",").map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        implementation = \"{implementation}\",")
+        .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(
+        out,
+        "        occurrence_identity = OccurrenceIdentity::Uuid5From(\"replace-with-object-level-occurrence-key\"),"
+    )
+    .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(
+        out,
+        "        resource_profile = ResourceProfile::BoundedFile,"
+    )
+    .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        runner_pack = RunnerPack::Staged,")
+        .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(
+        out,
+        "        checkpoint_family = CheckpointFamily::AppendStream,"
+    )
+    .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        runtime_shape = RuntimeShape::OnDemand,")
+        .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        factory = \"none\"").map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "    )]").map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out, "    pub struct {type_name}SourceMeta;")
         .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out).map_err(|_| SourceSkeletonError::Render)?;
@@ -254,6 +310,9 @@ mod tests {
         assert!(rendered.contains("coverage_and_debt_views"));
         assert!(rendered.contains("compile_error!"));
         assert!(!rendered.contains("pilot"));
+        assert!(rendered.contains("event_source ="));
+        assert!(rendered.contains("occurrence_identity = OccurrenceIdentity::Uuid5From"));
+        assert!(rendered.contains("runtime_shape = RuntimeShape::OnDemand"));
     }
 
     #[test]
