@@ -44,6 +44,7 @@ pub enum RpcRole {
 pub enum RpcDomain {
     Audit,
     Automata,
+    Browser,
     Content,
     Coordination,
     Curation,
@@ -148,6 +149,7 @@ pub struct RpcMethodInfo {
 
 pub mod audit;
 pub mod automata;
+pub mod browser;
 pub mod content;
 pub mod coordination;
 pub mod curation;
@@ -178,6 +180,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
     vec![
         audit::AUDIT_GET_METHOD.info(),
         automata::AUTOMATA_STATUS_METHOD.info(),
+        browser::BROWSER_CAPTURE_BATCH_METHOD.info(),
         content::CONTENT_RETRIEVE_BLOB_METHOD.info(),
         content::CONTENT_STORE_BLOB_METHOD.info(),
         coordination::COORDINATION_GET_LEADER_METHOD.info(),
@@ -318,6 +321,7 @@ pub mod prelude {
     pub use super::JsonRpcError;
     pub use super::audit::*;
     pub use super::automata::*;
+    pub use super::browser::*;
     pub use super::content::*;
     pub use super::coordination::*;
     pub use super::dlq::*;

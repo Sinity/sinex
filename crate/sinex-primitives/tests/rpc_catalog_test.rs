@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use sinex_primitives::rpc::{RpcMutability, RpcRole, method_catalog};
+use sinex_primitives::rpc::{RpcDomain, RpcMutability, RpcRole, method_catalog, methods};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -62,6 +62,14 @@ async fn rpc_catalog_contains_unique_typed_method_descriptors() -> TestResult<()
         RpcMutability::ReadOnly,
         "llm.route.explain mutability"
     );
+
+    let browser_capture = catalog
+        .iter()
+        .find(|method| method.name == methods::BROWSER_CAPTURE_BATCH)
+        .expect("browser.capture_batch should be catalogued");
+    assert_eq!(browser_capture.role, RpcRole::Write);
+    assert_eq!(browser_capture.domain, RpcDomain::Browser);
+    assert_eq!(browser_capture.mutability, RpcMutability::Mutating);
 
     Ok(())
 }
