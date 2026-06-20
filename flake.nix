@@ -940,7 +940,7 @@ SQL
                   done
 
                   case "$command_name:$subcommand" in
-                    infra:status|run:list)
+                    infra:status|infra:stop|run:list)
                       return 0
                       ;;
                     *)
