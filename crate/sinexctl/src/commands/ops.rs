@@ -253,9 +253,6 @@ pub enum EvidenceCommands {
         /// the content-addressed artifact ref in the bundle.
         #[arg(long)]
         save_artifact: bool,
-        /// Non-authoritative operator note to carry with the bundle.
-        #[arg(long = "note", value_name = "TEXT")]
-        notes: Vec<String>,
     },
 }
 
@@ -391,7 +388,6 @@ impl EvidenceCommands {
                 include_runtime_health,
                 include_package_completeness,
                 save_artifact,
-                notes,
             } => {
                 let spec = build_evidence_bundle_spec(
                     refs,
@@ -403,7 +399,6 @@ impl EvidenceCommands {
                     *include_runtime_health,
                     *include_package_completeness,
                     *save_artifact,
-                    notes,
                 )?;
                 let mut bundle = compile_evidence_bundle(client, &spec).await?;
                 if spec.save_artifact {
@@ -445,7 +440,6 @@ fn build_evidence_bundle_spec(
     include_runtime_health: bool,
     include_package_completeness: bool,
     save_artifact: bool,
-    notes: &[String],
 ) -> Result<EvidenceBundleSpec> {
     let mut spec = EvidenceBundleSpec::new();
     spec.target_context =
@@ -472,9 +466,6 @@ fn build_evidence_bundle_spec(
     for source_id in source_driver_ids {
         spec.seeds
             .push(EvidenceBundleSeedView::source_driver(source_id.clone()));
-    }
-    for note in notes {
-        spec.seeds.push(EvidenceBundleSeedView::operator_note(note));
     }
     if include_debt || include_capture || projection_trigger.is_some() {
         spec.seeds.push(EvidenceBundleSeedView::debt_query(
@@ -506,11 +497,6 @@ async fn compile_evidence_bundle(
         .seeds
         .iter()
         .filter(|seed| seed.kind == EvidenceBundleSeedKind::SourceDriver)
-        .collect::<Vec<_>>();
-    let note_seeds = spec
-        .seeds
-        .iter()
-        .filter(|seed| seed.kind == EvidenceBundleSeedKind::OperatorNote)
         .collect::<Vec<_>>();
 
     for seed in &ref_seeds {
@@ -585,10 +571,6 @@ async fn compile_evidence_bundle(
                 .package_completeness
                 .dedup_by(|a, b| a.package_id == b.package_id);
         }
-    }
-
-    for seed in &note_seeds {
-        bundle.seeds.push((*seed).clone());
     }
 
     if spec.include_debt || spec.include_capture || spec.projection_trigger.is_some() {
@@ -1499,10 +1481,9 @@ mod tests {
             true,
             true,
             true,
-            &["handoff note".to_string()],
         )?;
 
-        assert_eq!(spec.schema_version, "sinex.evidence-bundle-spec/v1");
+        assert_eq!(spec.schema_version, "sinex.evidence-bundle-spec/v2");
         assert_eq!(
             spec.target_context.as_deref(),
             Some("explicit operator-selected seeds")
@@ -1532,11 +1513,6 @@ mod tests {
             spec.seeds
                 .iter()
                 .any(|seed| seed.kind == EvidenceBundleSeedKind::DebtQuery)
-        );
-        assert!(
-            spec.seeds
-                .iter()
-                .any(|seed| seed.kind == EvidenceBundleSeedKind::OperatorNote)
         );
         Ok(())
     }
@@ -1582,7 +1558,7 @@ mod tests {
         let table = format_evidence_bundle_table(&view);
 
         assert!(table.contains("Evidence Bundle"));
-        assert!(table.contains("sinex.evidence-bundle/v1"));
+        assert!(table.contains("sinex.evidence-bundle/v2"));
         assert!(table.contains("Seeds:            1"));
         assert!(table.contains("Included sections: 5"));
         assert!(table.contains("Evidence rows:"));
