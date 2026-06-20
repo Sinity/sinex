@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 
 use sqlx::PgPool;
 
+use crate::runner::TestRunner;
+
 pub const WATCHED_DIR: &str = "/var/lib/sinex/watched";
 pub const SINEXD_SERVICE: &str = "sinexd";
 
@@ -67,6 +69,41 @@ pub async fn wait_for_event_count_increase(
         }
         if Instant::now() >= deadline {
             return None;
+        }
+    }
+}
+
+pub fn report_service_active(runner: &mut TestRunner, name: &str, inactive_reason: &str) -> bool {
+    if service_is_active(SINEXD_SERVICE) {
+        runner.pass(name);
+        true
+    } else {
+        runner.fail(name, inactive_reason);
+        false
+    }
+}
+
+pub async fn report_event_count_increase<F>(
+    runner: &mut TestRunner,
+    name: &str,
+    pool: &PgPool,
+    before: i64,
+    deadline_after: Duration,
+    poll_every: Duration,
+    failure_reason: F,
+) -> Option<i64>
+where
+    F: FnOnce(i64) -> String,
+{
+    let after = wait_for_event_count_increase(pool, before, deadline_after, poll_every).await;
+    match after {
+        Some(count) => {
+            runner.pass(name);
+            Some(count)
+        }
+        None => {
+            runner.fail(name, &failure_reason(before));
+            None
         }
     }
 }

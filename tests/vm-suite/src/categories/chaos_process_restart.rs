@@ -12,7 +12,7 @@ use sqlx::PgPool;
 use crate::runner::TestRunner;
 
 use super::chaos_support::{
-    SINEXD_SERVICE, event_count, wait_for_event_count_increase, wait_for_service_active,
+    SINEXD_SERVICE, event_count, report_event_count_increase, wait_for_service_active,
     write_watched_files,
 };
 
@@ -146,18 +146,14 @@ async fn test_pipeline_flows_after_recovery(runner: &mut TestRunner, pool: &PgPo
     let before = event_count(pool).await;
     write_watched_files("restart-post", 10, "post");
 
-    match wait_for_event_count_increase(
+    report_event_count_increase(
+        runner,
+        name,
         pool,
         before,
         Duration::from_secs(30),
         Duration::from_secs(2),
+        |before| format!("pipeline stalled after recovery (before={before})"),
     )
-    .await
-    {
-        Some(_) => runner.pass(name),
-        None => runner.fail(
-            name,
-            &format!("pipeline stalled after recovery (before={before})"),
-        ),
-    }
+    .await;
 }

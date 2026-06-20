@@ -12,7 +12,7 @@ use sqlx::PgPool;
 use crate::runner::TestRunner;
 
 use super::chaos_support::{
-    SINEXD_SERVICE, command_status, event_count, service_is_active, wait_for_event_count_increase,
+    command_status, event_count, report_service_active, wait_for_event_count_increase,
     write_watched_files,
 };
 
@@ -86,11 +86,7 @@ async fn test_event_engine_survives_clock_advance(runner: &mut TestRunner, _pool
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Check event_engine still active
-    if service_is_active(SINEXD_SERVICE) {
-        runner.pass(name);
-    } else {
-        runner.fail(name, "event_engine crashed after clock advance");
+    if !report_service_active(runner, name, "event_engine crashed after clock advance") {
         // Restore clock before returning
         let _ = command_status("date", &["-s", &format!("@{current_epoch}")]);
     }
