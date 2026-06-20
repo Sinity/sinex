@@ -1,29 +1,10 @@
 use sinex_primitives::activity::ActivitySourceKind;
-use sinex_primitives::domain::{ProcessingMode, TriggerKind};
-use sinex_primitives::events::payloads::{
-    ActivityDailySummaryPayload, ActivityHourlySummaryPayload,
-};
-use sinex_primitives::events::{Event, EventPayload};
+use sinex_primitives::events::payloads::ActivityHourlySummaryPayload;
 use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::daily::{DailySummarizer, DailySummaryState};
-use sinexd::runtime::automaton::{AutomatonContext, DerivedOutput};
-use sinexd::runtime::{AutomatonLogicError, Windowed};
 use xtask::sandbox::prelude::*;
 
-fn make_context(ts_orig: Timestamp) -> AutomatonContext {
-    let event_id: Id<Event<JsonValue>> = Id::new();
-    AutomatonContext {
-        trigger_event_id: event_id,
-        source: ActivityHourlySummaryPayload::SOURCE,
-        event_type: ActivityHourlySummaryPayload::EVENT_TYPE,
-        ts_orig: Some(ts_orig),
-        ts_coided: event_id.timestamp(),
-        processing_mode: ProcessingMode::Live,
-        trigger_kind: TriggerKind::NewEvent,
-        created_by_operation_id: None,
-    }
-}
+use super::summarizer_support::{process_windowed_input, summary_context};
 
 fn hourly_payload(
     hour_start: Timestamp,
@@ -66,18 +47,8 @@ fn hourly_payload(
     }
 }
 
-async fn process(
-    summarizer: &mut DailySummarizer,
-    state: &mut DailySummaryState,
-    payload: ActivityHourlySummaryPayload,
-    context: &AutomatonContext,
-) -> Result<Option<DerivedOutput<ActivityDailySummaryPayload>>, AutomatonLogicError> {
-    summarizer.accumulate(state, payload, context).await?;
-    if summarizer.window_complete(state) {
-        summarizer.emit(state, context).await
-    } else {
-        Ok(None)
-    }
+fn make_context(ts_orig: Timestamp) -> sinexd::runtime::automaton::AutomatonContext {
+    summary_context::<ActivityHourlySummaryPayload>(ts_orig)
 }
 
 #[sinex_test]
@@ -91,7 +62,7 @@ async fn day_boundary_closes_summary_and_seeds_next_day() -> TestResult<()> {
     let second_ctx = make_context(next_day_hour + Duration::hours(1));
 
     assert!(
-        process(
+        process_windowed_input(
             &mut summarizer,
             &mut state,
             hourly_payload(
@@ -110,7 +81,7 @@ async fn day_boundary_closes_summary_and_seeds_next_day() -> TestResult<()> {
         .is_none()
     );
 
-    let output = process(
+    let output = process_windowed_input(
         &mut summarizer,
         &mut state,
         hourly_payload(
@@ -181,7 +152,7 @@ async fn daily_summary_aggregates_hourly_rollups() -> TestResult<()> {
     let third_ctx = make_context(next_day_hour + Duration::hours(1));
 
     assert!(
-        process(
+        process_windowed_input(
             &mut summarizer,
             &mut state,
             hourly_payload(
@@ -203,7 +174,7 @@ async fn daily_summary_aggregates_hourly_rollups() -> TestResult<()> {
         .is_none()
     );
     assert!(
-        process(
+        process_windowed_input(
             &mut summarizer,
             &mut state,
             hourly_payload(
@@ -222,7 +193,7 @@ async fn daily_summary_aggregates_hourly_rollups() -> TestResult<()> {
         .is_none()
     );
 
-    let output = process(
+    let output = process_windowed_input(
         &mut summarizer,
         &mut state,
         hourly_payload(

@@ -16,4 +16,5 @@ mod automata {
     mod instruction_reconciler_test;
     mod relation_extractor_test;
     mod session_detector_test;
+    mod summarizer_support;
 }
