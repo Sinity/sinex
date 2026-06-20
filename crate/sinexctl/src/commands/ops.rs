@@ -4,8 +4,9 @@ use base64::Engine as _;
 use clap::{Subcommand, ValueEnum};
 use serde_json::Value;
 use sinex_primitives::evidence_bundle::{
-    EvidenceBundleOmissionView, EvidenceBundleRuntimeHealthView, EvidenceBundleSavedArtifactView,
-    EvidenceBundleSeedKind, EvidenceBundleSeedView, EvidenceBundleSpec, EvidenceBundleView,
+    EvidenceBundleDiagnosticExcerptView, EvidenceBundleOmissionView,
+    EvidenceBundleRuntimeHealthView, EvidenceBundleSavedArtifactView, EvidenceBundleSeedKind,
+    EvidenceBundleSeedView, EvidenceBundleSpec, EvidenceBundleView,
 };
 use sinex_primitives::public_ref::PublicSinexRef;
 use sinex_primitives::rpc::content::StoreBlobRequest;
@@ -14,10 +15,10 @@ use sinex_primitives::rpc::ops::{Operation as OpsOperation, OpsStartResponse};
 use sinex_primitives::rpc::runtime::RuntimeHealthResponse;
 use sinex_primitives::rpc::sources::{SourceCoverageEntry, SourcePackageCompletenessPackageView};
 use sinex_primitives::views::{
-    ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, CoverageGapView,
-    DebtKind, DebtListView, DebtOwnerView, DebtRowView, DebtStage, OperationJobListView,
-    OperationView, SinexObjectKind, SinexObjectRef, SourceCoverageContinuity,
-    SourceCoverageReadiness, SourceCoverageView, ViewEnvelope,
+    ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, DebtKind,
+    DebtListView, DebtOwnerView, DebtRowView, DebtStage, OperationJobListView, OperationView,
+    SinexObjectKind, SinexObjectRef, SourceCoverageContinuity, SourceCoverageReadiness,
+    SourceCoverageView, ViewEnvelope,
 };
 use sinex_primitives::{DerivationSpec, InvalidationTrigger, affected_derivations};
 
@@ -605,6 +606,8 @@ async fn compile_evidence_bundle(
         }
     }
 
+    attach_bounded_diagnostic_excerpts(&mut bundle);
+
     if bundle.evidence_row_count() == 0 {
         bundle.omitted_sections.push(EvidenceBundleOmissionView::new(
             "evidence_rows",
@@ -613,6 +616,78 @@ async fn compile_evidence_bundle(
     }
 
     Ok(bundle)
+}
+
+const EVIDENCE_BUNDLE_MAX_DIAGNOSTIC_EXCERPTS: usize = 8;
+const EVIDENCE_BUNDLE_MAX_DIAGNOSTIC_EXCERPT_CHARS: usize = 240;
+
+fn attach_bounded_diagnostic_excerpts(bundle: &mut EvidenceBundleView) {
+    for source in &bundle.source_coverage {
+        for caveat in &source.caveats {
+            push_diagnostic_excerpt(
+                &mut bundle.diagnostic_excerpts,
+                "source_coverage",
+                caveat.ref_.clone().or_else(|| {
+                    Some(SinexObjectRef::new(
+                        SinexObjectKind::SourceDriver,
+                        source.source_id.clone(),
+                    ))
+                }),
+                &caveat.message,
+            );
+        }
+    }
+
+    for debt in &bundle.debt_rows {
+        for caveat in &debt.caveats {
+            push_diagnostic_excerpt(
+                &mut bundle.diagnostic_excerpts,
+                "debt_rows",
+                caveat.ref_.clone().or_else(|| debt.refs.first().cloned()),
+                &caveat.message,
+            );
+        }
+    }
+
+    for omission in &bundle.omitted_sections {
+        push_diagnostic_excerpt(
+            &mut bundle.diagnostic_excerpts,
+            "omitted_sections",
+            omission
+                .caveats
+                .first()
+                .and_then(|caveat| caveat.ref_.clone()),
+            &omission.reason,
+        );
+    }
+}
+
+fn push_diagnostic_excerpt(
+    excerpts: &mut Vec<EvidenceBundleDiagnosticExcerptView>,
+    section: impl Into<String>,
+    source_ref: Option<SinexObjectRef>,
+    message: &str,
+) {
+    if message.is_empty() || excerpts.len() >= EVIDENCE_BUNDLE_MAX_DIAGNOSTIC_EXCERPTS {
+        return;
+    }
+
+    let (excerpt, truncated) =
+        bounded_excerpt(message, EVIDENCE_BUNDLE_MAX_DIAGNOSTIC_EXCERPT_CHARS);
+    excerpts.push(EvidenceBundleDiagnosticExcerptView {
+        section: section.into(),
+        source_ref,
+        excerpt,
+        max_chars: EVIDENCE_BUNDLE_MAX_DIAGNOSTIC_EXCERPT_CHARS,
+        truncated,
+    });
+}
+
+fn bounded_excerpt(message: &str, max_chars: usize) -> (String, bool) {
+    let mut chars = message.chars();
+    let excerpt = chars.by_ref().take(max_chars).collect::<String>();
+    let truncated = chars.next().is_some();
+    (excerpt, truncated)
 }
 
 async fn save_evidence_bundle_artifact(
@@ -1302,6 +1377,10 @@ fn format_evidence_bundle_table(view: &EvidenceBundleView) -> String {
         "  Package rows:     {}\n",
         view.package_completeness.len()
     ));
+    output.push_str(&format!(
+        "  Diagnostic excerpts: {}\n",
+        view.diagnostic_excerpts.len()
+    ));
     if let Some(artifact) = view.saved_artifact.as_ref() {
         output.push_str(&format!("  Saved artifact:   {}\n", artifact.ref_));
     }
@@ -1313,6 +1392,16 @@ fn format_evidence_bundle_table(view: &EvidenceBundleView) -> String {
         output.push_str("Omissions:\n");
         for omission in &view.omitted_sections {
             output.push_str(&format!("  - {}: {}\n", omission.section, omission.reason));
+        }
+    }
+    if !view.diagnostic_excerpts.is_empty() {
+        output.push_str("Diagnostics:\n");
+        for excerpt in &view.diagnostic_excerpts {
+            let suffix = if excerpt.truncated { "..." } else { "" };
+            output.push_str(&format!(
+                "  - {}: {}{}\n",
+                excerpt.section, excerpt.excerpt, suffix
+            ));
         }
     }
     output
@@ -1395,6 +1484,7 @@ mod tests {
     use super::*;
     use sinex_primitives::domain::OperationStatus;
     use sinex_primitives::public_ref::ResolvedObjectView;
+    use sinex_primitives::views::CoverageGapView;
     use xtask::sandbox::sinex_test;
 
     fn fixture_operation(id: &str, operation_type: &str) -> OpsOperation {
@@ -1535,6 +1625,7 @@ mod tests {
         view.debt_rows.extend(debt_rows_from_derivation_trigger(
             InvalidationTrigger::Replay,
         ));
+        attach_bounded_diagnostic_excerpts(&mut view);
         view.runtime_health = Some(EvidenceBundleRuntimeHealthView {
             stale_after_secs: 300,
             active_count: 1,
@@ -1560,11 +1651,69 @@ mod tests {
         assert!(table.contains("Evidence Bundle"));
         assert!(table.contains("sinex.evidence-bundle/v2"));
         assert!(table.contains("Seeds:            1"));
-        assert!(table.contains("Included sections: 5"));
+        assert!(table.contains("Included sections: 6"));
         assert!(table.contains("Evidence rows:"));
         assert!(table.contains("Runtime health:   included"));
         assert!(table.contains("Package rows:     1"));
+        assert!(!view.diagnostic_excerpts.is_empty());
+        assert!(
+            view.diagnostic_excerpts
+                .len()
+                <= EVIDENCE_BUNDLE_MAX_DIAGNOSTIC_EXCERPTS
+        );
+        assert!(table.contains("Diagnostic excerpts:"));
+        assert!(table.contains("Diagnostics:"));
+        assert!(table.contains("derivation"));
         assert!(table.contains("Saved artifact:   artifact:SINEXBLAKE3-test"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn evidence_bundle_diagnostic_excerpts_are_bounded() -> xtask::TestResult<()> {
+        let mut view = EvidenceBundleView::new("sinexctl.ops.evidence.compile");
+        view.debt_rows.push(DebtRowView {
+            id: "debt:projection:test".to_string(),
+            kind: DebtKind::Projection,
+            stage: DebtStage::ProjectionStale,
+            summary: "projection needs rebuild".to_string(),
+            refs: vec![SinexObjectRef::new(SinexObjectKind::Projection, "p1")],
+            owner: None,
+            age_secs: None,
+            freshness: None,
+            caveats: vec![CaveatView {
+                id: "projection.long_diagnostic".to_string(),
+                message: "x".repeat(EVIDENCE_BUNDLE_MAX_DIAGNOSTIC_EXCERPT_CHARS + 16),
+                ref_: Some(SinexObjectRef::new(SinexObjectKind::Projection, "p1")),
+            }],
+            actions: Vec::new(),
+        });
+
+        attach_bounded_diagnostic_excerpts(&mut view);
+
+        assert_eq!(view.diagnostic_excerpts.len(), 1);
+        let excerpt = &view.diagnostic_excerpts[0];
+        assert_eq!(excerpt.section, "debt_rows");
+        assert_eq!(excerpt.excerpt.chars().count(), excerpt.max_chars);
+        assert!(excerpt.truncated);
+        assert_eq!(
+            excerpt.source_ref.as_ref().map(ToString::to_string).as_deref(),
+            Some("projection:p1")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn evidence_bundle_command_is_registered_as_finite_view() -> xtask::TestResult<()> {
+        let registry = crate::model::format_registry::build();
+        let capability = registry
+            .get("ops evidence compile")
+            .expect("ops evidence compile must have a format registry entry");
+
+        assert!(capability.supports(OutputFormat::Table));
+        assert!(capability.supports(OutputFormat::Json));
+        assert!(capability.supports(OutputFormat::Yaml));
+        assert!(!capability.supports(OutputFormat::Ndjson));
+        assert!(!capability.streaming);
         Ok(())
     }
 

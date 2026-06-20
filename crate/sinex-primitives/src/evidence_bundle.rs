@@ -164,6 +164,16 @@ pub struct EvidenceBundleSavedArtifactView {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EvidenceBundleDiagnosticExcerptView {
+    pub section: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_ref: Option<SinexObjectRef>,
+    pub excerpt: String,
+    pub max_chars: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceBundleView {
     pub schema_version: String,
     pub generated_at: Timestamp,
@@ -186,6 +196,8 @@ pub struct EvidenceBundleView {
     pub package_completeness: Vec<SourcePackageCompletenessPackageView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub saved_artifact: Option<EvidenceBundleSavedArtifactView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostic_excerpts: Vec<EvidenceBundleDiagnosticExcerptView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub omitted_sections: Vec<EvidenceBundleOmissionView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -210,6 +222,7 @@ impl EvidenceBundleView {
             runtime_health: None,
             package_completeness: Vec::new(),
             saved_artifact: None,
+            diagnostic_excerpts: Vec::new(),
             omitted_sections: Vec::new(),
             caveats: Vec::new(),
             actions: Vec::new(),
@@ -231,6 +244,7 @@ impl EvidenceBundleView {
             !self.operations.is_empty(),
             self.runtime_health.is_some(),
             !self.package_completeness.is_empty(),
+            !self.diagnostic_excerpts.is_empty(),
         ]
         .into_iter()
         .filter(|included| *included)
@@ -245,5 +259,6 @@ impl EvidenceBundleView {
             + self.operations.len()
             + usize::from(self.runtime_health.is_some())
             + self.package_completeness.len()
+            + self.diagnostic_excerpts.len()
     }
 }
