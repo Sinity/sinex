@@ -1842,12 +1842,21 @@ mod tests {
                 )),
             });
         source.actions.push(
-            ActionAvailability::read(
-                "terminal.activity.reconnect",
-                "Reconnect Bridge",
-                ActionAvailabilityState::Unavailable,
-            )
-            .with_reason("package declares `terminal.activity.reconnect` for source `terminal.kitty-osc-live`"),
+            ActionAvailability {
+                id: "terminal.activity.reconnect".to_string(),
+                label: "Reconnect Bridge".to_string(),
+                state: ActionAvailabilityState::Enabled,
+                reason: Some(
+                    "package declares `terminal.activity.reconnect` for source `terminal.kitty-osc-live`"
+                        .to_string(),
+                ),
+                command_hint: Some("sinexctl runtime resume terminal-source".to_string()),
+                rpc_method: Some("runtime.resume".to_string()),
+                side_effect: ActionSideEffect::Admin,
+                requires_confirmation: true,
+                dry_run_available: false,
+                audit_output_ref: None,
+            },
         );
 
         let rows = debt_rows_from_source_status_coverage(&[source]);
@@ -1885,11 +1894,17 @@ mod tests {
             }),
             "debt row should point operators back to the status surface"
         );
-        assert!(
-            row.actions
-                .iter()
-                .any(|action| action.id == "terminal.activity.reconnect"),
-            "declared package operation actions should carry into capture debt"
+        let reconnect = row
+            .actions
+            .iter()
+            .find(|action| action.id == "terminal.activity.reconnect")
+            .ok_or_else(|| color_eyre::eyre::eyre!("reconnect action expected"))?;
+        assert_eq!(reconnect.state, ActionAvailabilityState::Enabled);
+        assert_eq!(reconnect.side_effect, ActionSideEffect::Admin);
+        assert_eq!(reconnect.rpc_method.as_deref(), Some("runtime.resume"));
+        assert_eq!(
+            reconnect.command_hint.as_deref(),
+            Some("sinexctl runtime resume terminal-source")
         );
         Ok(())
     }
