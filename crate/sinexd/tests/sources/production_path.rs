@@ -624,11 +624,10 @@ mod coverage_matrix {
             SmokeCoverage::ObligationHarness,
             "production_path/document.rs",
         ),
-        blocked_entry(
+        entry(
             "email.mailbox",
             SmokeCoverage::ObligationHarness,
-            "source_contracts/email.rs parser/unit coverage; production-path harness tracked by #1469",
-            "#1469",
+            "production_path/email.rs staged RFC822, Maildir, and MBOX fixtures",
         ),
         entry(
             "facebook-messenger-thread",
@@ -930,6 +929,9 @@ mod desktop;
 
 #[path = "production_path/document.rs"]
 mod document;
+
+#[path = "production_path/email.rs"]
+mod email;
 
 #[path = "production_path/export_parsers.rs"]
 mod export_parsers;
