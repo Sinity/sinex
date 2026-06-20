@@ -46,6 +46,56 @@ pub enum AdapterKind {
 /// test instead of being repeated for every source fixture.
 pub const ALL_OBLIGATIONS: &[&str] = &["initial_ingestion", "replay", "isolation", "privacy"];
 
+#[derive(Debug, Clone, Copy)]
+pub struct ProductionPathCase {
+    pub label: &'static str,
+    pub source_id: &'static str,
+    pub adapter_kind: AdapterKind,
+    pub fixture_data: &'static [u8],
+    pub expected_event_types: &'static [&'static str],
+    pub obligation_names: &'static [&'static str],
+}
+
+impl ProductionPathCase {
+    #[must_use]
+    pub const fn new(
+        label: &'static str,
+        source_id: &'static str,
+        adapter_kind: AdapterKind,
+        fixture_data: &'static [u8],
+        expected_event_types: &'static [&'static str],
+    ) -> Self {
+        Self {
+            label,
+            source_id,
+            adapter_kind,
+            fixture_data,
+            expected_event_types,
+            obligation_names: ALL_OBLIGATIONS,
+        }
+    }
+}
+
+pub async fn run_production_path_case(case: ProductionPathCase) -> Result<(), String> {
+    let failures = _run_case(
+        case.source_id,
+        case.adapter_kind,
+        case.fixture_data,
+        case.expected_event_types,
+        case.obligation_names,
+    )
+    .await;
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} production-path obligations failed:\n{failures:#?}",
+            case.label
+        ))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Internal case runner
 // ---------------------------------------------------------------------------
@@ -505,6 +555,12 @@ mod coverage_matrix {
             SmokeCoverage::ObligationHarness,
             "production_path/document.rs",
         ),
+        blocked_entry(
+            "email.mailbox",
+            SmokeCoverage::ObligationHarness,
+            "source_contracts/email.rs parser/unit coverage; production-path harness tracked by #1469",
+            "#1469",
+        ),
         entry(
             "facebook-messenger-thread",
             SmokeCoverage::ObligationHarness,
@@ -529,6 +585,18 @@ mod coverage_matrix {
             "knowledgebase-vault",
             SmokeCoverage::ObligationHarness,
             "production_path/path_sensitive.rs",
+        ),
+        blocked_entry(
+            "media.audio-transcript",
+            SmokeCoverage::ObligationHarness,
+            "source_contracts/media.rs parser/unit coverage; production-path harness tracked by #1043",
+            "#1043",
+        ),
+        blocked_entry(
+            "media.screen-ocr",
+            SmokeCoverage::ObligationHarness,
+            "source_contracts/media.rs parser/unit coverage; production-path harness tracked by #1043",
+            "#1043",
         ),
         entry(
             "noop",
@@ -605,6 +673,12 @@ mod coverage_matrix {
             SmokeCoverage::ObligationHarness,
             "production_path/terminal.rs",
         ),
+        blocked_entry(
+            "terminal.kitty-osc-live",
+            SmokeCoverage::ObligationHarness,
+            "source_contracts/terminal/kitty_osc.rs parser/unit coverage; production-path harness tracked by #1033",
+            "#1033",
+        ),
         entry(
             "terminal.monitor",
             SmokeCoverage::MonitorHarness,
@@ -647,6 +721,20 @@ mod coverage_matrix {
             coverage,
             evidence,
             blocker_issue: None,
+        }
+    }
+
+    const fn blocked_entry(
+        source_id: &'static str,
+        coverage: SmokeCoverage,
+        evidence: &'static str,
+        blocker_issue: &'static str,
+    ) -> SmokeMatrixEntry {
+        SmokeMatrixEntry {
+            source_id,
+            coverage,
+            evidence,
+            blocker_issue: Some(blocker_issue),
         }
     }
 
@@ -734,11 +822,18 @@ mod coverage_matrix {
                 );
             }
 
-            assert!(
-                entry.blocker_issue.is_none(),
-                "{} smoke entry has obsolete blocker metadata",
-                entry.source_id
-            );
+            if let Some(blocker_issue) = entry.blocker_issue {
+                assert!(
+                    blocker_issue.starts_with('#'),
+                    "{} blocker must cite a GitHub issue number",
+                    entry.source_id
+                );
+                assert!(
+                    entry.evidence.contains(blocker_issue),
+                    "{} evidence must mention its blocker issue {blocker_issue}",
+                    entry.source_id
+                );
+            }
         }
 
         Ok(())

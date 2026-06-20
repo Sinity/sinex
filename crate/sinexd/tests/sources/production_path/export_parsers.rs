@@ -54,71 +54,67 @@ id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
       ]
     }"#;
 
+    const RAINDROP_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "raindrop-bookmarks",
+        "raindrop-bookmarks",
+        crate::AdapterKind::StaticFile,
+        RAINDROP_CSV,
+        &["bookmark.created"],
+    );
+
+    const SPOTIFY_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "spotify-extended-history",
+        "spotify-extended-history",
+        crate::AdapterKind::StaticFile,
+        SPOTIFY_JSON,
+        &["track.played"],
+    );
+
+    const HLEDGER_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "hledger-journal",
+        "hledger-journal",
+        crate::AdapterKind::StaticFile,
+        HLEDGER_JOURNAL,
+        &["transaction.posted"],
+    );
+
+    const MESSENGER_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "facebook-messenger-thread",
+        "facebook-messenger-thread",
+        crate::AdapterKind::StaticFile,
+        MESSENGER_THREAD,
+        &["message.sent"],
+    );
+
     #[sinex_test]
     async fn raindrop_bookmarks_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "raindrop-bookmarks",
-            crate::AdapterKind::StaticFile,
-            RAINDROP_CSV,
-            &["bookmark.created"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "raindrop-bookmarks obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(RAINDROP_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
     #[sinex_test]
     async fn spotify_extended_history_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "spotify-extended-history",
-            crate::AdapterKind::StaticFile,
-            SPOTIFY_JSON,
-            &["track.played"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "spotify-extended-history obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(SPOTIFY_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
     #[sinex_test]
     async fn hledger_journal_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "hledger-journal",
-            crate::AdapterKind::StaticFile,
-            HLEDGER_JOURNAL,
-            &["transaction.posted"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "hledger-journal obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(HLEDGER_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
     #[sinex_test]
     async fn facebook_messenger_thread_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "facebook-messenger-thread",
-            crate::AdapterKind::StaticFile,
-            MESSENGER_THREAD,
-            &["message.sent"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "facebook-messenger-thread obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(MESSENGER_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 }

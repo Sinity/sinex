@@ -30,6 +30,10 @@ explicitly invoked.
 - [ ] `xtask check --changed-strict origin/master` (drift guard — required for any PR
       touching Rust source unless `WIP:` in the title; auto-runs via the
       `.githooks/pre-push` hook installed by the devshell)
+- [ ] Impact evidence recorded when the affected-test/default-test choice matters:
+      `xtask impact explain --json` for ordinary test-scope decisions, or
+      `xtask test --impact-mode=off --all` when this PR intentionally takes the
+      broad phase-boundary path instead of affected selection.
 
 ```bash
 # commands here

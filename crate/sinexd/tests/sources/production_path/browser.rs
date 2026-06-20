@@ -25,54 +25,51 @@ mod tests {
     const JSONL_DUMP_FIXTURE: &[u8] =
         b"{\"url\":\"https://dump.example.com\",\"title\":\"Dump\",\"time\":1700002000}\n";
 
+    const QUTEBROWSER_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "browser.history qutebrowser",
+        "browser.history",
+        crate::AdapterKind::SqliteRow,
+        QUTEBROWSER_FIXTURE,
+        &["page.visited"],
+    );
+
+    const CHROMIUM_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "browser.history chromium",
+        "browser.history",
+        crate::AdapterKind::SqliteRow,
+        CHROMIUM_FIXTURE,
+        &["page.visited"],
+    );
+
+    const JSONL_DUMP_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "browser.history JSONL dump",
+        "browser.history",
+        crate::AdapterKind::AppendOnlyFile,
+        JSONL_DUMP_FIXTURE,
+        &["page.visited"],
+    );
+
     #[sinex_test]
     async fn browser_history_qutebrowser_initial_ingestion() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "browser.history",
-            crate::AdapterKind::SqliteRow,
-            QUTEBROWSER_FIXTURE,
-            &["page.visited"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "browser.history qutebrowser obligations failed:\n{failures:#?}"
-        );
+        crate::run_production_path_case(QUTEBROWSER_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
     #[sinex_test]
     async fn browser_history_chromium_initial_ingestion() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "browser.history",
-            crate::AdapterKind::SqliteRow,
-            CHROMIUM_FIXTURE,
-            &["page.visited"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "browser.history chromium obligations failed:\n{failures:#?}"
-        );
+        crate::run_production_path_case(CHROMIUM_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
     #[sinex_test]
     async fn browser_history_jsonl_dump_initial_ingestion() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "browser.history",
-            crate::AdapterKind::AppendOnlyFile,
-            JSONL_DUMP_FIXTURE,
-            &["page.visited"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "browser.history JSONL dump obligations failed:\n{failures:#?}"
-        );
+        crate::run_production_path_case(JSONL_DUMP_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 }

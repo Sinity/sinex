@@ -40,24 +40,63 @@ mod tests {
     /// A plain text history line (catch-all parser).
     const TEXT_FIXTURE: &[u8] = b"make build\n";
 
+    const ATUIN_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "terminal.atuin-history",
+        "terminal.atuin-history",
+        crate::AdapterKind::SqliteRow,
+        ATUIN_FIXTURE,
+        &["command.executed"],
+    );
+
+    const BASH_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "terminal.bash-history",
+        "terminal.bash-history",
+        crate::AdapterKind::AppendOnlyFile,
+        BASH_FIXTURE,
+        &["command.imported"],
+    );
+
+    const ZSH_PLAIN_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "terminal.zsh-history plain",
+        "terminal.zsh-history",
+        crate::AdapterKind::AppendOnlyFile,
+        ZSH_PLAIN_FIXTURE,
+        &["command.imported"],
+    );
+
+    const ZSH_EXTENDED_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "terminal.zsh-history extended",
+        "terminal.zsh-history",
+        crate::AdapterKind::AppendOnlyFile,
+        ZSH_EXTENDED_FIXTURE,
+        &["command.imported"],
+    );
+
+    const TEXT_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "terminal.text-history",
+        "terminal.text-history",
+        crate::AdapterKind::AppendOnlyFile,
+        TEXT_FIXTURE,
+        &["command.imported"],
+    );
+
+    const FISH_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+        "terminal.fish-history",
+        "terminal.fish-history",
+        crate::AdapterKind::SqliteRow,
+        FISH_FIXTURE,
+        &["command.imported"],
+    );
+
     // -------------------------------------------------------------------------
     // terminal.atuin-history
     // -------------------------------------------------------------------------
 
     #[sinex_test]
     async fn terminal_atuin_history_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "terminal.atuin-history",
-            crate::AdapterKind::SqliteRow,
-            ATUIN_FIXTURE,
-            &["command.executed"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "terminal.atuin-history obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(ATUIN_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
@@ -67,18 +106,9 @@ mod tests {
 
     #[sinex_test]
     async fn terminal_bash_history_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "terminal.bash-history",
-            crate::AdapterKind::AppendOnlyFile,
-            BASH_FIXTURE,
-            &["command.imported"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "terminal.bash-history obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(BASH_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
@@ -88,18 +118,9 @@ mod tests {
 
     #[sinex_test]
     async fn terminal_zsh_history_plain_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "terminal.zsh-history",
-            crate::AdapterKind::AppendOnlyFile,
-            ZSH_PLAIN_FIXTURE,
-            &["command.imported"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "terminal.zsh-history (plain) obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(ZSH_PLAIN_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
@@ -109,18 +130,9 @@ mod tests {
 
     #[sinex_test]
     async fn terminal_zsh_history_extended_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "terminal.zsh-history",
-            crate::AdapterKind::AppendOnlyFile,
-            ZSH_EXTENDED_FIXTURE,
-            &["command.imported"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "terminal.zsh-history (extended) obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(ZSH_EXTENDED_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
@@ -130,18 +142,9 @@ mod tests {
 
     #[sinex_test]
     async fn terminal_text_history_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "terminal.text-history",
-            crate::AdapterKind::AppendOnlyFile,
-            TEXT_FIXTURE,
-            &["command.imported"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "terminal.text-history obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(TEXT_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
@@ -151,18 +154,9 @@ mod tests {
 
     #[sinex_test]
     async fn terminal_fish_history_obligations() -> TestResult<()> {
-        let failures = crate::_run_case(
-            "terminal.fish-history",
-            crate::AdapterKind::SqliteRow,
-            FISH_FIXTURE,
-            &["command.imported"],
-            crate::ALL_OBLIGATIONS,
-        )
-        .await;
-        assert!(
-            failures.is_empty(),
-            "terminal.fish-history obligations failed: {failures:#?}"
-        );
+        crate::run_production_path_case(FISH_CASE)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
         Ok(())
     }
 
