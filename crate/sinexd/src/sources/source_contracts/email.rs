@@ -1,8 +1,9 @@
 //! Email capture source — `email.mailbox` (#1469).
 //!
 //! The accepted staged modes cover RFC822/`.eml`, Maildir entries, and MBOX
-//! message slices. Live Gmail/IMAP modes stay represented by issue scope, not
-//! by this parser.
+//! message slices. Proposed Gmail/IMAP modes publish package-mode, cursor, and
+//! runtime contracts for coverage/debt/deployment inventory without claiming
+//! that this staged parser runs those provider clients.
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
@@ -40,7 +41,7 @@ pub struct EmailMailboxParserConfig;
     namespace = "email",
     event_source = "email",
     event_type = "email.message.received",
-    event_types = "email.message.sent, email.attachment.observed, email.thread.observed",
+    event_types = "email.message.sent, email.attachment.observed, email.thread.observed, email.sync_cursor.observed, email.capture_runtime.observed",
     adapter = "FileContentDropAdapter",
     implementation = "staged-parser",
     privacy_tier = PrivacyTier::Sensitive,
@@ -80,6 +81,42 @@ pub struct EmailMailboxParserConfig;
         subject = "source:email.mailbox.sent",
         event_type = "email.message.sent",
         proposed = true
+    ),
+    binding(
+        subject = "source:email.mailbox.gmail-api-scheduled-sync",
+        event_type = "email.sync_cursor.observed",
+        implementation = "gmail-api-scheduled-sync",
+        adapter = "GmailApiCursorAdapter",
+        resource_profile = ResourceProfile::BoundedStream,
+        runner_pack = RunnerPack::SinexdSource,
+        checkpoint_family = CheckpointFamily::Journal,
+        runtime_shape = RuntimeShape::Scheduled,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.sync, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.replay",
+        proposed = true
+    ),
+    binding(
+        subject = "source:email.mailbox.imap-scheduled-sync",
+        event_type = "email.sync_cursor.observed",
+        implementation = "imap-scheduled-sync",
+        adapter = "ImapCursorAdapter",
+        resource_profile = ResourceProfile::BoundedStream,
+        runner_pack = RunnerPack::SinexdSource,
+        checkpoint_family = CheckpointFamily::Polling,
+        runtime_shape = RuntimeShape::Scheduled,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.sync, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.replay",
+        proposed = true
+    ),
+    binding(
+        subject = "source:email.mailbox.imap-idle-live",
+        event_type = "email.capture_runtime.observed",
+        implementation = "imap-idle-live",
+        adapter = "ImapIdleAdapter",
+        resource_profile = ResourceProfile::LiveWatcher,
+        runner_pack = RunnerPack::Live,
+        checkpoint_family = CheckpointFamily::LiveObservation,
+        runtime_shape = RuntimeShape::Continuous,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect",
+        proposed = true
     )
 )]
 pub struct EmailMailboxParser;
@@ -110,6 +147,14 @@ impl MaterialParser for EmailMailboxParser {
                 (
                     EventSource::from_static("email"),
                     EventType::from_static("email.thread.observed"),
+                ),
+                (
+                    EventSource::from_static("email"),
+                    EventType::from_static("email.sync_cursor.observed"),
+                ),
+                (
+                    EventSource::from_static("email"),
+                    EventType::from_static("email.capture_runtime.observed"),
                 ),
             ],
             privacy_contexts: vec![ProcessingContext::Document, ProcessingContext::Metadata],
