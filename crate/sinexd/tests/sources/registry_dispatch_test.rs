@@ -876,17 +876,32 @@ async fn package_completeness_report_consumes_coverage_debt_and_operation_refs()
         "email operation refs should satisfy the package completeness requirement"
     );
 
-    for (package_id, operation_ref) in [
+    for (package_id, mode_id, operation_ref) in [
         (
+            "media.audio-transcript",
             "media.audio-transcript",
             "operation:media.audio-transcript.check",
         ),
-        ("media.screen-ocr", "operation:media.screen-ocr.check"),
+        (
+            "media.audio-transcript",
+            "media.audio-transcript.audio-bundle-staged",
+            "operation:media.audio-transcript.import-bundle",
+        ),
+        (
+            "media.screen-ocr",
+            "media.screen-ocr",
+            "operation:media.screen-ocr.check",
+        ),
+        (
+            "media.screen-ocr",
+            "media.screen-ocr.screenshot-ocr-staged",
+            "operation:media.screen-ocr.import-screenshots",
+        ),
     ] {
         let media = report
             .packages
             .get(package_id)
-            .and_then(|package| package.modes.get(package_id))
+            .and_then(|package| package.modes.get(mode_id))
             .expect("media staged package/mode row");
         assert!(
             media
@@ -959,11 +974,19 @@ async fn package_completeness_report_distinguishes_proposed_and_manual_modes() -
         "generated source catalog must project every binding mode in multi-binding packages"
     );
 
-    for package_id in ["media.audio-transcript", "media.screen-ocr"] {
+    for (package_id, mode_id) in [
+        ("media.audio-transcript", "media.audio-transcript"),
+        (
+            "media.audio-transcript",
+            "media.audio-transcript.audio-bundle-staged",
+        ),
+        ("media.screen-ocr", "media.screen-ocr"),
+        ("media.screen-ocr", "media.screen-ocr.screenshot-ocr-staged"),
+    ] {
         let mode = report
             .packages
             .get(package_id)
-            .and_then(|package| package.modes.get(package_id))
+            .and_then(|package| package.modes.get(mode_id))
             .expect("media package mode row");
         assert_eq!(mode.mode_state, PackageModeState::Accepted);
         assert!(

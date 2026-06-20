@@ -1088,6 +1088,19 @@ mod tests {
         assert_eq!(import_transcript.side_effect, ActionSideEffect::Write);
         assert_eq!(import_transcript.state, ActionAvailabilityState::Enabled);
 
+        let import_bundle = view
+            .actions
+            .iter()
+            .find(|action| action.id == "media.audio-transcript.import-bundle")
+            .ok_or_else(|| color_eyre::eyre::eyre!("audio bundle import action expected"))?;
+        assert_eq!(
+            import_bundle.command_hint.as_deref(),
+            Some("sinexctl sources stage <path> --format json")
+        );
+        assert_eq!(import_bundle.rpc_method.as_deref(), Some("sources.stage"));
+        assert_eq!(import_bundle.side_effect, ActionSideEffect::Write);
+        assert_eq!(import_bundle.state, ActionAvailabilityState::Enabled);
+
         let replay = view
             .actions
             .iter()
@@ -1132,6 +1145,41 @@ mod tests {
         assert_eq!(delete.state, ActionAvailabilityState::Unavailable);
         assert_eq!(delete.side_effect, ActionSideEffect::Destructive);
         assert!(delete.requires_confirmation);
+
+        let screen_contract = all_source_contracts()
+            .find(|contract| contract.id == "media.screen-ocr")
+            .ok_or_else(|| color_eyre::eyre::eyre!("media screen contract expected"))?;
+        let screen_bindings = source_runtime_bindings()
+            .filter(|binding| binding.source_id == "media.screen-ocr")
+            .collect::<Vec<_>>();
+        let screen_view = source_coverage_view(
+            screen_contract,
+            &screen_bindings,
+            &HashMap::new(),
+            &HashMap::new(),
+            &healthy_confirmation_buffer(),
+            &HashMap::new(),
+            Timestamp::now(),
+        );
+
+        let import_screenshots = screen_view
+            .actions
+            .iter()
+            .find(|action| action.id == "media.screen-ocr.import-screenshots")
+            .ok_or_else(|| color_eyre::eyre::eyre!("screenshot import action expected"))?;
+        assert_eq!(
+            import_screenshots.command_hint.as_deref(),
+            Some("sinexctl sources stage <path> --format json")
+        );
+        assert_eq!(
+            import_screenshots.rpc_method.as_deref(),
+            Some("sources.stage")
+        );
+        assert_eq!(import_screenshots.side_effect, ActionSideEffect::Write);
+        assert_eq!(
+            import_screenshots.state,
+            ActionAvailabilityState::Enabled
+        );
 
         Ok(())
     }
