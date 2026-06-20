@@ -17,9 +17,12 @@ lives and what deserves a runtime process boundary.
 
 ## Why
 
-`sinexctl sources stage` registers source material. It is not itself an
-source. Once material is staged, some runtime still needs to enumerate bytes
-or records, dispatch a parser, and persist interpreted events.
+`sinexctl sources stage` registers source material. It is not itself a
+source. When the operator already knows the package mode that should own the
+material, `--binding <source:...>` records that binding in the material origin
+so later parser/admission work can see the intended package mode. Once
+material is staged, some runtime still needs to enumerate bytes or records,
+dispatch a parser, and persist interpreted events.
 
 The previous mental model bundled unrelated mechanics into source-domain crates.
 For example, "terminal source" contains several different source shapes:

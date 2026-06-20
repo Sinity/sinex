@@ -169,22 +169,30 @@ pub struct StageCommand {
     #[arg(long)]
     format: Option<SourceMaterialFormat>,
 
+    /// Source binding/package mode to attach to the staged material.
+    #[arg(long, value_name = "BINDING")]
+    binding: Option<String>,
+
     /// Operator tag to attach to the staged material. Can be repeated.
     #[arg(long = "tag")]
     tags: Vec<String>,
 }
 
 impl StageCommand {
-    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let req = SourcesStageRequest {
+    fn request(&self) -> SourcesStageRequest {
+        SourcesStageRequest {
             file_path: self.file.clone(),
             format: self.format,
             timing_info_type: None,
             reason: self.reason.clone(),
             tags: self.tags.clone(),
-            binding_name: None,
+            binding_name: self.binding.clone(),
             with_bytes: true,
-        };
+        }
+    }
+
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let req = self.request();
 
         let stage_response: SourcesStageResponse = client.sources_stage(req).await?;
 
@@ -1351,6 +1359,30 @@ mod tests {
             caveats: Vec::new(),
             evidence: serde_json::json!({"fixture": true}),
         }
+    }
+
+    #[sinex_test]
+    async fn stage_request_preserves_package_mode_binding() -> TestResult<()> {
+        let command = StageCommand {
+            file: "/realm/data/captures/audio/session.json".to_string(),
+            reason: Some("operator import".to_string()),
+            format: Some(SourceMaterialFormat::Json),
+            binding: Some("source:media.audio-transcript.audio-bundle-staged".to_string()),
+            tags: vec!["media".to_string()],
+        };
+
+        let request = command.request();
+
+        assert_eq!(request.file_path, "/realm/data/captures/audio/session.json");
+        assert_eq!(request.format, Some(SourceMaterialFormat::Json));
+        assert_eq!(request.reason.as_deref(), Some("operator import"));
+        assert_eq!(
+            request.binding_name.as_deref(),
+            Some("source:media.audio-transcript.audio-bundle-staged")
+        );
+        assert_eq!(request.tags, vec!["media"]);
+        assert!(request.with_bytes);
+        Ok(())
     }
 
     #[sinex_test]
