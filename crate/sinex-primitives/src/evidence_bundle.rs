@@ -262,3 +262,28 @@ impl EvidenceBundleView {
             + self.diagnostic_excerpts.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn evidence_bundle_view_schema_exposes_stable_context_fields() {
+        let schema = serde_json::to_value(schemars::schema_for!(EvidenceBundleView))
+            .expect("EvidenceBundleView schema serializes");
+        let schema_text = serde_json::to_string(&schema).expect("schema renders as JSON text");
+
+        for field in [
+            "diagnostic_excerpts",
+            "omitted_sections",
+            "caveats",
+            "actions",
+            "package_completeness",
+        ] {
+            assert!(
+                schema_text.contains(field),
+                "EvidenceBundleView schema should expose `{field}`"
+            );
+        }
+    }
+}
