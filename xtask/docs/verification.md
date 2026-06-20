@@ -27,6 +27,16 @@ integration tests, schema strict-diff, or generated-surface checks can own.
 | Phase and perf manifests | `xtask verify plan` and `xtask verify perf` | `xtask verify plan --check`; `xtask verify perf ...` | Orchestration and artifact emission only. Product/resource invariants should move to ordinary tests or explicit perf contracts when possible. |
 | Trybuild compile-fail runners | owning crate trybuild fixtures | `xtask test --debug --heavy -p <package> -E 'test(<runner>)'` | Keep individual fixtures and stderr files. Use the debug profile for edited runner/fixture verification so cold trybuild nodes run serially instead of timing out under parallel nextest execution. |
 
+## Gate Cadence
+
+| Cadence | Gates | Use when |
+| --- | --- | --- |
+| Focused PR loop | `xtask test` with the owning package/test filter; `xtask impact explain --json` when scope selection matters | During implementation and review of a coherent issue phase. This is the default agent loop: prove the changed behavior and make the selected test scope explainable. |
+| PR publish boundary | `xtask check --changed-strict origin/master --allow-contended-host`; generated-surface checks touched by the diff, such as `xtask docs command-reference --check` or `xtask docs schema-bundle --check` | Before pushing/opening a PR that changes Rust API, command/docs/schema surfaces, source catalogs, or package metadata. |
+| Verification-policy PRs | `xtask impact audit --sample-skips N`; focused `xtask` unit tests for the planner/history command being changed | When editing impact planning, history proof reuse, affected-test selection, or verification docs. Keep sampled audits bounded in PRs and report the sample size. |
+| Release boundary | `xtask release-readiness --target rc-local --base-ref origin/master --run-required-checks`; `xtask schema strict-diff` when DB/schema claims are part of the release | Before claiming release readiness or broad shipped/non-shipped scope. This aggregates required checks; it does not replace focused behavior tests for changed code. |
+| Scheduled or human-requested broad sweep | `xtask test --impact-mode=off --all`; larger `xtask impact audit` samples; heavy trybuild/fuzz/mutation suites | When validating planner quality, finding stale evidence, or exercising expensive suites outside the normal PR loop. Do not turn these into default per-PR gates without measurement. |
+
 ## Simplification Landed
 
 The dependency-hygiene duplicate-vocabulary guard was removed from

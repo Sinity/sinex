@@ -1,13 +1,11 @@
 use sinex_primitives::activity::ActivitySourceKind;
-use sinex_primitives::events::payloads::{
-    ActivityWindowCloseReason, ActivityWindowSummaryPayload,
-};
+use sinex_primitives::events::payloads::{ActivityWindowCloseReason, ActivityWindowSummaryPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinexd::automata::hourly::{HourlySummarizer, HourlySummaryState};
 use sinexd::runtime::Windowed;
 use xtask::sandbox::prelude::*;
 
-use super::summarizer_support::{process_windowed_input, summary_context};
+use super::summarizer_support::{process_windowed_input, summary_context, utc_hour_start};
 
 fn window_payload(
     window_start: Timestamp,
@@ -89,19 +87,7 @@ async fn hour_boundary_closes_summary_and_seeds_next_hour() -> TestResult<()> {
     .await?
     .expect("new UTC hour should close the prior hour");
 
-    assert_eq!(
-        output.payload.hour_start,
-        Timestamp::from(
-            first_end
-                .inner()
-                .replace_minute(0)
-                .unwrap()
-                .replace_second(0)
-                .unwrap()
-                .replace_nanosecond(0)
-                .unwrap()
-        )
-    );
+    assert_eq!(output.payload.hour_start, utc_hour_start(first_end));
     assert_eq!(
         output.payload.hour_end,
         output.payload.hour_start + Duration::hours(1)
