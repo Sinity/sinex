@@ -317,6 +317,9 @@ const GIT_REPOSITORY_ENV_KEYS: &[&str] = &[
     "GIT_NAMESPACE",
     "GIT_OBJECT_DIRECTORY",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
 ];
 
 fn git_subprocess(program: &str) -> Command {
