@@ -8,7 +8,7 @@ use sinex_primitives::evidence_bundle::{
     EvidenceBundleRuntimeHealthView, EvidenceBundleSavedArtifactView, EvidenceBundleSeedKind,
     EvidenceBundleSeedView, EvidenceBundleSpec, EvidenceBundleView,
 };
-use sinex_primitives::public_ref::PublicSinexRef;
+use sinex_primitives::public_ref::{PublicSinexRef, ResolvedObjectView};
 use sinex_primitives::rpc::content::StoreBlobRequest;
 use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::ops::{Operation as OpsOperation, OpsStartResponse};
@@ -17,8 +17,8 @@ use sinex_primitives::rpc::sources::{SourceCoverageEntry, SourcePackageCompleten
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, DebtKind,
     DebtListView, DebtOwnerView, DebtRowView, DebtStage, OperationJobListView, OperationView,
-    SinexObjectKind, SinexObjectRef, SourceCoverageContinuity, SourceCoverageReadiness,
-    SourceCoverageView, ViewEnvelope,
+    SinexObjectKind, SinexObjectRef, SourceCoverageContinuity, SourceCoverageListView,
+    SourceCoverageReadiness, SourceCoverageView, ViewEnvelope,
 };
 use sinex_primitives::{DerivationSpec, InvalidationTrigger, affected_derivations};
 
@@ -481,6 +481,67 @@ async fn compile_evidence_bundle(
     client: &GatewayClient,
     spec: &EvidenceBundleSpec,
 ) -> Result<EvidenceBundleView> {
+    let ref_seeds = spec
+        .seeds
+        .iter()
+        .filter(|seed| seed.kind == EvidenceBundleSeedKind::PublicRef)
+        .collect::<Vec<_>>();
+    let operation_seeds = spec
+        .seeds
+        .iter()
+        .filter(|seed| seed.kind == EvidenceBundleSeedKind::Operation)
+        .collect::<Vec<_>>();
+    let source_driver_seeds = spec
+        .seeds
+        .iter()
+        .filter(|seed| seed.kind == EvidenceBundleSeedKind::SourceDriver)
+        .collect::<Vec<_>>();
+
+    let mut rows = EvidenceBundleReadSurfaceRows::default();
+
+    for seed in &ref_seeds {
+        let public_ref = PublicSinexRef::from_str(&seed.value)?;
+        rows.resolved_objects
+            .push(resolve_ref(client, public_ref).await?.payload);
+    }
+
+    for seed in &operation_seeds {
+        rows.operations.push(client.ops_get(&seed.value).await?);
+    }
+
+    if !source_driver_seeds.is_empty() || spec.include_capture {
+        rows.source_coverage = Some(client.sources_status_view().await?.payload);
+    }
+
+    if spec.include_runtime_health {
+        rows.runtime_health = Some(client.runtime_health(300).await?);
+    }
+
+    if spec.include_package_completeness || !source_driver_seeds.is_empty() {
+        rows.package_completeness = Some(client.sources_package_completeness().await?.packages);
+    }
+
+    if spec.include_debt {
+        rows.dlq = Some(client.dlq_list().await?);
+    }
+
+    compile_evidence_bundle_from_rows(spec, rows)
+}
+
+#[derive(Default)]
+struct EvidenceBundleReadSurfaceRows {
+    resolved_objects: Vec<ResolvedObjectView>,
+    operations: Vec<OpsOperation>,
+    source_coverage: Option<SourceCoverageListView>,
+    runtime_health: Option<RuntimeHealthResponse>,
+    package_completeness: Option<Vec<SourcePackageCompletenessPackageView>>,
+    dlq: Option<DlqListResponse>,
+}
+
+fn compile_evidence_bundle_from_rows(
+    spec: &EvidenceBundleSpec,
+    rows: EvidenceBundleReadSurfaceRows,
+) -> Result<EvidenceBundleView> {
     let mut bundle = EvidenceBundleView::new("sinexctl.ops.evidence.compile")
         .with_target_context(spec.target_context.clone());
 
@@ -500,31 +561,43 @@ async fn compile_evidence_bundle(
         .filter(|seed| seed.kind == EvidenceBundleSeedKind::SourceDriver)
         .collect::<Vec<_>>();
 
-    for seed in &ref_seeds {
-        let public_ref = PublicSinexRef::from_str(&seed.value)?;
+    for (index, seed) in ref_seeds.iter().enumerate() {
         bundle.seeds.push((*seed).clone());
-        bundle
-            .resolved_objects
-            .push(resolve_ref(client, public_ref).await?.payload);
+        if let Some(resolved) = rows.resolved_objects.get(index) {
+            bundle.resolved_objects.push(resolved.clone());
+        } else {
+            bundle.omitted_sections.push(omitted_evidence_section(
+                format!("resolved_ref:{}", seed.value),
+                "public ref seed was requested but the ref resolver read surface was unavailable",
+                seed.ref_.clone(),
+            ));
+        }
     }
 
-    for seed in &operation_seeds {
+    for (index, seed) in operation_seeds.iter().enumerate() {
         bundle.seeds.push((*seed).clone());
-        let operation = client.ops_get(&seed.value).await?;
-        bundle.operations.push(operation_to_view(&operation));
+        if let Some(operation) = rows.operations.get(index) {
+            bundle.operations.push(operation_to_view(operation));
+        } else {
+            bundle.omitted_sections.push(omitted_evidence_section(
+                format!("operation:{}", seed.value),
+                "operation seed was requested but the operation read surface was unavailable",
+                seed.ref_.clone(),
+            ));
+        }
     }
 
     if !source_driver_seeds.is_empty() {
-        let coverage = client.sources_status_view().await?;
+        let coverage = rows.source_coverage.as_ref();
         for seed in &source_driver_seeds {
             let source_id = &seed.value;
             bundle.seeds.push((*seed).clone());
-            if let Some(source) = coverage
-                .payload
-                .sources
-                .iter()
-                .find(|source| source.source_id == *source_id)
-            {
+            if let Some(source) = coverage.and_then(|coverage| {
+                coverage
+                    .sources
+                    .iter()
+                    .find(|source| source.source_id == *source_id)
+            }) {
                 bundle.source_coverage.push(source.clone());
             } else {
                 bundle.omitted_sections.push(omitted_evidence_section(
@@ -540,45 +613,66 @@ async fn compile_evidence_bundle(
     }
 
     if spec.include_runtime_health {
-        bundle.runtime_health = Some(runtime_health_to_bundle_view(
-            client.runtime_health(300).await?,
-            300,
-        ));
+        if let Some(runtime_health) = rows.runtime_health {
+            bundle.runtime_health = Some(runtime_health_to_bundle_view(runtime_health, 300));
+        } else {
+            bundle.omitted_sections.push(omitted_evidence_section(
+                "runtime_health",
+                "runtime health was requested but the runtime health read surface was unavailable",
+                Some(SinexObjectRef::new(
+                    SinexObjectKind::RpcMethod,
+                    "runtime.health",
+                )),
+            ));
+        }
     }
 
     if spec.include_package_completeness || !source_driver_seeds.is_empty() {
-        let completeness = client.sources_package_completeness().await?;
-        if spec.include_package_completeness && source_driver_seeds.is_empty() {
-            bundle.package_completeness = completeness.packages;
-        } else {
-            for seed in &source_driver_seeds {
-                let source_id = &seed.value;
-                let matching = completeness
-                    .packages
-                    .iter()
-                    .filter(|package| package_matches_source_seed(package, source_id))
-                    .cloned()
-                    .collect::<Vec<_>>();
-
-                if matching.is_empty() {
-                    bundle.omitted_sections.push(omitted_evidence_section(
-                        format!("package_completeness:{source_id}"),
-                        "source-driver seed was requested but package completeness had no matching package or mode row",
-                        Some(SinexObjectRef::new(
-                            SinexObjectKind::SourceDriver,
-                            source_id.clone(),
-                        )),
-                    ));
-                } else {
-                    bundle.package_completeness.extend(matching);
-                }
+        match rows.package_completeness {
+            Some(completeness)
+                if spec.include_package_completeness && source_driver_seeds.is_empty() =>
+            {
+                bundle.package_completeness = completeness;
             }
-            bundle
-                .package_completeness
-                .sort_by(|a, b| a.package_id.cmp(&b.package_id));
-            bundle
-                .package_completeness
-                .dedup_by(|a, b| a.package_id == b.package_id);
+            Some(completeness) => {
+                for seed in &source_driver_seeds {
+                    let source_id = &seed.value;
+                    let matching = completeness
+                        .iter()
+                        .filter(|package| package_matches_source_seed(package, source_id))
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                    if matching.is_empty() {
+                        bundle.omitted_sections.push(omitted_evidence_section(
+                            format!("package_completeness:{source_id}"),
+                            "source-driver seed was requested but package completeness had no matching package or mode row",
+                            Some(SinexObjectRef::new(
+                                SinexObjectKind::SourceDriver,
+                                source_id.clone(),
+                            )),
+                        ));
+                    } else {
+                        bundle.package_completeness.extend(matching);
+                    }
+                }
+                bundle
+                    .package_completeness
+                    .sort_by(|a, b| a.package_id.cmp(&b.package_id));
+                bundle
+                    .package_completeness
+                    .dedup_by(|a, b| a.package_id == b.package_id);
+            }
+            None => {
+                bundle.omitted_sections.push(omitted_evidence_section(
+                    "package_completeness",
+                    "package completeness was requested but the package completeness read surface was unavailable",
+                    Some(SinexObjectRef::new(
+                        SinexObjectKind::RpcMethod,
+                        "sources.package_completeness",
+                    )),
+                ));
+            }
         }
     }
 
@@ -591,17 +685,31 @@ async fn compile_evidence_bundle(
             bundle.seeds.push(seed.clone());
         }
         if spec.include_debt {
-            bundle
-                .debt_rows
-                .extend(debt_rows_from_dlq(&client.dlq_list().await?));
+            if let Some(dlq) = rows.dlq.as_ref() {
+                bundle.debt_rows.extend(debt_rows_from_dlq(dlq));
+            } else {
+                bundle.omitted_sections.push(omitted_evidence_section(
+                    "debt_rows:dlq",
+                    "debt rows were requested but the DLQ read surface was unavailable",
+                    Some(SinexObjectRef::new(SinexObjectKind::RpcMethod, "dlq.list")),
+                ));
+            }
         }
         if spec.include_capture {
-            let coverage = client.sources_status_view().await?;
-            bundle
-                .debt_rows
-                .extend(debt_rows_from_source_status_coverage(
-                    &coverage.payload.sources,
+            if let Some(coverage) = rows.source_coverage.as_ref() {
+                bundle
+                    .debt_rows
+                    .extend(debt_rows_from_source_status_coverage(&coverage.sources));
+            } else {
+                bundle.omitted_sections.push(omitted_evidence_section(
+                    "debt_rows:capture",
+                    "capture debt rows were requested but source coverage was unavailable",
+                    Some(SinexObjectRef::new(
+                        SinexObjectKind::RpcMethod,
+                        "sources.status.view",
+                    )),
                 ));
+            }
         }
         if let Some(trigger) = spec
             .projection_trigger
@@ -2078,6 +2186,198 @@ mod tests {
             "terminal.command.executed"
         ));
         assert!(!package_matches_source_seed(&package, "browser.web"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn evidence_bundle_compiler_assembles_required_seed_classes_from_read_surfaces()
+    -> xtask::TestResult<()> {
+        let spec = build_evidence_bundle_spec(
+            &["operation:op-1".to_string()],
+            &["op-1".to_string()],
+            &["terminal.kitty-osc-live".to_string()],
+            true,
+            true,
+            Some(DebtProjectionTrigger::Replay),
+            true,
+            true,
+            false,
+        )?;
+
+        let mut source = fixture_source_status_coverage(
+            SourceCoverageReadiness::MissingMaterial,
+            SourceCoverageContinuity::Gapped,
+            0,
+            0,
+        );
+        source.caveats.push(CaveatView {
+            id: "policy.disclosure_applied".to_string(),
+            message: "terminal command text is hidden by view disclosure policy".to_string(),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::SourceDriver,
+                "terminal.kitty-osc-live",
+            )),
+        });
+
+        let rows = EvidenceBundleReadSurfaceRows {
+            resolved_objects: vec![ResolvedObjectView::resolved(
+                SinexObjectRef::new(SinexObjectKind::Operation, "op-1"),
+                "sinexctl.ops.get",
+                serde_json::json!({"id": "op-1"}),
+            )],
+            operations: vec![fixture_operation("op-1", "replay")],
+            source_coverage: Some(SourceCoverageListView::new(vec![source])),
+            runtime_health: Some(RuntimeHealthResponse {
+                active_count: 1,
+                inactive_count: 0,
+                unique_modules: 1,
+                active_run_count: 1,
+                oldest_heartbeat: None,
+            }),
+            package_completeness: Some(vec![fixture_package(
+                "terminal.activity",
+                "terminal.kitty-osc-live",
+            )]),
+            dlq: Some(fixture_dlq(12)),
+        };
+
+        let bundle = compile_evidence_bundle_from_rows(&spec, rows)?;
+
+        assert!(
+            bundle
+                .seeds
+                .iter()
+                .any(|seed| seed.kind == EvidenceBundleSeedKind::PublicRef)
+        );
+        assert!(
+            bundle
+                .seeds
+                .iter()
+                .any(|seed| seed.kind == EvidenceBundleSeedKind::Operation)
+        );
+        assert!(
+            bundle
+                .seeds
+                .iter()
+                .any(|seed| seed.kind == EvidenceBundleSeedKind::SourceDriver)
+        );
+        assert!(
+            bundle
+                .seeds
+                .iter()
+                .any(|seed| seed.kind == EvidenceBundleSeedKind::DebtQuery)
+        );
+        assert_eq!(bundle.resolved_objects.len(), 1);
+        assert_eq!(bundle.operations.len(), 1);
+        assert_eq!(bundle.source_coverage.len(), 1);
+        assert!(bundle.runtime_health.is_some());
+        assert_eq!(bundle.package_completeness.len(), 1);
+        assert!(
+            bundle
+                .debt_rows
+                .iter()
+                .any(|row| row.kind == DebtKind::Admission)
+        );
+        assert!(
+            bundle
+                .debt_rows
+                .iter()
+                .any(|row| row.kind == DebtKind::Capture)
+        );
+        assert!(
+            bundle
+                .debt_rows
+                .iter()
+                .any(|row| row.kind == DebtKind::Projection)
+        );
+        assert!(
+            bundle
+                .target_refs
+                .iter()
+                .any(|ref_| ref_.to_string() == "operation:op-1")
+        );
+        assert!(
+            bundle
+                .target_refs
+                .iter()
+                .any(|ref_| ref_.to_string() == "source-driver:terminal.kitty-osc-live")
+        );
+        assert!(
+            bundle
+                .disclosure_caveats
+                .iter()
+                .any(|caveat| caveat.id == "policy.disclosure_applied")
+        );
+        assert!(
+            bundle
+                .diagnostic_excerpts
+                .iter()
+                .any(|excerpt| excerpt.section == "source_coverage")
+        );
+        assert!(bundle.omitted_sections.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn evidence_bundle_compiler_reports_unavailable_requested_sections()
+    -> xtask::TestResult<()> {
+        let spec = build_evidence_bundle_spec(
+            &["operation:missing-op".to_string()],
+            &["missing-op".to_string()],
+            &["terminal.unknown-live".to_string()],
+            true,
+            true,
+            None,
+            true,
+            true,
+            false,
+        )?;
+
+        let bundle =
+            compile_evidence_bundle_from_rows(&spec, EvidenceBundleReadSurfaceRows::default())?;
+
+        for section in [
+            "resolved_ref:operation:missing-op",
+            "operation:missing-op",
+            "source_coverage:terminal.unknown-live",
+            "runtime_health",
+            "package_completeness",
+            "debt_rows:dlq",
+            "debt_rows:capture",
+            "evidence_rows",
+        ] {
+            assert!(
+                bundle
+                    .omitted_sections
+                    .iter()
+                    .any(|omission| omission.section == section),
+                "bundle should report omitted section `{section}`"
+            );
+        }
+        assert!(
+            bundle
+                .caveats
+                .iter()
+                .all(|caveat| caveat.id == "evidence_bundle.section_unavailable")
+        );
+        assert!(
+            bundle
+                .diagnostic_excerpts
+                .iter()
+                .any(|excerpt| excerpt.section == "omitted_sections")
+        );
+        assert!(
+            bundle
+                .target_refs
+                .iter()
+                .any(|ref_| ref_.to_string() == "operation:missing-op")
+        );
+        assert!(
+            bundle
+                .target_refs
+                .iter()
+                .any(|ref_| ref_.to_string() == "source-driver:terminal.unknown-live")
+        );
         Ok(())
     }
 
