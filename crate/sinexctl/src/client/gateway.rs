@@ -10,6 +10,7 @@ use sinex_primitives::domain::{EventSource, InstanceId, ModuleKind};
 use sinex_primitives::rpc::{
     JsonRpcError, RpcMethod,
     automata::{AUTOMATA_STATUS_METHOD, AutomataStatusRequest, AutomataStatusResponse},
+    content::{CONTENT_STORE_BLOB_METHOD, StoreBlobRequest, StoreBlobResponse},
     coordination::{
         COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
         COORDINATION_LIST_INSTANCES_METHOD, GetLeaderRequest, GetLeaderResponse,
@@ -132,13 +133,14 @@ use sinex_primitives::rpc::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_LIST_METHOD,
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
-        SOURCES_DRIFT_LIST_METHOD, SOURCES_LIST_METHOD, SOURCES_PRESETS_LIST_METHOD,
-        SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD,
-        SOURCES_STAGE_METHOD, SourcesAnnotateRequest, SourcesAnnotateResponse,
+        SOURCES_DRIFT_LIST_METHOD, SOURCES_LIST_METHOD, SOURCES_PACKAGE_COMPLETENESS_METHOD,
+        SOURCES_PRESETS_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
+        SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD, SourcesAnnotateRequest, SourcesAnnotateResponse,
         SourcesArchiveRequest, SourcesArchiveResponse, SourcesBindingsListRequest,
         SourcesBindingsListResponse, SourcesContinuityRequest, SourcesContinuityResponse,
         SourcesCoverageRequest, SourcesCoverageResponse, SourcesDriftListRequest,
         SourcesDriftListResponse, SourcesListRequest, SourcesListResponse,
+        SourcesPackageCompletenessRequest, SourcesPackageCompletenessResponse,
         SourcesPresetsListRequest, SourcesPresetsListResponse, SourcesReadinessGetRequest,
         SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
         SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
@@ -724,6 +726,10 @@ impl GatewayClient {
 
     // ==================== Replay Commands ====================
 
+    pub async fn store_blob(&self, request: StoreBlobRequest) -> Result<StoreBlobResponse> {
+        self.call_typed(CONTENT_STORE_BLOB_METHOD, &request).await
+    }
+
     /// Create a replay plan
     pub async fn replay_plan(
         &self,
@@ -1263,6 +1269,14 @@ impl GatewayClient {
         request: SourcesCoverageRequest,
     ) -> Result<SourcesCoverageResponse> {
         self.call_typed(SOURCES_COVERAGE_METHOD, &request).await
+    }
+
+    pub async fn sources_package_completeness(&self) -> Result<SourcesPackageCompletenessResponse> {
+        self.call_typed(
+            SOURCES_PACKAGE_COMPLETENESS_METHOD,
+            &SourcesPackageCompletenessRequest {},
+        )
+        .await
     }
 
     pub async fn sources_presets_list(&self) -> Result<SourcesPresetsListResponse> {

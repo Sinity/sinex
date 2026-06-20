@@ -3,7 +3,7 @@
 //! Handlers for `sources.stage`, `sources.list`, `sources.show`, and
 //! `sources.coverage` — the CLI-driven source material inventory surface.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial;
 use sinex_primitives::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
@@ -11,18 +11,21 @@ use sinex_primitives::privacy::{RuntimePrivateModeState, load_private_mode_state
 use sinex_primitives::rpc::sources::{
     CaveatSeverity, ContinuityContractStatus, CoverageGap, ReplayabilityStatus, SourceAnnotations,
     SourceCaveat, SourceCoverageEntry, SourceMaterialDetail, SourceMaterialMetadataContract,
-    SourceMaterialStatistics, SourceMaterialSummary, SourceOrigin, SourcePolicyEvidence,
+    SourceMaterialStatistics, SourceMaterialSummary, SourceOrigin,
+    SourcePackageCompletenessModeView, SourcePackageCompletenessPackageView, SourcePolicyEvidence,
     SourcePresetDescriptor, SourceReadiness, SourceReadinessStatus, SourceShapeDriftObservation,
     SourceShapeTypeChange, SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
     SourcesArchiveResponse, SourcesBindingsCreateRequest, SourcesBindingsCreateResponse,
     SourcesBindingsListRequest, SourcesBindingsListResponse, SourcesBindingsResolveRequest,
     SourcesBindingsResolveResponse, SourcesContinuityRequest, SourcesContinuityResponse,
     SourcesCoverageRequest, SourcesCoverageResponse, SourcesDriftListRequest,
-    SourcesDriftListResponse, SourcesListRequest, SourcesListResponse, SourcesPresetsListRequest,
-    SourcesPresetsListResponse, SourcesReadinessGetRequest, SourcesReadinessGetResponse,
-    SourcesReadinessListRequest, SourcesReadinessListResponse, SourcesShowRequest,
-    SourcesShowResponse, SourcesStageRequest, SourcesStageResponse, TemporalEvidenceSummary,
-    bridge_material_presets, caveat_codes, external_producer_presets,
+    SourcesDriftListResponse, SourcesListRequest, SourcesListResponse,
+    SourcesPackageCompletenessRequest, SourcesPackageCompletenessResponse,
+    SourcesPackageCompletenessSummaryView, SourcesPresetsListRequest, SourcesPresetsListResponse,
+    SourcesReadinessGetRequest, SourcesReadinessGetResponse, SourcesReadinessListRequest,
+    SourcesReadinessListResponse, SourcesShowRequest, SourcesShowResponse, SourcesStageRequest,
+    SourcesStageResponse, TemporalEvidenceSummary, bridge_material_presets, caveat_codes,
+    external_producer_presets,
 };
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::{
@@ -37,6 +40,8 @@ use sqlx::{FromRow, PgPool};
 use std::error::Error as _;
 use time::OffsetDateTime;
 use uuid::Uuid;
+
+use crate::sources::package_completeness::build_package_completeness_report;
 
 // ── Query row structs (sqlx FromRow) ──────────────────────────
 
@@ -430,6 +435,64 @@ pub async fn handle_sources_coverage(
         .collect();
 
     Ok(SourcesCoverageResponse { sources })
+}
+
+// ── sources.package_completeness ───────────────────────────────
+
+pub async fn handle_sources_package_completeness(
+    _services: &crate::api::service_container::ServiceContainer,
+    _request: SourcesPackageCompletenessRequest,
+) -> Result<SourcesPackageCompletenessResponse> {
+    let report = build_package_completeness_report();
+    let packages = report
+        .packages
+        .into_values()
+        .map(|package| SourcePackageCompletenessPackageView {
+            package_id: package.package_id,
+            family: package.family,
+            display_namespace: package.display_namespace,
+            modes: package
+                .modes
+                .into_values()
+                .map(|mode| SourcePackageCompletenessModeView {
+                    mode_id: mode.mode_id,
+                    package_id: mode.package_id,
+                    mode_state: serialized_label(&mode.mode_state),
+                    completeness: serialized_label(&mode.completeness),
+                    subject: mode.subject,
+                    acquisition_kind: mode.acquisition_kind.to_string(),
+                    operator_enablement: mode.operator_enablement.to_string(),
+                    missing: mode.missing,
+                    caveats: mode.caveats,
+                    event_contract_refs: mode.event_contract_refs,
+                    admission_policy_refs: mode.admission_policy_refs,
+                    coverage_debt_refs: mode.coverage_debt_refs,
+                    operation_refs: mode.operation_refs,
+                })
+                .collect(),
+        })
+        .collect();
+
+    Ok(SourcesPackageCompletenessResponse {
+        schema_version: report.schema_version,
+        summary: SourcesPackageCompletenessSummaryView {
+            package_count: report.summary.package_count,
+            mode_count: report.summary.mode_count,
+            accepted_mode_count: report.summary.accepted_mode_count,
+            proposed_mode_count: report.summary.proposed_mode_count,
+            manual_mode_count: report.summary.manual_mode_count,
+            incomplete_mode_count: report.summary.incomplete_mode_count,
+            blocking_missing_count: report.summary.blocking_missing_count,
+        },
+        packages,
+    })
+}
+
+fn serialized_label(value: &impl Serialize) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 // ── sources.presets.list ─────────────────────────────────────────

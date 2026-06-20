@@ -105,8 +105,9 @@ pub use sources::{
     handle_sources_bindings_list, handle_sources_bindings_resolve, handle_sources_continuity,
     handle_sources_continuity_explain_gap, handle_sources_continuity_get,
     handle_sources_continuity_list, handle_sources_coverage, handle_sources_drift_list,
-    handle_sources_list, handle_sources_presets_list, handle_sources_readiness_get,
-    handle_sources_readiness_list, handle_sources_show, handle_sources_stage,
+    handle_sources_list, handle_sources_package_completeness, handle_sources_presets_list,
+    handle_sources_readiness_get, handle_sources_readiness_list, handle_sources_show,
+    handle_sources_stage,
 };
 pub use system::{handle_system_health, handle_system_ping, handle_system_version};
 pub use tasks::{

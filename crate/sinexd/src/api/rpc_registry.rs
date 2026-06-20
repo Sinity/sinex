@@ -78,9 +78,9 @@ use sinex_primitives::rpc::{
         SOURCES_BINDINGS_LIST_METHOD, SOURCES_BINDINGS_RESOLVE_METHOD,
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
-        SOURCES_DRIFT_LIST_METHOD, SOURCES_LIST_METHOD, SOURCES_PRESETS_LIST_METHOD,
-        SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD,
-        SOURCES_STAGE_METHOD,
+        SOURCES_DRIFT_LIST_METHOD, SOURCES_LIST_METHOD, SOURCES_PACKAGE_COMPLETENESS_METHOD,
+        SOURCES_PRESETS_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
+        SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
     },
     system::{SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD},
     tasks::{
@@ -598,20 +598,21 @@ fn build_registry_impl() -> RpcRegistry {
         handle_sources_bindings_resolve, handle_sources_continuity,
         handle_sources_continuity_explain_gap, handle_sources_continuity_get,
         handle_sources_continuity_list, handle_sources_coverage, handle_sources_drift_list,
-        handle_sources_list, handle_sources_presets_list, handle_sources_readiness_get,
-        handle_sources_readiness_list, handle_sources_show, handle_sources_stage,
-        handle_sources_status, handle_sources_status_view, handle_store_blob, handle_system_health,
-        handle_system_ping, handle_system_version, handle_tasks_cancel, handle_tasks_complete,
-        handle_tasks_create, handle_tasks_list, handle_tasks_state_get, handle_tasks_status_set,
-        handle_tasks_update, handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
-        handle_telemetry_current_device_state, handle_telemetry_current_health,
-        handle_telemetry_event_engine_batch_stats, handle_telemetry_event_engine_validation,
-        handle_telemetry_file_activity, handle_telemetry_gateway_stats,
-        handle_telemetry_metric_counters, handle_telemetry_recent_activity,
-        handle_telemetry_source_stats, handle_telemetry_stream_stats,
-        handle_telemetry_system_state, handle_telemetry_throughput, handle_telemetry_window_focus,
-        handle_tombstone_approve, handle_tombstone_cancel, handle_tombstone_create,
-        handle_tombstone_list, handle_tombstone_preview, handle_tombstone_status,
+        handle_sources_list, handle_sources_package_completeness, handle_sources_presets_list,
+        handle_sources_readiness_get, handle_sources_readiness_list, handle_sources_show,
+        handle_sources_stage, handle_sources_status, handle_sources_status_view, handle_store_blob,
+        handle_system_health, handle_system_ping, handle_system_version, handle_tasks_cancel,
+        handle_tasks_complete, handle_tasks_create, handle_tasks_list, handle_tasks_state_get,
+        handle_tasks_status_set, handle_tasks_update, handle_telemetry_assembly_stats,
+        handle_telemetry_command_frequency, handle_telemetry_current_device_state,
+        handle_telemetry_current_health, handle_telemetry_event_engine_batch_stats,
+        handle_telemetry_event_engine_validation, handle_telemetry_file_activity,
+        handle_telemetry_gateway_stats, handle_telemetry_metric_counters,
+        handle_telemetry_recent_activity, handle_telemetry_source_stats,
+        handle_telemetry_stream_stats, handle_telemetry_system_state, handle_telemetry_throughput,
+        handle_telemetry_window_focus, handle_tombstone_approve, handle_tombstone_cancel,
+        handle_tombstone_create, handle_tombstone_list, handle_tombstone_preview,
+        handle_tombstone_status,
     };
 
     RpcRegistry::new()
@@ -726,6 +727,10 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(SOURCES_LIST_METHOD, boxed!(handle_sources_list))
         .pool_typed_rpc(SOURCES_SHOW_METHOD, boxed!(handle_sources_show))
         .pool_typed_rpc(SOURCES_COVERAGE_METHOD, boxed!(handle_sources_coverage))
+        .service_typed_rpc(
+            SOURCES_PACKAGE_COMPLETENESS_METHOD,
+            boxed!(handle_sources_package_completeness),
+        )
         .pool_typed_rpc(SOURCES_CONTINUITY_METHOD, boxed!(handle_sources_continuity))
         .service_typed_rpc(
             SOURCES_READINESS_LIST_METHOD,
