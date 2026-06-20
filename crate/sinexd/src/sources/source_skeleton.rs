@@ -74,6 +74,8 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
     .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out).map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out, "use sinex_macros::SourceMeta;").map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "use sinex_primitives::privacy::ProcessingContext;")
+        .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(
         out,
         "use sinex_primitives::source_contracts::{{AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile, RetentionPolicy, RunnerPack, RuntimeShape, SourceContract, SourceRuntimeBinding}};"
@@ -113,6 +115,35 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
     let implementation = binding
         .map(|binding| binding.implementation.as_str())
         .unwrap_or("replace-implementation");
+    let source_contract = &mode.sources.source_contract;
+    let privacy_tier = privacy_tier_expr(&source_contract.privacy_tier);
+    let horizons = horizons_expr(&source_contract.horizons);
+    let retention = retention_expr(&source_contract.retention);
+    let occurrence_identity = occurrence_identity_expr(&source_contract.occurrence_identity);
+    let access_scope = access_scope_expr(&source_contract.access_scope);
+    let privacy_context = binding.map_or_else(
+        || "ProcessingContext::Command".to_string(),
+        |binding| privacy_context_expr(&binding.privacy_context),
+    );
+    let resource_profile = binding.map_or_else(
+        || "ResourceProfile::BoundedFile".to_string(),
+        |binding| resource_profile_expr(&binding.resource_profile),
+    );
+    let runner_pack = binding.map_or_else(
+        || "RunnerPack::Staged".to_string(),
+        |binding| runner_pack_expr(&binding.runner_pack),
+    );
+    let checkpoint_family = binding.map_or_else(
+        || "CheckpointFamily::AppendStream".to_string(),
+        |binding| checkpoint_family_expr(&binding.checkpoint_family),
+    );
+    let runtime_shape = binding.map_or_else(
+        || "RuntimeShape::OnDemand".to_string(),
+        |binding| runtime_shape_expr(&binding.runtime_shape),
+    );
+    let capabilities = binding
+        .map(|binding| binding.capabilities.as_slice())
+        .unwrap_or(&mode.coverage_debt_refs);
     writeln!(out, "    #[source_meta(").map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out, "        id = \"{}\",", mode.package_id)
         .map_err(|_| SourceSkeletonError::Render)?;
@@ -131,35 +162,37 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
             .map_err(|_| SourceSkeletonError::Render)?;
     }
     writeln!(out, "        adapter = \"{adapter}\",").map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(out, "        privacy_tier = PrivacyTier::Sensitive,")
+    writeln!(out, "        privacy_tier = {privacy_tier},")
         .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(out, "        horizons(Horizon::Continuous),")
-        .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(out, "        retention = RetentionPolicy::Forever,")
-        .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        horizons({horizons}),").map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        retention = {retention},").map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out, "        implementation = \"{implementation}\",")
         .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(
-        out,
-        "        occurrence_identity = OccurrenceIdentity::Uuid5From(\"replace-with-object-level-occurrence-key\"),"
-    )
-    .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(out, "        access_scope = AccessScope::Internal,")
+    writeln!(out, "        occurrence_identity = {occurrence_identity},")
         .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(
-        out,
-        "        resource_profile = ResourceProfile::BoundedFile,"
-    )
-    .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(out, "        runner_pack = RunnerPack::Staged,")
+    writeln!(out, "        access_scope = {access_scope},")
         .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(
-        out,
-        "        checkpoint_family = CheckpointFamily::AppendStream,"
-    )
-    .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(out, "        runtime_shape = RuntimeShape::OnDemand,")
+    writeln!(out, "        privacy_context = {privacy_context},")
         .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        resource_profile = {resource_profile},")
+        .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        runner_pack = {runner_pack},")
+        .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        checkpoint_family = {checkpoint_family},")
+        .map_err(|_| SourceSkeletonError::Render)?;
+    writeln!(out, "        runtime_shape = {runtime_shape},")
+        .map_err(|_| SourceSkeletonError::Render)?;
+    if !capabilities.is_empty() {
+        writeln!(
+            out,
+            "        capabilities = \"{}\",",
+            capabilities.join(", ")
+        )
+        .map_err(|_| SourceSkeletonError::Render)?;
+    }
+    if binding.is_some_and(|binding| binding.proposed) {
+        writeln!(out, "        proposed = true,").map_err(|_| SourceSkeletonError::Render)?;
+    }
     writeln!(out, "        factory = \"none\"").map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out, "    )]").map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out, "    pub struct {type_name}SourceMeta;")
@@ -267,6 +300,154 @@ fn comma_list(values: &[String]) -> String {
     }
 }
 
+fn string_field<'a>(value: &'a serde_json::Value, field: &str) -> Option<&'a str> {
+    value.get(field).and_then(serde_json::Value::as_str)
+}
+
+fn pascal_variant(value: &str) -> String {
+    let mut out = String::new();
+    let mut uppercase_next = true;
+    for ch in value.chars() {
+        if ch == '_' || ch == '-' {
+            uppercase_next = true;
+        } else if uppercase_next {
+            out.push(ch.to_ascii_uppercase());
+            uppercase_next = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn quoted(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "\"replace\"".to_string())
+}
+
+fn enum_path(type_name: &str, value: &serde_json::Value, fallback: &str) -> String {
+    value.as_str().map_or_else(
+        || fallback.to_string(),
+        |variant| format!("{type_name}::{}", pascal_variant(variant)),
+    )
+}
+
+fn privacy_tier_expr(value: &serde_json::Value) -> String {
+    enum_path("PrivacyTier", value, "PrivacyTier::Sensitive")
+}
+
+fn privacy_context_expr(value: &serde_json::Value) -> String {
+    enum_path("ProcessingContext", value, "ProcessingContext::Command")
+}
+
+fn resource_profile_expr(value: &serde_json::Value) -> String {
+    enum_path("ResourceProfile", value, "ResourceProfile::BoundedFile")
+}
+
+fn runner_pack_expr(value: &serde_json::Value) -> String {
+    enum_path("RunnerPack", value, "RunnerPack::Staged")
+}
+
+fn runtime_shape_expr(value: &serde_json::Value) -> String {
+    enum_path("RuntimeShape", value, "RuntimeShape::OnDemand")
+}
+
+fn horizons_expr(value: &serde_json::Value) -> String {
+    let Some(values) = value.as_array() else {
+        return "Horizon::Continuous".to_string();
+    };
+    let rendered = values
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .map(|variant| format!("Horizon::{}", pascal_variant(variant)))
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        "Horizon::Continuous".to_string()
+    } else {
+        rendered.join(", ")
+    }
+}
+
+fn retention_expr(value: &serde_json::Value) -> String {
+    match string_field(value, "kind") {
+        Some("forever") => "RetentionPolicy::Forever".to_string(),
+        Some("days") => format!(
+            "RetentionPolicy::Days {{ days: {} }}",
+            value
+                .get("days")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        ),
+        Some("tiered") => format!(
+            "RetentionPolicy::Tiered {{ hot_days: {}, warm_days: {} }}",
+            value
+                .get("hot_days")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+            value
+                .get("warm_days")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        ),
+        _ => "RetentionPolicy::Forever".to_string(),
+    }
+}
+
+fn occurrence_identity_expr(value: &serde_json::Value) -> String {
+    match string_field(value, "kind") {
+        Some("uuid5_from") => format!(
+            "OccurrenceIdentity::Uuid5From({})",
+            quoted(
+                string_field(value, "key").unwrap_or("replace-with-object-level-occurrence-key")
+            )
+        ),
+        Some("natural") => "OccurrenceIdentity::Natural".to_string(),
+        Some("anchor") => "OccurrenceIdentity::Anchor".to_string(),
+        _ => "OccurrenceIdentity::Uuid5From(\"replace-with-object-level-occurrence-key\")"
+            .to_string(),
+    }
+}
+
+fn checkpoint_family_expr(value: &serde_json::Value) -> String {
+    match string_field(value, "kind") {
+        Some("append_stream") => "CheckpointFamily::AppendStream".to_string(),
+        Some("mutable_snapshot") => format!(
+            "CheckpointFamily::MutableSnapshot {{ backing_store_kind: {}, occurrence_anchor: {} }}",
+            quoted(string_field(value, "backing_store_kind").unwrap_or("replace-backing-store")),
+            quoted(string_field(value, "occurrence_anchor").unwrap_or("replace-occurrence-anchor")),
+        ),
+        Some("journal") => "CheckpointFamily::Journal".to_string(),
+        Some("polling") => "CheckpointFamily::Polling".to_string(),
+        Some("live_observation") => "CheckpointFamily::LiveObservation".to_string(),
+        _ => "CheckpointFamily::AppendStream".to_string(),
+    }
+}
+
+fn access_scope_expr(value: &serde_json::Value) -> String {
+    match string_field(value, "scope") {
+        Some("internal") => "AccessScope::Internal".to_string(),
+        Some("staged_export") => "AccessScope::StagedExport".to_string(),
+        Some("target_home") => format!(
+            "AccessScope::TargetHome {{ path: {} }}",
+            quoted(string_field(value, "path").unwrap_or("replace-path"))
+        ),
+        Some("target_data") => format!(
+            "AccessScope::TargetData {{ path: {} }}",
+            quoted(string_field(value, "path").unwrap_or("replace-path"))
+        ),
+        Some("runtime_bridge") => format!(
+            "AccessScope::RuntimeBridge {{ surface: {} }}",
+            quoted(string_field(value, "surface").unwrap_or("replace-surface"))
+        ),
+        Some("systemd_journal") => "AccessScope::SystemdJournal".to_string(),
+        Some("kernel_uevents") => "AccessScope::KernelUevents".to_string(),
+        Some("session_bus") => "AccessScope::SessionBus".to_string(),
+        Some("system_bus") => "AccessScope::SystemBus".to_string(),
+        Some("configured_roots") => "AccessScope::ConfiguredRoots".to_string(),
+        Some("library_root") => "AccessScope::LibraryRoot".to_string(),
+        _ => "AccessScope::Internal".to_string(),
+    }
+}
+
 fn rust_ident(value: &str) -> String {
     value
         .chars()
@@ -319,12 +500,29 @@ mod tests {
         assert!(rendered.contains("compile_error!"));
         assert!(!rendered.contains("pilot"));
         assert!(rendered.contains("event_source ="));
-        assert!(rendered.contains("privacy_tier = PrivacyTier::Sensitive"));
-        assert!(rendered.contains("horizons(Horizon::Continuous)"));
-        assert!(rendered.contains("retention = RetentionPolicy::Forever"));
-        assert!(rendered.contains("occurrence_identity = OccurrenceIdentity::Uuid5From"));
-        assert!(rendered.contains("access_scope = AccessScope::Internal"));
-        assert!(rendered.contains("runtime_shape = RuntimeShape::OnDemand"));
+        assert!(rendered.contains("privacy_tier = PrivacyTier::"));
+        assert!(rendered.contains("horizons(Horizon::"));
+        assert!(rendered.contains("retention = RetentionPolicy::"));
+        assert!(rendered.contains("occurrence_identity = OccurrenceIdentity::"));
+        assert!(rendered.contains("privacy_context = ProcessingContext::"));
+        assert!(rendered.contains("runtime_shape = RuntimeShape::"));
+    }
+
+    #[test]
+    fn skeleton_renders_runtime_binding_metadata_when_available() {
+        let rendered =
+            render_source_skeleton("terminal.kitty-osc-live", "terminal.kitty-osc-live").unwrap();
+
+        assert!(
+            rendered
+                .contains("access_scope = AccessScope::RuntimeBridge { surface: \"kitty_osc\" }")
+        );
+        assert!(rendered.contains("resource_profile = ResourceProfile::LiveWatcher"));
+        assert!(rendered.contains("runner_pack = RunnerPack::Live"));
+        assert!(rendered.contains("checkpoint_family = CheckpointFamily::LiveObservation"));
+        assert!(rendered.contains("runtime_shape = RuntimeShape::Continuous"));
+        assert!(rendered.contains("capabilities = \"coverage:source-coverage, debt:unified-debt-view, operation:terminal.activity.check"));
+        assert!(rendered.contains("operation:terminal.activity.inspect"));
     }
 
     #[test]
