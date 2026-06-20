@@ -876,6 +876,73 @@ SQL
                     ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot)
                       return 0
                       ;;
+                    doctor|infra|run)
+                      _sinex_xtask_is_read_only_subcommand "$@"
+                      return $?
+                      ;;
+                    *)
+                      return 1
+                      ;;
+                  esac
+                }
+
+                _sinex_xtask_is_help_request() {
+                  while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                      -h|--help)
+                        return 0
+                        ;;
+                      *)
+                        shift
+                        ;;
+                    esac
+                  done
+                  return 1
+                }
+
+                _sinex_xtask_is_read_only_subcommand() {
+                  local command_name subcommand seen_command
+
+                  if _sinex_xtask_is_help_request "$@"; then
+                    return 0
+                  fi
+
+                  command_name="$(_sinex_xtask_command_name "$@")"
+                  subcommand=""
+                  seen_command=0
+                  while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                      --json|--list-commands|--bg|--fg|-v|-vv|-vvv)
+                        shift
+                        ;;
+                      --format)
+                        if [ "$#" -ge 2 ]; then
+                          shift 2
+                        else
+                          shift
+                        fi
+                        ;;
+                      --format=*)
+                        shift
+                        ;;
+                      "$command_name")
+                        seen_command=1
+                        shift
+                        ;;
+                      *)
+                        if [ "$seen_command" = 1 ]; then
+                          subcommand="$1"
+                          break
+                        fi
+                        shift
+                        ;;
+                    esac
+                  done
+
+                  case "$command_name:$subcommand" in
+                    infra:status|run:list)
+                      return 0
+                      ;;
                     *)
                       return 1
                       ;;
@@ -910,7 +977,7 @@ SQL
                   local command_name
                   command_name="$(_sinex_xtask_command_name "$@")"
                   case "$command_name" in
-                    ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot|check|test|build|deps|doctor|infra|docs)
+                    ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot|check|test|build|deps|doctor|infra|run|docs)
                       return 0
                       ;;
                     *)
@@ -921,9 +988,16 @@ SQL
 
                 _sinex_xtask_requires_sqlx_database() {
                   local command_name
+                  if _sinex_xtask_is_help_request "$@"; then
+                    return 1
+                  fi
                   command_name="$(_sinex_xtask_command_name "$@")"
                   case "$command_name" in
-                    check|test|build|deps|doctor)
+                    check|test|build|deps)
+                      return 0
+                      ;;
+                    doctor)
+                      _sinex_xtask_is_read_only_subcommand "$@" && return 1
                       return 0
                       ;;
                     *)
@@ -937,6 +1011,15 @@ SQL
                     _sinex_xtask_ensure_sqlx_database || exit $?
                   fi
                   exec "$bin_path" "$@"
+                }
+
+                _sinex_xtask_exec_nix_readonly_fallback() {
+                  if ! command -v nix >/dev/null 2>&1; then
+                    echo "✗ no checkout-local xtask binary exists and nix is unavailable for the read-only fallback" >&2
+                    return 127
+                  fi
+                  echo "ℹ  Using Nix-built xtask fallback for read-only command; checkout-local Postgres/NATS will not be started" >&2
+                  exec nix run "$root_dir#xtask" -- "$@"
                 }
 
                 _sinex_xtask_wait_for_existing_build() {
@@ -1130,6 +1213,10 @@ SQL
                     fi
                   fi
                   _sinex_xtask_exec_checkout_binary "$@"
+                fi
+
+                if [ "$force_rebuild" != "1" ] && _sinex_xtask_is_observability_command "$@"; then
+                  _sinex_xtask_exec_nix_readonly_fallback "$@"
                 fi
 
                 if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
