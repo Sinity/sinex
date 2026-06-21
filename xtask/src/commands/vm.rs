@@ -381,6 +381,22 @@ fn classify_vm_progress_line(line: &str) -> Option<String> {
         return Some(format!("Subtest: {subtest}"));
     }
 
+    if let Some(summary_json) = candidate.strip_prefix("VM_OUTCOME_SUMMARY ") {
+        if let Ok(summary) = serde_json::from_str::<serde_json::Value>(summary_json) {
+            let total = summary["total"].as_u64().unwrap_or(0);
+            let passed = summary["passed"].as_u64().unwrap_or(0);
+            let skipped = summary["skipped"].as_u64().unwrap_or(0);
+            let inconclusive = summary["inconclusive"].as_u64().unwrap_or(0);
+            let evidence_missing = summary["evidence_missing"].as_u64().unwrap_or(0);
+            let failed = summary["failed"].as_u64().unwrap_or(0);
+            return Some(format!(
+                "VM outcome summary: {passed}/{total} passed, {skipped} skipped, \
+                 {inconclusive} inconclusive, {evidence_missing} evidence-missing, {failed} failed"
+            ));
+        }
+        return Some("VM outcome summary emitted".to_string());
+    }
+
     const PREFIXES: &[&str] = &[
         "!!! Test ",
         "!!! ",
@@ -1833,6 +1849,20 @@ mod tests {
         assert_eq!(
             classify_vm_progress_line(line),
             Some("RequestedAssertionFailed: browser evidence missing".to_string())
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_vm_progress_line_summarizes_vm_outcome_report()
+    -> ::xtask::sandbox::TestResult<()> {
+        let line = r#"vm-test > VM_OUTCOME_SUMMARY {"evidence_missing":1,"failed":0,"inconclusive":2,"items":[],"passed":3,"skipped":4,"total":10}"#;
+        assert_eq!(
+            classify_vm_progress_line(line),
+            Some(
+                "VM outcome summary: 3/10 passed, 4 skipped, 2 inconclusive, 1 evidence-missing, 0 failed"
+                    .to_string()
+            )
         );
         Ok(())
     }
