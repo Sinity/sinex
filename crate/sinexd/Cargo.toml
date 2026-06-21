@@ -255,6 +255,7 @@ rcgen = { workspace = true }
 # `query` for `.query(..)` URL params, `rustls` for the self-signed TLS client,
 # `json` for typed bodies. Test-only; the runtime dependency (above) stays minimal.
 reqwest = { workspace = true, features = ["stream", "query", "json", "rustls"] }
+syn = { workspace = true }
 
 [lints]
 workspace = true
