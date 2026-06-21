@@ -68,8 +68,9 @@ use std::collections::{HashMap, HashSet};
 use crate::apply::ApplyError;
 use crate::defs::{
     Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
-    EventEmbeddings, EventPayloadSchemas, Events, OperationsLog, SemanticEpochs, SemanticLaneDiffs,
-    SemanticLaneOutputs, SemanticLanes, SourceMaterialRegistry, TableMeta, TaggedItems, Tags,
+    EventEmbeddings, EventPayloadSchemas, Events, ModelEffects, OperationsLog, SemanticEpochs,
+    SemanticLaneDiffs, SemanticLaneOutputs, SemanticLanes, SourceMaterialRegistry, TableMeta,
+    TaggedItems, Tags,
 };
 use sea_query::{
     Alias, ColumnDef, ColumnSpec, ForeignKeyCreateStatement, PostgresQueryBuilder, Table,
@@ -739,6 +740,16 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                 // Skipping avoids any edge-case where the expression is re-added.
                 skip_extra_generated: true,
             }),
+        },
+        ConvergibleTable {
+            meta: find_meta("core.model_effects")?,
+            statement_fn: ModelEffects::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
         },
         ConvergibleTable {
             meta: find_meta("sinex_schemas.event_payload_schemas")?,
