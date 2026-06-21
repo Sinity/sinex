@@ -7,6 +7,7 @@
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
+use std::{path::Path, process::ExitStatus};
 
 use color_eyre::eyre::{Result, eyre};
 use serde_json::Value;
@@ -222,7 +223,7 @@ fn test_zombie_reaping(runner: &mut TestRunner) {
 // ─── Scenario 3: PID reuse safety ────────────────────────────────────────────
 
 fn test_pid_reuse_safety(runner: &mut TestRunner) {
-    let name = "PID reuse safety: cancel reads /proc/{pid}/cmdline before killing";
+    let name = "PID reuse safety: stale cancel does not claim a missing process was killed";
 
     // Start a background job and get its PID
     let jid: u64 = if let Some(id) =
@@ -253,9 +254,19 @@ fn test_pid_reuse_safety(runner: &mut TestRunner) {
     let pid_str = pid.to_string();
     let _ = Command::new("kill").args(["-9", pid_str.as_str()]).status();
 
-    thread::sleep(Duration::from_secs(1));
+    if !wait_for_pid_to_disappear(pid, Duration::from_secs(5)) {
+        runner.record(
+            name,
+            TestOutcome::EvidenceMissing,
+            &format!(
+                "PID {pid} remained visible after SIGKILL; stale-process cancel path was not exercised"
+            ),
+        );
+        return;
+    }
 
-    // Attempt to cancel — xtask should verify cmdline before sending signal
+    // Attempt to cancel after the tracked process is gone. xtask should refuse
+    // to claim the job was killed and surface the structured stale-job error.
     let cancel_out = match xtask(&["jobs", "cancel", &jid.to_string(), "--json"]) {
         Ok(output) => output,
         Err(error) => {
@@ -268,30 +279,69 @@ fn test_pid_reuse_safety(runner: &mut TestRunner) {
     };
     let stdout = String::from_utf8_lossy(&cancel_out.stdout);
     let stderr = String::from_utf8_lossy(&cancel_out.stderr);
-    let combined = format!("{stdout}{stderr}");
 
-    // Accept any outcome that shows the cancel resolved without process corruption:
-    // - exit 0: job found gone, already cleaned up
-    // - "not found" / "already" / "cmdline" / "mismatch": safety check fired
-    let acceptable = cancel_out.status.success()
-        || combined.contains("not found")
-        || combined.contains("already")
-        || combined.to_lowercase().contains("cmdline")
-        || combined.to_lowercase().contains("mismatch")
-        || combined.contains("pid")
-        || combined.contains("dead");
+    match classify_stale_cancel_output(&cancel_out.status, &stdout, &stderr) {
+        Ok(()) => runner.pass(name),
+        Err(reason) => runner.fail(name, &reason),
+    }
+}
 
-    if acceptable {
-        runner.pass(name);
+fn wait_for_pid_to_disappear(pid: u64, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if !Path::new(&format!("/proc/{pid}")).exists() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
+fn classify_stale_cancel_output(
+    status: &ExitStatus,
+    stdout: &str,
+    stderr: &str,
+) -> std::result::Result<(), String> {
+    let Some(value) = last_json_object(stdout) else {
+        let combined = format!("{stdout}{stderr}");
+        return Err(format!(
+            "cancel did not emit a JSON result (rc={}): {}",
+            status.code().unwrap_or(-1),
+            truncate_for_report(&combined)
+        ));
+    };
+
+    let status_field = value["status"].as_str().unwrap_or("");
+    let errors = value["errors"].as_array().cloned().unwrap_or_default();
+    let has_job_not_found = errors
+        .iter()
+        .any(|error| error["code"].as_str() == Some("JOB_NOT_FOUND"));
+
+    if status_field == "failed" && has_job_not_found {
+        return Ok(());
+    }
+
+    Err(format!(
+        "cancel should reject the stale job with JOB_NOT_FOUND, got status={status_field:?}, rc={}, errors={errors:?}",
+        status.code().unwrap_or(-1)
+    ))
+}
+
+fn last_json_object(output: &str) -> Option<Value> {
+    for (start, _) in output.match_indices('{').rev() {
+        if let Ok(value) = serde_json::from_str(&output[start..]) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn truncate_for_report(text: &str) -> String {
+    const MAX_LEN: usize = 240;
+    if text.len() <= MAX_LEN {
+        text.to_string()
     } else {
-        runner.fail(
-            name,
-            &format!(
-                "unexpected cancel behavior rc={}: {}",
-                cancel_out.status.code().unwrap_or(-1),
-                &combined[..combined.len().min(200)]
-            ),
-        );
+        format!("{}...", &text[..MAX_LEN])
     }
 }
 
@@ -314,5 +364,63 @@ fn test_history_db_consistency(runner: &mut TestRunner) {
             name,
             &format!("expected history to grow by 1 (before={before}, after={after})"),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_stale_cancel_output, last_json_object};
+
+    #[cfg(unix)]
+    fn exit_status(code: i32) -> std::process::ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+
+        std::process::ExitStatus::from_raw(code << 8)
+    }
+
+    #[test]
+    fn stale_cancel_classifier_accepts_structured_job_not_found() {
+        let output = r#"{"status":"failed","errors":[{"code":"JOB_NOT_FOUND","message":"Job 7 not found or not running"}]}"#;
+
+        classify_stale_cancel_output(&exit_status(1), output, "")
+            .expect("structured stale-job rejection should prove the VM safety branch");
+    }
+
+    #[test]
+    fn stale_cancel_classifier_rejects_success() {
+        let output = r#"{"status":"success","message":"Job 7 cancelled"}"#;
+
+        let error = classify_stale_cancel_output(&exit_status(0), output, "")
+            .expect_err("success would not prove stale-process rejection");
+        assert!(error.contains("JOB_NOT_FOUND"));
+    }
+
+    #[test]
+    fn last_json_object_uses_trailing_json_object() {
+        let parsed = last_json_object("noise\n{\"status\":\"running\"}\n{\"status\":\"failed\"}\n")
+            .expect("expected trailing JSON object");
+
+        assert_eq!(parsed["status"].as_str(), Some("failed"));
+    }
+
+    #[test]
+    fn last_json_object_accepts_pretty_xtask_output() {
+        let parsed = last_json_object(
+            r#"warning: ignored
+{
+  "status": "failed",
+  "errors": [
+    {
+      "code": "JOB_NOT_FOUND",
+      "message": "Job 7 not found or not running"
+    }
+  ]
+}
+"#,
+        )
+        .expect("expected trailing pretty JSON object");
+
+        assert_eq!(parsed["status"].as_str(), Some("failed"));
+        assert_eq!(parsed["errors"][0]["code"].as_str(), Some("JOB_NOT_FOUND"));
     }
 }
