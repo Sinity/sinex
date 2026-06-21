@@ -1,4 +1,4 @@
-use crate::runtime::RuntimeResult;
+use crate::runtime::{RuntimeResult, SinexError};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::SanitizedPath;
 use sinex_primitives::temporal::Timestamp;
@@ -42,6 +42,18 @@ pub enum ExportFormat {
     Json,
     Csv,
     Raw,
+}
+
+/// Build a consistent error for exploration/debug surfaces a runtime module
+/// deliberately does not expose.
+pub fn unsupported_exploration_capability(
+    module_kind: &str,
+    module_name: &str,
+    capability: &str,
+) -> SinexError {
+    SinexError::invalid_state(format!(
+        "{module_kind} '{module_name}' does not support {capability}"
+    ))
 }
 
 /// Trait for module-specific exploration capabilities
