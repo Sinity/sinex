@@ -3,6 +3,12 @@
 //! These tables store experiment artifacts outside canonical entity/relation
 //! projections. Promotion into canonical state must happen through explicit
 //! operator authority, not by reading lane outputs as ordinary projections.
+//!
+//! Keep this schema narrow. New derived outputs should first consider the
+//! Proposal/Judgment/Operation path, DerivationSpec, Artifact/Projection rows,
+//! and output-kind discipline. Semantic lanes remain for shadow comparison and
+//! epoch/lane diffs; they must not become a parallel authority path for model
+//! effects or admitted facts.
 
 use crate::primitives::{Timestamp, Uuid};
 use crate::{Events, OperationsLog, SourceMaterialRegistry, TableDef};

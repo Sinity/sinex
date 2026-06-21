@@ -1,10 +1,14 @@
 //! Schema Cache Repository
 //!
-//! Centralized schema lookup and caching for event validation.
+//! Centralized payload-schema lookup and caching for event validation.
 //! This consolidates schema access patterns from:
-//! - `types/events/schema_registry.rs` (lazy lookup by `source/event_type`)
+//! - `types/events/schema_registry.rs` (lazy lookup by namespace pair)
 //! - `db/validation.rs` (bulk loading for `EventValidator`)
 //! - `sinexd/service.rs` (schema content for NATS KV)
+//!
+//! The lookup key remains `(source, event_type)` for existing schema rows and
+//! compatibility with payload inventory. EventContract/AdmissionPolicy catalogs
+//! are the semantic authority above this physical schema cache.
 
 use crate::repositories::common::db_error;
 use crate::repositories::events::EventPayloadSchema;
@@ -38,7 +42,7 @@ impl<'a> SchemaCacheRepository<'a> {
         Self { pool }
     }
 
-    /// Look up the schema ID for a given source and event type.
+    /// Look up the physical payload schema ID for a namespace pair.
     ///
     /// Returns the most recently updated active schema.
     /// Callers should cache the result to avoid repeated DB queries.
