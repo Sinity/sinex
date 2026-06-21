@@ -11,9 +11,9 @@ landed under this pattern:
 - `raindrop-bookmarks` (#1091 → PR #1263) — CSV files
 - `facebook-messenger-thread` (#1090 → PR #1264) — per-thread JSON object files
 
-Use it for the remaining #1070 backlog (`#1089` social, `#1088` docs,
-`#1075` KB, `#1074` finance, `#1068` AI sessions, `#1053` git, `#1052`
-health) and for any new export format from a personal-data provider.
+Use it as the implementation guide for staged personal-data exports. The
+old #1070 parser tracker is closed; current package or parser issues own
+new export work instead of this guide naming a live backlog.
 
 ## Mental model
 
@@ -351,7 +351,7 @@ See `crate/sinexd/src/sources/source_contracts/music.rs::tests`,
 
 ### 9a. Parser-family acceptance fixture
 
-Every #1070 parser child should include at least one representative
+Every staged-export parser should include at least one representative
 `ParserFixtureHarness` fixture with a `FixtureAcceptanceContract`. That
 contract is the shared acceptance vocabulary for parser backlog work:
 
@@ -424,7 +424,7 @@ enforced checks.
   on-demand (operator runs `sinexctl sources stage` + `sources replay`)
   and require no extra Nix wiring beyond the existing source
   service.
-- **Live-deploy parity proof.** Each parser's #1070-style AC includes
+- **Live-deploy parity proof.** Parser acceptance may require
   "query parity against Lynchpin export counts." That is operator work:
   stage the export under `/realm/data/exports/<provider>/`, run the
   parser job, compare counts. Not part of the PR.
@@ -443,4 +443,3 @@ enforced checks.
   CSV example
 - `crate/sinexd/src/sources/source_contracts/messaging.rs` — the
   canonical per-file JSON-object example
-- #1070 — the live tracker for remaining export parsers
