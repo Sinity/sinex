@@ -230,6 +230,48 @@ fn make_nats_snapshot_archive_with_summary() -> TestResult<(TempDir, PathBuf)> {
     Ok((dir, archive_path))
 }
 
+fn make_unsupported_component_snapshot_archive() -> TestResult<(TempDir, PathBuf)> {
+    use sinexctl::admin::manifest::{ComponentRecord, SnapshotManifest, Totals};
+
+    let dir = tempfile::tempdir()?;
+    let staging = dir.path().join("staging");
+    fs::create_dir_all(staging.join("legacy-index"))?;
+    fs::write(
+        staging.join("legacy-index").join("snapshot.json"),
+        br#"{"shape":"old"}"#,
+    )?;
+    let component_blake3 = snapshot_component_blake3(&staging.join("legacy-index"))?;
+
+    let manifest = SnapshotManifest {
+        snapshot_id: "01970a7f-391b-7000-8000-000000000004".to_string(),
+        created_at: "2026-05-15T11:33:00Z".to_string(),
+        sinex_version: "0.1.0".to_string(),
+        git_sha: Some("abc1234".to_string()),
+        host: "sinnix-prime".to_string(),
+        mode: "quiesce".to_string(),
+        source_ids: registered_fixture_source_ids(),
+        components: vec![ComponentRecord {
+            name: "legacy-index".to_string(),
+            path: "legacy-index/".to_string(),
+            bytes: 15,
+            blake3: component_blake3,
+            extras: None,
+        }],
+        totals: Totals {
+            uncompressed_bytes: 15,
+            archive_bytes: Some(512),
+        },
+    };
+    fs::write(
+        staging.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+
+    let archive_path = dir.path().join("unsupported-component.sinex.tar.zst");
+    exec::tar_create_zstd(&staging, &archive_path, 1, 1)?;
+    Ok((dir, archive_path))
+}
+
 fn make_executable_script(dir: &TempDir, name: &str, body: &str) -> TestResult<PathBuf> {
     let path = dir.path().join(name);
     fs::write(&path, body)?;
@@ -1045,6 +1087,39 @@ async fn snapshot_restore_execute_requires_confirmation() -> xtask::sandbox::Tes
     assert!(
         format!("{error:#}").contains("--confirm-restore"),
         "error should explain confirmation flag: {error:#}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn snapshot_restore_rejects_unsupported_archive_components() -> xtask::sandbox::TestResult<()>
+{
+    let (_dir, archive_path) = make_unsupported_component_snapshot_archive()?;
+    let target_parent = tempfile::tempdir()?;
+    let target = target_parent.path().join("unsupported-restore-target");
+
+    let cmd = AdminSnapshotRestoreCommand {
+        archive: archive_path,
+        target_dir: target,
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: true,
+        allow_active_services: true,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
+    };
+    let error = cmd
+        .execute()
+        .expect_err("unknown archive components should be rejected before extraction");
+    let rendered = format!("{error:#}");
+    assert!(
+        rendered.contains("state, cas, nats, and postgres"),
+        "restore execution error should name the supported restore-drill components: {rendered}"
+    );
+    assert!(
+        rendered.contains("legacy-index"),
+        "restore execution error should name the unsupported archive component: {rendered}"
     );
     Ok(())
 }
