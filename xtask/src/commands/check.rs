@@ -77,6 +77,10 @@ pub struct CheckCommand {
     /// Allow broad checks to start even when host PSI is already severe.
     #[arg(long)]
     pub allow_contended_host: bool,
+    /// Internal: child checks invoked by `--changed-strict` inherit the parent
+    /// compile-ready environment and must not run their own preflight.
+    #[arg(long, hide = true)]
+    pub skip_preflight: bool,
 
     /// API drift guard: check only packages that own Rust files changed between
     /// HEAD and the merge-base of the given ref (default `origin/master`).
@@ -127,6 +131,7 @@ impl CheckCommand {
             self.allow_contended_host,
             "--allow-contended-host",
         );
+        push_flag(&mut args, self.skip_preflight, "--skip-preflight");
         if let Some(base_ref) = &self.changed_strict {
             args.push("--changed-strict".to_string());
             if let Some(base_ref) = base_ref {
@@ -543,7 +548,11 @@ impl XtaskCommand for CheckCommand {
             // `cargo check` needs a live Postgres schema for sqlx macros, but it
             // must not start NATS or runtime services as a verification side
             // effect.
-            let compile_ready = preflight::ensure_compile_ready(ctx)?;
+            let compile_ready = if this.skip_preflight {
+                None
+            } else {
+                Some(preflight::ensure_compile_ready(ctx)?)
+            };
             let result = run_changed_strict_command(base_ref, ctx, &this);
             drop(compile_ready);
             return result;
@@ -554,7 +563,11 @@ impl XtaskCommand for CheckCommand {
         // Ensure only compile-time infrastructure is ready. `cargo check` needs a
         // live Postgres schema for sqlx macros, but it must not start NATS or
         // runtime services as a side effect of verification.
-        let _compile_ready = preflight::ensure_compile_ready(ctx)?;
+        let _compile_ready = if this.skip_preflight {
+            None
+        } else {
+            Some(preflight::ensure_compile_ready(ctx)?)
+        };
 
         // Resource warning before heavy operation.  Captured regardless of output
         // mode so that machine-facing callers (agents, CI) can surface the
@@ -872,19 +885,7 @@ fn run_changed_strict_command(
     let xtask_bin = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("xtask"));
 
     // Forward check modifier flags to the per-package invocations.
-    let mut extra_args: Vec<String> = vec![];
-    if this.lint {
-        extra_args.push("--lint".to_string());
-    }
-    if this.fmt {
-        extra_args.push("--fmt".to_string());
-    }
-    if this.forbidden {
-        extra_args.push("--forbidden".to_string());
-    }
-    if this.skip_tests {
-        extra_args.push("--skip-tests".to_string());
-    }
+    let extra_args = changed_strict_child_check_args(this);
 
     let report = crate::strict_changed::run_changed_strict(
         base_ref,
@@ -916,6 +917,23 @@ fn run_changed_strict_command(
     }
 
     changed_strict_command_result(ctx, report)
+}
+
+fn changed_strict_child_check_args(this: &CheckCommand) -> Vec<String> {
+    let mut extra_args: Vec<String> = vec!["--skip-preflight".to_string()];
+    if this.lint {
+        extra_args.push("--lint".to_string());
+    }
+    if this.fmt {
+        extra_args.push("--fmt".to_string());
+    }
+    if this.forbidden {
+        extra_args.push("--forbidden".to_string());
+    }
+    if this.skip_tests {
+        extra_args.push("--skip-tests".to_string());
+    }
+    extra_args
 }
 
 fn changed_strict_command_result(
@@ -995,6 +1013,7 @@ mod tests {
             nix: false,
             plan: false,
             allow_contended_host: true,
+            skip_preflight: false,
             changed_strict: None,
         }
     }
@@ -1049,6 +1068,37 @@ mod tests {
         assert!(!cmd.fmt);
         assert!(!cmd.forbidden);
         assert!(!cmd.full);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_changed_strict_child_checks_skip_nested_preflight()
+    -> ::xtask::sandbox::TestResult<()> {
+        let cmd = CheckCommand {
+            lint: true,
+            forbidden: true,
+            skip_tests: true,
+            ..make_cmd(CheckFlags::default())
+        };
+
+        let args = changed_strict_child_check_args(&cmd);
+
+        assert!(
+            args.contains(&"--skip-preflight".to_string()),
+            "changed-strict parent owns compile readiness; child checks must not run nested preflight: {args:?}"
+        );
+        assert!(
+            args.contains(&"--lint".to_string()),
+            "child checks should preserve lint mode: {args:?}"
+        );
+        assert!(
+            args.contains(&"--forbidden".to_string()),
+            "child checks should preserve forbidden-pattern mode: {args:?}"
+        );
+        assert!(
+            args.contains(&"--skip-tests".to_string()),
+            "child checks should preserve test-skip mode: {args:?}"
+        );
         Ok(())
     }
 
