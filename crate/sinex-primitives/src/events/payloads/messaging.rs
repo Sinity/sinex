@@ -1,6 +1,6 @@
 //! Messaging-domain event payloads.
 //!
-//! Currently hosts the Facebook Messenger GDPR-export payload (#1090).
+//! Currently hosts the Facebook Messenger GDPR-export payload.
 //! Adding other messaging-provider exports (Signal, Telegram, IRC private
 //! messages) belongs in this module rather than spawning a new domain per
 //! provider.

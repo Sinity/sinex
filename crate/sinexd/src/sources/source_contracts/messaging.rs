@@ -1,4 +1,4 @@
-//! Facebook Messenger GDPR export parser (#1090).
+//! Facebook Messenger GDPR export parser.
 //!
 //! Reads one JSON file per conversation thread (Facebook GDPR export shape:
 //! `{participants: [...], threadName: "...", messages: [...]}`) and emits
