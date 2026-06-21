@@ -498,6 +498,46 @@ fn query_unit_candidates(
     let lower = active.to_ascii_lowercase();
     let last = tokens.last().map(String::as_str).unwrap_or_default();
 
+    if lower.ends_with(" sort") || lower.ends_with(" sort ") || last == "sort" {
+        return descriptor
+            .sort_keys
+            .iter()
+            .map(|sort| {
+                CompletionCandidate::new(
+                    sort.key,
+                    "query-sort-key",
+                    "Query sort keys",
+                    format!("sort key for {}", descriptor.unit),
+                    replace_start,
+                    replace_end,
+                    95,
+                )
+            })
+            .collect();
+    }
+
+    if tokens.len() >= 2
+        && tokens
+            .get(tokens.len().saturating_sub(2))
+            .is_some_and(|token| token == "sort")
+        && descriptor.sort_keys.iter().any(|sort| sort.key == last)
+    {
+        return ["asc", "desc"]
+            .into_iter()
+            .map(|direction| {
+                CompletionCandidate::new(
+                    direction,
+                    "query-sort-direction",
+                    "Query sort direction",
+                    "sort direction",
+                    replace_start,
+                    replace_end,
+                    90,
+                )
+            })
+            .collect();
+    }
+
     if lower.ends_with(" where") || lower.ends_with(" and") || lower.ends_with(" or") {
         return descriptor
             .fields
@@ -861,6 +901,24 @@ mod tests {
                 .iter()
                 .any(|candidate| candidate.value == "source"),
             "query field completions must come from descriptor registry: {field_response:#?}"
+        );
+
+        let sort_response = response("sinexctl query operations sort ").await;
+        assert!(
+            sort_response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.value == "operation_id"),
+            "query sort completions must come from descriptor registry: {sort_response:#?}"
+        );
+
+        let direction_response = response("sinexctl query operations sort status ").await;
+        assert!(
+            direction_response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.value == "desc"),
+            "query sort direction completions must be exposed: {direction_response:#?}"
         );
         Ok(())
     }
