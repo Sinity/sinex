@@ -36,7 +36,7 @@ async fn spawn_fake_scan_source_runtime(
     events_processed: u64,
 ) -> TestResult<(
     tokio::sync::oneshot::Receiver<SourceScanCommand>,
-    tokio::task::JoinHandle<()>,
+    tokio::task::JoinHandle<TestResult<()>>,
 )> {
     let module_name = module_name.to_string();
     let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
@@ -45,14 +45,16 @@ async fn spawn_fake_scan_source_runtime(
 
     let handle = tokio::spawn(async move {
         let Some(msg) = sub.next().await else {
-            panic!("fake scan source runtime `{module_name}` ended before receiving scan command");
+            return Err(color_eyre::eyre::eyre!(
+                "fake scan source runtime `{module_name}` ended before receiving scan command"
+            ));
         };
 
-        let Ok(command) = serde_json::from_slice::<SourceScanCommand>(&msg.payload) else {
-            panic!(
-                "fake scan source runtime `{module_name}` received invalid scan command payload"
-            );
-        };
+        let command = serde_json::from_slice::<SourceScanCommand>(&msg.payload).map_err(|error| {
+            color_eyre::eyre::eyre!(
+                "fake scan source runtime `{module_name}` received invalid scan command payload: {error}"
+            )
+        })?;
         let operation_id = command.operation_id;
         let progress_subject =
             env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
@@ -68,56 +70,66 @@ async fn spawn_fake_scan_source_runtime(
                 accepted: true,
                 error: None,
             };
-            let bytes = serde_json::to_vec(&ack).expect("fake scan source ack should serialize");
-            nats.publish(reply, bytes.into())
-                .await
-                .expect("fake scan source should publish ack reply");
+            let bytes = serde_json::to_vec(&ack).map_err(|error| {
+                color_eyre::eyre::eyre!(
+                    "fake scan source runtime `{module_name}` failed to serialize ack: {error}"
+                )
+            })?;
+            nats.publish(reply, bytes.into()).await.map_err(|error| {
+                color_eyre::eyre::eyre!(
+                    "fake scan source runtime `{module_name}` failed to publish ack reply: {error}"
+                )
+            })?;
         }
 
-        if let Some(replay_context) = replay_context.as_ref()
-            && let Some(material) = replay_context.materials.first()
-        {
-            let logical_source_identifier = material
-                .material_metadata
-                .get("logical_source_identifier")
-                .and_then(serde_json::Value::as_str)
-                .or_else(|| material.source_identifier.split("#material=").next())
-                .unwrap_or("/tmp/replay-end-to-end.txt");
-            let event_type = replay_context
-                .replay_scope
-                .event_types
-                .as_ref()
-                .and_then(|types| types.first())
-                .map_or("file.created", String::as_str);
-            let material_id = material.source_material_id;
-            for index in 0..events_processed {
-                let anchor_byte = (index * 100) as i64;
-                let event = match DynamicPayload::new(
-                    module_name.as_str(),
-                    event_type,
-                    json!({ "path": logical_source_identifier, "replay_index": index }),
-                )
-                .from_material_at(Id::from_uuid(material_id), anchor_byte)
-                .with_offset_start(anchor_byte)
-                .and_then(|builder| builder.with_offset_end(anchor_byte + 100))
-                .and_then(|builder| builder.build())
-                {
-                    Ok(mut event) => {
-                        event.created_by_operation_id = Some(operation_id);
-                        event
-                    }
-                    Err(error) => {
-                        panic!(
-                            "fake scan source runtime `{module_name}` failed to build replay output event: {error}"
-                        );
-                    }
-                };
-                if let Err(error) = pool.events().insert(event).await {
-                    panic!(
-                        "fake scan source runtime `{module_name}` failed to insert replay output event: {error}"
-                    );
+        let Some(replay_context) = replay_context.as_ref() else {
+            return Err(color_eyre::eyre::eyre!(
+                "fake scan source runtime `{module_name}` received no replay context"
+            ));
+        };
+        let Some(material) = replay_context.materials.first() else {
+            return Err(color_eyre::eyre::eyre!(
+                "fake scan source runtime `{module_name}` received replay context without material roots"
+            ));
+        };
+        let logical_source_identifier = material
+            .material_metadata
+            .get("logical_source_identifier")
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| material.source_identifier.split("#material=").next())
+            .unwrap_or("/tmp/replay-end-to-end.txt");
+        let event_type = replay_context
+            .replay_scope
+            .event_types
+            .as_ref()
+            .and_then(|types| types.first())
+            .map_or("file.created", String::as_str);
+        let material_id = material.source_material_id;
+        for index in 0..events_processed {
+            let anchor_byte = (index * 100) as i64;
+            let event = match DynamicPayload::new(
+                module_name.as_str(),
+                event_type,
+                json!({ "path": logical_source_identifier, "replay_index": index }),
+            )
+            .from_material_at(Id::from_uuid(material_id), anchor_byte)
+            .with_offset_start(anchor_byte)
+            .and_then(|builder| builder.with_offset_end(anchor_byte + 100))
+            .and_then(|builder| builder.build())
+            {
+                Ok(mut event) => {
+                    event.created_by_operation_id = Some(operation_id);
+                    event
                 }
-            }
+                Err(error) => return Err(color_eyre::eyre::eyre!(
+                    "fake scan source runtime `{module_name}` failed to build replay output event {index}: {error}"
+                )),
+            };
+            pool.events().insert(event).await.map_err(|error| {
+                color_eyre::eyre::eyre!(
+                    "fake scan source runtime `{module_name}` failed to insert replay output event {index}: {error}"
+                )
+            })?;
         }
 
         let report = ScanReport {
@@ -132,29 +144,38 @@ async fn spawn_fake_scan_source_runtime(
         };
         let progress = SourceScanProgress {
             operation_id,
-            module_name,
+            module_name: module_name.clone(),
             events_processed,
             events_emitted: events_processed,
             final_report: Some(report),
             error: None,
         };
-        let bytes =
-            serde_json::to_vec(&progress).expect("fake scan source progress should serialize");
+        let bytes = serde_json::to_vec(&progress).map_err(|error| {
+            color_eyre::eyre::eyre!(
+                "fake scan source runtime `{module_name}` failed to serialize final progress: {error}"
+            )
+        })?;
         nats.publish(progress_subject, bytes.into())
             .await
-            .expect("fake scan source should publish final progress");
+            .map_err(|error| {
+                color_eyre::eyre::eyre!(
+                    "fake scan source runtime `{module_name}` failed to publish final progress: {error}"
+                )
+            })?;
+        Ok(())
     });
 
     Ok((command_rx, handle))
 }
 
 async fn await_fake_scan_source_runtime(
-    handle: tokio::task::JoinHandle<()>,
+    handle: tokio::task::JoinHandle<TestResult<()>>,
     label: &str,
 ) -> TestResult<()> {
     handle
         .await
-        .map_err(|error| color_eyre::eyre::eyre!("{label} fake scan runtime failed: {error}"))
+        .map_err(|error| color_eyre::eyre::eyre!("{label} fake scan runtime panicked: {error}"))?
+        .map_err(|error| color_eyre::eyre::eyre!("{label} fake scan runtime failed: {error:#}"))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
