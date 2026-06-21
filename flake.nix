@@ -919,6 +919,10 @@ SQL
                     ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot)
                       return 0
                       ;;
+                    fix)
+                      _sinex_xtask_is_no_compile_subcommand "$@"
+                      return $?
+                      ;;
                     doctor|infra|run)
                       _sinex_xtask_is_read_only_subcommand "$@"
                       return $?
@@ -941,6 +945,28 @@ SQL
                     esac
                   done
                   return 1
+                }
+
+                _sinex_xtask_is_no_compile_subcommand() {
+                  local command_name
+
+                  command_name="$(_sinex_xtask_command_name "$@")"
+                  case "$command_name" in
+                    fix)
+                      while [ "$#" -gt 0 ]; do
+                        case "$1" in
+                          --fmt-only)
+                            return 0
+                            ;;
+                        esac
+                        shift
+                      done
+                      return 1
+                      ;;
+                    *)
+                      return 1
+                      ;;
+                  esac
                 }
 
                 _sinex_xtask_is_read_only_subcommand() {
@@ -1020,7 +1046,7 @@ SQL
                   local command_name
                   command_name="$(_sinex_xtask_command_name "$@")"
                   case "$command_name" in
-                    ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot|check|test|build|deps|doctor|infra|run|docs)
+                    ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot|check|test|build|deps|doctor|infra|run|docs|fix)
                       return 0
                       ;;
                     *)
@@ -1034,9 +1060,12 @@ SQL
                   if _sinex_xtask_is_help_request "$@"; then
                     return 1
                   fi
+                  if _sinex_xtask_is_no_compile_subcommand "$@"; then
+                    return 1
+                  fi
                   command_name="$(_sinex_xtask_command_name "$@")"
                   case "$command_name" in
-                    check|test|build|deps)
+                    check|test|build|deps|fix)
                       return 0
                       ;;
                     doctor)
