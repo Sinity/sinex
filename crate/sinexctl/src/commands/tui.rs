@@ -1450,7 +1450,7 @@ fn source_has_unparsed_caveat(source: &SourceCoverageView) -> bool {
     source.caveats.iter().any(|caveat| {
         matches!(
             caveat.id.as_str(),
-            "material.staged_unparsed" | "parser.no_binding" | "parser.jobs_untracked"
+            "material.staged_unparsed" | "parser.no_binding" | "parser.operation_evidence_unjoined"
         )
     })
 }
@@ -2182,7 +2182,10 @@ mod tests {
                 "ux.runtime.actions",
                 SourceCoverageReadiness::Ready,
                 SourceCoverageContinuity::Gapped,
-                vec![caveat("parser.jobs_untracked", "parser jobs are untracked")],
+                vec![caveat(
+                    "parser.operation_evidence_unjoined",
+                    "parser/source-worker operation evidence is reported by operation and debt surfaces",
+                )],
                 4,
                 vec![CoverageGapView {
                     kind: "gapped".to_string(),

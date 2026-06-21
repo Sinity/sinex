@@ -109,8 +109,9 @@ pub async fn handle_sources_stage(
     }
 
     // ── Determine material capture class ─────────────────────────
-    // Source bindings are Nix config (#1098), not a DB catalog.
-    // Default to allowed_plaintext for now; binding-based policy is a follow-up.
+    // Source bindings are deployment config, not a DB catalog. This manual
+    // staging path has no binding record to consult, so it records the default
+    // allowed material capture class.
     let capture_class = "allowed_plaintext".to_string();
 
     let material_class =
@@ -605,7 +606,7 @@ pub async fn handle_sources_bindings_list(
     _pool: &PgPool,
     _request: SourcesBindingsListRequest,
 ) -> Result<SourcesBindingsListResponse> {
-    // Source bindings are Nix configuration (#1098), not a DB catalog.
+    // Source bindings are deployment configuration, not a DB catalog.
     // The binding catalog DB tables were removed in #1160.
     Ok(SourcesBindingsListResponse { bindings: vec![] })
 }
@@ -617,7 +618,7 @@ pub async fn handle_sources_bindings_create(
     _request: SourcesBindingsCreateRequest,
 ) -> Result<SourcesBindingsCreateResponse> {
     Err(SinexError::configuration(
-        "Source bindings are Nix configuration (#1098), not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix.",
+        "Source bindings are deployment configuration, not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix.",
     ))
 }
 
@@ -628,7 +629,7 @@ pub async fn handle_sources_bindings_resolve(
     _request: SourcesBindingsResolveRequest,
 ) -> Result<SourcesBindingsResolveResponse> {
     Err(SinexError::configuration(
-        "Source bindings are Nix configuration (#1098), not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix.",
+        "Source bindings are deployment configuration, not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix.",
     ))
 }
 

@@ -1042,9 +1042,9 @@ pub mod caveat_codes {
     pub const COST_LOCAL_HEAVY: &str = "cost.local_heavy";
     /// Using this source requires network access.
     pub const COST_NETWORK_REQUIRED: &str = "cost.network_required";
-    /// Parser jobs are not yet tracked in the database (#1057 follow-up).
-    pub const PARSER_JOBS_UNTRACKED: &str = "parser.jobs_untracked";
-    /// Source bindings are declared in Nix configuration; no DB catalog (#1098).
+    /// Readiness is derived from materials/events and does not join parser operation evidence.
+    pub const PARSER_OPERATION_EVIDENCE_UNJOINED: &str = "parser.operation_evidence_unjoined";
+    /// Source bindings are declared in Nix configuration; no DB catalog.
     pub const BINDINGS_NOT_IN_DB: &str = "binding.not_in_db";
     /// Runtime private-mode state could not be read, so readiness fails closed.
     pub const POLICY_PRIVATE_MODE_STATE_UNAVAILABLE: &str = "policy.private_mode_state_unavailable";
