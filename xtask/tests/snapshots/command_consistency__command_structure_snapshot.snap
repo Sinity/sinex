@@ -1683,11 +1683,11 @@ expression: json
               "subcommands": []
             },
             {
-              "about": "Start an interactive VM",
+              "about": "Report that interactive VM presets are not exported yet",
               "args": [
                 {
                   "global": false,
-                  "help": "VM preset name. Interactive preset wiring is not implemented yet",
+                  "help": "VM preset name to validate against the reserved preset vocabulary",
                   "long": null,
                   "name": "preset",
                   "possible_values": [],
