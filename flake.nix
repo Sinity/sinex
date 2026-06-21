@@ -542,11 +542,24 @@ SQL
                   trap - EXIT INT TERM
                 }
 
+                _sinex_cargo_stop_bootstrap_postgres() {
+                  if [ "''${_sinex_cargo_bootstrap_postgres_owned:-0}" != 1 ]; then
+                    return 0
+                  fi
+
+                  ${postgresForSqlx}/bin/pg_ctl -D "$pgdata" -m fast stop >/dev/null 2>&1 || true
+                }
+
                 _sinex_cargo_guard_xtask_surface "$@"
+
+                _sinex_cargo_bootstrap_postgres_owned=0
 
                 if _sinex_cargo_requires_sqlx_database "$@"; then
                   if [ "''${SINEX_CARGO_SQLX_BOOTSTRAP:-1}" = 1 ]; then
                     echo "ℹ  cargo $(_sinex_cargo_command_name "$@" || printf command) uses SQLx compile-time validation; bootstrapping checkout-local Postgres/schema..." >&2
+                    if ! ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1; then
+                      _sinex_cargo_bootstrap_postgres_owned=1
+                    fi
                     _sinex_cargo_bootstrap_sqlx_database
                   fi
                   export PGHOST="$pgrun"
@@ -554,7 +567,12 @@ SQL
                   export DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres"
                 fi
 
-                exec "$real_cargo" "$@"
+                set +e
+                "$real_cargo" "$@"
+                cargo_status="$?"
+                set -e
+                _sinex_cargo_stop_bootstrap_postgres
+                exit "$cargo_status"
               '';
               xtaskCommand = pkgs.writeShellScriptBin "xtask" ''
                 set -euo pipefail
@@ -620,6 +638,7 @@ SQL
                 build_failure_log="$build_state_dir/xtask-build.failed.log"
                 build_stage_metrics="$build_lock_dir/stages.json"
                 build_rebuild_trigger="$build_lock_dir/rebuild-trigger.json"
+                build_postgres_owned_marker="$build_state_dir/xtask-bootstrap-postgres-owned"
                 wrapper_event_log="$build_state_dir/xtask-wrapper-events.jsonl"
                 force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
 
@@ -1079,7 +1098,14 @@ SQL
                 }
 
                 _sinex_xtask_exec_checkout_binary() {
+                  if [ -f "$build_postgres_owned_marker" ]; then
+                    export SINEX_XTASK_BOOTSTRAP_POSTGRES_OWNED=1
+                    rm -f "$build_postgres_owned_marker"
+                  fi
                   if _sinex_xtask_requires_sqlx_database "$@"; then
+                    if ! _sinex_xtask_postgres_ready; then
+                      export SINEX_XTASK_BOOTSTRAP_POSTGRES_OWNED=1
+                    fi
                     _sinex_xtask_ensure_sqlx_database || exit $?
                   fi
                   exec "$bin_path" "$@"
@@ -1164,6 +1190,15 @@ SQL
                   (
                     local build_rc
 
+                    _sinex_xtask_postgres_preexisting=0
+                    rm -f "$build_postgres_owned_marker"
+                    if _sinex_xtask_postgres_ready; then
+                      _sinex_xtask_postgres_preexisting=1
+                    else
+                      touch "$build_postgres_owned_marker"
+                    fi
+                    trap '_sinex_xtask_stop_bootstrap_postgres' EXIT
+
                     build_rc=0
                     _sinex_xtask_ensure_sqlx_database || return $?
                     _stage_started_ns="$(_sinex_xtask_stage_start)"
@@ -1172,8 +1207,27 @@ SQL
                     if [ "$build_rc" -eq 0 ]; then
                       touch "$bin_path" "$cargo_target_dir/debug/xtask.d" 2>/dev/null || true
                     fi
+                    _sinex_xtask_stop_bootstrap_postgres
+                    trap - EXIT
                     return "$build_rc"
                   )
+                }
+
+                _sinex_xtask_stop_bootstrap_postgres() {
+                  if [ "''${_sinex_xtask_postgres_preexisting:-1}" = 1 ]; then
+                    return 0
+                  fi
+
+                  local pgdata
+                  pgdata="$SINEX_DEV_STATE_DIR/data/postgres"
+                  ${postgresForSqlx}/bin/pg_ctl -D "$pgdata" -m fast stop >/dev/null 2>&1 || true
+                }
+
+                _sinex_xtask_postgres_ready() {
+                  local pgrun pgport
+                  pgrun="$SINEX_DEV_STATE_DIR/run"
+                  pgport="''${PGPORT:-5432}"
+                  ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1
                 }
 
                 _sinex_xtask_ensure_sqlx_database() {

@@ -122,6 +122,21 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 ],
             },
             GuideEntry {
+                path: "infra smoke",
+                fallback_summary: "Verify the explicit local devshell/runtime lifecycle",
+                when: "you need to prove a checkout can work locally without a Sinnix deployment or hidden runtime starts",
+                examples: &[
+                    "xtask infra smoke --dry-run",
+                    "xtask infra smoke --reset-first",
+                    "xtask infra smoke --reset-first --skip-start",
+                ],
+                notes: &[
+                    "`xtask infra smoke` starts services only in its explicit start phase, then stops them before returning.",
+                    "Use `--dry-run` for a no-service plan and current coordinate/RSS inventory.",
+                    "Use `--skip-start` when you only want to recheck read-only probes and all-checkout inventory.",
+                ],
+            },
+            GuideEntry {
                 path: "infra flake-stage",
                 fallback_summary: "Stage a flake-safe checkout copy",
                 when: "you need a dirty checkout, untracked files, or a runtime-socket-filled repo to work as a local Nix or nixos-rebuild input",
