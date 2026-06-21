@@ -629,17 +629,97 @@ const RUNTIME_FIELDS: &[QueryFieldDescriptor] = &[
     },
 ];
 
-const DEFAULT_SORT: &[QuerySortDescriptor] = &[QuerySortDescriptor {
-    key: "updated_at",
-    default_descending: true,
-}];
-const EVENT_SORT: &[QuerySortDescriptor] = &[
+const SOURCE_DRIVER_SORT: &[QuerySortDescriptor] = &[
     QuerySortDescriptor {
-        key: "ts_orig",
+        key: "source_id",
+        default_descending: false,
+    },
+    QuerySortDescriptor {
+        key: "family",
+        default_descending: false,
+    },
+    QuerySortDescriptor {
+        key: "readiness",
+        default_descending: false,
+    },
+    QuerySortDescriptor {
+        key: "enabled",
+        default_descending: true,
+    },
+];
+const SOURCE_MATERIAL_SORT: &[QuerySortDescriptor] = &[
+    QuerySortDescriptor {
+        key: "material_id",
+        default_descending: false,
+    },
+    QuerySortDescriptor {
+        key: "source_identifier",
+        default_descending: false,
+    },
+    QuerySortDescriptor {
+        key: "material_kind",
+        default_descending: false,
+    },
+    QuerySortDescriptor {
+        key: "status",
+        default_descending: false,
+    },
+];
+const DEBT_SORT: &[QuerySortDescriptor] = &[
+    QuerySortDescriptor {
+        key: "kind",
+        default_descending: false,
+    },
+    QuerySortDescriptor {
+        key: "severity",
         default_descending: true,
     },
     QuerySortDescriptor {
-        key: "created_at",
+        key: "source",
+        default_descending: false,
+    },
+    QuerySortDescriptor {
+        key: "age",
+        default_descending: true,
+    },
+];
+const OPERATION_SORT: &[QuerySortDescriptor] = &[
+    QuerySortDescriptor {
+        key: "operation_id",
+        default_descending: false,
+    },
+    QuerySortDescriptor {
+        key: "operation_type",
+        default_descending: false,
+    },
+    QuerySortDescriptor {
+        key: "status",
+        default_descending: false,
+    },
+];
+const RUNTIME_SORT: &[QuerySortDescriptor] = &[
+    QuerySortDescriptor {
+        key: "module",
+        default_descending: false,
+    },
+    QuerySortDescriptor {
+        key: "role",
+        default_descending: false,
+    },
+    QuerySortDescriptor {
+        key: "state",
+        default_descending: false,
+    },
+    QuerySortDescriptor {
+        key: "active_count",
+        default_descending: true,
+    },
+    QuerySortDescriptor {
+        key: "inactive_count",
+        default_descending: true,
+    },
+    QuerySortDescriptor {
+        key: "stale_after",
         default_descending: true,
     },
 ];
@@ -652,7 +732,7 @@ static QUERY_UNITS: &[QueryUnitDescriptor] = &[
         max_limit: 1000,
         supports_aggregation: true,
         fields: EVENT_FIELDS,
-        sort_keys: EVENT_SORT,
+        sort_keys: &[],
         backing_rpc_methods: &["events.cards", "events.query"],
         disclosure_context: "view",
     },
@@ -663,7 +743,7 @@ static QUERY_UNITS: &[QueryUnitDescriptor] = &[
         max_limit: 250,
         supports_aggregation: false,
         fields: SOURCE_DRIVER_FIELDS,
-        sort_keys: DEFAULT_SORT,
+        sort_keys: SOURCE_DRIVER_SORT,
         backing_rpc_methods: &["sources.status_view", "sources.coverage"],
         disclosure_context: "view",
     },
@@ -674,7 +754,7 @@ static QUERY_UNITS: &[QueryUnitDescriptor] = &[
         max_limit: 250,
         supports_aggregation: false,
         fields: MATERIAL_FIELDS,
-        sort_keys: DEFAULT_SORT,
+        sort_keys: SOURCE_MATERIAL_SORT,
         backing_rpc_methods: &["sources.show"],
         disclosure_context: "view",
     },
@@ -685,7 +765,7 @@ static QUERY_UNITS: &[QueryUnitDescriptor] = &[
         max_limit: 500,
         supports_aggregation: false,
         fields: DEBT_FIELDS,
-        sort_keys: DEFAULT_SORT,
+        sort_keys: DEBT_SORT,
         backing_rpc_methods: &["dlq.list", "sources.coverage", "automata.derivation_debt"],
         disclosure_context: "view",
     },
@@ -696,7 +776,7 @@ static QUERY_UNITS: &[QueryUnitDescriptor] = &[
         max_limit: 500,
         supports_aggregation: false,
         fields: OPERATION_FIELDS,
-        sort_keys: DEFAULT_SORT,
+        sort_keys: OPERATION_SORT,
         backing_rpc_methods: &["ops.list", "ops.get"],
         disclosure_context: "view",
     },
@@ -707,7 +787,7 @@ static QUERY_UNITS: &[QueryUnitDescriptor] = &[
         max_limit: 250,
         supports_aggregation: false,
         fields: RUNTIME_FIELDS,
-        sort_keys: DEFAULT_SORT,
+        sort_keys: RUNTIME_SORT,
         backing_rpc_methods: &[
             "system.health",
             "coordination.instance_health",
@@ -742,6 +822,7 @@ struct ParsedQueryTokens {
     unit: String,
     predicates: Vec<ParsedPredicateToken>,
     connectors: Vec<ParsedConnector>,
+    sorts: Vec<ParsedSortToken>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -759,11 +840,18 @@ enum ParsedConnector {
     Or,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedSortToken {
+    key: String,
+    descending: Option<bool>,
+}
+
 fn parse_query_tokens(input: &mut &str) -> ModalResult<ParsedQueryTokens> {
     skip_ws(input)?;
     let unit = identifier.parse_next(input)?.to_string();
     let mut predicates = Vec::new();
     let mut connectors = Vec::new();
+    let mut sorts = Vec::new();
 
     if opt(ws("where")).parse_next(input)?.is_some() {
         predicates.push(predicate_token.parse_next(input)?);
@@ -776,6 +864,10 @@ fn parse_query_tokens(input: &mut &str) -> ModalResult<ParsedQueryTokens> {
     let mut limit = None;
     let mut offset = None;
     loop {
+        if opt(ws("sort")).parse_next(input)?.is_some() {
+            sorts.push(sort_token.parse_next(input)?);
+            continue;
+        }
         if opt(ws("limit")).parse_next(input)?.is_some() {
             limit = Some(number.parse_next(input)?);
             continue;
@@ -792,6 +884,7 @@ fn parse_query_tokens(input: &mut &str) -> ModalResult<ParsedQueryTokens> {
         unit,
         predicates,
         connectors,
+        sorts,
         limit,
         offset,
     })
@@ -828,8 +921,42 @@ fn lower_tokens(tokens: ParsedQueryTokens) -> Result<SinexQuery, SinexError> {
     }
 
     query.predicate = fold_predicates(lowered, tokens.connectors)?;
+    query.sort = lower_sorts(descriptor, tokens.sorts)?;
     query.validate()?;
     Ok(query)
+}
+
+fn lower_sorts(
+    descriptor: &QueryUnitDescriptor,
+    sorts: Vec<ParsedSortToken>,
+) -> Result<Vec<SinexQuerySort>, SinexError> {
+    let mut lowered = Vec::with_capacity(sorts.len());
+    for sort in sorts {
+        let Some(sort_descriptor) = descriptor
+            .sort_keys
+            .iter()
+            .find(|descriptor| descriptor.key == sort.key)
+        else {
+            return Err(SinexError::validation(format!(
+                "query unit `{}` does not support sort key `{}`; supported sort keys: {}",
+                descriptor.unit,
+                sort.key,
+                descriptor
+                    .sort_keys
+                    .iter()
+                    .map(|key| key.key)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        };
+        lowered.push(SinexQuerySort {
+            key: sort.key,
+            descending: sort
+                .descending
+                .unwrap_or(sort_descriptor.default_descending),
+        });
+    }
+    Ok(lowered)
 }
 
 fn parse_query_value(
@@ -900,6 +1027,16 @@ fn connector_token(input: &mut &str) -> ModalResult<ParsedConnector> {
         "or".value(ParsedConnector::Or),
     ))
     .parse_next(input)
+}
+
+fn sort_token(input: &mut &str) -> ModalResult<ParsedSortToken> {
+    let key = ws(identifier).parse_next(input)?.to_string();
+    let descending = opt(ws(sort_direction_token)).parse_next(input)?;
+    Ok(ParsedSortToken { key, descending })
+}
+
+fn sort_direction_token(input: &mut &str) -> ModalResult<bool> {
+    alt(("desc".value(true), "asc".value(false))).parse_next(input)
 }
 
 fn operator_token<'input>(input: &mut &'input str) -> ModalResult<&'input str> {
@@ -1045,6 +1182,7 @@ mod tests {
 
         assert_eq!(query.unit, QueryUnitId::Events);
         assert_eq!(query.pagination.limit, 10);
+        assert!(query.sort.is_empty());
         assert!(matches!(
             query.predicate,
             Some(SinexQueryPredicate::And { .. })
@@ -1070,6 +1208,14 @@ mod tests {
         let error = parse_sinex_query("operations where status = mystery").unwrap_err();
 
         assert!(error.to_string().contains("does not allow enum value"));
+    }
+
+    #[test]
+    fn parser_rejects_unsupported_sort_key_before_execution() {
+        let error = parse_sinex_query("operations sort widget desc").unwrap_err();
+
+        assert!(error.to_string().contains("does not support sort key"));
+        assert!(error.to_string().contains("operation_id"));
     }
 
     #[test]
