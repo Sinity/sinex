@@ -11,8 +11,8 @@ use sinex_primitives::rpc::{
     },
 };
 use sinex_primitives::source_contracts::{
-    AccessScope, BudgetPressureAction, ResourceBudgetSpec, ResourceProfile, SourceContract,
-    SourceRuntimeBinding, WorkClass, all_source_contracts, source_runtime_bindings,
+    AccessScope, BudgetPressureAction, ResourceBudgetSpec, ResourceProfile, SourceCapabilityKind,
+    SourceContract, SourceRuntimeBinding, WorkClass, all_source_contracts, source_runtime_bindings,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
@@ -629,10 +629,11 @@ fn source_actions(
         .map(|action| action.id.clone())
         .collect::<BTreeSet<_>>();
     for binding in bindings {
-        for capability in binding.capabilities {
-            let Some(operation) = capability.strip_prefix("operation:") else {
-                continue;
-            };
+        for capability in binding
+            .capability_refs()
+            .filter(|capability| capability.is_kind(SourceCapabilityKind::Operation))
+        {
+            let operation = capability.target;
             if seen.insert(operation.to_string()) {
                 actions.push(operation_capability_action(operation, source_id));
             }
@@ -955,6 +956,48 @@ mod tests {
             missing.is_empty(),
             "source {source_id} actions reference unknown RPC methods: {missing:?}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_actions_ignore_non_operation_capability_refs() -> xtask::TestResult<()> {
+        static CAPABILITIES: &[&str] = &[
+            "coverage:source-coverage",
+            "operation:",
+            "operation:fixture.source.check",
+            "package:fixture.source",
+        ];
+        let binding = SourceRuntimeBinding::builder(
+            SubjectRef::from_static("source:fixture.source"),
+            "fixture.source",
+            "fixture",
+        )
+        .implementation("sinexd")
+        .adapter("StaticFileAdapter")
+        .output_event_type("fixture.event")
+        .privacy_context(ProcessingContext::Command)
+        .resource_profile(ResourceProfile::BoundedFile)
+        .capabilities(CAPABILITIES)
+        .source_id("fixture.source")
+        .runner_pack(RunnerPack::SinexdSource)
+        .checkpoint_family(CheckpointFamily::AppendStream)
+        .runtime_shape(RuntimeShape::OnDemand)
+        .build_impact(SourceBuildImpact::ZERO)
+        .build();
+
+        let actions = source_actions("fixture.source", &[&binding], false);
+        assert!(
+            actions
+                .iter()
+                .any(|action| action.id == "fixture.source.check")
+        );
+        assert!(!actions.iter().any(|action| action.id.is_empty()));
+        assert!(
+            actions
+                .iter()
+                .all(|action| !action.id.starts_with("package:"))
+        );
+        assert_action_rpc_methods_are_cataloged("fixture.source", &actions)?;
         Ok(())
     }
 
