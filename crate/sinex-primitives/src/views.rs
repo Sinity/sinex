@@ -2175,7 +2175,7 @@ mod tests {
             pressure_level: "nominal".to_string(),
             resource_pressure: DlqPressureSignal {
                 pressure_level: "nominal".to_string(),
-                runtime_action: "none".to_string(),
+                runtime_action: crate::RuntimePressureAction::None,
                 pending_messages: 0,
                 pending_bytes: 0,
                 retry_batch_size: 10,

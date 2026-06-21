@@ -88,7 +88,10 @@ async fn dlq_list_returns_empty_for_new_stream(ctx: TestContext) -> TestResult<(
     assert_eq!(response.total_bytes, 0);
     assert_eq!(response.pressure_level, "nominal");
     assert_eq!(response.resource_pressure.pressure_level, "nominal");
-    assert_eq!(response.resource_pressure.runtime_action, "admit");
+    assert_eq!(
+        response.resource_pressure.runtime_action,
+        sinex_primitives::RuntimePressureAction::Admit
+    );
     assert_eq!(response.resource_pressure.pending_messages, 0);
     assert_eq!(response.resource_pressure.pending_bytes, 0);
     assert_eq!(response.pending_sequence_span, 0);
@@ -130,7 +133,10 @@ async fn dlq_list_counts_messages_correctly(ctx: TestContext) -> TestResult<()> 
     assert!(response.total_bytes > 0);
     assert_eq!(response.pressure_level, "warning");
     assert_eq!(response.resource_pressure.pressure_level, "warning");
-    assert_eq!(response.resource_pressure.runtime_action, "inspect");
+    assert_eq!(
+        response.resource_pressure.runtime_action,
+        sinex_primitives::RuntimePressureAction::Inspect
+    );
     assert_eq!(response.resource_pressure.pending_messages, 3);
     assert_eq!(
         response.resource_pressure.pending_bytes,

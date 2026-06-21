@@ -401,7 +401,7 @@ impl JetStreamEventConsumer {
                     event_id = %event.event_id,
                     pressure_level = ?decision.pressure_level,
                     rejection_reason = ?decision.rejection_reason,
-                    runtime_action = decision.runtime_action(),
+                    runtime_action = decision.runtime_action().as_str(),
                     pending_count = decision.pending_count,
                     max_capacity = decision.max_capacity,
                     retained_payload_bytes = decision.retained_payload_bytes,

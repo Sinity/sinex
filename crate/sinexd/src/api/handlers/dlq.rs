@@ -15,6 +15,7 @@ use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::Operation;
 use sinex_primitives::domain::OperationStatus;
+use sinex_primitives::runtime_pressure::RuntimePressureAction;
 use sinex_primitives::validation::normalize_unicode;
 use sinex_primitives::views::{CaveatView, SinexObjectKind, SinexObjectRef};
 use sinex_primitives::{Result, SinexError};
@@ -69,13 +70,13 @@ fn dlq_pressure_level(total_messages: u64, retry_batch_size: usize) -> &'static 
     }
 }
 
-fn dlq_runtime_action(total_messages: u64, retry_batch_size: usize) -> &'static str {
+fn dlq_runtime_action(total_messages: u64, retry_batch_size: usize) -> RuntimePressureAction {
     if total_messages == 0 {
-        "admit"
+        RuntimePressureAction::Admit
     } else if total_messages > retry_batch_size as u64 {
-        "throttle"
+        RuntimePressureAction::Throttle
     } else {
-        "inspect"
+        RuntimePressureAction::Inspect
     }
 }
 
@@ -98,7 +99,7 @@ fn dlq_pressure_signal(
     let (recommended_action, reason) = dlq_operator_action(total_messages);
     DlqPressureSignal {
         pressure_level: dlq_pressure_level(total_messages, retry_batch_size).to_string(),
-        runtime_action: dlq_runtime_action(total_messages, retry_batch_size).to_string(),
+        runtime_action: dlq_runtime_action(total_messages, retry_batch_size),
         pending_messages: total_messages,
         pending_bytes: total_bytes,
         retry_batch_size: retry_batch_size as u64,
@@ -570,7 +571,7 @@ mod tests {
     use sinex_primitives::events::DynamicPayload;
     use sinex_primitives::query::QueryResultEvent;
     use sinex_primitives::views::PrivacyStateKind;
-    use sinex_primitives::{Id, SourceMaterial, Uuid};
+    use sinex_primitives::{Id, RuntimePressureAction, SourceMaterial, Uuid};
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -639,7 +640,7 @@ mod tests {
         let pressure = dlq_pressure_signal(11, 4096, 10);
 
         assert_eq!(pressure.pressure_level, "critical");
-        assert_eq!(pressure.runtime_action, "throttle");
+        assert_eq!(pressure.runtime_action, RuntimePressureAction::Throttle);
         assert_eq!(pressure.pending_messages, 11);
         assert_eq!(pressure.pending_bytes, 4096);
         assert_eq!(pressure.retry_batch_size, 10);
