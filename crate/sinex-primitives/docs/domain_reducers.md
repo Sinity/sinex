@@ -2,9 +2,10 @@
 
 Status: partially implemented. The shared metadata vocabulary lives in
 `sinex_primitives::domain_reducer`, and the task domain exports
-`TASK_REDUCER_SPEC` for `tasks.current` v1. Issue #1120 remains open for the
-generic projection/runtime substrate: registration, invalidation, replay
-scheduling, trace shape, and object-event indexes.
+`TASK_REDUCER_SPEC` for `tasks.current` v1. The original #1120 design issue is
+closed; remaining reducer/projection cleanup should be attached to current
+projection, derivation, or #1963 cleanup work rather than treated as an open
+#1120 tail.
 
 Event-native domains keep events canonical. Current state is a projection,
 owned by a reducer spec, and must stay traceable back to the events that built
