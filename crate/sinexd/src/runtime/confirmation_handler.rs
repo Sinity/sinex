@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::constants::buffers::DEFAULT_CONFIRMATION_BUFFER_CAPACITY;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::builder::EventId;
+use sinex_primitives::runtime_pressure::RuntimePressureAction;
 use sinex_primitives::source_contracts::ResourceBudgetSpec;
 use sinex_primitives::units::Bytes;
 use std::collections::{BTreeMap, HashMap};
@@ -56,7 +57,7 @@ pub struct ConfirmationBufferSnapshot {
     pub rejected_count: u64,
     pub late_confirmation_count: u64,
     pub pressure_level: ConfirmationBufferPressureLevel,
-    pub runtime_action: String,
+    pub runtime_action: RuntimePressureAction,
     pub retained_payload_bytes: usize,
     pub max_payload_bytes: usize,
     pub approximate_payload_bytes: usize,
@@ -110,14 +111,14 @@ impl ConfirmationBufferInsertDecision {
     /// introducing a scheduler layer here: callers can log and act on the
     /// decision already made by the confirmation buffer.
     #[must_use]
-    pub const fn runtime_action(&self) -> &'static str {
+    pub const fn runtime_action(&self) -> RuntimePressureAction {
         if !self.accepted {
-            return "throttle";
+            return RuntimePressureAction::Throttle;
         }
         match self.pressure_level {
-            ConfirmationBufferPressureLevel::Nominal => "admit",
+            ConfirmationBufferPressureLevel::Nominal => RuntimePressureAction::Admit,
             ConfirmationBufferPressureLevel::Warning
-            | ConfirmationBufferPressureLevel::Critical => "admit_with_pressure",
+            | ConfirmationBufferPressureLevel::Critical => RuntimePressureAction::AdmitWithPressure,
         }
     }
 
@@ -760,7 +761,7 @@ impl ConfirmationBuffer {
             rejected_count: self.rejected_count(),
             late_confirmation_count: self.late_confirmation_count(),
             pressure_level: pressure.pressure_level,
-            runtime_action: pressure.runtime_action().to_string(),
+            runtime_action: pressure.runtime_action(),
             retained_payload_bytes,
             max_payload_bytes: self.max_payload_bytes,
             approximate_payload_bytes,
@@ -1011,7 +1012,7 @@ mod tests {
         active_payload_bytes: usize,
         timed_out_retained_payload_bytes: usize,
         journald_payload_bytes: usize,
-        runtime_action: String,
+        runtime_action: RuntimePressureAction,
     }
 
     impl ConfirmationBufferEvidence {
@@ -1080,7 +1081,10 @@ mod tests {
         let admitted = buffer.add_provisional_with_pressure(at_limit.clone()).await;
         assert!(admitted.accepted);
         assert_eq!(admitted.rejection_reason, None);
-        assert_eq!(admitted.runtime_action(), "admit_with_pressure");
+        assert_eq!(
+            admitted.runtime_action(),
+            RuntimePressureAction::AdmitWithPressure
+        );
         assert_eq!(admitted.rejected_redelivery_delay_ms(), None);
         assert_eq!(
             admitted.pressure_level,
@@ -1102,7 +1106,7 @@ mod tests {
             Some(Duration::from_secs(2))
         );
         assert_eq!(rejected.rejected_redelivery_delay_ms(), Some(2_000));
-        assert_eq!(rejected.runtime_action(), "throttle");
+        assert_eq!(rejected.runtime_action(), RuntimePressureAction::Throttle);
         assert_eq!(
             rejected.pressure_level,
             ConfirmationBufferPressureLevel::Critical
@@ -1114,7 +1118,10 @@ mod tests {
             saturated_snapshot.pressure_level,
             ConfirmationBufferPressureLevel::Critical
         );
-        assert_eq!(saturated_snapshot.runtime_action, "throttle");
+        assert_eq!(
+            saturated_snapshot.runtime_action,
+            RuntimePressureAction::Throttle
+        );
 
         let confirmed = buffer.confirm(at_limit.event_id).await.ok_or_else(|| {
             color_eyre::eyre::eyre!("expected at-limit event to remain confirmable")
@@ -1156,7 +1163,10 @@ mod tests {
             ))
             .await;
 
-        assert_eq!(admitted.runtime_action(), "admit_with_pressure");
+        assert_eq!(
+            admitted.runtime_action(),
+            RuntimePressureAction::AdmitWithPressure
+        );
         assert_eq!(admitted.rejected_redelivery_delay(), None);
         assert_eq!(
             rejected.rejection_reason,
@@ -1167,13 +1177,16 @@ mod tests {
             Some(Duration::from_millis(500))
         );
         assert_eq!(rejected.rejected_redelivery_delay_ms(), Some(500));
-        assert_eq!(rejected.runtime_action(), "throttle");
+        assert_eq!(rejected.runtime_action(), RuntimePressureAction::Throttle);
         let saturated_snapshot = buffer.snapshot().await;
         assert_eq!(
             saturated_snapshot.pressure_level,
             ConfirmationBufferPressureLevel::Critical
         );
-        assert_eq!(saturated_snapshot.runtime_action, "throttle");
+        assert_eq!(
+            saturated_snapshot.runtime_action,
+            RuntimePressureAction::Throttle
+        );
         Ok(())
     }
 
@@ -1552,7 +1565,10 @@ mod tests {
             retained.timed_out_retained_payload_bytes,
             retained.retained_payload_bytes
         );
-        assert_eq!(retained.journald_payload_bytes, retained.retained_payload_bytes);
+        assert_eq!(
+            retained.journald_payload_bytes,
+            retained.retained_payload_bytes
+        );
 
         let purged = buffer.purge_expired().await;
         assert_eq!(purged.len(), CAPACITY);
@@ -1611,7 +1627,7 @@ mod tests {
                 rejected.rejection_reason,
                 Some(ConfirmationBufferRejectionReason::EventCapacity)
             );
-            assert_eq!(rejected.runtime_action(), "throttle");
+            assert_eq!(rejected.runtime_action(), RuntimePressureAction::Throttle);
             assert_eq!(rejected.rejected_redelivery_delay_ms(), Some(500));
         }
 
@@ -1627,7 +1643,7 @@ mod tests {
             before.timed_out_retained_payload_bytes
         );
         assert_eq!(before.journald_payload_bytes, before.retained_payload_bytes);
-        assert_eq!(before.runtime_action, "throttle");
+        assert_eq!(before.runtime_action, RuntimePressureAction::Throttle);
 
         let captured = CapturedLogs::default();
         let subscriber = tracing_subscriber::fmt()

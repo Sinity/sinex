@@ -36,6 +36,7 @@ pub mod query;
 pub mod query_units;
 pub mod relations;
 pub mod rpc;
+pub mod runtime_pressure;
 pub mod runtime_target;
 pub mod schema_constraints;
 pub mod semantic;
@@ -170,6 +171,7 @@ pub use query_units::{
     QueryUnitDescriptor, QueryUnitId, QueryValue, SinexQuery, SinexQueryPredicate, SinexQuerySort,
     parse_sinex_query, query_unit_descriptor, query_unit_descriptors,
 };
+pub use runtime_pressure::RuntimePressureAction;
 pub use runtime_target::{
     RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeStatusWarning,
     RuntimeTargetDatabase, RuntimeTargetDescriptor, RuntimeTargetGateway,

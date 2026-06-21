@@ -245,7 +245,7 @@ mod tests {
             pressure_level: "critical".to_string(),
             resource_pressure: DlqPressureSignal {
                 pressure_level: "critical".to_string(),
-                runtime_action: "throttle".to_string(),
+                runtime_action: sinex_primitives::RuntimePressureAction::Throttle,
                 pending_messages: 11,
                 pending_bytes: 4096,
                 retry_batch_size: 10,
