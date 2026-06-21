@@ -18,9 +18,9 @@ expression: buffer_to_text(terminal.backend().buffer())
 │Actions                                                                           │
 │status [current] — sinexctl ops replay status op-fixture                          │
 │execute [dangerous] — sinexctl ops replay execute op-fixture                      │
-│context pack [target] — not implemented: context pack                             │
+│evidence [current] — sinexctl ops evidence compile --operation op-fixture         │
+│--include-debt --include-runtime                                                  │
 │                                                                                  │
 │Audit                                                                             │
 │sinexctl ops audit op-fixture                                                     │
-│                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────┘
