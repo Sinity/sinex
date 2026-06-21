@@ -21,32 +21,77 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
 
     let pool = PgPool::connect(database_url).await?;
 
-    test_baseline_events_captured(runner, &pool).await;
+    let baseline = test_baseline_events_captured(runner, &pool).await;
     test_event_engine_restarts_after_sigkill(runner, &pool).await;
-    test_no_data_loss_after_restart(runner, &pool).await;
+    test_no_data_loss_after_restart(runner, &pool, baseline.as_ref()).await;
     test_no_duplicate_events_after_restart(runner, &pool).await;
     test_pipeline_flows_after_recovery(runner, &pool).await;
 
     Ok(())
 }
 
-async fn test_baseline_events_captured(runner: &mut TestRunner, pool: &PgPool) {
+#[derive(Debug, Clone)]
+struct RestartBaseline {
+    event_ids: Vec<sqlx::types::Uuid>,
+}
+
+async fn test_baseline_events_captured(
+    runner: &mut TestRunner,
+    pool: &PgPool,
+) -> Option<RestartBaseline> {
     let name = "chaos-process-restart: baseline events captured";
 
     if !report_watched_files_written(runner, name, "restart-baseline", 10, "baseline") {
-        return;
+        return None;
     }
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     let Some(count) = observed_event_count(runner, name, pool).await else {
-        return;
+        return None;
     };
-    if count > 0 {
-        runner.pass(name);
-    } else {
+    if count <= 0 {
         runner.fail(name, "no baseline events captured");
+        return None;
     }
+
+    match event_ids(pool).await {
+        Ok(event_ids) if !event_ids.is_empty() => {
+            runner.pass(name);
+            Some(RestartBaseline { event_ids })
+        }
+        Ok(_) => {
+            runner.record(
+                name,
+                TestOutcome::EvidenceMissing,
+                "baseline event count was positive but no event IDs could be snapshotted",
+            );
+            None
+        }
+        Err(error) => {
+            runner.record(
+                name,
+                TestOutcome::EvidenceMissing,
+                &format!("baseline event-id snapshot failed: {error}"),
+            );
+            None
+        }
+    }
+}
+
+async fn event_ids(pool: &PgPool) -> Result<Vec<sqlx::types::Uuid>, sqlx::Error> {
+    sqlx::query_scalar::<_, sqlx::types::Uuid>("SELECT id FROM core.events ORDER BY id")
+        .fetch_all(pool)
+        .await
+}
+
+fn missing_baseline_event_count(
+    baseline_ids: &[sqlx::types::Uuid],
+    current_ids: &[sqlx::types::Uuid],
+) -> usize {
+    let baseline_set: std::collections::HashSet<_> = baseline_ids.iter().copied().collect();
+    let current_set: std::collections::HashSet<_> = current_ids.iter().copied().collect();
+    baseline_set.difference(&current_set).count()
 }
 
 async fn test_event_engine_restarts_after_sigkill(runner: &mut TestRunner, _pool: &PgPool) {
@@ -107,54 +152,39 @@ async fn test_event_engine_restarts_after_sigkill(runner: &mut TestRunner, _pool
     }
 }
 
-async fn test_no_data_loss_after_restart(runner: &mut TestRunner, pool: &PgPool) {
+async fn test_no_data_loss_after_restart(
+    runner: &mut TestRunner,
+    pool: &PgPool,
+    baseline: Option<&RestartBaseline>,
+) {
     let name = "chaos-process-restart: no data loss after restart";
 
-    let baseline_ids: Vec<sqlx::types::Uuid> =
-        match sqlx::query_scalar::<_, sqlx::types::Uuid>("SELECT id FROM core.events ORDER BY id")
-            .fetch_all(pool)
-            .await
-        {
-            Ok(ids) => ids,
-            Err(error) => {
-                runner.record(
-                    name,
-                    TestOutcome::EvidenceMissing,
-                    &format!("baseline event-id query failed: {error}"),
-                );
-                return;
-            }
-        };
-
-    if baseline_ids.is_empty() {
-        runner.fail(name, "baseline IDs are empty, cannot verify data loss");
+    let Some(baseline) = baseline else {
+        runner.record(
+            name,
+            TestOutcome::EvidenceMissing,
+            "pre-SIGKILL event-id snapshot was not captured, so data-loss comparison cannot run",
+        );
         return;
-    }
+    };
 
     // Baseline IDs should still exist after restart (no deletion)
-    let current_ids: Vec<sqlx::types::Uuid> =
-        match sqlx::query_scalar::<_, sqlx::types::Uuid>("SELECT id FROM core.events ORDER BY id")
-            .fetch_all(pool)
-            .await
-        {
-            Ok(ids) => ids,
-            Err(error) => {
-                runner.record(
-                    name,
-                    TestOutcome::EvidenceMissing,
-                    &format!("current event-id query failed: {error}"),
-                );
-                return;
-            }
-        };
+    let current_ids = match event_ids(pool).await {
+        Ok(ids) => ids,
+        Err(error) => {
+            runner.record(
+                name,
+                TestOutcome::EvidenceMissing,
+                &format!("current event-id query failed: {error}"),
+            );
+            return;
+        }
+    };
 
-    let baseline_set: std::collections::HashSet<_> = baseline_ids.into_iter().collect();
-    let current_set: std::collections::HashSet<_> = current_ids.into_iter().collect();
-
-    if baseline_set.is_subset(&current_set) {
+    let lost_count = missing_baseline_event_count(&baseline.event_ids, &current_ids);
+    if lost_count == 0 {
         runner.pass(name);
     } else {
-        let lost_count = baseline_set.len() - baseline_set.intersection(&current_set).count();
         runner.fail(
             name,
             &format!("{lost_count} baseline events lost after restart"),
@@ -203,4 +233,38 @@ async fn test_pipeline_flows_after_recovery(runner: &mut TestRunner, pool: &PgPo
         |before| format!("pipeline stalled after recovery (before={before})"),
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::types::Uuid;
+
+    use super::missing_baseline_event_count;
+
+    fn uuid(value: u128) -> Uuid {
+        Uuid::from_u128(value)
+    }
+
+    #[test]
+    fn missing_baseline_event_count_detects_lost_pre_fault_events() {
+        let kept = uuid(1);
+        let lost = uuid(2);
+        let extra = uuid(3);
+
+        assert_eq!(
+            missing_baseline_event_count(&[kept, lost], &[kept, extra]),
+            1
+        );
+    }
+
+    #[test]
+    fn missing_baseline_event_count_allows_added_recovery_events() {
+        let baseline = uuid(1);
+        let recovered = uuid(2);
+
+        assert_eq!(
+            missing_baseline_event_count(&[baseline], &[baseline, recovered]),
+            0
+        );
+    }
 }
