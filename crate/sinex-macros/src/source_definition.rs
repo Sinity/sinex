@@ -175,6 +175,10 @@ struct SourceDefinitionAttrs {
     checkpoint_family: Option<proc_macro2::TokenStream>,
     /// Typed enum path token (e.g. `RuntimeShape::OnDemand`), emitted verbatim.
     runtime_shape: Option<proc_macro2::TokenStream>,
+    /// Typed enum-expression token (`MaterialLifecyclePolicy::RetainRaw`), verbatim.
+    material_lifecycle: Option<proc_macro2::TokenStream>,
+    /// Typed enum-expression token (`TransportSemantics::DIRECT_APPEND_STREAM`), verbatim.
+    transport_semantics: Option<proc_macro2::TokenStream>,
     capabilities: Vec<String>,
 }
 
@@ -219,6 +223,8 @@ impl SourceDefinitionAttrs {
             runner_pack: self.runner_pack.clone(),
             checkpoint_family: self.checkpoint_family.clone(),
             runtime_shape: self.runtime_shape.clone(),
+            material_lifecycle: self.material_lifecycle.clone(),
+            transport_semantics: self.transport_semantics.clone(),
             capabilities: self.capabilities.clone(),
             proposed: false,
             // SourceDefinition is the declarative adapter+parser form; it never
@@ -261,6 +267,14 @@ fn parse_source_definition_attrs(attrs: &[syn::Attribute]) -> syn::Result<Source
                 }
                 "runtime_shape" => {
                     out.runtime_shape = Some(parse_enum_path_attr(&meta)?);
+                    return Ok(());
+                }
+                "material_lifecycle" => {
+                    out.material_lifecycle = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
+                "transport_semantics" => {
+                    out.transport_semantics = Some(parse_enum_expr_attr(&meta)?);
                     return Ok(());
                 }
                 "checkpoint_family" => {

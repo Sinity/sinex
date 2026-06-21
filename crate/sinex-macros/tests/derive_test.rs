@@ -2,8 +2,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::source_contracts::{
-    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape, source_runtime_bindings,
+    AccessScope, CheckpointFamily, Horizon, MaterialLifecyclePolicy, OccurrenceIdentity,
+    PrivacyTier, ResourceProfile, RetentionPolicy, RunnerPack, RuntimeShape, TransportKind,
+    TransportSemantics, source_runtime_bindings,
 };
 use xtask::sandbox::prelude::*;
 
@@ -331,6 +332,8 @@ async fn test_source_meta_primary_subject_override() -> TestResult<()> {
         runner_pack = RunnerPack::Staged,
         checkpoint_family = CheckpointFamily::AppendStream,
         runtime_shape = RuntimeShape::Scheduled,
+        material_lifecycle = MaterialLifecyclePolicy::ExternalReferenceOnly,
+        transport_semantics = TransportSemantics::JETSTREAM_DURABLE,
         factory = "none"
     )]
     struct MacroSubjectPackage;
@@ -347,6 +350,16 @@ async fn test_source_meta_primary_subject_override() -> TestResult<()> {
     );
     assert_eq!(binding.source_id, "macro.subject-package");
     assert_eq!(binding.output_event_type, "macro.subject.observed");
+    assert_eq!(
+        binding.material_lifecycle,
+        MaterialLifecyclePolicy::ExternalReferenceOnly
+    );
+    assert_eq!(
+        binding.transport_semantics.transport,
+        TransportKind::JetStream
+    );
+    assert!(binding.transport_semantics.replayable);
+    assert!(binding.transport_semantics.dlq);
 
     Ok(())
 }
