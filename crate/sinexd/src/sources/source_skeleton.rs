@@ -94,24 +94,29 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
     writeln!(out).map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out, "    #[derive(Debug, Clone, Default, SourceMeta)]")
         .map_err(|_| SourceSkeletonError::Render)?;
+    let primary_binding = mode.sources.runtime_binding.as_ref();
     let primary_event = mode.event_pairs.first();
-    let event_source = primary_event
+    let selected_event = primary_binding
+        .and_then(|binding| {
+            mode.event_pairs
+                .iter()
+                .find(|event| event.event_type == binding.output_event_type)
+        })
+        .or(primary_event);
+    let event_source = selected_event
         .map(|event| event.source.as_str())
         .unwrap_or("replace.event.source");
-    let event_type = primary_event
-        .map(|event| event.event_type.as_str())
+    let event_type = primary_binding
+        .map(|binding| binding.output_event_type.as_str())
+        .or_else(|| selected_event.map(|event| event.event_type.as_str()))
         .unwrap_or("replace.event_type");
     let additional_event_types = mode
         .event_pairs
         .iter()
-        .skip(1)
         .map(|event| event.event_type.as_str())
+        .filter(|declared| *declared != event_type)
         .collect::<Vec<_>>()
         .join(", ");
-    let selected_binding = mode.sources.runtime_binding.as_ref();
-    let primary_binding = selected_binding.filter(|binding| {
-        mode.mode_id == mode.package_id || binding.subject == format!("source:{}", mode.package_id)
-    });
     let adapter = primary_binding
         .map(|binding| binding.adapter.as_str())
         .unwrap_or("ReplaceAdapter");
@@ -156,6 +161,12 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
         mode.sources.source_contract.namespace
     )
     .map_err(|_| SourceSkeletonError::Render)?;
+    if let Some(binding) =
+        primary_binding.filter(|binding| binding.subject != format!("source:{}", mode.package_id))
+    {
+        writeln!(out, "        subject = \"{}\",", binding.subject)
+            .map_err(|_| SourceSkeletonError::Render)?;
+    }
     writeln!(out, "        event_source = \"{event_source}\",")
         .map_err(|_| SourceSkeletonError::Render)?;
     writeln!(out, "        event_type = \"{event_type}\",")
@@ -195,11 +206,6 @@ fn render_mode_skeleton(mode: &PackageCompletenessMode) -> Result<String, Source
     }
     if primary_binding.is_some_and(|binding| binding.proposed) {
         writeln!(out, "        proposed = true,").map_err(|_| SourceSkeletonError::Render)?;
-    }
-    if let Some(binding) = selected_binding.filter(|binding| {
-        mode.mode_id != mode.package_id && binding.subject != format!("source:{}", mode.package_id)
-    }) {
-        render_nested_binding(&mut out, binding)?;
     }
     writeln!(out, "        factory = \"{}\"", factory_mode(mode))
         .map_err(|_| SourceSkeletonError::Render)?;
@@ -318,73 +324,6 @@ fn factory_mode(mode: &PackageCompletenessMode) -> &'static str {
             }
         }
     }
-}
-
-fn render_nested_binding(
-    out: &mut String,
-    binding: &crate::sources::package_completeness::RuntimeBindingRef,
-) -> Result<(), SourceSkeletonError> {
-    writeln!(out, "        binding(").map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(out, "            subject = \"{}\",", binding.subject)
-        .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(
-        out,
-        "            event_type = \"{}\",",
-        binding.output_event_type
-    )
-    .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(
-        out,
-        "            implementation = \"{}\",",
-        binding.implementation
-    )
-    .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(out, "            adapter = \"{}\",", binding.adapter)
-        .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(
-        out,
-        "            privacy_context = {},",
-        privacy_context_expr(&binding.privacy_context)
-    )
-    .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(
-        out,
-        "            resource_profile = {},",
-        resource_profile_expr(&binding.resource_profile)
-    )
-    .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(
-        out,
-        "            runner_pack = {},",
-        runner_pack_expr(&binding.runner_pack)
-    )
-    .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(
-        out,
-        "            checkpoint_family = {},",
-        checkpoint_family_expr(&binding.checkpoint_family)
-    )
-    .map_err(|_| SourceSkeletonError::Render)?;
-    writeln!(
-        out,
-        "            runtime_shape = {},",
-        runtime_shape_expr(&binding.runtime_shape)
-    )
-    .map_err(|_| SourceSkeletonError::Render)?;
-    if !binding.capabilities.is_empty() {
-        writeln!(
-            out,
-            "            capabilities = \"{}\",",
-            binding.capabilities.join(", ")
-        )
-        .map_err(|_| SourceSkeletonError::Render)?;
-    }
-    if binding.proposed {
-        writeln!(out, "            proposed = true").map_err(|_| SourceSkeletonError::Render)?;
-    }
-    writeln!(out, "        ),").map_err(|_| SourceSkeletonError::Render)?;
-
-    Ok(())
 }
 
 fn comma_list(values: &[String]) -> String {
@@ -623,13 +562,10 @@ mod tests {
 
     #[test]
     fn skeleton_renders_package_mode_binding_metadata() {
-        let rendered = render_source_skeleton(
-            "email.mailbox",
-            "email.mailbox.gmail-api-scheduled-sync",
-        )
-        .unwrap();
+        let rendered =
+            render_source_skeleton("email.mailbox", "email.mailbox.gmail-api-scheduled-sync")
+                .unwrap();
 
-        assert!(rendered.contains("binding("));
         assert!(rendered.contains("subject = \"source:email.mailbox.gmail-api-scheduled-sync\""));
         assert!(rendered.contains("event_type = \"email.sync_cursor.observed\""));
         assert!(rendered.contains("implementation = \"gmail-api-scheduled-sync\""));
@@ -641,6 +577,8 @@ mod tests {
         assert!(rendered.contains("operation:email.mailbox.authorize"));
         assert!(rendered.contains("operation:email.mailbox.replay"));
         assert!(rendered.contains("proposed = true"));
+        assert!(!rendered.contains("ReplaceAdapter"));
+        assert!(!rendered.contains("binding("));
     }
 
     #[test]
