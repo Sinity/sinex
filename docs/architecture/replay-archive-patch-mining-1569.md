@@ -1,7 +1,10 @@
 # Replay Archive Patch Mining (#1569)
 
-The #1569 re-audit report is accepted for the replay/archive orphan-window
-slice, not as a mandate to wire or delete deployment-inactive invalidation code.
+The #1569 re-audit report was accepted for the replay/archive orphan-window
+slice, not as a mandate to create a second projection-debt model or bypass the
+operation/debt recovery path. This note is patch-mining history; current
+runtime truth lives in the replay writer, operation state machine, and
+verification gates.
 
 ## Accepted
 
@@ -16,16 +19,15 @@ slice, not as a mandate to wire or delete deployment-inactive invalidation code.
 
 ## Rejected
 
-- Do not wire the deployment-inactive `adapter/invalidate.rs` path in this PR.
-  The runtime still dispatches through the event bridge, so wiring/deleting that
-  path is a separate product/runtime decision.
 - Do not add a second derivation or projection-debt model here. #1901 owns the
   unified `DebtListView`; #1903 owns `DerivationSpec`.
 
-## Remaining
+## Current State
 
 - TTL archive has the same split plan/archive shape and should reuse the
-  transaction-scoped archive helper in a follow-up.
-- Post-archive invalidation delivery failures should surface through
-  `OperationView` or unified projection debt rows once the replay correctness
-  boundary is stable.
+  transaction-scoped archive helper if it grows beyond the existing archive
+  path.
+- Replay/archive invalidation recovery is no longer tracked by this historical
+  patch-mining note. The live contract is durable operation metadata plus the
+  existing operation/debt recovery surface; stale source comments should point
+  there rather than to a deployment-inactive scan-loop decision.
