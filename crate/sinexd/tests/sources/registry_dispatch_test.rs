@@ -547,6 +547,8 @@ async fn source_meta_document_staging_registers_parser_and_driver() -> TestResul
 
 #[sinex_test]
 async fn package_completeness_report_is_keyed_by_package_and_mode() -> TestResult<()> {
+    use sinex_primitives::STANDARD_EVENT_ADMISSION_POLICY_ID;
+    use sinex_primitives::event_contracts::SHELL_ATUIN_COMMAND_EXECUTED_CONTRACT_ID;
     use sinexd::sources::package_completeness::{
         PackageCompleteness, PackageModeState, build_package_completeness_report,
     };
@@ -575,10 +577,32 @@ async fn package_completeness_report_is_keyed_by_package_and_mode() -> TestResul
     assert!(mode.sources.privacy_coverage_registered);
     assert_eq!(mode.completeness, PackageCompleteness::Incomplete);
     assert_eq!(mode.mode_state, PackageModeState::Incomplete);
-    assert_ne!(
-        mode.mode_state,
-        PackageModeState::Accepted,
-        "runnable/accepted modes must not stay incomplete after EventContract and AdmissionPolicy refs are available"
+    assert!(
+        mode.event_contract_refs
+            .contains(&SHELL_ATUIN_COMMAND_EXECUTED_CONTRACT_ID.to_string()),
+        "Atuin history mode must consume the current EventContract registry"
+    );
+    assert!(
+        mode.admission_policy_refs
+            .contains(&STANDARD_EVENT_ADMISSION_POLICY_ID.to_string()),
+        "Atuin history mode must consume the current AdmissionPolicy registry"
+    );
+    assert!(
+        mode.event_pairs.iter().any(|pair| {
+            pair.source == "shell.atuin"
+                && pair.event_type == "command.executed"
+                && pair.event_contract_ref.as_deref()
+                    == Some(SHELL_ATUIN_COMMAND_EXECUTED_CONTRACT_ID)
+        }),
+        "Atuin event pair rows should carry the matching EventContract ref"
+    );
+    assert!(
+        !mode
+            .missing
+            .iter()
+            .any(|field| field == "event_contract_refs" || field == "admission_policy_ref"),
+        "incomplete package rows must point at current executable gaps, not closed design refs: {:?}",
+        mode.missing
     );
     assert!(
         mode.missing.iter().any(|field| field == "operation_refs")

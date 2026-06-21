@@ -621,32 +621,39 @@ async fn check_inline_check_exprs(pool: &PgPool) -> Result<Vec<StrictDrift>, App
         .fetch_all(pool)
         .await?;
 
-        let location = format!("{}.{}::{}", declared.schema, declared.table, declared.label);
-
-        let any_match = definitions.iter().any(|def| {
-            declared
-                .expected_markers
-                .iter()
-                .all(|marker| def.contains(marker))
-        });
-
-        if !any_match {
-            drifts.push(StrictDrift {
-                category: DriftCategory::InlineCheckExpr,
-                location,
-                declared_summary: format!(
-                    "some CHECK on {}.{} contains all of {:?}",
-                    declared.schema, declared.table, declared.expected_markers
-                ),
-                observed_summary: if definitions.is_empty() {
-                    "table has no CHECK constraints".to_string()
-                } else {
-                    format!("{} CHECK constraint(s); none match", definitions.len())
-                },
-            });
+        if let Some(drift) = inline_check_drift(declared, &definitions) {
+            drifts.push(drift);
         }
     }
     Ok(drifts)
+}
+
+fn inline_check_drift(
+    declared: &DeclaredInlineCheck,
+    definitions: &[String],
+) -> Option<StrictDrift> {
+    let location = format!("{}.{}::{}", declared.schema, declared.table, declared.label);
+
+    let any_match = definitions.iter().any(|def| {
+        declared
+            .expected_markers
+            .iter()
+            .all(|marker| def.contains(marker))
+    });
+
+    (!any_match).then(|| StrictDrift {
+        category: DriftCategory::InlineCheckExpr,
+        location,
+        declared_summary: format!(
+            "some CHECK on {}.{} contains all of {:?}",
+            declared.schema, declared.table, declared.expected_markers
+        ),
+        observed_summary: if definitions.is_empty() {
+            "table has no CHECK constraints".to_string()
+        } else {
+            format!("{} CHECK constraint(s); none match", definitions.len())
+        },
+    })
 }
 
 // ─── Foreign key actions ────────────────────────────────────────────────────
@@ -724,61 +731,71 @@ async fn check_foreign_key_actions(pool: &PgPool) -> Result<Vec<StrictDrift>, Ap
         .fetch_all(pool)
         .await?;
 
-        let location = format!(
-            "{}.{} {}",
-            declared.schema, declared.table, declared.fk_marker
-        );
-
-        let Some(matching) = definitions
-            .iter()
-            .find(|def| def.contains(declared.fk_marker))
-        else {
-            drifts.push(StrictDrift {
-                category: DriftCategory::ForeignKeyAction,
-                location,
-                declared_summary: format!(
-                    "FK with `{}`{}{}",
-                    declared.fk_marker,
-                    declared
-                        .expected_delete_action_marker
-                        .map(|a| format!(", delete action `{a}`"))
-                        .unwrap_or_default(),
-                    declared
-                        .expected_update_action_marker
-                        .map(|a| format!(", update action `{a}`"))
-                        .unwrap_or_default(),
-                ),
-                observed_summary: format!(
-                    "no FK on {}.{} matches `{}`",
-                    declared.schema, declared.table, declared.fk_marker
-                ),
-            });
-            continue;
-        };
-
-        if let Some(delete_marker) = declared.expected_delete_action_marker
-            && !matching.contains(delete_marker)
-        {
-            drifts.push(StrictDrift {
-                category: DriftCategory::ForeignKeyAction,
-                location: format!("{location} (ON DELETE)"),
-                declared_summary: format!("contains `{delete_marker}`"),
-                observed_summary: matching.clone(),
-            });
-        }
-
-        if let Some(update_marker) = declared.expected_update_action_marker
-            && !matching.contains(update_marker)
-        {
-            drifts.push(StrictDrift {
-                category: DriftCategory::ForeignKeyAction,
-                location: format!("{location} (ON UPDATE)"),
-                declared_summary: format!("contains `{update_marker}`"),
-                observed_summary: matching.clone(),
-            });
-        }
+        drifts.extend(foreign_key_action_drifts(declared, &definitions));
     }
     Ok(drifts)
+}
+
+fn foreign_key_action_drifts(
+    declared: &DeclaredForeignKeyAction,
+    definitions: &[String],
+) -> Vec<StrictDrift> {
+    let mut drifts = Vec::new();
+    let location = format!(
+        "{}.{} {}",
+        declared.schema, declared.table, declared.fk_marker
+    );
+
+    let Some(matching) = definitions
+        .iter()
+        .find(|def| def.contains(declared.fk_marker))
+    else {
+        drifts.push(StrictDrift {
+            category: DriftCategory::ForeignKeyAction,
+            location,
+            declared_summary: format!(
+                "FK with `{}`{}{}",
+                declared.fk_marker,
+                declared
+                    .expected_delete_action_marker
+                    .map(|a| format!(", delete action `{a}`"))
+                    .unwrap_or_default(),
+                declared
+                    .expected_update_action_marker
+                    .map(|a| format!(", update action `{a}`"))
+                    .unwrap_or_default(),
+            ),
+            observed_summary: format!(
+                "no FK on {}.{} matches `{}`",
+                declared.schema, declared.table, declared.fk_marker
+            ),
+        });
+        return drifts;
+    };
+
+    if let Some(delete_marker) = declared.expected_delete_action_marker
+        && !matching.contains(delete_marker)
+    {
+        drifts.push(StrictDrift {
+            category: DriftCategory::ForeignKeyAction,
+            location: format!("{location} (ON DELETE)"),
+            declared_summary: format!("contains `{delete_marker}`"),
+            observed_summary: matching.clone(),
+        });
+    }
+
+    if let Some(update_marker) = declared.expected_update_action_marker
+        && !matching.contains(update_marker)
+    {
+        drifts.push(StrictDrift {
+            category: DriftCategory::ForeignKeyAction,
+            location: format!("{location} (ON UPDATE)"),
+            declared_summary: format!("contains `{update_marker}`"),
+            observed_summary: matching.clone(),
+        });
+    }
+
+    drifts
 }
 
 // ─── TimescaleDB hypertable settings ────────────────────────────────────────
@@ -820,36 +837,8 @@ async fn check_hypertable_settings(pool: &PgPool) -> Result<Vec<StrictDrift>, Ap
     .await
     .map_err(ApplyError::from)?;
 
-    match row {
-        None => {
-            drifts.push(StrictDrift {
-                category: DriftCategory::HypertableSetting,
-                location: "core.events".to_string(),
-                declared_summary: "hypertable with 7d chunk interval".to_string(),
-                observed_summary: "core.events is not a hypertable".to_string(),
-            });
-        }
-        Some((Some(observed),)) if observed != HYPERTABLE_CHUNK_INTERVAL_MICROS => {
-            drifts.push(StrictDrift {
-                category: DriftCategory::HypertableSetting,
-                location: "core.events::chunk_interval".to_string(),
-                declared_summary: format!(
-                    "interval_length = {HYPERTABLE_CHUNK_INTERVAL_MICROS} (7 days in µs)"
-                ),
-                observed_summary: format!("interval_length = {observed}"),
-            });
-        }
-        Some((None,)) => {
-            drifts.push(StrictDrift {
-                category: DriftCategory::HypertableSetting,
-                location: "core.events::chunk_interval".to_string(),
-                declared_summary: format!(
-                    "interval_length = {HYPERTABLE_CHUNK_INTERVAL_MICROS} (7 days in µs)"
-                ),
-                observed_summary: "interval_length is NULL".to_string(),
-            });
-        }
-        Some(_) => {} // matches; no drift
+    if let Some(drift) = hypertable_chunk_interval_drift(row) {
+        drifts.push(drift);
     }
 
     // Retention policy must NOT exist on core.events. The bgw_job table is
@@ -867,16 +856,50 @@ async fn check_hypertable_settings(pool: &PgPool) -> Result<Vec<StrictDrift>, Ap
     .await
     .map_err(ApplyError::from)?;
 
-    if retention_count > 0 {
-        drifts.push(StrictDrift {
-            category: DriftCategory::HypertableSetting,
-            location: "core.events::retention_policy".to_string(),
-            declared_summary: "no retention policy".to_string(),
-            observed_summary: format!("{retention_count} retention policy job(s) present"),
-        });
+    if let Some(drift) = hypertable_retention_policy_drift(retention_count) {
+        drifts.push(drift);
     }
 
     Ok(drifts)
+}
+
+fn hypertable_chunk_interval_drift(row: Option<(Option<i64>,)>) -> Option<StrictDrift> {
+    match row {
+        None => Some(StrictDrift {
+            category: DriftCategory::HypertableSetting,
+            location: "core.events".to_string(),
+            declared_summary: "hypertable with 7d chunk interval".to_string(),
+            observed_summary: "core.events is not a hypertable".to_string(),
+        }),
+        Some((Some(observed),)) if observed != HYPERTABLE_CHUNK_INTERVAL_MICROS => {
+            Some(StrictDrift {
+                category: DriftCategory::HypertableSetting,
+                location: "core.events::chunk_interval".to_string(),
+                declared_summary: format!(
+                    "interval_length = {HYPERTABLE_CHUNK_INTERVAL_MICROS} (7 days in µs)"
+                ),
+                observed_summary: format!("interval_length = {observed}"),
+            })
+        }
+        Some((None,)) => Some(StrictDrift {
+            category: DriftCategory::HypertableSetting,
+            location: "core.events::chunk_interval".to_string(),
+            declared_summary: format!(
+                "interval_length = {HYPERTABLE_CHUNK_INTERVAL_MICROS} (7 days in µs)"
+            ),
+            observed_summary: "interval_length is NULL".to_string(),
+        }),
+        Some(_) => None,
+    }
+}
+
+fn hypertable_retention_policy_drift(retention_count: i64) -> Option<StrictDrift> {
+    (retention_count > 0).then(|| StrictDrift {
+        category: DriftCategory::HypertableSetting,
+        location: "core.events::retention_policy".to_string(),
+        declared_summary: "no retention policy".to_string(),
+        observed_summary: format!("{retention_count} retention policy job(s) present"),
+    })
 }
 
 // ─── Orphan column detection ─────────────────────────────────────────────────
@@ -948,7 +971,11 @@ async fn check_orphan_columns(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyEr
 
 #[cfg(test)]
 mod tests {
-    use super::{DriftCategory, StrictDrift};
+    use super::{
+        DECLARED_FK_ACTIONS, DECLARED_INLINE_CHECKS, DriftCategory,
+        HYPERTABLE_CHUNK_INTERVAL_MICROS, StrictDrift, foreign_key_action_drifts,
+        hypertable_chunk_interval_drift, hypertable_retention_policy_drift, inline_check_drift,
+    };
     use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
@@ -993,5 +1020,126 @@ mod tests {
         assert!(rendered.contains("now()"));
         assert!(rendered.contains("no DEFAULT set"));
         Ok(())
+    }
+
+    #[test]
+    fn inline_check_drift_reports_when_required_markers_are_split() {
+        let declared = DECLARED_INLINE_CHECKS
+            .iter()
+            .find(|check| check.label == "xor_provenance")
+            .expect("xor provenance strict-diff expectation is declared");
+        let partial_definitions = vec![
+            "CHECK ((source_material_id IS NOT NULL) AND (source_event_ids IS NULL))".to_string(),
+            "CHECK ((source_material_id IS NULL))".to_string(),
+        ];
+
+        let drift = inline_check_drift(declared, &partial_definitions)
+            .expect("split markers across constraints must not satisfy one inline check");
+
+        assert_eq!(drift.category, DriftCategory::InlineCheckExpr);
+        assert_eq!(drift.location, "core.events::xor_provenance");
+        assert!(drift.declared_summary.contains("source_material_id"));
+        assert_eq!(drift.observed_summary, "2 CHECK constraint(s); none match");
+
+        let matching_definition = vec![declared.expected_markers.join(" AND ")];
+        assert!(
+            inline_check_drift(declared, &matching_definition).is_none(),
+            "one CHECK containing every declared marker is not drift"
+        );
+    }
+
+    #[test]
+    fn inline_check_drift_reports_missing_constraints() {
+        let declared = DECLARED_INLINE_CHECKS
+            .iter()
+            .find(|check| check.label == "anchor_byte_non_negative")
+            .expect("anchor-byte strict-diff expectation is declared");
+
+        let drift = inline_check_drift(declared, &[])
+            .expect("absence of inline CHECK definitions must be reported");
+
+        assert_eq!(drift.category, DriftCategory::InlineCheckExpr);
+        assert_eq!(drift.location, "core.events::anchor_byte_non_negative");
+        assert_eq!(drift.observed_summary, "table has no CHECK constraints");
+    }
+
+    #[test]
+    fn foreign_key_action_drift_reports_missing_delete_action() {
+        let declared = DECLARED_FK_ACTIONS
+            .iter()
+            .find(|fk| fk.table == "tagged_items")
+            .expect("tagged_items FK action strict-diff expectation is declared");
+        let definitions =
+            vec!["FOREIGN KEY (tag_id) REFERENCES core.tags(id) ON DELETE NO ACTION".to_string()];
+
+        let drifts = foreign_key_action_drifts(declared, &definitions);
+
+        assert_eq!(drifts.len(), 1);
+        let drift = &drifts[0];
+        assert_eq!(drift.category, DriftCategory::ForeignKeyAction);
+        assert_eq!(
+            drift.location,
+            "core.tagged_items FOREIGN KEY (tag_id) (ON DELETE)"
+        );
+        assert_eq!(drift.declared_summary, "contains `ON DELETE CASCADE`");
+        assert!(drift.observed_summary.contains("ON DELETE NO ACTION"));
+    }
+
+    #[test]
+    fn foreign_key_action_drift_reports_missing_fk_definition() {
+        let declared = DECLARED_FK_ACTIONS
+            .iter()
+            .find(|fk| fk.table == "tags")
+            .expect("tags self-FK action strict-diff expectation is declared");
+        let definitions = vec!["FOREIGN KEY (other_id) REFERENCES core.tags(id)".to_string()];
+
+        let drifts = foreign_key_action_drifts(declared, &definitions);
+
+        assert_eq!(drifts.len(), 1);
+        let drift = &drifts[0];
+        assert_eq!(drift.category, DriftCategory::ForeignKeyAction);
+        assert_eq!(drift.location, "core.tags FOREIGN KEY (parent_tag_id)");
+        assert!(drift.declared_summary.contains("ON DELETE SET NULL"));
+        assert!(
+            drift
+                .observed_summary
+                .contains("no FK on core.tags matches")
+        );
+    }
+
+    #[test]
+    fn hypertable_setting_drift_reports_chunk_interval_states() {
+        assert!(
+            hypertable_chunk_interval_drift(Some((Some(HYPERTABLE_CHUNK_INTERVAL_MICROS),)))
+                .is_none(),
+            "declared 7-day chunk interval is not drift"
+        );
+
+        let drift = hypertable_chunk_interval_drift(Some((Some(60_000_000),)))
+            .expect("wrong chunk interval must be reported");
+        assert_eq!(drift.category, DriftCategory::HypertableSetting);
+        assert_eq!(drift.location, "core.events::chunk_interval");
+        assert!(drift.declared_summary.contains("7 days"));
+        assert_eq!(drift.observed_summary, "interval_length = 60000000");
+
+        let missing =
+            hypertable_chunk_interval_drift(None).expect("missing hypertable must be reported");
+        assert_eq!(missing.location, "core.events");
+        assert_eq!(missing.observed_summary, "core.events is not a hypertable");
+    }
+
+    #[test]
+    fn hypertable_setting_drift_reports_retention_policy() {
+        assert!(
+            hypertable_retention_policy_drift(0).is_none(),
+            "declared state has no retention-policy drift"
+        );
+
+        let drift =
+            hypertable_retention_policy_drift(2).expect("retention policy jobs must be reported");
+        assert_eq!(drift.category, DriftCategory::HypertableSetting);
+        assert_eq!(drift.location, "core.events::retention_policy");
+        assert_eq!(drift.declared_summary, "no retention policy");
+        assert_eq!(drift.observed_summary, "2 retention policy job(s) present");
     }
 }
