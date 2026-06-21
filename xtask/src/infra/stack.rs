@@ -208,9 +208,13 @@ impl StackConfig {
 
 #[derive(Debug, Serialize)]
 pub struct StackStatus {
+    pub checkout_root: PathBuf,
+    pub dev_state_dir: PathBuf,
+    pub logs_dir: PathBuf,
     pub initialized: bool,
     pub postgres: ServiceStatus,
     pub nats: ServiceStatus,
+    pub sinexd: RuntimeProcessStatus,
     pub annex: AnnexStatus,
     pub data_sizes: DataSizes,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -377,6 +381,7 @@ pub struct DirectorySizeProbe {
 impl StackStatus {
     #[must_use]
     pub fn gather(config: &StackConfig) -> Self {
+        let checkout_root = crate::config::workspace_root();
         let initialized =
             config.state_dir.exists() && (config.pg_data().exists() || config.nats_data().exists());
 
@@ -418,11 +423,16 @@ impl StackStatus {
             .collect();
 
         let snapshots = list_snapshots(&config.snapshots_dir());
+        let sinexd = inspect_sinexd_processes(Some(&checkout_root));
 
         Self {
+            checkout_root,
+            dev_state_dir: config.state_dir.clone(),
+            logs_dir: config.logs_dir(),
             initialized,
             postgres,
             nats,
+            sinexd,
             annex,
             data_sizes,
             data_size_issues,
@@ -1502,7 +1512,6 @@ pub fn list_snapshots(dir: &Path) -> SnapshotListProbe {
 
 #[cfg(test)]
 mod tests {
-    use super::StackConfig;
     use super::{
         AllCheckoutsCleanup, AllCheckoutsStatus, CleanupActionKind, GIT_REPOSITORY_ENV_KEYS,
         collect_snapshot_names, dir_size, discover_nats_port, git_subprocess, list_snapshots,
@@ -1510,6 +1519,7 @@ mod tests {
         require_successful_command, service_pid_state, stop_dev_sinexd_pid,
         sync_event_payload_schemas_for_database_url,
     };
+    use super::{StackConfig, StackStatus};
     use crate::infra::state::{CheckoutInventoryRoot, LockInfo, LockInspection};
     use crate::sandbox::prelude::*;
     use sinex_primitives::temporal::Timestamp;
@@ -1732,6 +1742,51 @@ port = 4310
         stop_dev_sinexd_pid(pid, false).ok();
         child.wait().ok();
         bail!("fake dev-local sinexd pid {pid} was not detected");
+    }
+
+    #[test]
+    fn current_checkout_status_reports_dev_local_sinexd() -> Result<()> {
+        let checkout = crate::config::workspace_root();
+        let config = StackConfig::for_current_checkout()?;
+        let temp = tempfile::Builder::new()
+            .prefix(".sinex-test-sinexd-")
+            .tempdir_in(&checkout)?;
+        let fake_bin = temp.path().join("sinexd");
+        fs::write(
+            &fake_bin,
+            "#!/usr/bin/env bash\n\
+             sleep 30 &\n\
+             child=$!\n\
+             trap 'kill \"$child\" 2>/dev/null; wait \"$child\" 2>/dev/null; exit 0' TERM INT EXIT\n\
+             wait \"$child\"\n",
+        )?;
+        let mut permissions = fs::metadata(&fake_bin)?.permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_bin, permissions)?;
+
+        let mut child = StdCommand::new(&fake_bin)
+            .current_dir(temp.path())
+            .spawn()
+            .wrap_err("failed to spawn fake current-checkout sinexd")?;
+        let pid = child.id();
+        let deadline = Instant::now() + Duration::from_secs(2);
+
+        while Instant::now() < deadline {
+            let status = StackStatus::gather(&config);
+            if status.sinexd.pids.contains(&pid) {
+                assert!(status.sinexd.running);
+                assert_eq!(status.checkout_root, checkout);
+                stop_dev_sinexd_pid(pid, false).ok();
+                child.wait().ok();
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        stop_dev_sinexd_pid(pid, false).ok();
+        child.wait().ok();
+        bail!("fake current-checkout sinexd pid {pid} was not detected");
     }
 
     #[test]
