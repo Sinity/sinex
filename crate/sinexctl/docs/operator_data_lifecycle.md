@@ -122,8 +122,11 @@ the CAS — needs operator attention).
 
 Retention is the same primitive (archive -> tombstone) executed on a schedule
 instead of on demand. Today, schema-level `retention_seconds` can drive
-`sinexd::api::lifecycle_ttl`; broad operator retention UX remains open under
-#1072/#1172.
+`sinexd::api::lifecycle_ttl`; broad operator lifecycle UX is now owned by
+the current package-mode cleanup and capture work rather than the closed
+#1072/#1172 trackers. Use #1963 for typed material lifecycle / transport
+semantics and the active capture issues such as #1043 and #1469 when a
+package needs concrete raw-material lifecycle behavior.
 
 ```
 sinexctl ops lifecycle retention status

@@ -52,11 +52,11 @@ target parser dispatch, and external/proposed modes remain metadata-only.
 >   the pre-derive form; still valid and used by many existing sources, but a new
 >   source should reach for a derive first.
 >
-> Per-field disclosure policy (distinct from the field-level
-> `ProcessingContext` / `SensitivityHint` hints that exist today) and migration
-> of the remaining manual registrations are tracked in **#1727 (SNX-41)**. The
+> Per-field disclosure policy is distinct from the field-level
+> `ProcessingContext` / `SensitivityHint` hints that exist today. The
 > required-field list below is stable regardless of which authoring path you
-> choose.
+> choose, and package-completeness output is the live way to find missing
+> authoring fields.
 
 ## Required fields (every source/capture package issue)
 
@@ -115,11 +115,12 @@ package completeness row  the #1792 report names remaining blocking fields or
 
 ## Package mode order
 
-The `SourceDefinition` / `SourceMeta` derives are landed; per-field disclosure
-coverage and the coherence / identity work (**#1727**, #1682, #1685) are still
-in progress. Implement package modes in dependency order so each one exercises a
-new capability against known data, with missing policy-owned fields surfaced by
-the package-completeness row rather than hidden in prose:
+The `SourceDefinition` / `SourceMeta` derives are landed, and the broad
+source-package / source-identity design issues have closed into the current
+package-completeness and source-identity doctrine. Implement package modes in
+dependency order so each one exercises a new capability against known data, with
+missing policy-owned fields surfaced by the package-completeness row rather than
+hidden in prose:
 
 1. `terminal.atuin-history` — proves the source-definition path with a simple,
    well-understood SQLite source.
