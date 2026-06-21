@@ -93,6 +93,7 @@ inventory::submit! {
         scope: AdmissionPolicyScope::GlobalDefault,
         accepted_event_contracts: &[
             crate::event_contracts::SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
+            crate::event_contracts::SHELL_ATUIN_COMMAND_EXECUTED_CONTRACT_ID,
             crate::event_contracts::SHELL_KITTY_COMMAND_EXECUTED_CONTRACT_ID,
             crate::event_contracts::BROWSER_PAGE_VISITED_CONTRACT_ID,
             crate::event_contracts::BROWSER_NAVIGATION_OBSERVED_CONTRACT_ID,
