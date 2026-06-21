@@ -58,11 +58,12 @@ _sinex_pre_push_nats_port() {
 }
 
 _sinex_pre_push_checkout_env() {
-  local cache_root dev_state_dir target_dir pg_run_dir nats_port gateway_port
+  local cache_root dev_state_dir target_dir pg_run_dir pg_port nats_port gateway_port
   cache_root="$(_sinex_pre_push_cache_root)"
   dev_state_dir="$cache_root/dev-state"
   target_dir="$cache_root/target"
   pg_run_dir="$dev_state_dir/run"
+  pg_port="5432"
   nats_port="$(_sinex_pre_push_nats_port)"
   gateway_port="$(_sinex_pre_push_gateway_port)"
 
@@ -72,11 +73,12 @@ _sinex_pre_push_checkout_env() {
     CARGO_TARGET_DIR="$target_dir" \
     DATABASE_URL="postgresql:///sinex_dev?host=$pg_run_dir" \
     PGHOST="$pg_run_dir" \
-    PGPORT= \
+    PGPORT="$pg_port" \
     SINEX_CACHE_DIR="$cache_root" \
     SINEX_DEV_CACHE_ROOT="$cache_root" \
     SINEX_DEV_GATEWAY_PORT="$gateway_port" \
     SINEX_DEV_NATS_PORT="$nats_port" \
+    SINEX_DEV_PG_PORT="$pg_port" \
     SINEX_DEV_ROOT="$REPO_ROOT" \
     SINEX_DEV_STATE_DIR="$dev_state_dir" \
     SINEX_NATS_DIR="$dev_state_dir/nats" \

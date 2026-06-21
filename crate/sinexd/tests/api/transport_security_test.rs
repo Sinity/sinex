@@ -83,7 +83,7 @@ fn write_tls_bundle(dir: &Path) -> Result<CertBundle> {
     })
 }
 
-async fn wait_for_tls_response(client: &Client, url: &str, token: &str) -> Result<()> {
+async fn wait_for_tls_health_response(client: &Client, url: &str, token: &str) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(Timeouts::SHORT);
     let payload = json!({
         "jsonrpc": "2.0",
@@ -104,11 +104,32 @@ async fn wait_for_tls_response(client: &Client, url: &str, token: &str) -> Resul
 
         match resp {
             Ok(response) => {
-                let _ = response.text().await;
+                let status = response.status();
+                let body = response.text().await?;
+                if !status.is_success() {
+                    last_err = Some(eyre!("gateway returned HTTP {status}: {body}"));
+                    sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+
+                let value: serde_json::Value = serde_json::from_str(&body)
+                    .map_err(|error| eyre!("gateway returned non-JSON health body: {error}; body={body}"))?;
+                if value["jsonrpc"].as_str() != Some("2.0") {
+                    return Err(eyre!("health response missing jsonrpc=2.0: {value}"));
+                }
+                if value["id"].as_i64() != Some(1) {
+                    return Err(eyre!("health response id mismatch: {value}"));
+                }
+                if value.get("error").is_some() {
+                    return Err(eyre!("health response returned JSON-RPC error: {value}"));
+                }
+                if value["result"]["healthy"].as_bool().is_none() {
+                    return Err(eyre!("health response missing typed result.healthy: {value}"));
+                }
                 return Ok(());
             }
             Err(err) => {
-                last_err = Some(err);
+                last_err = Some(err.into());
                 sleep(Duration::from_millis(100)).await;
             }
         }
@@ -170,7 +191,7 @@ async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
     let ca = ReqwestCert::from_pem(bundle.ca_pem.as_bytes())?;
     let client = Client::builder().add_root_certificate(ca).build()?;
     let url = format!("https://127.0.0.1:{port}/rpc");
-    let result = wait_for_tls_response(&client, &url, "test-token").await;
+    let result = wait_for_tls_health_response(&client, &url, "test-token").await;
 
     server_handle.abort();
     result
