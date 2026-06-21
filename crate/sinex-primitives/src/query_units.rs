@@ -623,7 +623,7 @@ const RUNTIME_FIELDS: &[QueryFieldDescriptor] = &[
     },
     QueryFieldDescriptor {
         name: "stale_after",
-        field_type: QueryFieldType::Duration,
+        field_type: QueryFieldType::Integer,
         operators: ORDERED,
         enum_values: &[],
     },
@@ -1070,5 +1070,20 @@ mod tests {
         let error = parse_sinex_query("operations where status = mystery").unwrap_err();
 
         assert!(error.to_string().contains("does not allow enum value"));
+    }
+
+    #[test]
+    fn parser_lowers_runtime_stale_after_as_numeric_seconds() {
+        let query = parse_sinex_query("runtime-health where stale_after >= 300").unwrap();
+
+        assert_eq!(query.unit, QueryUnitId::RuntimeHealth);
+        assert!(matches!(
+            query.predicate,
+            Some(SinexQueryPredicate::Compare {
+                field,
+                operator: QueryOperator::GreaterThanOrEq,
+                value: QueryValue::Integer(300),
+            }) if field == "stale_after"
+        ));
     }
 }
