@@ -7,10 +7,11 @@
 use sinex_workspace_tests::built_binary;
 use sinexd::api::{ServiceContainer, config::GatewayConfig, rpc_server};
 use std::net::TcpListener;
+use std::path::Path;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::sync::watch;
-use xtask::sandbox::{TestContext, sinex_test, timing::Timeouts};
+use xtask::sandbox::{EnvGuard, TestContext, sinex_test, timing::Timeouts};
 
 const TEST_TOKEN: &str = "test-token:admin";
 
@@ -40,10 +41,29 @@ async fn wait_for_port(port: u16, timeout: Duration) -> color_eyre::Result<()> {
 
 struct TestGateway {
     port: u16,
+    _env: EnvGuard,
     _shutdown_tx: watch::Sender<bool>,
     handle: tokio::task::JoinHandle<()>,
     _cert_file: NamedTempFile,
     _key_file: NamedTempFile,
+}
+
+const GATEWAY_ENV_KEYS: &[&str] = &[
+    "SINEX_API_TLS_CERT",
+    "SINEX_API_TLS_KEY",
+    "SINEX_API_TLS_CLIENT_CA",
+    "SINEX_API_TOKEN",
+    "SINEX_NATS_URL",
+];
+
+fn configure_test_gateway_env(nats_url: &str, cert_path: &Path, key_path: &Path) -> EnvGuard {
+    let mut env = EnvGuard::with_keys(GATEWAY_ENV_KEYS);
+    env.set("SINEX_API_TLS_CERT", cert_path.as_os_str());
+    env.set("SINEX_API_TLS_KEY", key_path.as_os_str());
+    env.clear("SINEX_API_TLS_CLIENT_CA");
+    env.set("SINEX_API_TOKEN", TEST_TOKEN);
+    env.set("SINEX_NATS_URL", nats_url);
+    env
 }
 
 async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway> {
@@ -54,20 +74,7 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
     let key_file = NamedTempFile::new()?;
     tokio::fs::write(cert_file.path(), cert.cert.pem()).await?;
     tokio::fs::write(key_file.path(), cert.key_pair.serialize_pem()).await?;
-
-    unsafe {
-        std::env::set_var(
-            "SINEX_API_TLS_CERT",
-            cert_file.path().to_string_lossy().to_string(),
-        );
-        std::env::set_var(
-            "SINEX_API_TLS_KEY",
-            key_file.path().to_string_lossy().to_string(),
-        );
-        std::env::remove_var("SINEX_API_TLS_CLIENT_CA");
-        std::env::set_var("SINEX_API_TOKEN", TEST_TOKEN);
-        std::env::set_var("SINEX_NATS_URL", &nats_url);
-    }
+    let env = configure_test_gateway_env(&nats_url, cert_file.path(), key_file.path());
 
     let port = reserve_port()?;
     let mut config = GatewayConfig::load_with_database_url(ctx.database_url().to_string())?;
@@ -102,11 +109,104 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
 
     Ok(TestGateway {
         port,
+        _env: env,
         _shutdown_tx: shutdown_tx,
         handle: server_handle,
         _cert_file: cert_file,
         _key_file: key_file,
     })
+}
+
+struct RawEnvRestore {
+    original: Vec<(&'static str, Option<String>)>,
+}
+
+impl RawEnvRestore {
+    // This test intentionally verifies EnvGuard behavior, so the sentinel
+    // environment setup cannot itself use EnvGuard without nesting the global
+    // environment mutex.
+    fn capture(keys: &'static [&'static str]) -> Self {
+        Self {
+            original: keys
+                .iter()
+                .map(|key| (*key, std::env::var(key).ok()))
+                .collect(),
+        }
+    }
+}
+
+impl Drop for RawEnvRestore {
+    fn drop(&mut self) {
+        for (key, value) in self.original.drain(..).rev() {
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+}
+
+#[sinex_test]
+async fn replay_gateway_env_guard_restores_existing_values(
+    _ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let _restore = RawEnvRestore::capture(GATEWAY_ENV_KEYS);
+    unsafe {
+        std::env::set_var("SINEX_API_TLS_CERT", "sentinel-cert");
+        std::env::set_var("SINEX_API_TLS_KEY", "sentinel-key");
+        std::env::set_var("SINEX_API_TLS_CLIENT_CA", "sentinel-ca");
+        std::env::set_var("SINEX_API_TOKEN", "sentinel-token");
+        std::env::set_var("SINEX_NATS_URL", "nats://sentinel");
+    }
+
+    {
+        let _env = configure_test_gateway_env(
+            "nats://test-gateway",
+            Path::new("/tmp/sinex-test-cert.pem"),
+            Path::new("/tmp/sinex-test-key.pem"),
+        );
+        assert_eq!(
+            std::env::var("SINEX_API_TLS_CERT").as_deref(),
+            Ok("/tmp/sinex-test-cert.pem")
+        );
+        assert_eq!(
+            std::env::var("SINEX_API_TLS_KEY").as_deref(),
+            Ok("/tmp/sinex-test-key.pem")
+        );
+        assert!(
+            std::env::var("SINEX_API_TLS_CLIENT_CA").is_err(),
+            "test gateway must clear client CA while it owns the gateway env"
+        );
+        assert_eq!(std::env::var("SINEX_API_TOKEN").as_deref(), Ok(TEST_TOKEN));
+        assert_eq!(
+            std::env::var("SINEX_NATS_URL").as_deref(),
+            Ok("nats://test-gateway")
+        );
+    }
+
+    assert_eq!(
+        std::env::var("SINEX_API_TLS_CERT").as_deref(),
+        Ok("sentinel-cert")
+    );
+    assert_eq!(
+        std::env::var("SINEX_API_TLS_KEY").as_deref(),
+        Ok("sentinel-key")
+    );
+    assert_eq!(
+        std::env::var("SINEX_API_TLS_CLIENT_CA").as_deref(),
+        Ok("sentinel-ca")
+    );
+    assert_eq!(
+        std::env::var("SINEX_API_TOKEN").as_deref(),
+        Ok("sentinel-token")
+    );
+    assert_eq!(
+        std::env::var("SINEX_NATS_URL").as_deref(),
+        Ok("nats://sentinel")
+    );
+    Ok(())
 }
 
 /// Helper: run sinexctl with common flags + replay subcommand args.
