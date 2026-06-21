@@ -634,15 +634,38 @@ fn source_actions(
             .filter(|capability| capability.is_kind(SourceCapabilityKind::Operation))
         {
             let operation = capability.target;
-            if seen.insert(operation.to_string()) {
-                actions.push(operation_capability_action(operation, source_id));
+            let action_key = operation_action_key(operation, source_id, binding);
+            if seen.insert(action_key.clone()) {
+                actions.push(operation_capability_action(
+                    operation,
+                    source_id,
+                    Some(binding),
+                    action_key,
+                ));
             }
         }
     }
     actions
 }
 
-fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvailability {
+fn operation_action_key(
+    operation: &str,
+    source_id: &str,
+    binding: &SourceRuntimeBinding,
+) -> String {
+    if source_id == "email.mailbox" && email_operation_is_mode_scoped(operation) {
+        format!("{}:{}", operation, binding.subject.as_str())
+    } else {
+        operation.to_string()
+    }
+}
+
+fn operation_capability_action(
+    operation: &str,
+    source_id: &str,
+    binding: Option<&SourceRuntimeBinding>,
+    action_id: String,
+) -> ActionAvailability {
     let module = source_runtime_module(source_id);
     let (label, command_hint, rpc_method, side_effect) = match operation
         .rsplit('.')
@@ -656,11 +679,14 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
             ActionSideEffect::Read,
         ),
         "inspect" => (
-            "Inspect Bridge",
-            module
+            email_operation_label(operation, binding).unwrap_or("Inspect Bridge"),
+            package_operation_command_hint(operation, source_id, binding).or_else(|| {
+                module
                 .map(|module| format!("sinexctl runtime status {module}"))
-                .or_else(|| Some(format!("sinexctl sources status {source_id} --format json"))),
-            module.map(|_| methods::COORDINATION_INSTANCE_HEALTH),
+                .or_else(|| Some(format!("sinexctl sources status {source_id} --format json")))
+            }),
+            package_operation_rpc_method(operation, source_id, binding)
+                .or_else(|| module.map(|_| methods::COORDINATION_INSTANCE_HEALTH)),
             ActionSideEffect::Read,
         ),
         "drain" => (
@@ -678,32 +704,36 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
             ActionSideEffect::Admin,
         ),
         "pause" => (
-            package_operation_label(operation, "Pause Package Mode").unwrap_or("Pause Bridge"),
-            package_operation_command_hint(operation, source_id).or_else(|| {
+            email_operation_label(operation, binding)
+                .or_else(|| package_operation_label(operation, "Pause Package Mode"))
+                .unwrap_or("Pause Bridge"),
+            package_operation_command_hint(operation, source_id, binding).or_else(|| {
                 module.map(|module| format!("sinexctl runtime drain {module} --reason source-paused"))
             }),
-            package_operation_rpc_method(operation, source_id)
+            package_operation_rpc_method(operation, source_id, binding)
                 .or_else(|| module.map(|_| methods::RUNTIME_DRAIN)),
             ActionSideEffect::Admin,
         ),
         "resume" => (
-            package_operation_label(operation, "Resume Package Mode").unwrap_or("Resume Bridge"),
-            package_operation_command_hint(operation, source_id)
+            email_operation_label(operation, binding)
+                .or_else(|| package_operation_label(operation, "Resume Package Mode"))
+                .unwrap_or("Resume Bridge"),
+            package_operation_command_hint(operation, source_id, binding)
                 .or_else(|| module.map(|module| format!("sinexctl runtime resume {module}"))),
-            package_operation_rpc_method(operation, source_id)
+            package_operation_rpc_method(operation, source_id, binding)
                 .or_else(|| module.map(|_| methods::RUNTIME_RESUME)),
             ActionSideEffect::Admin,
         ),
         "authorize" => (
-            "Authorize Mailbox",
-            package_operation_command_hint(operation, source_id),
-            package_operation_rpc_method(operation, source_id),
+            email_operation_label(operation, binding).unwrap_or("Authorize Mailbox"),
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Admin,
         ),
         "sync" => (
-            "Sync Mailbox",
-            package_operation_command_hint(operation, source_id),
-            package_operation_rpc_method(operation, source_id),
+            email_operation_label(operation, binding).unwrap_or("Sync Mailbox"),
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Write,
         ),
         "import-transcript" => (
@@ -745,57 +775,59 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
             ActionSideEffect::Read,
         ),
         "replay" => (
-            "Replay Source",
-            Some(format!("sinexctl ops replay plan --source {source_id}")),
-            Some(methods::REPLAY_CREATE_OPERATION),
+            email_operation_label(operation, binding).unwrap_or("Replay Source"),
+            package_operation_command_hint(operation, source_id, binding)
+                .or_else(|| Some(format!("sinexctl ops replay plan --source {source_id}"))),
+            package_operation_rpc_method(operation, source_id, binding)
+                .or(Some(methods::REPLAY_CREATE_OPERATION)),
             ActionSideEffect::Write,
         ),
         "delete-material" => (
             "Delete Material",
-            package_operation_command_hint(operation, source_id),
-            package_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Destructive,
         ),
         "run-model" => (
             "Run Local Model",
-            package_operation_command_hint(operation, source_id),
-            package_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Admin,
         ),
         "run-ocr" => (
             "Run OCR",
-            package_operation_command_hint(operation, source_id),
-            package_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Admin,
         ),
         "retry" => (
             "Retry Package Operation",
-            package_operation_command_hint(operation, source_id),
-            package_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Write,
         ),
         "rebuild-artifact" => (
             "Rebuild Artifact",
-            package_operation_command_hint(operation, source_id),
-            package_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Write,
         ),
         "enable-session" => (
             "Enable Capture Session",
-            package_operation_command_hint(operation, source_id),
-            package_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Admin,
         ),
         "disable-session" => (
             "Disable Capture Session",
-            package_operation_command_hint(operation, source_id),
-            package_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Admin,
         ),
         "capture-region" => (
             "Capture Region",
-            package_operation_command_hint(operation, source_id),
-            package_operation_rpc_method(operation, source_id),
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Admin,
         ),
         _ => ("Package Operation", None, None, ActionSideEffect::Read),
@@ -813,7 +845,7 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
         )
     };
     let mut action = ActionAvailability {
-        id: operation.to_string(),
+        id: action_id,
         label: label.to_string(),
         state,
         reason: Some(reason),
@@ -836,15 +868,29 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
     action
 }
 
-fn package_operation_command_hint(operation: &str, source_id: &str) -> Option<String> {
-    let mode_id = package_operation_mode_hint(operation)?;
+fn package_operation_command_hint(
+    operation: &str,
+    source_id: &str,
+    binding: Option<&SourceRuntimeBinding>,
+) -> Option<String> {
+    let mode_id = package_operation_mode_hint(operation, binding)?;
 
     Some(format!(
         "sinexctl ops start {operation} --scope '{{\"source_id\":\"{source_id}\",\"mode_id\":\"{mode_id}\"}}' --format json"
     ))
 }
 
-fn package_operation_mode_hint(operation: &str) -> Option<&'static str> {
+fn package_operation_mode_hint(
+    operation: &str,
+    binding: Option<&SourceRuntimeBinding>,
+) -> Option<&'static str> {
+    if email_operation_is_mode_scoped(operation)
+        && let Some(binding) = binding
+        && binding.source_id == "email.mailbox"
+    {
+        return Some(binding.subject.as_str());
+    }
+
     let mode_id = match operation {
         "media.audio-transcript.run-model"
         | "media.audio-transcript.retry"
@@ -867,21 +913,91 @@ fn package_operation_mode_hint(operation: &str) -> Option<&'static str> {
         | "media.screen-ocr.pause"
         | "media.screen-ocr.resume" => "source:media.screen-ocr.live-session",
         "media.screen-ocr.delete-material" => "source:media.screen-ocr.screenshot-ocr-staged",
-        "email.mailbox.authorize" | "email.mailbox.pause" | "email.mailbox.resume" => {
-            "<provider-mode-id>"
-        }
-        "email.mailbox.sync" => "<email-mode-id>",
         _ => return None,
     };
     Some(mode_id)
 }
 
-fn package_operation_rpc_method(operation: &str, source_id: &str) -> Option<&'static str> {
-    package_operation_command_hint(operation, source_id).map(|_| methods::OPS_START)
+fn package_operation_rpc_method(
+    operation: &str,
+    source_id: &str,
+    binding: Option<&SourceRuntimeBinding>,
+) -> Option<&'static str> {
+    package_operation_command_hint(operation, source_id, binding).map(|_| methods::OPS_START)
 }
 
 fn package_operation_label<'a>(operation: &str, label: &'a str) -> Option<&'a str> {
-    package_operation_mode_hint(operation).map(|_| label)
+    package_operation_mode_hint(operation, None).map(|_| label)
+}
+
+fn email_operation_is_mode_scoped(operation: &str) -> bool {
+    matches!(
+        operation,
+        "email.mailbox.authorize"
+            | "email.mailbox.sync"
+            | "email.mailbox.pause"
+            | "email.mailbox.resume"
+            | "email.mailbox.inspect"
+            | "email.mailbox.replay"
+    )
+}
+
+fn email_operation_label(
+    operation: &str,
+    binding: Option<&SourceRuntimeBinding>,
+) -> Option<&'static str> {
+    let binding = binding?;
+    if binding.source_id != "email.mailbox" {
+        return None;
+    }
+    match (operation, binding.subject.as_str()) {
+        ("email.mailbox.authorize", "source:email.mailbox.gmail-api-scheduled-sync") => {
+            Some("Authorize Gmail")
+        }
+        (
+            "email.mailbox.authorize",
+            "source:email.mailbox.imap-scheduled-sync" | "source:email.mailbox.imap-idle-live",
+        ) => Some("Authorize IMAP"),
+        ("email.mailbox.sync", "source:email.mailbox.maildir-staged") => Some("Import Maildir"),
+        ("email.mailbox.sync", "source:email.mailbox.mbox-staged") => Some("Import MBOX"),
+        ("email.mailbox.sync", "source:email.mailbox.gmail-api-scheduled-sync") => {
+            Some("Sync Gmail")
+        }
+        ("email.mailbox.sync", "source:email.mailbox.imap-scheduled-sync") => Some("Sync IMAP"),
+        ("email.mailbox.pause", "source:email.mailbox.gmail-api-scheduled-sync") => {
+            Some("Pause Gmail Sync")
+        }
+        ("email.mailbox.pause", "source:email.mailbox.imap-scheduled-sync") => {
+            Some("Pause IMAP Sync")
+        }
+        ("email.mailbox.pause", "source:email.mailbox.imap-idle-live") => Some("Pause IMAP IDLE"),
+        ("email.mailbox.resume", "source:email.mailbox.gmail-api-scheduled-sync") => {
+            Some("Resume Gmail Sync")
+        }
+        ("email.mailbox.resume", "source:email.mailbox.imap-scheduled-sync") => {
+            Some("Resume IMAP Sync")
+        }
+        ("email.mailbox.resume", "source:email.mailbox.imap-idle-live") => Some("Resume IMAP IDLE"),
+        ("email.mailbox.inspect", "source:email.mailbox.gmail-api-scheduled-sync") => {
+            Some("Inspect Gmail Sync")
+        }
+        ("email.mailbox.inspect", "source:email.mailbox.imap-scheduled-sync") => {
+            Some("Inspect IMAP Sync")
+        }
+        ("email.mailbox.inspect", "source:email.mailbox.imap-idle-live") => {
+            Some("Inspect IMAP IDLE")
+        }
+        ("email.mailbox.replay", "source:email.mailbox.maildir-staged") => Some("Replay Maildir"),
+        ("email.mailbox.replay", "source:email.mailbox.mbox-staged") => Some("Replay MBOX"),
+        ("email.mailbox.replay", "source:email.mailbox.gmail-api-scheduled-sync") => {
+            Some("Replay Gmail Sync")
+        }
+        ("email.mailbox.replay", "source:email.mailbox.imap-scheduled-sync") => {
+            Some("Replay IMAP Sync")
+        }
+        ("email.mailbox.replay", "source:email.mailbox.imap-idle-live") => Some("Replay IMAP IDLE"),
+        _ => None,
+    }
 }
 
 fn source_runtime_module(source_id: &str) -> Option<&'static str> {
@@ -1431,40 +1547,89 @@ mod tests {
             Timestamp::now(),
         );
 
-        let authorize = view
+        let authorize_gmail = view
             .actions
             .iter()
-            .find(|action| action.id == "email.mailbox.authorize")
-            .ok_or_else(|| color_eyre::eyre::eyre!("email authorize action expected"))?;
-        assert_eq!(authorize.state, ActionAvailabilityState::Enabled);
-        assert_eq!(authorize.side_effect, ActionSideEffect::Admin);
-        assert_eq!(authorize.rpc_method.as_deref(), Some("ops.start"));
-        assert_eq!(
-            authorize.command_hint.as_deref(),
-            Some(
-                "sinexctl ops start email.mailbox.authorize --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"<provider-mode-id>\"}' --format json"
-            )
-        );
+            .find(|action| {
+                action.command_hint.as_deref()
+                    == Some(
+                        "sinexctl ops start email.mailbox.authorize --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.gmail-api-scheduled-sync\"}' --format json",
+                    )
+            })
+            .ok_or_else(|| color_eyre::eyre::eyre!("Gmail authorize action expected"))?;
+        assert_eq!(authorize_gmail.state, ActionAvailabilityState::Enabled);
+        assert_eq!(authorize_gmail.side_effect, ActionSideEffect::Admin);
+        assert_eq!(authorize_gmail.rpc_method.as_deref(), Some("ops.start"));
+        assert_eq!(authorize_gmail.label, "Authorize Gmail");
 
-        let sync = view
+        let authorize_imap = view
             .actions
             .iter()
-            .find(|action| action.id == "email.mailbox.sync")
-            .ok_or_else(|| color_eyre::eyre::eyre!("email sync action expected"))?;
-        assert_eq!(sync.state, ActionAvailabilityState::Enabled);
-        assert_eq!(sync.side_effect, ActionSideEffect::Write);
-        assert_eq!(sync.rpc_method.as_deref(), Some("ops.start"));
-        assert_eq!(
-            sync.command_hint.as_deref(),
-            Some(
-                "sinexctl ops start email.mailbox.sync --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"<email-mode-id>\"}' --format json"
-            )
+            .find(|action| {
+                action.command_hint.as_deref()
+                    == Some(
+                        "sinexctl ops start email.mailbox.authorize --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.imap-scheduled-sync\"}' --format json",
+                    )
+            })
+            .ok_or_else(|| color_eyre::eyre::eyre!("IMAP authorize action expected"))?;
+        assert_eq!(authorize_imap.label, "Authorize IMAP");
+
+        let maildir_sync = view
+            .actions
+            .iter()
+            .find(|action| {
+                action.command_hint.as_deref()
+                    == Some(
+                        "sinexctl ops start email.mailbox.sync --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.maildir-staged\"}' --format json",
+                    )
+            })
+            .ok_or_else(|| color_eyre::eyre::eyre!("Maildir sync action expected"))?;
+        assert_eq!(maildir_sync.state, ActionAvailabilityState::Enabled);
+        assert_eq!(maildir_sync.side_effect, ActionSideEffect::Write);
+        assert_eq!(maildir_sync.rpc_method.as_deref(), Some("ops.start"));
+        assert_eq!(maildir_sync.label, "Import Maildir");
+
+        let gmail_sync = view
+            .actions
+            .iter()
+            .find(|action| {
+                action.command_hint.as_deref()
+                    == Some(
+                        "sinexctl ops start email.mailbox.sync --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.gmail-api-scheduled-sync\"}' --format json",
+                    )
+            })
+            .ok_or_else(|| color_eyre::eyre::eyre!("Gmail sync action expected"))?;
+        assert_eq!(gmail_sync.label, "Sync Gmail");
+
+        let imap_sync = view
+            .actions
+            .iter()
+            .find(|action| {
+                action.command_hint.as_deref()
+                    == Some(
+                        "sinexctl ops start email.mailbox.sync --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.imap-scheduled-sync\"}' --format json",
+                    )
+            })
+            .ok_or_else(|| color_eyre::eyre::eyre!("IMAP sync action expected"))?;
+        assert_eq!(imap_sync.label, "Sync IMAP");
+
+        assert!(
+            view.actions.iter().all(|action| {
+                let hint = action.command_hint.as_deref().unwrap_or_default();
+                !hint.contains("<email-mode-id>") && !hint.contains("<provider-mode-id>")
+            }),
+            "email coverage actions should be concrete mode commands"
         );
 
         let pause = view
             .actions
             .iter()
-            .find(|action| action.id == "email.mailbox.pause")
+            .find(|action| {
+                action.command_hint.as_deref()
+                    == Some(
+                        "sinexctl ops start email.mailbox.pause --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.gmail-api-scheduled-sync\"}' --format json",
+                    )
+            })
             .ok_or_else(|| color_eyre::eyre::eyre!("email pause action expected"))?;
         assert_eq!(pause.state, ActionAvailabilityState::Enabled);
         assert_eq!(pause.side_effect, ActionSideEffect::Admin);

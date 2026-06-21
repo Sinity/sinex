@@ -5,8 +5,11 @@ use sinex_primitives::Id;
 use sinex_primitives::InvalidationTrigger;
 use sinex_primitives::SinexError;
 use sinex_primitives::events::payloads::email::{
-    EmailProviderKind, EmailProviderRuntime, EmailSyncCursorKind,
+    EmailAuthorizationState, EmailCaptureRuntimeObservedPayload, EmailContinuityState,
+    EmailNetworkState, EmailProviderKind, EmailProviderRuntime, EmailSyncCursorKind,
+    EmailSyncCursorObservedPayload, EmailSyncState,
 };
+use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
 
 // Re-export shared types
@@ -110,6 +113,108 @@ struct EmailProviderModeMetadata {
     caveats: &'static [&'static str],
 }
 
+#[derive(Debug, Clone)]
+struct EmailProviderOperationScope {
+    account_binding_ref: String,
+    mailbox_scope: Option<String>,
+    cursor_value: Option<String>,
+    uidvalidity: Option<String>,
+    uid: Option<String>,
+    gmail_history_id: Option<String>,
+    page_token: Option<String>,
+}
+
+impl EmailProviderOperationScope {
+    fn from_scope(
+        operation_type: &str,
+        mode: EmailProviderRuntimeMode,
+        scope: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Self> {
+        let account_binding_ref = scope
+            .get("account_binding_ref")
+            .or_else(|| scope.get("account_ref"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                SinexError::validation(format!(
+                    "package operation {operation_type} requires account_binding_ref for provider mode {}",
+                    mode.mode_id()
+                ))
+                .with_operation("ops.start")
+                .with_context("mode_id", mode.mode_id())
+            })?
+            .to_string();
+
+        let parsed = Self {
+            account_binding_ref,
+            mailbox_scope: optional_scope_string(scope, "mailbox_scope"),
+            cursor_value: optional_scope_string(scope, "cursor_value"),
+            uidvalidity: optional_scope_string(scope, "uidvalidity"),
+            uid: optional_scope_string(scope, "uid"),
+            gmail_history_id: optional_scope_string(scope, "gmail_history_id"),
+            page_token: optional_scope_string(scope, "page_token"),
+        };
+        parsed.validate_provider_cursor(operation_type, mode)?;
+        Ok(parsed)
+    }
+
+    fn validate_provider_cursor(
+        &self,
+        operation_type: &str,
+        mode: EmailProviderRuntimeMode,
+    ) -> Result<()> {
+        match mode.provider() {
+            EmailProviderKind::Gmail => {
+                if self.uidvalidity.is_some() || self.uid.is_some() {
+                    return Err(SinexError::validation(format!(
+                        "package operation {operation_type} cannot use IMAP UID cursor fields for Gmail mode {}",
+                        mode.mode_id()
+                    ))
+                    .with_operation("ops.start")
+                    .with_context("mode_id", mode.mode_id()));
+                }
+            }
+            EmailProviderKind::Imap => {
+                if self.gmail_history_id.is_some() || self.page_token.is_some() {
+                    return Err(SinexError::validation(format!(
+                        "package operation {operation_type} cannot use Gmail cursor fields for IMAP mode {}",
+                        mode.mode_id()
+                    ))
+                    .with_operation("ops.start")
+                    .with_context("mode_id", mode.mode_id()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn cursor_value_for(&self, provider: EmailProviderKind) -> Option<String> {
+        match provider {
+            EmailProviderKind::Gmail => self
+                .gmail_history_id
+                .clone()
+                .or_else(|| self.page_token.clone())
+                .or_else(|| self.cursor_value.clone()),
+            EmailProviderKind::Imap => match (&self.uidvalidity, &self.uid) {
+                (Some(uidvalidity), Some(uid)) => Some(format!("{uidvalidity}:{uid}")),
+                _ => self.cursor_value.clone(),
+            },
+        }
+    }
+
+    fn to_scope_value(&self) -> serde_json::Value {
+        serde_json::json!({
+            "account_binding_ref": self.account_binding_ref,
+            "mailbox_scope": self.mailbox_scope,
+            "cursor_value": self.cursor_value,
+            "uidvalidity": self.uidvalidity,
+            "uid": self.uid,
+            "gmail_history_id": self.gmail_history_id,
+            "page_token": self.page_token,
+        })
+    }
+}
+
 const fn email_provider_authorization_state_ref(provider: EmailProviderKind) -> &'static str {
     match provider {
         EmailProviderKind::Gmail => "email.mailbox.provider_authorization.gmail.oauth",
@@ -178,6 +283,14 @@ impl EmailProviderRuntimeMode {
             Self::GmailScheduledSync => "debt:email.mailbox.gmail.provider_runtime",
             Self::ImapScheduledSync => "debt:email.mailbox.imap.provider_runtime",
             Self::ImapIdleLive => "debt:email.mailbox.imap.idle_runtime",
+        }
+    }
+
+    const fn mode_id(self) -> &'static str {
+        match self {
+            Self::GmailScheduledSync => EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID,
+            Self::ImapScheduledSync => EMAIL_IMAP_SCHEDULED_SYNC_MODE_ID,
+            Self::ImapIdleLive => EMAIL_IMAP_IDLE_LIVE_MODE_ID,
         }
     }
 }
@@ -619,6 +732,7 @@ async fn start_package_operation(
         serde_json::json!(PACKAGE_OPERATION_EXECUTOR_STATE),
     );
     scope.remove("provider_runtime");
+    scope.remove("provider_cursor");
     let operation_metadata = media_operation_metadata(&spec, &mode_id);
     if let Some(metadata) = operation_metadata.clone() {
         scope.insert("operation_metadata".to_string(), metadata);
@@ -634,12 +748,33 @@ async fn start_package_operation(
         "message": spec.executor_message,
     });
     if let Some(provider_metadata) = email_provider_mode_metadata(&mode_id) {
-        let provider_runtime = email_provider_mode_metadata_value(provider_metadata);
+        let provider_scope = EmailProviderOperationScope::from_scope(
+            operation_type,
+            provider_metadata.mode,
+            &scope,
+        )?;
+        scope.insert(
+            "account_binding_ref".to_string(),
+            serde_json::json!(&provider_scope.account_binding_ref),
+        );
+        scope.insert(
+            "provider_operation_scope".to_string(),
+            provider_scope.to_scope_value(),
+        );
+        let provider_runtime =
+            email_provider_mode_metadata_value(provider_metadata, &provider_scope);
+        let provider_cursor =
+            email_provider_cursor_metadata_value(provider_metadata.mode, &provider_scope);
         scope.insert("provider_runtime".to_string(), provider_runtime.clone());
+        scope.insert("provider_cursor".to_string(), provider_cursor.clone());
         preview_summary
             .as_object_mut()
             .expect("package operation preview is an object")
             .insert("provider_runtime".to_string(), provider_runtime);
+        preview_summary
+            .as_object_mut()
+            .expect("package operation preview is an object")
+            .insert("provider_cursor".to_string(), provider_cursor);
     }
     if let Some(metadata) = operation_metadata {
         preview_summary
@@ -660,6 +795,17 @@ async fn start_package_operation(
             duration_ms: None,
         })
         .await
+}
+
+fn optional_scope_string(
+    scope: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<String> {
+    scope
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
 }
 
 fn email_provider_mode_metadata(mode_id: &str) -> Option<EmailProviderModeMetadata> {
@@ -692,12 +838,39 @@ fn email_provider_mode_metadata(mode_id: &str) -> Option<EmailProviderModeMetada
     }
 }
 
-fn email_provider_mode_metadata_value(metadata: EmailProviderModeMetadata) -> serde_json::Value {
+fn email_provider_mode_metadata_value(
+    metadata: EmailProviderModeMetadata,
+    scope: &EmailProviderOperationScope,
+) -> serde_json::Value {
     let provider = metadata.mode.provider();
     let cursor_kind = email_provider_sync_cursor_kind(provider);
+    let runtime_payload = EmailCaptureRuntimeObservedPayload {
+        provider,
+        account_binding_ref: scope.account_binding_ref.clone(),
+        mode_id: metadata.mode.mode_id().to_string(),
+        observed_at: Timestamp::now(),
+        provider_runtime: metadata.mode.runtime(),
+        auth_state: EmailAuthorizationState::Unknown,
+        network_state: EmailNetworkState::Unknown,
+        rate_limit_state: None,
+        sync_state: EmailSyncState::Idle,
+        pending_messages: None,
+        pending_material_bytes: None,
+        caveats: metadata
+            .caveats
+            .iter()
+            .map(|caveat| caveat.to_string())
+            .collect(),
+        actions: email_provider_runtime_actions(metadata.mode)
+            .iter()
+            .map(|action| action.to_string())
+            .collect(),
+    };
     serde_json::json!({
         "provider": provider.as_str(),
         "provider_runtime": metadata.mode.runtime().as_str(),
+        "account_binding_ref": scope.account_binding_ref,
+        "mailbox_scope": scope.mailbox_scope,
         "authorization_state_ref": email_provider_authorization_state_ref(provider),
         "sync_cursor_ref": format!("email.sync_cursor.observed:{}", cursor_kind.as_str()),
         "sync_cursor_kind": cursor_kind.as_str(),
@@ -705,7 +878,69 @@ fn email_provider_mode_metadata_value(metadata: EmailProviderModeMetadata) -> se
         "coverage_ref": metadata.mode.coverage_ref(),
         "debt_ref": metadata.mode.debt_ref(),
         "caveats": metadata.caveats,
+        "runtime_observation_contract": runtime_payload,
     })
+}
+
+fn email_provider_cursor_metadata_value(
+    mode: EmailProviderRuntimeMode,
+    scope: &EmailProviderOperationScope,
+) -> serde_json::Value {
+    let provider = mode.provider();
+    let cursor_kind = email_provider_sync_cursor_kind(provider);
+    let cursor_payload = EmailSyncCursorObservedPayload {
+        provider,
+        account_binding_ref: scope.account_binding_ref.clone(),
+        mailbox_scope: scope.mailbox_scope.clone(),
+        cursor_kind,
+        cursor_value: scope.cursor_value_for(provider),
+        uidvalidity: scope.uidvalidity.clone(),
+        uid: scope.uid.clone(),
+        gmail_history_id: scope.gmail_history_id.clone(),
+        page_token: scope.page_token.clone(),
+        observed_at: Timestamp::now(),
+        continuity_state: EmailContinuityState::Unknown,
+        caveats: email_provider_cursor_caveats(mode)
+            .iter()
+            .map(|caveat| caveat.to_string())
+            .collect(),
+    };
+    serde_json::json!({
+        "provider": provider.as_str(),
+        "account_binding_ref": scope.account_binding_ref,
+        "mailbox_scope": scope.mailbox_scope,
+        "cursor_kind": cursor_kind.as_str(),
+        "cursor_value": scope.cursor_value_for(provider),
+        "continuity_state": "unknown",
+        "cursor_observation_contract": cursor_payload,
+    })
+}
+
+fn email_provider_cursor_caveats(mode: EmailProviderRuntimeMode) -> &'static [&'static str] {
+    match mode {
+        EmailProviderRuntimeMode::GmailScheduledSync => &[
+            "Gmail sync executor must advance history id only after material/admission checkpoint succeeds",
+        ],
+        EmailProviderRuntimeMode::ImapScheduledSync | EmailProviderRuntimeMode::ImapIdleLive => &[
+            "IMAP sync executor must treat UIDVALIDITY changes as continuity debt, not cursor reuse",
+        ],
+    }
+}
+
+fn email_provider_runtime_actions(mode: EmailProviderRuntimeMode) -> &'static [&'static str] {
+    match mode {
+        EmailProviderRuntimeMode::GmailScheduledSync
+        | EmailProviderRuntimeMode::ImapScheduledSync => &[
+            "email.mailbox.sync",
+            "email.mailbox.pause",
+            "email.mailbox.inspect",
+        ],
+        EmailProviderRuntimeMode::ImapIdleLive => &[
+            "email.mailbox.pause",
+            "email.mailbox.resume",
+            "email.mailbox.inspect",
+        ],
+    }
 }
 
 fn media_operation_metadata(
@@ -1045,6 +1280,7 @@ mod tests {
                     "source_id": "email.mailbox",
                     "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
                     "account_ref": "operator-mailbox:primary",
+                    "gmail_history_id": "12345",
                     "reason": "operator-requested"
                 })),
             },
@@ -1071,9 +1307,18 @@ mod tests {
         );
         assert_eq!(scope["action"], "sync");
         assert_eq!(scope["account_ref"], "operator-mailbox:primary");
+        assert_eq!(scope["account_binding_ref"], "operator-mailbox:primary");
+        assert_eq!(
+            scope["provider_operation_scope"]["account_binding_ref"],
+            "operator-mailbox:primary"
+        );
         let provider_runtime = &scope["provider_runtime"];
         assert_eq!(provider_runtime["provider"], "gmail");
         assert_eq!(provider_runtime["provider_runtime"], "scheduled-sync");
+        assert_eq!(
+            provider_runtime["account_binding_ref"],
+            "operator-mailbox:primary"
+        );
         assert_eq!(
             provider_runtime["authorization_state_ref"],
             "email.mailbox.provider_authorization.gmail.oauth"
@@ -1104,6 +1349,39 @@ mod tests {
                     |caveat| caveat == "sync cursor persistence waits for Gmail history-id runtime"
                 )
         );
+        assert_eq!(
+            provider_runtime["runtime_observation_contract"]["account_binding_ref"],
+            "operator-mailbox:primary"
+        );
+        assert_eq!(
+            provider_runtime["runtime_observation_contract"]["provider"],
+            "gmail"
+        );
+        assert_eq!(
+            provider_runtime["runtime_observation_contract"]["provider_runtime"],
+            "scheduled-sync"
+        );
+        assert_eq!(
+            provider_runtime["runtime_observation_contract"]["sync_state"],
+            "idle"
+        );
+
+        let provider_cursor = &scope["provider_cursor"];
+        assert_eq!(provider_cursor["provider"], "gmail");
+        assert_eq!(
+            provider_cursor["account_binding_ref"],
+            "operator-mailbox:primary"
+        );
+        assert_eq!(provider_cursor["cursor_kind"], "gmail-history-id");
+        assert_eq!(provider_cursor["cursor_value"], "12345");
+        assert_eq!(
+            provider_cursor["cursor_observation_contract"]["gmail_history_id"],
+            "12345"
+        );
+        assert_eq!(
+            provider_cursor["cursor_observation_contract"]["continuity_state"],
+            "unknown"
+        );
 
         let preview = response
             .operation
@@ -1117,6 +1395,7 @@ mod tests {
             "source:email.mailbox.gmail-api-scheduled-sync"
         );
         assert_eq!(preview["provider_runtime"], scope["provider_runtime"]);
+        assert_eq!(preview["provider_cursor"], scope["provider_cursor"]);
         Ok(())
     }
 
@@ -1134,6 +1413,10 @@ mod tests {
                     "provider_runtime": {
                         "provider": "gmail",
                         "runtime_state_ref": "email.capture_runtime.observed:gmail.scheduled_sync"
+                    },
+                    "provider_cursor": {
+                        "provider": "gmail",
+                        "sync_cursor_kind": "gmail-history-id"
                     }
                 })),
             },
@@ -1151,6 +1434,10 @@ mod tests {
             scope.get("provider_runtime").is_none(),
             "staged email operations must not retain provider runtime metadata"
         );
+        assert!(
+            scope.get("provider_cursor").is_none(),
+            "staged email operations must not retain provider cursor metadata"
+        );
         let preview = response
             .operation
             .preview_summary
@@ -1159,6 +1446,61 @@ mod tests {
         assert!(
             preview.get("provider_runtime").is_none(),
             "staged email previews must not advertise provider runtime metadata"
+        );
+        assert!(
+            preview.get("provider_cursor").is_none(),
+            "staged email previews must not advertise provider cursor metadata"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ops_start_rejects_email_provider_operation_without_account_binding(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let error = handle_ops_start(
+            ctx.pool(),
+            OpsStartRequest {
+                operation_type: "email.mailbox.sync".to_string(),
+                scope: Some(serde_json::json!({
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.gmail-api-scheduled-sync"
+                })),
+            },
+            &RpcAuthContext::system(),
+        )
+        .await
+        .expect_err("provider sync should require an explicit account binding");
+
+        assert!(error.to_string().contains("requires account_binding_ref"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ops_start_rejects_email_provider_operation_with_wrong_cursor_family(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let error = handle_ops_start(
+            ctx.pool(),
+            OpsStartRequest {
+                operation_type: "email.mailbox.sync".to_string(),
+                scope: Some(serde_json::json!({
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:primary",
+                    "uidvalidity": "100",
+                    "uid": "42"
+                })),
+            },
+            &RpcAuthContext::system(),
+        )
+        .await
+        .expect_err("Gmail sync must reject IMAP cursor coordinates");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cannot use IMAP UID cursor fields")
         );
         Ok(())
     }

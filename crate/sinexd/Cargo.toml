@@ -117,6 +117,10 @@ name = "browser_history_parser_test"
 path = "tests/sources/browser_history_parser_test.rs"
 
 [[test]]
+name = "email_mailbox_parser_test"
+path = "tests/sources/email_mailbox_parser_test.rs"
+
+[[test]]
 name = "terminal_history_parser_test"
 path = "tests/sources/terminal_history_parser_test.rs"
 
