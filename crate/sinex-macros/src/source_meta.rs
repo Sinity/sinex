@@ -174,6 +174,7 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                 "event_type" => out.event_type = v,
                 "event_source" => out.event_source = v,
                 "adapter" => out.adapter = v,
+                "subject" => out.subject = Some(v),
                 "event_types" => out.additional_event_types = split_csv(&v),
                 "implementation" => out.implementation = Some(v),
                 "capabilities" => out.capabilities = split_csv(&v),

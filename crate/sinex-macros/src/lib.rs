@@ -245,8 +245,9 @@ pub fn derive_source_definition(input: TokenStream) -> TokenStream {
 ///
 /// String-literal keys — Required: `id`, `namespace`, `event_type`,
 /// `event_source`, `adapter`. Optional: `implementation`, `event_types` (extra
-/// comma-separated emitted types), `capabilities`, and for monitor-emit sources
-/// `monitor_emit_fn` / `monitor_phase`. External producers may set
+/// comma-separated emitted types), `subject` (primary runtime-binding subject
+/// override), `capabilities`, and for monitor-emit sources `monitor_emit_fn` /
+/// `monitor_phase`. External producers may set
 /// `factory = "none"`; parser-only sources may set `factory = "parser"`; the
 /// default is `factory = "adapter_parser"`.
 /// Extra runtime bindings use nested `binding(event_type = "...", ...)`.

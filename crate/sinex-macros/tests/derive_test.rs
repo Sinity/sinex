@@ -1,6 +1,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::events::EventPayload;
+use sinex_primitives::source_contracts::{
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape, source_runtime_bindings,
+};
 use xtask::sandbox::prelude::*;
 
 // Test 1: Basic EventPayload derive
@@ -302,6 +306,47 @@ async fn test_source_record_derive_uses_primitives_parser_contract() -> TestResu
     assert_eq!(intents[0].event_source.as_str(), "test");
     assert_eq!(intents[0].event_type.as_str(), "test.raw");
     assert_eq!(intents[0].payload["message"], "hello from primitives");
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_source_meta_primary_subject_override() -> TestResult<()> {
+    #[derive(Default, sinex_macros::SourceMeta)]
+    #[source_meta(
+        id = "macro.subject-package",
+        namespace = "macro",
+        subject = "source:macro.subject-package.mode",
+        event_source = "macro.subject",
+        event_type = "macro.subject.observed",
+        adapter = "FileContentDropAdapter",
+        implementation = "macro-subject-test",
+        privacy_tier = PrivacyTier::Sensitive,
+        horizons(Horizon::Historical),
+        retention = RetentionPolicy::Forever,
+        occurrence_identity = OccurrenceIdentity::Uuid5From("(material_id, row)"),
+        access_scope = AccessScope::StagedExport,
+        privacy_context = sinex_primitives::privacy::ProcessingContext::Document,
+        resource_profile = ResourceProfile::BoundedFile,
+        runner_pack = RunnerPack::Staged,
+        checkpoint_family = CheckpointFamily::AppendStream,
+        runtime_shape = RuntimeShape::Scheduled,
+        factory = "none"
+    )]
+    struct MacroSubjectPackage;
+
+    let _ = MacroSubjectPackage;
+    let binding = source_runtime_bindings()
+        .into_iter()
+        .find(|binding| binding.id == "macro.subject-package")
+        .expect("SourceMeta should register runtime binding");
+
+    assert_eq!(
+        binding.subject.as_str(),
+        "source:macro.subject-package.mode"
+    );
+    assert_eq!(binding.source_id, "macro.subject-package");
+    assert_eq!(binding.output_event_type, "macro.subject.observed");
 
     Ok(())
 }

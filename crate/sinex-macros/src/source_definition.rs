@@ -206,6 +206,7 @@ impl SourceDefinitionAttrs {
             event_type: self.event_type.clone(),
             event_source: self.event_source.clone(),
             adapter: self.adapter.clone(),
+            subject: None,
             additional_event_types: self.additional_event_types.clone(),
             privacy_tier: self.privacy_tier.clone(),
             horizons: self.horizons.clone(),
