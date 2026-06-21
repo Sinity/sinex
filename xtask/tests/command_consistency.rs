@@ -49,6 +49,40 @@ async fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn test_vm_start_reports_structured_unsupported_surface() -> ::xtask::sandbox::TestResult<()>
+{
+    let output = xtask_command()?
+        .args(["infra", "vm", "start", "minimal", "--json"])
+        .output()?;
+
+    assert!(
+        !output.status.success(),
+        "unsupported interactive VM start should fail"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: Value =
+        serde_json::from_str(&stdout).map_err(|e| color_eyre::eyre::eyre!("invalid JSON: {e}"))?;
+
+    assert_eq!(json["status"], "failed");
+    let errors = json["errors"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("errors must be an array"))?;
+    let error = errors
+        .first()
+        .ok_or_else(|| color_eyre::eyre::eyre!("expected one structured error"))?;
+    assert_eq!(error["code"], "VM_INTERACTIVE_PRESET_UNSUPPORTED");
+    assert_eq!(error["location"], "xtask infra vm start");
+    assert!(
+        error["suggestion"]
+            .as_str()
+            .is_some_and(|suggestion| suggestion.contains("xtask test vm")),
+        "unsupported VM start should point to the supported VM flake-check suite: {error}"
+    );
+    Ok(())
+}
+
 // test_status_summary_json_contract is covered by snapshot_status_summary_json in
 // cli_output_snapshots.rs.
 // The snapshot catches structural drift (field removed/renamed/retyped) that

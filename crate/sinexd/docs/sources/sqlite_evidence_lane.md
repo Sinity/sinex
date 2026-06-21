@@ -159,7 +159,7 @@ poll cycles should share the same material. The regression shape is: 1,000
 polling cycles that emit one or two tiny records should produce one material
 under the default policy, not approximately 1,000 registry rows.
 
-## Storage and Retention
+## Storage and Lifecycle Policy
 
 Expected storage profile:
 
@@ -172,17 +172,15 @@ Expected storage profile:
 
 Snapshots go through the normal source-material storage path. Small snapshots
 benefit from local CAS by BLAKE3; larger snapshots route to the large-object
-backend according to the existing content-store policy. Retention should be
-metadata-driven and source-specific instead of hard-coded into source runtimes.
+backend according to the existing content-store policy.
 
-Recommended initial retention:
-
-- Keep the first snapshot per source.
-- Keep the latest snapshot.
-- Keep one snapshot per day for active sources for a bounded window.
-- Keep snapshots associated with historical backfills until the backfill proof
-  is no longer needed.
-- Allow manual pinning for incident/debugging evidence.
+Lifecycle behavior must remain explicit package policy rather than source-local
+habit. The SQLite evidence lane may declare material lifecycle boundaries such
+as first-observation snapshots, latest-snapshot coverage, bounded historical
+backfill evidence, and operator-requested preservation for a concrete replay or
+debugging workflow. Those declarations must surface through package
+completeness, coverage, and operation views; they must not become hidden
+retention defaults inside a parser or SDK helper.
 
 ## Replay Semantics
 
