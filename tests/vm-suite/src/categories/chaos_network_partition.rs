@@ -19,14 +19,63 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
     println!("\n── Chaos: Network Partition tests ────────────────────────────────");
 
     let pool = PgPool::connect(database_url).await?;
+    let mut partition = NetworkPartitionState::default();
 
     test_baseline_pipeline(runner, &pool).await;
-    test_partition_event_engine_survives(runner, &pool).await;
-    test_during_partition_period(runner, &pool).await;
-    test_partition_healed_event_engine_active(runner, &pool).await;
-    test_events_reach_db_after_heal(runner, &pool).await;
+    test_partition_event_engine_survives(runner, &pool, &mut partition).await;
+    test_during_partition_period(runner, &pool, &partition).await;
+    test_partition_healed_event_engine_active(runner, &pool, &mut partition).await;
+    test_events_reach_db_after_heal(runner, &pool, &partition).await;
 
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct NetworkPartitionState {
+    injected: bool,
+    healed: bool,
+}
+
+impl NetworkPartitionState {
+    fn partition_was_injected(&self) -> bool {
+        self.injected
+    }
+
+    fn partition_was_healed(&self) -> bool {
+        self.injected && self.healed
+    }
+}
+
+fn skip_without_injected_partition(
+    runner: &mut TestRunner,
+    name: &str,
+    partition: &NetworkPartitionState,
+) -> bool {
+    if partition.partition_was_injected() {
+        false
+    } else {
+        runner.skip(
+            name,
+            "network partition was not fully injected; partition-specific behavior was not exercised",
+        );
+        true
+    }
+}
+
+fn skip_without_healed_partition(
+    runner: &mut TestRunner,
+    name: &str,
+    partition: &NetworkPartitionState,
+) -> bool {
+    if partition.partition_was_healed() {
+        false
+    } else {
+        runner.skip(
+            name,
+            "network partition was not injected and healed; post-heal behavior was not exercised",
+        );
+        true
+    }
 }
 
 async fn test_baseline_pipeline(runner: &mut TestRunner, pool: &PgPool) {
@@ -55,7 +104,11 @@ async fn test_baseline_pipeline(runner: &mut TestRunner, pool: &PgPool) {
     }
 }
 
-async fn test_partition_event_engine_survives(runner: &mut TestRunner, _pool: &PgPool) {
+async fn test_partition_event_engine_survives(
+    runner: &mut TestRunner,
+    _pool: &PgPool,
+    partition: &mut NetworkPartitionState,
+) {
     let name = "chaos-network-partition: event_engine survives NATS partition";
 
     // Inject iptables rules to drop traffic to NATS port 4222
@@ -93,6 +146,7 @@ async fn test_partition_event_engine_survives(runner: &mut TestRunner, _pool: &P
         );
         return;
     }
+    partition.injected = true;
 
     // Wait for partition to stabilize
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -104,8 +158,16 @@ async fn test_partition_event_engine_survives(runner: &mut TestRunner, _pool: &P
     );
 }
 
-async fn test_during_partition_period(runner: &mut TestRunner, pool: &PgPool) {
+async fn test_during_partition_period(
+    runner: &mut TestRunner,
+    pool: &PgPool,
+    partition: &NetworkPartitionState,
+) {
     let name = "chaos-network-partition: event_engine survives during-partition period";
+
+    if skip_without_injected_partition(runner, name, partition) {
+        return;
+    }
 
     let Some(_before) = observed_event_count(runner, name, pool).await else {
         return;
@@ -124,13 +186,39 @@ async fn test_during_partition_period(runner: &mut TestRunner, pool: &PgPool) {
     );
 }
 
-async fn test_partition_healed_event_engine_active(runner: &mut TestRunner, _pool: &PgPool) {
+async fn test_partition_healed_event_engine_active(
+    runner: &mut TestRunner,
+    _pool: &PgPool,
+    partition: &mut NetworkPartitionState,
+) {
     let name = "chaos-network-partition: partition healed, event_engine still active";
 
     // Heal the partition
-    let _ = command_status("sh", &["-c", "iptables -F INPUT"]);
-    let _ = command_status("sh", &["-c", "iptables -F OUTPUT"]);
-    let _ = command_status("sh", &["-c", "tc qdisc del dev lo root"]);
+    let failed_heals = [
+        "iptables -F INPUT",
+        "iptables -F OUTPUT",
+        "tc qdisc del dev lo root",
+    ]
+    .into_iter()
+    .filter(|rule| !command_status("sh", &["-c", rule]))
+    .collect::<Vec<_>>();
+
+    if skip_without_injected_partition(runner, name, partition) {
+        return;
+    }
+
+    if !failed_heals.is_empty() {
+        runner.record(
+            name,
+            TestOutcome::EvidenceMissing,
+            &format!(
+                "network partition was injected but not fully healed; failed commands: {}",
+                failed_heals.join("; ")
+            ),
+        );
+        return;
+    }
+    partition.healed = true;
 
     // Wait for network to stabilize
     tokio::time::sleep(Duration::from_secs(10)).await;
@@ -138,8 +226,16 @@ async fn test_partition_healed_event_engine_active(runner: &mut TestRunner, _poo
     report_service_active(runner, name, "event_engine crashed after partition heal");
 }
 
-async fn test_events_reach_db_after_heal(runner: &mut TestRunner, pool: &PgPool) {
+async fn test_events_reach_db_after_heal(
+    runner: &mut TestRunner,
+    pool: &PgPool,
+    partition: &NetworkPartitionState,
+) {
     let name = "chaos-network-partition: events reach DB after partition heal";
+
+    if skip_without_healed_partition(runner, name, partition) {
+        return;
+    }
 
     let Some(before) = observed_event_count(runner, name, pool).await else {
         return;
@@ -158,4 +254,36 @@ async fn test_events_reach_db_after_heal(runner: &mut TestRunner, pool: &PgPool)
         |before| format!("no events reached DB after 30s of partition heal (before={before})"),
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NetworkPartitionState;
+
+    #[test]
+    fn network_partition_state_requires_injection_before_heal_counts() {
+        assert!(!NetworkPartitionState::default().partition_was_injected());
+        assert!(!NetworkPartitionState::default().partition_was_healed());
+
+        let healed_without_injection = NetworkPartitionState {
+            injected: false,
+            healed: true,
+        };
+        assert!(!healed_without_injection.partition_was_injected());
+        assert!(!healed_without_injection.partition_was_healed());
+
+        let injected_only = NetworkPartitionState {
+            injected: true,
+            healed: false,
+        };
+        assert!(injected_only.partition_was_injected());
+        assert!(!injected_only.partition_was_healed());
+
+        let healed = NetworkPartitionState {
+            injected: true,
+            healed: true,
+        };
+        assert!(healed.partition_was_injected());
+        assert!(healed.partition_was_healed());
+    }
 }
