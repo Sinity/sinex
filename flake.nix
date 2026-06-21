@@ -1035,6 +1035,17 @@ SQL
                     infra:status|infra:stop|run:list)
                       return 0
                       ;;
+                    infra:smoke)
+                      while [ "$#" -gt 0 ]; do
+                        case "$1" in
+                          --dry-run|--skip-start)
+                            return 0
+                            ;;
+                        esac
+                        shift
+                      done
+                      return 1
+                      ;;
                     *)
                       return 1
                       ;;
