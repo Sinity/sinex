@@ -401,10 +401,10 @@ impl<O, CF, RS, BI> SourceRuntimeBindingBuilder<O, MissingPrivacy, CF, RS, BI> {
 }
 
 impl<O, P, RS, BI> SourceRuntimeBindingBuilder<O, P, MissingCheckpointFamily, RS, BI> {
-    /// Shape of the source's checkpoint state machine. Required: codex P2 follow-up
-    /// on PR #1189 — concrete defaults silently passed descriptor validation
-    /// for new bindings that forgot to set it. Typestate forces every binding to
-    /// declare the family explicitly.
+    /// Shape of the source's checkpoint state machine. Concrete defaults once
+    /// passed descriptor validation silently for new bindings that forgot to set
+    /// this field; typestate now forces every binding to declare the family
+    /// explicitly.
     #[must_use]
     pub const fn checkpoint_family(
         mut self,
