@@ -426,7 +426,10 @@ async fn confirmation_buffer_pressure_degrades_health_with_payload_attribution(
         report.confirmation_buffer.memory_owner,
         ConfirmationBufferMemoryOwner::TimedOutGracePayloads
     );
-    assert_eq!(report.confirmation_buffer.pressure_level, "warning");
+    assert_eq!(
+        report.confirmation_buffer.pressure_level,
+        sinex_primitives::RuntimePressureLevel::Warning
+    );
     assert_eq!(
         report.confirmation_buffer.runtime_action,
         sinex_primitives::RuntimePressureAction::AdmitWithPressure

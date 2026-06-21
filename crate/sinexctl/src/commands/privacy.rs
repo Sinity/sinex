@@ -1338,9 +1338,9 @@ mod tests {
                 total_bytes: 128,
                 first_seq: 1,
                 last_seq: 2,
-                pressure_level: "warning".to_string(),
+                pressure_level: sinex_primitives::RuntimePressureLevel::Warning,
                 resource_pressure: sinex_primitives::rpc::dlq::DlqPressureSignal {
-                    pressure_level: "warning".to_string(),
+                    pressure_level: sinex_primitives::RuntimePressureLevel::Warning,
                     runtime_action: sinex_primitives::RuntimePressureAction::Inspect,
                     pending_messages: 2,
                     pending_bytes: 128,

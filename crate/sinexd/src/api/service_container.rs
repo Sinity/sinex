@@ -9,8 +9,11 @@ use sinex_db::create_pool_with_config;
 use sinex_db::pkm::PkmService;
 use sinex_db::replay::state_machine::ReplayStateMachine;
 use sinex_primitives::{
-    Result as SinexResult, coordination::CoordinationKvClient, environment as sinex_environment,
-    error::SinexError, runtime_pressure::RuntimePressureAction,
+    Result as SinexResult,
+    coordination::CoordinationKvClient,
+    environment as sinex_environment,
+    error::SinexError,
+    runtime_pressure::{RuntimePressureAction, RuntimePressureLevel},
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
@@ -60,7 +63,7 @@ pub struct ConfirmationBufferHealth {
     pub status: GatewayHealthStatus,
     pub connected: bool,
     pub memory_owner: ConfirmationBufferMemoryOwner,
-    pub pressure_level: String,
+    pub pressure_level: RuntimePressureLevel,
     pub runtime_action: RuntimePressureAction,
     pub observed_buffers: usize,
     pub pending_count: usize,
@@ -514,7 +517,7 @@ impl ServiceContainer {
                 status: GatewayHealthStatus::Unknown,
                 connected: false,
                 memory_owner: ConfirmationBufferMemoryOwner::NotObserved,
-                pressure_level: "unknown".to_string(),
+                pressure_level: RuntimePressureLevel::Unknown,
                 runtime_action: RuntimePressureAction::None,
                 observed_buffers: 0,
                 pending_count: 0,
@@ -601,7 +604,7 @@ impl ServiceContainer {
             status,
             connected: true,
             memory_owner,
-            pressure_level: pressure_level.as_str().to_string(),
+            pressure_level: confirmation_pressure_level(pressure_level),
             runtime_action,
             observed_buffers: snapshots.len(),
             pending_count,
@@ -743,6 +746,16 @@ fn strongest_confirmation_pressure(
         (Critical, _) | (_, Critical) => Critical,
         (Warning, _) | (_, Warning) => Warning,
         (Nominal, Nominal) => Nominal,
+    }
+}
+
+fn confirmation_pressure_level(
+    level: crate::runtime::ConfirmationBufferPressureLevel,
+) -> RuntimePressureLevel {
+    match level {
+        crate::runtime::ConfirmationBufferPressureLevel::Nominal => RuntimePressureLevel::Nominal,
+        crate::runtime::ConfirmationBufferPressureLevel::Warning => RuntimePressureLevel::Warning,
+        crate::runtime::ConfirmationBufferPressureLevel::Critical => RuntimePressureLevel::Critical,
     }
 }
 

@@ -1,7 +1,7 @@
 //! Raw-ingest DLQ management types
 
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
-use crate::runtime_pressure::RuntimePressureAction;
+use crate::runtime_pressure::{RuntimePressureAction, RuntimePressureLevel};
 use crate::views::CaveatView;
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +29,7 @@ pub struct DlqListRequest {}
 /// and `action_reason`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DlqPressureSignal {
-    pub pressure_level: String,
+    pub pressure_level: RuntimePressureLevel,
     pub runtime_action: RuntimePressureAction,
     pub pending_messages: u64,
     pub pending_bytes: u64,
@@ -50,7 +50,7 @@ pub struct DlqListResponse {
     /// Empty DLQ is `nominal`; non-empty DLQ is `warning`; depth beyond the
     /// retry batch size is `critical` because recovery requires more than one
     /// paced operator retry batch.
-    pub pressure_level: String,
+    pub pressure_level: RuntimePressureLevel,
     /// Structured pressure signal for runtime/operator surfaces.
     pub resource_pressure: DlqPressureSignal,
     /// Sequence span covered by pending DLQ messages. This is the DLQ lag
