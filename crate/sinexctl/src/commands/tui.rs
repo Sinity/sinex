@@ -15,6 +15,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
+use sinex_primitives::privacy::private_mode::RuntimePrivateModeState;
 use sinex_primitives::query::{EventQuery, QueryResultEvent, SortDirection, TimeRange};
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::temporal::Timestamp;
@@ -1039,7 +1040,10 @@ fn state_snapshot_operation_card() -> OperationRoomCard {
 }
 
 fn privacy_operation_card(app: &App) -> OperationRoomCard {
-    let state = app.private_mode.as_ref().map(|response| &response.state);
+    privacy_operation_card_for_state(app.private_mode.as_ref().map(|response| &response.state))
+}
+
+fn privacy_operation_card_for_state(state: Option<&RuntimePrivateModeState>) -> OperationRoomCard {
     let enabled = state.is_some_and(|state| state.enabled);
     let mut affected_refs = state.map_or_else(Vec::new, |state| {
         let mut refs = vec![format!("actor: {}", state.actor)];
@@ -1060,7 +1064,7 @@ fn privacy_operation_card(app: &App) -> OperationRoomCard {
         affected_refs.push("private-mode state unavailable".to_string());
     }
     OperationRoomCard {
-        title: "privacy export/delete/redact authority".to_string(),
+        title: "privacy audit/export authority".to_string(),
         authority: "write".to_string(),
         phase: if enabled { "private-mode" } else { "normal" }.to_string(),
         progress: if enabled {
@@ -1071,8 +1075,7 @@ fn privacy_operation_card(app: &App) -> OperationRoomCard {
         affected_refs,
         caveats: vec![
             "privacy export requires explicit scope".to_string(),
-            "delete/redact remain target operations until concrete command surfaces land"
-                .to_string(),
+            "destructive privacy changes must use concrete operation/proposal surfaces".to_string(),
         ],
         actions: vec![
             operation_room_action(
@@ -1087,20 +1090,6 @@ fn privacy_operation_card(app: &App) -> OperationRoomCard {
                 "export scoped",
                 ActionAvailabilityState::Dangerous,
                 "sinexctl privacy export --since 24h --source <source> --output <file>",
-                ActionSideEffect::Admin,
-            ),
-            operation_room_action(
-                "privacy.delete",
-                "delete",
-                ActionAvailabilityState::Target,
-                "not implemented: privacy delete",
-                ActionSideEffect::Destructive,
-            ),
-            operation_room_action(
-                "privacy.redact",
-                "redact",
-                ActionAvailabilityState::Target,
-                "not implemented: privacy redact",
                 ActionSideEffect::Admin,
             ),
         ],
@@ -2310,10 +2299,10 @@ mod tests {
                     ActionSideEffect::Admin,
                 ),
                 operation_room_action(
-                    "context_pack",
-                    "context pack",
-                    ActionAvailabilityState::Target,
-                    "not implemented: context pack",
+                    "ops.evidence",
+                    "evidence",
+                    ActionAvailabilityState::Enabled,
+                    "sinexctl ops evidence compile --operation op-fixture --include-debt --include-runtime",
                     ActionSideEffect::Read,
                 ),
             ],
@@ -2371,6 +2360,38 @@ mod tests {
             ActionAvailabilityState::Dangerous,
             "sinexctl ops replay submit --ref-op op-fixture",
         )));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_operation_card_only_advertises_current_commands() -> TestResult<()> {
+        let card = privacy_operation_card_for_state(None);
+        let command_hints = card
+            .actions
+            .iter()
+            .filter_map(|action| action.command_hint.as_deref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            command_hints,
+            vec![
+                "sinexctl privacy audit",
+                "sinexctl privacy export --since 24h --source <source> --output <file>",
+            ]
+        );
+        assert!(
+            card.actions.iter().all(|action| action
+                .command_hint
+                .as_deref()
+                .is_some_and(|hint| hint.starts_with("sinexctl privacy "))),
+            "privacy operation card must advertise concrete sinexctl privacy commands"
+        );
+        assert!(
+            card.actions
+                .iter()
+                .all(|action| action.side_effect != ActionSideEffect::Destructive),
+            "privacy operation card must not advertise destructive commands without an implemented operation surface"
+        );
         Ok(())
     }
 
