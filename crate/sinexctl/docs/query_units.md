@@ -24,7 +24,7 @@ sinexctl query 'source-drivers where readiness != "ready" limit 50'
 sinexctl query 'source-materials where status = "completed" limit 25'
 sinexctl query 'debt where kind = "admission" or kind = "projection" limit 50'
 sinexctl query 'operations where status = "failed" limit 25'
-sinexctl query 'runtime-health limit 1'
+sinexctl query 'runtime-health where state != "healthy" limit 1'
 ```
 
 Grammar:
@@ -41,6 +41,9 @@ Event queries currently expose the executable `EventQuery` filter fields:
 `source`, `event_type`, `host`, `scope_key`, and `equivalence_key`, each with
 exact-match predicates. Contract/schema/time predicates should not appear in
 docs or completions until they have an executable lowering path.
+Runtime-health queries execute against the bounded runtime summary row exposed
+by `runtime.health`; predicates filter the summary fields declared by the
+descriptor (`module`, `role`, `state`, and `stale_after`).
 
 `json` and `yaml` return the full `ViewEnvelope<SinexQueryResultListView>`.
 `ndjson` emits one `SinexQueryResultRow` per line. `table` prints a compact
