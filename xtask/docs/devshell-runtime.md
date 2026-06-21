@@ -84,6 +84,13 @@ Expected current behavior:
 
 - No local infra: no checkout-local Postgres/NATS/`sinexd` processes.
 - One explicit checkout-local stack: Postgres/NATS RSS appears in `infra status`.
+- Checkout-local Postgres is tuned for development rather than production: the
+  managed config uses 128 connections, 32MB shared buffers, 6 worker processes,
+  and 2 TimescaleDB background workers. These values are deliberately enough for
+  SQLx validation and local tests, not for production traffic.
+- Checkout-local NATS JetStream is bounded at 64MB memory and 256MB file storage
+  per checkout. A larger local runtime/debug session should opt in explicitly
+  instead of making every compile/test checkout pay the resident cost.
 - Multiple checkout-local stacks: aggregate RSS appears in
   `infra status --all-checkouts`.
 - Local `sinexd`: visible in current and all-checkout status when its current

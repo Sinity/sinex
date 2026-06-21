@@ -23,7 +23,9 @@ fn pg_literal(value: &str) -> String {
 const MANAGED_CONFIG_BEGIN: &str = "# >>> sinex-dev managed configuration >>>";
 const MANAGED_CONFIG_END: &str = "# <<< sinex-dev managed configuration <<<";
 const LEGACY_CONFIG_MARKER: &str = "# sinex-dev configuration";
-const TIMESCALEDB_MAX_BACKGROUND_WORKERS: u16 = 4;
+const POSTGRES_MAX_CONNECTIONS: u16 = 128;
+const POSTGRES_SHARED_BUFFERS: &str = "32MB";
+const TIMESCALEDB_MAX_BACKGROUND_WORKERS: u16 = 2;
 const POSTGRES_WORKER_PROCESS_HEADROOM: u16 = 4;
 const POSTGRES_MAX_WORKER_PROCESSES: u16 =
     TIMESCALEDB_MAX_BACKGROUND_WORKERS + POSTGRES_WORKER_PROCESS_HEADROOM;
@@ -712,7 +714,7 @@ jit = off
 autovacuum = off
 checkpoint_timeout = '30min'
 max_wal_size = '2GB'
-shared_buffers = '64MB'
+shared_buffers = '{POSTGRES_SHARED_BUFFERS}'
 "
             }
         };
@@ -721,9 +723,9 @@ shared_buffers = '64MB'
 unix_socket_directories = '{}'
 listen_addresses = '{}'
 port = {}
-max_connections = 256
+max_connections = {}
 max_worker_processes = {}
-shared_buffers = '64MB'
+shared_buffers = '{}'
 shared_preload_libraries = 'timescaledb'
 timescaledb.max_background_workers = {}
 log_destination = 'stderr'
@@ -735,7 +737,9 @@ log_filename = 'postgres.log'
             run_dir,
             self.config.listen_addresses,
             self.config.port,
+            POSTGRES_MAX_CONNECTIONS,
             POSTGRES_MAX_WORKER_PROCESSES,
+            POSTGRES_SHARED_BUFFERS,
             TIMESCALEDB_MAX_BACKGROUND_WORKERS,
             logs_dir,
             fast_ephemeral_config.trim_end()
@@ -1087,9 +1091,11 @@ mod tests {
 
         let config = fs::read_to_string(manager.config.data_dir.join("postgresql.conf"))?;
         assert!(config.contains(MANAGED_CONFIG_BEGIN));
+        assert!(config.contains(&format!("max_connections = {POSTGRES_MAX_CONNECTIONS}")));
         assert!(config.contains(&format!(
             "max_worker_processes = {POSTGRES_MAX_WORKER_PROCESSES}"
         )));
+        assert!(config.contains(&format!("shared_buffers = '{POSTGRES_SHARED_BUFFERS}'")));
         assert!(config.contains(&format!(
             "timescaledb.max_background_workers = {TIMESCALEDB_MAX_BACKGROUND_WORKERS}"
         )));
@@ -1114,15 +1120,27 @@ mod tests {
         let config = fs::read_to_string(manager.config.data_dir.join("postgresql.conf"))?;
         assert_eq!(config.matches(MANAGED_CONFIG_BEGIN).count(), 1);
         assert!(config.contains("port = 55432"));
+        let managed_block = config
+            .split_once(MANAGED_CONFIG_BEGIN)
+            .and_then(|(_, rest)| rest.split_once(MANAGED_CONFIG_END).map(|(block, _)| block))
+            .ok_or_else(|| color_eyre::eyre::eyre!("managed postgres config block missing"))?;
+        assert!(managed_block.contains(&format!("max_connections = {POSTGRES_MAX_CONNECTIONS}")));
+        assert!(managed_block.contains(&format!("shared_buffers = '{POSTGRES_SHARED_BUFFERS}'")));
         assert!(!config.contains("port = 1111"));
+        assert!(!managed_block.contains("max_connections = 256"));
+        assert!(!managed_block.contains("shared_buffers = '128MB'"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_postgres_worker_process_budget_leaves_headroom() -> TestResult<()> {
+    async fn test_postgres_dev_runtime_budget_stays_small_but_usable() -> TestResult<()> {
         const {
+            assert!(POSTGRES_MAX_CONNECTIONS >= 96);
+            assert!(POSTGRES_MAX_CONNECTIONS <= 128);
             assert!(POSTGRES_MAX_WORKER_PROCESSES > TIMESCALEDB_MAX_BACKGROUND_WORKERS);
+            assert!(TIMESCALEDB_MAX_BACKGROUND_WORKERS >= 2);
         }
+        assert_eq!(POSTGRES_SHARED_BUFFERS, "32MB");
         assert_eq!(
             POSTGRES_MAX_WORKER_PROCESSES - TIMESCALEDB_MAX_BACKGROUND_WORKERS,
             POSTGRES_WORKER_PROCESS_HEADROOM
