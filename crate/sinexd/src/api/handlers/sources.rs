@@ -9,18 +9,18 @@ use sinex_db::repositories::SourceMaterial;
 use sinex_primitives::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
 use sinex_primitives::privacy::{RuntimePrivateModeState, load_private_mode_state};
 use sinex_primitives::rpc::sources::{
-    CaveatSeverity, ContinuityContractStatus, CoverageGap, ReplayabilityStatus, SourceAnnotations,
-    SourceCaveat, SourceCoverageEntry, SourceMaterialDetail, SourceMaterialMetadataContract,
-    SourceMaterialStatistics, SourceMaterialSummary, SourceOrigin,
-    SourcePackageCompletenessModeView, SourcePackageCompletenessPackageView, SourcePolicyEvidence,
-    SourcePresetDescriptor, SourceReadiness, SourceReadinessStatus, SourceShapeDriftObservation,
-    SourceShapeTypeChange, SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
-    SourcesArchiveResponse, SourcesBindingsCreateRequest, SourcesBindingsCreateResponse,
-    SourcesBindingsListRequest, SourcesBindingsListResponse, SourcesBindingsResolveRequest,
-    SourcesBindingsResolveResponse, SourcesContinuityRequest, SourcesContinuityResponse,
-    SourcesCoverageRequest, SourcesCoverageResponse, SourcesDriftListRequest,
-    SourcesDriftListResponse, SourcesListRequest, SourcesListResponse,
-    SourcesPackageCompletenessRequest, SourcesPackageCompletenessResponse,
+    CaveatSeverity, ContinuityContractStatus, CoverageGap, ReplayabilityStatus,
+    SourceAdmissionDecision, SourceAnnotations, SourceCaveat, SourceCoverageEntry,
+    SourceMaterialDetail, SourceMaterialMetadataContract, SourceMaterialStatistics,
+    SourceMaterialSummary, SourceOrigin, SourcePackageCompletenessModeView,
+    SourcePackageCompletenessPackageView, SourcePolicyEvidence, SourcePresetDescriptor,
+    SourceReadiness, SourceReadinessStatus, SourceShapeDriftObservation, SourceShapeTypeChange,
+    SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest, SourcesArchiveResponse,
+    SourcesBindingsCreateRequest, SourcesBindingsCreateResponse, SourcesBindingsListRequest,
+    SourcesBindingsListResponse, SourcesBindingsResolveRequest, SourcesBindingsResolveResponse,
+    SourcesContinuityRequest, SourcesContinuityResponse, SourcesCoverageRequest,
+    SourcesCoverageResponse, SourcesDriftListRequest, SourcesDriftListResponse, SourcesListRequest,
+    SourcesListResponse, SourcesPackageCompletenessRequest, SourcesPackageCompletenessResponse,
     SourcesPackageCompletenessSummaryView, SourcesPresetsListRequest, SourcesPresetsListResponse,
     SourcesReadinessGetRequest, SourcesReadinessGetResponse, SourcesReadinessListRequest,
     SourcesReadinessListResponse, SourcesShowRequest, SourcesShowResponse, SourcesStageRequest,
@@ -176,13 +176,13 @@ pub async fn handle_sources_stage(
 
     // Record privacy policy evidence.
     contract.policy = Some(SourcePolicyEvidence {
-        privacy_class: Some(capture_class),
+        capture_class: Some(material_class),
         admission_decision: Some(if material_class.is_rejected() {
-            "rejected".to_string()
+            SourceAdmissionDecision::Rejected
         } else if material_class.requires_confirmation() {
-            "requires_confirmation".to_string()
+            SourceAdmissionDecision::RequiresConfirmation
         } else {
-            "admitted".to_string()
+            SourceAdmissionDecision::Admitted
         }),
         quarantine_reason: None,
     });
