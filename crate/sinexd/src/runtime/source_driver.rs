@@ -19,7 +19,10 @@ use crate::runtime::stream::{
 };
 use crate::runtime::{
     RuntimeResult, SinexError,
-    exploration::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState},
+    exploration::{
+        ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+        unsupported_exploration_capability,
+    },
 };
 use sinex_primitives::SanitizedPath;
 use sinex_primitives::env as shared_env;
@@ -117,8 +120,10 @@ pub trait SourceDriver: Send + Sync + 'static {
 
     // Exploration provider methods
     fn get_source_state(&self, _state: &Self::State) -> RuntimeResult<SourceState> {
-        Err(SinexError::processing(
-            "Source state exploration not implemented",
+        Err(unsupported_exploration_capability(
+            "source driver",
+            self.name(),
+            "source-state exploration",
         ))
     }
 
@@ -127,7 +132,11 @@ pub trait SourceDriver: Send + Sync + 'static {
         _state: &Self::State,
         _limit: u64,
     ) -> RuntimeResult<Vec<IngestionHistoryEntry>> {
-        Err(SinexError::processing("Ingestion history not implemented"))
+        Err(unsupported_exploration_capability(
+            "source driver",
+            self.name(),
+            "ingestion history",
+        ))
     }
 
     fn export_data(
@@ -136,7 +145,11 @@ pub trait SourceDriver: Send + Sync + 'static {
         _path: &SanitizedPath,
         _format: ExportFormat,
     ) -> RuntimeResult<()> {
-        Err(SinexError::processing("Data export not implemented"))
+        Err(unsupported_exploration_capability(
+            "source driver",
+            self.name(),
+            "data export",
+        ))
     }
 }
 
@@ -732,6 +745,7 @@ mod tests {
     // Inline because these cover a private shutdown-signaling helper.
     use super::{SourceDriverRuntime, SourceDriverState};
     use crate::runtime::checkpoint::{CheckpointManager, CheckpointState};
+    use crate::runtime::exploration::{ExplorationProvider, ExportFormat};
     use crate::runtime::shutdown::ShutdownConfig;
     use crate::runtime::stream::{
         Checkpoint, ContinuousStart, RuntimeCapabilities, ScanArgs, ScanReport, TimeHorizon,
@@ -739,7 +753,7 @@ mod tests {
     use crate::runtime::{RuntimeResult, SourceDriver};
     use futures::TryStreamExt;
     use serde::{Deserialize, Serialize};
-    use sinex_primitives::Timestamp;
+    use sinex_primitives::{SanitizedPath, Timestamp};
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -828,6 +842,39 @@ mod tests {
                 warnings: Vec::new(),
             })
         }
+    }
+
+    #[sinex_test]
+    async fn default_exploration_capabilities_are_explicitly_unavailable() -> TestResult<()> {
+        let adapter = SourceDriverRuntime::new(TestSource);
+        let export_path = SanitizedPath::from_static("/tmp/source-driver-default-export.json");
+
+        let source_state_error = adapter
+            .get_source_state()
+            .expect_err("source drivers without exploration state must report unavailable");
+        let history_error = adapter
+            .get_ingestion_history(10)
+            .expect_err("source drivers without history must report unavailable");
+        let export_error = adapter
+            .export_data(&export_path, ExportFormat::Json)
+            .expect_err("source drivers without export support must report unavailable");
+
+        assert!(source_state_error.to_string().contains("source driver"));
+        assert!(
+            source_state_error
+                .to_string()
+                .contains("source-adapter-test")
+        );
+        assert!(
+            source_state_error
+                .to_string()
+                .contains("source-state exploration")
+        );
+        assert!(history_error.to_string().contains("source-adapter-test"));
+        assert!(history_error.to_string().contains("ingestion history"));
+        assert!(export_error.to_string().contains("source-adapter-test"));
+        assert!(export_error.to_string().contains("data export"));
+        Ok(())
     }
 
     #[sinex_test]
