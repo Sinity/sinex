@@ -14,8 +14,9 @@ use sinex_primitives::{
     events::{
         EventPayload,
         payloads::email::{
-            EmailAttachmentObservedPayload, EmailMailboxFormat, EmailMessageReceivedPayload,
-            EmailMessageSentPayload, EmailThreadObservedPayload,
+            EmailAttachmentObservedPayload, EmailContinuityState, EmailMailboxFormat,
+            EmailMessageReceivedPayload, EmailMessageSentPayload, EmailProviderKind,
+            EmailSyncCursorKind, EmailSyncCursorObservedPayload, EmailThreadObservedPayload,
         },
     },
     parser::{
@@ -30,7 +31,10 @@ use sinex_primitives::{
     temporal::Timestamp,
 };
 
-use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
+use crate::runtime::parser::{
+    GmailApiRecord, GmailApiRecordKind, ImapSyncMode, ImapSyncRecord, ImapSyncRecordKind,
+    MaterialParser, ParserError, ParserResult,
+};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EmailMailboxParserConfig;
@@ -173,6 +177,12 @@ impl MaterialParser for EmailMailboxParser {
         record: SourceRecord,
         ctx: &ParserContext,
     ) -> ParserResult<Vec<ParsedEventIntent>> {
+        if is_gmail_provider_record(&record) {
+            return parse_gmail_provider_record(record, ctx);
+        }
+        if is_imap_provider_record(&record) {
+            return parse_imap_provider_record(record, ctx);
+        }
         if let Some(records) = split_mbox_container_record(&record) {
             let mut intents = Vec::new();
             for record in records {
@@ -182,6 +192,165 @@ impl MaterialParser for EmailMailboxParser {
         }
         parse_email_message_record(record, ctx)
     }
+}
+
+fn is_gmail_provider_record(record: &SourceRecord) -> bool {
+    metadata_str(record, "provider").is_some_and(|provider| provider == "gmail")
+        && metadata_str(record, "gmail_record_kind").is_some()
+}
+
+fn is_imap_provider_record(record: &SourceRecord) -> bool {
+    metadata_str(record, "provider").is_some_and(|provider| provider == "imap")
+        && metadata_str(record, "imap_record_kind").is_some()
+}
+
+fn parse_gmail_provider_record(
+    record: SourceRecord,
+    ctx: &ParserContext,
+) -> ParserResult<Vec<ParsedEventIntent>> {
+    let provider_record: GmailApiRecord =
+        serde_json::from_slice(&record.bytes).map_err(|error| {
+            ParserError::Parse(format!("failed to parse Gmail provider record: {error}"))
+        })?;
+    let account_binding_ref = required_metadata_string(&record, "account_binding_ref")?;
+    let mailbox_scope = metadata_string(&record, "mailbox_scope");
+    let gmail_history_id =
+        metadata_string(&record, "gmail_history_id").or_else(|| provider_record.history_id.clone());
+    let page_token = metadata_string(&record, "gmail_page_token_next");
+    let cursor_kind = if page_token.is_some() {
+        EmailSyncCursorKind::GmailPageToken
+    } else {
+        EmailSyncCursorKind::GmailHistoryId
+    };
+    let cursor_value = match cursor_kind {
+        EmailSyncCursorKind::GmailPageToken => page_token.clone(),
+        EmailSyncCursorKind::GmailHistoryId => gmail_history_id.clone(),
+        EmailSyncCursorKind::ImapUidvalidityUid | EmailSyncCursorKind::ImapModseq => None,
+    };
+    let payload = EmailSyncCursorObservedPayload {
+        provider: EmailProviderKind::Gmail,
+        account_binding_ref: account_binding_ref.clone(),
+        mailbox_scope: mailbox_scope.clone(),
+        cursor_kind,
+        cursor_value,
+        uidvalidity: None,
+        uid: None,
+        gmail_history_id: gmail_history_id.clone(),
+        page_token: page_token.clone(),
+        observed_at: ctx.acquisition_time,
+        continuity_state: EmailContinuityState::Current,
+        caveats: gmail_cursor_caveats(provider_record.kind)
+            .iter()
+            .map(|caveat| (*caveat).to_string())
+            .collect(),
+    };
+    Ok(vec![provider_cursor_intent(
+        record,
+        ctx,
+        serde_json::to_value(&payload).map_err(|error| {
+            ParserError::Parse(format!("failed to serialize Gmail cursor payload: {error}"))
+        })?,
+        provider_cursor_occurrence_key(
+            EmailProviderKind::Gmail,
+            &account_binding_ref,
+            mailbox_scope.as_deref(),
+            cursor_kind,
+            payload.gmail_history_id.as_deref(),
+            payload.page_token.as_deref(),
+            None,
+            None,
+            None,
+        ),
+    )])
+}
+
+fn parse_imap_provider_record(
+    record: SourceRecord,
+    ctx: &ParserContext,
+) -> ParserResult<Vec<ParsedEventIntent>> {
+    let provider_record: ImapSyncRecord =
+        serde_json::from_slice(&record.bytes).map_err(|error| {
+            ParserError::Parse(format!("failed to parse IMAP provider record: {error}"))
+        })?;
+    let account_binding_ref = required_metadata_string(&record, "account_binding_ref")?;
+    let mailbox_scope = metadata_string(&record, "mailbox");
+    let uidvalidity = metadata_string(&record, "imap_uid_validity");
+    let uid = metadata_string(&record, "imap_uid_next").or_else(|| {
+        provider_record
+            .uid
+            .map(|uid| uid.saturating_add(1).to_string())
+    });
+    let highest_modseq = metadata_string(&record, "imap_highest_modseq");
+    let cursor_kind =
+        if highest_modseq.is_some() && provider_record.kind == ImapSyncRecordKind::Flags {
+            EmailSyncCursorKind::ImapModseq
+        } else {
+            EmailSyncCursorKind::ImapUidvalidityUid
+        };
+    let cursor_value = match cursor_kind {
+        EmailSyncCursorKind::ImapUidvalidityUid => uidvalidity
+            .as_ref()
+            .zip(uid.as_ref())
+            .map(|(uidvalidity, uid)| format!("{uidvalidity}:{uid}")),
+        EmailSyncCursorKind::ImapModseq => highest_modseq.clone(),
+        EmailSyncCursorKind::GmailHistoryId | EmailSyncCursorKind::GmailPageToken => None,
+    };
+    let payload = EmailSyncCursorObservedPayload {
+        provider: EmailProviderKind::Imap,
+        account_binding_ref: account_binding_ref.clone(),
+        mailbox_scope: mailbox_scope.clone(),
+        cursor_kind,
+        cursor_value,
+        uidvalidity: uidvalidity.clone(),
+        uid: uid.clone(),
+        gmail_history_id: None,
+        page_token: None,
+        observed_at: ctx.acquisition_time,
+        continuity_state: EmailContinuityState::Current,
+        caveats: imap_cursor_caveats(provider_record.kind, imap_mode(&record))
+            .iter()
+            .map(|caveat| (*caveat).to_string())
+            .collect(),
+    };
+    Ok(vec![provider_cursor_intent(
+        record,
+        ctx,
+        serde_json::to_value(&payload).map_err(|error| {
+            ParserError::Parse(format!("failed to serialize IMAP cursor payload: {error}"))
+        })?,
+        provider_cursor_occurrence_key(
+            EmailProviderKind::Imap,
+            &account_binding_ref,
+            mailbox_scope.as_deref(),
+            cursor_kind,
+            None,
+            None,
+            uidvalidity.as_deref(),
+            uid.as_deref(),
+            highest_modseq.as_deref(),
+        ),
+    )])
+}
+
+fn provider_cursor_intent(
+    record: SourceRecord,
+    ctx: &ParserContext,
+    payload: serde_json::Value,
+    occurrence_key: OccurrenceKey,
+) -> ParsedEventIntent {
+    ParsedEventIntent::builder()
+        .source_id(SourceId::from_static("email.mailbox"))
+        .parser_id(ParserId::from_static("email-mailbox-rfc822"))
+        .parser_version("1.0.0")
+        .event_source(EventSource::from_static("email"))
+        .event_type(EventType::from_static("email.sync_cursor.observed"))
+        .payload(payload)
+        .ts_orig(ctx.acquisition_time)
+        .timing(TimingEvidence::StagedAtFallback)
+        .anchor(record.anchor)
+        .occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Metadata)
+        .build()
 }
 
 fn parse_email_message_record(
@@ -926,6 +1095,114 @@ fn folder_from_path(path: Option<&Utf8PathBuf>) -> Option<String> {
         .and_then(|parent| parent.file_name())
         .filter(|name| !name.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn metadata_str<'a>(record: &'a SourceRecord, key: &str) -> Option<&'a str> {
+    record.metadata.get(key).and_then(serde_json::Value::as_str)
+}
+
+fn metadata_string(record: &SourceRecord, key: &str) -> Option<String> {
+    metadata_str(record, key).map(str::to_string).or_else(|| {
+        record
+            .metadata
+            .get(key)
+            .and_then(serde_json::Value::as_u64)
+            .map(|value| value.to_string())
+    })
+}
+
+fn required_metadata_string(record: &SourceRecord, key: &str) -> ParserResult<String> {
+    metadata_string(record, key).ok_or_else(|| {
+        ParserError::Parse(format!(
+            "email provider record missing metadata field `{key}`"
+        ))
+    })
+}
+
+fn provider_cursor_occurrence_key(
+    provider: EmailProviderKind,
+    account_binding_ref: &str,
+    mailbox_scope: Option<&str>,
+    cursor_kind: EmailSyncCursorKind,
+    gmail_history_id: Option<&str>,
+    page_token: Option<&str>,
+    uidvalidity: Option<&str>,
+    uid: Option<&str>,
+    highest_modseq: Option<&str>,
+) -> OccurrenceKey {
+    OccurrenceKey {
+        source_id: SourceId::from_static("email.mailbox"),
+        fields: vec![
+            ("provider".to_string(), provider.as_str().to_string()),
+            (
+                "account_binding_ref".to_string(),
+                account_binding_ref.to_string(),
+            ),
+            (
+                "mailbox_scope".to_string(),
+                mailbox_scope.unwrap_or("").to_string(),
+            ),
+            ("cursor_kind".to_string(), cursor_kind.as_str().to_string()),
+            (
+                "gmail_history_id".to_string(),
+                gmail_history_id.unwrap_or("").to_string(),
+            ),
+            (
+                "page_token".to_string(),
+                page_token.unwrap_or("").to_string(),
+            ),
+            (
+                "uidvalidity".to_string(),
+                uidvalidity.unwrap_or("").to_string(),
+            ),
+            ("uid".to_string(), uid.unwrap_or("").to_string()),
+            (
+                "highest_modseq".to_string(),
+                highest_modseq.unwrap_or("").to_string(),
+            ),
+        ],
+    }
+}
+
+fn gmail_cursor_caveats(kind: GmailApiRecordKind) -> &'static [&'static str] {
+    match kind {
+        GmailApiRecordKind::Message | GmailApiRecordKind::History => &[
+            "provider cursor is only committed after the adapter record is consumed",
+            "Gmail message/body materialization is owned by the runtime client",
+        ],
+        GmailApiRecordKind::Cursor => &[
+            "cursor checkpoint page contained no message/history records",
+            "provider cursor is only committed after the adapter record is consumed",
+        ],
+    }
+}
+
+fn imap_cursor_caveats(
+    kind: ImapSyncRecordKind,
+    mode: Option<ImapSyncMode>,
+) -> &'static [&'static str] {
+    match (kind, mode) {
+        (ImapSyncRecordKind::Cursor, _) => &[
+            "cursor checkpoint batch contained no mailbox records",
+            "UIDVALIDITY changes must be handled as continuity debt",
+        ],
+        (ImapSyncRecordKind::IdleHeartbeat, Some(ImapSyncMode::Idle)) => &[
+            "IDLE heartbeat updates runtime freshness without implying new messages",
+            "UIDVALIDITY changes must be handled as continuity debt",
+        ],
+        _ => &[
+            "provider cursor is only committed after the adapter record is consumed",
+            "UIDVALIDITY changes must be handled as continuity debt",
+        ],
+    }
+}
+
+fn imap_mode(record: &SourceRecord) -> Option<ImapSyncMode> {
+    match metadata_str(record, "imap_mode")? {
+        "scheduled" => Some(ImapSyncMode::Scheduled),
+        "idle" => Some(ImapSyncMode::Idle),
+        _ => None,
+    }
 }
 
 fn occurrence_key(
