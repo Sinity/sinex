@@ -559,10 +559,52 @@ SQL
               xtaskCommand = pkgs.writeShellScriptBin "xtask" ''
                 set -euo pipefail
 
-                root_dir="''${SINEX_DEV_ROOT:-}"
+                inherited_root_dir="''${SINEX_DEV_ROOT:-}"
+                detected_root_dir="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+                root_dir="$inherited_root_dir"
+                foreign_devshell_env=0
+
+                if [ -n "$detected_root_dir" ] && [ -f "$detected_root_dir/flake.nix" ] && [ -d "$detected_root_dir/xtask" ]; then
+                  if [ -z "$root_dir" ] || [ "$root_dir" != "$detected_root_dir" ]; then
+                    root_dir="$detected_root_dir"
+                    foreign_devshell_env=1
+                  fi
+                fi
+
                 if [ -z "$root_dir" ]; then
                   echo "xtask requires the sinex devShell (missing SINEX_DEV_ROOT)" >&2
                   exit 1
+                fi
+                if [ ! -f "$root_dir/flake.nix" ] || [ ! -d "$root_dir/xtask" ]; then
+                  echo "xtask expected a Sinex checkout root, got: $root_dir" >&2
+                  exit 1
+                fi
+
+                if [ "$foreign_devshell_env" = "1" ]; then
+                  checkout_hash="$(printf '%s' "$root_dir" | sha256sum | cut -c1-12)"
+                  checkout_user="''${USER:-$(id -un)}"
+                  checkout_cache_root="/var/cache/sinex/$checkout_user/$checkout_hash"
+                  checkout_dev_state_dir="$checkout_cache_root/dev-state"
+                  checkout_pg_run_dir="$checkout_dev_state_dir/run"
+                  checkout_first_byte="$((16#''${checkout_hash:0:2}))"
+                  checkout_nats_port="$((4222 + (checkout_first_byte % 100)))"
+                  checkout_gateway_port="$((19000 + checkout_first_byte))"
+
+                  export SINEX_DEV_ROOT="$root_dir"
+                  export SINEX_ROOT="$root_dir"
+                  export SINEX_DEV_CACHE_ROOT="$checkout_cache_root"
+                  export SINEX_CACHE_DIR="$checkout_cache_root"
+                  export CARGO_TARGET_DIR="$checkout_cache_root/target"
+                  export SINEX_DEV_STATE_DIR="$checkout_dev_state_dir"
+                  export SINEX_STATE_DIR="$root_dir/.sinex/state"
+                  export PGHOST="$checkout_pg_run_dir"
+                  export PGPORT=5432
+                  export DATABASE_URL="postgresql:///sinex_dev?host=$checkout_pg_run_dir"
+                  export SINEX_DEV_PG_PORT="$PGPORT"
+                  export SINEX_DEV_NATS_PORT="$checkout_nats_port"
+                  export SINEX_DEV_GATEWAY_PORT="$checkout_gateway_port"
+                  export SINEX_NATS_DIR="$checkout_dev_state_dir/nats"
+                  export SINEX_NATS_URL="nats://127.0.0.1:$checkout_nats_port"
                 fi
 
                 cargo_target_dir="''${CARGO_TARGET_DIR:-''${SINEX_DEV_CACHE_ROOT:-$root_dir/.sinex/cache}/target}"

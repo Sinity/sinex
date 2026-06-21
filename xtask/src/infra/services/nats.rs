@@ -405,24 +405,50 @@ jetstream {{
             println!("Stopping NATS...");
         }
 
-        unsafe {
-            libc::kill(pid as i32, libc::SIGTERM);
+        if unsafe { libc::kill(pid as i32, libc::SIGTERM) } != 0 {
+            bail!(
+                "failed to send SIGTERM to NATS pid {pid}: {}",
+                std::io::Error::last_os_error()
+            );
         }
         // Wait for exit
         for _ in 0..40 {
             if !self.is_running_pid(pid) {
-                break;
+                self.remove_pid_file_if_present("NATS pid file")?;
+
+                if verbose {
+                    println!("NATS stopped");
+                }
+
+                return Ok(());
             }
             std::thread::sleep(std::time::Duration::from_millis(250));
         }
 
-        self.remove_pid_file_if_present("NATS pid file")?;
-
         if verbose {
-            println!("NATS stopped");
+            eprintln!("  NATS pid {pid} remained alive after SIGTERM; sending SIGKILL...");
+        }
+        if unsafe { libc::kill(pid as i32, libc::SIGKILL) } != 0 {
+            bail!(
+                "failed to send SIGKILL to NATS pid {pid}: {}",
+                std::io::Error::last_os_error()
+            );
         }
 
-        Ok(())
+        for _ in 0..20 {
+            if !self.is_running_pid(pid) {
+                self.remove_pid_file_if_present("NATS pid file")?;
+
+                if verbose {
+                    println!("NATS stopped");
+                }
+
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+
+        bail!("NATS pid {pid} remained alive after SIGTERM and SIGKILL");
     }
 
     #[must_use]
