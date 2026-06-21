@@ -137,8 +137,17 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 path: "run",
                 fallback_summary: "Run sinex binaries",
                 when: "you need to launch sinexd or a source/automaton runtime target during development",
-                examples: &["xtask run module terminal-source --watch", "xtask run core"],
-                notes: &[],
+                examples: &[
+                    "xtask run core --dry-run",
+                    "xtask run core --logs",
+                    "xtask run module terminal-source --watch",
+                ],
+                notes: &[
+                    "`xtask run` is the local unified-sinexd development surface; it replaces old multi-node dev-run assumptions.",
+                    "Local sinexd execution is explicit. Build/check/test/help/pre-push flows must not start it as a side effect.",
+                    "Dry-run and startup output report the checkout root, dev-state, log directory, database URL, NATS URL, API URL when configured, and job directory; use `xtask infra status` to inspect live dev-local processes.",
+                    "Foreground runs are owned by the terminal lifecycle; background runs are owned by `xtask jobs` and show up in the checkout-local process inventory.",
+                ],
             },
             GuideEntry {
                 path: "status",

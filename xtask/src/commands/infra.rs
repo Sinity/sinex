@@ -490,6 +490,9 @@ async fn execute_status(
         if ctx.is_human() {
             println!("sinex-dev infra status");
             println!("────────────────────────────────────────");
+            println!("Checkout:    {}", status.checkout_root.display());
+            println!("Dev-state:   {}", status.dev_state_dir.display());
+            println!("Logs:        {}", status.logs_dir.display());
             println!(
                 "PostgreSQL:  {}{} (unix socket, port: {}, rss: {})",
                 format_service_state(&status.postgres),
@@ -504,6 +507,14 @@ async fn execute_status(
                 status.nats.port,
                 format_optional_bytes(status.nats.rss_bytes),
             );
+            println!(
+                "sinexd:      {} (rss: {})",
+                format_runtime_state(&status.sinexd),
+                format_bytes(status.sinexd.rss_bytes)
+            );
+            if let Some(issue) = &status.sinexd.issue {
+                println!("             {issue}");
+            }
             println!(
                 "Git-annex:   {}",
                 if status.annex.initialized {
@@ -535,6 +546,9 @@ async fn execute_status(
                 result = result.with_warning(issue.clone());
             }
             if let Some(issue) = &status.snapshot_issue {
+                result = result.with_warning(issue.clone());
+            }
+            if let Some(issue) = &status.sinexd.issue {
                 result = result.with_warning(issue.clone());
             }
             return Ok(result);
@@ -664,6 +678,14 @@ fn format_lock_state(state: stack::LockState) -> &'static str {
 
 fn format_pid(pid: Option<u32>) -> String {
     pid.map(|pid| format!(" pid={pid}")).unwrap_or_default()
+}
+
+fn format_runtime_state(status: &stack::RuntimeProcessStatus) -> String {
+    if status.running {
+        format!("running pids={:?}", status.pids)
+    } else {
+        "stopped".to_string()
+    }
 }
 
 fn format_optional_bytes(bytes: Option<u64>) -> String {
