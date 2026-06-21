@@ -252,6 +252,7 @@ fn check_command_for_ci() -> crate::commands::check::CheckCommand {
         nix: false, // nix flake check runs in a dedicated CI stage if needed
         plan: false,
         allow_contended_host: true,
+        skip_preflight: false,
         changed_strict: None, // CI uses the full workspace check, not the delta guard
     }
 }

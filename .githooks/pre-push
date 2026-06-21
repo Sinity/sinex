@@ -93,7 +93,26 @@ _sinex_pre_push_checkout_xtask_binary() {
   local cache_root candidate
   cache_root="$(_sinex_pre_push_cache_root)"
   candidate="$cache_root/target/debug/xtask"
-  [[ -x "$candidate" ]] && printf '%s\n' "$candidate"
+  _sinex_pre_push_xtask_binary_is_current "$candidate" && printf '%s\n' "$candidate"
+}
+
+_sinex_pre_push_xtask_binary_is_current() {
+  local candidate
+  candidate="$1"
+  [[ -x "$candidate" ]] || return 1
+  ! _sinex_pre_push_xtask_sources_newer_than "$candidate"
+}
+
+_sinex_pre_push_xtask_sources_newer_than() {
+  local candidate
+  candidate="$1"
+  find \
+    "$REPO_ROOT/xtask/src" \
+    "$REPO_ROOT/xtask/macros/src" \
+    "$REPO_ROOT/Cargo.lock" \
+    "$REPO_ROOT/Cargo.toml" \
+    "$REPO_ROOT/xtask/Cargo.toml" \
+    -type f -newer "$candidate" -print -quit 2>/dev/null | grep -q .
 }
 
 _sinex_pre_push_checkout_postgres_running() {
@@ -178,18 +197,24 @@ _sinex_pre_push_run_xtask() {
         echo "[pre-push] Ignoring checkout .direnv xtask wrapper without a built checkout-local binary." >&2
         ;;
       *)
-        echo "[pre-push] Using active devshell xtask: $xtask_bin" >&2
-        _sinex_pre_push_checkout_env "$xtask_bin" "$@"
-        return $?
+        if _sinex_pre_push_xtask_binary_is_current "$xtask_bin"; then
+          echo "[pre-push] Using active devshell xtask: $xtask_bin" >&2
+          _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+          return $?
+        fi
+        echo "[pre-push] Ignoring stale active xtask binary: $xtask_bin" >&2
         ;;
     esac
   fi
 
   xtask_bin="$(_sinex_pre_push_path_xtask_binary || true)"
   if [[ -n "$xtask_bin" ]]; then
-    echo "[pre-push] Using read-only PATH xtask fallback: $xtask_bin" >&2
-    _sinex_pre_push_checkout_env "$xtask_bin" "$@"
-    return $?
+    if _sinex_pre_push_xtask_binary_is_current "$xtask_bin"; then
+      echo "[pre-push] Using read-only PATH xtask fallback: $xtask_bin" >&2
+      _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+      return $?
+    fi
+    echo "[pre-push] Ignoring stale PATH xtask fallback: $xtask_bin" >&2
   fi
 
   echo "[pre-push] No usable xtask binary found; using nix develop fallback." >&2
