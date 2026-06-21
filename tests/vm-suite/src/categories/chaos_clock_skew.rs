@@ -20,14 +20,71 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
     println!("\n── Chaos: Clock Skew tests ────────────────────────────────");
 
     let pool = PgPool::connect(database_url).await?;
+    let mut skew = ClockSkewState::default();
 
     test_baseline_monotonic(runner, &pool).await;
-    test_event_engine_survives_clock_advance(runner, &pool).await;
-    test_events_reach_db_despite_skew(runner, &pool).await;
-    test_no_catastrophic_timestamp_corruption(runner, &pool).await;
+    test_event_engine_survives_clock_advance(runner, &pool, &mut skew).await;
+    test_events_reach_db_despite_skew(runner, &pool, &skew).await;
+    test_no_catastrophic_timestamp_corruption(runner, &pool, &mut skew).await;
     test_hypertable_chunk_structure_intact(runner, &pool).await;
 
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct ClockSkewState {
+    original_epoch: Option<i64>,
+    advanced_epoch: Option<i64>,
+}
+
+impl ClockSkewState {
+    fn skew_was_injected(&self) -> bool {
+        self.original_epoch.is_some() && self.advanced_epoch.is_some()
+    }
+}
+
+fn read_epoch() -> Option<i64> {
+    Command::new("date")
+        .args(["+%s"])
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|stdout| stdout.trim().parse().ok())
+        .filter(|epoch| *epoch > 0)
+}
+
+fn skip_without_injected_skew(runner: &mut TestRunner, name: &str, skew: &ClockSkewState) -> bool {
+    if skew.skew_was_injected() {
+        false
+    } else {
+        runner.skip(
+            name,
+            "clock skew was not injected; VM lacks clock-setting capability or epoch capture failed",
+        );
+        true
+    }
+}
+
+fn restore_original_clock(runner: &mut TestRunner, name: &str, skew: &mut ClockSkewState) -> bool {
+    let Some(original_epoch) = skew.original_epoch else {
+        runner.record(
+            name,
+            TestOutcome::EvidenceMissing,
+            "original epoch was not captured before clock skew; cannot prove restore",
+        );
+        return false;
+    };
+
+    if command_status("date", &["-s", &format!("@{original_epoch}")]) {
+        true
+    } else {
+        runner.record(
+            name,
+            TestOutcome::EvidenceMissing,
+            "date -s restore failed after successful clock skew injection",
+        );
+        false
+    }
 }
 
 async fn test_baseline_monotonic(runner: &mut TestRunner, pool: &PgPool) {
@@ -61,21 +118,17 @@ async fn test_baseline_monotonic(runner: &mut TestRunner, pool: &PgPool) {
     }
 }
 
-async fn test_event_engine_survives_clock_advance(runner: &mut TestRunner, _pool: &PgPool) {
+async fn test_event_engine_survives_clock_advance(
+    runner: &mut TestRunner,
+    _pool: &PgPool,
+    skew: &mut ClockSkewState,
+) {
     let name = "chaos-clock-skew: event_engine survives clock advance";
 
-    // Read current epoch
-    let epoch_output = Command::new("date").args(["+%s"]).output().ok();
-
-    let current_epoch: i64 = epoch_output
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-
-    if current_epoch == 0 {
+    let Some(current_epoch) = read_epoch() else {
         runner.fail(name, "could not read current epoch");
         return;
-    }
+    };
 
     // Advance clock by 1 hour (3600 seconds)
     let new_epoch = current_epoch + 3600;
@@ -90,16 +143,26 @@ async fn test_event_engine_survives_clock_advance(runner: &mut TestRunner, _pool
         return;
     }
 
+    skew.original_epoch = Some(current_epoch);
+    skew.advanced_epoch = Some(new_epoch);
+
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     if !report_service_active(runner, name, "event_engine crashed after clock advance") {
-        // Restore clock before returning
-        let _ = command_status("date", &["-s", &format!("@{current_epoch}")]);
+        restore_original_clock(runner, name, skew);
     }
 }
 
-async fn test_events_reach_db_despite_skew(runner: &mut TestRunner, pool: &PgPool) {
+async fn test_events_reach_db_despite_skew(
+    runner: &mut TestRunner,
+    pool: &PgPool,
+    skew: &ClockSkewState,
+) {
     let name = "chaos-clock-skew: events reach DB despite clock skew";
+
+    if skip_without_injected_skew(runner, name, skew) {
+        return;
+    }
 
     let Some(before) = observed_event_count(runner, name, pool).await else {
         return;
@@ -123,20 +186,20 @@ async fn test_events_reach_db_despite_skew(runner: &mut TestRunner, pool: &PgPoo
     }
 }
 
-async fn test_no_catastrophic_timestamp_corruption(runner: &mut TestRunner, pool: &PgPool) {
+async fn test_no_catastrophic_timestamp_corruption(
+    runner: &mut TestRunner,
+    pool: &PgPool,
+    skew: &mut ClockSkewState,
+) {
     let name = "chaos-clock-skew: no catastrophic timestamp corruption";
 
-    // Read current epoch and restore clock first
-    let epoch_output = Command::new("date").args(["+%s"]).output().ok();
+    if skip_without_injected_skew(runner, name, skew) {
+        return;
+    }
 
-    let current_epoch: i64 = epoch_output
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-
-    // Restore to original time (subtract 1 hour)
-    let original_epoch = current_epoch - 3600;
-    let _ = command_status("date", &["-s", &format!("@{original_epoch}")]);
+    if !restore_original_clock(runner, name, skew) {
+        return;
+    }
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -218,5 +281,24 @@ async fn test_hypertable_chunk_structure_intact(runner: &mut TestRunner, pool: &
         Ok(0) => runner.fail(name, "hypertable has no chunks"),
         Ok(_n) => runner.pass(name), // Any chunks > 0 is good
         Err(e) => runner.fail(name, &format!("chunk query failed: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClockSkewState;
+
+    #[test]
+    fn clock_skew_state_requires_both_original_and_advanced_epochs() {
+        assert!(!ClockSkewState::default().skew_was_injected());
+
+        let mut skew = ClockSkewState {
+            original_epoch: Some(1000),
+            ..ClockSkewState::default()
+        };
+        assert!(!skew.skew_was_injected());
+
+        skew.advanced_epoch = Some(4600);
+        assert!(skew.skew_was_injected());
     }
 }
