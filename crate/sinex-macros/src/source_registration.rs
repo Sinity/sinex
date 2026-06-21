@@ -29,6 +29,13 @@ pub(crate) struct RegistrationAttrs {
     pub event_type: String,
     pub event_source: String,
     pub adapter: String,
+    /// Optional primary runtime-binding subject. Absent => `source:{id}`.
+    ///
+    /// Package contracts with several modes sometimes need to render or author
+    /// one mode as the primary binding while keeping the SourceContract id at
+    /// the package id. Extra `binding(...)` entries already support this field;
+    /// the primary binding uses the same semantics.
+    pub subject: Option<String>,
     /// Extra event types this source may emit besides `event_type`.
     pub additional_event_types: Vec<String>,
 
@@ -237,6 +244,7 @@ fn generate_one_source_runtime_binding(
     let namespace = &attrs.namespace;
     let subject = binding
         .and_then(|binding| binding.subject.as_deref())
+        .or(attrs.subject.as_deref())
         .map(str::to_owned)
         .unwrap_or_else(|| format!("source:{id}"));
 
