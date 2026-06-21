@@ -676,6 +676,26 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
             .is_some_and(|binding| !binding.resource_budget.is_null()),
         "runtime binding rows should expose the derived ResourceBudgetSpec"
     );
+    let binding = mode
+        .sources
+        .runtime_binding
+        .as_ref()
+        .expect("terminal.bash-history runtime binding row");
+    assert_eq!(binding.material_lifecycle.as_str(), Some("retain_raw"));
+    assert_eq!(
+        binding
+            .transport_semantics
+            .get("transport")
+            .and_then(serde_json::Value::as_str),
+        Some("local_queue")
+    );
+    assert_eq!(
+        binding
+            .transport_semantics
+            .get("backpressure")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
 
     let browser = report
         .packages
@@ -915,6 +935,26 @@ async fn package_completeness_report_consumes_coverage_debt_and_operation_refs()
     assert!(
         !mode.missing.iter().any(|field| field == "operations"),
         "operation refs should satisfy the package completeness requirement"
+    );
+    let binding = mode
+        .sources
+        .runtime_binding
+        .as_ref()
+        .expect("terminal.kitty-osc-live runtime binding row");
+    assert_eq!(binding.material_lifecycle.as_str(), Some("ephemeral_raw"));
+    assert_eq!(
+        binding
+            .transport_semantics
+            .get("transport")
+            .and_then(serde_json::Value::as_str),
+        Some("local_queue")
+    );
+    assert_eq!(
+        binding
+            .transport_semantics
+            .get("backpressure")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
     );
 
     let browser = report
