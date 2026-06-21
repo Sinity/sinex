@@ -1,6 +1,7 @@
 //! Raw-ingest DLQ management types
 
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
+use crate::runtime_pressure::RuntimePressureAction;
 use crate::views::CaveatView;
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +30,7 @@ pub struct DlqListRequest {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DlqPressureSignal {
     pub pressure_level: String,
-    pub runtime_action: String,
+    pub runtime_action: RuntimePressureAction,
     pub pending_messages: u64,
     pub pending_bytes: u64,
     pub retry_batch_size: u64,

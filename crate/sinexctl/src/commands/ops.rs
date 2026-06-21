@@ -2467,11 +2467,11 @@ mod tests {
             resource_pressure: sinex_primitives::rpc::dlq::DlqPressureSignal {
                 pressure_level: pressure_level.to_string(),
                 runtime_action: if total_messages > 10 {
-                    "throttle".to_string()
+                    sinex_primitives::RuntimePressureAction::Throttle
                 } else if total_messages > 0 {
-                    "inspect".to_string()
+                    sinex_primitives::RuntimePressureAction::Inspect
                 } else {
-                    "admit".to_string()
+                    sinex_primitives::RuntimePressureAction::Admit
                 },
                 pending_messages: total_messages,
                 pending_bytes: total_messages * 1024,
