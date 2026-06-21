@@ -17,7 +17,9 @@ body:
         `#[derive(SourceDefinition)]` (fully declarative) or `#[derive(SourceMeta)]`
         (hand-written parser) — over manual `register_source_contract!`. Per-field
         disclosure behavior stays operator-controlled; a package-level posture
-        is not final field authority.
+        is not final field authority. During implementation, use
+        `sinexd export-package-completeness --package <id> --mode <id> --strict`
+        as the focused authoring loop for the row this issue owns.
   - type: input
     id: source_id
     attributes:

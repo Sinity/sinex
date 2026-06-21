@@ -167,11 +167,11 @@ enum Command {
         output: Option<String>,
 
         /// Restrict the report to one package id from the completeness map.
-        #[arg(long)]
+        #[arg(long, alias = "package")]
         package_id: Option<String>,
 
         /// Restrict the report to one package-local mode id.
-        #[arg(long)]
+        #[arg(long, alias = "mode")]
         mode_id: Option<String>,
 
         /// Fail when any accepted mode has blocking missing requirements.
@@ -186,11 +186,11 @@ enum Command {
     /// AdmissionPolicy, catalog, and privacy-coverage evidence.
     ExportSourceSkeleton {
         /// Package id from the package-completeness report.
-        #[arg(long)]
+        #[arg(long, alias = "package")]
         package_id: String,
 
         /// Mode id from the package-completeness report.
-        #[arg(long)]
+        #[arg(long, alias = "mode")]
         mode_id: String,
 
         /// Output path. If omitted, writes Rust skeleton text to stdout.
@@ -473,4 +473,63 @@ async fn scan_source(
 
     source_bindings::run_binding(binding).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Command};
+    use clap::Parser;
+
+    #[test]
+    fn package_completeness_accepts_authoring_aliases() {
+        let cli = Cli::try_parse_from([
+            "sinexd",
+            "export-package-completeness",
+            "--package",
+            "terminal.atuin-history",
+            "--mode",
+            "terminal.atuin-history",
+            "--strict",
+        ])
+        .expect("package completeness authoring aliases should parse");
+
+        let Some(Command::ExportPackageCompleteness {
+            package_id,
+            mode_id,
+            strict,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected export-package-completeness command");
+        };
+
+        assert_eq!(package_id.as_deref(), Some("terminal.atuin-history"));
+        assert_eq!(mode_id.as_deref(), Some("terminal.atuin-history"));
+        assert!(strict);
+    }
+
+    #[test]
+    fn source_skeleton_accepts_package_and_mode_aliases() {
+        let cli = Cli::try_parse_from([
+            "sinexd",
+            "export-source-skeleton",
+            "--package",
+            "terminal.atuin-history",
+            "--mode",
+            "terminal.atuin-history",
+        ])
+        .expect("source skeleton authoring aliases should parse");
+
+        let Some(Command::ExportSourceSkeleton {
+            package_id,
+            mode_id,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected export-source-skeleton command");
+        };
+
+        assert_eq!(package_id, "terminal.atuin-history");
+        assert_eq!(mode_id, "terminal.atuin-history");
+    }
 }

@@ -24,10 +24,18 @@ should not paste a separate proof checklist.
 sinexd export-package-completeness
 sinexd export-package-completeness --strict
 sinexd export-package-completeness --output path/to/report.json
+sinexd export-package-completeness --package terminal.atuin-history
+sinexd export-package-completeness --package terminal.atuin-history --mode terminal.atuin-history --strict
 ```
 
 `--strict` fails when accepted modes have blocking missing requirements.
 Proposed and typed manual rows remain visible but do not block strict mode.
+
+Use the package/mode filters during authoring. They render the same report
+schema, but scoped to the row that a source PR is actually changing. Mode ids
+are package-local, so `--mode` requires `--package`. The long forms
+`--package-id` and `--mode-id` remain available for scripts; the shorter
+`--package` and `--mode` names are the preferred interactive loop.
 
 ## Status Rules
 
