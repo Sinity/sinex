@@ -24,7 +24,8 @@ Generate the first reviewed Rust draft for a package/mode directly from the
 compiled completeness report:
 
 ```bash
-sinexd export-source-skeleton --package-id terminal.atuin-history --mode-id terminal.atuin-history
+sinexd export-package-completeness --package terminal.atuin-history --mode terminal.atuin-history --strict
+sinexd export-source-skeleton --package terminal.atuin-history --mode terminal.atuin-history
 ```
 
 The emitted file is a review starting point. It deliberately contains a
