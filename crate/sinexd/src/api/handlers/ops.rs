@@ -4,6 +4,9 @@ use sinex_db::repositories::state::PROJECTION_REBUILD_OPERATION_TYPE;
 use sinex_primitives::Id;
 use sinex_primitives::InvalidationTrigger;
 use sinex_primitives::SinexError;
+use sinex_primitives::events::payloads::email::{
+    EmailProviderKind, EmailProviderRuntime, EmailSyncCursorKind,
+};
 use sqlx::PgPool;
 
 // Re-export shared types
@@ -107,32 +110,17 @@ struct EmailProviderModeMetadata {
     caveats: &'static [&'static str],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EmailProviderKind {
-    Gmail,
-    Imap,
+const fn email_provider_authorization_state_ref(provider: EmailProviderKind) -> &'static str {
+    match provider {
+        EmailProviderKind::Gmail => "email.mailbox.provider_authorization.gmail.oauth",
+        EmailProviderKind::Imap => "email.mailbox.provider_authorization.imap.credentials",
+    }
 }
 
-impl EmailProviderKind {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Gmail => "gmail",
-            Self::Imap => "imap",
-        }
-    }
-
-    const fn authorization_state_ref(self) -> &'static str {
-        match self {
-            Self::Gmail => "email.mailbox.provider_authorization.gmail.oauth",
-            Self::Imap => "email.mailbox.provider_authorization.imap.credentials",
-        }
-    }
-
-    const fn sync_cursor_ref(self) -> &'static str {
-        match self {
-            Self::Gmail => "email.sync_cursor.observed:gmail.history_id",
-            Self::Imap => "email.sync_cursor.observed:imap.uidvalidity_uid",
-        }
+const fn email_provider_sync_cursor_kind(provider: EmailProviderKind) -> EmailSyncCursorKind {
+    match provider {
+        EmailProviderKind::Gmail => EmailSyncCursorKind::GmailHistoryId,
+        EmailProviderKind::Imap => EmailSyncCursorKind::ImapUidvalidityUid,
     }
 }
 
@@ -160,10 +148,12 @@ impl EmailProviderRuntimeMode {
         }
     }
 
-    const fn as_str(self) -> &'static str {
+    const fn runtime(self) -> EmailProviderRuntime {
         match self {
-            Self::GmailScheduledSync | Self::ImapScheduledSync => "scheduled_sync",
-            Self::ImapIdleLive => "idle_live",
+            Self::GmailScheduledSync | Self::ImapScheduledSync => {
+                EmailProviderRuntime::ScheduledSync
+            }
+            Self::ImapIdleLive => EmailProviderRuntime::IdleLive,
         }
     }
 
@@ -704,11 +694,13 @@ fn email_provider_mode_metadata(mode_id: &str) -> Option<EmailProviderModeMetada
 
 fn email_provider_mode_metadata_value(metadata: EmailProviderModeMetadata) -> serde_json::Value {
     let provider = metadata.mode.provider();
+    let cursor_kind = email_provider_sync_cursor_kind(provider);
     serde_json::json!({
         "provider": provider.as_str(),
-        "provider_runtime": metadata.mode.as_str(),
-        "authorization_state_ref": provider.authorization_state_ref(),
-        "sync_cursor_ref": provider.sync_cursor_ref(),
+        "provider_runtime": metadata.mode.runtime().as_str(),
+        "authorization_state_ref": email_provider_authorization_state_ref(provider),
+        "sync_cursor_ref": format!("email.sync_cursor.observed:{}", cursor_kind.as_str()),
+        "sync_cursor_kind": cursor_kind.as_str(),
         "runtime_state_ref": metadata.mode.runtime_state_ref(),
         "coverage_ref": metadata.mode.coverage_ref(),
         "debt_ref": metadata.mode.debt_ref(),
@@ -1081,15 +1073,16 @@ mod tests {
         assert_eq!(scope["account_ref"], "operator-mailbox:primary");
         let provider_runtime = &scope["provider_runtime"];
         assert_eq!(provider_runtime["provider"], "gmail");
-        assert_eq!(provider_runtime["provider_runtime"], "scheduled_sync");
+        assert_eq!(provider_runtime["provider_runtime"], "scheduled-sync");
         assert_eq!(
             provider_runtime["authorization_state_ref"],
             "email.mailbox.provider_authorization.gmail.oauth"
         );
         assert_eq!(
             provider_runtime["sync_cursor_ref"],
-            "email.sync_cursor.observed:gmail.history_id"
+            "email.sync_cursor.observed:gmail-history-id"
         );
+        assert_eq!(provider_runtime["sync_cursor_kind"], "gmail-history-id");
         assert_eq!(
             provider_runtime["runtime_state_ref"],
             "email.capture_runtime.observed:gmail.scheduled_sync"
