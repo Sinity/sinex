@@ -41,16 +41,19 @@ fn merge_base(base: &str) -> Result<String> {
 /// The caller is responsible for resolving the merge-base if needed.
 pub fn changed_rust_files(base_ref: &str) -> Result<Vec<PathBuf>> {
     let mb = merge_base(base_ref)?;
+    changed_rust_files_from_merge_base(&mb)
+}
 
+fn changed_rust_files_from_merge_base(merge_base: &str) -> Result<Vec<PathBuf>> {
     let output = Command::new("git")
-        .args(["diff", "--name-only", &mb, "HEAD", "--", "*.rs"])
+        .args(["diff", "--name-only", merge_base, "HEAD", "--", "*.rs"])
         .output()
         .map_err(|e| eyre!("failed to spawn git diff: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(eyre!(
-            "git diff --name-only {mb} HEAD -- *.rs failed: {stderr}"
+            "git diff --name-only {merge_base} HEAD -- *.rs failed: {stderr}"
         ));
     }
 
@@ -155,13 +158,62 @@ fn extract_package_name(cargo_toml: &Path) -> Option<String> {
 /// one of the Rust files changed between `base_ref` and `HEAD`.
 pub fn affected_packages(base_ref: &str, workspace_root: &Path) -> Result<BTreeSet<String>> {
     let files = changed_rust_files(base_ref)?;
+    affected_packages_for_files(&files, workspace_root)
+}
+
+fn affected_packages_for_files(
+    files: &[PathBuf],
+    workspace_root: &Path,
+) -> Result<BTreeSet<String>> {
     let mut packages = BTreeSet::new();
-    for file in &files {
+    for file in files {
         if let Some(pkg) = owning_package(file, workspace_root) {
             packages.insert(pkg);
         }
     }
     Ok(packages)
+}
+
+/// Git-only plan for `xtask check --changed-strict`.
+///
+/// Planning is separated from compile readiness so callers can return early
+/// when a branch has no Rust/package delta without starting checkout-local
+/// Postgres just to discover that there is nothing to compile.
+#[derive(Debug, serde::Serialize)]
+pub struct ChangedStrictPlan {
+    pub base_ref: String,
+    pub merge_base: String,
+    pub changed_files: Vec<PathBuf>,
+    pub affected_packages: Vec<String>,
+}
+
+pub fn plan_changed_strict(base_ref: &str, workspace_root: &Path) -> Result<ChangedStrictPlan> {
+    let mb = merge_base(base_ref)?;
+    let changed_files = changed_rust_files_from_merge_base(&mb)?;
+    let affected_packages = affected_packages_for_files(&changed_files, workspace_root)?
+        .into_iter()
+        .collect();
+
+    Ok(ChangedStrictPlan {
+        base_ref: base_ref.to_string(),
+        merge_base: mb,
+        changed_files,
+        affected_packages,
+    })
+}
+
+impl ChangedStrictPlan {
+    #[must_use]
+    pub fn into_empty_report(self) -> ChangedStrictReport {
+        ChangedStrictReport {
+            base_ref: self.base_ref,
+            merge_base: self.merge_base,
+            changed_files: self.changed_files,
+            affected_packages: self.affected_packages,
+            package_results: vec![],
+            success: true,
+        }
+    }
 }
 
 /// Result of running `xtask check --changed-strict`.
