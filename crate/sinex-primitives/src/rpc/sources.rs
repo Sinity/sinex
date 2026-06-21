@@ -99,6 +99,7 @@
 
 use crate::domain::{MaterialStatus, SourceMaterialFormat, SourceMaterialTimingInfoType};
 use crate::parser::{ParserId, SourceBindingId, SourceId};
+use crate::privacy::MaterialCaptureClass;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::sources::continuity::{
     SourcesContinuityGetRequest, SourcesContinuityGetResponse, SourcesContinuityListRequest,
@@ -387,11 +388,20 @@ pub struct SourceMaterialStatistics {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SourcePolicyEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub privacy_class: Option<String>,
+    pub capture_class: Option<MaterialCaptureClass>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub admission_decision: Option<String>,
+    pub admission_decision: Option<SourceAdmissionDecision>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quarantine_reason: Option<String>,
+}
+
+/// Staging/admission decision recorded in source-material policy evidence.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceAdmissionDecision {
+    Admitted,
+    RequiresConfirmation,
+    Rejected,
 }
 
 /// Query-time summary of temporal ledger evidence for a material.
