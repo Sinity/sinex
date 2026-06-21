@@ -169,6 +169,7 @@ pub use parser::{
     ApiClient, ApiCursorAdapter, ApiCursorConfig, ApiCursorPosition, ApiFetchError, ApiFetchPage,
     RetryPolicy,
 };
+pub use parser::{EmailMboxFileAdapter, EmailMboxFileConfig, EmailMboxFileCursor};
 
 // IncrementalDump adapter — periodic full-export superset dumps (#1774).
 pub use parser::{
