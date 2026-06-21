@@ -12,6 +12,46 @@ use serde::Serialize;
 use crate::privacy::ProcessingContext;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceCapabilityKind {
+    Coverage,
+    Debt,
+    Operation,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SourceCapabilityRef<'a> {
+    pub kind: SourceCapabilityKind,
+    pub target: &'a str,
+    pub raw: &'a str,
+}
+
+impl<'a> SourceCapabilityRef<'a> {
+    #[must_use]
+    pub fn parse(raw: &'a str) -> Option<Self> {
+        for (prefix, kind) in [
+            ("coverage:", SourceCapabilityKind::Coverage),
+            ("debt:", SourceCapabilityKind::Debt),
+            ("operation:", SourceCapabilityKind::Operation),
+        ] {
+            let Some(target) = raw.strip_prefix(prefix) else {
+                continue;
+            };
+            if target.is_empty() {
+                return None;
+            }
+            return Some(Self { kind, target, raw });
+        }
+        None
+    }
+
+    #[must_use]
+    pub fn is_kind(self, kind: SourceCapabilityKind) -> bool {
+        self.kind == kind
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(transparent)]
 pub struct SubjectRef {
     raw: &'static str,
@@ -250,6 +290,12 @@ impl SourceRuntimeBinding {
     #[must_use]
     pub const fn resource_budget(self) -> ResourceBudgetSpec {
         self.resource_profile.budget_spec()
+    }
+
+    pub fn capability_refs(&self) -> impl Iterator<Item = SourceCapabilityRef<'static>> + '_ {
+        self.capabilities
+            .iter()
+            .filter_map(|capability| SourceCapabilityRef::parse(capability))
     }
 }
 
@@ -970,6 +1016,70 @@ mod tests {
             stream_budget
                 .pressure_actions
                 .contains(&BudgetPressureAction::Retry)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_capability_refs_parse_known_package_refs() -> TestResult<()> {
+        assert_eq!(
+            SourceCapabilityRef::parse("coverage:source-coverage"),
+            Some(SourceCapabilityRef {
+                kind: SourceCapabilityKind::Coverage,
+                target: "source-coverage",
+                raw: "coverage:source-coverage",
+            })
+        );
+        assert_eq!(
+            SourceCapabilityRef::parse("debt:unified-debt-view").map(|capability| capability.kind),
+            Some(SourceCapabilityKind::Debt)
+        );
+        assert_eq!(
+            SourceCapabilityRef::parse("operation:terminal.activity.check")
+                .map(|capability| capability.target),
+            Some("terminal.activity.check")
+        );
+        assert_eq!(SourceCapabilityRef::parse("operation:"), None);
+        assert_eq!(
+            SourceCapabilityRef::parse("package:terminal.activity"),
+            None
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_runtime_binding_exposes_typed_capability_refs() -> TestResult<()> {
+        let binding = SourceRuntimeBinding::builder(
+            SubjectRef::from_static("runtime_unit:test.capabilities"),
+            "test.capabilities",
+            "test",
+        )
+        .adapter("static")
+        .implementation("test::capabilities")
+        .output_event_type("test.output")
+        .privacy_context(ProcessingContext::Metadata)
+        .resource_profile(ResourceProfile::EmbeddedEmitter)
+        .capabilities(&[
+            "coverage:source-coverage",
+            "unknown:ignored",
+            "operation:test.capabilities.check",
+        ])
+        .checkpoint_family(CheckpointFamily::AppendStream)
+        .runtime_shape(RuntimeShape::OnDemand)
+        .build_impact(SourceBuildImpact::ZERO)
+        .build();
+
+        let capabilities = binding.capability_refs().collect::<Vec<_>>();
+        assert_eq!(capabilities.len(), 2);
+        assert!(
+            capabilities
+                .iter()
+                .any(|capability| capability.is_kind(SourceCapabilityKind::Coverage))
+        );
+        assert!(
+            capabilities
+                .iter()
+                .any(|capability| capability.target == "test.capabilities.check")
         );
         Ok(())
     }
