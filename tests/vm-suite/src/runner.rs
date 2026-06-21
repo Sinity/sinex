@@ -1,102 +1,125 @@
 //! VM-suite result runner with explicit non-green evidence states.
 
 use color_eyre::eyre::{Result, bail};
+use serde_json::json;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestOutcome {
+    Passed,
+    Failed,
     Skipped,
     Inconclusive,
     EvidenceMissing,
 }
 
+impl TestOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            TestOutcome::Passed => "passed",
+            TestOutcome::Failed => "failed",
+            TestOutcome::Skipped => "skipped",
+            TestOutcome::Inconclusive => "inconclusive",
+            TestOutcome::EvidenceMissing => "evidence-missing",
+        }
+    }
+
+    fn blocks_success(self) -> bool {
+        matches!(
+            self,
+            TestOutcome::Failed | TestOutcome::Inconclusive | TestOutcome::EvidenceMissing
+        )
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            TestOutcome::Passed => "PASS",
+            TestOutcome::Failed => "FAIL",
+            TestOutcome::Skipped => "SKIP",
+            TestOutcome::Inconclusive => "INCONCLUSIVE",
+            TestOutcome::EvidenceMissing => "EVIDENCE-MISSING",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TestRecord {
+    name: String,
+    outcome: TestOutcome,
+    reason: Option<String>,
+}
+
 pub struct TestRunner {
-    passed: Vec<String>,
-    failed: Vec<String>,
-    skipped: Vec<String>,
-    inconclusive: Vec<String>,
-    evidence_missing: Vec<String>,
+    records: Vec<TestRecord>,
 }
 
 impl TestRunner {
     pub fn new() -> Self {
         Self {
-            passed: Vec::new(),
-            failed: Vec::new(),
-            skipped: Vec::new(),
-            inconclusive: Vec::new(),
-            evidence_missing: Vec::new(),
+            records: Vec::new(),
         }
     }
 
     pub fn pass(&mut self, name: &str) {
-        println!("  PASS {name}");
-        self.passed.push(name.to_string());
+        self.record(name, TestOutcome::Passed, "");
     }
 
     pub fn skip(&mut self, name: &str, reason: &str) {
-        println!("  SKIP {name}");
-        println!("       {reason}");
-        self.skipped.push(format!("{name}: {reason}"));
+        self.record(name, TestOutcome::Skipped, reason);
     }
 
     pub fn inconclusive(&mut self, name: &str, reason: &str) {
-        eprintln!("  INCONCLUSIVE {name}");
-        eprintln!("               {reason}");
-        self.inconclusive.push(format!("{name}: {reason}"));
+        self.record(name, TestOutcome::Inconclusive, reason);
     }
 
     pub fn evidence_missing(&mut self, name: &str, reason: &str) {
-        eprintln!("  EVIDENCE-MISSING {name}");
-        eprintln!("                   {reason}");
-        self.evidence_missing.push(format!("{name}: {reason}"));
+        self.record(name, TestOutcome::EvidenceMissing, reason);
     }
 
     pub fn fail(&mut self, name: &str, reason: &str) {
-        eprintln!("  FAIL {name}");
-        eprintln!("       {reason}");
-        self.failed.push(format!("{name}: {reason}"));
+        self.record(name, TestOutcome::Failed, reason);
     }
 
     pub fn record(&mut self, name: &str, outcome: TestOutcome, reason: &str) {
-        match outcome {
-            TestOutcome::Skipped => self.skip(name, reason),
-            TestOutcome::Inconclusive => self.inconclusive(name, reason),
-            TestOutcome::EvidenceMissing => self.evidence_missing(name, reason),
+        let label = outcome.label();
+        if outcome.blocks_success() {
+            eprintln!("  {label} {name}");
+            if !reason.is_empty() {
+                eprintln!("       {reason}");
+            }
+        } else {
+            println!("  {label} {name}");
+            if !reason.is_empty() {
+                println!("       {reason}");
+            }
         }
+
+        self.records.push(TestRecord {
+            name: name.to_string(),
+            outcome,
+            reason: (!reason.is_empty()).then(|| reason.to_string()),
+        });
     }
 
     pub fn finish(self) -> Result<()> {
-        let total = self.passed.len()
-            + self.failed.len()
-            + self.skipped.len()
-            + self.inconclusive.len()
-            + self.evidence_missing.len();
+        let summary = VmOutcomeSummary::from_records(&self.records);
         println!("────────────────────────────────────────────");
         println!(
             "{} passed / {} total ({} skipped, {} inconclusive, {} evidence-missing, {} failed)",
-            self.passed.len(),
-            total,
-            self.skipped.len(),
-            self.inconclusive.len(),
-            self.evidence_missing.len(),
-            self.failed.len()
+            summary.passed,
+            summary.total,
+            summary.skipped,
+            summary.inconclusive,
+            summary.evidence_missing,
+            summary.failed
         );
-        if !self.skipped.is_empty() {
-            println!("Skipped:\n{}", self.skipped.join("\n"));
+        println!("{}", summary.to_json_line(&self.records));
+
+        let skipped = Self::entries_for(&self.records, TestOutcome::Skipped);
+        if !skipped.is_empty() {
+            println!("Skipped:\n{}", skipped.join("\n"));
         }
 
-        let mut blockers = Vec::new();
-        blockers.extend(self.failed.iter().cloned());
-        blockers.extend(
-            self.inconclusive
-                .iter()
-                .map(|entry| format!("INCONCLUSIVE: {entry}")),
-        );
-        blockers.extend(
-            self.evidence_missing
-                .iter()
-                .map(|entry| format!("EVIDENCE MISSING: {entry}")),
-        );
+        let blockers = Self::blocking_entries(&self.records);
         if !blockers.is_empty() {
             bail!(
                 "{} non-passing VM test outcome(s):\n{}",
@@ -106,11 +129,90 @@ impl TestRunner {
         }
         Ok(())
     }
+
+    fn entries_for(records: &[TestRecord], outcome: TestOutcome) -> Vec<String> {
+        records
+            .iter()
+            .filter(|record| record.outcome == outcome)
+            .map(format_record)
+            .collect()
+    }
+
+    fn blocking_entries(records: &[TestRecord]) -> Vec<String> {
+        records
+            .iter()
+            .filter(|record| record.outcome.blocks_success())
+            .map(|record| format!("{}: {}", record.outcome.label(), format_record(record)))
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VmOutcomeSummary {
+    total: usize,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    inconclusive: usize,
+    evidence_missing: usize,
+}
+
+impl VmOutcomeSummary {
+    fn from_records(records: &[TestRecord]) -> Self {
+        Self {
+            total: records.len(),
+            passed: count(records, TestOutcome::Passed),
+            failed: count(records, TestOutcome::Failed),
+            skipped: count(records, TestOutcome::Skipped),
+            inconclusive: count(records, TestOutcome::Inconclusive),
+            evidence_missing: count(records, TestOutcome::EvidenceMissing),
+        }
+    }
+
+    fn to_json_line(self, records: &[TestRecord]) -> String {
+        let items: Vec<_> = records
+            .iter()
+            .map(|record| {
+                json!({
+                    "name": &record.name,
+                    "outcome": record.outcome.as_str(),
+                    "reason": record.reason.as_deref(),
+                })
+            })
+            .collect();
+
+        format!(
+            "VM_OUTCOME_SUMMARY {}",
+            json!({
+                "total": self.total,
+                "passed": self.passed,
+                "failed": self.failed,
+                "skipped": self.skipped,
+                "inconclusive": self.inconclusive,
+                "evidence_missing": self.evidence_missing,
+                "items": items,
+            })
+        )
+    }
+}
+
+fn count(records: &[TestRecord], outcome: TestOutcome) -> usize {
+    records
+        .iter()
+        .filter(|record| record.outcome == outcome)
+        .count()
+}
+
+fn format_record(record: &TestRecord) -> String {
+    match record.reason.as_deref() {
+        Some(reason) => format!("{}: {reason}", record.name),
+        None => record.name.clone(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{TestOutcome, TestRunner};
+    use super::{TestOutcome, TestRunner, VmOutcomeSummary};
 
     #[test]
     fn skipped_outcomes_do_not_fail_vm_suite() {
@@ -140,7 +242,7 @@ mod tests {
         let error = runner
             .finish()
             .expect_err("missing evidence must not be reported as a green VM suite");
-        assert!(error.to_string().contains("EVIDENCE MISSING"));
+        assert!(error.to_string().contains("EVIDENCE-MISSING"));
     }
 
     #[test]
@@ -156,5 +258,27 @@ mod tests {
             .finish()
             .expect_err("inconclusive fault tests must not be reported as green");
         assert!(error.to_string().contains("INCONCLUSIVE"));
+    }
+
+    #[test]
+    fn summary_counts_all_outcome_states() {
+        let mut runner = TestRunner::new();
+        runner.pass("schema exists");
+        runner.fail("pipeline drains", "no events arrived");
+        runner.skip("clock skew", "VM lacks clock control");
+        runner.inconclusive("zombie reaping", "fault raced with normal completion");
+        runner.evidence_missing("PID reuse safety", "no PID was observed");
+
+        let summary = VmOutcomeSummary::from_records(&runner.records);
+        assert_eq!(summary.total, 5);
+        assert_eq!(summary.passed, 1);
+        assert_eq!(summary.failed, 1);
+        assert_eq!(summary.skipped, 1);
+        assert_eq!(summary.inconclusive, 1);
+        assert_eq!(summary.evidence_missing, 1);
+
+        let json_line = summary.to_json_line(&runner.records);
+        assert!(json_line.starts_with("VM_OUTCOME_SUMMARY "));
+        assert!(json_line.contains(r#""outcome":"evidence-missing""#));
     }
 }
