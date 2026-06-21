@@ -325,6 +325,14 @@ const ALL_TABLES: &[TableMeta] = &[
         cleanup_protected: false,
     },
     TableMeta {
+        schema: "core",
+        name: "model_effects",
+        qualified_name: "core.model_effects",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
         schema: "audit",
         name: "event_replacements",
         qualified_name: "audit.event_replacements",
