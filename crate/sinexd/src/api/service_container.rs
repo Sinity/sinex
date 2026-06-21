@@ -10,7 +10,7 @@ use sinex_db::pkm::PkmService;
 use sinex_db::replay::state_machine::ReplayStateMachine;
 use sinex_primitives::{
     Result as SinexResult, coordination::CoordinationKvClient, environment as sinex_environment,
-    error::SinexError,
+    error::SinexError, runtime_pressure::RuntimePressureAction,
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
@@ -61,7 +61,7 @@ pub struct ConfirmationBufferHealth {
     pub connected: bool,
     pub memory_owner: ConfirmationBufferMemoryOwner,
     pub pressure_level: String,
-    pub runtime_action: String,
+    pub runtime_action: RuntimePressureAction,
     pub observed_buffers: usize,
     pub pending_count: usize,
     pub timed_out_retained_count: usize,
@@ -515,7 +515,7 @@ impl ServiceContainer {
                 connected: false,
                 memory_owner: ConfirmationBufferMemoryOwner::NotObserved,
                 pressure_level: "unknown".to_string(),
-                runtime_action: "none".to_string(),
+                runtime_action: RuntimePressureAction::None,
                 observed_buffers: 0,
                 pending_count: 0,
                 timed_out_retained_count: 0,
@@ -540,7 +540,7 @@ impl ServiceContainer {
         let mut timed_out_retained_payload_bytes = 0usize;
         let mut approximate_payload_bytes_by_kind = BTreeMap::new();
         let mut pressure_level = crate::runtime::ConfirmationBufferPressureLevel::Nominal;
-        let mut runtime_action = "admit";
+        let mut runtime_action = RuntimePressureAction::Admit;
 
         for snapshot in &snapshots {
             pending_count += snapshot.pending_count;
@@ -553,12 +553,7 @@ impl ServiceContainer {
             timed_out_retained_payload_bytes += snapshot.timed_out_retained_payload_bytes;
             pressure_level =
                 strongest_confirmation_pressure(pressure_level, snapshot.pressure_level);
-            if snapshot.runtime_action == "throttle" {
-                runtime_action = "throttle";
-            } else if runtime_action == "admit" && snapshot.runtime_action == "admit_with_pressure"
-            {
-                runtime_action = "admit_with_pressure";
-            }
+            runtime_action = runtime_action.strongest(snapshot.runtime_action);
             for (kind, bytes) in &snapshot.approximate_payload_bytes_by_kind {
                 *approximate_payload_bytes_by_kind
                     .entry(kind.clone())
@@ -607,7 +602,7 @@ impl ServiceContainer {
             connected: true,
             memory_owner,
             pressure_level: pressure_level.as_str().to_string(),
-            runtime_action: runtime_action.to_string(),
+            runtime_action,
             observed_buffers: snapshots.len(),
             pending_count,
             timed_out_retained_count,

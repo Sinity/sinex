@@ -429,7 +429,7 @@ async fn confirmation_buffer_pressure_degrades_health_with_payload_attribution(
     assert_eq!(report.confirmation_buffer.pressure_level, "warning");
     assert_eq!(
         report.confirmation_buffer.runtime_action,
-        "admit_with_pressure"
+        sinex_primitives::RuntimePressureAction::AdmitWithPressure
     );
     assert!(report.confirmation_buffer.observed_buffers >= 1);
     assert!(report.confirmation_buffer.pending_count >= 3);

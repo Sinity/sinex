@@ -1720,7 +1720,7 @@ mod tests {
             connected: true,
             memory_owner: crate::api::service_container::ConfirmationBufferMemoryOwner::None,
             pressure_level: "nominal".to_string(),
-            runtime_action: "admit".to_string(),
+            runtime_action: sinex_primitives::RuntimePressureAction::Admit,
             observed_buffers: 0,
             pending_count: 0,
             timed_out_retained_count: 0,

@@ -340,7 +340,7 @@ impl MockGatewayClient {
                 pressure_level: "nominal".to_string(),
                 resource_pressure: sinex_primitives::rpc::dlq::DlqPressureSignal {
                     pressure_level: "nominal".to_string(),
-                    runtime_action: "admit".to_string(),
+                    runtime_action: sinex_primitives::RuntimePressureAction::Admit,
                     pending_messages: 0,
                     pending_bytes: 0,
                     retry_batch_size: 100,
