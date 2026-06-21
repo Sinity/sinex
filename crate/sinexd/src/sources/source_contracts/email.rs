@@ -14,8 +14,8 @@ use sinex_primitives::{
     events::{
         EventPayload,
         payloads::email::{
-            EmailAttachmentObservedPayload, EmailMessageReceivedPayload, EmailMessageSentPayload,
-            EmailThreadObservedPayload,
+            EmailAttachmentObservedPayload, EmailMailboxFormat, EmailMessageReceivedPayload,
+            EmailMessageSentPayload, EmailThreadObservedPayload,
         },
     },
     parser::{
@@ -221,7 +221,7 @@ impl MaterialParser for EmailMailboxParser {
                     folder: material.folder.clone(),
                     source_file: source_file.clone(),
                     raw_material_id: raw_material_id.clone(),
-                    mailbox_format: material.mailbox_format.as_str().to_string(),
+                    mailbox_format: material.mailbox_format,
                     maildir_subdir: material.maildir_subdir.clone(),
                     maildir_flags: material.maildir_flags.clone(),
                     maildir_stable_filename: material.maildir_stable_filename.clone(),
@@ -256,7 +256,7 @@ impl MaterialParser for EmailMailboxParser {
                     folder: material.folder.clone(),
                     source_file: source_file.clone(),
                     raw_material_id: raw_material_id.clone(),
-                    mailbox_format: material.mailbox_format.as_str().to_string(),
+                    mailbox_format: material.mailbox_format,
                     maildir_subdir: material.maildir_subdir.clone(),
                     maildir_flags: material.maildir_flags.clone(),
                     maildir_stable_filename: material.maildir_stable_filename.clone(),
@@ -309,7 +309,7 @@ impl MaterialParser for EmailMailboxParser {
             folder: material.folder.clone(),
             source_file: source_file.clone(),
             raw_material_id: raw_material_id.clone(),
-            mailbox_format: material.mailbox_format.as_str().to_string(),
+            mailbox_format: material.mailbox_format,
         };
         let thread_payload = serde_json::to_value(&thread_payload).map_err(|error| {
             ParserError::Parse(format!(
@@ -343,7 +343,7 @@ impl MaterialParser for EmailMailboxParser {
                 folder: material.folder.clone(),
                 source_file: source_file.clone(),
                 raw_material_id: raw_material_id.clone(),
-                mailbox_format: material.mailbox_format.as_str().to_string(),
+                mailbox_format: material.mailbox_format,
                 attachment_index,
                 disposition: attachment.disposition.clone(),
                 filename: attachment.filename.clone(),
@@ -382,23 +382,6 @@ impl MaterialParser for EmailMailboxParser {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EmailMailboxFormat {
-    Rfc822Drop,
-    Maildir,
-    Mbox,
-}
-
-impl EmailMailboxFormat {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Rfc822Drop => "rfc822-drop-staged",
-            Self::Maildir => "maildir-staged",
-            Self::Mbox => "mbox-staged",
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 struct EmailMaterialIdentity {
     mailbox_format: EmailMailboxFormat,
@@ -429,7 +412,7 @@ impl EmailMaterialIdentity {
 
         if let Some(maildir) = MaildirPathIdentity::from_record(record) {
             return Self {
-                mailbox_format: EmailMailboxFormat::Maildir,
+                mailbox_format: EmailMailboxFormat::MaildirStaged,
                 folder: metadata_folder.or(maildir.folder),
                 source_file,
                 material_anchor,
@@ -448,7 +431,7 @@ impl EmailMaterialIdentity {
                 _ => (None, None),
             };
             return Self {
-                mailbox_format: EmailMailboxFormat::Mbox,
+                mailbox_format: EmailMailboxFormat::MboxStaged,
                 folder: metadata_folder.or_else(|| folder_from_path(record.logical_path.as_ref())),
                 source_file: source_file.clone(),
                 material_anchor,
@@ -466,7 +449,7 @@ impl EmailMaterialIdentity {
         }
 
         Self {
-            mailbox_format: EmailMailboxFormat::Rfc822Drop,
+            mailbox_format: EmailMailboxFormat::Rfc822DropStaged,
             folder: metadata_folder.or_else(|| folder_from_path(record.logical_path.as_ref())),
             source_file,
             material_anchor,
@@ -535,7 +518,8 @@ fn is_mbox_record(record: &SourceRecord) -> bool {
         .metadata
         .get("mailbox_format")
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|format| format.eq_ignore_ascii_case("mbox"))
+        .and_then(email_mailbox_format_token)
+        .is_some_and(|format| format == EmailMailboxFormat::MboxStaged)
     {
         return true;
     }
@@ -544,6 +528,17 @@ fn is_mbox_record(record: &SourceRecord) -> bool {
         .as_ref()
         .and_then(|path| path.file_name())
         .is_some_and(|name| name.ends_with(".mbox") || name == "mbox")
+}
+
+fn email_mailbox_format_token(value: &str) -> Option<EmailMailboxFormat> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "rfc822-drop" | "rfc822-drop-staged" | "rfc822_drop_staged" => {
+            Some(EmailMailboxFormat::Rfc822DropStaged)
+        }
+        "maildir" | "maildir-staged" | "maildir_staged" => Some(EmailMailboxFormat::MaildirStaged),
+        "mbox" | "mbox-staged" | "mbox_staged" => Some(EmailMailboxFormat::MboxStaged),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -801,7 +796,7 @@ fn occurrence_key(
         ),
     ];
     match material.mailbox_format {
-        EmailMailboxFormat::Maildir => {
+        EmailMailboxFormat::MaildirStaged => {
             fields.push((
                 "maildir_stable_filename".to_string(),
                 material
@@ -811,7 +806,7 @@ fn occurrence_key(
                     .to_string(),
             ));
         }
-        EmailMailboxFormat::Mbox => {
+        EmailMailboxFormat::MboxStaged => {
             fields.push((
                 "mbox_file".to_string(),
                 material.mbox_file.as_deref().unwrap_or("").to_string(),
@@ -831,7 +826,7 @@ fn occurrence_key(
                     .unwrap_or_default(),
             ));
         }
-        EmailMailboxFormat::Rfc822Drop => {
+        EmailMailboxFormat::Rfc822DropStaged => {
             fields.push(("source_file".to_string(), material.source_file.clone()));
         }
     }
@@ -906,11 +901,11 @@ fn thread_occurrence_key(
 
 fn material_fallback_identity(material: &EmailMaterialIdentity, raw_material_id: &str) -> String {
     match material.mailbox_format {
-        EmailMailboxFormat::Maildir => material
+        EmailMailboxFormat::MaildirStaged => material
             .maildir_stable_filename
             .clone()
             .unwrap_or_else(|| raw_material_id.to_string()),
-        EmailMailboxFormat::Mbox => {
+        EmailMailboxFormat::MboxStaged => {
             let file = material.mbox_file.as_deref().unwrap_or("");
             let start = material
                 .mbox_byte_start
@@ -922,7 +917,7 @@ fn material_fallback_identity(material: &EmailMaterialIdentity, raw_material_id:
                 .unwrap_or_default();
             format!("{file}:{start}:{end}")
         }
-        EmailMailboxFormat::Rfc822Drop => {
+        EmailMailboxFormat::Rfc822DropStaged => {
             if material.source_file.is_empty() {
                 raw_material_id.to_string()
             } else {
@@ -1174,6 +1169,26 @@ binary bytes are not decoded by this staged envelope parser\n",
         );
         assert_eq!(occurrence_field(&intent, "mbox_byte_start"), Some("1024"));
         assert_eq!(occurrence_field(&intent, "mbox_byte_end"), Some("1186"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn canonical_mbox_staged_metadata_selects_mbox_identity() -> TestResult<()> {
+        let mut parser = EmailMailboxParser;
+        let record = record_with_anchor(
+            b"Message-ID: <mbox-2@example.com>\nFrom: Alice <alice@example.com>\nTo: Bob <bob@example.com>\nSubject: Canonical MBOX metadata\n\nBody.\n",
+            "exports/message.slice",
+            MaterialAnchor::ByteRange { start: 10, len: 128 },
+            serde_json::json!({"mailbox_format": "mbox-staged", "folder": "archive/sent"}),
+        );
+
+        let intent = parser.parse_record(record, &test_ctx()).await?.remove(0);
+
+        assert_eq!(intent.payload["mailbox_format"], "mbox-staged");
+        assert_eq!(intent.payload["folder"], "archive/sent");
+        assert_eq!(intent.payload["mbox_file"], "exports/message.slice");
+        assert_eq!(occurrence_field(&intent, "mbox_byte_start"), Some("10"));
+        assert_eq!(occurrence_field(&intent, "mbox_byte_end"), Some("138"));
         Ok(())
     }
 
