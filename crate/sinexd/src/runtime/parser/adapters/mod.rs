@@ -19,6 +19,7 @@
 //! | [`DirectoryWalkAdapter`] | `DirectoryWalk` | `BTreeMap<path, fingerprint>` | Recursive walk with fingerprint dedup |
 //! | [`ApiCursorAdapter`] | `ApiCursor` | `ApiCursorPosition` | Paginated REST API with cursor |
 //! | [`GmailApiCursorAdapter`] | `ApiCursor` | `GmailApiCursor` | Gmail scheduled-sync pages/history |
+//! | [`ImapSyncAdapter`] | `ApiCursor` | `ImapSyncCursor` | IMAP scheduled/IDLE mailbox batches |
 //! | [`EmailMboxFileAdapter`] | `Archive` | byte offset | Streaming MBOX/MBOXRD message slices |
 //! | [`IncrementalDumpAdapter`] | `IncrementalDump` | `IncrementalDumpCursor` | Periodic full-export superset dumps |
 
@@ -30,6 +31,7 @@ mod clipboard_polling;
 mod dbus_stream;
 mod directory_walk;
 mod email_gmail_api;
+mod email_imap_sync;
 mod email_mbox_file;
 mod file_drop;
 mod incremental_dump;
@@ -65,6 +67,10 @@ pub use directory_walk::{
 pub use email_gmail_api::{
     GmailApiClient, GmailApiCursor, GmailApiCursorAdapter, GmailApiCursorConfig, GmailApiPage,
     GmailApiPageRequest, GmailApiRecord, GmailApiRecordKind,
+};
+pub use email_imap_sync::{
+    ImapSyncAdapter, ImapSyncBatch, ImapSyncClient, ImapSyncConfig, ImapSyncCursor, ImapSyncMode,
+    ImapSyncRecord, ImapSyncRecordKind, ImapSyncRequest,
 };
 pub use email_mbox_file::{EmailMboxFileAdapter, EmailMboxFileConfig, EmailMboxFileCursor};
 pub use sqlite_row::{SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor};
@@ -128,6 +134,11 @@ impl InputShapeAdapterExt for directory_walk::DirectoryWalkAdapter {}
 #[cfg(feature = "messaging")]
 impl<C: email_gmail_api::GmailApiClient + 'static> InputShapeAdapterExt
     for email_gmail_api::GmailApiCursorAdapter<C>
+{
+}
+#[cfg(feature = "messaging")]
+impl<C: email_imap_sync::ImapSyncClient + 'static> InputShapeAdapterExt
+    for email_imap_sync::ImapSyncAdapter<C>
 {
 }
 #[cfg(feature = "messaging")]

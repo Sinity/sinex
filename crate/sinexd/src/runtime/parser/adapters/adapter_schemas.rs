@@ -20,7 +20,8 @@ use serde_json::Value;
 use super::{
     AppendOnlyFileConfig, ChainedConfig, ClipboardPollingConfig, DirectoryWalkConfig,
     EmailMboxFileConfig, FileContentDropConfig, FileDropConfig, GmailApiCursorConfig,
-    JournalctlStreamConfig, SqliteRowConfig, StaticFileConfig, UnixSocketStreamConfig,
+    ImapSyncConfig, JournalctlStreamConfig, SqliteRowConfig, StaticFileConfig,
+    UnixSocketStreamConfig,
 };
 
 // =============================================================================
@@ -58,6 +59,7 @@ pub struct AdapterSchema {
 /// - `FileContentDropAdapter`
 /// - `FileDropAdapter`
 /// - `GmailApiCursorAdapter`
+/// - `ImapSyncAdapter`
 /// - `JournalctlStreamAdapter`
 /// - `SqliteRowAdapter`
 /// - `StaticFileAdapter`
@@ -108,6 +110,7 @@ pub fn all_adapter_schemas() -> BTreeMap<String, AdapterSchema> {
         "GmailApiCursorAdapter".into(),
         schema_for_type::<GmailApiCursorConfig>(),
     );
+    map.insert("ImapSyncAdapter".into(), schema_for_type::<ImapSyncConfig>());
     map.insert(
         "JournalctlStreamAdapter".into(),
         schema_for_type::<JournalctlStreamConfig>(),
