@@ -5282,6 +5282,7 @@ dependencies = [
  "sinexd",
  "sqlx",
  "subtle",
+ "syn 2.0.117",
  "sysinfo",
  "tempfile",
  "time",
