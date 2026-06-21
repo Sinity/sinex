@@ -507,14 +507,22 @@ impl ExplorationProvider for FilesystemSource {
         })
     }
     fn get_ingestion_history(&self, _limit: u64) -> RuntimeResult<Vec<IngestionHistoryEntry>> {
-        Err(SinexError::invalid_state(
-            "ingestion history is not implemented in the example filesystem source",
-        ))
+        Err(
+            crate::runtime::exploration::unsupported_exploration_capability(
+                "example source",
+                "filesystem",
+                "ingestion history",
+            ),
+        )
     }
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> RuntimeResult<()> {
-        Err(SinexError::invalid_state(
-            "data export is not implemented in the example filesystem source",
-        ))
+        Err(
+            crate::runtime::exploration::unsupported_exploration_capability(
+                "example source",
+                "filesystem",
+                "data export",
+            ),
+        )
     }
 }
 
@@ -533,7 +541,9 @@ mod tests {
         let error = ExplorationProvider::get_ingestion_history(&source, 10)
             .expect_err("example must not report empty ingestion history as success");
 
-        assert!(error.to_string().contains("example filesystem source"));
+        assert!(error.to_string().contains("example source"));
+        assert!(error.to_string().contains("filesystem"));
+        assert!(error.to_string().contains("ingestion history"));
         Ok(())
     }
 
@@ -545,7 +555,9 @@ mod tests {
         let error = ExplorationProvider::export_data(&source, &path, ExportFormat::Json)
             .expect_err("example must not report export success without writing data");
 
-        assert!(error.to_string().contains("example filesystem source"));
+        assert!(error.to_string().contains("example source"));
+        assert!(error.to_string().contains("filesystem"));
+        assert!(error.to_string().contains("data export"));
         Ok(())
     }
 }

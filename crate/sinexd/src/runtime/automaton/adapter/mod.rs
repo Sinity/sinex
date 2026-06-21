@@ -666,9 +666,13 @@ where
         &self,
         _limit: u64,
     ) -> RuntimeResult<Vec<crate::runtime::exploration::IngestionHistoryEntry>> {
-        Err(SinexError::invalid_state(
-            "ingestion history is not implemented for automatons",
-        ))
+        Err(
+            crate::runtime::exploration::unsupported_exploration_capability(
+                "automaton",
+                self.automaton.name(),
+                "ingestion history",
+            ),
+        )
     }
 
     fn export_data(
@@ -676,9 +680,13 @@ where
         _path: &sinex_primitives::domain::SanitizedPath,
         _format: crate::runtime::exploration::ExportFormat,
     ) -> RuntimeResult<()> {
-        Err(SinexError::invalid_state(
-            "data export is not implemented for automatons",
-        ))
+        Err(
+            crate::runtime::exploration::unsupported_exploration_capability(
+                "automaton",
+                self.automaton.name(),
+                "data export",
+            ),
+        )
     }
 }
 

@@ -662,7 +662,8 @@ async fn derived_ingestion_history_is_explicitly_unavailable() -> TestResult<()>
     let error = ExplorationProvider::get_ingestion_history(&adapter, 10)
         .expect_err("automatons must not report an empty ingestion history as success");
 
-    assert!(error.to_string().contains("automatons"));
+    assert!(error.to_string().contains("automaton"));
+    assert!(error.to_string().contains("ingestion history"));
     Ok(())
 }
 
@@ -674,7 +675,8 @@ async fn derived_export_is_explicitly_unavailable() -> TestResult<()> {
     let error = ExplorationProvider::export_data(&adapter, &path, ExportFormat::Json)
         .expect_err("automatons must not report export success without writing data");
 
-    assert!(error.to_string().contains("automatons"));
+    assert!(error.to_string().contains("automaton"));
+    assert!(error.to_string().contains("data export"));
     Ok(())
 }
 
