@@ -50,6 +50,14 @@ The smoke verifies this sequence:
 `xtask infra smoke --dry-run` is a no-service plan and inventory check. It is
 safe to run before deciding whether to start local infra.
 
+Use `xtask infra smoke --reset-first --run-core` when the change needs the full
+dev-local runtime proof. That opt-in path starts `xtask run core` as a managed
+background job, waits until `xtask infra status` observes checkout-local
+`sinexd`, cancels the job through `xtask jobs`, verifies `sinexd` disappears
+from infra status, and then stops Postgres/NATS. The default smoke intentionally
+does not run this phase so routine wrapper/check changes do not compile or start
+`sinexd`.
+
 ## Why isolated checkout-local services remain the default
 
 The current default is still per-checkout isolated Postgres/NATS under
@@ -119,6 +127,7 @@ devshell wrappers, use:
 xtask infra stop
 pgrep -a 'sinexd|postgres|postmaster|nats-server' || true
 xtask infra smoke --reset-first
+xtask infra smoke --reset-first --run-core
 xtask infra status --all-checkouts
 ```
 
@@ -126,6 +135,7 @@ When the wrapper itself is the target, run the smoke through the devshell entry:
 
 ```bash
 nix develop --command xtask infra smoke --reset-first
+nix develop --command xtask infra smoke --reset-first --run-core
 ```
 
 Do not replace this with a test that only asserts a config literal or flag name.
