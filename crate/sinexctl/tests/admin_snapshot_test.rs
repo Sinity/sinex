@@ -18,6 +18,7 @@ use sinexctl::admin::exec;
 use sinexctl::admin::manifest::ComponentExtras;
 use sinexctl::admin::snapshot::{
     AdminSnapshotCommand, AdminSnapshotInspectCommand, AdminSnapshotRestoreCommand, Component,
+    format_snapshot_restore_plan_result,
 };
 
 /// Helper: build a fake state directory with recognizable fixture files.
@@ -79,8 +80,8 @@ async fn state_snapshot_help_points_to_restore_drill() -> TestResult<()> {
         "help should point operators at the restore drill command\nstdout: {stdout}"
     );
     assert!(
-        !stdout.contains("Restore is manual"),
-        "help must not claim restore remains manual\nstdout: {stdout}"
+        stdout.contains("Inspect and run an isolated drill before any manual live restore"),
+        "help should distinguish isolated restore drills from manual live restores\nstdout: {stdout}"
     );
 
     Ok(())
@@ -564,7 +565,7 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
     let observed = restore
         .observed_checks
         .as_ref()
-        .ok_or_else(|| color_eyre::eyre::eyre!("restore execution should report observations"))?;
+        .ok_or_else(|| color_eyre::eyre::eyre!("restore drill should report observations"))?;
     assert!(observed.nats_state_present);
     assert_eq!(observed.nats_member_count, Some(1));
     assert_eq!(observed.nats_member_paths_match, Some(true));
@@ -833,7 +834,7 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
     let observed = result
         .observed_checks
         .as_ref()
-        .ok_or_else(|| color_eyre::eyre::eyre!("restore execution should report observations"))?;
+        .ok_or_else(|| color_eyre::eyre::eyre!("restore drill should report observations"))?;
     assert!(observed.checks_passed);
     assert!(
         observed.failed_checks.is_empty(),
@@ -845,7 +846,16 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
     assert_eq!(
         observed.component_blake3_matches.get("state"),
         Some(&true),
-        "restore execution should compare restored state content hash with the manifest"
+        "restore drill should compare restored state content hash with the manifest"
+    );
+    let table = format_snapshot_restore_plan_result(&result);
+    assert!(
+        table.contains("Mode:    isolated-drill"),
+        "table output should label non-dry-run restores as isolated drills:\n{table}"
+    );
+    assert!(
+        table.contains("Observed after isolated drill:"),
+        "table output should describe observed checks as drill evidence:\n{table}"
     );
 
     let binary_target = target_parent.path().join("binary-target");
@@ -967,7 +977,7 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
     let observed = result
         .observed_checks
         .as_ref()
-        .ok_or_else(|| color_eyre::eyre::eyre!("restore execution should report observations"))?;
+        .ok_or_else(|| color_eyre::eyre::eyre!("restore drill should report observations"))?;
 
     assert!(observed.checks_passed);
     assert!(observed.failed_checks.is_empty());
@@ -982,7 +992,7 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
     assert_eq!(
         observed.component_blake3_matches.get("postgres"),
         Some(&true),
-        "restore execution should compare restored postgres dump hash with the manifest"
+        "restore drill should compare restored postgres dump hash with the manifest"
     );
     assert!(target.join("postgres").join("sinex_prod.dump").exists());
     let psql_calls = fs::read_to_string(psql_log)?;
@@ -1027,7 +1037,7 @@ async fn snapshot_restore_ignores_nats_summary_in_component_hash() -> xtask::san
     let observed = result
         .observed_checks
         .as_ref()
-        .ok_or_else(|| color_eyre::eyre::eyre!("restore execution should report observations"))?;
+        .ok_or_else(|| color_eyre::eyre::eyre!("restore drill should report observations"))?;
 
     assert!(observed.checks_passed);
     assert!(observed.failed_checks.is_empty());
@@ -1057,9 +1067,9 @@ async fn snapshot_restore_postgres_requires_target_database_url() -> xtask::sand
     };
     let error = cmd
         .execute()
-        .expect_err("postgres restore execution should require a target database url");
+        .expect_err("postgres restore drill should require a target database url");
     assert!(
-        format!("{error:#}").contains("--restore-database-url"),
+        format!("{error:#}").contains("restore drill execution requires --restore-database-url"),
         "error should explain restore database requirement: {error:#}"
     );
     Ok(())
@@ -1083,9 +1093,9 @@ async fn snapshot_restore_execute_requires_confirmation() -> xtask::sandbox::Tes
     };
     let error = cmd
         .execute()
-        .expect_err("restore execution should require explicit confirmation");
+        .expect_err("restore drill should require explicit confirmation");
     assert!(
-        format!("{error:#}").contains("--confirm-restore"),
+        format!("{error:#}").contains("restore drill execution requires --confirm-restore"),
         "error should explain confirmation flag: {error:#}"
     );
     Ok(())
@@ -1115,11 +1125,11 @@ async fn snapshot_restore_rejects_unsupported_archive_components() -> xtask::san
     let rendered = format!("{error:#}");
     assert!(
         rendered.contains("state, cas, nats, and postgres"),
-        "restore execution error should name the supported restore-drill components: {rendered}"
+        "restore drill error should name the supported restore-drill components: {rendered}"
     );
     assert!(
         rendered.contains("legacy-index"),
-        "restore execution error should name the unsupported archive component: {rendered}"
+        "restore drill error should name the unsupported archive component: {rendered}"
     );
     Ok(())
 }

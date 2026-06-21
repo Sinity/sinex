@@ -115,8 +115,8 @@ drill directory. It does not permit destructive writes.
 ## Isolated restore drill execution
 
 For file-backed components (`state`, `cas`, `nats`) and explicitly supplied
-Postgres drill databases, `state restore` can execute an isolated drill into an
-empty target directory:
+Postgres drill databases, `state restore` can execute only an isolated drill
+into an empty target directory:
 
 ```bash
 sinexctl ops state restore \
@@ -137,7 +137,7 @@ sinexctl ops state restore \
     --confirm-restore
 ```
 
-Execution refuses to run unless:
+Isolated drill execution refuses to run unless:
 
 - `--confirm-restore` is present.
 - The target directory is empty, or does not yet exist under an existing parent.
@@ -146,11 +146,11 @@ Execution refuses to run unless:
 - Archives with non-empty `postgres` components include
   `--restore-database-url`, pointing at an empty drill database.
 
-The JSON/YAML result includes `observed_checks` comparing the extracted target
-against the manifest: source IDs, NATS JetStream member paths when present,
-CAS blob count when present, and private-mode state presence. When Postgres is
-restored, it also compares exact row counts for the tables listed in the
-snapshot manifest.
+The JSON/YAML result includes `observed_checks` comparing the isolated drill
+target against the manifest: source IDs, NATS JetStream member paths when
+present, CAS blob count when present, and private-mode state presence. When a
+Postgres drill database is supplied, it also compares exact row counts for the
+tables listed in the snapshot manifest.
 
 ## Restore procedure (manual for Postgres/live state)
 
