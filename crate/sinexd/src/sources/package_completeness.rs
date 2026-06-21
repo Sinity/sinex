@@ -13,7 +13,8 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::source_contracts::{
-    RunnerPack, SourceContract, SourceRuntimeBinding, all_source_contracts, source_runtime_bindings,
+    RunnerPack, SourceCapabilityKind, SourceCapabilityRef, SourceContract, SourceRuntimeBinding,
+    all_source_contracts, source_runtime_bindings,
 };
 use sinex_primitives::{AdmissionPolicy, EventContract, admission_policies, event_contracts};
 
@@ -504,8 +505,11 @@ fn finalize_mode(
         .map(|contract| contract.id.to_string())
         .collect::<Vec<_>>();
     let admission_policy_refs = admission_policy_refs_for_event_contracts(&package_event_contracts);
-    let coverage_debt_refs = capability_refs(binding, &["coverage:", "debt:"]);
-    let operation_refs = capability_refs(binding, &["operation:"]);
+    let coverage_debt_refs = capability_refs(
+        binding,
+        &[SourceCapabilityKind::Coverage, SourceCapabilityKind::Debt],
+    );
+    let operation_refs = capability_refs(binding, &[SourceCapabilityKind::Operation]);
     let event_pairs = event_pair_reports(contract, payload_pairs, &package_event_contracts);
 
     diagnostics.require(
@@ -755,16 +759,16 @@ fn finalize_mode(
     );
     diagnostics.require(
         "coverage_and_debt_views",
-        if has_capability_ref(&coverage_debt_refs, "coverage:")
-            && has_capability_ref(&coverage_debt_refs, "debt:")
+        if has_capability_ref(&coverage_debt_refs, SourceCapabilityKind::Coverage)
+            && has_capability_ref(&coverage_debt_refs, SourceCapabilityKind::Debt)
         {
             RequirementStatus::Present
         } else {
             RequirementStatus::Missing
         },
         mode_state == PackageModeState::Accepted
-            && (!has_capability_ref(&coverage_debt_refs, "coverage:")
-                || !has_capability_ref(&coverage_debt_refs, "debt:")),
+            && (!has_capability_ref(&coverage_debt_refs, SourceCapabilityKind::Coverage)
+                || !has_capability_ref(&coverage_debt_refs, SourceCapabilityKind::Debt)),
         if coverage_debt_refs.is_empty() {
             "SourceCoverage exists; unified DebtListView provider refs are not declared per package mode yet".to_string()
         } else {
@@ -1156,20 +1160,25 @@ fn parser_manifest_ref(
     }
 }
 
-fn capability_refs(binding: Option<&SourceRuntimeBinding>, prefixes: &[&str]) -> Vec<String> {
+fn capability_refs(
+    binding: Option<&SourceRuntimeBinding>,
+    kinds: &[SourceCapabilityKind],
+) -> Vec<String> {
     let mut refs = binding
         .into_iter()
-        .flat_map(|binding| binding.capabilities.iter().copied())
-        .filter(|capability| prefixes.iter().any(|prefix| capability.starts_with(prefix)))
-        .map(str::to_string)
+        .flat_map(SourceRuntimeBinding::capability_refs)
+        .filter(|capability| kinds.contains(&capability.kind))
+        .map(|capability| capability.raw.to_string())
         .collect::<Vec<_>>();
     refs.sort();
     refs.dedup();
     refs
 }
 
-fn has_capability_ref(refs: &[String], prefix: &str) -> bool {
-    refs.iter().any(|capability| capability.starts_with(prefix))
+fn has_capability_ref(refs: &[String], kind: SourceCapabilityKind) -> bool {
+    refs.iter()
+        .filter_map(|capability| SourceCapabilityRef::parse(capability))
+        .any(|capability| capability.is_kind(kind))
 }
 
 fn acquisition_kind(binding: Option<&SourceRuntimeBinding>) -> &'static str {
@@ -1221,6 +1230,10 @@ fn to_json_value<T: Serialize>(value: T) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::privacy::ProcessingContext;
+    use sinex_primitives::source_contracts::{
+        CheckpointFamily, ResourceProfile, RuntimeShape, SourceBuildImpact, SubjectRef,
+    };
 
     #[test]
     fn filtered_report_recomputes_package_summary() {
@@ -1264,5 +1277,46 @@ mod tests {
             err,
             PackageCompletenessFilterError::ModeRequiresPackage
         ));
+    }
+
+    #[test]
+    fn capability_report_refs_are_filtered_through_typed_parser() {
+        static CAPABILITIES: &[&str] = &[
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:fixture.source.check",
+            "operation:",
+            "package:fixture.source",
+        ];
+        let binding = SourceRuntimeBinding::builder(
+            SubjectRef::from_static("source:fixture.source"),
+            "fixture.source",
+            "fixture",
+        )
+        .implementation("test")
+        .adapter("static")
+        .output_event_type("fixture.event")
+        .privacy_context(ProcessingContext::Metadata)
+        .resource_profile(ResourceProfile::EmbeddedEmitter)
+        .capabilities(CAPABILITIES)
+        .checkpoint_family(CheckpointFamily::AppendStream)
+        .runtime_shape(RuntimeShape::OnDemand)
+        .build_impact(SourceBuildImpact::ZERO)
+        .build();
+
+        assert_eq!(
+            capability_refs(
+                Some(&binding),
+                &[SourceCapabilityKind::Coverage, SourceCapabilityKind::Debt]
+            ),
+            vec![
+                "coverage:source-coverage".to_string(),
+                "debt:unified-debt-view".to_string()
+            ]
+        );
+        assert_eq!(
+            capability_refs(Some(&binding), &[SourceCapabilityKind::Operation]),
+            vec!["operation:fixture.source.check".to_string()]
+        );
     }
 }
