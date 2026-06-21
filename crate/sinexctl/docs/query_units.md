@@ -23,14 +23,14 @@ sinexctl query 'events where source = "terminal.fish-history" and event_type = "
 sinexctl query 'source-drivers where readiness != "ready" limit 50'
 sinexctl query 'source-materials where status = "completed" limit 25'
 sinexctl query 'debt where kind = "admission" or kind = "projection" limit 50'
-sinexctl query 'operations where status = "failed" limit 25'
+sinexctl query 'operations where status = "failed" sort operation_id desc limit 25'
 sinexctl query 'runtime-health where state != "healthy" limit 1'
 ```
 
 Grammar:
 
 ```text
-<unit> [where <predicate> (and|or <predicate>)*] [limit <n>] [offset <n>]
+<unit> [where <predicate> (and|or <predicate>)*] [sort <key> [asc|desc]]* [limit <n>] [offset <n>]
 <predicate> = <field> <operator> <value>
 <predicate> = <field> exists
 ```
@@ -45,6 +45,11 @@ Runtime-health queries execute against the bounded runtime summary row exposed
 by `runtime.health`; predicates filter the summary fields declared by the
 descriptor (`module`, `role`, `state`, and `stale_after`). `stale_after` is
 expressed as integer seconds so range predicates compare numerically.
+
+Sort keys are declared by each query-unit descriptor and must correspond to
+fields emitted by the executor row. Unsupported sort keys fail before an RPC is
+issued, and completions only suggest descriptor-backed keys and directions.
+Row-backed units apply descriptor sort before offset/limit pagination.
 
 `json` and `yaml` return the full `ViewEnvelope<SinexQueryResultListView>`.
 `ndjson` emits one `SinexQueryResultRow` per line. `table` prints a compact

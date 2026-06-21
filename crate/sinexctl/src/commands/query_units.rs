@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use clap::Args;
@@ -34,7 +35,7 @@ EXAMPLES:
     sinexctl query 'source-drivers where readiness != \"ready\" limit 50'
     sinexctl query 'source-materials where status = \"completed\" limit 25'
     sinexctl query 'debt where kind = \"admission\" or kind = \"projection\" limit 50'
-    sinexctl query 'operations where status = \"failed\" limit 25'
+    sinexctl query 'operations where status = \"failed\" sort operation_id desc limit 25'
     sinexctl query 'runtime-health limit 1'
 ")]
 pub struct QueryUnitsCommand {
@@ -80,7 +81,7 @@ async fn query_events(
 ) -> Result<Vec<SinexQueryResultRow>> {
     let request = event_query_from_query(query)?;
     let result = client.event_cards(request).await?;
-    Ok(result
+    let rows = result
         .cards
         .into_iter()
         .map(|card| {
@@ -98,12 +99,13 @@ async fn query_events(
             .with_field("origin_kind", format!("{:?}", card.origin_kind))
             .with_caveats(card.caveats)
         })
-        .collect())
+        .collect::<Vec<_>>();
+    Ok(finalize_rows(query, rows))
 }
 
 fn event_query_from_query(query: &SinexQuery) -> Result<EventQuery> {
     let mut request = EventQuery {
-        limit: query.pagination.limit,
+        limit: query.pagination.limit + query.pagination.offset,
         direction: SortDirection::Desc,
         ..Default::default()
     };
@@ -160,9 +162,8 @@ async fn query_source_drivers(
         .into_iter()
         .map(source_driver_row)
         .filter(|row| row_matches_query(query, row))
-        .take(query.pagination.limit as usize)
         .collect();
-    Ok(rows)
+    Ok(finalize_rows(query, rows))
 }
 
 fn source_driver_row(source: SourceCoverageView) -> SinexQueryResultRow {
@@ -202,16 +203,16 @@ async fn query_source_materials(
     let response = client
         .sources_list(SourcesListRequest {
             status,
-            limit: Some(query.pagination.limit),
+            limit: None,
         })
         .await?;
-    Ok(response
+    let rows = response
         .materials
         .into_iter()
         .map(source_material_row)
         .filter(|row| row_matches_query(query, row))
-        .take(query.pagination.limit as usize)
-        .collect())
+        .collect::<Vec<_>>();
+    Ok(finalize_rows(query, rows))
 }
 
 fn source_material_row(material: SourceMaterialSummary) -> SinexQueryResultRow {
@@ -249,12 +250,12 @@ async fn query_debt(
     debt_rows.extend(debt_rows_from_derivation_trigger(
         sinex_primitives::InvalidationTrigger::Replay,
     ));
-    Ok(debt_rows
+    let rows = debt_rows
         .into_iter()
         .map(debt_row)
         .filter(|row| row_matches_query(query, row))
-        .take(query.pagination.limit as usize)
-        .collect())
+        .collect::<Vec<_>>();
+    Ok(finalize_rows(query, rows))
 }
 
 fn debt_row(row: DebtRowView) -> SinexQueryResultRow {
@@ -279,7 +280,7 @@ fn debt_row(row: DebtRowView) -> SinexQueryResultRow {
     .with_field("kind", kind)
     .with_field("severity", severity)
     .with_field("source", source)
-    .with_field("age", row.age_secs.unwrap_or_default().to_string())
+    .with_field("age", row.age_secs.unwrap_or_default())
     .with_caveats(row.caveats)
 }
 
@@ -304,15 +305,13 @@ async fn query_operations(
 ) -> Result<Vec<SinexQueryResultRow>> {
     let operation_type = exact_string_filter(query.predicate.as_ref(), "operation_type")?;
     let status = exact_string_filter(query.predicate.as_ref(), "status")?;
-    let operations = client
-        .ops_list(operation_type, status, Some(query.pagination.limit))
-        .await?;
-    Ok(operations_to_views(&operations)
+    let operations = client.ops_list(operation_type, status, None).await?;
+    let rows = operations_to_views(&operations)
         .into_iter()
         .map(operation_row)
         .filter(|row| row_matches_query(query, row))
-        .take(query.pagination.limit as usize)
-        .collect())
+        .collect::<Vec<_>>();
+    Ok(finalize_rows(query, rows))
 }
 
 fn operation_row(view: OperationView) -> SinexQueryResultRow {
@@ -366,11 +365,58 @@ async fn query_runtime_health(
     .with_field("active_count", health.active_count)
     .with_field("inactive_count", health.inactive_count)
     .with_field("stale_after", 300);
-    Ok(vec![row]
+    let rows = vec![row]
         .into_iter()
         .filter(|row| row_matches_query(query, row))
+        .collect::<Vec<_>>();
+    Ok(finalize_rows(query, rows))
+}
+
+fn finalize_rows(
+    query: &SinexQuery,
+    mut rows: Vec<SinexQueryResultRow>,
+) -> Vec<SinexQueryResultRow> {
+    apply_query_sort(query, &mut rows);
+    rows.into_iter()
+        .skip(query.pagination.offset as usize)
         .take(query.pagination.limit as usize)
-        .collect())
+        .collect()
+}
+
+fn apply_query_sort(query: &SinexQuery, rows: &mut [SinexQueryResultRow]) {
+    for sort in query.sort.iter().rev() {
+        rows.sort_by(|left, right| compare_row_field(left, right, &sort.key, sort.descending));
+    }
+}
+
+fn compare_row_field(
+    left: &SinexQueryResultRow,
+    right: &SinexQueryResultRow,
+    key: &str,
+    descending: bool,
+) -> Ordering {
+    let ordering = match (left.fields.get(key), right.fields.get(key)) {
+        (Some(left), Some(right)) => compare_json_field(left, right),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    };
+    if descending {
+        ordering.reverse()
+    } else {
+        ordering
+    }
+}
+
+fn compare_json_field(left: &Value, right: &Value) -> Ordering {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => left
+            .as_f64()
+            .partial_cmp(&right.as_f64())
+            .unwrap_or(Ordering::Equal),
+        (Value::Bool(left), Value::Bool(right)) => left.cmp(right),
+        _ => value_to_string(left).cmp(&value_to_string(right)),
+    }
 }
 
 fn exact_string_filter(
@@ -637,6 +683,76 @@ mod tests {
         assert!(row_matches_query(&role_query, &row));
         assert!(row_matches_query(&stale_query, &row));
         assert!(!row_matches_query(&stale_range_query, &row));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn query_sort_and_offset_are_applied_to_result_rows() -> xtask::TestResult<()> {
+        let query = parse_sinex_query("operations sort status asc offset 1 limit 1")?;
+        let rows = vec![
+            SinexQueryResultRow::new(
+                QueryUnitId::Operations,
+                SinexObjectKind::Operation,
+                "failed op",
+                json!({"id": "op-failed"}),
+            )
+            .with_ref(SinexObjectRef::new(SinexObjectKind::Operation, "op-failed"))
+            .with_field("status", "failed"),
+            SinexQueryResultRow::new(
+                QueryUnitId::Operations,
+                SinexObjectKind::Operation,
+                "completed op",
+                json!({"id": "op-completed"}),
+            )
+            .with_ref(SinexObjectRef::new(
+                SinexObjectKind::Operation,
+                "op-completed",
+            ))
+            .with_field("status", "completed"),
+            SinexQueryResultRow::new(
+                QueryUnitId::Operations,
+                SinexObjectKind::Operation,
+                "running op",
+                json!({"id": "op-running"}),
+            )
+            .with_ref(SinexObjectRef::new(
+                SinexObjectKind::Operation,
+                "op-running",
+            ))
+            .with_field("status", "running"),
+        ];
+
+        let rows = finalize_rows(&query, rows);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "failed op");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn numeric_query_sort_does_not_use_lexicographic_ordering() -> xtask::TestResult<()> {
+        let query = parse_sinex_query("debt sort age desc limit 2")?;
+        let rows = vec![
+            SinexQueryResultRow::new(
+                QueryUnitId::Debt,
+                SinexObjectKind::DebtRow,
+                "age 20",
+                json!({}),
+            )
+            .with_field("age", 20),
+            SinexQueryResultRow::new(
+                QueryUnitId::Debt,
+                SinexObjectKind::DebtRow,
+                "age 100",
+                json!({}),
+            )
+            .with_field("age", 100),
+        ];
+
+        let rows = finalize_rows(&query, rows);
+
+        assert_eq!(rows[0].title, "age 100");
+        assert_eq!(rows[1].title, "age 20");
         Ok(())
     }
 }
