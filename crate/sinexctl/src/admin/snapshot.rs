@@ -81,7 +81,7 @@ EXAMPLES:
         --components postgres,cas --auto-stop
 
 RESTORE:
-    Inspect and drill before any live restore:
+    Inspect and run an isolated drill before any manual live restore:
         sinexctl ops state inspect --archive <archive>
         sinexctl ops state restore --archive <archive> --target-dir /tmp/restore-drill --dry-run
         sinexctl ops state restore --archive <archive> --target-dir /tmp/restore-drill \\
@@ -803,8 +803,8 @@ impl AdminSnapshotRestoreCommand {
     ) -> Result<RestoreObservedChecks> {
         if !self.confirm_restore {
             bail!(
-                "snapshot restore execution requires --confirm-restore; rerun with --dry-run to \
-                 inspect the plan without writing target state"
+                "snapshot restore drill execution requires --confirm-restore; rerun with \
+                 --dry-run to inspect the plan without writing target state"
             );
         }
         if !self.allow_active_services {
@@ -818,7 +818,7 @@ impl AdminSnapshotRestoreCommand {
         }
         if !target_state.empty {
             bail!(
-                "restore execution requires an empty target directory; {} is not empty",
+                "restore drill execution requires an empty target directory; {} is not empty",
                 self.target_dir.display()
             );
         }
@@ -883,8 +883,8 @@ impl AdminSnapshotRestoreCommand {
 
         let restore_database_url = self.restore_database_url.as_deref().ok_or_else(|| {
             eyre!(
-                "postgres restore execution requires --restore-database-url pointing at an \
-                 empty drill database"
+                "postgres restore drill execution requires --restore-database-url pointing at \
+                 an empty drill database"
             )
         })?;
         let dump_path = self.target_dir.join(&component.path);
@@ -1690,7 +1690,7 @@ pub fn format_snapshot_inspect_result(result: &SnapshotInspectResult) -> String 
     out
 }
 
-/// Render a snapshot restore plan or execution result as a human-readable table string.
+/// Render a snapshot restore plan or isolated drill result as a human-readable table string.
 #[must_use]
 pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -> String {
     let mut out = String::new();
@@ -1700,7 +1700,11 @@ pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -
     out.push_str(&format!("  Target:  {}\n", result.target_dir));
     out.push_str(&format!(
         "  Mode:    {}\n",
-        if result.dry_run { "dry-run" } else { "execute" }
+        if result.dry_run {
+            "dry-run"
+        } else {
+            "isolated-drill"
+        }
     ));
     out.push_str(&format!(
         "  Target empty: {}\n",
@@ -1747,7 +1751,7 @@ pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -
     ));
 
     if let Some(observed) = &result.observed_checks {
-        out.push_str("\n  Observed after restore:\n");
+        out.push_str("\n  Observed after isolated drill:\n");
         out.push_str(&format!(
             "    checks: {}\n",
             if observed.checks_passed {
