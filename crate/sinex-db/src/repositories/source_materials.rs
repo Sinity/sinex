@@ -21,7 +21,12 @@ use sinex_primitives::{Id, SinexError, Timestamp, events::OffsetKind};
 use sqlx::PgPool;
 use time::format_description;
 use uuid::Uuid;
-/// Canonical material kinds recognised by the registry
+/// Canonical storage/backend kinds recognised by the registry.
+///
+/// These values select how raw material is stored or addressed. They are not
+/// capture-package material classes; richer classes such as transcript
+/// documents, OCR segments, API pages, or live stream segments belong in
+/// material metadata and package-mode contracts.
 pub mod material_kinds {
     pub const ANNEX: &str = "annex";
     pub const GIT: &str = "git";
@@ -1004,7 +1009,8 @@ impl SourceMaterialRepository<'_> {
         .await
         .map_err(|e| db_error(e, "get recent materials"))
     }
-    /// Get recent materials filtered by `material_kind`, ordered by staged time.
+    /// Get recent materials filtered by storage/backend `material_kind`,
+    /// ordered by staged time.
     ///
     /// When `material_kind` is Some, the filter is pushed to SQL (indexed column)
     /// rather than filtering in application code.
@@ -1724,9 +1730,10 @@ impl SourceMaterialRepository<'_> {
     /// List readiness reports for every source observed in the registry.
     ///
     /// Sources are grouped at `source_identifier` granularity; counts and the
-    /// worst-case status are aggregated across all `material_kind` values for
-    /// the same identifier so callers cannot get a healthy kind silently
-    /// masking a stale or failed kind. The kind list is preserved in
+    /// worst-case status are aggregated across all storage/backend
+    /// `material_kind` values for the same identifier so callers cannot get a
+    /// healthy storage kind silently masking a stale or failed kind. The kind
+    /// list is preserved in
     /// `evidence.material_kinds` for diagnostics. The derivation runs purely
     /// from `raw.source_material_registry` and `core.events`; binding and
     /// parser-job tables do not yet exist (#1098 places bindings in Nix
