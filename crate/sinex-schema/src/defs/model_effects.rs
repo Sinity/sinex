@@ -1,11 +1,14 @@
-//! Model-effect record schema (#1063).
+//! Model-effect record schema.
 //!
-//! Records LLM call outputs keyed by composite input hash so non-deterministic
-//! derived events can be replayed against a recorded effect rather than
-//! re-issued. This is an event-spine provenance artifact, not a parallel lookup
-//! cache. Replay policy governs whether to reuse a record, fail if missing, or
-//! always re-evaluate. NOTE: not yet wired — `pool.model_effects()` has no
-//! production callers (#1063).
+//! Dormant schema surface for recorded model effects. The table records LLM
+//! call outputs keyed by composite input hash so non-deterministic derived
+//! outputs can be replayed against a recorded effect rather than re-issued.
+//!
+//! Current ownership is deliberately explicit: the schema and repository are
+//! registered, but no production caller records or replays model effects yet.
+//! Future live use must enter through the Proposal/Judgment/Operation or
+//! derivation path that consumes this table; `core.model_effects` must not
+//! become a parallel event log, hidden authority channel, or ad hoc model cache.
 
 use crate::TableDef;
 use sea_query::{
@@ -14,9 +17,11 @@ use sea_query::{
 
 /// **Table: `core.model_effects`**
 ///
-/// Immutable record of a completed LLM call. Keyed by composite hash of
-/// (provider, model, `prompt_hash`, `schema_hash`, `input_hash`) so identical
-/// requests can replay without re-invoking the model.
+/// Immutable record of a completed LLM call.
+///
+/// The row is keyed by a composite hash of `(provider, model, prompt_hash,
+/// schema_hash, input_hash)` so identical requests can replay without
+/// re-invoking the model once a production effect path is wired.
 #[derive(Iden, Copy, Clone)]
 pub enum ModelEffects {
     Table,

@@ -2,8 +2,10 @@
 
 Status: design contract for the embedding execution layer. Implementation
 tracking lives in #1021 (embedding repository and hybrid search SQL) and #400
-(Tier-1 design). The model-effect cache and replay policy (#1063) sit above
-this runtime layer.
+(Tier-1 design). Recorded model effects are a separate dormant
+schema/repository surface above this runtime layer; they are not part of the
+embedding runtime until a live derivation or proposal/judgment consumer is
+wired.
 
 This record owns the *runtime* concerns of embedding generation: which model
 runs where, how the client throttles and retries, how backfill is paced, and
@@ -28,9 +30,11 @@ content surfaces and rules).
   are #1021's substrate (`sinex-db` repository module).
 - Semantic search ranking, hybrid scoring weights, or query-time prompt
   shape. Those are the search/retrieval layer's concerns.
-- Model-effect tracking and replay. Handled by the model-effect cache work
-  in #1063 — embeddings are one of multiple effect classes that surface goes
-  through.
+- Model-effect tracking and replay. `core.model_effects` exists for recorded
+  non-deterministic effects, but current embedding generation should use the
+  embedding model registry and embedding repository. Do not route embeddings
+  through the dormant model-effect table unless a future replay/derivation
+  design explicitly does so.
 
 ## Model Identity
 
@@ -169,9 +173,9 @@ own redaction pass; text arriving at the runtime is already admission-checked.
 - Whether to add a GPU profile (`use_gpu = true`) and a CUDA backend
   alongside Ollama. Realistic only if a GPU is added to the workstation;
   out of scope today.
-- Whether the model-effect cache (#1063) and the embedding cache table
-  should be unified. They serve different replay semantics; unifying is
-  tempting but premature.
+- Whether recorded model effects and embedding rows should ever share a common
+  effect abstraction. They serve different replay semantics today; unifying is
+  premature unless a concrete derivation/replay consumer needs it.
 - How to handle a model upgrade (new dimensions): the registry already
   isolates models, but search needs a "preferred model" pointer and a
   migration path. Owning record: search/retrieval layer.
@@ -187,5 +191,6 @@ own redaction pass; text arriving at the runtime is already admission-checked.
 
 **Related:** `crate/sinex-schema/docs/document_layer.md`,
 `crate/sinexd/docs/runtime_qos.md`,
-issues #400, #1021, #1063, #1076, #1118 (inference decision metadata),
-#1116 (prompt router + budget ledger).
+issues #400, #1021, #1076, #1118 (inference decision metadata), #1116
+(prompt router + budget ledger), and #1963 (cleanup ownership for dormant
+model-effect surfaces).

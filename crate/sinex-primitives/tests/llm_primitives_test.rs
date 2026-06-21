@@ -1,4 +1,4 @@
-//! Tests for model-effect cache primitives — `ReplayPolicy`, `can_replay`,
+//! Tests for model-effect record primitives — `ReplayPolicy`, `can_replay`,
 //! `ModelEffectRequest` `composite_key` determinism, and record creation.
 
 use sinex_primitives::llm::{
