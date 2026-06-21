@@ -123,7 +123,7 @@ Start with the canonical repo workflow docs:
 
 - contributing workflow: [CONTRIBUTING.md](CONTRIBUTING.md)
 - testing workflow: [TESTING.md](TESTING.md)
-- local runtime loop: `xtask infra start` and `xtask run core --logs`
+- local runtime loop and devshell smoke: [xtask/docs/devshell-runtime.md](xtask/docs/devshell-runtime.md)
 - xtask/tooling reference: [xtask/docs/README.md](xtask/docs/README.md)
 - sandbox harness details: [xtask/docs/sandbox/README.md](xtask/docs/sandbox/README.md)
 
