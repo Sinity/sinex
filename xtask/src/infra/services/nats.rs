@@ -3,6 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const NATS_JETSTREAM_MAX_MEM: &str = "64MB";
+const NATS_JETSTREAM_MAX_FILE: &str = "256MB";
+
 /// Kill stale nats-server processes that may be orphaned.
 ///
 /// This helps prevent "port already in use" errors and cleans up
@@ -262,12 +265,14 @@ host = "127.0.0.1"
 port = {}
 jetstream {{
     store_dir = "{}"
-    max_mem = 64MB
-    max_file = 256MB
+    max_mem = {}
+    max_file = {}
 }}
 "#,
             self.config.port,
-            store_dir.display()
+            store_dir.display(),
+            NATS_JETSTREAM_MAX_MEM,
+            NATS_JETSTREAM_MAX_FILE
         );
 
         // Check if existing config matches expected (handles port changes)
@@ -655,6 +660,11 @@ mod tests {
         assert!(
             conf.contains(r#"host = "127.0.0.1""#),
             "dev NATS config must pin a loopback bind, got:\n{conf}"
+        );
+        assert!(
+            conf.contains(&format!("max_mem = {NATS_JETSTREAM_MAX_MEM}"))
+                && conf.contains(&format!("max_file = {NATS_JETSTREAM_MAX_FILE}")),
+            "dev NATS config must carry bounded JetStream budgets, got:\n{conf}"
         );
         Ok(())
     }
