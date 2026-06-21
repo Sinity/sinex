@@ -1631,8 +1631,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn stage_material_contract_records_package_mode_binding()
-    -> xtask::sandbox::TestResult<()> {
+    async fn stage_material_contract_records_package_mode_binding() -> xtask::sandbox::TestResult<()>
+    {
         let request = SourcesStageRequest {
             file_path: "/realm/data/captures/screenshot/session.json".to_string(),
             format: Some(SourceMaterialFormat::Json),

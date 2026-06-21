@@ -1719,7 +1719,7 @@ mod tests {
             status: HealthStatus::Healthy,
             connected: true,
             memory_owner: crate::api::service_container::ConfirmationBufferMemoryOwner::None,
-            pressure_level: "nominal".to_string(),
+            pressure_level: sinex_primitives::RuntimePressureLevel::Nominal,
             runtime_action: sinex_primitives::RuntimePressureAction::Admit,
             observed_buffers: 0,
             pending_count: 0,

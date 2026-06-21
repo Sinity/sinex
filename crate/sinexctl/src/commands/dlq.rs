@@ -242,9 +242,9 @@ mod tests {
             total_bytes: 4096,
             first_seq: 1,
             last_seq: 11,
-            pressure_level: "critical".to_string(),
+            pressure_level: sinex_primitives::RuntimePressureLevel::Critical,
             resource_pressure: DlqPressureSignal {
-                pressure_level: "critical".to_string(),
+                pressure_level: sinex_primitives::RuntimePressureLevel::Critical,
                 runtime_action: sinex_primitives::RuntimePressureAction::Throttle,
                 pending_messages: 11,
                 pending_bytes: 4096,
