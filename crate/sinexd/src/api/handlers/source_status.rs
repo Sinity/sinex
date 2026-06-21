@@ -3,9 +3,12 @@
 use crate::api::service_container::{ConfirmationBufferHealth, ServiceContainer};
 use sinex_db::DbPoolExt;
 use sinex_primitives::SinexError;
-use sinex_primitives::rpc::source_status::{
-    EmitStallThresholds, EmitStallVerdict, SourceStatus, SourcesStatusRequest,
-    SourcesStatusResponse, SourcesStatusViewRequest,
+use sinex_primitives::rpc::{
+    methods,
+    source_status::{
+        EmitStallThresholds, EmitStallVerdict, SourceStatus, SourcesStatusRequest,
+        SourcesStatusResponse, SourcesStatusViewRequest,
+    },
 };
 use sinex_primitives::source_contracts::{
     AccessScope, BudgetPressureAction, ResourceBudgetSpec, ResourceProfile, SourceContract,
@@ -601,14 +604,14 @@ fn source_actions(
             ActionAvailabilityState::Enabled,
         )
         .with_command_hint(format!("sinexctl sources readiness {source_id}"))
-        .with_rpc_method("sources.readiness.get"),
+        .with_rpc_method(methods::SOURCES_READINESS_GET),
         ActionAvailability::read(
             "sources.coverage",
             "Coverage",
             ActionAvailabilityState::Enabled,
         )
         .with_command_hint("sinexctl sources coverage")
-        .with_rpc_method("sources.coverage"),
+        .with_rpc_method(methods::SOURCES_COVERAGE),
     ];
     if has_pressure {
         actions.push(
@@ -618,7 +621,7 @@ fn source_actions(
                 ActionAvailabilityState::Enabled,
             )
             .with_command_hint("sinexctl runtime health")
-            .with_rpc_method("system.health"),
+            .with_rpc_method(methods::SYSTEM_HEALTH),
         );
     }
     let mut seen = actions
@@ -648,7 +651,7 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
         "check" => (
             "Check Bridge",
             Some(format!("sinexctl sources status {source_id} --format json")),
-            Some("sources.status.view"),
+            Some(methods::SOURCES_STATUS_VIEW),
             ActionSideEffect::Read,
         ),
         "inspect" => (
@@ -656,21 +659,21 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
             module
                 .map(|module| format!("sinexctl runtime status {module}"))
                 .or_else(|| Some(format!("sinexctl sources status {source_id} --format json"))),
-            module.map(|_| "runtime.status"),
+            module.map(|_| methods::COORDINATION_INSTANCE_HEALTH),
             ActionSideEffect::Read,
         ),
         "drain" => (
             "Drain Bridge",
             module
                 .map(|module| format!("sinexctl runtime drain {module} --reason source-coverage")),
-            module.map(|_| "runtime.drain"),
+            module.map(|_| methods::RUNTIME_DRAIN),
             ActionSideEffect::Admin,
         ),
         "flush" => ("Flush Bridge", None, None, ActionSideEffect::Admin),
         "reconnect" => (
             "Reconnect Bridge",
             module.map(|module| format!("sinexctl runtime resume {module}")),
-            module.map(|_| "runtime.resume"),
+            module.map(|_| methods::RUNTIME_RESUME),
             ActionSideEffect::Admin,
         ),
         "pause" => (
@@ -678,14 +681,16 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
             package_operation_command_hint(operation, source_id).or_else(|| {
                 module.map(|module| format!("sinexctl runtime drain {module} --reason source-paused"))
             }),
-            package_operation_rpc_method(operation, source_id).or_else(|| module.map(|_| "runtime.drain")),
+            package_operation_rpc_method(operation, source_id)
+                .or_else(|| module.map(|_| methods::RUNTIME_DRAIN)),
             ActionSideEffect::Admin,
         ),
         "resume" => (
             package_operation_label(operation, "Resume Package Mode").unwrap_or("Resume Bridge"),
             package_operation_command_hint(operation, source_id)
                 .or_else(|| module.map(|module| format!("sinexctl runtime resume {module}"))),
-            package_operation_rpc_method(operation, source_id).or_else(|| module.map(|_| "runtime.resume")),
+            package_operation_rpc_method(operation, source_id)
+                .or_else(|| module.map(|_| methods::RUNTIME_RESUME)),
             ActionSideEffect::Admin,
         ),
         "authorize" => (
@@ -703,13 +708,13 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
         "import-transcript" => (
             "Import Transcript",
             Some("sinexctl sources stage <path> --format json".to_string()),
-            Some("sources.stage"),
+            Some(methods::SOURCES_STAGE),
             ActionSideEffect::Write,
         ),
         "import-ocr" => (
             "Import OCR",
             Some("sinexctl sources stage <path> --format json".to_string()),
-            Some("sources.stage"),
+            Some(methods::SOURCES_STAGE),
             ActionSideEffect::Write,
         ),
         "import-bundle" => (
@@ -718,7 +723,7 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
                 "sinexctl sources stage <path> --binding source:media.audio-transcript.audio-bundle-staged --format json"
                     .to_string(),
             ),
-            Some("sources.stage"),
+            Some(methods::SOURCES_STAGE),
             ActionSideEffect::Write,
         ),
         "import-screenshots" => (
@@ -727,7 +732,7 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
                 "sinexctl sources stage <path> --binding source:media.screen-ocr.screenshot-ocr-staged --format json"
                     .to_string(),
             ),
-            Some("sources.stage"),
+            Some(methods::SOURCES_STAGE),
             ActionSideEffect::Write,
         ),
         "export" => (
@@ -741,7 +746,7 @@ fn operation_capability_action(operation: &str, source_id: &str) -> ActionAvaila
         "replay" => (
             "Replay Source",
             Some(format!("sinexctl ops replay plan --source {source_id}")),
-            Some("replay.create"),
+            Some(methods::REPLAY_CREATE_OPERATION),
             ActionSideEffect::Write,
         ),
         "delete-material" => (
@@ -871,7 +876,7 @@ fn package_operation_mode_hint(operation: &str) -> Option<&'static str> {
 }
 
 fn package_operation_rpc_method(operation: &str, source_id: &str) -> Option<&'static str> {
-    package_operation_command_hint(operation, source_id).map(|_| "ops.start")
+    package_operation_command_hint(operation, source_id).map(|_| methods::OPS_START)
 }
 
 fn package_operation_label<'a>(operation: &str, label: &'a str) -> Option<&'a str> {
@@ -892,6 +897,7 @@ mod tests {
     use super::*;
     use sinex_primitives::domain::{HealthStatus, ModuleName};
     use sinex_primitives::privacy::ProcessingContext;
+    use sinex_primitives::rpc::method_catalog;
     use sinex_primitives::source_contracts::{
         AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
         RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SubjectRef,
@@ -926,6 +932,31 @@ mod tests {
     .runtime_shape(RuntimeShape::OnDemand)
     .build_impact(SourceBuildImpact::ZERO)
     .build();
+
+    fn assert_action_rpc_methods_are_cataloged(
+        source_id: &str,
+        actions: &[ActionAvailability],
+    ) -> xtask::TestResult<()> {
+        let catalog = method_catalog()
+            .into_iter()
+            .map(|method| method.name)
+            .collect::<BTreeSet<_>>();
+        let missing = actions
+            .iter()
+            .filter_map(|action| {
+                action
+                    .rpc_method
+                    .as_deref()
+                    .filter(|method| !catalog.contains(method))
+                    .map(|method| format!("{} -> {}", action.id, method))
+            })
+            .collect::<Vec<_>>();
+        color_eyre::eyre::ensure!(
+            missing.is_empty(),
+            "source {source_id} actions reference unknown RPC methods: {missing:?}"
+        );
+        Ok(())
+    }
 
     #[sinex_test]
     async fn source_coverage_view_marks_ready_when_catalog_material_and_events_exist()
@@ -980,6 +1011,7 @@ mod tests {
                 .iter()
                 .any(|action| action.id == "sources.readiness")
         );
+        assert_action_rpc_methods_are_cataloged(CONTRACT.id, &view.actions)?;
         Ok(())
     }
 
@@ -1144,6 +1176,7 @@ mod tests {
             reconnect.command_hint.as_deref(),
             Some("sinexctl runtime resume terminal-source")
         );
+        assert_action_rpc_methods_are_cataloged(BRIDGE_CONTRACT.id, &view.actions)?;
         Ok(())
     }
 
@@ -1206,7 +1239,10 @@ mod tests {
             replay.command_hint.as_deref(),
             Some("sinexctl ops replay plan --source media.audio-transcript")
         );
-        assert_eq!(replay.rpc_method.as_deref(), Some("replay.create"));
+        assert_eq!(
+            replay.rpc_method.as_deref(),
+            Some(methods::REPLAY_CREATE_OPERATION)
+        );
         assert_eq!(replay.side_effect, ActionSideEffect::Write);
 
         let export = view
@@ -1327,6 +1363,8 @@ mod tests {
                 "sinexctl ops start media.screen-ocr.capture-region --scope '{\"source_id\":\"media.screen-ocr\",\"mode_id\":\"source:media.screen-ocr.on-demand-region\"}' --format json"
             )
         );
+        assert_action_rpc_methods_are_cataloged("media.audio-transcript", &view.actions)?;
+        assert_action_rpc_methods_are_cataloged("media.screen-ocr", &screen_view.actions)?;
 
         Ok(())
     }
@@ -1401,6 +1439,7 @@ mod tests {
         );
         assert_eq!(check.side_effect, ActionSideEffect::Read);
 
+        assert_action_rpc_methods_are_cataloged("email.mailbox", &view.actions)?;
         Ok(())
     }
 
