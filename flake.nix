@@ -938,6 +938,10 @@ SQL
                     ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot)
                       return 0
                       ;;
+                    check)
+                      _sinex_xtask_changed_strict_has_no_rust_delta "$@"
+                      return $?
+                      ;;
                     fix)
                       _sinex_xtask_is_no_compile_subcommand "$@"
                       return $?
@@ -1037,6 +1041,66 @@ SQL
                   esac
                 }
 
+                _sinex_xtask_changed_strict_has_no_rust_delta() {
+                  local command_name seen_command base_ref next_arg merge_base changed_files
+
+                  command_name="$(_sinex_xtask_command_name "$@")"
+                  [ "$command_name" = "check" ] || return 1
+
+                  seen_command=0
+                  base_ref=""
+                  while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                      --json|--list-commands|--bg|--fg|-v|-vv|-vvv)
+                        shift
+                        ;;
+                      --format)
+                        if [ "$#" -ge 2 ]; then
+                          shift 2
+                        else
+                          shift
+                        fi
+                        ;;
+                      --format=*)
+                        shift
+                        ;;
+                      "$command_name")
+                        seen_command=1
+                        shift
+                        ;;
+                      --changed-strict)
+                        [ "$seen_command" = 1 ] || { shift; continue; }
+                        base_ref="origin/master"
+                        if [ "$#" -ge 2 ]; then
+                          next_arg="$2"
+                          case "$next_arg" in
+                            -*)
+                              ;;
+                            *)
+                              base_ref="$next_arg"
+                              ;;
+                          esac
+                        fi
+                        break
+                        ;;
+                      --changed-strict=*)
+                        [ "$seen_command" = 1 ] || { shift; continue; }
+                        base_ref="''${1#--changed-strict=}"
+                        [ -n "$base_ref" ] || base_ref="origin/master"
+                        break
+                        ;;
+                      *)
+                        shift
+                        ;;
+                    esac
+                  done
+
+                  [ -n "$base_ref" ] || return 1
+                  merge_base="$(git -C "$root_dir" merge-base "$base_ref" HEAD 2>/dev/null)" || return 1
+                  changed_files="$(git -C "$root_dir" diff --name-only "$merge_base" HEAD -- '*.rs' 2>/dev/null | sed '/^$/d')" || return 1
+                  [ -z "$changed_files" ]
+                }
+
                 _sinex_xtask_command_name() {
                   while [ "$#" -gt 0 ]; do
                     case "$1" in
@@ -1080,6 +1144,9 @@ SQL
                     return 1
                   fi
                   if _sinex_xtask_is_no_compile_subcommand "$@"; then
+                    return 1
+                  fi
+                  if _sinex_xtask_changed_strict_has_no_rust_delta "$@"; then
                     return 1
                   fi
                   command_name="$(_sinex_xtask_command_name "$@")"
