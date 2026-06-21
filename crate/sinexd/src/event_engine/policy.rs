@@ -1381,6 +1381,38 @@ mod tests {
         Ok(())
     }
 
+    async fn insert_scoped_rule(
+        pool: &sinex_db::DbPool,
+        name: &str,
+        matcher_value: &str,
+        action_label: &str,
+        event_source: &str,
+        event_type: &str,
+        field_path: &str,
+    ) -> TestResult<()> {
+        let repo = pool.privacy_policy();
+        repo.add_rule(
+            name,
+            "test scoped disclosure rule",
+            "literal",
+            matcher_value,
+            false,
+            "redact",
+            Some(action_label),
+            "default",
+        )
+        .await?;
+        repo.bind_field_rule(
+            name,
+            Some(event_source),
+            Some(event_type),
+            Some(field_path),
+            0,
+        )
+        .await?;
+        Ok(())
+    }
+
     // ─── DB rule loading ──────────────────────────────────────────────────────
 
     #[sinex_test]
@@ -1581,6 +1613,184 @@ mod tests {
         assert!(
             val_other.contains("PII_DATA"),
             "unscoped-source event must be untouched; got: {val_other}"
+        );
+        Ok(())
+    }
+
+    // ─── Media disclosure (#2039 / #1043) ────────────────────────────────────
+
+    #[sinex_test]
+    async fn media_audio_transcript_dlq_disclosure_redacts_segment_text_and_material_ref(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let pool = ctx.pool();
+        insert_scoped_rule(
+            pool,
+            "media-audio-text-dlq",
+            "CALL_TOKEN",
+            "<MEDIA_TEXT>",
+            "media.audio",
+            "media.audio.transcript_segment_observed",
+            "/text",
+        )
+        .await?;
+        insert_scoped_rule(
+            pool,
+            "media-audio-material-dlq",
+            "raw-audio-secret-001",
+            "<MEDIA_MATERIAL>",
+            "media.audio",
+            "media.audio.transcript_segment_observed",
+            "/raw_material_id",
+        )
+        .await?;
+
+        let engine = PolicyEngine::load(pool.clone()).await?;
+        let event = make_material_event(
+            "media.audio",
+            "media.audio.transcript_segment_observed",
+            serde_json::json!({
+                "segment_index": 7,
+                "text": "caller said CALL_TOKEN during the meeting",
+                "raw_material_id": "raw-audio-secret-001",
+                "source_file": "/captures/audio/meeting.wav",
+            }),
+        );
+
+        let decision = engine
+            .disclose_event_payload(&event, DisclosureContext::Dlq)
+            .await;
+
+        let disclosed = serde_json::to_string(&decision.value)?;
+        assert!(
+            decision.changed,
+            "media transcript disclosure must change sensitive fields"
+        );
+        assert_eq!(decision.context, DisclosureContext::Dlq);
+        assert!(
+            !disclosed.contains("CALL_TOKEN"),
+            "DLQ disclosure must not expose transcript text secret: {disclosed}"
+        );
+        assert!(
+            !disclosed.contains("raw-audio-secret-001"),
+            "DLQ disclosure must not expose scoped raw material id: {disclosed}"
+        );
+        assert!(
+            disclosed.contains("<MEDIA_TEXT>") && disclosed.contains("<MEDIA_MATERIAL>"),
+            "DLQ disclosure should retain visible redaction markers: {disclosed}"
+        );
+        assert!(
+            decision
+                .caveats
+                .iter()
+                .any(|caveat| caveat.policy_ref == "db.media-audio-text-dlq"),
+            "operator-visible caveats should name the text policy"
+        );
+        assert_eq!(
+            event.payload["text"].as_str(),
+            Some("caller said CALL_TOKEN during the meeting"),
+            "presentation-time disclosure must not mutate stored event payload"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn media_screen_ocr_view_disclosure_redacts_text_window_path_and_material_ref(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let pool = ctx.pool();
+        for (name, matcher, label, field_path) in [
+            (
+                "media-screen-ocr-text-view",
+                "SCREEN_SECRET",
+                "<OCR_TEXT>",
+                "/text",
+            ),
+            (
+                "media-screen-window-view",
+                "Secret Window",
+                "<WINDOW_TITLE>",
+                "/window_title",
+            ),
+            (
+                "media-screen-source-path-view",
+                "/home/sinity/private/screen.png",
+                "<SOURCE_PATH>",
+                "/source_file",
+            ),
+            (
+                "media-screen-material-view",
+                "raw-screen-secret-001",
+                "<SCREEN_MATERIAL>",
+                "/raw_material_id",
+            ),
+        ] {
+            insert_scoped_rule(
+                pool,
+                name,
+                matcher,
+                label,
+                "media.screen",
+                "media.screen.ocr_segment_observed",
+                field_path,
+            )
+            .await?;
+        }
+
+        let engine = PolicyEngine::load(pool.clone()).await?;
+        let event = make_material_event(
+            "media.screen",
+            "media.screen.ocr_segment_observed",
+            serde_json::json!({
+                "segment_index": 3,
+                "text": "visible SCREEN_SECRET from a focused app",
+                "window_title": "Secret Window",
+                "source_file": "/home/sinity/private/screen.png",
+                "raw_material_id": "raw-screen-secret-001",
+            }),
+        );
+
+        let decision = engine
+            .disclose_event_payload(&event, DisclosureContext::View)
+            .await;
+        let disclosed = serde_json::to_string(&decision.value)?;
+
+        assert!(
+            decision.changed,
+            "OCR view disclosure must change sensitive fields"
+        );
+        assert_eq!(decision.context, DisclosureContext::View);
+        for forbidden in [
+            "SCREEN_SECRET",
+            "Secret Window",
+            "/home/sinity/private/screen.png",
+            "raw-screen-secret-001",
+        ] {
+            assert!(
+                !disclosed.contains(forbidden),
+                "OCR view disclosure leaked `{forbidden}` in {disclosed}"
+            );
+        }
+        for marker in [
+            "<OCR_TEXT>",
+            "<WINDOW_TITLE>",
+            "<SOURCE_PATH>",
+            "<SCREEN_MATERIAL>",
+        ] {
+            assert!(
+                disclosed.contains(marker),
+                "OCR view disclosure should include marker `{marker}` in {disclosed}"
+            );
+        }
+        assert_eq!(
+            decision.caveats.len(),
+            4,
+            "each scoped media field policy should surface as an operator caveat"
+        );
+        assert_eq!(
+            event.payload["window_title"].as_str(),
+            Some("Secret Window"),
+            "presentation-time disclosure must not mutate stored event payload"
         );
         Ok(())
     }
