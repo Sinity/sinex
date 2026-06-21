@@ -1521,6 +1521,63 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn command_catalog_streaming_rows_advertise_ndjson() -> xtask::sandbox::TestResult<()> {
+        for entry in command_catalog() {
+            if entry.capability.streaming {
+                assert_eq!(
+                    entry.effect,
+                    CommandEffect::Streaming,
+                    "streaming command `{}` must be classified as streaming",
+                    entry.path
+                );
+                assert!(
+                    entry.capability.supports(OutputFormat::Ndjson),
+                    "streaming command `{}` must advertise ndjson row output",
+                    entry.path
+                );
+                continue;
+            }
+
+            assert_ne!(
+                entry.effect,
+                CommandEffect::Streaming,
+                "non-streaming command `{}` must not be classified as streaming",
+                entry.path
+            );
+
+            if entry.capability.supports(OutputFormat::Ndjson) {
+                assert!(
+                    entry.capability.note.is_some(),
+                    "finite ndjson-capable command `{}` must document what one ndjson row means",
+                    entry.path
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_dot_output_is_graph_scoped() -> xtask::sandbox::TestResult<()> {
+        for entry in command_catalog() {
+            if !entry.capability.supports(OutputFormat::Dot) {
+                continue;
+            }
+
+            assert!(
+                matches!(entry.path, "events trace" | "ops replay graph"),
+                "command `{}` advertises dot output but is not a graph-shaped surface",
+                entry.path
+            );
+            assert!(
+                entry.capability.note.is_some(),
+                "dot-capable command `{}` must document the graph it renders",
+                entry.path
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn command_catalog_mutating_entries_declare_guards() -> xtask::sandbox::TestResult<()> {
         for entry in command_catalog() {
             if entry.effect != CommandEffect::Mutating {
