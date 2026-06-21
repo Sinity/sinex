@@ -7,6 +7,11 @@
 # class of bug PR #1268 (and several others) shipped under because the
 # author's local check ran against a stale dependency graph.
 #
+# The hook computes the pushed checkout's devshell paths itself before running
+# `xtask`. This prevents a worktree push from inheriting the main checkout's
+# target dir, database socket, or `.direnv` wrapper and falling into a surprise
+# `nix develop` bootstrap before the useful guard even starts.
+#
 # Skip in two cases:
 #   1. Pushing a branch with no commits ahead of origin/master (just
 #      catching up). We have nothing to drift-check against.
@@ -21,12 +26,180 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
+_sinex_pre_push_xtask_env_matches_checkout() {
+  [[ -n "${SINEX_DEV_ROOT:-}" ]] \
+    && [[ "${SINEX_DEV_ROOT:-}" == "$REPO_ROOT" ]] \
+    && command -v xtask >/dev/null 2>&1
+}
+
+_sinex_pre_push_checkout_hash() {
+  printf '%s' "$REPO_ROOT" | sha256sum | cut -c1-12
+}
+
+_sinex_pre_push_cache_root() {
+  local user_name checkout_hash
+  user_name="${USER:-$(id -un)}"
+  checkout_hash="$(_sinex_pre_push_checkout_hash)"
+  printf '/var/cache/sinex/%s/%s' "$user_name" "$checkout_hash"
+}
+
+_sinex_pre_push_gateway_port() {
+  local checkout_hash first_byte
+  checkout_hash="$(_sinex_pre_push_checkout_hash)"
+  first_byte="$((16#${checkout_hash:0:2}))"
+  printf '%s' "$((19000 + first_byte))"
+}
+
+_sinex_pre_push_nats_port() {
+  local checkout_hash first_byte
+  checkout_hash="$(_sinex_pre_push_checkout_hash)"
+  first_byte="$((16#${checkout_hash:0:2}))"
+  printf '%s' "$((4222 + (first_byte % 100)))"
+}
+
+_sinex_pre_push_checkout_env() {
+  local cache_root dev_state_dir target_dir pg_run_dir nats_port gateway_port
+  cache_root="$(_sinex_pre_push_cache_root)"
+  dev_state_dir="$cache_root/dev-state"
+  target_dir="$cache_root/target"
+  pg_run_dir="$dev_state_dir/run"
+  nats_port="$(_sinex_pre_push_nats_port)"
+  gateway_port="$(_sinex_pre_push_gateway_port)"
+
+  mkdir -p "$cache_root" "$target_dir" "$dev_state_dir" "$REPO_ROOT/.sinex/state"
+
+  env \
+    CARGO_TARGET_DIR="$target_dir" \
+    DATABASE_URL="postgresql:///sinex_dev?host=$pg_run_dir" \
+    PGHOST="$pg_run_dir" \
+    PGPORT= \
+    SINEX_CACHE_DIR="$cache_root" \
+    SINEX_DEV_CACHE_ROOT="$cache_root" \
+    SINEX_DEV_GATEWAY_PORT="$gateway_port" \
+    SINEX_DEV_NATS_PORT="$nats_port" \
+    SINEX_DEV_ROOT="$REPO_ROOT" \
+    SINEX_DEV_STATE_DIR="$dev_state_dir" \
+    SINEX_NATS_DIR="$dev_state_dir/nats" \
+    SINEX_NATS_URL="nats://127.0.0.1:$nats_port" \
+    SINEX_ROOT="$REPO_ROOT" \
+    SINEX_STATE_DIR="$REPO_ROOT/.sinex/state" \
+    "$@"
+}
+
+_sinex_pre_push_checkout_xtask_binary() {
+  local cache_root candidate
+  cache_root="$(_sinex_pre_push_cache_root)"
+  candidate="$cache_root/target/debug/xtask"
+  [[ -x "$candidate" ]] && printf '%s\n' "$candidate"
+}
+
+_sinex_pre_push_path_xtask_binary() {
+  local candidate
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    case "$candidate" in
+      "$REPO_ROOT"/*|*/.direnv/*|/realm/project/sinex/.direnv/*|/realm/tmp/worktrees/*/.direnv/*)
+        continue
+        ;;
+    esac
+    [[ -x "$candidate" ]] && printf '%s\n' "$candidate" && return 0
+  done < <(type -P -a xtask 2>/dev/null || true)
+}
+
+_sinex_pre_push_clean_env() {
+  env \
+    -u CARGO_TARGET_DIR \
+    -u DATABASE_URL \
+    -u PGHOST \
+    -u PGPORT \
+    -u SINEX_API_ADMIN_TOKEN \
+    -u SINEX_API_TCP_LISTEN \
+    -u SINEX_API_TLS_CERT \
+    -u SINEX_API_TLS_CLIENT_CA \
+    -u SINEX_API_TLS_KEY \
+    -u SINEX_API_URL \
+    -u SINEX_CACHE_DIR \
+    -u SINEX_DEV_CACHE_ROOT \
+    -u SINEX_DEV_GATEWAY_PORT \
+    -u SINEX_DEV_NATS_PORT \
+    -u SINEX_DEV_PG_PORT \
+    -u SINEX_DEV_ROOT \
+    -u SINEX_DEV_STATE_DIR \
+    -u SINEX_NATS_DIR \
+    -u SINEX_NATS_URL \
+    -u SINEX_ROOT \
+    -u SINEX_STATE_DIR \
+    -u SINEX_TEST_PGDATA_DIR \
+    -u SINEX_TEST_RESULTS_DIR \
+    -u SINEX_TEST_TMPDIR \
+    "$@"
+}
+
+_sinex_pre_push_run_xtask() {
+  local xtask_bin
+
+  xtask_bin="$(_sinex_pre_push_checkout_xtask_binary || true)"
+  if [[ -n "$xtask_bin" ]]; then
+    echo "[pre-push] Using checkout-local xtask binary: $xtask_bin" >&2
+    _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+    return $?
+  fi
+
+  if _sinex_pre_push_xtask_env_matches_checkout; then
+    xtask_bin="$(command -v xtask)"
+    case "$xtask_bin" in
+      */.direnv/*)
+        echo "[pre-push] Ignoring checkout .direnv xtask wrapper without a built checkout-local binary." >&2
+        ;;
+      *)
+        echo "[pre-push] Using active devshell xtask: $xtask_bin" >&2
+        _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+        return $?
+        ;;
+    esac
+  fi
+
+  xtask_bin="$(_sinex_pre_push_path_xtask_binary || true)"
+  if [[ -n "$xtask_bin" ]]; then
+    echo "[pre-push] Using read-only PATH xtask fallback: $xtask_bin" >&2
+    _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+    return $?
+  fi
+
+  echo "[pre-push] No usable xtask binary found; using nix develop fallback." >&2
+  _sinex_pre_push_clean_env \
+    nix develop "$REPO_ROOT" --command xtask "$@"
+}
+
+_sinex_pre_push_record_drift_bypass() {
+  local branch="$1"
+  local sha="$2"
+
+  local xtask_bin
+
+  xtask_bin="$(_sinex_pre_push_checkout_xtask_binary || true)"
+  if [[ -n "$xtask_bin" ]]; then
+    _sinex_pre_push_checkout_env "$xtask_bin" record-drift-bypass --branch "$branch" --sha "$sha" 2>/dev/null || true
+    return 0
+  fi
+
+  xtask_bin="$(_sinex_pre_push_path_xtask_binary || true)"
+  if [[ -n "$xtask_bin" ]]; then
+    _sinex_pre_push_checkout_env "$xtask_bin" record-drift-bypass --branch "$branch" --sha "$sha" 2>/dev/null || true
+    return 0
+  fi
+
+  # Keep the emergency bypass non-blocking. A foreign/stale shell must not
+  # rebuild xtask or enter nix just to record the audit event.
+  echo "[pre-push] Drift-bypass audit recording skipped: no usable xtask binary outside Nix." >&2
+}
+
 if [[ "${SINEX_SKIP_DRIFT_GUARD:-}" == "1" ]]; then
   echo "[pre-push] SINEX_SKIP_DRIFT_GUARD=1 — drift guard bypassed." >&2
   # Record the bypass in xtask history (#1565)
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
   sha="$(git rev-parse HEAD 2>/dev/null || echo "")"
-  xtask record-drift-bypass --branch "$branch" --sha "$sha" 2>/dev/null || true
+  _sinex_pre_push_record_drift_bypass "$branch" "$sha"
   exit 0
 fi
 
@@ -52,32 +225,7 @@ if [[ -z "$(git diff --name-only "$BASE_REF" HEAD -- '*.rs' 2>/dev/null)" ]]; th
 fi
 
 echo "[pre-push] Running xtask check --changed-strict $BASE_REF --allow-contended-host ..." >&2
-if ! env \
-  -u CARGO_TARGET_DIR \
-  -u DATABASE_URL \
-  -u PGHOST \
-  -u PGPORT \
-  -u SINEX_API_ADMIN_TOKEN \
-  -u SINEX_API_TCP_LISTEN \
-  -u SINEX_API_TLS_CERT \
-  -u SINEX_API_TLS_CLIENT_CA \
-  -u SINEX_API_TLS_KEY \
-  -u SINEX_API_URL \
-  -u SINEX_CACHE_DIR \
-  -u SINEX_DEV_CACHE_ROOT \
-  -u SINEX_DEV_GATEWAY_PORT \
-  -u SINEX_DEV_NATS_PORT \
-  -u SINEX_DEV_PG_PORT \
-  -u SINEX_DEV_ROOT \
-  -u SINEX_DEV_STATE_DIR \
-  -u SINEX_NATS_DIR \
-  -u SINEX_NATS_URL \
-  -u SINEX_ROOT \
-  -u SINEX_STATE_DIR \
-  -u SINEX_TEST_PGDATA_DIR \
-  -u SINEX_TEST_RESULTS_DIR \
-  -u SINEX_TEST_TMPDIR \
-  nix develop "$REPO_ROOT" --command xtask check --changed-strict "$BASE_REF" --allow-contended-host >&2; then
+if ! _sinex_pre_push_run_xtask check --changed-strict "$BASE_REF" --allow-contended-host >&2; then
   echo "" >&2
   echo "[pre-push] DRIFT GUARD FAILED." >&2
   echo "Your changes introduce diagnostics on affected packages that didn't exist on $BASE_REF." >&2
