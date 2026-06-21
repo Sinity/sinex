@@ -87,6 +87,7 @@ Run the fast workspace verification pipeline
 | `--by-file` | no | no | Show breakdown of warning counts by file path (top 20) |
 | `--nix` | no | no | Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full. Fails if `nix` is unavailable or unhealthy |
 | `--allow-contended-host` | no | no | Allow broad checks to start even when host PSI is already severe |
+| `--skip-preflight` | no | no | Internal: child checks invoked by `--changed-strict` inherit the parent compile-ready environment and must not run their own preflight |
 | `--changed-strict` | yes | no | API drift guard: check only packages that own Rust files changed between HEAD and the merge-base of the given ref (default `origin/master`). Emits a JSON report of changed files, affected packages, and per-package results. Non-zero exit if any per-package check fails. This flag is opt-in and does not alter the default check behaviour |
 
 
@@ -353,6 +354,7 @@ Stop the infrastructure
 | `--all-checkouts` | no | no | Stop/clean every checkout-local dev-state root under /var/cache/sinex/$USER |
 | `--stale-only` | no | no | Only remove stale/malformed lock and PID files; do not stop live processes |
 | `--dry-run` | no | no | Print planned actions without stopping processes or removing files |
+| `processes` | yes | no | Specific processes to stop |
 
 
 ### `xtask infra smoke`
@@ -366,6 +368,7 @@ Run the explicit local devshell/runtime lifecycle smoke
 | `--dry-run` | no | no | Print the smoke plan and current coordinates without starting or stopping services |
 | `--reset-first` | no | no | Stop current-checkout infra before the smoke if it is already running |
 | `--skip-start` | no | no | Skip the explicit infra start/stop phase and only verify read-only probes |
+| `--run-core` | no | no | Start a managed local sinexd job, observe it in infra status, and cancel it |
 
 
 ### `xtask infra status`

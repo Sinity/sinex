@@ -5,11 +5,15 @@ use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::config::config as xtask_config;
+use crate::history::JobLifecycleStatus;
 use crate::infra::flake_stage::stage_checkout_for_flake;
 use crate::infra::stack::{self, AllCheckoutsStatus, StackConfig, StackStatus};
 use crate::infra::state::CheckoutState;
+use crate::jobs::JobManager;
 
 /// Infra command - manages the isolated development environment.
 pub struct InfraCommand {
@@ -51,6 +55,9 @@ pub enum InfraSubcommand {
         /// Skip the explicit infra start/stop phase and only verify read-only probes
         #[arg(long)]
         skip_start: bool,
+        /// Start a managed local sinexd job, observe it in infra status, and cancel it
+        #[arg(long)]
+        run_core: bool,
     },
     /// Show infrastructure status
     Status {
@@ -144,9 +151,10 @@ impl XtaskCommand for InfraCommand {
                 dry_run,
                 reset_first,
                 skip_start,
+                run_core,
             } => {
                 let config = StackConfig::for_current_checkout()?;
-                execute_smoke(&config, *dry_run, *reset_first, *skip_start, ctx)
+                execute_smoke(&config, *dry_run, *reset_first, *skip_start, *run_core, ctx)
             }
             InfraSubcommand::Status {
                 watch,
@@ -537,6 +545,7 @@ struct InfraSmokeReport {
     dry_run: bool,
     reset_first: bool,
     skip_start: bool,
+    run_core: bool,
     steps: Vec<InfraSmokeStep>,
     baseline: InfraSmokeSnapshot,
     final_state: InfraSmokeSnapshot,
@@ -575,6 +584,7 @@ fn execute_smoke(
     dry_run: bool,
     reset_first: bool,
     skip_start: bool,
+    run_core: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     ctx.heading("infra smoke");
@@ -616,6 +626,7 @@ fn execute_smoke(
             dry_run,
             reset_first,
             skip_start,
+            run_core,
             steps,
             baseline,
             final_state: smoke_snapshot(config),
@@ -665,6 +676,7 @@ fn execute_smoke(
                 dry_run,
                 reset_first,
                 skip_start,
+                run_core,
                 steps,
                 baseline,
                 final_state: smoke_snapshot(config),
@@ -735,6 +747,28 @@ fn execute_smoke(
             }));
         }
 
+        if run_core {
+            let runtime_step = if dry_run {
+                InfraSmokeStep {
+                    name: "managed local sinexd runtime".to_string(),
+                    command: vec!["xtask".into(), "--bg".into(), "run".into(), "core".into()],
+                    status: "planned".to_string(),
+                    detail:
+                        "would start a managed background sinexd job, observe it, and cancel it"
+                            .to_string(),
+                }
+            } else {
+                match run_managed_core_smoke(config) {
+                    Ok(step) => step,
+                    Err(err) => {
+                        stop_current_checkout_infra(config, ctx.is_human())?;
+                        return Err(err);
+                    }
+                }
+            };
+            steps.push(runtime_step);
+        }
+
         steps.push(InfraSmokeStep {
             name: "explicit infra stop".to_string(),
             command: vec!["xtask".into(), "infra".into(), "stop".into()],
@@ -757,6 +791,7 @@ fn execute_smoke(
         dry_run,
         reset_first,
         skip_start,
+        run_core,
         steps,
         baseline,
         final_state,
@@ -814,6 +849,90 @@ fn read_only_smoke_commands() -> Vec<(&'static str, Vec<&'static str>)> {
         ("run target list", vec!["run", "list"]),
         ("run core dry-run", vec!["run", "core", "--dry-run"]),
     ]
+}
+
+fn run_managed_core_smoke(config: &StackConfig) -> Result<InfraSmokeStep> {
+    let manager = JobManager::new(xtask_config().jobs_dir())?;
+    let current_exe = std::env::current_exe().wrap_err("failed to resolve current xtask binary")?;
+    let args = vec![
+        "--fg".to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+        "run".to_string(),
+        "core".to_string(),
+    ];
+    let env_vars = crate::preflight::local_runtime_env_overrides();
+    let job = manager.spawn_with_env(&current_exe.to_string_lossy(), &args, &env_vars)?;
+    let job_id = job.id;
+
+    match wait_for_sinexd_observed(config, Duration::from_secs(300)) {
+        Ok(status) => {
+            let cancel_result = manager.cancel(job_id);
+            let stopped = wait_for_sinexd_stopped(config, Duration::from_secs(10));
+            match (cancel_result, stopped) {
+                (Ok(true), Ok(())) => Ok(InfraSmokeStep {
+                    name: "managed local sinexd runtime".to_string(),
+                    command: vec!["xtask".into(), "--bg".into(), "run".into(), "core".into()],
+                    status: "passed".to_string(),
+                    detail: format!(
+                        "job {job_id} observed pids {:?} rss={}, then cancelled cleanly",
+                        status.sinexd.pids,
+                        format_bytes(status.sinexd.rss_bytes)
+                    ),
+                }),
+                (Ok(false), _) => bail!(
+                    "managed local sinexd smoke observed job {job_id}, but jobs cancel reported it was not running"
+                ),
+                (Err(error), _) => Err(error)
+                    .with_context(|| format!("failed to cancel managed sinexd smoke job {job_id}")),
+                (_, Err(error)) => Err(error).with_context(|| {
+                    format!("managed sinexd smoke job {job_id} did not disappear after cancel")
+                }),
+            }
+        }
+        Err(error) => {
+            let _ = manager.cancel(job_id);
+            let status = manager
+                .get(job_id)
+                .ok()
+                .flatten()
+                .map(|job| job.job_status)
+                .unwrap_or(JobLifecycleStatus::Orphaned);
+            Err(error).with_context(|| {
+                format!("managed sinexd smoke job {job_id} was not observable; last job status was {status:?}")
+            })
+        }
+    }
+}
+
+fn wait_for_sinexd_observed(config: &StackConfig, timeout: Duration) -> Result<StackStatus> {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        let status = StackStatus::gather(config);
+        if status.sinexd.running {
+            return Ok(status);
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    bail!(
+        "timed out after {}s waiting for dev-local sinexd to appear in infra status",
+        timeout.as_secs()
+    )
+}
+
+fn wait_for_sinexd_stopped(config: &StackConfig, timeout: Duration) -> Result<()> {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        let status = StackStatus::gather(config);
+        if !status.sinexd.running {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    bail!(
+        "timed out after {}s waiting for dev-local sinexd to stop",
+        timeout.as_secs()
+    )
 }
 
 fn run_xtask_probe(name: &str, args: &[&str]) -> Result<InfraSmokeStep> {
