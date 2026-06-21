@@ -1735,10 +1735,10 @@ impl SourceMaterialRepository<'_> {
     /// healthy storage kind silently masking a stale or failed kind. The kind
     /// list is preserved in
     /// `evidence.material_kinds` for diagnostics. The derivation runs purely
-    /// from `raw.source_material_registry` and `core.events`; binding and
-    /// parser-job tables do not yet exist (#1098 places bindings in Nix
-    /// configuration; #1057 will add parser jobs as a DB table). Caveats
-    /// record those gaps.
+    /// from `raw.source_material_registry` and `core.events`; source-binding
+    /// declarations live in Nix/config manifests and parser/source-worker run
+    /// evidence is owned by operation/debt surfaces. Caveats record those
+    /// join boundaries so readiness does not pretend to be a full job monitor.
     ///
     /// `stale_after_seconds` controls when a recent-success source flips to
     /// `Stale`. Defaults to 7 days when `None`.
@@ -1835,10 +1835,10 @@ impl SourceMaterialRepository<'_> {
                 evidence_ref: None,
             });
             caveats.push(SourceCaveat {
-                code: caveat_codes::PARSER_JOBS_UNTRACKED.to_string(),
+                code: caveat_codes::PARSER_OPERATION_EVIDENCE_UNJOINED.to_string(),
                 severity: CaveatSeverity::Info,
                 message:
-                    "Parser jobs are not yet tracked in the database (#1057); parser-failure evidence not available."
+                    "Readiness is derived from raw material and admitted events; parser/source-worker operation evidence is reported by operation and debt surfaces."
                         .to_string(),
                 evidence_ref: None,
             });
@@ -2111,10 +2111,11 @@ impl SourceMaterialRepository<'_> {
 
 /// Best-effort family classification from registry-only data.
 ///
-/// Bindings (#1098) carry the canonical `source_family` in Nix; until the
-/// readiness derivation can join binding evidence, we infer a coarse family
-/// from the identifier shape. The classification is advisory; consumers
-/// should treat unfamiliar values as `"generic"`.
+/// Source-binding manifests carry canonical package/family metadata in
+/// deployment config. Until the readiness derivation can join that binding
+/// evidence, infer a coarse family from the identifier shape. The
+/// classification is advisory; consumers should treat unfamiliar values as
+/// `"generic"`.
 fn derive_source_family(source_identifier: &str, _material_kind: &str) -> &'static str {
     let lower = source_identifier.to_ascii_lowercase();
     if lower.starts_with("integration.") || lower.starts_with("analysis.") {
