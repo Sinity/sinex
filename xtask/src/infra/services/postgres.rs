@@ -319,15 +319,80 @@ impl PostgresManager {
             println!("Stopping PostgreSQL...");
         }
 
-        self.pg_ctl_stop_command()
-            .status()
-            .context("pg_ctl stop failed")?;
+        let fast_output = self
+            .pg_ctl_stop_command("fast")
+            .output()
+            .context("failed to run pg_ctl stop -m fast")?;
 
-        if verbose {
-            println!("PostgreSQL stopped");
+        if fast_output.status.success() && self.wait_until_stopped(verbose)? {
+            return Ok(());
         }
 
-        Ok(())
+        match self.postmaster_pid_state()? {
+            PostmasterPidState::Missing | PostmasterPidState::Stale(_) => {
+                if verbose {
+                    println!("PostgreSQL stopped");
+                }
+                return Ok(());
+            }
+            PostmasterPidState::Running(pid) if verbose => {
+                eprintln!(
+                    "  pg_ctl fast stop did not stop PostgreSQL pid {pid}: status {}{}",
+                    fast_output.status,
+                    format_command_output(&fast_output)
+                );
+                eprintln!("  Retrying PostgreSQL stop with immediate shutdown...");
+            }
+            PostmasterPidState::Running(_) => {}
+        }
+
+        let immediate_output = self
+            .pg_ctl_stop_command("immediate")
+            .output()
+            .context("failed to run pg_ctl stop -m immediate")?;
+
+        if immediate_output.status.success() && self.wait_until_stopped(verbose)? {
+            return Ok(());
+        }
+
+        match self.postmaster_pid_state()? {
+            PostmasterPidState::Missing | PostmasterPidState::Stale(_) => {
+                if verbose {
+                    println!("PostgreSQL stopped");
+                }
+                Ok(())
+            }
+            PostmasterPidState::Running(pid) => {
+                if verbose {
+                    eprintln!(
+                        "  pg_ctl immediate stop did not stop PostgreSQL pid {pid}: status {}{}",
+                        immediate_output.status,
+                        format_command_output(&immediate_output)
+                    );
+                    eprintln!("  Forcing cleanup of checkout-local PostgreSQL pid {pid}...");
+                }
+
+                self.force_cleanup(verbose)?;
+
+                match self.postmaster_pid_state()? {
+                    PostmasterPidState::Missing | PostmasterPidState::Stale(_) => {
+                        if verbose {
+                            println!("PostgreSQL stopped");
+                        }
+                        Ok(())
+                    }
+                    PostmasterPidState::Running(pid) => {
+                        bail!(
+                            "PostgreSQL pid {pid} remained alive after fast, immediate, and forced stop; fast status {}{}; immediate status {}{}",
+                            fast_output.status,
+                            format_command_output(&fast_output),
+                            immediate_output.status,
+                            format_command_output(&immediate_output)
+                        )
+                    }
+                }
+            }
+        }
     }
 
     #[must_use]
@@ -369,8 +434,17 @@ impl PostgresManager {
                 eprintln!("  Sending SIGKILL to stale PID {pid}");
             }
             unsafe { libc::kill(pid, libc::SIGKILL) };
-            // Brief pause for kernel to reap
-            std::thread::sleep(std::time::Duration::from_millis(500));
+
+            for _ in 0..20 {
+                if unsafe { libc::kill(pid, 0) } != 0 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+
+            if unsafe { libc::kill(pid, 0) } == 0 {
+                bail!("PostgreSQL pid {pid} remained alive after SIGKILL");
+            }
         }
 
         // Clean up stale files so pg_ctl start succeeds
@@ -391,6 +465,24 @@ impl PostgresManager {
         }
 
         Ok(())
+    }
+
+    fn wait_until_stopped(&self, verbose: bool) -> Result<bool> {
+        for _ in 0..40 {
+            match self.postmaster_pid_state()? {
+                PostmasterPidState::Missing | PostmasterPidState::Stale(_) => {
+                    if verbose {
+                        println!("PostgreSQL stopped");
+                    }
+                    return Ok(true);
+                }
+                PostmasterPidState::Running(_) => {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     pub fn psql(&self, user: &str, db: &str, sql: &str) -> Result<String> {
@@ -485,14 +577,17 @@ impl PostgresManager {
         Ok(pg_ctl)
     }
 
-    fn pg_ctl_stop_command(&self) -> Command {
+    fn pg_ctl_stop_command(&self, mode: &str) -> Command {
         let mut pg_ctl = self.pg_command("pg_ctl");
         pg_ctl
             .arg("-D")
             .arg(&self.config.data_dir)
             .arg("stop")
+            .arg("-w")
+            .arg("-t")
+            .arg("10")
             .arg("-m")
-            .arg("fast");
+            .arg(mode);
         pg_ctl
     }
 
@@ -1054,7 +1149,7 @@ mod tests {
         });
 
         let stop_args: Vec<OsString> = manager
-            .pg_ctl_stop_command()
+            .pg_ctl_stop_command("fast")
             .get_args()
             .map(OsStr::to_os_string)
             .collect();
