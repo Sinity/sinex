@@ -292,8 +292,8 @@ fn non_claims() -> Vec<ReleaseNonClaim> {
     vec![
         ReleaseNonClaim {
             area: "capture packages",
-            non_claim: "browser WebExtension, media audio/OCR, and email sync packages are not claimed complete until their package-specific issues close",
-            owner: "#847/#1043/#1469",
+            non_claim: "media audio/OCR and email sync packages are not claimed complete until their package-specific issues close",
+            owner: "#1043/#1469",
         },
         ReleaseNonClaim {
             area: "package completeness",
