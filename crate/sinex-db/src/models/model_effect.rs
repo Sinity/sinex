@@ -1,4 +1,4 @@
-//! Model-effect cache model types.
+//! Model-effect record model types.
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
