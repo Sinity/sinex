@@ -110,22 +110,6 @@ pub struct StrictDrift {
     pub observed_summary: String,
 }
 
-/// Strict-diff categories that are intentionally not emitted yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UnsupportedStrictDiffCategory {
-    pub category: DriftCategory,
-    pub reason: &'static str,
-}
-
-/// Operator-visible support gate for categories that are acknowledged as
-/// blind spots but are not part of the active strict-diff contract.
-pub fn unsupported_strict_diff_categories() -> &'static [UnsupportedStrictDiffCategory] {
-    &[UnsupportedStrictDiffCategory {
-        category: DriftCategory::Comment,
-        reason: "comments are not a runtime contract; strict diff does not report comment drift",
-    }]
-}
-
 impl fmt::Display for StrictDrift {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -991,7 +975,6 @@ mod tests {
         DECLARED_FK_ACTIONS, DECLARED_INLINE_CHECKS, DriftCategory,
         HYPERTABLE_CHUNK_INTERVAL_MICROS, StrictDrift, foreign_key_action_drifts,
         hypertable_chunk_interval_drift, hypertable_retention_policy_drift, inline_check_drift,
-        unsupported_strict_diff_categories,
     };
     use xtask::sandbox::prelude::sinex_test;
 
@@ -1158,19 +1141,5 @@ mod tests {
         assert_eq!(drift.location, "core.events::retention_policy");
         assert_eq!(drift.declared_summary, "no retention policy");
         assert_eq!(drift.observed_summary, "2 retention policy job(s) present");
-    }
-
-    #[test]
-    fn comment_drift_is_an_explicitly_unsupported_category() {
-        let unsupported = unsupported_strict_diff_categories();
-
-        assert_eq!(unsupported.len(), 1);
-        assert_eq!(unsupported[0].category, DriftCategory::Comment);
-        assert!(unsupported[0].reason.contains("not a runtime contract"));
-        assert!(
-            unsupported[0]
-                .reason
-                .contains("does not report comment drift")
-        );
     }
 }
