@@ -229,6 +229,8 @@
           sinexPackages = pkgs.lib.genAttrs (runtimePackageNames ++ [ "sinex-vm-test-suite" ]) mkPackage // {
             sinex = sinexRuntime;
 
+            schema-apply-bootstrap = schemaApplyBootstrap;
+
             pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
 
             default = sinexPackages.sinex;
