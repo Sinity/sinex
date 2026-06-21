@@ -115,6 +115,14 @@ fn parse_source_meta_attrs(attrs: &[syn::Attribute]) -> syn::Result<Registration
                     out.runtime_shape = Some(parse_enum_path_attr(&meta)?);
                     return Ok(());
                 }
+                "material_lifecycle" => {
+                    out.material_lifecycle = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
+                "transport_semantics" => {
+                    out.transport_semantics = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
                 "factory_adapter" => {
                     out.factory_adapter = Some(parse_enum_path_attr(&meta)?);
                     return Ok(());
@@ -270,6 +278,14 @@ fn parse_runtime_binding_attr(
             }
             "runtime_shape" => {
                 out.runtime_shape = Some(parse_enum_path_attr(&nested)?);
+                return Ok(());
+            }
+            "material_lifecycle" => {
+                out.material_lifecycle = Some(parse_enum_expr_attr(&nested)?);
+                return Ok(());
+            }
+            "transport_semantics" => {
+                out.transport_semantics = Some(parse_enum_expr_attr(&nested)?);
                 return Ok(());
             }
             "proposed" => {
