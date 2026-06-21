@@ -1,12 +1,12 @@
-//! Integration tests for the Facebook Messenger GDPR export parser (#1090).
+//! Integration tests for the Facebook Messenger GDPR export parser.
 //!
 //! ## AC Coverage Matrix
 //!
 //! | AC Item | Status | Notes |
 //! |---------|--------|-------|
 //! | Messenger: sent/received/unsent/reaction/thread-index events | SATISFIED | See `messenger_*` tests |
-//! | Messenger: `message_uid (mid.$...)` anchors | DEFERRED → #1090 follow-up | GDPR export has no per-message id; occurrence key uses (thread,sender,ts,hint) |
-//! | Email: Message-ID anchors + IMAP fallback | DEFERRED → #1090 follow-up | Email parser not yet implemented |
+//! | Messenger: `message_uid (mid.$...)` anchors | NOT AVAILABLE IN GDPR EXPORT | GDPR export has no per-message id; occurrence key uses (thread,sender,ts,hint) |
+//! | Email: Message-ID anchors + IMAP fallback | OWNED BY #1469 | Email parser belongs to the `email.mailbox` package family |
 //! | Bus-First admission path | SATISFIED | `privacy_context = Document` set on every intent |
 //! | Privacy: body/media/participant not in raw NATS payload | PARTIALLY SATISFIED | `text` preserved for admission gating (intentional per design); media/reactions summarised |
 //! | Idempotent replay at occurrence level | SATISFIED | Same input → same occurrence_key deterministically |
@@ -247,7 +247,9 @@ async fn messenger_thread_index_encoded_in_anchor() {
 //   (a) A SQLite export path that exposes Facebook's internal message IDs, or
 //   (b) A companion GDPR field if Facebook ever adds it.
 //
-// This gap is tracked as a follow-up to #1090.
+// There is no live follow-up for this GDPR-export-only gap. If a future
+// Facebook acquisition mode exposes mid.$ IDs, that mode should add a new
+// parser fixture and occurrence-key test instead of weakening this fallback.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn messenger_occurrence_key_uses_thread_sender_ts_texthint() {
@@ -420,7 +422,9 @@ async fn messenger_replay_produces_identical_occurrence_keys() {
 //   - Missing/duplicate Message-ID falls back to IMAP (mailbox, uid_validity, uid)
 //   - Bus-First source path produces event_engine confirmations
 //
-// are deferred to a follow-up implementation issue branching off #1090.
+// are owned by #1469 (`email.mailbox`). Keep this Messenger test file honest
+// about the communication-export history, but do not imply the closed
+// Messenger parser issue still owns missing email behavior.
 // When EmailParser is added to sinexd::sources::source_contracts::messaging,
 // tests should be added here covering:
 //   - parse minimal RFC 2822 message (From/To/Subject/Date/Message-ID)
