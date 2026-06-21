@@ -18,6 +18,7 @@
 //! | [`ClipboardPollingAdapter`] | `Polling` | `()` (anchor-only) | Clipboard change detection |
 //! | [`DirectoryWalkAdapter`] | `DirectoryWalk` | `BTreeMap<path, fingerprint>` | Recursive walk with fingerprint dedup |
 //! | [`ApiCursorAdapter`] | `ApiCursor` | `ApiCursorPosition` | Paginated REST API with cursor |
+//! | [`GmailApiCursorAdapter`] | `ApiCursor` | `GmailApiCursor` | Gmail scheduled-sync pages/history |
 //! | [`EmailMboxFileAdapter`] | `Archive` | byte offset | Streaming MBOX/MBOXRD message slices |
 //! | [`IncrementalDumpAdapter`] | `IncrementalDump` | `IncrementalDumpCursor` | Periodic full-export superset dumps |
 
@@ -28,6 +29,7 @@ mod chained;
 mod clipboard_polling;
 mod dbus_stream;
 mod directory_walk;
+mod email_gmail_api;
 mod email_mbox_file;
 mod file_drop;
 mod incremental_dump;
@@ -59,6 +61,10 @@ pub use chained::{
 };
 pub use directory_walk::{
     DirectoryWalkAdapter, DirectoryWalkConfig, DirectoryWalkCursor, FileFingerprint,
+};
+pub use email_gmail_api::{
+    GmailApiClient, GmailApiCursor, GmailApiCursorAdapter, GmailApiCursorConfig, GmailApiPage,
+    GmailApiPageRequest, GmailApiRecord, GmailApiRecordKind,
 };
 pub use email_mbox_file::{EmailMboxFileAdapter, EmailMboxFileConfig, EmailMboxFileCursor};
 pub use sqlite_row::{SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor};
@@ -119,6 +125,11 @@ impl InputShapeAdapterExt for clipboard_polling::ClipboardPollingAdapter {}
 impl InputShapeAdapterExt for dbus_stream::DbusStreamAdapter {}
 #[cfg(feature = "messaging")]
 impl InputShapeAdapterExt for directory_walk::DirectoryWalkAdapter {}
+#[cfg(feature = "messaging")]
+impl<C: email_gmail_api::GmailApiClient + 'static> InputShapeAdapterExt
+    for email_gmail_api::GmailApiCursorAdapter<C>
+{
+}
 #[cfg(feature = "messaging")]
 impl InputShapeAdapterExt for email_mbox_file::EmailMboxFileAdapter {}
 #[cfg(feature = "messaging")]

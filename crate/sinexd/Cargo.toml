@@ -125,6 +125,10 @@ name = "email_mbox_file_adapter_test"
 path = "tests/runtime/email_mbox_file_adapter_test.rs"
 
 [[test]]
+name = "email_gmail_api_cursor_adapter_test"
+path = "tests/runtime/email_gmail_api_cursor_adapter_test.rs"
+
+[[test]]
 name = "terminal_history_parser_test"
 path = "tests/sources/terminal_history_parser_test.rs"
 
