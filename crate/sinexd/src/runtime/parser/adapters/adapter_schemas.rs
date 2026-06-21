@@ -19,8 +19,9 @@ use serde_json::Value;
 
 use super::{
     AppendOnlyFileConfig, ChainedConfig, ClipboardPollingConfig, DirectoryWalkConfig,
-    FileContentDropConfig, FileDropConfig, JournalctlStreamConfig, SqliteRowConfig,
-    StaticFileConfig, UnixSocketStreamConfig,
+    EmailMboxFileConfig, FileContentDropConfig, FileDropConfig, GmailApiCursorConfig,
+    ImapSyncConfig, JournalctlStreamConfig, SqliteRowConfig, StaticFileConfig,
+    UnixSocketStreamConfig,
 };
 
 // =============================================================================
@@ -54,8 +55,11 @@ pub struct AdapterSchema {
 /// - `ClipboardPollingAdapter`
 /// - `DbusStreamAdapter` (hand-authored schema; source file is pending parallel work)
 /// - `DirectoryWalkAdapter`
+/// - `EmailMboxFileAdapter`
 /// - `FileContentDropAdapter`
 /// - `FileDropAdapter`
+/// - `GmailApiCursorAdapter`
+/// - `ImapSyncAdapter`
 /// - `JournalctlStreamAdapter`
 /// - `SqliteRowAdapter`
 /// - `StaticFileAdapter`
@@ -91,6 +95,10 @@ pub fn all_adapter_schemas() -> BTreeMap<String, AdapterSchema> {
         schema_for_type::<DirectoryWalkConfig>(),
     );
     map.insert(
+        "EmailMboxFileAdapter".into(),
+        schema_for_type::<EmailMboxFileConfig>(),
+    );
+    map.insert(
         "FileContentDropAdapter".into(),
         schema_for_type::<FileContentDropConfig>(),
     );
@@ -98,6 +106,11 @@ pub fn all_adapter_schemas() -> BTreeMap<String, AdapterSchema> {
         "FileDropAdapter".into(),
         schema_for_type::<FileDropConfig>(),
     );
+    map.insert(
+        "GmailApiCursorAdapter".into(),
+        schema_for_type::<GmailApiCursorConfig>(),
+    );
+    map.insert("ImapSyncAdapter".into(), schema_for_type::<ImapSyncConfig>());
     map.insert(
         "JournalctlStreamAdapter".into(),
         schema_for_type::<JournalctlStreamConfig>(),
