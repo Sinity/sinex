@@ -524,14 +524,18 @@ impl XtaskCommand for CheckCommand {
 
         this.guard_broad_start_pressure(ctx)?;
 
-        // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
-        preflight::ensure_ready(ctx)?;
+        // Ensure only compile-time infrastructure is ready. `cargo check` needs a
+        // live Postgres schema for sqlx macros, but it must not start NATS or
+        // runtime services as a side effect of verification.
+        let compile_ready = preflight::ensure_compile_ready(ctx)?;
 
         // --changed-strict: API drift guard.  Runs before the normal check
         // pipeline and short-circuits it when set.
         if let Some(ref base_opt) = this.changed_strict {
             let base_ref = base_opt.as_deref().unwrap_or("origin/master");
-            return run_changed_strict_command(base_ref, ctx, &this);
+            let result = run_changed_strict_command(base_ref, ctx, &this);
+            drop(compile_ready);
+            return result;
         }
 
         // Resource warning before heavy operation.  Captured regardless of output

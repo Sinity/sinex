@@ -322,6 +322,7 @@ Manage local infrastructure (Postgres, NATS, VMs)
 |---|---|
 | `start` | Start the infrastructure |
 | `stop` | Stop the infrastructure |
+| `smoke` | Run the explicit local devshell/runtime lifecycle smoke |
 | `status` | Show infrastructure status |
 | `logs` | View logs |
 | `schema-apply` | Apply the declarative schema to a database |
@@ -354,6 +355,19 @@ Stop the infrastructure
 | `--dry-run` | no | no | Print planned actions without stopping processes or removing files |
 
 
+### `xtask infra smoke`
+
+Run the explicit local devshell/runtime lifecycle smoke
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--dry-run` | no | no | Print the smoke plan and current coordinates without starting or stopping services |
+| `--reset-first` | no | no | Stop current-checkout infra before the smoke if it is already running |
+| `--skip-start` | no | no | Skip the explicit infra start/stop phase and only verify read-only probes |
+
+
 ### `xtask infra status`
 
 Show infrastructure status
@@ -363,6 +377,7 @@ Show infrastructure status
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `-w, --watch` | no | no | Watch mode |
+| `--all-checkouts` | no | no | Show every checkout-local dev-state root under /var/cache/sinex/$USER |
 
 
 ### `xtask infra logs`

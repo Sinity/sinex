@@ -96,6 +96,29 @@ _sinex_pre_push_checkout_xtask_binary() {
   [[ -x "$candidate" ]] && printf '%s\n' "$candidate"
 }
 
+_sinex_pre_push_checkout_postgres_running() {
+  local cache_root pid_file pid
+  cache_root="$(_sinex_pre_push_cache_root)"
+  pid_file="$cache_root/dev-state/data/postgres/postmaster.pid"
+  [[ -r "$pid_file" ]] || return 1
+  pid="$(sed -n '1p' "$pid_file" 2>/dev/null || true)"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+_sinex_pre_push_stop_checkout_postgres() {
+  local cache_root pgdata
+  cache_root="$(_sinex_pre_push_cache_root)"
+  pgdata="$cache_root/dev-state/data/postgres"
+  [[ -d "$pgdata" ]] || return 0
+  if command -v pg_ctl >/dev/null 2>&1; then
+    pg_ctl -D "$pgdata" -m fast stop >/dev/null 2>&1 || true
+    return 0
+  fi
+  _sinex_pre_push_clean_env \
+    nix develop "$REPO_ROOT" --command pg_ctl -D "$pgdata" -m fast stop >/dev/null 2>&1 || true
+}
+
 _sinex_pre_push_path_xtask_binary() {
   local candidate
   while IFS= read -r candidate; do
@@ -228,7 +251,19 @@ if [[ -z "$(git diff --name-only "$BASE_REF" HEAD -- '*.rs' 2>/dev/null)" ]]; th
 fi
 
 echo "[pre-push] Running xtask check --changed-strict $BASE_REF --allow-contended-host ..." >&2
-if ! _sinex_pre_push_run_xtask check --changed-strict "$BASE_REF" --allow-contended-host >&2; then
+pre_push_owned_postgres=0
+if ! _sinex_pre_push_checkout_postgres_running; then
+  pre_push_owned_postgres=1
+fi
+
+pre_push_status=0
+_sinex_pre_push_run_xtask check --changed-strict "$BASE_REF" --allow-contended-host >&2 || pre_push_status=$?
+
+if [[ "$pre_push_owned_postgres" == "1" ]]; then
+  _sinex_pre_push_stop_checkout_postgres
+fi
+
+if [[ "$pre_push_status" != "0" ]]; then
   echo "" >&2
   echo "[pre-push] DRIFT GUARD FAILED." >&2
   echo "Your changes introduce diagnostics on affected packages that didn't exist on $BASE_REF." >&2
