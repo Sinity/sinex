@@ -24,7 +24,7 @@ visible and bounded without creating a parallel scheduler vocabulary.
 
 ## Reconciled
 
-#1886 closed after the memory-owner evidence and confirmation-pressure work
-landed. Future resource-pressure cleanup should start from fresh evidence and
-attach it to the owning runtime/package-completeness surface instead of
-reopening the stale patch vocabulary here.
+#1886 remains open for the live memory incident/regression evidence that is not
+settled by patch mining alone. Future resource-pressure cleanup should start
+from fresh runtime evidence and attach it to the owning runtime/package-
+completeness surface instead of reopening the stale patch vocabulary here.
