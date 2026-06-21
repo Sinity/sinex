@@ -129,11 +129,13 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                     "xtask infra smoke --dry-run",
                     "xtask infra smoke --reset-first",
                     "xtask infra smoke --reset-first --skip-start",
+                    "xtask infra smoke --reset-first --run-core",
                 ],
                 notes: &[
                     "`xtask infra smoke` starts services only in its explicit start phase, then stops them before returning.",
                     "Use `--dry-run` for a no-service plan and current coordinate/RSS inventory.",
                     "Use `--skip-start` when you only want to recheck read-only probes and all-checkout inventory.",
+                    "Use `--run-core` when you need to prove the checkout can start, observe, and cleanly cancel managed local sinexd.",
                 ],
             },
             GuideEntry {
