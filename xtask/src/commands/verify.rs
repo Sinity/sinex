@@ -2359,7 +2359,7 @@ Verification:
 | Acceptance criterion | Evidence | Status |
 | --- | --- | --- |
 | EvidenceWindow v0 is declared complete | `relations.rs` defines the DTOs. | Satisfied |
-| Privacy enforcement is owned elsewhere | #1693 owns runtime policy enforcement. | Satisfied with owner |
+| Privacy enforcement is owned elsewhere | Follow-up owner is recorded in issue #123. | Satisfied with owner |
 ";
         let items = extract_closure_matrix_items(body, "body");
         assert_eq!(items.len(), 2);
@@ -2371,7 +2371,7 @@ Verification:
         assert_eq!(items[1].status, "satisfied");
         assert_eq!(
             items[1].text,
-            "Privacy enforcement is owned elsewhere | #1693 owns runtime policy enforcement."
+            "Privacy enforcement is owned elsewhere | Follow-up owner is recorded in issue #123."
         );
         Ok(())
     }
@@ -2386,14 +2386,14 @@ Acceptance matrix:
 
 | AC | Evidence | Status |
 | --- | --- | --- |
-| Every finding has a ledger state | #1800 owns the resurrection work. | Satisfied |
+| Every finding has a ledger state | Follow-up owner is recorded in issue #456. | Satisfied |
 ";
         let items = extract_closure_matrix_items(body, "comment[0]");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].status, "satisfied");
         assert_eq!(
             items[0].text,
-            "Every finding has a ledger state | #1800 owns the resurrection work."
+            "Every finding has a ledger state | Follow-up owner is recorded in issue #456."
         );
         Ok(())
     }

@@ -2438,11 +2438,11 @@ mod tests {
 
     fn fixture_dlq(total_messages: u64) -> DlqListResponse {
         let pressure_level = if total_messages > 10 {
-            "critical"
+            sinex_primitives::RuntimePressureLevel::Critical
         } else if total_messages > 0 {
-            "warning"
+            sinex_primitives::RuntimePressureLevel::Warning
         } else {
-            "nominal"
+            sinex_primitives::RuntimePressureLevel::Nominal
         };
         let recommended_action = if total_messages == 0 {
             "none"
@@ -2463,9 +2463,9 @@ mod tests {
             } else {
                 10 + total_messages
             },
-            pressure_level: pressure_level.to_string(),
+            pressure_level,
             resource_pressure: sinex_primitives::rpc::dlq::DlqPressureSignal {
-                pressure_level: pressure_level.to_string(),
+                pressure_level,
                 runtime_action: if total_messages > 10 {
                     sinex_primitives::RuntimePressureAction::Throttle
                 } else if total_messages > 0 {

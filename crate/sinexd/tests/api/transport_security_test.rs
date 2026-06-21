@@ -112,8 +112,9 @@ async fn wait_for_tls_health_response(client: &Client, url: &str, token: &str) -
                     continue;
                 }
 
-                let value: serde_json::Value = serde_json::from_str(&body)
-                    .map_err(|error| eyre!("gateway returned non-JSON health body: {error}; body={body}"))?;
+                let value: serde_json::Value = serde_json::from_str(&body).map_err(|error| {
+                    eyre!("gateway returned non-JSON health body: {error}; body={body}")
+                })?;
                 if value["jsonrpc"].as_str() != Some("2.0") {
                     return Err(eyre!("health response missing jsonrpc=2.0: {value}"));
                 }
@@ -124,7 +125,9 @@ async fn wait_for_tls_health_response(client: &Client, url: &str, token: &str) -
                     return Err(eyre!("health response returned JSON-RPC error: {value}"));
                 }
                 if value["result"]["healthy"].as_bool().is_none() {
-                    return Err(eyre!("health response missing typed result.healthy: {value}"));
+                    return Err(eyre!(
+                        "health response missing typed result.healthy: {value}"
+                    ));
                 }
                 return Ok(());
             }

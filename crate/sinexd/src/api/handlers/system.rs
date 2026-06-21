@@ -87,7 +87,7 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
                     ),
                     (
                         "pressure_level".to_string(),
-                        confirmation_buffer.pressure_level,
+                        confirmation_buffer.pressure_level.to_string(),
                     ),
                     (
                         "runtime_action".to_string(),
@@ -209,7 +209,7 @@ mod tests {
                 connected: true,
                 memory_owner:
                     crate::api::service_container::ConfirmationBufferMemoryOwner::TimedOutGracePayloads,
-                pressure_level: "critical".to_string(),
+                pressure_level: sinex_primitives::RuntimePressureLevel::Critical,
                 runtime_action: sinex_primitives::RuntimePressureAction::AdmitWithPressure,
                 observed_buffers: 1,
                 pending_count: 3,

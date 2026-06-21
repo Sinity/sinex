@@ -171,7 +171,7 @@ pub use query_units::{
     QueryUnitDescriptor, QueryUnitId, QueryValue, SinexQuery, SinexQueryPredicate, SinexQuerySort,
     parse_sinex_query, query_unit_descriptor, query_unit_descriptors,
 };
-pub use runtime_pressure::RuntimePressureAction;
+pub use runtime_pressure::{RuntimePressureAction, RuntimePressureLevel};
 pub use runtime_target::{
     RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeStatusWarning,
     RuntimeTargetDatabase, RuntimeTargetDescriptor, RuntimeTargetGateway,

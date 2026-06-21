@@ -2172,9 +2172,9 @@ mod tests {
             total_bytes: 0,
             first_seq: 0,
             last_seq: 0,
-            pressure_level: "nominal".to_string(),
+            pressure_level: crate::RuntimePressureLevel::Nominal,
             resource_pressure: DlqPressureSignal {
-                pressure_level: "nominal".to_string(),
+                pressure_level: crate::RuntimePressureLevel::Nominal,
                 runtime_action: crate::RuntimePressureAction::None,
                 pending_messages: 0,
                 pending_bytes: 0,
