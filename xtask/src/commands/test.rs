@@ -59,6 +59,27 @@ struct PackageProofCoverage {
     proof_invocation_id: Option<i64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestPreflightMode {
+    Skipped,
+    CompileOnly,
+    RuntimeStack,
+}
+
+fn preflight_mode_for_test_plan(
+    skip_preflight: bool,
+    prime_pool: bool,
+    runtime_binary_requirements: &[plan::RuntimeBinaryRequirement],
+) -> TestPreflightMode {
+    if skip_preflight {
+        return TestPreflightMode::Skipped;
+    }
+    if prime_pool || !runtime_binary_requirements.is_empty() {
+        return TestPreflightMode::RuntimeStack;
+    }
+    TestPreflightMode::CompileOnly
+}
+
 /// Push `flag` onto `args` if `cond` is true.
 fn push_flag(args: &mut Vec<String>, cond: bool, flag: &'static str) {
     if cond {
@@ -1767,26 +1788,12 @@ impl XtaskCommand for TestCommand {
             }
         }
 
-        // Preflight is default ON unless explicitly disabled
-        if !self.skip_preflight {
-            let stage = ctx.start_stage("preflight");
-            let ready = crate::preflight::ensure_ready(ctx);
-            ctx.finish_stage(stage, ready.is_ok());
-            ready?;
-        }
-
         // Determine profile
         // Available profiles in .config/nextest.toml:
         //   default = 24 threads, fail-fast=false (good for CI/batch runs)
         //   debug   = 1 thread, 300s slow-timeout (good for investigating tests)
         let profile = if self.debug { "debug" } else { "default" };
         let use_fail_fast = self.fail_fast;
-        self.guard_broad_start_pressure(
-            ctx,
-            &execution_plan,
-            effective_filter.as_deref(),
-            &effective_test_binaries,
-        )?;
 
         let runtime_binary_requirements = runtime_binary_requirements_for_target(
             &execution_plan,
@@ -1794,6 +1801,39 @@ impl XtaskCommand for TestCommand {
             &effective_test_binaries,
             effective_filter.as_deref(),
         );
+
+        // Preflight is default ON unless explicitly disabled. Runtime-independent
+        // nextest plans still need compile-time sqlx readiness, but they should
+        // not auto-start NATS, TLS, or contract deployment just to compile and
+        // execute local unit/DTO tests.
+        let mut _compile_ready_guard: Option<crate::preflight::CompileReadyGuard> = None;
+        match preflight_mode_for_test_plan(
+            self.skip_preflight,
+            self.prime,
+            &runtime_binary_requirements,
+        ) {
+            TestPreflightMode::Skipped => {}
+            TestPreflightMode::CompileOnly => {
+                let stage = ctx.start_stage("preflight");
+                let ready = crate::preflight::ensure_compile_ready(ctx);
+                ctx.finish_stage(stage, ready.is_ok());
+                _compile_ready_guard = Some(ready?);
+            }
+            TestPreflightMode::RuntimeStack => {
+                let stage = ctx.start_stage("preflight");
+                let ready = crate::preflight::ensure_ready(ctx);
+                ctx.finish_stage(stage, ready.is_ok());
+                ready?;
+            }
+        }
+
+        self.guard_broad_start_pressure(
+            ctx,
+            &execution_plan,
+            effective_filter.as_deref(),
+            &effective_test_binaries,
+        )?;
+
         let runtime_binary_reports = if runtime_binary_requirements.is_empty() {
             Vec::new()
         } else {
@@ -2817,6 +2857,55 @@ mod tests {
                 "{flag} must bypass direct exact proof consumption"
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_preflight_mode_uses_compile_only_for_runtime_independent_tests()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            super::preflight_mode_for_test_plan(false, false, &[]),
+            super::TestPreflightMode::CompileOnly
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_preflight_mode_uses_runtime_stack_for_runtime_test_requirements()
+    -> ::xtask::sandbox::TestResult<()> {
+        let requirements = [plan::RuntimeBinaryRequirement {
+            package: "sinexd",
+            binary: "sinexd",
+        }];
+
+        assert_eq!(
+            super::preflight_mode_for_test_plan(false, false, &requirements),
+            super::TestPreflightMode::RuntimeStack
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_preflight_mode_uses_runtime_stack_for_pool_priming()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            super::preflight_mode_for_test_plan(false, true, &[]),
+            super::TestPreflightMode::RuntimeStack
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_preflight_mode_honors_explicit_skip() -> ::xtask::sandbox::TestResult<()> {
+        let requirements = [plan::RuntimeBinaryRequirement {
+            package: "sinexd",
+            binary: "sinexd",
+        }];
+
+        assert_eq!(
+            super::preflight_mode_for_test_plan(true, true, &requirements),
+            super::TestPreflightMode::Skipped
+        );
         Ok(())
     }
 
