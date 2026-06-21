@@ -1795,6 +1795,215 @@ mod tests {
         Ok(())
     }
 
+    // ─── Email disclosure (#2039 / #1469) ────────────────────────────────────
+
+    #[sinex_test]
+    async fn email_message_export_disclosure_redacts_subject_recipients_and_material_ref(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let pool = ctx.pool();
+        for (name, matcher, label, field_path) in [
+            (
+                "email-message-subject-export",
+                "M_AND_A_SECRET",
+                "<EMAIL_SUBJECT>",
+                "/subject",
+            ),
+            (
+                "email-message-bcc-export",
+                "hidden-board@example.com",
+                "<EMAIL_BCC>",
+                "/bcc/0",
+            ),
+            (
+                "email-message-recipient-export",
+                "client-private@example.com",
+                "<EMAIL_RECIPIENT>",
+                "/to/0",
+            ),
+            (
+                "email-message-material-export",
+                "raw-email-secret-001",
+                "<EMAIL_MATERIAL>",
+                "/raw_material_id",
+            ),
+        ] {
+            insert_scoped_rule(
+                pool,
+                name,
+                matcher,
+                label,
+                "email",
+                "email.message.received",
+                field_path,
+            )
+            .await?;
+        }
+
+        let engine = PolicyEngine::load(pool.clone()).await?;
+        let event = make_material_event(
+            "email",
+            "email.message.received",
+            serde_json::json!({
+                "message_id": "export-1@example.com",
+                "from": ["Alice <alice@example.com>"],
+                "to": ["Client <client-private@example.com>"],
+                "cc": [],
+                "bcc": ["Board <hidden-board@example.com>"],
+                "subject": "M_AND_A_SECRET launch plan",
+                "folder": "inbox",
+                "source_file": "Maildir/INBOX/cur/1710000005.M5P1.host:2,S",
+                "raw_material_id": "raw-email-secret-001",
+                "mailbox_format": "maildir-staged",
+                "body_bytes": 4096,
+                "attachment_count": 0,
+            }),
+        );
+
+        let decision = engine
+            .disclose_event_payload(&event, DisclosureContext::Export)
+            .await;
+        let disclosed = serde_json::to_string(&decision.value)?;
+
+        assert!(
+            decision.changed,
+            "email export disclosure must change scoped sensitive fields"
+        );
+        assert_eq!(decision.context, DisclosureContext::Export);
+        for forbidden in [
+            "M_AND_A_SECRET",
+            "hidden-board@example.com",
+            "client-private@example.com",
+            "raw-email-secret-001",
+        ] {
+            assert!(
+                !disclosed.contains(forbidden),
+                "email export disclosure leaked `{forbidden}` in {disclosed}"
+            );
+        }
+        for marker in [
+            "<EMAIL_SUBJECT>",
+            "<EMAIL_BCC>",
+            "<EMAIL_RECIPIENT>",
+            "<EMAIL_MATERIAL>",
+        ] {
+            assert!(
+                disclosed.contains(marker),
+                "email export disclosure should include marker `{marker}` in {disclosed}"
+            );
+        }
+        assert_eq!(
+            decision.caveats.len(),
+            4,
+            "each scoped email field policy should surface as an operator caveat"
+        );
+        assert_eq!(
+            event.payload["subject"].as_str(),
+            Some("M_AND_A_SECRET launch plan"),
+            "presentation-time disclosure must not mutate stored event payload"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn email_attachment_dlq_disclosure_redacts_filename_content_id_and_material_ref(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let pool = ctx.pool();
+        for (name, matcher, label, field_path) in [
+            (
+                "email-attachment-filename-dlq",
+                "signed-secret.pdf",
+                "<EMAIL_ATTACHMENT_NAME>",
+                "/filename",
+            ),
+            (
+                "email-attachment-content-id-dlq",
+                "cid-secret@example.com",
+                "<EMAIL_CONTENT_ID>",
+                "/content_id",
+            ),
+            (
+                "email-attachment-material-dlq",
+                "raw-attachment-secret-001",
+                "<EMAIL_ATTACHMENT_MATERIAL>",
+                "/raw_material_id",
+            ),
+        ] {
+            insert_scoped_rule(
+                pool,
+                name,
+                matcher,
+                label,
+                "email",
+                "email.attachment.observed",
+                field_path,
+            )
+            .await?;
+        }
+
+        let engine = PolicyEngine::load(pool.clone()).await?;
+        let event = make_material_event(
+            "email",
+            "email.attachment.observed",
+            serde_json::json!({
+                "message_id": "attach-secret@example.com",
+                "folder": "legal",
+                "source_file": "Maildir/legal/cur/1710000006.M6P1.host:2,S",
+                "raw_material_id": "raw-attachment-secret-001",
+                "mailbox_format": "maildir-staged",
+                "attachment_index": 2,
+                "disposition": "attachment",
+                "filename": "signed-secret.pdf",
+                "content_type": "application/pdf",
+                "content_id": "cid-secret@example.com",
+                "material_policy_ref": "operator.email-mailbox.attachment-deferred",
+            }),
+        );
+
+        let decision = engine
+            .disclose_event_payload(&event, DisclosureContext::Dlq)
+            .await;
+        let disclosed = serde_json::to_string(&decision.value)?;
+
+        assert!(
+            decision.changed,
+            "email attachment DLQ disclosure must change scoped sensitive fields"
+        );
+        assert_eq!(decision.context, DisclosureContext::Dlq);
+        for forbidden in [
+            "signed-secret.pdf",
+            "cid-secret@example.com",
+            "raw-attachment-secret-001",
+        ] {
+            assert!(
+                !disclosed.contains(forbidden),
+                "email attachment DLQ disclosure leaked `{forbidden}` in {disclosed}"
+            );
+        }
+        for marker in [
+            "<EMAIL_ATTACHMENT_NAME>",
+            "<EMAIL_CONTENT_ID>",
+            "<EMAIL_ATTACHMENT_MATERIAL>",
+        ] {
+            assert!(
+                disclosed.contains(marker),
+                "email attachment DLQ disclosure should include marker `{marker}` in {disclosed}"
+            );
+        }
+        assert_eq!(
+            decision.caveats.len(),
+            3,
+            "each scoped email attachment policy should surface as an operator caveat"
+        );
+        assert_eq!(
+            event.payload["filename"].as_str(),
+            Some("signed-secret.pdf"),
+            "presentation-time disclosure must not mutate stored event payload"
+        );
+        Ok(())
+    }
+
     // ─── Chokepoint: derived events ───────────────────────────────────────────
 
     #[sinex_test]
